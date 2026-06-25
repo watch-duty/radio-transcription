@@ -139,7 +139,6 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
         token,
         setToken,
         isAdmin,
-        setIsAdmin: () => {},
         isLoading: isUserInfoLoading,
         isError: isUserInfoError,
       }}
