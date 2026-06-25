@@ -518,6 +518,7 @@ class TestFeedAuditSql(unittest.TestCase):
             self.assertIn(key, snapshot_sql)
 
         self.assertNotIn("'last_bookmark_time'", snapshot_sql)
+        self.assertNotIn("'quarantine_reason'", snapshot_sql)
 
         for sql in (
             feed_queries.UPDATE_FEED_SQL,

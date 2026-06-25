@@ -2699,11 +2699,11 @@ async def test_reset_feed_succeeds(
     assert "last_heartbeat" not in after_values
 
 
-async def test_reset_clears_stale_status_reason_with_clear_timestamp_and_status_reason_detail(
+async def test_reset_clears_stale_status_reason_with_clear_timestamp(
     db_pool: asyncpg.Pool,
     store: FeedStore,
 ) -> None:
-    """Reset clears stale canonical reason and status reason detail."""
+    """Reset clears stale canonical reason."""
     old_reason_ts = datetime.datetime(2026, 5, 29, 12, 0, tzinfo=datetime.UTC)
     worker = uuid.uuid4()
     feed_id = await _insert_feed(
