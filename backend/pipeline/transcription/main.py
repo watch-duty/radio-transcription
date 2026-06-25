@@ -158,28 +158,30 @@ class TranscriptionServiceContainer:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Warms up container services on startup and resets/closes them on shutdown."""
     container = TranscriptionServiceContainer()
-    container.eager_warmup()
-    if container.processor:
-        app.state.processor = container.processor
-    yield
-    # Clean up client connection pools/channels on exit
-    if container.processor:
-        processor = container.processor
-        if processor.transcriber:
-            try:
-                await processor.transcriber.close()
-            except Exception:
-                logger.exception(
-                    "Failed to close transcriber client on lifespan shutdown"
-                )
-        if processor.audio_segments_client:
-            try:
-                await processor.audio_segments_client.close()
-            except Exception:
-                logger.exception(
-                    "Failed to close audio segments client on lifespan shutdown"
-                )
-    container.reset_clients()
+    try:
+        container.eager_warmup()
+        if container.processor:
+            app.state.processor = container.processor
+        yield
+    finally:
+        # Clean up client connection pools/channels on exit
+        if container.processor:
+            processor = container.processor
+            if processor.transcriber:
+                try:
+                    await processor.transcriber.close()
+                except Exception:
+                    logger.exception(
+                        "Failed to close transcriber client on lifespan shutdown"
+                    )
+            if processor.audio_segments_client:
+                try:
+                    await processor.audio_segments_client.close()
+                except Exception:
+                    logger.exception(
+                        "Failed to close audio segments client on lifespan shutdown"
+                    )
+        container.reset_clients()
 
 
 app = FastAPI(title="Transcription Service ASGI", lifespan=lifespan)

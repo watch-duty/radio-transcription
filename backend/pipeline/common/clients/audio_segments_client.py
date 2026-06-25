@@ -141,7 +141,7 @@ def is_transient_error(e: BaseException) -> bool:
     """Retries on all network errors and transient 429/5xx status codes."""
     if isinstance(e, httpx.HTTPStatusError):
         return e.response.status_code in {429, 500, 502, 503, 504}
-    return isinstance(e, httpx.RequestError)
+    return isinstance(e, (httpx.TransportError, httpx.TimeoutException))
 
 
 class AsyncAudioSegmentsClient:
