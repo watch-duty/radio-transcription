@@ -101,10 +101,13 @@ class GeminiTranscriber(base.Transcriber):
 
         # TODO(http://linear.app/watchduty/issue/GOO-580/extend-gemini-transcriber-to-support-context): Support context
         mime_type = self.config.mime_type
-        if uri:
-            guessed_mime, _ = mimetypes.guess_type(uri)
-            if guessed_mime:
-                mime_type = guessed_mime
+        if not uri:
+            logger.error("No audio_data or uri provided to Gemini transcriber.")
+            return None
+
+        guessed_mime, _ = mimetypes.guess_type(uri)
+        if guessed_mime:
+            mime_type = guessed_mime
 
         parts = []
         if uri:
@@ -113,10 +116,6 @@ class GeminiTranscriber(base.Transcriber):
             parts.append(
                 types.Part.from_bytes(data=audio_data, mime_type=mime_type)
             )
-
-        else:
-            logger.error("No audio_data or uri provided to Gemini transcriber.")
-            return None
 
         contents = types.Content(role="user", parts=parts)
 
