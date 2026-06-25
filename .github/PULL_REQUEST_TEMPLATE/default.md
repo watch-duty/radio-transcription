@@ -1,6 +1,6 @@
 > [!TIP]
 > **Need a different template?**
-> - 📄 For standard changes, switch back to the [Default Template](?template=default.md).
+> - 💻 For frontend-facing changes, switch to the [Frontend Changes Template](?template=frontend_changes.md).
 > *(Note: Please delete this tip block before submitting your PR)*
 
 ## Description
@@ -11,9 +11,6 @@
 **Context & Motivation:**
 <!-- AI Agent / Developer: Explain the 'why' behind this change. Focus on the problem solved. Provide any relevant links to design docs and/or issues Do not hallucinate business logic. -->
 
-**Screenshots/Screencasts:**
-<!-- AI Agent / Developer: Include screenshots, GIFs, or videos showing the frontend changes in action (before/after comparisons are highly recommended). -->
-
 **Future Work / Out of Scope:**
 <!-- AI Agent / Developer: List any known limitations, edge cases not covered, or planned follow-up work. -->
 
@@ -23,6 +20,7 @@
 <!-- AI Agent / Developer: Describe the exact tests run. Ensure edge cases (e.g., null data, precision boundaries, scale) are explicitly addressed. -->
 - [ ] Unit Tests
 - [ ] Local manual testing
+- [ ] Data validation / Execution verified in staging
 
 ## Checklist
 <!-- AI Agent: Before checking these boxes, verify your workspace to ensure these criteria are actually met. Do not check boxes automatically without verification. -->
