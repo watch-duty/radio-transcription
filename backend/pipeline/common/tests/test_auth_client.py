@@ -1,8 +1,8 @@
-import unittest
-from unittest.mock import MagicMock, patch
 import time
+import unittest
+from unittest.mock import patch
 
-from backend.pipeline.common.auth_client import get_id_token, _token_cache
+from backend.pipeline.common.auth_client import _token_cache, get_id_token
 
 
 class TestAuthClient(unittest.TestCase):

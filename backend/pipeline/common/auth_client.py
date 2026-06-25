@@ -40,4 +40,3 @@ def get_id_token(audience: str) -> str:
         _token_cache[audience] = (token, now + CACHE_TTL_SECONDS)
 
     return token
-
