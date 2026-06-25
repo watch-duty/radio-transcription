@@ -76,6 +76,7 @@ export function TranscriptView({
 
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [playLatestAudio, setPlayLatestAudio] = useState(true);
+  const [playbackIntent, setPlaybackIntent] = useState<'playing' | 'paused'>('playing');
 
   // Effect which sets the searched feed ID based on the search params changing.
   useEffect(() => {
@@ -157,14 +158,14 @@ export function TranscriptView({
         }
       }
 
-      if (!isAudioPlaying && playLatestAudio) {
+      if (playbackIntent === 'playing' && !isAudioPlaying && playLatestAudio) {
         const audioToPlay = newAudioSegments[newAudioSegments.length - 1];
         if (audioToPlay.playbackAudioUri) {
           toggleAudio(audioToPlay.id, audioToPlay.playbackAudioUri);
         }
       }
     },
-    [triggerSnackbar, isAudioPlaying, playLatestAudio, toggleAudio]
+    [triggerSnackbar, isAudioPlaying, playLatestAudio, playbackIntent, toggleAudio]
   );
 
   const {
@@ -259,6 +260,40 @@ export function TranscriptView({
     audioSegmentsRef.current = audioSegments;
   }, [audioSegments]);
 
+  const handleToggleAudio = useCallback(
+    (segmentId: string, audioUri: string) => {
+      toggleAudio(segmentId, audioUri);
+
+      if (currentlyPlayingSegmentId === segmentId && isAudioPlaying) {
+        setPlaybackIntent('paused');
+      } else {
+        setPlaybackIntent('playing');
+      }
+    },
+    [currentlyPlayingSegmentId, isAudioPlaying, toggleAudio]
+  );
+
+  // Automatically play the highlighted/selected segment, or the most recent segment, if play mode is active.
+  useEffect(() => {
+    if (playbackIntent !== 'playing' || audioSegments.length === 0) return;
+
+    const hasSelectionChange = highlightedSegmentId && highlightedSegmentId !== currentlyPlayingSegmentId;
+    const shouldStartPlaying = !currentlyPlayingSegmentId || hasSelectionChange;
+
+    if (shouldStartPlaying) {
+      const targetId = highlightedSegmentId || audioSegments[0].id;
+      const segment = rawAudioSegments.find((s) => s.id === targetId);
+      if (segment && segment.playbackAudioUri) {
+        toggleAudio(segment.id, segment.playbackAudioUri);
+      } else {
+        const audioSegment = audioSegments.find((t) => matchesSegmentId(t, targetId));
+        if (audioSegment && audioSegment.playbackAudioUri) {
+          toggleAudio(audioSegment.id, audioSegment.playbackAudioUri);
+        }
+      }
+    }
+  }, [playbackIntent, audioSegments, rawAudioSegments, currentlyPlayingSegmentId, highlightedSegmentId, toggleAudio]);
+
   const {
     skipToNext,
     skipToPrevious,
@@ -273,7 +308,7 @@ export function TranscriptView({
     isAudioPlaying,
     currentAudioRef,
     virtuosoRef,
-    toggleAudio,
+    toggleAudio: handleToggleAudio,
   });
 
   // Handles continuous auto-play by advancing to the next newer audio segment when the current audio finishes.
@@ -332,6 +367,12 @@ export function TranscriptView({
       }
     }
 
+    if (currentIndex <= 0) {
+      if (!playLatestAudio) {
+        setPlaybackIntent('paused');
+      }
+    }
+
     setPlaybackEndedForId(null);
   }, [
     playbackEndedForId,
@@ -339,6 +380,7 @@ export function TranscriptView({
     rawAudioSegments,
     toggleAudio,
     setPlaybackEndedForId,
+    playLatestAudio,
   ]);
 
   // This is used to group audio segments by date and display them in the UI.
@@ -445,24 +487,68 @@ export function TranscriptView({
   };
 
   const handleTogglePlayPause = () => {
-    const targetId = isAudioPlaying
-      ? currentlyPlayingSegmentId || highlightedSegmentId
-      : highlightedSegmentId ||
-        currentlyPlayingSegmentId ||
-        audioSegments[0]?.id;
-    if (!targetId) return;
+    if (playbackIntent === 'playing') {
+      setPlaybackIntent('paused');
+      if (isAudioPlaying && currentlyPlayingSegmentId) {
+        const segment = rawAudioSegments.find((s) => s.id === currentlyPlayingSegmentId);
+        if (segment && segment.playbackAudioUri) {
+          toggleAudio(segment.id, segment.playbackAudioUri);
+        }
+      }
+    } else {
+      setPlaybackIntent('playing');
 
-    const specificSegment = rawAudioSegments.find((s) => s.id === targetId);
-    if (specificSegment && specificSegment.playbackAudioUri) {
-      toggleAudio(specificSegment.id, specificSegment.playbackAudioUri);
-      return;
-    }
+      let targetId: string | null = null;
+      let shouldPlayNext = false;
 
-    const audioSegment = audioSegments.find((t) =>
-      matchesSegmentId(t, targetId)
-    );
-    if (audioSegment && audioSegment.playbackAudioUri) {
-      toggleAudio(audioSegment.id, audioSegment.playbackAudioUri);
+      if (highlightedSegmentId && highlightedSegmentId !== currentlyPlayingSegmentId) {
+        targetId = highlightedSegmentId;
+      } else if (currentlyPlayingSegmentId) {
+        if (currentAudioRef.current === null) {
+          shouldPlayNext = true;
+          targetId = currentlyPlayingSegmentId;
+        } else {
+          targetId = currentlyPlayingSegmentId;
+        }
+      } else if (highlightedSegmentId) {
+        targetId = highlightedSegmentId;
+      } else if (audioSegments.length > 0) {
+        targetId = audioSegments[0].id;
+      }
+
+      if (!targetId) return;
+
+      if (shouldPlayNext) {
+        const idx = audioSegments.findIndex((s) => matchesSegmentId(s, targetId!));
+        if (idx !== -1 && idx > 0) {
+          const nextAudioSegment = audioSegments[idx - 1];
+          if (nextAudioSegment.playbackAudioUri) {
+            if (
+              nextAudioSegment.isSilenceBundle &&
+              nextAudioSegment.bundledSegmentIds &&
+              nextAudioSegment.bundledSegmentIds.length > 0
+            ) {
+              const firstId = nextAudioSegment.bundledSegmentIds[0];
+              const firstSegment = rawAudioSegments.find((s) => s.id === firstId);
+              if (firstSegment && firstSegment.playbackAudioUri) {
+                toggleAudio(firstSegment.id, firstSegment.playbackAudioUri);
+                return;
+              }
+            }
+            toggleAudio(nextAudioSegment.id, nextAudioSegment.playbackAudioUri);
+          }
+        } else {
+          const segment = rawAudioSegments.find((s) => s.id === targetId!);
+          if (segment && segment.playbackAudioUri) {
+            toggleAudio(segment.id, segment.playbackAudioUri);
+          }
+        }
+      } else {
+        const segment = rawAudioSegments.find((s) => s.id === targetId!);
+        if (segment && segment.playbackAudioUri) {
+          toggleAudio(segment.id, segment.playbackAudioUri);
+        }
+      }
     }
   };
 
@@ -558,6 +644,7 @@ export function TranscriptView({
     setNewMessageCount(0);
     setHighlightedSegmentId(null);
     setIsViewAtTopOfAudioSegments(true);
+    setPlaybackIntent('playing');
     // Update URL params
     setSearchParams((prev) => {
       prev.set('feedId', feedId);
@@ -612,7 +699,7 @@ export function TranscriptView({
 
       <AudioControl
         sx={{ mt: 1 }}
-        isAudioPlaying={isAudioPlaying}
+        isAudioPlaying={playbackIntent === 'playing'}
         onTogglePlayPause={handleTogglePlayPause}
         onSkipToNext={skipToNext}
         onSkipToPrevious={skipToPrevious}
@@ -672,7 +759,7 @@ export function TranscriptView({
             triggerSnackbar={triggerSnackbar}
             ruleIdToNameMap={ruleIdToNameMap}
             rulesLoading={rulesLoading}
-            onToggleAudio={toggleAudio}
+            onToggleAudio={handleToggleAudio}
             isAudioPlaying={isAudioPlaying}
             currentlyPlayingSegmentId={currentlyPlayingSegmentId}
             highlightedSegmentId={highlightedSegmentId}
