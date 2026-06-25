@@ -58,17 +58,37 @@ def is_blank_or_unintelligible(text: str) -> bool:
 def prepare_rows(
     rows: list[dict[str, Any]],
     normalizer: Any,
+    norm_cache: dict[str, str],
 ) -> None:
     """Cache normalized scoring strings once per row."""
     for row in rows:
         if REF_NORM_KEY in row:
             continue
-        row[REF_NORM_KEY] = normalizer(str(row.get("text", ""))).strip()
-        row[PRED_NORM_KEY] = normalizer(prediction(row)).strip()
+        row[REF_NORM_KEY] = normalize_cached(
+            str(row.get("text", "")),
+            normalizer,
+            norm_cache,
+        )
+        row[PRED_NORM_KEY] = normalize_cached(
+            prediction(row),
+            normalizer,
+            norm_cache,
+        )
         row[HISTORY_NORM_KEY] = [
-            normalizer(str(item)).strip()
+            normalize_cached(str(item), normalizer, norm_cache)
             for item in row.get(f"history_pred_text_{MODEL_KEY}") or []
         ]
+
+
+def normalize_cached(
+    text: str,
+    normalizer: Any,
+    norm_cache: dict[str, str],
+) -> str:
+    """Normalize text with a process-wide cache."""
+    if text not in norm_cache:
+        norm_cache[text] = normalizer(text).strip()
+    return norm_cache[text]
 
 
 def exact_history_match(row: dict[str, Any]) -> bool:
@@ -146,10 +166,14 @@ def summarize_subset(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def summarize_file(path: str, normalizer: Any) -> dict[str, Any]:
+def summarize_file(
+    path: str,
+    normalizer: Any,
+    norm_cache: dict[str, str],
+) -> dict[str, Any]:
     """Summarize one probe output file."""
     rows = load_jsonl(path)
-    prepare_rows(rows, normalizer)
+    prepare_rows(rows, normalizer, norm_cache)
     by_dataset: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in rows:
         by_dataset[str(row.get("dataset_name", "unknown"))].append(row)
@@ -199,8 +223,11 @@ def main() -> int:
     """Entrypoint."""
     args = parse_args()
     normalizer = scoring.build_normalizer()
+    norm_cache: dict[str, str] = {}
     summary = {
-        "results": [summarize_file(path, normalizer) for path in args.jsonl],
+        "results": [
+            summarize_file(path, normalizer, norm_cache) for path in args.jsonl
+        ],
     }
     output_json = Path(args.output_json)
     output_json.parent.mkdir(parents=True, exist_ok=True)
