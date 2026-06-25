@@ -872,13 +872,14 @@ class FeedStore:
         properties in the `feed_properties` table.
         """
         required_actor_id = _require_actor_id(actor_id)
+        tags_json = json.dumps(tags) if tags is not None else None
         try:
             async with self._pool.acquire() as conn:
                 row = await conn.fetchrow(
                     feed_queries.UPDATE_FEED_SQL,
                     feed_id,
                     name,
-                    json.dumps(tags or []),
+                    tags_json,
                     required_actor_id,
                 )
             if row is None:

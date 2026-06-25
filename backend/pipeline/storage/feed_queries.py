@@ -843,7 +843,7 @@ change AS (
         before_row.*,
         (
             before_row.name IS DISTINCT FROM $2
-            OR before_row.tags IS DISTINCT FROM $3::jsonb
+            OR ($3::jsonb IS NOT NULL AND before_row.tags IS DISTINCT FROM $3::jsonb)
         ) AS changed
     FROM before_row
 ),
@@ -858,7 +858,7 @@ updated_feed AS (
 ),
 updated_props AS (
     UPDATE feed_properties
-    SET tags = $3::jsonb
+    SET tags = COALESCE($3::jsonb, feed_properties.tags)
     FROM updated_feed
     WHERE feed_properties.feed_id = updated_feed.id
     RETURNING source_feed_id, tags
