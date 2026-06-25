@@ -9,6 +9,7 @@ import { RequireAdmin } from './RequireAdmin';
 
 // Mock useAuth
 const mockSetToken = vi.fn();
+const mockSetIsAdmin = vi.fn();
 let mockToken: string | null = null;
 let mockIsAdmin = false;
 let mockIsLoading = false;
@@ -19,6 +20,7 @@ vi.mock('../../context/AuthContext', () => ({
     token: mockToken,
     setToken: mockSetToken,
     isAdmin: mockIsAdmin,
+    setIsAdmin: mockSetIsAdmin,
     isLoading: mockIsLoading,
     isError: mockIsError,
   })),
