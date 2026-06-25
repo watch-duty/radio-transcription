@@ -1093,6 +1093,75 @@ describe('TranscriptView', () => {
     vi.useRealTimers();
   });
 
+  it('does not pause playback when selecting an already-visible clip', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const { playSpy, stopSpy } = audioEngineMock;
+
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        'recent',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Recent transcript',
+        'gs:://foo.m4a',
+        []
+      ),
+      makeMockAudioSegment(
+        'old',
+        'feed123',
+        '2026-04-10T11:00:00Z',
+        '2026-04-10T11:00:05Z',
+        'Old transcript',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+    const newerAudioSegments = [
+      makeMockAudioSegment(
+        'newer',
+        'feed123',
+        '2026-04-10T12:05:00Z',
+        '2026-04-10T12:05:05Z',
+        'Newer transcript',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+
+    vi.mocked(listAudioSegments)
+      .mockResolvedValueOnce({
+        segments: initialAudioSegments,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        segments: newerAudioSegments,
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Recent transcript')).toBeTruthy();
+    });
+
+    // Autoplay at the live edge starts playback.
+    vi.advanceTimersByTime(15000);
+    await waitFor(() => {
+      expect(playSpy).toHaveBeenCalled();
+    });
+
+    // 'Recent' is inside the live window, so selecting it doesn't move the
+    // window — playback keeps going.
+    fireEvent.click(screen.getByText('Recent transcript'));
+    expect(stopSpy).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
   it('does not autoplay incoming clips while viewing the past', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     const { playSpy } = audioEngineMock;

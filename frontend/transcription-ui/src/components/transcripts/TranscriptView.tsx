@@ -248,10 +248,14 @@ export function TranscriptView({
       currentlyPlayingSegmentId,
       highlightedSegmentId,
     });
-  isLatestTimeWindowRef.current = isLatestTimeWindow;
+  // Keep the ref the poll callback reads in sync with the latest window state.
+  useEffect(() => {
+    isLatestTimeWindowRef.current = isLatestTimeWindow;
+  }, [isLatestTimeWindow]);
 
   // A user pick pauses playback only when it will move the display window — i.e.
-  // the picked segment isn't already visible in the current window.
+  // the picked segment isn't already visible. Resolves by exact id (mirroring
+  // the window hook's recenter); a bundle id resolves to its first raw segment.
   const willMoveWindowTo = (segmentId: string): boolean => {
     const target = rawAudioSegments.find((s) => s.id === segmentId);
     if (!target) return false;
