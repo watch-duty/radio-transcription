@@ -269,6 +269,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.patchers = [
             patch.object(icecast_collector, "logger", self.mock_logger),
             patch.dict(os.environ, MOCK_ENV_VARS),
+            patch.object(
+                icecast_collector, "_fix_flac_header", new_callable=AsyncMock
+            ),
         ]
         for p in self.patchers:
             p.start()
@@ -1173,8 +1176,10 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
         ".icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
+    @patch.object(icecast_collector, "_fix_flac_header", new_callable=AsyncMock)
     async def test_stamps_receipt_time_on_yielded_chunk(
         self,
+        mock_fix_header: AsyncMock,
         mock_create: AsyncMock,
         mock_now: MagicMock,
     ) -> None:
