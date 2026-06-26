@@ -486,8 +486,9 @@ export function TranscriptView({
     }
   }, [isAudioSegmentsSuccess, targetSegmentId, audioSegments]);
 
+  // Clicking a clip in the timeline plays it immediately; playback sets the
+  // highlight and recenters the window on the now-playing segment.
   const handleClipClick = (segmentId: string) => {
-    if (willMoveWindowTo(segmentId)) stopPlayback();
     const index = audioSegments.findIndex((t) => isWithinSegment(t, segmentId));
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
@@ -496,7 +497,7 @@ export function TranscriptView({
         behavior: 'smooth',
       });
     }
-    setHighlightedSegmentId(segmentId);
+    playSegmentById(segmentId);
   };
 
   const playSegmentById = (segmentId: string | null | undefined) => {
