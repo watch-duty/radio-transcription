@@ -46,6 +46,7 @@ DEFAULT_OUTPUT_PREFIX = (
 )
 DEFAULT_METRIC_NAME = "asr_wer_score"
 DEFAULT_METRIC_FUNCTION = "wd-asr-wer-score"
+DEFAULT_METRIC_FUNCTION_LOCATION = DEFAULT_LOCATION
 DEFAULT_SAMPLE_SIZE = 600
 DEFAULT_DATA_LIMIT = 100
 DEFAULT_CONTEXT_COUNT = 8
@@ -188,6 +189,11 @@ def main() -> int:
     parser.add_argument("--seed", type=int, default=20260627)
     parser.add_argument("--metric-name", default=DEFAULT_METRIC_NAME)
     parser.add_argument("--metric-function", default=DEFAULT_METRIC_FUNCTION)
+    parser.add_argument(
+        "--metric-function-location",
+        default=DEFAULT_METRIC_FUNCTION_LOCATION,
+        help="Cloud Functions region for the custom VAPO metric endpoint.",
+    )
     parser.add_argument("--metric-mode", choices=("custom", "bleu"), default="custom")
     parser.add_argument("--optimization-mode", default=None)
     parser.add_argument("--target-model-qps", type=float, default=3.0)
@@ -292,7 +298,14 @@ def prepare_optimizer_artifacts(
         "target_model_location": args.target_model_location,
         "metric_mode": args.metric_mode,
         "metric_name": args.metric_name,
-        "metric_function": args.metric_function if args.metric_mode == "custom" else None,
+        "metric_function": (
+            args.metric_function if args.metric_mode == "custom" else None
+        ),
+        "metric_function_location": (
+            args.metric_function_location
+            if args.metric_mode == "custom"
+            else None
+        ),
         "families": family_records,
     }
     manifest_text = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
@@ -375,6 +388,8 @@ def _vapo_config(
             {
                 "eval_metric": "custom_metric",
                 "custom_metric_name": args.metric_name,
+                "custom_metric_cloud_function_project": args.project,
+                "custom_metric_cloud_function_location": args.metric_function_location,
                 "custom_metric_cloud_function_name": args.metric_function,
             }
         )

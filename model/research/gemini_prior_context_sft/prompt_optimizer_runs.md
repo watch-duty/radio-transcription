@@ -44,6 +44,25 @@ Fixed smoke run:
 - target model location: `us`
 - job:
   `projects/781667204380/locations/us-central1/customJobs/4583945348648534016`
+- result: failed
+- root cause: once `target_model_location=us` was set, VAPO inferred the
+  custom metric function location as `us` and validated
+  `https://us-automatic-hawk-481415-m9.cloudfunctions.net/wd-asr-wer-score`.
+  The deployed function is in `us-central1`, so the validation returned `404`.
+
+Second fixed smoke run:
+
+- output prefix:
+  `gs://wd-transcription-data/sft/experiments/gemini-prior-context-sft-v20260625/prompt_optimizer/20260627-prior-context-count8-prompt-optimizer-smoke-us2`
+- family: `P1_force_words_incumbent`
+- sample rows: `24`
+- data limit: `24`
+- VAPO steps: `2`
+- optimizer job location: `us-central1`
+- target model location: `us`
+- custom metric function location: `us-central1`
+- job:
+  `projects/781667204380/locations/us-central1/customJobs/8889949542368149504`
 - status: pending/provisioning at submission
 
 ## 2026-06-26: Full Prompt-Family VAPO Jobs
@@ -72,7 +91,8 @@ Initial full run:
 
 Result: all failed for the same `target_model_location=us-central1` issue.
 
-Next step: wait for the fixed-location smoke run. If it succeeds, relaunch the
-full prompt-family sweep with `target_model_location=us`, parse optimized
-prompts, then score the top prompt packages on the full four-dataset eval set
-with no fallback before selecting the prompt for SFT.
+Next step: wait for the second fixed smoke run. If it succeeds, relaunch the
+full prompt-family sweep with `target_model_location=us` and
+`custom_metric_cloud_function_location=us-central1`, parse optimized prompts,
+then score the top prompt packages on the full four-dataset eval set with no
+fallback before selecting the prompt for SFT.
