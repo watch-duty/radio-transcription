@@ -102,41 +102,41 @@ export interface SkipTimeDestination {
  */
 export function calculateSkipTimeDestination(
   rawAudioSegments: AudioSegment[],
-  currentId: string,
-  currentTimeSeconds: number,
+  activeSegmentId: string,
+  currentTime: number,
   offsetSeconds: number
 ): SkipTimeDestination | null {
-  const currentIdx = rawAudioSegments.findIndex((s) => s.id === currentId);
+  const currentIdx = rawAudioSegments.findIndex(
+    (s) => s.id === activeSegmentId
+  );
   if (currentIdx === -1) return null;
-
   const activeSegment = rawAudioSegments[currentIdx];
-  if (!activeSegment.playbackAudioUri) return null;
 
   const activeDuration = getSegmentDuration(activeSegment);
-  const targetTime = currentTimeSeconds + offsetSeconds;
+  const targetTime = currentTime + offsetSeconds;
 
-  // CASE 1: Skip lands within the active segment
+  // CASE 1: Within the bounds of the current segment
   if (targetTime >= 0 && targetTime <= activeDuration) {
-    return {
-      segmentId: activeSegment.id,
-      playbackAudioUri: activeSegment.playbackAudioUri,
-      seekTime: targetTime,
-    };
+    if (activeSegment.playbackAudioUri) {
+      return {
+        segmentId: activeSegment.id,
+        playbackAudioUri: activeSegment.playbackAudioUri,
+        seekTime: targetTime,
+      };
+    }
+    return null;
   }
 
   // CASE 2: Overshot backwards (Replay / older segments)
   if (targetTime < 0) {
     let remainingOvershoot = -targetTime;
+    let nextIdx = currentIdx + 1; // Older segments have higher indexes
 
-    for (
-      let nextIdx = currentIdx + 1;
-      nextIdx < rawAudioSegments.length;
-      nextIdx++
-    ) {
+    while (nextIdx < rawAudioSegments.length) {
       const segment = rawAudioSegments[nextIdx];
       if (segment.playbackAudioUri) {
         const duration = getSegmentDuration(segment);
-        if (remainingOvershoot <= duration) {
+        if (duration >= remainingOvershoot) {
           return {
             segmentId: segment.id,
             playbackAudioUri: segment.playbackAudioUri,
@@ -146,15 +146,16 @@ export function calculateSkipTimeDestination(
           remainingOvershoot -= duration;
         }
       }
+      nextIdx++;
     }
 
     // Fallback: If we overshot the oldest segment, play the oldest from the start (0)
     for (let i = rawAudioSegments.length - 1; i >= 0; i--) {
-      const oldestSegment = rawAudioSegments[i];
-      if (oldestSegment.playbackAudioUri) {
+      const segment = rawAudioSegments[i];
+      if (segment.playbackAudioUri) {
         return {
-          segmentId: oldestSegment.id,
-          playbackAudioUri: oldestSegment.playbackAudioUri,
+          segmentId: segment.id,
+          playbackAudioUri: segment.playbackAudioUri,
           seekTime: 0,
         };
       }
@@ -164,12 +165,13 @@ export function calculateSkipTimeDestination(
   // CASE 3: Overshot forwards (Forward / newer segments)
   if (targetTime > activeDuration) {
     let remainingOvershoot = targetTime - activeDuration;
+    let nextIdx = currentIdx - 1; // Newer segments have lower indexes
 
-    for (let nextIdx = currentIdx - 1; nextIdx >= 0; nextIdx--) {
+    while (nextIdx >= 0) {
       const segment = rawAudioSegments[nextIdx];
       if (segment.playbackAudioUri) {
         const duration = getSegmentDuration(segment);
-        if (remainingOvershoot <= duration) {
+        if (duration >= remainingOvershoot) {
           return {
             segmentId: segment.id,
             playbackAudioUri: segment.playbackAudioUri,
@@ -179,16 +181,17 @@ export function calculateSkipTimeDestination(
           remainingOvershoot -= duration;
         }
       }
+      nextIdx--;
     }
 
     // Fallback: If we overshot the newest segment, seek to the end of the newest segment
     for (let i = 0; i < rawAudioSegments.length; i++) {
-      const newestSegment = rawAudioSegments[i];
-      if (newestSegment.playbackAudioUri) {
+      const segment = rawAudioSegments[i];
+      if (segment.playbackAudioUri) {
         return {
-          segmentId: newestSegment.id,
-          playbackAudioUri: newestSegment.playbackAudioUri,
-          seekTime: getSegmentDuration(newestSegment),
+          segmentId: segment.id,
+          playbackAudioUri: segment.playbackAudioUri,
+          seekTime: getSegmentDuration(segment),
         };
       }
     }
