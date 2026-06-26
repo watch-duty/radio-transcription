@@ -144,14 +144,14 @@ describe('FeedStatusIndicator', () => {
           lastSpeechSegmentTimestamp={fixedNow.getTime() - 10 * 60 * 1000}
         />
       );
-      expect(screen.getByText('Latest: 10 minutes ago')).toBeTruthy();
+      expect(screen.getByText('Last activity: 10 minutes ago')).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('displays Latest: N/A if lastSpeechSegmentTimestamp is not provided', () => {
+  it('displays Last activity: N/A if lastSpeechSegmentTimestamp is not provided', () => {
     render(<FeedStatusIndicator status="active" />);
-    expect(screen.getByText('Latest: N/A')).toBeTruthy();
+    expect(screen.getByText('Last activity: N/A')).toBeTruthy();
   });
 });
