@@ -110,6 +110,10 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         display: 'flex',
         justifyContent: 'space-between',
         mb: 0.5,
+        // Lift the bar (and its overflowing speaker badges) above the list's
+        // sticky headers (zIndex 1) so they aren't clipped behind them.
+        position: 'relative',
+        zIndex: 2,
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

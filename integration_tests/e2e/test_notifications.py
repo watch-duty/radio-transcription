@@ -19,7 +19,7 @@ from integration_tests.test_utils import verify_notification_received
 from integration_tests.utils import assert_eventually
 
 FEEDS_API_HOST = os.environ.get("FEEDS_API_HOST", "localhost:8089")
-_TEST_ACTOR_HEADERS = {"X-WD-Actor-Id": "user:google:e2e-admin-sub"}
+_TEST_ACTOR_HEADERS = {"X-WD-Actor-Id": "user:google:e2e-admin@example.com"}
 
 
 @pytest.fixture

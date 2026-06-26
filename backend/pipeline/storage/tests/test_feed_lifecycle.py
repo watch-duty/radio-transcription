@@ -6,7 +6,7 @@ import typing
 
 import pytest
 
-from backend.pipeline.storage import feed_lifecycle, quarantine_reason
+from backend.pipeline.storage import feed_lifecycle, status_reason_detail
 from backend.pipeline.storage.feed_store import FeedStatus, FeedStatusReason
 
 
@@ -41,10 +41,12 @@ def test_status_reason_storage_value_rejects_other_enums() -> None:
 
 
 def test_status_reason_detail_storage_value_caps_reason() -> None:
-    long_reason = "x" * (quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1)
+    long_reason = "x" * (
+        status_reason_detail.MAX_STATUS_REASON_DETAIL_LENGTH + 1
+    )
 
     result = feed_lifecycle.status_reason_detail_storage_value(long_reason)
 
     assert result is not None
-    assert len(result) == quarantine_reason.MAX_QUARANTINE_REASON_LENGTH
+    assert len(result) == status_reason_detail.MAX_STATUS_REASON_DETAIL_LENGTH
     assert result.endswith("[truncated]")

@@ -23,6 +23,9 @@ const engineMock = vi.hoisted(() => ({
   playSpy: vi.fn(),
   pauseSpy: vi.fn(),
   unloadSpy: vi.fn(),
+  setVolumeDbSpy: vi.fn(),
+  setPanSpy: vi.fn(),
+  setSpeedSpy: vi.fn(),
 }));
 
 vi.mock('../audio/WebAudioPlayer', () => ({
@@ -36,6 +39,15 @@ vi.mock('../audio/WebAudioPlayer', () => ({
     }
     resume() {
       engineMock.resumeSpy();
+    }
+    setVolumeDb(db: number) {
+      engineMock.setVolumeDbSpy(db);
+    }
+    setPan(pan: number) {
+      engineMock.setPanSpy(pan);
+    }
+    setSpeed(rate: number) {
+      engineMock.setSpeedSpy(rate);
     }
     stop() {
       engineMock.stopSpy();
@@ -70,16 +82,30 @@ function makeSegment(id: string): AudioSegment {
   return { id, playbackAudioUri: `${id}.m4a` } as AudioSegment;
 }
 
-function renderPlayback(segments: AudioSegment[] = []) {
+function renderPlayback(
+  segments: AudioSegment[] = [],
+  initialProps: { volumeDb?: number; pan?: number; speed?: number } = {}
+) {
   const onPlaySegment = vi.fn();
   const audioSegmentsRef = { current: segments as RenderableAudioSegment[] };
   const rawAudioSegmentsRef = { current: segments };
-  const view = renderHook(() =>
-    useAudioPlayback({
-      audioSegmentsRef,
-      rawAudioSegmentsRef,
-      onPlaySegment,
-    })
+  const view = renderHook(
+    (props: { volumeDb: number; pan: number; speed: number }) =>
+      useAudioPlayback({
+        audioSegmentsRef,
+        rawAudioSegmentsRef,
+        onPlaySegment,
+        volumeDb: props.volumeDb,
+        pan: props.pan,
+        speed: props.speed,
+      }),
+    {
+      initialProps: {
+        volumeDb: initialProps.volumeDb ?? 0,
+        pan: initialProps.pan ?? 0,
+        speed: initialProps.speed ?? 1,
+      },
+    }
   );
   return { ...view, onPlaySegment, audioSegmentsRef, rawAudioSegmentsRef };
 }
@@ -111,6 +137,40 @@ describe('useAudioPlayback', () => {
     expect(engineMock.lastSrc).toBe('resolved://b.m4a');
     expect(result.current.isAudioPlaying).toBe(true);
     expect(result.current.currentlyPlayingSegmentId).toBe('b');
+  });
+
+  it('applies the current control values to the player on toggle', () => {
+    const { result } = renderPlayback([makeSegment('a')], {
+      volumeDb: -6,
+      pan: 1,
+      speed: 1.5,
+    });
+
+    act(() => result.current.togglePlay('a', 'a.m4a'));
+
+    expect(engineMock.setVolumeDbSpy).toHaveBeenCalledWith(-6);
+    expect(engineMock.setPanSpy).toHaveBeenCalledWith(1);
+    expect(engineMock.setSpeedSpy).toHaveBeenCalledWith(1.5);
+  });
+
+  it('pushes later control changes into the live player', () => {
+    const { result, rerender } = renderPlayback([makeSegment('a')], {
+      volumeDb: 0,
+      pan: 0,
+      speed: 1,
+    });
+
+    // The player is built on first toggle; only then can changes reach it.
+    act(() => result.current.togglePlay('a', 'a.m4a'));
+    engineMock.setVolumeDbSpy.mockClear();
+    engineMock.setPanSpy.mockClear();
+    engineMock.setSpeedSpy.mockClear();
+
+    act(() => rerender({ volumeDb: 6, pan: -1, speed: 2 }));
+
+    expect(engineMock.setVolumeDbSpy).toHaveBeenCalledWith(6);
+    expect(engineMock.setPanSpy).toHaveBeenCalledWith(-1);
+    expect(engineMock.setSpeedSpy).toHaveBeenCalledWith(2);
   });
 
   it('highlights and plays a new segment', () => {

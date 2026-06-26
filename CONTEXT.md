@@ -300,8 +300,7 @@ operators and is the v1 routing key for failure policy decisions.
 
 The bounded explanatory text stored as `status_reason_detail` for current feed
 state and Feed Audit Events. It gives diagnostic context, does not drive
-control flow, and is distinct from the legacy `quarantine_reason`
-compatibility alias.
+control flow, and is not a stable machine-readable code.
 
 ### Status Reason Owner
 
@@ -326,15 +325,6 @@ switched without changing collector evidence extraction.
 The residual fallback for untyped bugs or missing classification evidence. It
 is non-budgeted until a future change replaces it with a more precise status
 reason or switches its action in the policy table.
-
-### Quarantine Reason
-
-The detailed diagnostic message persisted when a feed failure episode
-crosses the quarantine threshold. It describes that threshold-crossing episode
-for debugging; it is not the lifecycle owner label and does not summarize the
-full failure budget history. It is not a stable machine-readable code and
-should not drive control flow. Ingestion keeps the full useful diagnostic in
-memory; storage caps it only at the database persistence boundary.
 
 ### Quarantine
 

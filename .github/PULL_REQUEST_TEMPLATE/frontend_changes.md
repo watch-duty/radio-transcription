@@ -1,3 +1,10 @@
+> [!TIP]
+> **Need a different template?**
+> - 📄 For standard changes, switch back to the [Default Template](?expand=1).
+> *(Note: Please delete this tip block before submitting your PR)*
+
+
+
 ## Description
 
 **Summary:**
@@ -18,7 +25,6 @@
 <!-- AI Agent / Developer: Describe the exact tests run. Ensure edge cases (e.g., null data, precision boundaries, scale) are explicitly addressed. -->
 - [ ] Unit Tests
 - [ ] Local manual testing
-
 
 ## Checklist
 <!-- AI Agent: Before checking these boxes, verify your workspace to ensure these criteria are actually met. Do not check boxes automatically without verification. -->

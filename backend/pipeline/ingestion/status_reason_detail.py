@@ -1,16 +1,16 @@
-"""Shared ingestion helpers for quarantine diagnostic text."""
+"""Shared ingestion helpers for status reason detail text."""
 
 from __future__ import annotations
 
 from backend.pipeline.storage import (
-    quarantine_reason as storage_quarantine_reason,
+    status_reason_detail as storage_status_reason_detail,
 )
 
-MAX_QUARANTINE_REASON_LENGTH = (
-    storage_quarantine_reason.MAX_QUARANTINE_REASON_LENGTH
+MAX_STATUS_REASON_DETAIL_LENGTH = (
+    storage_status_reason_detail.MAX_STATUS_REASON_DETAIL_LENGTH
 )
-cap_quarantine_reason_for_storage = (
-    storage_quarantine_reason.cap_quarantine_reason_for_storage
+cap_status_reason_detail_for_storage = (
+    storage_status_reason_detail.cap_status_reason_detail_for_storage
 )
 
 
