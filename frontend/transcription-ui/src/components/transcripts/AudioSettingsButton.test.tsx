@@ -27,6 +27,13 @@ describe('AudioSettingsButton', () => {
   const renderButton = (overrides = {}) =>
     render(<AudioSettingsButton {...defaultProps} {...overrides} />);
 
+  it('disables the button when disabled is true', () => {
+    renderButton({ disabled: true });
+    expect(
+      screen.getByRole('button', { name: 'audio controls' })
+    ).toBeDisabled();
+  });
+
   it('opens the audio controls popover with volume, pan, and speed', () => {
     renderButton({ volumeDb: -6 });
 

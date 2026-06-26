@@ -49,6 +49,7 @@ export interface AudioSettingsButtonProps {
   speed: number;
   setSpeed: (speed: number) => void;
   onReset: () => void;
+  disabled?: boolean;
 }
 
 export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
@@ -59,6 +60,7 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
   speed,
   setSpeed,
   onReset,
+  disabled = false,
 }) => {
   const theme = useTheme();
   const [audioAnchorEl, setAudioAnchorEl] = useState<HTMLElement | null>(null);
@@ -116,6 +118,7 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
               color="primary"
               size="large"
               aria-label="audio controls"
+              disabled={disabled}
               onClick={(e) => setAudioAnchorEl(e.currentTarget)}
               // Transparent border keeps the size stable when badges toggle.
               sx={{

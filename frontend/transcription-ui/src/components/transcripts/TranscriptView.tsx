@@ -696,6 +696,8 @@ export function TranscriptView({
   const sourceUrl = customSourceUrl || searchedFeed?.sourceUrl;
   const archiveUrl = customArchiveUrl || searchedFeed?.archiveUrl;
 
+  const controlsDisabled = rawAudioSegments.length === 0;
+
   return (
     <Box
       sx={{
@@ -726,7 +728,7 @@ export function TranscriptView({
         onFastForward={skipToNextSpeech}
         onFastRewind={skipToPreviousSpeech}
         onSkipTime={skipTime}
-        disableControls={rawAudioSegments.length === 0}
+        disableControls={controlsDisabled}
         endSlot={
           <AudioSettingsButton
             volumeDb={volumeDb}
@@ -736,6 +738,7 @@ export function TranscriptView({
             speed={speed}
             setSpeed={setSpeed}
             onReset={reset}
+            disabled={controlsDisabled}
           />
         }
       />
