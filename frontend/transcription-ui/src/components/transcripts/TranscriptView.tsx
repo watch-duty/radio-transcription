@@ -121,7 +121,7 @@ export function TranscriptView({
     isAudioPlaying,
     currentlyPlayingSegmentId,
     currentAudioRef,
-    togglePlay: toggleAudio,
+    togglePlay,
     stop: stopPlayback,
   } = useAudioPlayback({
     audioSegmentsRef,
@@ -160,11 +160,11 @@ export function TranscriptView({
       if (playbackIntent === 'playing' && !isAudioPlaying && playLatestAudio) {
         const audioToPlay = newAudioSegments[newAudioSegments.length - 1];
         if (audioToPlay.playbackAudioUri) {
-          toggleAudio(audioToPlay.id, audioToPlay.playbackAudioUri);
+          togglePlay(audioToPlay.id, audioToPlay.playbackAudioUri);
         }
       }
     },
-    [triggerSnackbar, isAudioPlaying, playLatestAudio, playbackIntent, toggleAudio]
+    [triggerSnackbar, isAudioPlaying, playLatestAudio, playbackIntent, togglePlay]
   );
 
   const {
@@ -261,7 +261,7 @@ export function TranscriptView({
 
   const handleToggleAudio = useCallback(
     (segmentId: string, audioUri: string) => {
-      toggleAudio(segmentId, audioUri);
+      togglePlay(segmentId, audioUri);
 
       if (currentlyPlayingSegmentId === segmentId && isAudioPlaying) {
         setPlaybackIntent('paused');
@@ -269,7 +269,7 @@ export function TranscriptView({
         setPlaybackIntent('playing');
       }
     },
-    [currentlyPlayingSegmentId, isAudioPlaying, toggleAudio]
+    [currentlyPlayingSegmentId, isAudioPlaying, togglePlay]
   );
 
   // Automatically play the highlighted/selected segment, or the most recent segment, if play mode is active.
@@ -283,15 +283,15 @@ export function TranscriptView({
       const targetId = highlightedSegmentId || audioSegments[0].id;
       const segment = rawAudioSegments.find((s) => s.id === targetId);
       if (segment && segment.playbackAudioUri) {
-        toggleAudio(segment.id, segment.playbackAudioUri);
+        togglePlay(segment.id, segment.playbackAudioUri);
       } else {
         const audioSegment = audioSegments.find((t) => isWithinSegment(t, targetId));
         if (audioSegment && audioSegment.playbackAudioUri) {
-          toggleAudio(audioSegment.id, audioSegment.playbackAudioUri);
+          togglePlay(audioSegment.id, audioSegment.playbackAudioUri);
         }
       }
     }
-  }, [playbackIntent, audioSegments, rawAudioSegments, currentlyPlayingSegmentId, highlightedSegmentId, toggleAudio]);
+  }, [playbackIntent, audioSegments, rawAudioSegments, currentlyPlayingSegmentId, highlightedSegmentId, togglePlay]);
 
   const {
     skipToNext,
@@ -421,7 +421,7 @@ export function TranscriptView({
       if (isAudioPlaying && currentlyPlayingSegmentId) {
         const segment = rawAudioSegments.find((s) => s.id === currentlyPlayingSegmentId);
         if (segment && segment.playbackAudioUri) {
-          toggleAudio(segment.id, segment.playbackAudioUri);
+          togglePlay(segment.id, segment.playbackAudioUri);
         }
       }
     } else {
@@ -452,11 +452,11 @@ export function TranscriptView({
               const firstId = nextAudioSegment.bundledSegmentIds[0];
               const firstSegment = rawAudioSegments.find((s) => s.id === firstId);
               if (firstSegment && firstSegment.playbackAudioUri) {
-                toggleAudio(firstSegment.id, firstSegment.playbackAudioUri);
+                togglePlay(firstSegment.id, firstSegment.playbackAudioUri);
                 return;
               }
             }
-            toggleAudio(nextAudioSegment.id, nextAudioSegment.playbackAudioUri);
+            togglePlay(nextAudioSegment.id, nextAudioSegment.playbackAudioUri);
             return;
           }
         }
@@ -465,11 +465,11 @@ export function TranscriptView({
       // Default fallback: play targetId directly
       const segment = rawAudioSegments.find((s) => s.id === targetId);
       if (segment && segment.playbackAudioUri) {
-        toggleAudio(segment.id, segment.playbackAudioUri);
+        togglePlay(segment.id, segment.playbackAudioUri);
       } else {
         const audioSegment = audioSegments.find((t) => isWithinSegment(t, targetId));
         if (audioSegment && audioSegment.playbackAudioUri) {
-          toggleAudio(audioSegment.id, audioSegment.playbackAudioUri);
+          togglePlay(audioSegment.id, audioSegment.playbackAudioUri);
         }
       }
     }
