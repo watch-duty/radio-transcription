@@ -44,7 +44,7 @@ describe('AudioControl', () => {
     expect(screen.getByLabelText('rewind 5 seconds')).toBeTruthy();
     expect(screen.getByLabelText('play')).toBeTruthy();
     expect(screen.getByLabelText('advance 5 seconds')).toBeTruthy();
-    expect(screen.getByLabelText('advance to next transmission')).toBeTruthy();
+    expect(screen.getByLabelText('advance to next segment')).toBeTruthy();
     expect(
       screen.getByLabelText('advance to next detected speech')
     ).toBeTruthy();
@@ -91,9 +91,9 @@ describe('AudioControl', () => {
     expect(mockOnSkipTime).toHaveBeenCalledWith(5);
   });
 
-  it('triggers callback for advance to next transmission button', () => {
+  it('triggers callback for advance to next segment button', () => {
     render(<AudioControl {...defaultProps} />);
-    fireEvent.click(screen.getByLabelText('advance to next transmission'));
+    fireEvent.click(screen.getByLabelText('advance to next segment'));
     expect(mockOnSkipToNext).toHaveBeenCalledTimes(1);
   });
 
@@ -122,7 +122,7 @@ describe('AudioControl', () => {
     expect(screen.getByLabelText('rewind 5 seconds')).toBeDisabled();
     expect(screen.getByLabelText('play')).toBeDisabled();
     expect(screen.getByLabelText('advance 5 seconds')).toBeDisabled();
-    expect(screen.getByLabelText('advance to next transmission')).toBeDisabled();
+    expect(screen.getByLabelText('advance to next segment')).toBeDisabled();
     expect(
       screen.getByLabelText('advance to next detected speech')
     ).toBeDisabled();

@@ -141,14 +141,14 @@ export function AudioControl({
           </span>
         </Tooltip>
 
-        <Tooltip title="Advance to next transmission">
+        <Tooltip title="Advance to next segment">
           <span>
             <IconButton
               onClick={onSkipToNext}
               size="large"
               color="primary"
               sx={{ p: 0.5 }}
-              aria-label="advance to next transmission"
+              aria-label="advance to next segment"
               disabled={disableControls}
             >
               <SkipNextIcon fontSize="large" />
