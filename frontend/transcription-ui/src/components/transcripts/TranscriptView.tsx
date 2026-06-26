@@ -280,6 +280,14 @@ export function TranscriptView({
       currentlyPlayingSegmentId,
       highlightedSegmentId,
     });
+
+  // Playback is "live" only when listening at the edge or playing the newest
+  // clip; a stale playhead (e.g. an older clip with newer ones ahead) is not,
+  // so "Jump to live" stays enabled to skip forward.
+  const isPlaybackAtLiveEdge =
+    playbackState === 'listening' ||
+    (playbackState === 'playing' &&
+      currentlyPlayingSegmentId === audioSegments[0]?.id);
   // Keep the ref the poll callback reads in sync with the latest window state.
   useEffect(() => {
     isLatestTimeWindowRef.current = isLatestTimeWindow;
@@ -766,6 +774,7 @@ export function TranscriptView({
         <TranscriptActionsBar
           hasNewerAudioSegments={hasNewerAudioSegments}
           isLatestTimeWindow={isLatestTimeWindow}
+          isPlaybackAtLiveEdge={isPlaybackAtLiveEdge}
           activeWindowTime={isLatestTimeWindow ? null : windowEndTime}
           redactTranscripts={redactTranscripts}
           setRedactTranscripts={setRedactTranscripts}

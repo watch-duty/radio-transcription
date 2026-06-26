@@ -22,6 +22,9 @@ export interface TranscriptActionsBarProps {
   hasNewerAudioSegments: boolean;
   // True when the audio window is at the most recent loaded audio.
   isLatestTimeWindow?: boolean;
+  // True when playback itself is live (listening, or playing the newest clip).
+  // Distinct from isLatestTimeWindow, which only tracks the visible window.
+  isPlaybackAtLiveEdge?: boolean;
   // The window's right edge (ms) when viewing back, shown in the chip; null when latest.
   activeWindowTime?: number | null;
   redactTranscripts: boolean;
@@ -39,6 +42,7 @@ const DEFAULT_FILTER_BG_COLOR = '#f9bf90';
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   hasNewerAudioSegments,
   isLatestTimeWindow = true,
+  isPlaybackAtLiveEdge = true,
   activeWindowTime = null,
   redactTranscripts,
   setRedactTranscripts,
@@ -137,7 +141,12 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
           variant="contained"
           sx={{ textTransform: 'none', gap: 1 }}
           onClick={onClickViewLatest}
-          disabled={!hasNewerAudioSegments && isLatestTimeWindow && !dateTime}
+          disabled={
+            !hasNewerAudioSegments &&
+            isLatestTimeWindow &&
+            !dateTime &&
+            isPlaybackAtLiveEdge
+          }
         >
           Jump to live
         </Button>

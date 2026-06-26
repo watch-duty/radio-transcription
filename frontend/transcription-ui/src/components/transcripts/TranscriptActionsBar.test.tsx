@@ -107,6 +107,26 @@ describe('TranscriptActionsBar', () => {
     expect(button).toBeDisabled();
   });
 
+  it('enables "Jump to live" at the live window when playback is not live (paused or a stale playhead)', () => {
+    render(
+      <TranscriptActionsBar
+        hasNewerAudioSegments={false}
+        isPlaybackAtLiveEdge={false}
+        redactTranscripts={false}
+        setRedactTranscripts={mockSetRedactTranscripts}
+        dateTime={null}
+        setDateTime={vi.fn()}
+        alertFilter="all"
+        setAlertFilter={vi.fn()}
+        onClickViewLatest={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByRole('button', { name: /Jump to live/i })
+    ).not.toBeDisabled();
+  });
+
   it('enables "Jump to live" when viewing back, even without newer segments', () => {
     render(
       <TranscriptActionsBar

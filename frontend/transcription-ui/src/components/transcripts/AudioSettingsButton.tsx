@@ -83,7 +83,7 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
   ].filter(Boolean);
   const audioTooltip = activeSummary.length
     ? activeSummary.join(', ')
-    : 'Audio controls';
+    : 'Audio settings';
   const audioBadgeSx = {
     '& .MuiBadge-badge': {
       fontSize: '0.5rem',
