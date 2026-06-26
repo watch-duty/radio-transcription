@@ -253,7 +253,12 @@ async def score_checkpoint_online(
     )
     lock = asyncio.Lock()
     semaphore = asyncio.Semaphore(args.concurrency)
-    progress = {"done": len(completed), "since_sync": 0}
+    existing_errors = sum(1 for row in completed.values() if row.get("error"))
+    progress = {
+        "done": len(completed),
+        "since_sync": 0,
+        "errors": existing_errors,
+    }
     total = len(source_rows)
 
     async def process_one(index: int, row: dict[str, Any]) -> None:
@@ -290,6 +295,8 @@ async def score_checkpoint_online(
             append_prediction(local_path, out_row)
             progress["done"] += 1
             progress["since_sync"] += 1
+            if error:
+                progress["errors"] += 1
             should_sync = (
                 args.sync_every > 0
                 and progress["since_sync"] >= args.sync_every
@@ -297,20 +304,15 @@ async def score_checkpoint_online(
             if should_sync:
                 upload_predictions(storage_client, local_path, gcs_uri)
                 progress["since_sync"] = 0
-            if (
-                error
-                or progress["done"] == total
-                or (
-                    args.log_every > 0
-                    and progress["done"] % args.log_every == 0
-                )
+            if progress["done"] == total or (
+                args.log_every > 0 and progress["done"] % args.log_every == 0
             ):
                 LOGGER.info(
-                    "checkpoint=%s progress=%s/%s error=%s",
+                    "checkpoint=%s progress=%s/%s errors=%s",
                     checkpoint["checkpoint_id"],
                     progress["done"],
                     total,
-                    bool(error),
+                    progress["errors"],
                 )
 
     await asyncio.gather(
