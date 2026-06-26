@@ -7,6 +7,7 @@ and highly unit-testable.
 import asyncio
 import base64
 import logging
+from typing import Any
 
 import grpc
 import requests
@@ -63,7 +64,7 @@ class TranscriptionEventProcessor:
         self.publisher = publisher
         self.audio_segments_client = audio_segments_client
 
-    async def process_event(self, cloud_event: CloudEvent | dict) -> None:  # noqa: PLR0915
+    async def process_event(self, cloud_event: CloudEvent | dict) -> None:
         """Decodes, processes, and transcribes the given CloudEvent or raw dictionary."""
         record_pipeline_stage("transcription", "start")
         try:
@@ -77,109 +78,110 @@ class TranscriptionEventProcessor:
         with with_tracer_context(
             combined_attributes, "transcribe_claim_check", __name__
         ) as root_span:
-            errors = []
-            transcript = ""
-            segment_id = ""
             if not raw_data:
                 logger.error("Bad Request: Missing Pub/Sub data payload")
                 return
 
-            # Parse claim-check payload
             claim = self._parse_claim(raw_data)
+            await self._transcribe_and_publish(claim, root_span)
 
-            feed_id = claim.feed_id
-            segment_id = claim.segment_id
+    async def _transcribe_and_publish(
+        self, claim: NormalizedAudio, root_span: Any
+    ) -> None:
+        """Transcribes the given audio claim and publishes the egress message."""
+        errors = []
+        transcript = ""
+        segment_id = claim.segment_id
+        feed_id = claim.feed_id
 
+        logger.info(
+            "Received claim for transmission %s (feed %s, uri: %s)",
+            segment_id,
+            feed_id,
+            claim.canonical_audio_uri,
+        )
+
+        if claim.audio_classification == claim.AUDIO_CLASSIFICATION_OTHER:
             logger.info(
-                "Received claim for transmission %s (feed %s, uri: %s)",
+                "Skipping transcription for non-speech segment %s (feed %s)",
                 segment_id,
                 feed_id,
-                claim.canonical_audio_uri,
             )
+            record_pipeline_stage("transcription", "skipped")
+            return
 
-            if claim.audio_classification == claim.AUDIO_CLASSIFICATION_OTHER:
+        try:
+            record_pipeline_stage("transcription_status", "attempts")
+            # Determine audio duration from start and end timestamps
+            duration_ms = self._get_duration_ms(claim)
+
+            # Retrieve active transcriber and run Speech API on ephemeral mono FLAC link
+            tracer = get_tracer(__name__)
+            with tracer.start_as_current_span("transcribe_audio") as span:
+                span.set_attribute("segment_id", segment_id)
+                span.set_attribute("feed_id", feed_id)
+                span.set_attribute("duration_ms", duration_ms)
+                transcript = await self.transcriber.transcribe(
+                    uri=claim.transcription_audio_uri
+                    or claim.canonical_audio_uri,
+                    duration_ms=duration_ms,
+                )
+
+            if not transcript:
                 logger.info(
-                    "Skipping transcription for non-speech segment %s (feed %s)",
-                    segment_id,
-                    feed_id,
+                    "Speech API returned empty transcription. Using fallback unintelligible marker."
                 )
-                record_pipeline_stage("transcription", "skipped")
-                return
+                errors.append("Empty transcription from Speech Model")
+                transcript = CHIRP_UNINTELLIGIBLE_MARKER
+                record_pipeline_stage("transcription_status", "unintelligible")
+            else:
+                record_pipeline_stage("transcription_status", "success")
 
-            try:
-                record_pipeline_stage("transcription_status", "attempts")
-                # Determine audio duration from start and end timestamps
-                duration_ms = self._get_duration_ms(claim)
+            # Build TranscribedAudio egress protobuf message
+            out_proto = self._build_egress_message(claim, transcript)
 
-                # Retrieve active transcriber and run Speech API on ephemeral mono FLAC link
-                tracer = get_tracer(__name__)
-                with tracer.start_as_current_span("transcribe_audio") as span:
-                    span.set_attribute("segment_id", segment_id)
-                    span.set_attribute("feed_id", feed_id)
-                    span.set_attribute("duration_ms", duration_ms)
-                    transcript = await self.transcriber.transcribe(
-                        uri=claim.transcription_audio_uri
-                        or claim.canonical_audio_uri,
-                        duration_ms=duration_ms,
-                    )
-
-                if not transcript:
-                    logger.info(
-                        "Speech API returned empty transcription. Using fallback unintelligible marker."
-                    )
-                    errors.append("Empty transcription from Speech Model")
-                    transcript = CHIRP_UNINTELLIGIBLE_MARKER
-                    record_pipeline_stage(
-                        "transcription_status", "unintelligible"
-                    )
-                else:
-                    record_pipeline_stage("transcription_status", "success")
-
-                # Build TranscribedAudio egress protobuf message
-                out_proto = self._build_egress_message(claim, transcript)
-
-                # Egress to final output topic, strictly ordered by feed_id
-                message_id = await self._publish_egress(
-                    feed_id, segment_id, out_proto
-                )
-                record_pipeline_stage("transcription", "success")
-                logger.info(
-                    "Successfully transcribed and published egress message %s for transmission %s (feed %s)",
-                    message_id,
-                    segment_id,
-                    feed_id,
-                )
-            except Exception as e:
-                record_pipeline_stage("transcription", "error")
-                record_pipeline_stage("transcription_status", "error")
-                if _is_transient_exception(e):
-                    logger.warning(
-                        "Transient failure processing transcription claim for transmission %s (feed %s): %s. "
-                        "Retrying...",
-                        segment_id,
-                        feed_id,
-                        e,
-                    )
-                    errors.append(f"Transient Failure: {e}")
-                    raise
-
-                root_span.record_exception(e)
-                root_span.set_status(StatusCode.ERROR)
-                logger.exception(
-                    "Permanent failure processing transcription claim for transmission %s (feed %s): %s. "
-                    "Acknowledging message without retry.",
+            # Egress to final output topic, strictly ordered by feed_id
+            message_id = await self._publish_egress(
+                feed_id, segment_id, out_proto
+            )
+            record_pipeline_stage("transcription", "success")
+            logger.info(
+                "Successfully transcribed and published egress message %s for transmission %s (feed %s)",
+                message_id,
+                segment_id,
+                feed_id,
+            )
+        except Exception as e:
+            record_pipeline_stage("transcription", "error")
+            record_pipeline_stage("transcription_status", "error")
+            if _is_transient_exception(e):
+                logger.warning(
+                    "Transient failure processing transcription claim for transmission %s (feed %s): %s. "
+                    "Retrying...",
                     segment_id,
                     feed_id,
                     e,
                 )
-                errors.append(f"Permanent Failure: {e}")
-            finally:
-                if segment_id:
-                    await self._write_transcript_annotation(
-                        segment_id,
-                        transcript or "",
-                        errors,
-                    )
+                errors.append(f"Transient Failure: {e}")
+                raise
+
+            root_span.record_exception(e)
+            root_span.set_status(StatusCode.ERROR)
+            logger.exception(
+                "Permanent failure processing transcription claim for transmission %s (feed %s): %s. "
+                "Acknowledging message without retry.",
+                segment_id,
+                feed_id,
+                e,
+            )
+            errors.append(f"Permanent Failure: {e}")
+        finally:
+            if segment_id:
+                await self._write_transcript_annotation(
+                    segment_id,
+                    transcript or "",
+                    errors,
+                )
 
     def _get_duration_ms(self, claim: NormalizedAudio) -> int:
         """Determine audio duration in milliseconds from start and end timestamps."""
