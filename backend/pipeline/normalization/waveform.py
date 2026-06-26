@@ -15,14 +15,14 @@ PEAK_DECIMALS = 3
 def compute_waveform(flac_bytes: bytes) -> WaveformAnnotationData:
     """Downsamples FLAC audio into per-bucket peak amplitudes in [0, 1]."""
     samples, sample_rate = sf.read(io.BytesIO(flac_bytes), dtype="float32")
-    if samples.ndim > 1:
-        samples = np.abs(samples).max(axis=1)
     if samples.size == 0:
         msg = "cannot compute a waveform for empty audio"
         raise ValueError(msg)
+    if samples.ndim > 1:
+        samples = np.abs(samples).max(axis=1)
 
     duration_seconds = len(samples) / sample_rate
-    num_buckets = max(1, math.ceil(duration_seconds / MAX_BIN_SIZE_SECONDS))
+    num_buckets = math.ceil(duration_seconds / MAX_BIN_SIZE_SECONDS)
 
     peaks = [
         round(float(np.abs(bucket).max()), PEAK_DECIMALS)
