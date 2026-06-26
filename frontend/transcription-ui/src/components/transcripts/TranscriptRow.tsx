@@ -251,7 +251,7 @@ export function TranscriptRow({
           variant={isSilence ? 'caption' : 'body1'}
           color={
             hasErrors
-              ? 'error.main'
+              ? 'error'
               : isPlaceholder
                 ? 'text.secondary'
                 : 'text.primary'
