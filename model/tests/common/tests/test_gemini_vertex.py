@@ -7,6 +7,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
+from common.gemini.context import ContextTurn
 import common.gemini.vertex as vmod
 from common.gemini.vertex import (
     _ADAPTER_ENUM,
@@ -349,7 +350,9 @@ class TestBuildRequest(unittest.TestCase):
         self.assertIn("system_instruction", req)
         self.assertIn("generation_config", req)
         self.assertIn("safety_settings", req)
-        part = req["contents"][0]["parts"][0]
+        part = next(
+            part for part in req["contents"][0]["parts"] if "file_data" in part
+        )
         self.assertEqual(
             part["file_data"]["file_uri"], "gs://bucket/audio.flac"
         )
@@ -423,6 +426,38 @@ class TestBuildRequest(unittest.TestCase):
             result["request"]["generation_config"]["temperature"], 0.5
         )
 
+    def test_history_is_encoded_before_current_request(self) -> None:
+        result = self.build_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt="U",
+            history=[
+                ContextTurn("gs://bucket/prev-1.flac", "first"),
+                ContextTurn("gs://bucket/prev-2.flac", "second"),
+            ],
+        )
+
+        contents = result["request"]["contents"]
+        self.assertEqual(
+            [turn["role"] for turn in contents],
+            ["user", "model", "user", "model", "user"],
+        )
+        self.assertEqual(
+            contents[0]["parts"][0]["file_data"]["file_uri"],
+            "gs://bucket/prev-1.flac",
+        )
+        self.assertEqual(contents[1]["parts"][0]["text"], "first")
+        self.assertEqual(
+            contents[2]["parts"][0]["file_data"]["file_uri"],
+            "gs://bucket/prev-2.flac",
+        )
+        self.assertEqual(contents[3]["parts"][0]["text"], "second")
+        self.assertEqual(contents[4]["parts"][0]["text"], "U")
+        self.assertEqual(
+            contents[4]["parts"][1]["file_data"]["file_uri"],
+            "gs://bucket/current.flac",
+        )
+
 
 class TestParseBatchOutput(unittest.TestCase):
     def test_parses_camel_case_request_echo(self) -> None:
@@ -473,6 +508,42 @@ class TestParseBatchOutput(unittest.TestCase):
         self.assertEqual(
             parse_batch_output(json.dumps(output)),
             {"gs://bucket/a.flac": "engine 41"},
+        )
+
+    def test_parses_last_file_uri_when_request_contains_history(self) -> None:
+        output = {
+            "request": {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "fileData": {
+                                    "fileUri": "gs://bucket/prior.flac",
+                                }
+                            }
+                        ]
+                    },
+                    {"parts": [{"text": "prior transcript"}]},
+                    {
+                        "parts": [
+                            {"text": "current prompt"},
+                            {
+                                "fileData": {
+                                    "fileUri": "gs://bucket/current.flac",
+                                }
+                            },
+                        ]
+                    },
+                ]
+            },
+            "response": {
+                "candidates": [{"content": {"parts": [{"text": "current"}]}}]
+            },
+        }
+
+        self.assertEqual(
+            parse_batch_output(json.dumps(output)),
+            {"gs://bucket/current.flac": "current"},
         )
 
     def test_skips_status_and_malformed_rows(self) -> None:

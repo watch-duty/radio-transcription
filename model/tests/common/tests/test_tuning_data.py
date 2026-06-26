@@ -4,6 +4,7 @@ import sys
 import unittest
 from pathlib import Path
 
+from common.gemini.context import ContextTurn
 from common.gemini.tuning_data import (
     build_audio_tuning_example,
     validate_audio_tuning_example,
@@ -11,6 +12,10 @@ from common.gemini.tuning_data import (
 
 # model/src must be on PYTHONPATH in subprocess calls so `import common` resolves.
 _SRC_DIR = str(Path(__file__).resolve().parents[3] / "src")
+
+
+def _first_file_part(turn: dict) -> dict:
+    return next(part for part in turn["parts"] if "fileData" in part)
 
 
 class TestBuildExample(unittest.TestCase):
@@ -71,6 +76,41 @@ class TestBuildExample(unittest.TestCase):
             msg=f"Expected user_prompt text not found in user turn parts: {example['contents'][0]['parts']}",
         )
 
+    def test_history_is_encoded_as_prior_audio_model_turn_pairs(self) -> None:
+        example = build_audio_tuning_example(
+            audio_uri="gs://bucket/current.flac",
+            gt_text="current text",
+            system_prompt="sys",
+            user_prompt="current prompt",
+            history=[
+                ContextTurn("gs://bucket/prev-1.flac", "first"),
+                ContextTurn("gs://bucket/prev-2.flac", "second"),
+            ],
+        )
+
+        self.assertEqual(
+            [turn["role"] for turn in example["contents"]],
+            ["user", "model", "user", "model", "user", "model"],
+        )
+        self.assertEqual(
+            _first_file_part(example["contents"][0])["fileData"]["fileUri"],
+            "gs://bucket/prev-1.flac",
+        )
+        self.assertEqual(example["contents"][1]["parts"][0]["text"], "first")
+        self.assertEqual(
+            _first_file_part(example["contents"][2])["fileData"]["fileUri"],
+            "gs://bucket/prev-2.flac",
+        )
+        self.assertEqual(example["contents"][3]["parts"][0]["text"], "second")
+        self.assertEqual(
+            example["contents"][4]["parts"][0]["text"],
+            "current prompt",
+        )
+        self.assertEqual(
+            _first_file_part(example["contents"][4])["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
+        )
+
 
 class TestValidateExample(unittest.TestCase):
     def test_accepts_well_formed_example(self) -> None:
@@ -91,20 +131,22 @@ class TestValidateExample(unittest.TestCase):
 
     def test_rejects_non_gs_uri(self) -> None:
         ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
-        ex["contents"][0]["parts"][0]["fileData"]["fileUri"] = (
+        _first_file_part(ex["contents"][0])["fileData"]["fileUri"] = (
             "s3://bucket/file.flac"
         )
         self.assertFalse(validate_audio_tuning_example(ex))
 
     def test_rejects_null_file_uri(self) -> None:
         ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
-        ex["contents"][0]["parts"][0]["fileData"]["fileUri"] = None
+        _first_file_part(ex["contents"][0])["fileData"]["fileUri"] = None
         # Must return False, not raise AttributeError on None.startswith(...)
         self.assertFalse(validate_audio_tuning_example(ex))
 
     def test_rejects_wrong_mime_type(self) -> None:
         ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
-        ex["contents"][0]["parts"][0]["fileData"]["mimeType"] = "audio/wav"
+        _first_file_part(ex["contents"][0])["fileData"]["mimeType"] = (
+            "audio/wav"
+        )
         self.assertFalse(validate_audio_tuning_example(ex))
 
     def test_rejects_empty_model_text(self) -> None:
@@ -116,6 +158,17 @@ class TestValidateExample(unittest.TestCase):
         # Remove the model turn so only one turn remains
         ex["contents"] = ex["contents"][:1]
         self.assertFalse(validate_audio_tuning_example(ex))
+
+    def test_accepts_well_formed_history_turns(self) -> None:
+        ex = build_audio_tuning_example(
+            "gs://b/current.flac",
+            "current",
+            "sys",
+            "user",
+            history=[ContextTurn("gs://b/prior.flac", "prior")],
+        )
+
+        self.assertTrue(validate_audio_tuning_example(ex))
 
 
 class TestImportIsolation(unittest.TestCase):

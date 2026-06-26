@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from common.gemini.context import ContextTurn
 from common.gemini.batch import (
     build_batch_jsonl,
     run_batch_audio_inference,
@@ -60,11 +61,52 @@ class TestGeminiBatchInference(unittest.TestCase):
             for line in storage.get(input_uri).splitlines()
             if line.strip()
         ]
+        current_audio_part = next(
+            part
+            for part in rows[0]["request"]["contents"][0]["parts"]
+            if "file_data" in part
+        )
         self.assertEqual(
-            rows[0]["request"]["contents"][0]["parts"][0]["file_data"][
-                "file_uri"
-            ],
-            "gs://audio/a.flac",
+            current_audio_part["file_data"]["file_uri"], "gs://audio/a.flac"
+        )
+
+    def test_build_batch_jsonl_uploads_context_requests(self) -> None:
+        storage = FakeStorageClient()
+        with tempfile.TemporaryDirectory() as tmp_s:
+            input_uri, _ = build_batch_jsonl(
+                storage_client=storage,
+                run_gcs_prefix="gs://bucket/sft/runs/run-a",
+                label="base",
+                audio_uris=["gs://audio/current.flac"],
+                system_prompt="sys",
+                user_prompt="user",
+                histories=[
+                    [ContextTurn("gs://audio/prior.flac", "prior transcript")]
+                ],
+                tmp_dir=Path(tmp_s),
+            )
+
+        rows = [
+            json.loads(line)
+            for line in storage.get(input_uri).splitlines()
+            if line.strip()
+        ]
+        contents = rows[0]["request"]["contents"]
+        self.assertEqual(
+            [turn["role"] for turn in contents],
+            ["user", "model", "user"],
+        )
+        self.assertEqual(
+            contents[0]["parts"][0]["file_data"]["file_uri"],
+            "gs://audio/prior.flac",
+        )
+        self.assertEqual(
+            contents[1]["parts"][0]["text"],
+            "prior transcript",
+        )
+        self.assertEqual(
+            contents[2]["parts"][1]["file_data"]["file_uri"],
+            "gs://audio/current.flac",
         )
 
     def test_run_batch_audio_inference_returns_predictions_and_output_uri(

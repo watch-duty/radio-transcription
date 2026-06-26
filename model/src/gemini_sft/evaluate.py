@@ -11,6 +11,7 @@ from common.gcs_utils import (
     download_jsonl_manifest,
     gcs_uri_exists,
 )
+from common.gemini.context import build_context_histories
 from common.gemini.batch import BatchPredictionMap, run_batch_audio_inference
 from common.gemini.prompts import GEMINI_TRANSCRIBE_KEYWORDS
 from common.gemini.vertex import submit_batch_inference
@@ -94,6 +95,10 @@ def evaluate_run(
     )
     gcs_bucket = require_config_str(config, "gcs_bucket")
     epoch_count = require_config_int(config, "epoch_count")
+    prior_context_count = _optional_config_nonnegative_int(
+        config,
+        "prior_context_count",
+    )
     tuned_endpoint = config.get("endpoint")
     base_only = bool(getattr(args, "base_only", False))
     if not base_only and not tuned_endpoint:
@@ -111,6 +116,10 @@ def evaluate_run(
         split="eval",
         source=eval_manifest_uri,
     )
+    histories = build_context_histories(
+        source_rows,
+        max_turns=prior_context_count,
+    )
     model_family_slug = model_family_slug_from_model_id(base_model)
 
     base_preds = batch_infer(
@@ -123,6 +132,7 @@ def evaluate_run(
         eval_rows=eval_rows,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
+        histories=histories,
     )
     if base_preds is None:
         return 1
@@ -167,6 +177,7 @@ def evaluate_run(
             eval_rows=eval_rows,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
+            histories=histories,
         )
         if tuned_preds is None:
             return 1
@@ -234,6 +245,7 @@ def batch_infer(
     eval_rows: list[Any],
     system_prompt: str,
     user_prompt: str,
+    histories: list[Any] | None = None,
 ) -> PredictionMap | None:
     """Build batch input JSONL, submit, download outputs, and parse predictions."""
     return run_batch_audio_inference(
@@ -246,6 +258,7 @@ def batch_infer(
         audio_uris=[str(row.audio_filepath) for row in eval_rows],
         system_prompt=system_prompt,
         user_prompt=user_prompt,
+        histories=histories,
         submit_fn=submit_batch_inference,
     )
 
@@ -253,6 +266,17 @@ def batch_infer(
 def _log_cli_error(exc: Exception) -> int:
     logger.error(str(exc))
     return 1
+
+
+def _optional_config_nonnegative_int(config: dict[str, Any], key: str) -> int:
+    value = config.get(key, 0)
+    if isinstance(value, bool) or not isinstance(value, int):
+        msg = f"config.json field must be a non-negative integer: {key}"
+        raise TypeError(msg)
+    if value < 0:
+        msg = f"config.json field must be a non-negative integer: {key}"
+        raise ValueError(msg)
+    return value
 
 
 def build_metrics(

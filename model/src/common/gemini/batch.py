@@ -14,6 +14,7 @@ from common.gcs_utils import (
     parse_gcs_uri,
     upload_file_to_blob,
 )
+from common.gemini.context import ContextTurn
 from common.gemini.vertex import (
     build_request,
     parse_batch_output,
@@ -45,6 +46,7 @@ def run_batch_audio_inference(
     audio_uris: Sequence[str],
     system_prompt: str,
     user_prompt: str,
+    histories: Sequence[Sequence[ContextTurn]] | None = None,
     submit_fn: BatchSubmitFn = submit_batch_inference,
 ) -> BatchPredictionMap | None:
     """Run Gemini batch inference for audio URIs and return parsed predictions."""
@@ -64,6 +66,7 @@ def run_batch_audio_inference(
             audio_uris=audio_uris,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
+            histories=histories,
             tmp_dir=Path(tmp),
         )
         try:
@@ -119,18 +122,24 @@ def build_batch_jsonl(
     audio_uris: Sequence[str],
     system_prompt: str,
     user_prompt: str,
+    histories: Sequence[Sequence[ContextTurn]] | None = None,
     tmp_dir: Path,
 ) -> tuple[str, str]:
     """Write and upload a Vertex batch input JSONL file."""
+    if histories is not None and len(histories) != len(audio_uris):
+        msg = "histories must have one entry per audio URI"
+        raise ValueError(msg)
     batch_input_path = tmp_dir / f"batch_input_{label}.jsonl"
     with batch_input_path.open("w", encoding="utf-8") as fh:
-        for audio_uri in audio_uris:
+        for index, audio_uri in enumerate(audio_uris):
+            history = histories[index] if histories is not None else None
             fh.write(
                 json.dumps(
                     build_request(
                         audio_uri,
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
+                        history=history,
                     )
                 )
                 + "\n"

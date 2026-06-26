@@ -46,7 +46,15 @@ def _row(
     return row
 
 
-def _config_text(round_id: str = "round-a") -> str:
+def _config_text(
+    round_id: str = "round-a", prior_context_count: int | None = None
+) -> str:
+    context = ""
+    if prior_context_count is not None:
+        context = f"""
+[context]
+prior_turn_count = {prior_context_count}
+"""
     return f"""
 round_id = "{round_id}"
 dataset = "wd-internal-v1"
@@ -65,6 +73,7 @@ base_model = "gemini-3.1-flash-lite"
 epoch_count = 6
 adapter_size = "SIXTEEN"
 learning_rate_multiplier = 1.0
+{context}
 """
 
 
@@ -104,9 +113,16 @@ def _patched_eval_scoring() -> Any:
     )
 
 
-def _write_config_file(tmp: Path, round_id: str = "round-a") -> Path:
+def _write_config_file(
+    tmp: Path,
+    round_id: str = "round-a",
+    prior_context_count: int | None = None,
+) -> Path:
     path = tmp / "run.toml"
-    path.write_text(_config_text(round_id), encoding="utf-8")
+    path.write_text(
+        _config_text(round_id, prior_context_count),
+        encoding="utf-8",
+    )
     return path
 
 
@@ -559,6 +575,108 @@ class TestPrepareRun(unittest.TestCase):
         self.assertEqual(config["status"], "preflight_passed")
         self.assertTrue(
             storage.has("gs://test-bucket/sft/runs/round-a/config.json")
+        )
+
+    def test_prepare_builds_same_source_prior_context_examples(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            train_rows = [
+                {
+                    **_row(
+                        "gs://audio/source-a/001.flac",
+                        "first",
+                        example_id="source-a",
+                        segment_id="001",
+                        offset=0.0,
+                    ),
+                    "original_audio_uri": "gs://audio/source-a.flac",
+                    "original_offset": 0.0,
+                    "row_index": 1,
+                },
+                {
+                    **_row(
+                        "gs://audio/source-a/002.flac",
+                        "second",
+                        example_id="source-a",
+                        segment_id="002",
+                        offset=1.0,
+                    ),
+                    "original_audio_uri": "gs://audio/source-a.flac",
+                    "original_offset": 1.0,
+                    "row_index": 2,
+                },
+            ]
+            storage.put(
+                "gs://source/manifests/train.jsonl",
+                _manifest(train_rows),
+            )
+            storage.put(
+                "gs://source/manifests/validation.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/validation.flac",
+                            "validation transcript",
+                            5.0,
+                        )
+                    ]
+                ),
+            )
+            storage.put(
+                "gs://source/manifests/eval.jsonl",
+                _manifest(
+                    [
+                        _row(
+                            "gs://audio/eval.flac",
+                            "eval transcript",
+                            6.0,
+                        )
+                    ]
+                ),
+            )
+            for uri in (
+                "gs://audio/source-a/001.flac",
+                "gs://audio/source-a/002.flac",
+                "gs://audio/validation.flac",
+                "gs://audio/eval.flac",
+            ):
+                storage.put(uri, "audio")
+            run_cfg = load_run_config(
+                _write_config_file(tmp, prior_context_count=8)
+            )
+
+            _, config = prepare_run(
+                run_cfg=run_cfg,
+                storage_client=storage,
+                results_dir=tmp / "results",
+            )
+
+            train_examples = [
+                json.loads(line)
+                for line in storage.get(
+                    run_cfg.paths.gemini_train_uri
+                ).splitlines()
+                if line.strip()
+            ]
+
+        self.assertEqual(config["status"], "preflight_passed")
+        self.assertEqual(config["prior_context_count"], 8)
+        self.assertEqual(len(train_examples[0]["contents"]), 2)
+        second_contents = train_examples[1]["contents"]
+        self.assertEqual(
+            [turn["role"] for turn in second_contents],
+            ["user", "model", "user", "model"],
+        )
+        self.assertEqual(
+            second_contents[0]["parts"][0]["fileData"]["fileUri"],
+            "gs://audio/source-a/001.flac",
+        )
+        self.assertEqual(second_contents[1]["parts"][0]["text"], "first")
+        self.assertEqual(second_contents[2]["parts"][0]["text"][:8], "Transcri")
+        self.assertEqual(
+            second_contents[2]["parts"][1]["fileData"]["fileUri"],
+            "gs://audio/source-a/002.flac",
         )
 
 
@@ -1027,6 +1145,147 @@ class TestEvaluateRun(unittest.TestCase):
                 manifest_rows[0]["pred_text_gemini_3_1_flash_lite"],
                 "eval transcript",
             )
+
+    def test_eval_builds_prior_context_batch_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            cfg_path = _write_config_file(tmp, prior_context_count=1)
+            run_cfg = load_run_config(cfg_path)
+            eval_rows = [
+                {
+                    **_row(
+                        "gs://audio/eval-1.flac",
+                        "first",
+                        example_id="source-a",
+                        segment_id="001",
+                        offset=0.0,
+                    ),
+                    "original_audio_uri": "gs://audio/source-a.flac",
+                    "original_offset": 0.0,
+                    "row_index": 1,
+                },
+                {
+                    **_row(
+                        "gs://audio/eval-2.flac",
+                        "second",
+                        example_id="source-a",
+                        segment_id="002",
+                        offset=1.0,
+                    ),
+                    "original_audio_uri": "gs://audio/source-a.flac",
+                    "original_offset": 1.0,
+                    "row_index": 2,
+                },
+            ]
+            storage.put(run_cfg.paths.canonical_eval_uri, _manifest(eval_rows))
+            storage.put(
+                run_cfg.paths.config_uri, json.dumps(run_cfg.to_record_dict())
+            )
+            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            storage.put(
+                f"{output_uri}predictions.jsonl",
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "request": {
+                                    "contents": [
+                                        {
+                                            "parts": [
+                                                {
+                                                    "fileData": {
+                                                        "fileUri": "gs://audio/eval-1.flac"
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                "response": {
+                                    "candidates": [
+                                        {
+                                            "content": {
+                                                "parts": [{"text": "first"}]
+                                            }
+                                        }
+                                    ]
+                                },
+                            }
+                        ),
+                        json.dumps(
+                            {
+                                "request": {
+                                    "contents": [
+                                        {
+                                            "parts": [
+                                                {
+                                                    "fileData": {
+                                                        "fileUri": "gs://audio/eval-2.flac"
+                                                    }
+                                                }
+                                            ]
+                                        }
+                                    ]
+                                },
+                                "response": {
+                                    "candidates": [
+                                        {
+                                            "content": {
+                                                "parts": [{"text": "second"}]
+                                            }
+                                        }
+                                    ]
+                                },
+                            }
+                        ),
+                    ]
+                )
+                + "\n",
+            )
+            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "results"
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "submit_batch_inference",
+                    return_value=output_uri,
+                ),
+                _patched_eval_scoring(),
+            ):
+                rc = evaluate_module.evaluate_run(
+                    args,
+                    run_cfg,
+                    storage,
+                    run_cfg.to_record_dict(),
+                )
+
+            batch_rows = [
+                json.loads(line)
+                for line in storage.get(
+                    f"{run_cfg.paths.gcs_prefix}/evals/base/input.jsonl"
+                ).splitlines()
+                if line.strip()
+            ]
+
+        self.assertEqual(rc, 0)
+        contents = batch_rows[1]["request"]["contents"]
+        self.assertEqual(
+            [turn["role"] for turn in contents],
+            ["user", "model", "user"],
+        )
+        self.assertEqual(
+            contents[0]["parts"][0]["file_data"]["file_uri"],
+            "gs://audio/eval-1.flac",
+        )
+        self.assertEqual(contents[1]["parts"][0]["text"], "first")
+        self.assertEqual(
+            contents[2]["parts"][1]["file_data"]["file_uri"],
+            "gs://audio/eval-2.flac",
+        )
 
     def test_eval_manifest_uri_comes_from_gcs_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:

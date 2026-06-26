@@ -12,6 +12,7 @@ from common.gcs_utils import (
     gcs_uri_exists,
     upload_local_file,
 )
+from common.gemini.context import build_context_histories
 from common.gemini.tuning_data import (
     build_audio_tuning_example,
     validate_audio_tuning_example,
@@ -37,8 +38,6 @@ from gemini_sft.preflight import run_preflight
 if TYPE_CHECKING:
     import argparse
     from pathlib import Path
-
-    from common.manifest import CanonicalRow
 
 logger = logging.getLogger(__name__)
 RESULTS_DIR = DEFAULT_RESULTS_DIR
@@ -182,8 +181,10 @@ def prepare_artifacts(
         storage_client, run_cfg.eval_manifest_uri, canonical_eval_path
     )
 
-    _, train_rows = load_canonical_rows(canonical_train_path, "train")
-    _, validation_rows = load_canonical_rows(
+    train_entries, train_rows = load_canonical_rows(
+        canonical_train_path, "train"
+    )
+    validation_entries, validation_rows = load_canonical_rows(
         canonical_validation_path, "validation"
     )
     _, eval_rows = load_canonical_rows(canonical_eval_path, "eval")
@@ -198,16 +199,18 @@ def prepare_artifacts(
     # batch-eval requests are built later so base and tuned models use the same
     # prompt/config recorded in config.json.
     write_gemini_jsonl(
-        train_rows,
+        train_entries,
         gemini_train_path,
         system_prompt=run_cfg.system_prompt,
         user_prompt=run_cfg.user_prompt,
+        prior_context_count=run_cfg.prior_context_count,
     )
     write_gemini_jsonl(
-        validation_rows,
+        validation_entries,
         gemini_validation_path,
         system_prompt=run_cfg.system_prompt,
         user_prompt=run_cfg.user_prompt,
+        prior_context_count=run_cfg.prior_context_count,
     )
 
     return PreparedRunArtifacts(
@@ -226,24 +229,28 @@ def prepare_artifacts(
 
 
 def write_gemini_jsonl(
-    rows: list[CanonicalRow],
+    rows: list[dict[str, Any]],
     path: Path,
     *,
     system_prompt: str,
     user_prompt: str,
+    prior_context_count: int = 0,
 ) -> None:
     """Write Gemini audio-SFT JSONL from canonical rows."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    histories = build_context_histories(rows, max_turns=prior_context_count)
     with path.open("w", encoding="utf-8") as fh:
-        for row in rows:
+        for row, history in zip(rows, histories, strict=True):
+            audio_uri = str(row.get("audio_filepath") or "")
             example = build_audio_tuning_example(
-                audio_uri=row.audio_filepath,
-                gt_text=row.text,
+                audio_uri=audio_uri,
+                gt_text=str(row.get("text") or ""),
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                history=history,
             )
             if not validate_audio_tuning_example(example):
-                msg = f"invalid Gemini SFT example for {row.audio_filepath}"
+                msg = f"invalid Gemini SFT example for {audio_uri}"
                 raise ValueError(msg)
             fh.write(json.dumps(example) + "\n")
 

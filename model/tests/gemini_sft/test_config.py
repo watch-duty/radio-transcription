@@ -39,6 +39,7 @@ class TestRunConfig(unittest.TestCase):
             "epoch_count": "6",
             "adapter_size": '"SIXTEEN"',
             "learning_rate_multiplier": "1.0",
+            "context": "",
             "prompts": "",
         }
         values.update(replacements)
@@ -60,6 +61,7 @@ base_model = {values["base_model"]}
 epoch_count = {values["epoch_count"]}
 adapter_size = {values["adapter_size"]}
 learning_rate_multiplier = {values["learning_rate_multiplier"]}
+{values["context"]}
 {values["prompts"]}
 """
 
@@ -84,6 +86,7 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
         )
         record = cfg.to_record_dict()
         self.assertEqual(record["dataset"], "wd-internal")
+        self.assertEqual(record["prior_context_count"], 0)
         self.assertEqual(record["inference_dataset_slug"], "echo/eval")
         self.assertEqual(record["gemini_train_uri"], cfg.paths.gemini_train_uri)
         self.assertEqual(
@@ -177,6 +180,32 @@ user = "custom user"
 
         self.assertEqual(cfg.system_prompt, "custom system")
         self.assertEqual(cfg.user_prompt, "custom user")
+
+    def test_context_prior_turn_count_is_recorded(self) -> None:
+        body = self._valid_toml(
+            context="""
+[context]
+prior_turn_count = 8
+"""
+        )
+
+        cfg = load_run_config(self._write_config(body))
+
+        self.assertEqual(cfg.prior_context_count, 8)
+        self.assertEqual(cfg.to_record_dict()["prior_context_count"], 8)
+
+    def test_context_prior_turn_count_must_be_nonnegative_int(self) -> None:
+        for value in ("-1", "true"):
+            with self.subTest(value=value):
+                body = self._valid_toml(
+                    context=f"""
+[context]
+prior_turn_count = {value}
+"""
+                )
+
+                with self.assertRaisesRegex(RunConfigError, "prior_turn_count"):
+                    load_run_config(self._write_config(body))
 
     def test_prompt_file_keys_are_rejected(self) -> None:
         body = self._valid_toml(

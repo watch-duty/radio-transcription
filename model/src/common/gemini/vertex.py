@@ -28,7 +28,10 @@ import json
 import logging
 import re
 import time
+from collections.abc import Sequence
 from typing import Any
+
+from common.gemini.context import ContextTurn
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +53,7 @@ def build_request(
     *,
     system_prompt: str,
     user_prompt: str,
+    history: Sequence[ContextTurn] | None = None,
     generation_config: dict = GEMINI_GENERATION_CONFIG,
     safety_settings: list = GEMINI_SAFETY_SETTINGS,
 ) -> dict:
@@ -67,29 +71,45 @@ def build_request(
     the request back in camelCase in batch OUTPUT, so output parsers must read both
     casings.
     """
-    return {
-        "request": {
-            "contents": [
+    contents: list[dict[str, Any]] = []
+    for turn in history or ():
+        contents.extend(
+            [
                 {
                     "role": "user",
-                    "parts": [
-                        # snake_case keys are intentional — see the docstring note.
-                        {
-                            "file_data": {
-                                "file_uri": audio_uri,
-                                "mime_type": "audio/flac",
-                            }
-                        },
-                        {"text": user_prompt},
-                    ],
-                }
+                    "parts": [_audio_file_data_part(turn.audio_uri)],
+                },
+                {"role": "model", "parts": [{"text": turn.text}]},
+            ]
+        )
+    contents.append(
+        {
+            "role": "user",
+            "parts": [
+                {"text": user_prompt},
+                _audio_file_data_part(audio_uri),
             ],
+        }
+    )
+    return {
+        "request": {
+            "contents": contents,
             "system_instruction": {
                 "role": "system",
                 "parts": [{"text": system_prompt}],
             },
             "generation_config": generation_config.copy(),
             "safety_settings": list(safety_settings),
+        }
+    }
+
+
+def _audio_file_data_part(audio_uri: str) -> dict[str, Any]:
+    # snake_case keys are intentional; see ``build_request``.
+    return {
+        "file_data": {
+            "file_uri": audio_uri,
+            "mime_type": "audio/flac",
         }
     }
 
@@ -126,22 +146,23 @@ def _extract_request_audio_uri(request: dict[str, Any]) -> str | None:
     contents = request.get("contents", [])
     if not isinstance(contents, list) or not contents:
         return None
-    first_content = contents[0]
-    if not isinstance(first_content, dict):
-        return None
-    parts = first_content.get("parts", [])
-    if not isinstance(parts, list):
-        return None
-    for part in parts:
-        if not isinstance(part, dict):
+    audio_uri: str | None = None
+    for content in contents:
+        if not isinstance(content, dict):
             continue
-        file_data = part.get("file_data") or part.get("fileData")
-        if not isinstance(file_data, dict):
+        parts = content.get("parts", [])
+        if not isinstance(parts, list):
             continue
-        candidate = file_data.get("file_uri") or file_data.get("fileUri")
-        if isinstance(candidate, str) and candidate:
-            return candidate
-    return None
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            file_data = part.get("file_data") or part.get("fileData")
+            if not isinstance(file_data, dict):
+                continue
+            candidate = file_data.get("file_uri") or file_data.get("fileUri")
+            if isinstance(candidate, str) and candidate:
+                audio_uri = candidate
+    return audio_uri
 
 
 def _extract_prediction_text(response: Any) -> str:

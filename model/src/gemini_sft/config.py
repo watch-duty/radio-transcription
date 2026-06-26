@@ -64,6 +64,7 @@ class RunConfig:
     epoch_count: int
     adapter_size: str
     learning_rate_multiplier: float
+    prior_context_count: int
     system_prompt: str
     user_prompt: str
     paths: RunPaths
@@ -84,6 +85,7 @@ class RunConfig:
             "epoch_count": self.epoch_count,
             "adapter_size": self.adapter_size,
             "learning_rate_multiplier": self.learning_rate_multiplier,
+            "prior_context_count": self.prior_context_count,
             "system_prompt": self.system_prompt,
             "user_prompt": self.user_prompt,
             "canonical_train_uri": self.paths.canonical_train_uri,
@@ -159,6 +161,17 @@ def _load_run_config(
     learning_rate_multiplier = _required_lr_multiplier(
         sft, "sft.learning_rate_multiplier"
     )
+    context = data.get("context", {})
+    if context is None:
+        context = {}
+    if not isinstance(context, dict):
+        msg = "context must be a TOML table"
+        raise RunConfigError(msg)
+    prior_context_count = _optional_nonnegative_int(
+        context,
+        "context.prior_turn_count",
+        default=0,
+    )
 
     prompts = data.get("prompts", {})
     if prompts is None:
@@ -196,6 +209,7 @@ def _load_run_config(
         epoch_count=epoch_count,
         adapter_size=adapter_size,
         learning_rate_multiplier=learning_rate_multiplier,
+        prior_context_count=prior_context_count,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         paths=paths,
@@ -301,6 +315,18 @@ def _required_positive_int(data: dict[str, Any], key: str) -> int:
     value = _lookup(data, key)
     if not isinstance(value, int) or value <= 0:
         msg = f"{key} must be a positive integer"
+        raise RunConfigError(msg)
+    return value
+
+
+def _optional_nonnegative_int(
+    data: dict[str, Any], key: str, *, default: int
+) -> int:
+    value = _lookup(data, key)
+    if value is None:
+        return default
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        msg = f"{key} must be a non-negative integer"
         raise RunConfigError(msg)
     return value
 

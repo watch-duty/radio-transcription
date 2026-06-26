@@ -9,7 +9,10 @@ caller-supplied parameters.
 """
 
 import logging
+from collections.abc import Sequence
 from typing import Any
+
+from common.gemini.context import ContextTurn
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +22,7 @@ def build_audio_tuning_example(
     gt_text: str,
     system_prompt: str,
     user_prompt: str,
+    history: Sequence[ContextTurn] | None = None,
 ) -> dict[str, Any]:
     """Build a single Gemini/Vertex AI audio-SFT JSONL example.
 
@@ -32,32 +36,42 @@ def build_audio_tuning_example(
             ``common.gemini.prompts``).
         user_prompt: Per-turn user instruction (e.g. from
             ``common.gemini.prompts``).
+        history: Previous audio/transcript pairs from the same source
+            recording. Each pair is emitted as ``user(audio) -> model(text)``.
 
     Returns:
         A dict matching the current Vertex AI audio-SFT JSONL schema:
-        ``{systemInstruction, contents: [{role:user, parts:[fileData, text]},
-                                          {role:model, parts:[text]}]}``.
+        ``{systemInstruction, contents: [history..., current user, target]}``.
     """
+    contents: list[dict[str, Any]] = []
+    for turn in history or ():
+        contents.extend(
+            [
+                {
+                    "role": "user",
+                    "parts": [_audio_file_data_part(turn.audio_uri)],
+                },
+                {"role": "model", "parts": [{"text": turn.text}]},
+            ]
+        )
+    contents.extend(
+        [
+            {
+                "role": "user",
+                "parts": [
+                    {"text": user_prompt},
+                    _audio_file_data_part(audio_uri),
+                ],
+            },
+            {"role": "model", "parts": [{"text": gt_text}]},
+        ]
+    )
     return {
         "systemInstruction": {
             "role": "system",
             "parts": [{"text": system_prompt}],
         },
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "fileData": {
-                            "mimeType": "audio/flac",
-                            "fileUri": audio_uri,
-                        }
-                    },
-                    {"text": user_prompt},
-                ],
-            },
-            {"role": "model", "parts": [{"text": gt_text}]},
-        ],
+        "contents": contents,
     }
 
 
@@ -77,20 +91,29 @@ def validate_audio_tuning_example(example: dict[str, Any]) -> bool:
     if "systemInstruction" not in example:
         return False
     contents = example.get("contents")
-    if not isinstance(contents, list) or len(contents) != 2:
+    if not isinstance(contents, list) or len(contents) < 2 or len(contents) % 2:
         return False
-    user_turn, model_turn = contents
-    if not isinstance(user_turn, dict) or not isinstance(model_turn, dict):
-        return False
-    if user_turn.get("role") != "user" or model_turn.get("role") != "model":
-        return False
+    for index in range(0, len(contents), 2):
+        user_turn = contents[index]
+        model_turn = contents[index + 1]
+        if not isinstance(user_turn, dict) or not isinstance(model_turn, dict):
+            return False
+        if user_turn.get("role") != "user" or model_turn.get("role") != "model":
+            return False
+        if not _is_valid_audio_file_data(_extract_user_file_data(user_turn)):
+            return False
+        if not _extract_model_text(model_turn).strip():
+            return False
+    return True
 
-    file_data = _extract_user_file_data(user_turn)
-    if not _is_valid_audio_file_data(file_data):
-        return False
 
-    model_text = _extract_model_text(model_turn)
-    return bool(model_text.strip())
+def _audio_file_data_part(audio_uri: str) -> dict[str, Any]:
+    return {
+        "fileData": {
+            "mimeType": "audio/flac",
+            "fileUri": audio_uri,
+        }
+    }
 
 
 def _extract_user_file_data(user_turn: dict[str, Any]) -> dict[str, Any] | None:
