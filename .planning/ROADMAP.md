@@ -33,7 +33,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Feed lifecycle writes, ingestion behavior, and audit row persistence still succeed when notification emission fails locally.
   4. Async `FeedStore` and sync `SyncFeedStore` audited write paths expose the same notification payload shape through one shared helper.
   5. A notification log contains `event_type="radio_transcription.feed_audit_notification"`, `schema_version=1`, and the flat allowlisted audit fields without extra database reads or repeated JSON encode/decode cycles.
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+- [ ] 01-01-PLAN.md — SQL payload contract and nullable `feed_audit_event` result columns
+- [ ] 01-02-PLAN.md — Shared failure-isolated notification logging helper
+- [ ] 01-03-PLAN.md — Async and sync store integration with focused verification
 
 ### Phase 2: Cloud Logging and Pub/Sub Routing
 **Goal**: Matching notification logs reach a dedicated Pub/Sub route with least-privilege publishing, authenticated push, bounded retry, and DLQ configuration.
@@ -76,7 +80,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Audit Contract and Emission | 0/TBD | Not started | - |
+| 1. Audit Contract and Emission | 0/3 | Not started | - |
 | 2. Cloud Logging and Pub/Sub Routing | 0/TBD | Not started | - |
 | 3. Webhook Relay Delivery | 0/TBD | Not started | - |
 | 4. Operations and Rollout Proof | 0/TBD | Not started | - |
