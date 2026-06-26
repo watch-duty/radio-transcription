@@ -2431,7 +2431,14 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                     rt._store.release_non_budgeted_failure.await_args.kwargs
                 )
                 self.assertIs(kwargs["status_reason"], status_reason)
-                self.assertEqual(kwargs["retry_after"], retry_after)
+                if status_reason is FeedStatusReason.SOURCE_UNREACHABLE:
+                    self.assertAlmostEqual(
+                        kwargs["retry_after"].timestamp(),
+                        datetime.datetime.now(datetime.UTC).timestamp(),
+                        delta=5,
+                    )
+                else:
+                    self.assertEqual(kwargs["retry_after"], retry_after)
                 mock_telemetry.emit_quarantine_event.assert_not_awaited()
 
     async def test_non_budgeted_source_config_failure_is_not_error_logged(

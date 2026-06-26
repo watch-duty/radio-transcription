@@ -1148,9 +1148,13 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             resources=_default_resources(),
         )
 
-        chunk = await gen.__anext__()
+        with self.assertRaises(FeedFailure) as ctx:
+            await gen.__anext__()
 
-        self.assertEqual(chunk.audio_bytes, b"FLAC_DATA_0")
+        self.assertEqual(
+            ctx.exception.status_reason, FeedStatusReason.SOURCE_UNREACHABLE
+        )
+        self.assertIn("stream_lag_exceeded", ctx.exception.reason)
         self.mock_logger.warning.assert_called_once()
         log_args = self.mock_logger.warning.call_args.args
         self.assertIn("Stream lag has exceeded threshold", log_args[0])

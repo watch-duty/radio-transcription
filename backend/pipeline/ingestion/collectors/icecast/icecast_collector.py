@@ -449,11 +449,15 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         if lag > _MAX_ALLOWED_LAG_SECONDS:
                             logger.warning(
                                 "Feed %s (%s): Stream lag has exceeded threshold "
-                                "(%.1fs > %.1fs).",
+                                "(%.1fs > %.1fs). Reconnecting to live edge.",
                                 feed_id,
                                 feed_name,
                                 lag,
                                 _MAX_ALLOWED_LAG_SECONDS,
+                            )
+                            raise collector_failure(
+                                FeedStatusReason.SOURCE_UNREACHABLE,
+                                f"stream_lag_exceeded: lag is {lag:.1f}s, threshold is {_MAX_ALLOWED_LAG_SECONDS}s",
                             )
 
                         yield CapturedChunk(

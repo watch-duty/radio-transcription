@@ -999,9 +999,11 @@ class CollectorRuntime:
         status_reason: FeedStatusReason,
         replay_missing: bool = False,
         data_gap_known: bool = False,
+        retry_after: datetime.datetime | None = None,
     ) -> None:
         """Release a failure that must not consume the feed quarantine budget."""
-        retry_after = self._non_budgeted_retry_after()
+        if retry_after is None:
+            retry_after = self._non_budgeted_retry_after()
         self._emit_policy_decision(
             feed,
             reason=reason,
@@ -1333,12 +1335,16 @@ class CollectorRuntime:
                     status_reason=e.status_reason,
                 )
             else:
+                retry_after = None
+                if e.status_reason is FeedStatusReason.SOURCE_UNREACHABLE:
+                    retry_after = datetime.datetime.now(datetime.UTC)
                 await self._record_non_budgeted_failure(
                     feed,
                     worker_id,
                     fencing_token,
                     reason=e.reason,
                     status_reason=e.status_reason,
+                    retry_after=retry_after,
                 )
             return
 
