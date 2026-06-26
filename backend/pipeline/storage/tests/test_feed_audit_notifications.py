@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import unittest
@@ -7,6 +8,19 @@ from typing import Any, cast
 from unittest import mock
 
 from backend.pipeline.storage import feed_audit_notifications
+
+_EXPECTED_FEED_AUDIT_KEYS = {
+    "event_type",
+    "schema_version",
+    "event_id",
+    "action",
+    "occurred_at",
+    "actor_id",
+    "feed_id",
+    "feed_revision",
+    "before_values",
+    "after_values",
+}
 
 
 def _feed_audit_payload(**overrides: object) -> dict[str, object]:
@@ -41,6 +55,9 @@ class TestEmitFeedAuditNotification(unittest.TestCase):
         self.assertEqual(len(cm.records), 1)
         record = cast("Any", cm.records[0])
         self.assertEqual(record.getMessage(), "Feed audit notification emitted")
+        self.assertIsInstance(record.json_fields, dict)
+        self.assertEqual(set(record.json_fields), _EXPECTED_FEED_AUDIT_KEYS)
+        self.assertNotIn("feed_audit_event", record.json_fields)
         self.assertEqual(record.json_fields, payload)
 
     def test_parses_string_payload(self) -> None:
@@ -56,6 +73,7 @@ class TestEmitFeedAuditNotification(unittest.TestCase):
 
         self.assertEqual(len(cm.records), 1)
         record = cast("Any", cm.records[0])
+        self.assertIsInstance(record.json_fields, dict)
         self.assertEqual(record.json_fields, payload)
 
     def test_noops_for_none(self) -> None:
@@ -71,6 +89,7 @@ class TestEmitFeedAuditNotification(unittest.TestCase):
         malformed_values: list[object] = [
             "{",
             ["not", "a", "mapping"],
+            {"feed_audit_event": _feed_audit_payload()},
             _feed_audit_payload(event_type="wrong"),
             _feed_audit_payload(schema_version=2),
             {
@@ -99,3 +118,19 @@ class TestEmitFeedAuditNotification(unittest.TestCase):
             feed_audit_notifications.emit_feed_audit_notification(
                 _feed_audit_payload()
             )
+
+    def test_helper_has_no_delivery_client_coupling(self) -> None:
+        source = inspect.getsource(feed_audit_notifications)
+
+        forbidden_strings = (
+            "google.cloud",
+            "pubsub",
+            "webhook",
+            "requests",
+            "httpx",
+            "CloudLoggingHandler",
+            "log_struct",
+        )
+        for value in forbidden_strings:
+            with self.subTest(value=value):
+                self.assertNotIn(value, source)
