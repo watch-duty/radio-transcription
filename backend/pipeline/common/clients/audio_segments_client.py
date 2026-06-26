@@ -147,7 +147,9 @@ class GCPMetadataAsyncAuth(httpx.Auth):
         params = {"audience": self.audience}
 
         async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers, params=params, timeout=5.0)
+            response = await client.get(
+                url, headers=headers, params=params, timeout=5.0
+            )
             response.raise_for_status()
             return response.text.strip()
 
@@ -181,7 +183,10 @@ class GCPMetadataAsyncAuth(httpx.Auth):
                     return
 
             token = await self._fetch_id_token_async()
-            _async_token_cache[self.audience] = (token, now + ASYNC_CACHE_TTL_SECONDS)
+            _async_token_cache[self.audience] = (
+                token,
+                now + ASYNC_CACHE_TTL_SECONDS,
+            )
 
         request.headers["Authorization"] = f"Bearer {token}"
         yield request

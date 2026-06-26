@@ -1,4 +1,5 @@
 import asyncio
+import time
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,6 +10,8 @@ from backend.pipeline.common.clients.audio_segments_client import (
     AudioSegmentsClient,
     GCPMetadataAsyncAuth,
     GCPMetadataAuth,
+    _async_audience_locks,
+    _async_token_cache,
 )
 from backend.services.audio_segments.models import AnnotationType
 
@@ -147,11 +150,6 @@ class TestAudioSegmentsClient(unittest.TestCase):
 
 class TestAsyncAudioSegmentsClient(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
-        from backend.pipeline.common.clients.audio_segments_client import (
-            _async_audience_locks,
-            _async_token_cache,
-        )
-
         _async_token_cache.clear()
         _async_audience_locks.clear()
 
@@ -233,7 +231,10 @@ class TestAsyncAudioSegmentsClient(unittest.IsolatedAsyncioTestCase):
 
         mock_get.assert_called_once()
         args, kwargs = mock_get.call_args
-        self.assertEqual(args[0], "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity")
+        self.assertEqual(
+            args[0],
+            "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity",
+        )
         self.assertEqual(kwargs["params"]["audience"], "http://audience")
 
     @patch("httpx.AsyncClient.get", new_callable=AsyncMock)
@@ -275,14 +276,17 @@ class TestAsyncAudioSegmentsClient(unittest.IsolatedAsyncioTestCase):
         # Fetch first token
         req1 = MagicMock(headers={})
         async for req in auth.async_auth_flow(req1):
-            self.assertEqual(req.headers["Authorization"], "Bearer fake-token-1")
+            self.assertEqual(
+                req.headers["Authorization"], "Bearer fake-token-1"
+            )
 
         # Mock time moving forward past TTL (2700s)
-        import time
         with patch("time.monotonic", return_value=time.monotonic() + 2701):
             req2 = MagicMock(headers={})
             async for req in auth.async_auth_flow(req2):
-                self.assertEqual(req.headers["Authorization"], "Bearer fake-token-2")
+                self.assertEqual(
+                    req.headers["Authorization"], "Bearer fake-token-2"
+                )
 
         self.assertEqual(mock_get.call_count, 2)
 
