@@ -22,6 +22,7 @@ import {
   type AlertFilter,
   useAudioSegments,
 } from '../../hooks/useAudioSegments';
+import { useAudioSettings } from '../../hooks/useAudioSettings';
 import { useConsolidatedAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
 import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
@@ -31,6 +32,7 @@ import { isWithinSegment } from '../../utils/playbackUtils';
 import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
 import FeedSearchView from '../feeds/FeedSearchView';
+import AudioSettingsButton from './AudioSettingsButton';
 import FeedHeader from './FeedHeader';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
@@ -98,6 +100,9 @@ export function TranscriptView({
   const newerLoadAnchorId = useRef<string | null>(null);
   const wasFetchingNewer = useRef(false);
 
+  const { volumeDb, setVolumeDb, pan, setPan, speed, setSpeed, reset } =
+    useAudioSettings(searchedFeedId);
+
   // Passed to useAudioPlayback so its `onEnd` callback reads the current list
   // rather than a stale closure when deciding whether to auto-advance.
   const audioSegmentsRef = useRef<AudioSegment[]>([]);
@@ -113,6 +118,9 @@ export function TranscriptView({
   } = useAudioPlayback({
     audioSegmentsRef,
     onPlaySegment: setHighlightedSegmentId,
+    volumeDb,
+    pan,
+    speed,
   });
 
   // Side effects for segments that arrive from a live poll: notify, bump the
@@ -599,20 +607,40 @@ export function TranscriptView({
         onError={onError}
       />
 
-      <AudioControl
-        sx={{ mt: 1 }}
-        isAudioPlaying={isAudioPlaying}
-        onTogglePlayPause={handleTogglePlayPause}
-        onSkipToNext={skipToNext}
-        onSkipToPrevious={skipToPrevious}
-        onFastForward={skipToNextSpeech}
-        onFastRewind={skipToPreviousSpeech}
-        onSkipTime={skipTime}
-        playLatestAudio={playLatestAudio}
-        togglePlayLatestAudio={setPlayLatestAudio}
-        disableControls={rawAudioSegments.length === 0}
-        disableCheckbox={!searchedFeed}
-      />
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          mt: 1,
+          // Space for the alert icon that hovers above the AudioDisplay.
+          mb: 2.5,
+        }}
+      >
+        <AudioControl
+          sx={{ flex: 1, mb: 0 }}
+          isAudioPlaying={isAudioPlaying}
+          onTogglePlayPause={handleTogglePlayPause}
+          onSkipToNext={skipToNext}
+          onSkipToPrevious={skipToPrevious}
+          onFastForward={skipToNextSpeech}
+          onFastRewind={skipToPreviousSpeech}
+          onSkipTime={skipTime}
+          playLatestAudio={playLatestAudio}
+          togglePlayLatestAudio={setPlayLatestAudio}
+          disableControls={rawAudioSegments.length === 0}
+          disableCheckbox={!searchedFeed}
+        />
+        <AudioSettingsButton
+          volumeDb={volumeDb}
+          setVolumeDb={setVolumeDb}
+          pan={pan}
+          setPan={setPan}
+          speed={speed}
+          setSpeed={setSpeed}
+          onReset={reset}
+        />
+      </Box>
 
       <AudioDisplay
         audioSegments={rawAudioSegments}
