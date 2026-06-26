@@ -192,6 +192,26 @@ class TestFeedAuditEventSqlContract(unittest.TestCase):
         self.assertIn("RETURNING feed_id,", sql)
         self.assertIn("WHERE feed_id IN (SELECT feed_id FROM write_audit)", sql)
 
+    def test_sync_audited_mutation_sql_returns_feed_audit_event(
+        self,
+    ) -> None:
+        audited_sql = {
+            "HEARTBEAT_SQL": sync_feed_queries.HEARTBEAT_SQL,
+            "RECORD_FAILURE_SQL": sync_feed_queries.RECORD_FAILURE_SQL,
+            "RECORD_NON_BUDGETED_FAILURE_SQL": (
+                sync_feed_queries.RECORD_NON_BUDGETED_FAILURE_SQL
+            ),
+        }
+
+        for name, sql in audited_sql.items():
+            with self.subTest(sql=name):
+                stripped = _sql_without_comments(sql)
+                self.assertIn("AS feed_audit_event", stripped)
+                self.assertIn("write_audit.feed_audit_event", stripped)
+                self.assertIn("LEFT JOIN write_audit", stripped)
+                self.assertIn("%s", stripped)
+                self.assertNotIn("$", stripped)
+
 
 class TestStatusReasonLifecycleIsolation(unittest.TestCase):
     """Tests that lifecycle SQL remains independent of status_reason."""
