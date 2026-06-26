@@ -86,6 +86,9 @@ Execute strict verbatim transcription EXCLUSIVELY on the single audio clip attac
 Apply all CRITICAL RULES.
 ```
 
+The configured TOML prompt must equal the notebook `TURN_PROMPT` literal exactly,
+including no trailing newline after the final period.
+
 This is teacher-forced prior context: validation/eval use gold prior transcripts,
 not self-fed predicted transcripts. The revised run therefore tests count-8
 same-source multi-turn text transcript context for SFT, not multi-audio SFT
@@ -99,7 +102,7 @@ context.
 - Epoch count: `8`
 - GCP location: `us-central1`
 - Artifact prefix: `gs://wd-transcription-data/sft/runs/<round_id>`
-- Revised round id: `20260625-prior-context-count8-text-turns-sft`
+- Revised round id: `20260625-prior-context-count8-text-turns-exact-sft`
 
 ## Execution
 

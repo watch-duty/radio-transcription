@@ -48,3 +48,26 @@ This keeps exactly one audio part per SFT example while retaining the prior
 conversation role alternation. The prior user text is exactly the same
 configured TURN_PROMPT text as the current user turn; only prior audio is
 omitted.
+
+## 2026-06-25: Exact-Prompt Text-Turn Run Submitted
+
+The first text-turn run used the right conversation structure but the local TOML
+prompt had one extra trailing newline relative to
+`evaluate_gemini_manual_context.ipynb`'s `TURN_PROMPT`. That job was cancelled:
+
+`projects/781667204380/locations/us-central1/tuningJobs/7168529948666232832`
+
+Replacement round:
+`20260625-prior-context-count8-text-turns-exact-sft`
+
+Replacement tuning job:
+`projects/781667204380/locations/us-central1/tuningJobs/722401138271322112`
+
+Prepared JSONL validation:
+
+- `config.user_prompt` byte-matches the notebook `TURN_PROMPT`.
+- All 16,919 train examples contain exactly one audio part.
+- Prior user turns contain exactly `TURN_PROMPT` text and no audio part.
+- The final/current user turn contains exactly `TURN_PROMPT` text and the
+  current audio part.
+- Max history length is 8 prior user/model pairs, for 18 content turns total.

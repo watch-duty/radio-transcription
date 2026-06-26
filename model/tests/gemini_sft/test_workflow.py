@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import tempfile
 import types
 import unittest
@@ -177,6 +178,28 @@ class TestCli(unittest.TestCase):
             self.assertEqual(cli.main(["prepare", "--config", "run.toml"]), 0)
 
         mock.assert_called_once()
+
+    def test_quiets_dependency_http_loggers(self) -> None:
+        loggers: dict[str, unittest.mock.Mock] = {}
+
+        def fake_get_logger(name: str | None = None) -> unittest.mock.Mock:
+            key = "" if name is None else name
+            return loggers.setdefault(key, unittest.mock.Mock())
+
+        with (
+            unittest.mock.patch("gemini_sft.cli.prepare", return_value=0),
+            unittest.mock.patch("logging.getLogger", side_effect=fake_get_logger),
+        ):
+            self.assertEqual(cli.main(["prepare", "--config", "run.toml"]), 0)
+
+        expected_levels = {
+            "httpx": logging.WARNING,
+            "httpcore": logging.WARNING,
+            "google.auth.transport.requests": logging.WARNING,
+            "urllib3.connectionpool": logging.ERROR,
+        }
+        for logger_name, level in expected_levels.items():
+            loggers[logger_name].setLevel.assert_called_once_with(level)
 
 
 class TestPrepareRun(unittest.TestCase):

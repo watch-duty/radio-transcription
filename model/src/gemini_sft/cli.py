@@ -10,6 +10,14 @@ from gemini_sft.prepare import prepare
 from gemini_sft.tune import tune
 
 
+_QUIET_LOGGER_LEVELS = {
+    "httpx": logging.WARNING,
+    "httpcore": logging.WARNING,
+    "google.auth.transport.requests": logging.WARNING,
+    "urllib3.connectionpool": logging.ERROR,
+}
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the ``gemini-sft`` CLI parser."""
     parser = argparse.ArgumentParser(
@@ -51,6 +59,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     """Run the CLI and return a process-style exit code."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    for logger_name, level in _QUIET_LOGGER_LEVELS.items():
+        logging.getLogger(logger_name).setLevel(level)
     parser = build_parser()
     args = parser.parse_args(argv)
     return int(args.func(args))
