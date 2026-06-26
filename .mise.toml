@@ -290,19 +290,19 @@ run = "uv run --extra dev --extra scoring --extra vertex pytest tests/"
 
 [tasks."test:component:rules"]
 description = "Run RulesStore component tests"
-run = "uv run pytest integration_tests/storage/test_rules_store_integration.py"
+run = "uv run pytest integration_tests/storage/test_rules_store_integration.py -n0"
 
 [tasks."test:component:feeds"]
 description = "Run FeedStore component tests"
-run = "uv run pytest integration_tests/storage/test_feed_store_integration.py"
+run = "uv run pytest integration_tests/storage/test_feed_store_integration.py -n0"
 
 [tasks."test:component:audio_segments"]
 description = "Run AudioSegmentStore component tests"
-run = "uv run pytest integration_tests/storage/test_audio_segment_store_integration.py"
+run = "uv run pytest integration_tests/storage/test_audio_segment_store_integration.py -n0"
 
 [tasks."test:component"]
 description = "Run all component tests"
-run = "uv run pytest integration_tests/storage/"
+run = "uv run pytest integration_tests/storage/ -n0"
 
 [tasks."test:e2e"]
 description = "Run all E2E tests in Docker Compose"
