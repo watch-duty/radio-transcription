@@ -21,7 +21,6 @@ def _store_feed(**overrides: object) -> dict[str, object]:
         "source_feed_id": "123",
         "status": FeedStatus.UNCLAIMED,
         "last_heartbeat": None,
-        "quarantine_reason": None,
         "status_reason": None,
         "status_reason_detail": None,
         "last_speech_segment_timestamp": None,
