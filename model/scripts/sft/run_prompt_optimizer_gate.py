@@ -37,6 +37,7 @@ DEFAULT_PROJECT = "automatic-hawk-481415-m9"
 DEFAULT_PROJECT_NUMBER = "781667204380"
 DEFAULT_LOCATION = "us-central1"
 DEFAULT_TARGET_MODEL = "gemini-3.1-flash-lite"
+DEFAULT_TARGET_MODEL_LOCATION = "us"
 DEFAULT_RUN_ID = "20260627-prior-context-count8-prompt-optimizer"
 DEFAULT_OUTPUT_PREFIX = (
     "gs://wd-transcription-data/sft/experiments/"
@@ -175,6 +176,11 @@ def main() -> int:
     parser.add_argument("--project-number", default=DEFAULT_PROJECT_NUMBER)
     parser.add_argument("--location", default=DEFAULT_LOCATION)
     parser.add_argument("--target-model", default=DEFAULT_TARGET_MODEL)
+    parser.add_argument(
+        "--target-model-location",
+        default=DEFAULT_TARGET_MODEL_LOCATION,
+        help="Vertex location used for target model inference inside VAPO.",
+    )
     parser.add_argument("--output-prefix", default=DEFAULT_OUTPUT_PREFIX)
     parser.add_argument("--sample-size", type=int, default=DEFAULT_SAMPLE_SIZE)
     parser.add_argument("--data-limit", type=int, default=DEFAULT_DATA_LIMIT)
@@ -282,7 +288,8 @@ def prepare_optimizer_artifacts(
         "sample_rows": len(samples),
         "data_limit": args.data_limit,
         "target_model": args.target_model,
-        "target_model_location": args.location,
+        "optimizer_job_location": args.location,
+        "target_model_location": args.target_model_location,
         "metric_mode": args.metric_mode,
         "metric_name": args.metric_name,
         "metric_function": args.metric_function if args.metric_mode == "custom" else None,
@@ -355,7 +362,7 @@ def _vapo_config(
         "optimization_mode": optimization_mode,
         "input_data_path": sample_uri,
         "output_path": f"{args.output_prefix.rstrip('/')}/outputs/{family.family_id}/",
-        "target_model_location": args.location,
+        "target_model_location": args.target_model_location,
         "target_model_qps": args.target_model_qps,
         "eval_qps": args.eval_qps,
         "response_mime_type": "text/plain",
