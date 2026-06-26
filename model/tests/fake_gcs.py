@@ -65,8 +65,8 @@ class FakeBucket:
         return FakeBlob(self._store, self._uploads, self.name, name)
 
     def list_blobs(
-        self, prefix: str = "", max_results: int | None = None
-    ) -> list[types.SimpleNamespace]:
+        self, prefix: str = "", max_results: int | None = None, **_: Any
+    ) -> list[FakeBlob]:
         names = [
             blob_name
             for bucket_name, blob_name in self._store
@@ -74,7 +74,7 @@ class FakeBucket:
         ]
         if max_results is not None:
             names = names[:max_results]
-        return [types.SimpleNamespace(name=name) for name in names]
+        return [FakeBlob(self._store, self._uploads, self.name, name) for name in names]
 
 
 class FakeStorageClient:

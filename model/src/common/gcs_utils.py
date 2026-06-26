@@ -103,6 +103,43 @@ def download_gcs_uri(
     )
 
 
+def download_gcs_directory(
+    storage_client: storage.Client,
+    gcs_uri: str,
+    local_dir: str | Path,
+) -> None:
+    """Downloads all blobs under a GCS prefix (directory) to a local directory.
+
+    Args:
+        storage_client: Initialized GCS client.
+        gcs_uri: GCS prefix URI (e.g. gs://bucket/path/to/dir or gs://bucket/path/to/dir/).
+        local_dir: The local directory to download files into.
+
+    Raises:
+        FileNotFoundError: If no files are found under the specified GCS URI.
+    """
+    bucket_name, blob_prefix = parse_gcs_uri(gcs_uri)
+    # Strip trailing slash for consistent prefix matching.
+    blob_prefix = blob_prefix.rstrip("/")
+    bucket = storage_client.bucket(bucket_name)
+    blobs = list(bucket.list_blobs(prefix=blob_prefix + "/"))
+    if not blobs:
+        msg = f"No files found under {gcs_uri}"
+        raise FileNotFoundError(msg)
+
+    os.makedirs(local_dir, exist_ok=True)
+    for blob in blobs:
+        # Compute relative path within the directory.
+        rel_path = blob.name[len(blob_prefix) :].lstrip("/")
+        if not rel_path:
+            continue
+        local_file = os.path.join(local_dir, rel_path)
+        os.makedirs(os.path.dirname(local_file), exist_ok=True)
+        blob.download_to_filename(local_file, retry=DEFAULT_RETRY)
+        logger.info(f"Downloaded gs://{bucket_name}/{blob.name} to {local_file}")
+
+
+
 def upload_local_file(
     storage_client: storage.Client, local_path: Path, gcs_uri: str
 ) -> None:
