@@ -50,12 +50,19 @@ class FeedService:
         except ValueError:
             return None
 
+        tags = None
+        if feed_in.tags is None:
+            existing_feed = await self._store.get_feed(uid)
+            if not existing_feed:
+                return None
+            tags = existing_feed.get("tags")
+        else:
+            tags = [t.model_dump() for t in feed_in.tags]
+
         store_feed = await self._store.update_feed(
             feed_id=uid,
             name=feed_in.name,
-            tags=[t.model_dump() for t in feed_in.tags]
-            if feed_in.tags
-            else None,
+            tags=tags,
             actor_id=actor_id,
         )
         if not store_feed:

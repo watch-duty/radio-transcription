@@ -108,6 +108,62 @@ class TestFeedServiceAuditActor(unittest.IsolatedAsyncioTestCase):
             actor_id=_ADMIN_ACTOR_ID,
         )
 
+    async def test_update_feed_preserves_existing_tags_when_tags_not_provided(
+        self,
+    ) -> None:
+        store = mock.AsyncMock()
+        existing_tags = [{"key": "county", "value": "Fulton"}]
+        store.get_feed.return_value = _store_feed(tags=existing_tags)
+        store.update_feed.return_value = _store_feed(
+            name="Updated Feed",
+            tags=existing_tags,
+        )
+        service = FeedService(store)
+        feed_in = FeedUpdate(name="Updated Feed", tags=None)
+
+        result = await service.update_feed(
+            str(_FEED_ID),
+            feed_in,
+            actor_id=_ADMIN_ACTOR_ID,
+        )
+
+        assert result is not None
+        self.assertEqual(result.name, "Updated Feed")
+        store.get_feed.assert_awaited_once_with(_FEED_ID)
+        store.update_feed.assert_awaited_once_with(
+            feed_id=_FEED_ID,
+            name="Updated Feed",
+            tags=existing_tags,
+            actor_id=_ADMIN_ACTOR_ID,
+        )
+
+    async def test_update_feed_clears_tags_when_empty_list_provided(
+        self,
+    ) -> None:
+        store = mock.AsyncMock()
+        store.update_feed.return_value = _store_feed(
+            name="Updated Feed",
+            tags=[],
+        )
+        service = FeedService(store)
+        feed_in = FeedUpdate(name="Updated Feed", tags=[])
+
+        result = await service.update_feed(
+            str(_FEED_ID),
+            feed_in,
+            actor_id=_ADMIN_ACTOR_ID,
+        )
+
+        assert result is not None
+        self.assertEqual(result.name, "Updated Feed")
+        store.get_feed.assert_not_awaited()
+        store.update_feed.assert_awaited_once_with(
+            feed_id=_FEED_ID,
+            name="Updated Feed",
+            tags=[],
+            actor_id=_ADMIN_ACTOR_ID,
+        )
+
     async def test_update_feed_rejects_invalid_uuid_before_store(
         self,
     ) -> None:

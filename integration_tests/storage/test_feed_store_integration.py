@@ -1825,53 +1825,6 @@ async def test_update_feed_succeeds(
     assert "last_heartbeat" not in after_values
 
 
-async def test_update_feed_preserves_existing_tags(
-    db_pool: asyncpg.Pool, store: FeedStore
-) -> None:
-    """update_feed preserves existing tags when tags=None."""
-    tags = [{"key": "county", "value": "Fulton"}]
-    feed = await store.create_feed(
-        name="Original Name",
-        source_type="bcfy_feeds",
-        source_feed_id="src_123",
-        tags=tags,
-        actor_id=_TEST_ACTOR_ID,
-    )
-
-    # Verify in DB before update
-    row_before = await db_pool.fetchrow(
-        "SELECT f.name, fp.tags "
-        "FROM feeds f "
-        "JOIN feed_properties fp ON f.id = fp.feed_id "
-        "WHERE f.id = $1",
-        feed["id"],
-    )
-    assert row_before is not None
-    assert json.loads(row_before["tags"]) == tags
-
-    updated_feed = await store.update_feed(
-        feed_id=feed["id"],
-        name="Updated Name",
-        actor_id=_TEST_ACTOR_ID,
-    )
-
-    assert updated_feed is not None
-    assert updated_feed["name"] == "Updated Name"
-    assert updated_feed["tags"] == tags
-
-    # Verify in DB
-    row = await db_pool.fetchrow(
-        "SELECT f.name, fp.tags "
-        "FROM feeds f "
-        "JOIN feed_properties fp ON f.id = fp.feed_id "
-        "WHERE f.id = $1",
-        feed["id"],
-    )
-    assert row is not None
-    assert row["name"] == "Updated Name"
-    assert json.loads(row["tags"]) == tags
-
-
 async def test_update_feed_no_op_does_not_write_audit_event(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
