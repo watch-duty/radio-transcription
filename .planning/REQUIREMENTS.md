@@ -81,35 +81,35 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AUDIT-01 | TBD | Pending |
-| AUDIT-02 | TBD | Pending |
-| AUDIT-03 | TBD | Pending |
-| AUDIT-04 | TBD | Pending |
-| AUDIT-05 | TBD | Pending |
-| PAYLOAD-01 | TBD | Pending |
-| PAYLOAD-02 | TBD | Pending |
-| PAYLOAD-03 | TBD | Pending |
-| PAYLOAD-04 | TBD | Pending |
-| ROUTE-01 | TBD | Pending |
-| ROUTE-02 | TBD | Pending |
-| ROUTE-03 | TBD | Pending |
-| ROUTE-04 | TBD | Pending |
-| RELAY-01 | TBD | Pending |
-| RELAY-02 | TBD | Pending |
-| RELAY-03 | TBD | Pending |
-| RELAY-04 | TBD | Pending |
-| RELAY-05 | TBD | Pending |
-| RELAY-06 | TBD | Pending |
-| OPS-01 | TBD | Pending |
-| OPS-02 | TBD | Pending |
-| OPS-03 | TBD | Pending |
-| OPS-04 | TBD | Pending |
+| AUDIT-01 | Phase 1 | Pending |
+| AUDIT-02 | Phase 1 | Pending |
+| AUDIT-03 | Phase 1 | Pending |
+| AUDIT-04 | Phase 1 | Pending |
+| AUDIT-05 | Phase 1 | Pending |
+| PAYLOAD-01 | Phase 1 | Pending |
+| PAYLOAD-02 | Phase 1 | Pending |
+| PAYLOAD-03 | Phase 1 | Pending |
+| PAYLOAD-04 | Phase 1 | Pending |
+| ROUTE-01 | Phase 2 | Pending |
+| ROUTE-02 | Phase 2 | Pending |
+| ROUTE-03 | Phase 2 | Pending |
+| ROUTE-04 | Phase 2 | Pending |
+| RELAY-01 | Phase 3 | Pending |
+| RELAY-02 | Phase 3 | Pending |
+| RELAY-03 | Phase 3 | Pending |
+| RELAY-04 | Phase 3 | Pending |
+| RELAY-05 | Phase 3 | Pending |
+| RELAY-06 | Phase 3 | Pending |
+| OPS-01 | Phase 4 | Pending |
+| OPS-02 | Phase 4 | Pending |
+| OPS-03 | Phase 4 | Pending |
+| OPS-04 | Phase 4 | Pending |
 
 **Coverage:**
 - v1 requirements: 23 total
-- Mapped to phases: 0
-- Unmapped: 23
+- Mapped to phases: 23
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-26*
-*Last updated: 2026-06-26 after initialization*
+*Last updated: 2026-06-26 after roadmap creation*
