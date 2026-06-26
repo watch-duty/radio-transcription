@@ -344,6 +344,11 @@ class NormalizationEventProcessor:
     ) -> None:
         """Attaches downsampled waveform peaks for timeline rendering (best-effort)."""
         if not self.audio_segments_client:
+            logger.warning(
+                "No audio_segments_client configured; "
+                "skipping waveform annotation for segment %s",
+                segment_id,
+            )
             return
         try:
             data = waveform.compute_waveform(flac_bytes).model_dump()
