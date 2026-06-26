@@ -156,3 +156,62 @@ The best oracle over the four saved strategies is WER 22.82, so simple
 generation/config fallback is unlikely to fully recover the old checkpoint.
 The remaining gap is probably model/prompt training behavior from repeated
 count-8 text-only prior user turns, not a disable-able filter.
+
+## 2026-06-26: Primary Prompt Variants, No Fallback
+
+Prompt variants were evaluated as primary requests, not as fallback retries.
+The first pass scored only the 275 rows that were empty under the original
+checkpoint-7 count-8 text-turn prompt.
+
+Pure current-turn wording changes with the original repeated prior user prompt
+helped only modestly. The best family was a transcript-block prompt
+presentation with a shorter ASR system prompt. This avoids the repeated prior
+`user(TURN_PROMPT text only)` turns that appear to trigger the immediate-stop
+mode.
+
+Best empty-row prompt variants:
+
+| primary prompt variant | non-empty | remaining empty | empty-row WER | empty-row CER |
+|---|---:|---:|---:|---:|
+| block_system_short_force_words | 240 | 35 | 35.60 | 26.47 |
+| block_system_short_final_audio | 234 | 41 | 35.88 | 27.46 |
+| block_system_short_direct | 226 | 49 | 36.33 | 28.65 |
+| block_system_short_no_preceding | 244 | 31 | 37.51 | 29.29 |
+
+Full-eval primary prompt results, with no fallback:
+
+| primary prompt variant | non-empty | empty | WER | CER |
+|---|---:|---:|---:|---:|
+| original checkpoint-7 prompt | 3833 | 275 | 27.63 | 22.67 |
+| block_system_short_force_words | 4055 | 53 | 23.17 | 16.59 |
+| block_system_short_final_audio | 4041 | 67 | 23.26 | 16.81 |
+| block_system_short_direct | 4023 | 85 | 23.44 | 17.05 |
+| block_direct | 3980 | 128 | 23.88 | 18.05 |
+| block_original | 3987 | 121 | 23.98 | 18.19 |
+
+Temperature on the best prompt reduced empties in the empty-row slice but hurt
+full-eval WER:
+
+| primary prompt variant | empty-row WER | full WER | full CER | empty |
+|---|---:|---:|---:|---:|
+| block_system_short_force_words, temp 0.0 | 35.60 | 23.17 | 16.59 | 53 |
+| block_system_short_force_words, temp 0.4 | 35.06 | 23.71 | 17.21 | 61 |
+| block_system_short_force_words, temp 0.7 | 36.15 | 25.39 | 18.77 | 73 |
+
+Recommended inference prompt for this checkpoint, if using it without fallback:
+
+- prior context presentation: one transcript block in the current user turn
+- system prompt:
+
+```text
+You are a strict verbatim ASR system for VHF/UHF dispatch radio. Transcribe only the attached current audio clip. Use prior transcripts only as context for names, units, and terminology. Output only the transcript, with no explanation.
+```
+
+- current prompt:
+
+```text
+Transcribe the attached radio audio clip. Return the words spoken in this clip only. If speech is present, return words; do not stop before producing text.
+```
+
+This fixes most but not all of the empty-response issue: WER improves from
+27.63 to 23.17, but still trails the old corrected checkpoint at WER 22.34.
