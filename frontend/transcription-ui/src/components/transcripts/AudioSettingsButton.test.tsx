@@ -22,6 +22,7 @@ describe('AudioSettingsButton', () => {
     speed: 1,
     setSpeed: vi.fn(),
     onReset: vi.fn(),
+    disableControls: false,
   };
 
   const renderButton = (overrides = {}) =>
@@ -110,5 +111,10 @@ describe('AudioSettingsButton', () => {
 
     expect(screen.getByRole('button', { name: 'Speed 1x' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Pan C' })).not.toBeDisabled();
+  });
+
+  it('disables the button when disableControls is true', () => {
+    renderButton({ disableControls: true });
+    expect(screen.getByRole('button', { name: 'audio controls' })).toBeDisabled();
   });
 });

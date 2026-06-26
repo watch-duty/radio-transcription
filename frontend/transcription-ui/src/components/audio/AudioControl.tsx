@@ -182,6 +182,7 @@ export function AudioControl({
           }
           label="Always play latest audio"
           slotProps={{ typography: { variant: 'body2' } }}
+          disabled={disableControls}
         />
       </Box>
     </Box>
