@@ -137,6 +137,36 @@ class TestGeminiBatchInference(unittest.TestCase):
         self.assertEqual(preds, {"gs://audio/a.flac": "copy"})
         self.assertEqual(preds.output_uri, output_uri)
 
+    def test_run_batch_audio_inference_reuses_existing_predictions(
+        self,
+    ) -> None:
+        storage = FakeStorageClient()
+        output_uri = "gs://bucket/sft/runs/run-a/evals/base/output/"
+        storage.put(
+            f"{output_uri}prediction-model-1/predictions.jsonl",
+            _vertex_output("gs://audio/a.flac", "copy") + "\n",
+        )
+        calls: list[dict[str, object]] = []
+
+        preds = run_batch_audio_inference(
+            storage_client=storage,
+            run_gcs_prefix="gs://bucket/sft/runs/run-a",
+            gcp_project="project",
+            location="us-central1",
+            model_id="gemini-3.1-flash-lite",
+            label="base",
+            audio_uris=["gs://audio/a.flac"],
+            system_prompt="sys",
+            user_prompt="user",
+            submit_fn=lambda **kwargs: calls.append(kwargs) or output_uri,
+        )
+
+        self.assertIsNotNone(preds)
+        assert preds is not None
+        self.assertEqual(preds, {"gs://audio/a.flac": "copy"})
+        self.assertEqual(preds.output_uri, output_uri)
+        self.assertEqual(calls, [])
+
     def test_run_batch_audio_inference_rejects_duplicate_audio_uris(
         self,
     ) -> None:

@@ -142,6 +142,18 @@ class TestComputeWerPolicies(unittest.TestCase):
         for key in ("wer", "insertions", "deletions", "substitutions", "hits"):
             self.assertIn(key, result)
 
+    def test_normalized_empty_reference_scores_empty_hypothesis_correct(
+        self,
+    ) -> None:
+        result = compute_wer(["Um"], [""], normalizer=build_normalizer())
+        self.assertEqual(result["wer"], 0)
+
+    def test_normalized_empty_reference_penalizes_nonempty_hypothesis(
+        self,
+    ) -> None:
+        result = compute_wer(["Um"], ["copy"], normalizer=build_normalizer())
+        self.assertGreater(result["wer"], 0)
+
 
 @_scoring_required
 class TestComputeCer(unittest.TestCase):
@@ -152,6 +164,12 @@ class TestComputeCer(unittest.TestCase):
     def test_cer_result_has_cer_key(self) -> None:
         result = compute_cer(["engine 41"], ["engine 41"])
         self.assertIn("cer", result)
+
+    def test_normalized_empty_reference_scores_empty_hypothesis_correct(
+        self,
+    ) -> None:
+        result = compute_cer(["Uh,"], [""], normalizer=build_normalizer())
+        self.assertEqual(result["cer"], 0)
 
 
 class TestHallucinationRate(unittest.TestCase):

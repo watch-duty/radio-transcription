@@ -24,6 +24,7 @@ from functools import cache
 from typing import Any
 
 logger = logging.getLogger(__name__)
+_EMPTY_REFERENCE_TOKEN = "emptyreference"
 
 # Heavy deps behind the [scoring] extra — deferred so `import common.scoring`
 # never triggers NeMo when [scoring] is not installed.
@@ -180,6 +181,9 @@ def compute_wer(
     if normalizer is not None:
         references = [normalizer(r) for r in references]
         hypotheses = [normalizer(h) for h in hypotheses]
+    references, hypotheses = _protect_empty_references(
+        references, hypotheses
+    )
     output = jiwer.process_words(references, hypotheses)
     return {
         "wer": round(100 * output.wer, 2),
@@ -212,8 +216,29 @@ def compute_cer(
     if normalizer is not None:
         references = [normalizer(r) for r in references]
         hypotheses = [normalizer(h) for h in hypotheses]
+    references, hypotheses = _protect_empty_references(
+        references, hypotheses
+    )
     value = jiwer.cer(references, hypotheses)
     return {"cer": round(100 * value, 2)}
+
+
+def _protect_empty_references(
+    references: list[str], hypotheses: list[str]
+) -> tuple[list[str], list[str]]:
+    """Replace empty references with a sentinel so jiwer can score the row."""
+    protected_refs: list[str] = []
+    protected_hyps: list[str] = []
+    for ref, hyp in zip(references, hypotheses, strict=True):
+        if ref.strip():
+            protected_refs.append(ref)
+            protected_hyps.append(hyp)
+        else:
+            protected_refs.append(_EMPTY_REFERENCE_TOKEN)
+            protected_hyps.append(
+                _EMPTY_REFERENCE_TOKEN if not hyp.strip() else hyp
+            )
+    return protected_refs, protected_hyps
 
 
 def hallucination_rate(hypotheses: list[str]) -> float:

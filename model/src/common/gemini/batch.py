@@ -71,26 +71,41 @@ def run_batch_audio_inference(
             history_mode=history_mode,
             tmp_dir=Path(tmp),
         )
-        try:
-            output_loc = submit_fn(
-                input_uri=batch_input_gcs,
-                output_uri=batch_output_gcs,
-                model=model_id,
-                project=gcp_project,
-                location=location,
-            )
-        except (RuntimeError, TimeoutError) as exc:
-            logger.exception("[%s] Batch inference failed: %s", label, exc)
-            return None
-
         preds = _load_batch_predictions(
             storage_client=storage_client,
-            output_uri=output_loc,
+            output_uri=batch_output_gcs,
             label=label,
             tmp_dir=Path(tmp),
+            missing_ok=True,
         )
         if preds is None:
-            return None
+            try:
+                output_loc = submit_fn(
+                    input_uri=batch_input_gcs,
+                    output_uri=batch_output_gcs,
+                    model=model_id,
+                    project=gcp_project,
+                    location=location,
+                )
+            except (RuntimeError, TimeoutError) as exc:
+                logger.exception("[%s] Batch inference failed: %s", label, exc)
+                return None
+
+            preds = _load_batch_predictions(
+                storage_client=storage_client,
+                output_uri=output_loc,
+                label=label,
+                tmp_dir=Path(tmp),
+            )
+            if preds is None:
+                return None
+        else:
+            output_loc = batch_output_gcs
+            logger.info(
+                "[%s] Reusing existing batch prediction output under %s.",
+                label,
+                batch_output_gcs,
+            )
 
     extra_prediction_uris = set(preds) - expected_audio_uris
     if extra_prediction_uris:
@@ -163,6 +178,7 @@ def _load_batch_predictions(
     output_uri: str,
     label: str,
     tmp_dir: Path,
+    missing_ok: bool = False,
 ) -> BatchPredictionMap | None:
     out_bucket, out_prefix = parse_gcs_uri(output_uri.rstrip("/") + "/")
     pred_blobs = [
@@ -173,9 +189,12 @@ def _load_batch_predictions(
         if blob.name.endswith(".jsonl")
     ]
     if not pred_blobs:
-        logger.error(
-            "[%s] no .jsonl prediction output under %s.", label, output_uri
-        )
+        if not missing_ok:
+            logger.error(
+                "[%s] no .jsonl prediction output under %s.",
+                label,
+                output_uri,
+            )
         return None
     preds = BatchPredictionMap()
     for i, blob in enumerate(pred_blobs):
