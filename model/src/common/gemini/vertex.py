@@ -366,7 +366,7 @@ def poll_tuning_job(
     name: str,
     project: str,
     location: str,
-    poll_interval: int = 30,
+    poll_interval: int = 300,
     timeout_hours: float = 24.0,
 ) -> str:
     """Re-fetch a Vertex AI tuning job by name and poll until terminal state.
@@ -378,7 +378,8 @@ def poll_tuning_job(
         name: Vertex AI tuning job resource name (from submit_tuning_job return value).
         project: GCP project ID.
         location: GCP region.
-        poll_interval: Seconds between state-poll requests.
+        poll_interval: Seconds between state-poll requests (default 300, or
+            5 minutes).
         timeout_hours: Max wall-clock hours to poll before raising TimeoutError
             (default 24) -- guards against an indefinite hang on an API/network stall.
 

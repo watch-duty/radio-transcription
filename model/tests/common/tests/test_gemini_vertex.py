@@ -208,6 +208,29 @@ class TestPollTuningJob(unittest.TestCase):
             name="projects/p/locations/l/tuningJobs/123"
         )
 
+    @unittest.mock.patch("common.gemini.vertex.time.sleep")
+    @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_default_poll_interval_is_five_minutes(
+        self, mock_genai, mock_sleep
+    ) -> None:
+        mock_client = unittest.mock.MagicMock()
+        running = unittest.mock.MagicMock()
+        running.state.name = "JOB_STATE_RUNNING"
+        succeeded = unittest.mock.MagicMock()
+        succeeded.state.name = "JOB_STATE_SUCCEEDED"
+        succeeded.tuned_model.endpoint = "projects/p/locations/l/endpoints/e"
+        mock_client.tunings.get.side_effect = [running, succeeded]
+        mock_genai.Client.return_value = mock_client
+
+        result = poll_tuning_job(
+            name="projects/p/locations/l/tuningJobs/123",
+            project="p",
+            location="us-central1",
+        )
+
+        self.assertIn("endpoints", result)
+        mock_sleep.assert_called_once_with(300)
+
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_raises_timeout_when_never_terminal(self, mock_genai) -> None:
         """poll_tuning_job raises TimeoutError if no terminal state within timeout_hours."""
