@@ -444,7 +444,7 @@ describe('TranscriptRow', () => {
     expect(screen.getByLabelText('view segment info')).toBeInTheDocument();
   });
 
-  it('renders transcription failure correctly with error text and error color', () => {
+  it('renders transcription failure correctly with placeholder text and disabled copy', () => {
     const mockFailedTranscript: AudioSegment = {
       ...mockAudioSegment,
       annotations: [
@@ -477,8 +477,9 @@ describe('TranscriptRow', () => {
       </MemoryRouter>
     );
 
-    const failedText = screen.getByText('[Transcription failed]');
-    expect(failedText).toBeTruthy();
-    expect(window.getComputedStyle(failedText).color).toBe('rgb(211, 47, 47)');
+    expect(screen.getByText('[Transcription failed]')).toBeTruthy();
+
+    const copyButton = screen.getByLabelText('copy transcript');
+    expect((copyButton as HTMLButtonElement).disabled).toBe(true);
   });
 });
