@@ -439,6 +439,11 @@ export function TranscriptView({
         if (idx !== -1 && idx > 0) {
           const nextAudioSegment = audioSegments[idx - 1];
           if (nextAudioSegment.playbackAudioUri) {
+            // If the next segment is a silence bundle, we must explicitly start playing
+            // its first raw segment ID (rather than the bundle's consolidated ID).
+            // This ensures that when the first track finishes, the continuous playback
+            // engine's onEnd listener can correctly identify the parent bundle, map the
+            // finished raw ID, and seamlessly transition to the next raw silence segment.
             if (
               nextAudioSegment.isSilenceBundle &&
               nextAudioSegment.bundledSegmentIds &&
