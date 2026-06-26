@@ -111,31 +111,7 @@ class TranscriptionEventProcessor:
             return
 
         try:
-            record_pipeline_stage("transcription_status", "attempts")
-            # Determine audio duration from start and end timestamps
-            duration_ms = self._get_duration_ms(claim)
-
-            # Retrieve active transcriber and run Speech API on ephemeral mono FLAC link
-            tracer = get_tracer(__name__)
-            with tracer.start_as_current_span("transcribe_audio") as span:
-                span.set_attribute("segment_id", segment_id)
-                span.set_attribute("feed_id", feed_id)
-                span.set_attribute("duration_ms", duration_ms)
-                transcript = await self.transcriber.transcribe(
-                    uri=claim.transcription_audio_uri
-                    or claim.canonical_audio_uri,
-                    duration_ms=duration_ms,
-                )
-
-            if not transcript:
-                logger.info(
-                    "Speech API returned empty transcription. Using fallback unintelligible marker."
-                )
-                errors.append("Empty transcription from Speech Model")
-                transcript = CHIRP_UNINTELLIGIBLE_MARKER
-                record_pipeline_stage("transcription_status", "unintelligible")
-            else:
-                record_pipeline_stage("transcription_status", "success")
+            transcript = await self._transcribe_audio_segment(claim, errors)
 
             # Build TranscribedAudio egress protobuf message
             out_proto = self._build_egress_message(claim, transcript)
@@ -182,6 +158,34 @@ class TranscriptionEventProcessor:
                     transcript or "",
                     errors,
                 )
+
+    async def _transcribe_audio_segment(
+        self, claim: NormalizedAudio, errors: list[str]
+    ) -> str:
+        """Invokes the active transcriber, handles empty transcripts, and returns the text."""
+        duration_ms = self._get_duration_ms(claim)
+
+        record_pipeline_stage("transcription_status", "attempts")
+        tracer = get_tracer(__name__)
+        with tracer.start_as_current_span("transcribe_audio") as span:
+            span.set_attribute("segment_id", claim.segment_id)
+            span.set_attribute("feed_id", claim.feed_id)
+            span.set_attribute("duration_ms", duration_ms)
+            transcript = await self.transcriber.transcribe(
+                uri=claim.transcription_audio_uri or claim.canonical_audio_uri,
+                duration_ms=duration_ms,
+            )
+
+        if not transcript:
+            logger.info(
+                "Speech API returned empty transcription. Using fallback unintelligible marker."
+            )
+            errors.append("Empty transcription from Speech Model")
+            record_pipeline_stage("transcription_status", "unintelligible")
+            return CHIRP_UNINTELLIGIBLE_MARKER
+
+        record_pipeline_stage("transcription_status", "success")
+        return transcript
 
     def _get_duration_ms(self, claim: NormalizedAudio) -> int:
         """Determine audio duration in milliseconds from start and end timestamps."""
