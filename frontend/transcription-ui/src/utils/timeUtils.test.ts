@@ -127,5 +127,12 @@ describe('timeUtils', () => {
       expect(formatDuration(60.2)).toBe('1 min');
       expect(formatDuration(60.7)).toBe('1 min 1 sec');
     });
+
+    it('returns <1 sec for durations less than 1 second', () => {
+      expect(formatDuration(0)).toBe('<1 sec');
+      expect(formatDuration(0.1)).toBe('<1 sec');
+      expect(formatDuration(0.5)).toBe('<1 sec');
+      expect(formatDuration(0.9)).toBe('<1 sec');
+    });
   });
 });

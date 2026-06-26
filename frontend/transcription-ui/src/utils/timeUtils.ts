@@ -63,6 +63,9 @@ export function getRelativeTimeString(
 }
 
 export function formatDuration(seconds: number): string {
+  if (seconds < 1) {
+    return '<1 sec';
+  }
   const roundedSeconds = Math.round(seconds);
   if (roundedSeconds < 60) {
     return `${roundedSeconds} sec`;
