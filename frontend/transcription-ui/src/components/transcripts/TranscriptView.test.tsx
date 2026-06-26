@@ -169,6 +169,8 @@ vi.mock('@wavesurfer/react', () => ({
 const audioEngineMock = vi.hoisted(() => ({
   playSpy: vi.fn(),
   lastSrc: null as string | null,
+  lastSeekTime: null as number | null,
+  currentTime: 0,
   lastCallbacks: null as {
     onPlay?: () => void;
     onPause?: () => void;
@@ -200,8 +202,10 @@ vi.mock('../../audio/WebAudioPlayer', async (importOriginal) => ({
         },
         pause: () => callbacks.onPause?.(),
         stop: () => {},
-        getCurrentTime: () => 0,
-        setCurrentTime: () => {},
+        getCurrentTime: () => audioEngineMock.currentTime,
+        setCurrentTime: (time: number) => {
+          audioEngineMock.lastSeekTime = time;
+        },
         unload: () => {},
         off: () => {},
       };
@@ -1236,6 +1240,69 @@ describe('TranscriptView', () => {
     // It should now play "Newer Transcript 1" (which is the next segment after the finished one)
     expect(playSpy).toHaveBeenCalledTimes(2);
     expect(audioEngineMock.lastSrc).toContain('gs:://newer.m4a');
+
+    vi.useRealTimers();
+  });
+
+  it('should stop playing when advancing past the end of the last segment, and rewind from the end back into the segment', async () => {
+    const mockSegment = makeMockAudioSegment(
+      '1',
+      'feed123',
+      '2026-04-10T12:00:00Z',
+      '2026-04-10T12:00:10Z',
+      'Transcript 1',
+      'gs:://foo.m4a'
+    );
+
+    vi.mocked(listAudioSegments).mockResolvedValueOnce({
+      segments: [mockSegment],
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+    // Play starts automatically
+    expect(audioEngineMock.lastSrc).toContain('gs:://foo.m4a');
+
+    // We mock getCurrentTime to return 8 seconds (near the end)
+    audioEngineMock.currentTime = 8;
+
+    // Click "Advance 5 seconds" button. It will overshoot the 10-second duration.
+    // 8 + 5 = 13 > 10.
+    // This should seek to 10 (the end) and since it is playing, it will trigger natural track end.
+    const advanceButton = screen.getByLabelText('advance 5 seconds');
+    fireEvent.click(advanceButton);
+
+    // It should seek to 10
+    expect(audioEngineMock.lastSeekTime).toBe(10);
+
+    // Simulate natural end of Transcript 1 due to seeking to the end
+    act(() => {
+      audioEngineMock.lastCallbacks?.onEnd?.();
+    });
+
+    // It should now stop playing and set playbackIntent to paused (which shows the play icon)
+    await waitFor(() => {
+      expect(screen.getAllByLabelText('play')[0]).toBeInTheDocument();
+    });
+
+    // Now, clicking "Rewind 5 seconds" while stopped/unloaded at the end
+    // should recognize the baseline currentTime is 10, targetTime is 5.
+    // So it should reload Transcript 1 and seek to 5.
+    const rewindButton = screen.getByLabelText('rewind 5 seconds');
+    fireEvent.click(rewindButton);
+
+    expect(audioEngineMock.lastSrc).toContain('gs:://foo.m4a');
+    expect(audioEngineMock.lastSeekTime).toBe(5);
 
     vi.useRealTimers();
   });

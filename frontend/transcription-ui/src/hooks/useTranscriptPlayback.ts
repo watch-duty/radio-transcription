@@ -8,6 +8,7 @@ import {
   calculateSkipTimeDestination,
   findAdjacentSpeechSegment,
   findNextAudioSegment,
+  getSegmentDuration,
   isWithinSegment,
 } from '../utils/playbackUtils';
 import { type RenderableAudioSegment } from './useConsolidatedAudioSegments';
@@ -110,9 +111,17 @@ export function useTranscriptPlayback({
     const activeId = currentlyPlayingSegmentId || highlightedSegmentId;
     if (!activeId) return;
 
-    const currentTime = currentAudioRef.current
-      ? currentAudioRef.current.getCurrentTime()
-      : 0;
+    // Determine the baseline current time.
+    // If a segment was active but the player is unloaded (e.g. track ended),
+    // we are conceptually at the end of that segment, so we start from its duration.
+    let currentTime = 0;
+    const activeSegment = rawAudioSegments.find((s) => s.id === activeId);
+
+    if (currentAudioRef.current) {
+      currentTime = currentAudioRef.current.getCurrentTime();
+    } else if (activeSegment) {
+      currentTime = getSegmentDuration(activeSegment);
+    }
 
     const dest = calculateSkipTimeDestination(
       rawAudioSegments,
@@ -122,7 +131,13 @@ export function useTranscriptPlayback({
     );
 
     if (dest) {
-      toggleAudio(dest.segmentId, dest.playbackAudioUri);
+      const needToLoad =
+        dest.segmentId !== currentlyPlayingSegmentId ||
+        currentAudioRef.current === null;
+
+      if (needToLoad) {
+        toggleAudio(dest.segmentId, dest.playbackAudioUri);
+      }
       currentAudioRef.current?.setCurrentTime(dest.seekTime);
       scrollSegmentIntoView(dest.segmentId);
     }
