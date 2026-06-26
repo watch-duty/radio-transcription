@@ -4,9 +4,11 @@ Triggered by Pub/Sub push events containing serialized NormalizedAudio
 claim-check metadata. Delegates processing to TranscriptionEventProcessor.
 """
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncGenerator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
@@ -154,9 +156,34 @@ class TranscriptionServiceContainer:
             )
 
 
+def _setup_default_executor() -> ThreadPoolExecutor:
+    """Configures and binds a ThreadPoolExecutor to the active event loop."""
+    concurrency_limit_str = os.environ.get("CONTAINER_CONCURRENCY", "128")
+    try:
+        concurrency_limit = int(concurrency_limit_str)
+    except ValueError:
+        logger.warning(
+            "Invalid CONTAINER_CONCURRENCY value: %r. Falling back to 128.",
+            concurrency_limit_str,
+        )
+        concurrency_limit = 128
+
+    executor = ThreadPoolExecutor(
+        max_workers=concurrency_limit,
+        thread_name_prefix="asyncio_default_executor",
+    )
+    asyncio.get_running_loop().set_default_executor(executor)
+    logger.info(
+        "Configured event loop default executor with %d threads.",
+        concurrency_limit,
+    )
+    return executor
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Warms up container services on startup and resets/closes them on shutdown."""
+    executor = _setup_default_executor()
     container = TranscriptionServiceContainer()
     try:
         container.eager_warmup()
@@ -182,6 +209,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
                         "Failed to close audio segments client on lifespan shutdown"
                     )
         container.reset_clients()
+        executor.shutdown(wait=False)
 
 
 app = FastAPI(title="Transcription Service ASGI", lifespan=lifespan)
