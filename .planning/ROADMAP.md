@@ -16,7 +16,7 @@ and finishes with operational proof, DLQ visibility, and rollout guidance.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Audit Contract and Emission** - Feed audit rows produce safe, non-blocking structured notification logs.
+- [x] **Phase 1: Audit Contract and Emission** - Feed audit rows produce safe, non-blocking structured notification logs. (completed 2026-06-26)
 - [ ] **Phase 2: Cloud Logging and Pub/Sub Routing** - Matching notification logs route to a dedicated Pub/Sub delivery path with IAM, retry, and DLQ configuration.
 - [ ] **Phase 3: Webhook Relay Delivery** - A stateless Cloud Run relay validates Pub/Sub log messages and forwards flat payloads to Watch Duty.
 - [ ] **Phase 4: Operations and Rollout Proof** - Delivery is observable, documented, and verified end-to-end in staging before production rollout.
@@ -40,7 +40,7 @@ Plans:
 - [x] 01-02-PLAN.md — Shared failure-isolated notification logging helper
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 01-03-PLAN.md — Async and sync store integration with focused verification
+- [x] 01-03-PLAN.md — Async and sync store integration with focused verification
 
 ### Phase 2: Cloud Logging and Pub/Sub Routing
 **Goal**: Matching notification logs reach a dedicated Pub/Sub route with least-privilege publishing, authenticated push, bounded retry, and DLQ configuration.
@@ -83,7 +83,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Audit Contract and Emission | 2/3 | In Progress | - |
+| 1. Audit Contract and Emission | 3/3 | Complete    | 2026-06-26 |
 | 2. Cloud Logging and Pub/Sub Routing | 0/TBD | Not started | - |
 | 3. Webhook Relay Delivery | 0/TBD | Not started | - |
 | 4. Operations and Rollout Proof | 0/TBD | Not started | - |
