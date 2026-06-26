@@ -9,16 +9,15 @@ with ``concurrency=1`` behind pgBouncer).
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING, Any, LiteralString, TypedDict, cast
 
 from backend.pipeline.storage import (
+    feed_audit_notifications,
     feed_lifecycle,
     feed_store,
     sync_feed_queries,
 )
 
-logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     import datetime
     import uuid
@@ -113,9 +112,13 @@ class SyncFeedStore:
         feed was previously in a failing state.
         """
         with self._connect_db() as conn:
-            conn.execute(
+            row = conn.execute(
                 cast("LiteralString", sync_feed_queries.HEARTBEAT_SQL),
                 (feed_id, _require_actor_id(actor_id)),
+            ).fetchone()
+        if row is not None:
+            feed_audit_notifications.emit_feed_audit_notification(
+                row.get("feed_audit_event")
             )
 
     def record_failure(
@@ -150,18 +153,14 @@ class SyncFeedStore:
             _require_actor_id(actor_id),
         )
         with self._connect_db() as conn:
-            conn.execute(
+            row = conn.execute(
                 cast("LiteralString", sync_feed_queries.RECORD_FAILURE_SQL),
                 params,
+            ).fetchone()
+        if row is not None:
+            feed_audit_notifications.emit_feed_audit_notification(
+                row.get("feed_audit_event")
             )
-        logger.warning(
-            "Feed failure recorded",
-            extra={
-                "feed_id": str(feed_id),
-                "status_reason": status_reason_value,
-                "reason": status_reason_detail,
-            },
-        )
 
     def record_non_budgeted_failure(
         self,
@@ -183,17 +182,14 @@ class SyncFeedStore:
             _require_actor_id(actor_id),
         )
         with self._connect_db() as conn:
-            conn.execute(
+            row = conn.execute(
                 cast(
                     "LiteralString",
                     sync_feed_queries.RECORD_NON_BUDGETED_FAILURE_SQL,
                 ),
                 params,
+            ).fetchone()
+        if row is not None:
+            feed_audit_notifications.emit_feed_audit_notification(
+                row.get("feed_audit_event")
             )
-        logger.info(
-            "Non-budgeted feed failure recorded",
-            extra={
-                "feed_id": str(feed_id),
-                "status_reason": status_reason.value,
-            },
-        )

@@ -126,8 +126,7 @@ class TestRecordHeartbeat:
         }
 
         with patch(
-            "backend.pipeline.storage.sync_feed_store."
-            "feed_audit_notifications",
+            "backend.pipeline.storage.sync_feed_store.feed_audit_notifications",
             create=True,
         ) as notifications:
             store.record_heartbeat(feed_id, actor_id=_ECHO_ACTOR_ID)
@@ -149,8 +148,7 @@ class TestRecordHeartbeat:
         store = _make_store(conn)
 
         with patch(
-            "backend.pipeline.storage.sync_feed_store."
-            "feed_audit_notifications",
+            "backend.pipeline.storage.sync_feed_store.feed_audit_notifications",
             create=True,
         ) as notifications:
             store.record_heartbeat(uuid.uuid4(), actor_id=_ECHO_ACTOR_ID)
@@ -184,8 +182,7 @@ class TestRecordFailure:
         }
 
         with patch(
-            "backend.pipeline.storage.sync_feed_store."
-            "feed_audit_notifications",
+            "backend.pipeline.storage.sync_feed_store.feed_audit_notifications",
             create=True,
         ) as notifications:
             store.record_failure(
@@ -299,8 +296,7 @@ class TestRecordFailure:
         }
 
         with patch(
-            "backend.pipeline.storage.sync_feed_store."
-            "feed_audit_notifications",
+            "backend.pipeline.storage.sync_feed_store.feed_audit_notifications",
             create=True,
         ) as notifications:
             store.record_failure(
@@ -339,8 +335,7 @@ class TestRecordNonBudgetedFailure:
         }
 
         with patch(
-            "backend.pipeline.storage.sync_feed_store."
-            "feed_audit_notifications",
+            "backend.pipeline.storage.sync_feed_store.feed_audit_notifications",
             create=True,
         ) as notifications:
             store.record_non_budgeted_failure(
@@ -378,8 +373,7 @@ class TestRecordNonBudgetedFailure:
         store = _make_store(conn)
 
         with patch(
-            "backend.pipeline.storage.sync_feed_store."
-            "feed_audit_notifications",
+            "backend.pipeline.storage.sync_feed_store.feed_audit_notifications",
             create=True,
         ) as notifications:
             store.record_non_budgeted_failure(
