@@ -4,6 +4,7 @@ import unittest.mock
 from pathlib import Path
 
 from common.gcs_utils import (
+    download_gcs_directory,
     download_gcs_uri,
     download_json_text,
     download_to_scratch,
@@ -168,6 +169,33 @@ class TestGcsObjectHelpers(unittest.TestCase):
             self.assertEqual(
                 storage.get("gs://bucket/path/inline.txt"), "inline"
             )
+
+    def test_download_gcs_directory(self) -> None:
+        storage = FakeStorageClient()
+        storage.put("gs://bucket/dir/a.txt", "file a")
+        storage.put("gs://bucket/dir/subdir/b.txt", "file b")
+        storage.put("gs://bucket/other.txt", "other file")
+
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp_dir = Path(tmp_s)
+            download_gcs_directory(storage, "gs://bucket/dir", tmp_dir)
+
+            self.assertEqual(
+                (tmp_dir / "a.txt").read_text(encoding="utf-8"), "file a"
+            )
+            self.assertEqual(
+                (tmp_dir / "subdir/b.txt").read_text(encoding="utf-8"), "file b"
+            )
+            self.assertFalse((tmp_dir / "other.txt").exists())
+
+    def test_download_gcs_directory_not_found(self) -> None:
+        storage = FakeStorageClient()
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp_dir = Path(tmp_s)
+            with self.assertRaises(FileNotFoundError):
+                download_gcs_directory(
+                    storage, "gs://bucket/nonexistent", tmp_dir
+                )
 
 
 if __name__ == "__main__":

@@ -2,10 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import type WaveSurfer from 'wavesurfer.js';
 
-import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
-import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
 import Box from '@mui/material/Box';
-import IconButton from '@mui/material/IconButton';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { type Theme, useTheme } from '@mui/material/styles';
@@ -25,7 +22,6 @@ interface AudioDisplayProps {
   onClipClick: (segmentId: string) => void;
   userDuration?: string | null;
   isAudioPlaying: boolean;
-  onTogglePlayPause: () => void;
   currentAudioRef?: React.RefObject<PlaybackController | null>;
 }
 
@@ -215,7 +211,6 @@ export function AudioDisplay({
   onClipClick,
   userDuration,
   isAudioPlaying,
-  onTogglePlayPause,
   currentAudioRef,
 }: AudioDisplayProps) {
   const theme = useTheme();
@@ -413,19 +408,6 @@ export function AudioDisplay({
     <Box
       sx={{ display: 'flex', alignItems: 'flex-start', width: '100%', mb: 1 }}
     >
-      <Box
-        sx={{ display: 'flex', mr: 1, alignItems: 'center', height: '60px' }}
-      >
-        <IconButton
-          onClick={onTogglePlayPause}
-          size="small"
-          color="primary"
-          aria-label={isAudioPlaying ? 'pause' : 'play'}
-          disabled={audioSegments.length === 0}
-        >
-          {isAudioPlaying ? <PauseIcon /> : <PlayArrowIcon />}
-        </IconButton>
-      </Box>
       <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
         <Paper
           variant="outlined"

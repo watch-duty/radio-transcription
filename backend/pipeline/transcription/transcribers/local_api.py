@@ -1,10 +1,10 @@
-import asyncio
 import logging
 import os
 import time
 
 import requests
 
+from backend.pipeline.common.tracing_utils import traced_to_thread
 from backend.pipeline.transcription.transcribers.base import Transcriber
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ class LocalApiTranscriber(Transcriber):
             )
             return None
 
-        resp = await asyncio.to_thread(_call_api)
+        resp = await traced_to_thread("local_asr_api_transcribe", _call_api)
         if resp is None:
             return None
 

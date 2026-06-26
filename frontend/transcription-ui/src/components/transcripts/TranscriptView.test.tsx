@@ -11,6 +11,7 @@ import {
   fireEvent,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react';
 import {
   AnnotationType,
@@ -177,7 +178,8 @@ const audioEngineMock = vi.hoisted(() => ({
   } | null,
 }));
 
-vi.mock('../../audio/WebAudioPlayer', () => ({
+vi.mock('../../audio/WebAudioPlayer', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../audio/WebAudioPlayer')>()),
   createAudioContext: () => ({ close: () => Promise.resolve() }),
   WebAudioPlayer: class {
     resume() {}
@@ -883,7 +885,7 @@ describe('TranscriptView', () => {
     await waitFor(() => {
       expect(screen.getByText('Active')).toBeTruthy();
       expect(screen.queryByText(/heartbeat|updated/i)).toBeNull();
-      expect(screen.getByText('Latest: 5 minutes ago')).toBeTruthy();
+      expect(screen.getByText('Last activity: 5 minutes ago')).toBeTruthy();
     });
 
     vi.useRealTimers();
@@ -1238,7 +1240,11 @@ describe('TranscriptView', () => {
       expect(screen.getByText('[No speech detected]')).toBeTruthy();
     });
 
-    const playButton = screen.getAllByLabelText('play')[1];
+    const row = screen.getByText('[No speech detected]').closest('li');
+    expect(row).toBeTruthy();
+    fireEvent.mouseEnter(row!);
+
+    const playButton = within(row!).getByLabelText('play');
     fireEvent.click(playButton);
 
     expect(audioEngineMock.lastSrc).toContain('silence-1.m4a');

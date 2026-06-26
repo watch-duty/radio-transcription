@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import AudioPlayer from './AudioPlayer';
+import TranscriptPlayControl from './TranscriptPlayControl';
 
 describe('AudioPlayer', () => {
   const mockOnToggleAudio = vi.fn();
@@ -24,12 +24,12 @@ describe('AudioPlayer', () => {
   });
 
   it('renders play button initially', () => {
-    render(<AudioPlayer {...defaultProps} />);
+    render(<TranscriptPlayControl {...defaultProps} />);
     expect(screen.getByLabelText('play')).toBeTruthy();
   });
 
   it('calls onToggleAudio when clicked', () => {
-    render(<AudioPlayer {...defaultProps} />);
+    render(<TranscriptPlayControl {...defaultProps} />);
 
     const button = screen.getByLabelText('play');
     fireEvent.click(button);
@@ -42,7 +42,7 @@ describe('AudioPlayer', () => {
 
   it('renders pause button when playing this segment', () => {
     render(
-      <AudioPlayer
+      <TranscriptPlayControl
         {...defaultProps}
         currentlyPlayingSegmentId="123"
         isAudioPlaying={true}
@@ -53,7 +53,7 @@ describe('AudioPlayer', () => {
 
   it('renders play button when playing another segment', () => {
     render(
-      <AudioPlayer
+      <TranscriptPlayControl
         {...defaultProps}
         currentlyPlayingSegmentId="456"
         isAudioPlaying={true}
@@ -64,7 +64,7 @@ describe('AudioPlayer', () => {
 
   it('renders play button when not playing even if currentlyPlayingSegmentId matches', () => {
     render(
-      <AudioPlayer
+      <TranscriptPlayControl
         {...defaultProps}
         currentlyPlayingSegmentId="123"
         isAudioPlaying={false}
