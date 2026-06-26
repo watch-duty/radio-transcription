@@ -6,9 +6,10 @@ claim-check metadata. Delegates processing to TranscriptionEventProcessor.
 
 import logging
 import os
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
-import functions_framework
-from cloudevents.http.event import CloudEvent
+from fastapi import FastAPI, HTTPException, Request, Response, status
 from google.cloud import pubsub_v1
 
 from backend.pipeline.common.clients import audio_segments_client
@@ -49,6 +50,11 @@ class TranscriptionServiceContainer:
         self._transcriber = None
         self._publisher = None
         self._processor = None
+
+    @property
+    def processor(self) -> TranscriptionEventProcessor | None:
+        """Returns the cached processor if it has been warmed up, otherwise None."""
+        return self._processor
 
     @fork_checked
     def get_transcriber(self, project_id: str) -> Transcriber:
@@ -112,9 +118,13 @@ class TranscriptionServiceContainer:
             api_url = os.environ.get("AUDIO_SEGMENTS_API_URL")
             audio_segments_client_instance = None
             if api_url:
-                logger.info("Initializing AudioSegmentsClient at: %s", api_url)
+                logger.info(
+                    "Initializing AsyncAudioSegmentsClient at: %s", api_url
+                )
                 audio_segments_client_instance = (
-                    audio_segments_client.AudioSegmentsClient(api_url=api_url)
+                    audio_segments_client.AsyncAudioSegmentsClient(
+                        api_url=api_url
+                    )
                 )
             else:
                 logger.error(
@@ -144,22 +154,49 @@ class TranscriptionServiceContainer:
             )
 
 
-# Global container instance managed by the GCF container instance lifecycle
-container = TranscriptionServiceContainer()
-container.eager_warmup()
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
+    """Warms up container services on startup and resets/closes them on shutdown."""
+    container = TranscriptionServiceContainer()
+    try:
+        container.eager_warmup()
+        if container.processor:
+            app.state.processor = container.processor
+        yield
+    finally:
+        # Clean up client connection pools/channels on exit
+        if container.processor:
+            processor = container.processor
+            if processor.transcriber:
+                try:
+                    await processor.transcriber.close()
+                except Exception:
+                    logger.exception(
+                        "Failed to close transcriber client on lifespan shutdown"
+                    )
+            if processor.audio_segments_client:
+                try:
+                    await processor.audio_segments_client.close()
+                except Exception:
+                    logger.exception(
+                        "Failed to close audio segments client on lifespan shutdown"
+                    )
+        container.reset_clients()
 
 
-@functions_framework.cloud_event
-def transcribe_claim_check(cloud_event: CloudEvent) -> None:
-    """Entry point for Cloud Function Pub/Sub trigger events.
+app = FastAPI(title="Transcription Service ASGI", lifespan=lifespan)
 
-    Args:
-        cloud_event: The triggered Pub/Sub CloudEvent.
-    """
-    setup_tracing(
-        service_name="transcription-service",
-        use_batch=False,
-    )
 
-    processor = container.get_processor()
-    processor.process_event(cloud_event)
+@app.post("/", status_code=status.HTTP_204_NO_CONTENT)
+async def transcribe_claim_check(envelope: dict, request: Request) -> Response:
+    """Entry point for Pub/Sub push HTTP POST requests."""
+    setup_tracing(service_name="transcription-service", use_batch=False)
+
+    processor = getattr(request.app.state, "processor", None)
+    if not processor:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Transcription service is not initialized",
+        )
+    await processor.process_event(envelope)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

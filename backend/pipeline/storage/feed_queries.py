@@ -141,7 +141,6 @@ SELECT
     do_update.status_reason,
     do_update.status_reason_updated_at,
     do_update.status_reason_detail,
-    do_update.quarantine_reason,
     do_update.last_bookmark_time,
     do_update.created_at,
     do_update.feed_revision,
@@ -602,8 +601,7 @@ GET_FEED_SQL = """\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
-       f.last_bookmark_time, f.created_at, f.quarantine_reason,
-       f.status_reason_detail,
+       f.last_bookmark_time, f.created_at, f.status_reason_detail,
        fp.source_feed_id, fp.tags,
        (
            SELECT s.end_timestamp
@@ -622,8 +620,7 @@ LIST_FEEDS_DESC_SQL = """\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
-       f.last_bookmark_time, f.created_at, f.quarantine_reason,
-       f.status_reason_detail,
+       f.last_bookmark_time, f.created_at, f.status_reason_detail,
        fp.source_feed_id, fp.tags,
        (
            SELECT s.end_timestamp
@@ -648,8 +645,7 @@ LIST_FEEDS_ASC_SQL = """\
 SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        f.status_reason_updated_at, f.failure_count,
        f.worker_id, f.last_heartbeat, f.last_processed_filename,
-       f.last_bookmark_time, f.created_at, f.quarantine_reason,
-       f.status_reason_detail,
+       f.last_bookmark_time, f.created_at, f.status_reason_detail,
        fp.source_feed_id, fp.tags,
        (
            SELECT s.end_timestamp
@@ -785,7 +781,6 @@ updated AS (
         failure_count = 0,
         worker_id = NULL,
         unclaimed_since = NOW(),
-        quarantine_reason = NULL,
         status_reason_detail = NULL,
         last_heartbeat = NOW(),
         audit_revision = feeds.audit_revision + 1,

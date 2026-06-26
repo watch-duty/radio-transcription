@@ -22,15 +22,20 @@ import {
   type AlertFilter,
   useAudioSegments,
 } from '../../hooks/useAudioSegments';
-import { useConsolidatedAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
+import { useAudioSettings } from '../../hooks/useAudioSettings';
+import {
+  type RenderableAudioSegment,
+  useConsolidatedAudioSegments,
+} from '../../hooks/useConsolidatedAudioSegments';
 import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
-import { matchesSegmentId } from '../../utils/playbackUtils';
+import { isWithinSegment } from '../../utils/playbackUtils';
 import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
 import FeedSearchView from '../feeds/FeedSearchView';
+import AudioSettingsButton from './AudioSettingsButton';
 import FeedHeader from './FeedHeader';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
@@ -67,34 +72,17 @@ export function TranscriptView({
     [targetTimestampParam]
   );
 
-  const [searchedFeedId, setSearchedFeedId] = useState<string>(
-    targetFeedId || ''
-  );
-  const [searchedTimestamp, setSearchedTimestamp] = useState<Date | null>(
-    targetTimestamp
-  );
+  const searchedFeedId = targetFeedId || '';
+  const searchedTimestamp = targetTimestamp;
 
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [playLatestAudio, setPlayLatestAudio] = useState(true);
   const [playbackIntent, setPlaybackIntent] = useState<'playing' | 'paused'>('playing');
 
-  // Effect which sets the searched feed ID based on the search params changing.
+  const playLatestAudioRef = useRef(playLatestAudio);
   useEffect(() => {
-    if (targetFeedId) {
-      setSearchedFeedId(targetFeedId);
-    } else {
-      setSearchedFeedId('');
-    }
-  }, [targetFeedId]);
-
-  // Effect which sets the searched timestamp based on the search params changing.
-  useEffect(() => {
-    if (targetTimestamp) {
-      setSearchedTimestamp(targetTimestamp);
-    } else {
-      setSearchedTimestamp(null);
-    }
-  }, [targetTimestamp]);
+    playLatestAudioRef.current = playLatestAudio;
+  }, [playLatestAudio]);
 
   const [redactTranscripts, setRedactTranscripts] = useState(false);
   const [alertFilter, setAlertFilter] = useState<AlertFilter>('all');
@@ -121,21 +109,32 @@ export function TranscriptView({
   const newerLoadAnchorId = useRef<string | null>(null);
   const wasFetchingNewer = useRef(false);
 
+  const { volumeDb, setVolumeDb, pan, setPan, speed, setSpeed, reset } =
+    useAudioSettings(searchedFeedId);
+
   // Passed to useAudioPlayback so its `onEnd` callback reads the current list
   // rather than a stale closure when deciding whether to auto-advance.
-  const audioSegmentsRef = useRef<AudioSegment[]>([]);
+  const audioSegmentsRef = useRef<RenderableAudioSegment[]>([]);
+  const rawAudioSegmentsRef = useRef<AudioSegment[]>([]);
 
   const {
     isAudioPlaying,
     currentlyPlayingSegmentId,
-    playbackEndedForId,
-    setPlaybackEndedForId,
     currentAudioRef,
     togglePlay: toggleAudio,
     stop: stopPlayback,
   } = useAudioPlayback({
     audioSegmentsRef,
+    rawAudioSegmentsRef,
     onPlaySegment: setHighlightedSegmentId,
+    volumeDb,
+    pan,
+    speed,
+    onPlaybackEnded: (lastSegmentId) => {
+      if (!playLatestAudioRef.current) {
+        setPlaybackIntent('paused');
+      }
+    },
   });
 
   // Side effects for segments that arrive from a live poll: notify, bump the
@@ -255,7 +254,7 @@ export function TranscriptView({
 
   const audioSegments = useConsolidatedAudioSegments(rawAudioSegments);
 
-  // Keep the ref in sync with the audio segments so that audio lifecycle callbacks can access the latest list.
+  // Keep the refs in sync with the audio segments so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {
     audioSegmentsRef.current = audioSegments;
   }, [audioSegments]);
@@ -286,7 +285,7 @@ export function TranscriptView({
       if (segment && segment.playbackAudioUri) {
         toggleAudio(segment.id, segment.playbackAudioUri);
       } else {
-        const audioSegment = audioSegments.find((t) => matchesSegmentId(t, targetId));
+        const audioSegment = audioSegments.find((t) => isWithinSegment(t, targetId));
         if (audioSegment && audioSegment.playbackAudioUri) {
           toggleAudio(audioSegment.id, audioSegment.playbackAudioUri);
         }
@@ -311,77 +310,9 @@ export function TranscriptView({
     toggleAudio: handleToggleAudio,
   });
 
-  // Handles continuous auto-play by advancing to the next newer audio segment when the current audio finishes.
-  // Since the audio segment list is sorted newest-first, the next transmission in time is at `currentIndex - 1`.
   useEffect(() => {
-    if (!playbackEndedForId) return;
-
-    // 1. First check if the ended segment was part of a silence bundle, and if there is a next newer segment in that same bundle!
-    const parentBundle = audioSegments.find(
-      (t) =>
-        t.isSilenceBundle && t.bundledSegmentIds?.includes(playbackEndedForId)
-    );
-
-    if (parentBundle && parentBundle.bundledSegmentIds) {
-      const endedIdx =
-        parentBundle.bundledSegmentIds.indexOf(playbackEndedForId);
-      if (
-        endedIdx !== -1 &&
-        endedIdx < parentBundle.bundledSegmentIds.length - 1
-      ) {
-        const nextSegmentId = parentBundle.bundledSegmentIds[endedIdx + 1];
-        const nextSegment = rawAudioSegments.find(
-          (s) => s.id === nextSegmentId
-        );
-        if (nextSegment && nextSegment.playbackAudioUri) {
-          toggleAudio(nextSegment.id, nextSegment.playbackAudioUri);
-          setPlaybackEndedForId(null);
-          return;
-        }
-      }
-    }
-
-    // 2. If it was a Speech segment, or the last segment in a silence bundle, advance to the next newer audio segment row
-    const currentIndex = audioSegments.findIndex((t) =>
-      matchesSegmentId(t, playbackEndedForId)
-    );
-
-    if (currentIndex > 0) {
-      const nextAudioSegment = audioSegments[currentIndex - 1];
-      if (nextAudioSegment.playbackAudioUri) {
-        // If the next audio segment is a silence bundle, play its first segment
-        if (
-          nextAudioSegment.isSilenceBundle &&
-          nextAudioSegment.bundledSegmentIds &&
-          nextAudioSegment.bundledSegmentIds.length > 0
-        ) {
-          const firstId = nextAudioSegment.bundledSegmentIds[0];
-          const firstSegment = rawAudioSegments.find((s) => s.id === firstId);
-          if (firstSegment && firstSegment.playbackAudioUri) {
-            toggleAudio(firstSegment.id, firstSegment.playbackAudioUri);
-            setPlaybackEndedForId(null);
-            return;
-          }
-        }
-        toggleAudio(nextAudioSegment.id, nextAudioSegment.playbackAudioUri);
-      }
-    }
-
-    if (currentIndex <= 0) {
-      if (!playLatestAudio) {
-        setPlaybackIntent('paused');
-      }
-    }
-
-    setPlaybackEndedForId(null);
-  }, [
-    playbackEndedForId,
-    audioSegments,
-    rawAudioSegments,
-    toggleAudio,
-    setPlaybackEndedForId,
-    playLatestAudio,
-  ]);
+    rawAudioSegmentsRef.current = rawAudioSegments;
+  }, [rawAudioSegments]);
 
   // This is used to group audio segments by date and display them in the UI.
   // groupCounts is an array of numbers representing the number of audio segments in each group.
@@ -456,7 +387,7 @@ export function TranscriptView({
       !hasScrolledToTarget.current
     ) {
       const index = audioSegments.findIndex((t) =>
-        matchesSegmentId(t, targetSegmentId)
+        isWithinSegment(t, targetSegmentId)
       );
       if (index !== -1) {
         const timer = setTimeout(() => {
@@ -473,9 +404,7 @@ export function TranscriptView({
   }, [isAudioSegmentsSuccess, targetSegmentId, audioSegments]);
 
   const handleClipClick = (segmentId: string) => {
-    const index = audioSegments.findIndex((t) =>
-      matchesSegmentId(t, segmentId)
-    );
+    const index = audioSegments.findIndex((t) => isWithinSegment(t, segmentId));
     if (index !== -1) {
       virtuosoRef.current?.scrollToIndex({
         index,
@@ -519,7 +448,7 @@ export function TranscriptView({
       if (!targetId) return;
 
       if (shouldPlayNext) {
-        const idx = audioSegments.findIndex((s) => matchesSegmentId(s, targetId!));
+        const idx = audioSegments.findIndex((s) => isWithinSegment(s, targetId!));
         if (idx !== -1 && idx > 0) {
           const nextAudioSegment = audioSegments[idx - 1];
           if (nextAudioSegment.playbackAudioUri) {
@@ -594,7 +523,7 @@ export function TranscriptView({
     if (!anchorId) return;
 
     const prependedCount = audioSegments.findIndex((s) =>
-      matchesSegmentId(s, anchorId)
+      isWithinSegment(s, anchorId)
     );
     if (prependedCount > 0) {
       setFirstItemIndex((prev) => prev - prependedCount);
@@ -603,14 +532,28 @@ export function TranscriptView({
 
   // A different feed / timestamp / alert filter replaces the list wholesale
   // rather than prepending, so reset the anchoring baseline.
-  useEffect(() => {
+  const [prevFeedId, setPrevFeedId] = useState(searchedFeedId);
+  const [prevTimestamp, setPrevTimestamp] = useState(searchedTimestamp);
+  const [prevAlertFilter, setPrevAlertFilter] = useState(alertFilter);
+
+  if (
+    searchedFeedId !== prevFeedId ||
+    searchedTimestamp?.getTime() !== prevTimestamp?.getTime() ||
+    alertFilter !== prevAlertFilter
+  ) {
+    setPrevFeedId(searchedFeedId);
+    setPrevTimestamp(searchedTimestamp);
+    setPrevAlertFilter(alertFilter);
     setFirstItemIndex(VIRTUOSO_START_INDEX);
+  }
+
+  // Reset refs inside an effect since they should not be modified during render
+  useEffect(() => {
     newerLoadAnchorId.current = null;
     hasScrolledAwayFromTop.current = false;
   }, [searchedFeedId, searchedTimestamp, alertFilter]);
 
   const handleFilterByDateTime = (date: Date | null) => {
-    setSearchedTimestamp(date);
     setSearchParams((prev) => {
       if (date) {
         prev.set('timestamp', date.getTime().toString());
@@ -637,7 +580,6 @@ export function TranscriptView({
   };
 
   const handleFeedSelect = (feedId: string) => {
-    setSearchedFeedId(feedId);
     stopPlayback();
     // Reset all state
     handleFilterByDateTime(null);
@@ -697,21 +639,40 @@ export function TranscriptView({
         onError={onError}
       />
 
-      <AudioControl
-        sx={{ mt: 1 }}
-        isAudioPlaying={playbackIntent === 'playing'}
-        onTogglePlayPause={handleTogglePlayPause}
-        onSkipToNext={skipToNext}
-        onSkipToPrevious={skipToPrevious}
-        onFastForward={skipToNextSpeech}
-        onFastRewind={skipToPreviousSpeech}
-        onReplay5={() => skipTime(-5)}
-        onForward5={() => skipTime(5)}
-        playLatestAudio={playLatestAudio}
-        onChangePlayLatestAudio={setPlayLatestAudio}
-        disableControls={rawAudioSegments.length === 0}
-        disableCheckbox={!searchedFeed}
-      />
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1,
+          mt: 1,
+          // Space for the alert icon that hovers above the AudioDisplay.
+          mb: 2.5,
+        }}
+      >
+        <AudioControl
+          sx={{ flex: 1, mb: 0 }}
+          isAudioPlaying={playbackIntent === 'playing'}
+          onTogglePlayPause={handleTogglePlayPause}
+          onSkipToNext={skipToNext}
+          onSkipToPrevious={skipToPrevious}
+          onFastForward={skipToNextSpeech}
+          onFastRewind={skipToPreviousSpeech}
+          onSkipTime={skipTime}
+          playLatestAudio={playLatestAudio}
+          togglePlayLatestAudio={setPlayLatestAudio}
+          disableControls={rawAudioSegments.length === 0}
+          disableCheckbox={!searchedFeed}
+        />
+        <AudioSettingsButton
+          volumeDb={volumeDb}
+          setVolumeDb={setVolumeDb}
+          pan={pan}
+          setPan={setPan}
+          speed={speed}
+          setSpeed={setSpeed}
+          onReset={reset}
+        />
+      </Box>
 
       <AudioDisplay
         audioSegments={rawAudioSegments}

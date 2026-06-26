@@ -11,9 +11,8 @@ describe('AudioControl', () => {
   const mockOnSkipToPrevious = vi.fn();
   const mockOnFastForward = vi.fn();
   const mockOnFastRewind = vi.fn();
-  const mockOnReplay5 = vi.fn();
-  const mockOnForward5 = vi.fn();
-  const mockOnChangePlayLatestAudio = vi.fn();
+  const mockOnSkipTime = vi.fn();
+  const mockTogglePlayLatestAudio = vi.fn();
 
   const defaultProps = {
     isAudioPlaying: false,
@@ -22,10 +21,9 @@ describe('AudioControl', () => {
     onSkipToPrevious: mockOnSkipToPrevious,
     onFastForward: mockOnFastForward,
     onFastRewind: mockOnFastRewind,
-    onReplay5: mockOnReplay5,
-    onForward5: mockOnForward5,
+    onSkipTime: mockOnSkipTime,
     playLatestAudio: true,
-    onChangePlayLatestAudio: mockOnChangePlayLatestAudio,
+    togglePlayLatestAudio: mockTogglePlayLatestAudio,
   };
 
   beforeEach(() => {
@@ -42,11 +40,11 @@ describe('AudioControl', () => {
     expect(
       screen.getByLabelText('rewind to previous detected speech')
     ).toBeTruthy();
-    expect(screen.getByLabelText('rewind to previous segment')).toBeTruthy();
+    expect(screen.getByLabelText('skip to previous transmission')).toBeTruthy();
     expect(screen.getByLabelText('rewind 5 seconds')).toBeTruthy();
     expect(screen.getByLabelText('play')).toBeTruthy();
     expect(screen.getByLabelText('advance 5 seconds')).toBeTruthy();
-    expect(screen.getByLabelText('advance to next segment')).toBeTruthy();
+    expect(screen.getByLabelText('skip to next transmission')).toBeTruthy();
     expect(
       screen.getByLabelText('advance to next detected speech')
     ).toBeTruthy();
@@ -69,16 +67,16 @@ describe('AudioControl', () => {
     expect(mockOnFastRewind).toHaveBeenCalledTimes(1);
   });
 
-  it('triggers callback for rewind to previous segment button', () => {
+  it('triggers callback for skip to previous transmission button', () => {
     render(<AudioControl {...defaultProps} />);
-    fireEvent.click(screen.getByLabelText('rewind to previous segment'));
+    fireEvent.click(screen.getByLabelText('skip to previous transmission'));
     expect(mockOnSkipToPrevious).toHaveBeenCalledTimes(1);
   });
 
   it('triggers callback for rewind 5 seconds button', () => {
     render(<AudioControl {...defaultProps} />);
     fireEvent.click(screen.getByLabelText('rewind 5 seconds'));
-    expect(mockOnReplay5).toHaveBeenCalledTimes(1);
+    expect(mockOnSkipTime).toHaveBeenCalledWith(-5);
   });
 
   it('triggers callback for play/pause button', () => {
@@ -90,12 +88,12 @@ describe('AudioControl', () => {
   it('triggers callback for advance 5 seconds button', () => {
     render(<AudioControl {...defaultProps} />);
     fireEvent.click(screen.getByLabelText('advance 5 seconds'));
-    expect(mockOnForward5).toHaveBeenCalledTimes(1);
+    expect(mockOnSkipTime).toHaveBeenCalledWith(5);
   });
 
-  it('triggers callback for advance to next segment button', () => {
+  it('triggers callback for skip to next transmission button', () => {
     render(<AudioControl {...defaultProps} />);
-    fireEvent.click(screen.getByLabelText('advance to next segment'));
+    fireEvent.click(screen.getByLabelText('skip to next transmission'));
     expect(mockOnSkipToNext).toHaveBeenCalledTimes(1);
   });
 
@@ -111,7 +109,7 @@ describe('AudioControl', () => {
       name: 'Always play latest audio',
     });
     fireEvent.click(checkbox);
-    expect(mockOnChangePlayLatestAudio).toHaveBeenCalledWith(false);
+    expect(mockTogglePlayLatestAudio).toHaveBeenCalledWith(false);
   });
 
   it('disables all buttons when disableControls is true', () => {
@@ -120,11 +118,11 @@ describe('AudioControl', () => {
     expect(
       screen.getByLabelText('rewind to previous detected speech')
     ).toBeDisabled();
-    expect(screen.getByLabelText('rewind to previous segment')).toBeDisabled();
+    expect(screen.getByLabelText('skip to previous transmission')).toBeDisabled();
     expect(screen.getByLabelText('rewind 5 seconds')).toBeDisabled();
     expect(screen.getByLabelText('play')).toBeDisabled();
     expect(screen.getByLabelText('advance 5 seconds')).toBeDisabled();
-    expect(screen.getByLabelText('advance to next segment')).toBeDisabled();
+    expect(screen.getByLabelText('skip to next transmission')).toBeDisabled();
     expect(
       screen.getByLabelText('advance to next detected speech')
     ).toBeDisabled();

@@ -8,7 +8,7 @@ import pytest
 import requests
 
 FEEDS_API_HOST = os.environ.get("FEEDS_API_HOST", "localhost:8089")
-_TEST_ACTOR_HEADERS = {"X-WD-Actor-Id": "user:google:e2e-admin-sub"}
+_TEST_ACTOR_HEADERS = {"X-WD-Actor-Id": "user:google:e2e-admin@example.com"}
 
 
 def _create_and_cleanup_feed(

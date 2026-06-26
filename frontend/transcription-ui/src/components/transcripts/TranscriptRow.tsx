@@ -17,7 +17,7 @@ import {
   findTranscriptAnnotationData,
 } from '../../utils/annotationUtils';
 import { formatDuration } from '../../utils/timeUtils';
-import AudioPlayer from '../audio/AudioPlayer';
+import TranscriptPlayControl from '../audio/TranscriptPlayControl';
 import AlertTooltip from './AlertTooltip';
 import HighlightedTranscript from './HighlightedTranscript';
 import { SegmentInfoPopover } from './SegmentInfoPopover';
@@ -226,7 +226,7 @@ export function TranscriptRow({
             </Typography>
           )}
         </Box>
-        <AudioPlayer
+        <TranscriptPlayControl
           audioUri={audioSegment.playbackAudioUri ?? ''}
           segmentId={audioSegment.id}
           onToggleAudio={onToggleAudio}

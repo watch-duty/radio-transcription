@@ -178,7 +178,8 @@ const audioEngineMock = vi.hoisted(() => ({
   } | null,
 }));
 
-vi.mock('../../audio/WebAudioPlayer', () => ({
+vi.mock('../../audio/WebAudioPlayer', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../audio/WebAudioPlayer')>()),
   createAudioContext: () => ({ close: () => Promise.resolve() }),
   WebAudioPlayer: class {
     resume() {}
@@ -884,7 +885,7 @@ describe('TranscriptView', () => {
     await waitFor(() => {
       expect(screen.getByText('Active')).toBeTruthy();
       expect(screen.queryByText(/heartbeat|updated/i)).toBeNull();
-      expect(screen.getByText('Latest: 5 minutes ago')).toBeTruthy();
+      expect(screen.getByText('Last activity: 5 minutes ago')).toBeTruthy();
     });
 
     vi.useRealTimers();

@@ -27,7 +27,4 @@ RUN mkdir -p ./backend/pipeline/schema_types
 RUN touch ./backend/pipeline/schema_types/__init__.py
 RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
-CMD ["functions-framework", \
-     "--source=backend/pipeline/transcription/main.py", \
-     "--target=transcribe_claim_check", \
-     "--signature-type=cloudevent"]
+CMD ["uvicorn", "backend.pipeline.transcription.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

@@ -6,9 +6,9 @@ import { type AudioSegment } from '@transcription/common';
 import { type PlaybackController } from '../audio/WebAudioPlayer';
 import {
   calculateSkipTimeDestination,
-  findAdjacentAudioSegment,
   findAdjacentSpeechSegment,
-  matchesSegmentId,
+  findNextAudioSegment,
+  isWithinSegment,
 } from '../utils/playbackUtils';
 import { type RenderableAudioSegment } from './useConsolidatedAudioSegments';
 
@@ -43,13 +43,14 @@ export function useTranscriptPlayback({
 
   const scrollSegmentIntoView = (segmentId: string) => {
     const displayIdx = audioSegments.findIndex((t) =>
-      matchesSegmentId(t, segmentId)
+      isWithinSegment(t, segmentId)
     );
     if (displayIdx !== -1) {
       virtuosoRef.current?.scrollToIndex({
         index: displayIdx,
         align: 'center',
         behavior: 'smooth',
+        offset: 0,
       });
     }
   };
@@ -58,11 +59,7 @@ export function useTranscriptPlayback({
     const targetId = getTargetId();
     if (!targetId) return;
 
-    const next = findAdjacentAudioSegment(
-      rawAudioSegments,
-      targetId,
-      'forward'
-    );
+    const next = findNextAudioSegment(rawAudioSegments, targetId, 'forward');
     if (next) {
       toggleAudio(next.id, next.uri);
       scrollSegmentIntoView(next.id);
@@ -73,11 +70,7 @@ export function useTranscriptPlayback({
     const targetId = getTargetId();
     if (!targetId) return;
 
-    const prev = findAdjacentAudioSegment(
-      rawAudioSegments,
-      targetId,
-      'backward'
-    );
+    const prev = findNextAudioSegment(rawAudioSegments, targetId, 'backward');
     if (prev) {
       toggleAudio(prev.id, prev.uri);
       scrollSegmentIntoView(prev.id);

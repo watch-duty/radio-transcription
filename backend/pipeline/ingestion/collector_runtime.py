@@ -28,8 +28,8 @@ from backend.pipeline.ingestion import (
     failure_policy,
     health_server,
     memory_watchdog,
-    quarantine_reason,
     quarantine_telemetry,
+    status_reason_detail,
 )
 from backend.pipeline.ingestion.failure_classifiers import pubsub
 from backend.pipeline.ingestion.health_server import HealthState
@@ -1377,7 +1377,7 @@ class CollectorRuntime:
             # Transitional catch-all for bugs or untyped collector failures.
             # Source-specific attribution belongs in collectors that raise
             # FeedFailure; the runtime only records the explicit fallback.
-            reason = quarantine_reason.exception_text(e)
+            reason = status_reason_detail.exception_text(e)
             status_reason = FeedStatusReason.SYSTEM_UNEXPECTED_ERROR
             action = failure_policy.classify_failure_policy(status_reason)
             if (
