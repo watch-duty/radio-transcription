@@ -139,6 +139,49 @@ class TestBuildExample(unittest.TestCase):
         self.assertIn("2. second", user_text)
         self.assertIn("current prompt", user_text)
 
+    def test_text_turn_history_mode_uses_prior_user_model_turns_with_one_audio(
+        self,
+    ) -> None:
+        user_prompt = "current prompt"
+        example = build_audio_tuning_example(
+            audio_uri="gs://bucket/current.flac",
+            gt_text="current text",
+            system_prompt="sys",
+            user_prompt=user_prompt,
+            history=[
+                ContextTurn("gs://bucket/prev-1.flac", "first"),
+                ContextTurn("gs://bucket/prev-2.flac", "second"),
+            ],
+            history_mode="text_turns",
+        )
+
+        self.assertEqual(
+            [turn["role"] for turn in example["contents"]],
+            ["user", "model", "user", "model", "user", "model"],
+        )
+        audio_parts = [
+            part
+            for turn in example["contents"]
+            for part in turn["parts"]
+            if "fileData" in part
+        ]
+        self.assertEqual(len(audio_parts), 1)
+        self.assertEqual(
+            audio_parts[0]["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
+        )
+        self.assertEqual(
+            example["contents"][0]["parts"][0]["text"], user_prompt
+        )
+        self.assertEqual(example["contents"][1]["parts"][0]["text"], "first")
+        self.assertEqual(
+            example["contents"][2]["parts"][0]["text"], user_prompt
+        )
+        self.assertEqual(example["contents"][3]["parts"][0]["text"], "second")
+        self.assertEqual(
+            example["contents"][4]["parts"][0]["text"], user_prompt
+        )
+
 
 class TestValidateExample(unittest.TestCase):
     def test_accepts_well_formed_example(self) -> None:
@@ -187,16 +230,31 @@ class TestValidateExample(unittest.TestCase):
         ex["contents"] = ex["contents"][:1]
         self.assertFalse(validate_audio_tuning_example(ex))
 
-    def test_accepts_well_formed_history_turns(self) -> None:
+    def test_accepts_well_formed_text_turn_history_turns(self) -> None:
         ex = build_audio_tuning_example(
             "gs://b/current.flac",
             "current",
             "sys",
             "user",
             history=[ContextTurn("gs://b/prior.flac", "prior")],
+            history_mode="text_turns",
         )
 
         self.assertTrue(validate_audio_tuning_example(ex))
+
+    def test_rejects_audio_history_turns_with_multiple_audio_parts(
+        self,
+    ) -> None:
+        ex = build_audio_tuning_example(
+            "gs://b/current.flac",
+            "current",
+            "sys",
+            "user",
+            history=[ContextTurn("gs://b/prior.flac", "prior")],
+            history_mode="audio",
+        )
+
+        self.assertFalse(validate_audio_tuning_example(ex))
 
 
 class TestImportIsolation(unittest.TestCase):

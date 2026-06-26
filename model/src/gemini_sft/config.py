@@ -15,7 +15,7 @@ from common.gemini.prompts import (
 from common.inference_manifest import validate_inference_dataset_slug
 
 ADAPTER_SIZES: Final = frozenset({"ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"})
-PRIOR_CONTEXT_MODES: Final = frozenset({"transcript"})
+PRIOR_CONTEXT_MODES: Final = frozenset({"text_turns", "transcript"})
 ROUND_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
@@ -342,15 +342,15 @@ def _optional_nonnegative_int(
 def _optional_prior_context_mode(data: dict[str, Any], key: str) -> str:
     value = _lookup(data, key)
     if value is None:
-        return "transcript"
+        return "text_turns"
     if not isinstance(value, str):
-        msg = f"{key} must be transcript"
+        msg = f"{key} must be one of {', '.join(sorted(PRIOR_CONTEXT_MODES))}"
         raise RunConfigError(msg)
     mode = value.strip().lower()
     if mode not in PRIOR_CONTEXT_MODES:
         msg = (
-            f"{key} must be transcript; Vertex SFT examples can contain "
-            "only one audio part"
+            f"{key} must be one of {', '.join(sorted(PRIOR_CONTEXT_MODES))}; "
+            "Vertex SFT examples can contain only one audio part"
         )
         raise RunConfigError(msg)
     return mode

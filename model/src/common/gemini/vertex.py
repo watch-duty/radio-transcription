@@ -31,7 +31,11 @@ import time
 from collections.abc import Sequence
 from typing import Any
 
-from common.gemini.context import ContextTurn, build_transcript_context_prompt
+from common.gemini.context import (
+    ContextTurn,
+    build_prior_text_user_turn,
+    build_transcript_context_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +77,8 @@ def build_request(
     casings.
     """
     contents: list[dict[str, Any]] = []
-    if history_mode not in {"audio", "transcript"}:
-        msg = "history_mode must be 'audio' or 'transcript'"
+    if history_mode not in {"audio", "text_turns", "transcript"}:
+        msg = "history_mode must be 'audio', 'text_turns', or 'transcript'"
         raise ValueError(msg)
     history_turns = list(history or ())
     if history_mode == "audio":
@@ -84,6 +88,20 @@ def build_request(
                     {
                         "role": "user",
                         "parts": [_audio_file_data_part(turn.audio_uri)],
+                    },
+                    {"role": "model", "parts": [{"text": turn.text}]},
+                ]
+            )
+        current_user_prompt = user_prompt
+    elif history_mode == "text_turns":
+        for turn in history_turns:
+            contents.extend(
+                [
+                    {
+                        "role": "user",
+                        "parts": [
+                            {"text": build_prior_text_user_turn(user_prompt)}
+                        ],
                     },
                     {"role": "model", "parts": [{"text": turn.text}]},
                 ]

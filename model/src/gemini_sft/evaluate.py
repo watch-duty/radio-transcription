@@ -252,7 +252,7 @@ def batch_infer(
     system_prompt: str,
     user_prompt: str,
     histories: list[Any] | None = None,
-    history_mode: str = "transcript",
+    history_mode: str = "text_turns",
 ) -> PredictionMap | None:
     """Build batch input JSONL, submit, download outputs, and parse predictions."""
     return run_batch_audio_inference(
@@ -290,13 +290,20 @@ def _optional_config_nonnegative_int(config: dict[str, Any], key: str) -> int:
 def _optional_config_prior_context_mode(
     config: dict[str, Any], key: str
 ) -> str:
-    value = config.get(key, "transcript")
+    allowed = {"text_turns", "transcript"}
+    value = config.get(key, "text_turns")
     if not isinstance(value, str):
-        msg = f"config.json field must be transcript: {key}"
+        msg = (
+            f"config.json field must be one of {', '.join(sorted(allowed))}: "
+            f"{key}"
+        )
         raise TypeError(msg)
     mode = value.strip().lower()
-    if mode != "transcript":
-        msg = f"config.json field must be transcript: {key}"
+    if mode not in allowed:
+        msg = (
+            f"config.json field must be one of {', '.join(sorted(allowed))}: "
+            f"{key}"
+        )
         raise ValueError(msg)
     return mode
 

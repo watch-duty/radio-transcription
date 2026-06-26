@@ -237,7 +237,7 @@ def write_gemini_jsonl(
     system_prompt: str,
     user_prompt: str,
     prior_context_count: int = 0,
-    prior_context_mode: str = "transcript",
+    prior_context_mode: str = "text_turns",
 ) -> None:
     """Write Gemini audio-SFT JSONL from canonical rows."""
     path.parent.mkdir(parents=True, exist_ok=True)

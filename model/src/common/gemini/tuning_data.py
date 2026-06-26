@@ -12,7 +12,11 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from common.gemini.context import ContextTurn, build_transcript_context_prompt
+from common.gemini.context import (
+    ContextTurn,
+    build_prior_text_user_turn,
+    build_transcript_context_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,16 +44,17 @@ def build_audio_tuning_example(
         history: Previous audio/transcript pairs from the same source
             recording. Each pair is emitted as ``user(audio) -> model(text)``.
         history_mode: ``audio`` emits notebook-style audio/text prior turns.
-            ``transcript`` folds prior transcripts into the current user prompt
-            so Vertex tuning sees only one audio part.
+            ``text_turns`` emits prior user/model turns with text-only user
+            turns and transcript model turns. ``transcript`` folds prior
+            transcripts into the current user prompt.
 
     Returns:
         A dict matching the current Vertex AI audio-SFT JSONL schema:
         ``{systemInstruction, contents: [history..., current user, target]}``.
     """
     contents: list[dict[str, Any]] = []
-    if history_mode not in {"audio", "transcript"}:
-        msg = "history_mode must be 'audio' or 'transcript'"
+    if history_mode not in {"audio", "text_turns", "transcript"}:
+        msg = "history_mode must be 'audio', 'text_turns', or 'transcript'"
         raise ValueError(msg)
     history_turns = list(history or ())
     if history_mode == "audio":
@@ -59,6 +64,20 @@ def build_audio_tuning_example(
                     {
                         "role": "user",
                         "parts": [_audio_file_data_part(turn.audio_uri)],
+                    },
+                    {"role": "model", "parts": [{"text": turn.text}]},
+                ]
+            )
+        current_user_prompt = user_prompt
+    elif history_mode == "text_turns":
+        for turn in history_turns:
+            contents.extend(
+                [
+                    {
+                        "role": "user",
+                        "parts": [
+                            {"text": build_prior_text_user_turn(user_prompt)}
+                        ],
                     },
                     {"role": "model", "parts": [{"text": turn.text}]},
                 ]
@@ -108,6 +127,7 @@ def validate_audio_tuning_example(example: dict[str, Any]) -> bool:
     contents = example.get("contents")
     if not isinstance(contents, list) or len(contents) < 2 or len(contents) % 2:
         return False
+    audio_part_count = 0
     for index in range(0, len(contents), 2):
         user_turn = contents[index]
         model_turn = contents[index + 1]
@@ -115,11 +135,19 @@ def validate_audio_tuning_example(example: dict[str, Any]) -> bool:
             return False
         if user_turn.get("role") != "user" or model_turn.get("role") != "model":
             return False
-        if not _is_valid_audio_file_data(_extract_user_file_data(user_turn)):
+        user_text = _extract_user_text(user_turn)
+        file_data_parts = _extract_user_file_data_parts(user_turn)
+        if not user_text.strip() and not file_data_parts:
+            return False
+        for file_data in file_data_parts:
+            if not _is_valid_audio_file_data(file_data):
+                return False
+        audio_part_count += len(file_data_parts)
+        if index == len(contents) - 2 and not file_data_parts:
             return False
         if not _extract_model_text(model_turn).strip():
             return False
-    return True
+    return audio_part_count == 1
 
 
 def _audio_file_data_part(audio_uri: str) -> dict[str, Any]:
@@ -132,16 +160,34 @@ def _audio_file_data_part(audio_uri: str) -> dict[str, Any]:
 
 
 def _extract_user_file_data(user_turn: dict[str, Any]) -> dict[str, Any] | None:
+    file_data_parts = _extract_user_file_data_parts(user_turn)
+    return file_data_parts[0] if file_data_parts else None
+
+
+def _extract_user_file_data_parts(
+    user_turn: dict[str, Any],
+) -> list[dict[str, Any]]:
     user_parts = user_turn.get("parts", [])
     file_parts = [
         p for p in user_parts if isinstance(p, dict) and "fileData" in p
     ]
-    if not file_parts:
-        return None
-    fd = file_parts[0]["fileData"]
-    if not isinstance(fd, dict):
-        return None
-    return fd
+    file_data_parts: list[dict[str, Any]] = []
+    for part in file_parts:
+        file_data = part["fileData"]
+        if isinstance(file_data, dict):
+            file_data_parts.append(file_data)
+    return file_data_parts
+
+
+def _extract_user_text(user_turn: dict[str, Any]) -> str:
+    user_parts = user_turn.get("parts", [])
+    if not isinstance(user_parts, list):
+        return ""
+    return "\n".join(
+        part["text"]
+        for part in user_parts
+        if isinstance(part, dict) and isinstance(part.get("text"), str)
+    )
 
 
 def _is_valid_audio_file_data(file_data: dict[str, Any] | None) -> bool:

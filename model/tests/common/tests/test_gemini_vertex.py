@@ -485,6 +485,43 @@ class TestBuildRequest(unittest.TestCase):
             contents[0]["parts"][0]["text"],
         )
 
+    def test_text_turn_history_mode_uses_prior_user_model_turns_with_one_audio(
+        self,
+    ) -> None:
+        user_prompt = "U"
+        result = self.build_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt=user_prompt,
+            history=[
+                ContextTurn("gs://bucket/prev-1.flac", "first"),
+                ContextTurn("gs://bucket/prev-2.flac", "second"),
+            ],
+            history_mode="text_turns",
+        )
+
+        contents = result["request"]["contents"]
+        self.assertEqual(
+            [turn["role"] for turn in contents],
+            ["user", "model", "user", "model", "user"],
+        )
+        audio_parts = [
+            part
+            for turn in contents
+            for part in turn["parts"]
+            if "file_data" in part
+        ]
+        self.assertEqual(len(audio_parts), 1)
+        self.assertEqual(
+            audio_parts[0]["file_data"]["file_uri"],
+            "gs://bucket/current.flac",
+        )
+        self.assertEqual(contents[0]["parts"][0]["text"], user_prompt)
+        self.assertEqual(contents[1]["parts"][0]["text"], "first")
+        self.assertEqual(contents[2]["parts"][0]["text"], user_prompt)
+        self.assertEqual(contents[3]["parts"][0]["text"], "second")
+        self.assertEqual(contents[4]["parts"][0]["text"], user_prompt)
+
 
 class TestParseBatchOutput(unittest.TestCase):
     def test_parses_camel_case_request_echo(self) -> None:

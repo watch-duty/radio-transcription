@@ -36,6 +36,16 @@ def build_transcript_context_prompt(
     return "\n".join(lines)
 
 
+def build_prior_text_user_turn(user_prompt: str) -> str:
+    """Return the text-only prior user turn.
+
+    This intentionally reuses the current-turn prompt exactly. For the prior
+    context SFT run that prompt is the manual-context notebook TURN_PROMPT; the
+    only omitted prior-turn part is the audio.
+    """
+    return user_prompt
+
+
 def build_context_histories(
     rows: list[dict[str, Any]],
     *,
