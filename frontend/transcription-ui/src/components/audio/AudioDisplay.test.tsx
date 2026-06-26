@@ -103,6 +103,7 @@ function makeMockAudioSegment(
 // by useAudioTimelineWindow.test.ts.
 type DisplayProps = React.ComponentProps<typeof AudioDisplay>;
 function renderDisplay(overrides: Partial<DisplayProps> = {}) {
+  const isAudioPlaying = overrides.isAudioPlaying ?? false;
   const props: DisplayProps = {
     audioSegments: [],
     currentlyPlayingSegmentId: null,
@@ -111,6 +112,7 @@ function renderDisplay(overrides: Partial<DisplayProps> = {}) {
     windowEndTime: null,
     windowDurationMs: AUDIO_WINDOW_DURATION_MS,
     isAudioPlaying: false,
+    playbackState: isAudioPlaying ? 'playing' : 'listening',
     ...overrides,
   };
   return render(<AudioDisplay {...props} />);

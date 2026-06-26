@@ -894,7 +894,7 @@ describe('TranscriptView', () => {
     vi.useRealTimers();
   });
 
-  it('automatically plays newly received audio when Always play latest audio checkbox is checked', async () => {
+  it('automatically plays newly received audio by default (live listening)', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
     const playSpy = audioEngineMock.playSpy;
@@ -955,13 +955,13 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Newer Transcript 1')).toBeTruthy();
     });
 
-    // Verify that audio was automatically played since "Always play latest audio" is checked by default
+    // Verify that audio was automatically played since live listening is the default
     expect(playSpy).toHaveBeenCalled();
 
     vi.useRealTimers();
   });
 
-  it('does not automatically play newly received audio when Always play latest audio checkbox is unchecked', async () => {
+  it('does not automatically play newly received audio after the user pauses', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
     const playSpy = audioEngineMock.playSpy;
@@ -1009,9 +1009,9 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
 
-    // Uncheck "Always play latest audio" checkbox
-    const autoplayCheckbox = screen.getByLabelText(/Always play latest audio/i);
-    fireEvent.click(autoplayCheckbox);
+    // Live "listening" is the default, so the control shows the pause icon.
+    // Clicking it stops live listening (enters the paused state).
+    fireEvent.click(screen.getByLabelText('pause'));
 
     // Advance time by 15 seconds to trigger background polling
     vi.advanceTimersByTime(15000);
@@ -1020,7 +1020,7 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Newer Transcript 1')).toBeTruthy();
     });
 
-    // Verify that audio was NOT automatically played when disabled
+    // Verify that audio was NOT automatically played once paused
     expect(playSpy).not.toHaveBeenCalled();
 
     vi.useRealTimers();
@@ -1400,6 +1400,101 @@ describe('TranscriptView', () => {
         'desc',
         undefined
       );
+    });
+  });
+
+  it('returns to live "listening" (not paused) when jumping to live from playback', async () => {
+    const { playSpy } = audioEngineMock;
+    const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
+
+    const pastSegments = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Past Transcript',
+        'gs://bucket/past.m4a',
+        []
+      ),
+    ];
+
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments: pastSegments,
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: [`/?feedId=feed123&timestamp=${testTimestamp}`] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Past Transcript')).toBeTruthy();
+    });
+
+    // Play a past clip so playback is active before navigating.
+    const row = screen.getByText('Past Transcript').closest('li');
+    fireEvent.mouseEnter(row!);
+    fireEvent.click(within(row!).getByLabelText('play'));
+    expect(playSpy).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Jump to live/i }));
+
+    // The fix: stopping playback to navigate must not be mistaken for a user
+    // pause. The control returns to the live "listening" state (pause icon),
+    // not a frozen "paused" state (play icon).
+    await waitFor(() => {
+      expect(screen.getByLabelText('pause')).toBeTruthy();
+    });
+  });
+
+  it('resumes live "listening" after playing while paused, once the clip ends', async () => {
+    const { playSpy } = audioEngineMock;
+
+    const segments = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs://bucket/clip.m4a',
+        []
+      ),
+    ];
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments,
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    // Pause live listening (control flips to the play icon).
+    fireEvent.click(screen.getByLabelText('pause'));
+    expect(screen.getByLabelText('play')).toBeTruthy();
+
+    // Play a clip from its row while paused → playback engages.
+    const row = screen.getByText('Transcript 1').closest('li');
+    fireEvent.mouseEnter(row!);
+    fireEvent.click(within(row!).getByLabelText('play'));
+    expect(playSpy).toHaveBeenCalled();
+
+    // When that clip ends, we return to live "listening" (pause icon), not the
+    // stale pre-play "paused" state.
+    act(() => {
+      audioEngineMock.lastCallbacks?.onEnd?.();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('pause')).toBeTruthy();
     });
   });
 

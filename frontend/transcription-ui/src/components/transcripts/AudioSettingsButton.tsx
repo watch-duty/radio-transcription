@@ -69,6 +69,7 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
   const volumeActive = volumeDb !== DEFAULT_VOLUME_DB;
   const panLabel = pan !== DEFAULT_PAN ? PAN_LABELS[pan] : null;
   const speedActive = speed !== DEFAULT_SPEED;
+  const hasBadges = speedActive || panLabel !== null;
   // The icon stays put except for mute; the scale below conveys cut vs. boost.
   const VolumeIcon = isMuted ? VolumeOffIcon : VolumeUpIcon;
   const volumeIconScale = volumeIconScaleFor(volumeDb);
@@ -113,13 +114,18 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
           >
             <IconButton
               color="primary"
-              size="small"
+              size="large"
               aria-label="audio controls"
               onClick={(e) => setAudioAnchorEl(e.currentTarget)}
-              sx={{ border: 1, borderColor: 'divider' }}
+              // Transparent border keeps the size stable when badges toggle.
+              sx={{
+                p: 0.5,
+                border: 1,
+                borderColor: hasBadges ? 'divider' : 'transparent',
+              }}
             >
               <VolumeIcon
-                fontSize="small"
+                fontSize="large"
                 sx={{
                   transform: `scale(${volumeIconScale})`,
                   transition: 'transform 0.15s ease',

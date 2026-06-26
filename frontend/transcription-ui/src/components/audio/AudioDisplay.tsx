@@ -12,8 +12,11 @@ import WavesurferPlayer from '@wavesurfer/react';
 import type { PlaybackController } from '../../audio/WebAudioPlayer';
 import { findEvaluationAnnotationData } from '../../utils/annotationUtils';
 import { getAudioUrl } from '../../utils/audioUtils';
+import { type PlaybackState } from '../../utils/playbackUtils';
 import { formatClockTime } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
+import TimelinePlayhead from './TimelinePlayhead';
+import { computePlayhead } from './computePlayhead';
 
 interface AudioDisplayProps {
   audioSegments: AudioSegment[];
@@ -24,10 +27,9 @@ interface AudioDisplayProps {
   windowEndTime: number | null;
   windowDurationMs: number;
   isAudioPlaying: boolean;
+  playbackState: PlaybackState;
   currentAudioRef?: React.RefObject<PlaybackController | null>;
 }
-
-const PLAYING_CURSOR_WIDTH_PX = 1;
 
 interface TimelineClipProps {
   clip: {
@@ -54,18 +56,6 @@ const TimelineClip = React.memo(
     currentTimeSeconds,
   }: TimelineClipProps) => {
     const wsRef = useRef<WaveSurfer | null>(null);
-
-    // Sync options dynamically (like cursor color/width) without destroying wavesurfer
-    useEffect(() => {
-      if (wsRef.current) {
-        wsRef.current.setOptions({
-          cursorColor: clip.isAudioPlaying
-            ? theme.palette.error.main
-            : 'transparent',
-          cursorWidth: clip.isAudioPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
-        });
-      }
-    }, [clip.isAudioPlaying, theme.palette.error.main]);
 
     // Sync playback progress (seek)
     useEffect(() => {
@@ -141,12 +131,6 @@ const TimelineClip = React.memo(
           interact={false}
           onReady={(ws) => {
             wsRef.current = ws;
-            ws.setOptions({
-              cursorColor: clip.isAudioPlaying
-                ? theme.palette.error.main
-                : 'transparent',
-              cursorWidth: clip.isAudioPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
-            });
             if (clip.isAudioPlaying && currentTimeSeconds !== undefined) {
               ws.setTime(currentTimeSeconds);
             }
@@ -184,6 +168,7 @@ export function AudioDisplay({
   windowEndTime,
   windowDurationMs,
   isAudioPlaying,
+  playbackState,
   currentAudioRef,
 }: AudioDisplayProps) {
   const theme = useTheme();
@@ -227,6 +212,11 @@ export function AudioDisplay({
     };
   }, [isAudioPlaying, currentlyPlayingSegmentId, currentAudioRef]);
 
+  const firstAudioSegment = audioSegments[0];
+  const firstAudioSegmentId = firstAudioSegment?.id || null;
+
+  const isListening = playbackState === 'listening';
+
   // Calculates the visible time window bounds and processes audio segments into positioned clips for the waveform display.
   const { startTime, clips } = useMemo(() => {
     if (audioSegments.length === 0) {
@@ -267,7 +257,10 @@ export function AudioDisplay({
           left,
           width,
           isAudioPlaying: t.id === currentlyPlayingSegmentId,
-          isHighlighted: t.id === highlightedSegmentId,
+          // While listening, the lozenge marks the newest clip, not selection.
+          isHighlighted:
+            t.id === highlightedSegmentId &&
+            !(isListening && t.id === firstAudioSegmentId),
           hasAlert:
             !!evaluationAnnotation && evaluationAnnotation.decisions.length > 0,
         };
@@ -280,7 +273,18 @@ export function AudioDisplay({
     highlightedSegmentId,
     windowEndTime,
     windowDurationMs,
+    isListening,
+    firstAudioSegmentId,
   ]);
+
+  const playhead = computePlayhead({
+    audioSegments,
+    currentlyPlayingSegmentId,
+    state: playbackState,
+    localCurrentTimeSeconds,
+    startTime,
+    windowDurationMs,
+  });
 
   return (
     <Box
@@ -310,6 +314,13 @@ export function AudioDisplay({
               }
             />
           ))}
+          {playhead.show && (
+            <TimelinePlayhead
+              state={playhead.state}
+              left={playhead.left}
+              label={playhead.label}
+            />
+          )}
           {audioSegments.length === 0 && (
             <Box
               sx={{

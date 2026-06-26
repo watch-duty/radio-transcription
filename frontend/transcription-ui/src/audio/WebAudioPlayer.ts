@@ -129,7 +129,11 @@ export class WebAudioPlayer {
 
     const listeners: GraphListeners = {
       play: () => callbacks.onPlay?.(),
-      pause: () => callbacks.onPause?.(),
+      // A `pause` fires right before `ended`; skip it so end-of-track isn't
+      // mistaken for a user pause (which would flash the paused UI mid-advance).
+      pause: () => {
+        if (!this.audio.ended) callbacks.onPause?.();
+      },
       ended: () => callbacks.onEnd?.(),
       error: () => callbacks.onError?.(),
     };

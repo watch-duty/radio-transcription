@@ -9,10 +9,14 @@ const rtf = new RelativeTimeFormat('en');
 // 24-hour HH:MM, used by the audio timeline labels and the date/time chip so
 // they stay consistent regardless of locale AM/PM conventions. Single choke
 // point for clock rendering — route a future user 12h/24h setting through here.
-export function formatClockTime(timestamp: number): string {
+export function formatClockTime(
+  timestamp: number,
+  includeSeconds = false
+): string {
   return new Date(timestamp).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
+    ...(includeSeconds && { second: '2-digit' }),
     hour12: false,
   });
 }

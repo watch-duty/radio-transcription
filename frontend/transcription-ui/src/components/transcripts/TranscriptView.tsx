@@ -28,7 +28,7 @@ import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
-import { isWithinSegment } from '../../utils/playbackUtils';
+import { type PlaybackState, isWithinSegment } from '../../utils/playbackUtils';
 import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
 import {
@@ -77,7 +77,11 @@ export function TranscriptView({
   const searchedTimestamp = targetTimestamp;
 
   const [newMessageCount, setNewMessageCount] = useState(0);
-  const [playLatestAudio, setPlayLatestAudio] = useState(true);
+  // Live audio auto-plays by default; pausing is how the user opts out. Deep
+  // links to a past timestamp start parked, since they aren't at the live edge.
+  const [isPlaybackPaused, setIsPlaybackPaused] = useState(
+    () => targetTimestamp !== null
+  );
 
   const [redactTranscripts, setRedactTranscripts] = useState(false);
   const [alertFilter, setAlertFilter] = useState<AlertFilter>('all');
@@ -115,6 +119,9 @@ export function TranscriptView({
   // window is at the live edge, so viewing the past isn't yanked forward.
   const isLatestTimeWindowRef = useRef(true);
 
+  // Live-edge segment captured on pause, to detect clips arriving while paused.
+  const pausedAnchorId = useRef<string | null>(null);
+
   const {
     isAudioPlaying,
     currentlyPlayingSegmentId,
@@ -130,6 +137,21 @@ export function TranscriptView({
     pan,
     speed,
   });
+
+  // The displayed state, shared by the play/pause control and the playhead.
+  // `isPlaybackPaused` is the explicit user intent; whether we're actively
+  // playing vs. idly "listening" at the live edge follows the engine.
+  const playbackState: PlaybackState = isAudioPlaying
+    ? 'playing'
+    : isPlaybackPaused
+      ? 'paused'
+      : 'listening';
+
+  // Invariant: if audio is playing, the user isn't paused. Clears the pause that
+  // a non-toggle play path (skip controls, row play) would otherwise leave stale.
+  useEffect(() => {
+    if (isAudioPlaying) setIsPlaybackPaused(false);
+  }, [isAudioPlaying]);
 
   // Side effects for segments that arrive from a live poll: notify, bump the
   // unread badge when backgrounded, and optionally autoplay the latest.
@@ -151,14 +173,16 @@ export function TranscriptView({
         }
       }
 
-      if (!isAudioPlaying && playLatestAudio && isLatestTimeWindowRef.current) {
+      // Autoplay incoming clips only while "listening" (idle and caught up at
+      // the live edge), so a scrolled-back view isn't yanked forward.
+      if (playbackState === 'listening' && isLatestTimeWindowRef.current) {
         const audioToPlay = newAudioSegments[newAudioSegments.length - 1];
         if (audioToPlay.playbackAudioUri) {
           toggleAudio(audioToPlay.id, audioToPlay.playbackAudioUri);
         }
       }
     },
-    [triggerSnackbar, isAudioPlaying, playLatestAudio, toggleAudio]
+    [triggerSnackbar, playbackState, toggleAudio]
   );
 
   const {
@@ -467,26 +491,59 @@ export function TranscriptView({
     setHighlightedSegmentId(segmentId);
   };
 
-  const handleTogglePlayPause = () => {
-    const targetId = isAudioPlaying
-      ? currentlyPlayingSegmentId || highlightedSegmentId
-      : highlightedSegmentId ||
-        currentlyPlayingSegmentId ||
-        audioSegments[0]?.id;
-    if (!targetId) return;
+  const playSegmentById = (segmentId: string | null | undefined) => {
+    if (!segmentId) return;
+    const segment =
+      rawAudioSegments.find((s) => s.id === segmentId) ??
+      audioSegments.find((t) => isWithinSegment(t, segmentId));
+    if (segment?.playbackAudioUri) {
+      toggleAudio(segment.id, segment.playbackAudioUri);
+    }
+  };
 
-    const specificSegment = rawAudioSegments.find((s) => s.id === targetId);
-    if (specificSegment && specificSegment.playbackAudioUri) {
-      toggleAudio(specificSegment.id, specificSegment.playbackAudioUri);
+  // Expand a silence bundle to its first raw segment, mirroring auto-advance.
+  const playConsolidatedAt = (index: number) => {
+    const segment = audioSegments[index];
+    if (!segment) return;
+    if (segment.isSilenceBundle && segment.bundledSegmentIds?.length) {
+      playSegmentById(segment.bundledSegmentIds[0]);
+    } else {
+      playSegmentById(segment.id);
+    }
+  };
+
+  const handleTogglePlayPause = () => {
+    // Playing → pause the active clip.
+    if (playbackState === 'playing') {
+      setIsPlaybackPaused(true);
+      playSegmentById(currentlyPlayingSegmentId);
       return;
     }
 
-    const audioSegment = audioSegments.find((t) =>
-      isWithinSegment(t, targetId)
-    );
-    if (audioSegment && audioSegment.playbackAudioUri) {
-      toggleAudio(audioSegment.id, audioSegment.playbackAudioUri);
+    // Paused → resume, advance to a newer clip, or fall back to "listening".
+    if (playbackState === 'paused') {
+      setIsPlaybackPaused(false);
+      // Still-loaded clip → we paused mid-playback; resume it.
+      if (currentAudioRef.current && currentlyPlayingSegmentId) {
+        playSegmentById(currentlyPlayingSegmentId);
+        return;
+      }
+      // At the live edge: play the next clip if newer ones arrived, else the
+      // cleared pause above leaves us back at green "listening".
+      const anchorId = pausedAnchorId.current ?? currentlyPlayingSegmentId;
+      const anchorIndex = anchorId
+        ? audioSegments.findIndex((t) => isWithinSegment(t, anchorId))
+        : -1;
+      if (anchorIndex > 0) {
+        playConsolidatedAt(anchorIndex - 1);
+      }
+      return;
     }
+
+    // Listening → pause; remember the live edge to compare against on resume.
+    pausedAnchorId.current =
+      currentlyPlayingSegmentId ?? audioSegments[0]?.id ?? null;
+    setIsPlaybackPaused(true);
   };
 
   const handleRowClick = (segmentId: string) => {
@@ -563,10 +620,13 @@ export function TranscriptView({
   }, [searchedFeedId, searchedTimestamp, alertFilter]);
 
   const handleFilterByDateTime = (date: Date | null) => {
-    // Navigating the window (filtering / jumping to live) pauses playback and
-    // drops the selection so playback doesn't drag the view back.
+    // Navigating the window stops playback and drops the selection so playback
+    // doesn't drag the view back. Picking a past time parks us ("press play");
+    // clearing the filter (jump to live / feed change) returns to "listening".
     stopPlayback();
     setHighlightedSegmentId(null);
+    setIsPlaybackPaused(date !== null);
+    pausedAnchorId.current = null;
     setSearchParams((prev) => {
       if (date) {
         prev.set('timestamp', date.getTime().toString());
@@ -600,7 +660,8 @@ export function TranscriptView({
   };
 
   const handleFeedSelect = (feedId: string) => {
-    // Resets to live: stops playback and clears the selection + date filter.
+    // Resets to live: handleFilterByDateTime stops playback, clears the
+    // selection + date filter, and returns to live "listening".
     handleFilterByDateTime(null);
     setNewMessageCount(0);
     setIsViewAtTopOfAudioSegments(true);
@@ -656,40 +717,28 @@ export function TranscriptView({
         onError={onError}
       />
 
-      <Box
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 1,
-          mt: 1,
-          // Space for the alert icon that hovers above the AudioDisplay.
-          mb: 2.5,
-        }}
-      >
-        <AudioControl
-          sx={{ flex: 1, mb: 0 }}
-          isAudioPlaying={isAudioPlaying}
-          onTogglePlayPause={handleTogglePlayPause}
-          onSkipToNext={skipToNext}
-          onSkipToPrevious={skipToPrevious}
-          onFastForward={skipToNextSpeech}
-          onFastRewind={skipToPreviousSpeech}
-          onSkipTime={skipTime}
-          playLatestAudio={playLatestAudio}
-          togglePlayLatestAudio={setPlayLatestAudio}
-          disableControls={rawAudioSegments.length === 0}
-          disableCheckbox={!searchedFeed}
-        />
-        <AudioSettingsButton
-          volumeDb={volumeDb}
-          setVolumeDb={setVolumeDb}
-          pan={pan}
-          setPan={setPan}
-          speed={speed}
-          setSpeed={setSpeed}
-          onReset={reset}
-        />
-      </Box>
+      <AudioControl
+        sx={{ mt: 1 }}
+        showPauseIcon={playbackState !== 'paused'}
+        onTogglePlayPause={handleTogglePlayPause}
+        onSkipToNext={skipToNext}
+        onSkipToPrevious={skipToPrevious}
+        onFastForward={skipToNextSpeech}
+        onFastRewind={skipToPreviousSpeech}
+        onSkipTime={skipTime}
+        disableControls={rawAudioSegments.length === 0}
+        endSlot={
+          <AudioSettingsButton
+            volumeDb={volumeDb}
+            setVolumeDb={setVolumeDb}
+            pan={pan}
+            setPan={setPan}
+            speed={speed}
+            setSpeed={setSpeed}
+            onReset={reset}
+          />
+        }
+      />
 
       <AudioDisplay
         audioSegments={rawAudioSegments}
@@ -699,6 +748,7 @@ export function TranscriptView({
         windowEndTime={windowEndTime}
         windowDurationMs={windowDurationMs}
         isAudioPlaying={isAudioPlaying}
+        playbackState={playbackState}
         currentAudioRef={currentAudioRef}
       />
 

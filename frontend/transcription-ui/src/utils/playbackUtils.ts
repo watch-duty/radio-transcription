@@ -2,6 +2,9 @@ import { type AudioSegment } from '@transcription/common';
 
 import { type RenderableAudioSegment } from '../hooks/useConsolidatedAudioSegments';
 
+// Playback mode shared by the play/pause control and the timeline playhead.
+export type PlaybackState = 'playing' | 'paused' | 'listening';
+
 /**
  * Matches a consolidated segment by its own id or, for silence bundles, by any
  * of the raw segment ids it contains.
