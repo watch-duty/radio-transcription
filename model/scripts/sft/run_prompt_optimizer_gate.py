@@ -199,6 +199,14 @@ def main() -> int:
     parser.add_argument("--target-model-qps", type=float, default=3.0)
     parser.add_argument("--eval-qps", type=float, default=3.0)
     parser.add_argument("--thinking-budget", type=int, default=0)
+    parser.add_argument(
+        "--target-model-harm-block-threshold",
+        default=None,
+        help=(
+            "Optional VAPO target_model_harm_block_threshold override, for "
+            "example OFF."
+        ),
+    )
     parser.add_argument("--num-steps", type=int, default=10)
     parser.add_argument("--families", nargs="*", default=None)
     parser.add_argument("--wait", action="store_true")
@@ -383,6 +391,10 @@ def _vapo_config(
         "data_limit": args.data_limit,
         "num_steps": args.num_steps,
     }
+    if args.target_model_harm_block_threshold:
+        config["target_model_harm_block_threshold"] = (
+            args.target_model_harm_block_threshold
+        )
     if args.metric_mode == "custom":
         config.update(
             {
