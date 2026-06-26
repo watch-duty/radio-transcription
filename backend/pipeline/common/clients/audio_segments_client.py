@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
-import time
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -125,69 +123,16 @@ class GCPMetadataAuth(requests.auth.AuthBase):
         return r
 
 
-# Async OIDC token cache mapping audience to (token, expire_timestamp)
-_async_token_cache: dict[str, tuple[str, float]] = {}
-_async_locks_lock = threading.Lock()
-_async_audience_locks: dict[str, asyncio.Lock] = {}
-
-# Keep cached tokens for 45 minutes (2700 seconds)
-ASYNC_CACHE_TTL_SECONDS = 2700
-
-
 class GCPMetadataAsyncAuth(httpx.Auth):
     """Custom httpx authentication class that fetches GCP ID tokens asynchronously."""
 
     def __init__(self, audience: str) -> None:
         self.audience = audience
 
-    async def _fetch_id_token_async(self) -> str:
-        """Asynchronously fetches OIDC ID token directly from GCP Metadata Server."""
-        url = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity"
-        headers = {"Metadata-Flavor": "Google"}
-        params = {"audience": self.audience}
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                url, headers=headers, params=params, timeout=5.0
-            )
-            response.raise_for_status()
-            return response.text.strip()
-
     async def async_auth_flow(
         self, request: httpx.Request
     ) -> AsyncGenerator[httpx.Request, httpx.Response]:
-        now = time.monotonic()
-
-        # 1. Quick check: read from cache
-        if self.audience in _async_token_cache:
-            token, expire_at = _async_token_cache[self.audience]
-            if now < expire_at:
-                request.headers["Authorization"] = f"Bearer {token}"
-                yield request
-                return
-
-        # 2. Get or create a Lock specific to this audience
-        with _async_locks_lock:
-            if self.audience not in _async_audience_locks:
-                _async_audience_locks[self.audience] = asyncio.Lock()
-            audience_lock = _async_audience_locks[self.audience]
-
-        # 3. Synchronize only for this audience during the fetch
-        async with audience_lock:
-            # Double check cache inside the lock
-            if self.audience in _async_token_cache:
-                token, expire_at = _async_token_cache[self.audience]
-                if now < expire_at:
-                    request.headers["Authorization"] = f"Bearer {token}"
-                    yield request
-                    return
-
-            token = await self._fetch_id_token_async()
-            _async_token_cache[self.audience] = (
-                token,
-                now + ASYNC_CACHE_TTL_SECONDS,
-            )
-
+        token = await asyncio.to_thread(get_id_token, self.audience)
         request.headers["Authorization"] = f"Bearer {token}"
         yield request
 
