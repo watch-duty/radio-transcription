@@ -174,8 +174,7 @@ class SyncFeedStore:
         """Record a visible failure without consuming quarantine budget.
 
         Echo receives source object notifications, so this sync path clears
-        ``retry_after`` instead of scheduling DB-based retry. It also leaves
-        ``quarantine_reason`` untouched because no quarantine threshold crossed.
+        ``retry_after`` instead of scheduling DB-based retry.
         """
         params = (
             feed_id,

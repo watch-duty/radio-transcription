@@ -9,7 +9,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from backend.pipeline.common.audio import probe_audio_metadata
-from backend.pipeline.ingestion import quarantine_reason
+from backend.pipeline.ingestion import status_reason_detail
 from backend.pipeline.ingestion.collectors import (
     control_flow,
     failure_classification,
@@ -292,7 +292,7 @@ async def fire_notifications_collector(  # noqa: PLR0912
         except Exception as exc:
             last_poll_failure = failure_classification.FailureInfo(
                 feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-                f"source_unreachable: {quarantine_reason.exception_text(exc)}",
+                f"source_unreachable: {status_reason_detail.exception_text(exc)}",
             )
             logger.warning(
                 "FN API unexpected poll error feed %s",

@@ -198,3 +198,61 @@ export function calculateSkipTimeDestination(
 
   return null;
 }
+
+/**
+ * Determines the next audio segment to auto-play when a segment ends.
+ * Since the audio segment list is sorted newest-first, the next transmission in time is at `currentIndex - 1`.
+ */
+export function getNextContinuousSegment(
+  audioSegments: RenderableAudioSegment[],
+  rawAudioSegments: AudioSegment[],
+  endedSegmentId: string
+): { id: string; uri: string } | null {
+  // 1. First check if the ended segment was part of a silence bundle, and if there is a next newer segment in that same bundle!
+  const parentBundle = audioSegments.find(
+    (t) => t.isSilenceBundle && t.bundledSegmentIds?.includes(endedSegmentId)
+  );
+
+  if (parentBundle && parentBundle.bundledSegmentIds) {
+    const endedIdx = parentBundle.bundledSegmentIds.indexOf(endedSegmentId);
+    if (
+      endedIdx !== -1 &&
+      endedIdx < parentBundle.bundledSegmentIds.length - 1
+    ) {
+      const nextSegmentId = parentBundle.bundledSegmentIds[endedIdx + 1];
+      const nextSegment = rawAudioSegments.find((s) => s.id === nextSegmentId);
+      if (nextSegment && nextSegment.playbackAudioUri) {
+        return { id: nextSegment.id, uri: nextSegment.playbackAudioUri };
+      }
+    }
+  }
+
+  // 2. If it was a Speech segment, or the last segment in a silence bundle, advance to the next newer audio segment row
+  const currentIndex = audioSegments.findIndex((t) =>
+    isWithinSegment(t, endedSegmentId)
+  );
+
+  if (currentIndex > 0) {
+    const nextAudioSegment = audioSegments[currentIndex - 1];
+    if (nextAudioSegment.playbackAudioUri) {
+      // If the next audio segment is a silence bundle, play its first segment
+      if (
+        nextAudioSegment.isSilenceBundle &&
+        nextAudioSegment.bundledSegmentIds &&
+        nextAudioSegment.bundledSegmentIds.length > 0
+      ) {
+        const firstId = nextAudioSegment.bundledSegmentIds[0];
+        const firstSegment = rawAudioSegments.find((s) => s.id === firstId);
+        if (firstSegment && firstSegment.playbackAudioUri) {
+          return { id: firstSegment.id, uri: firstSegment.playbackAudioUri };
+        }
+      }
+      return {
+        id: nextAudioSegment.id,
+        uri: nextAudioSegment.playbackAudioUri,
+      };
+    }
+  }
+
+  return null;
+}

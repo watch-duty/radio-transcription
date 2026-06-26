@@ -119,8 +119,8 @@ class FeedFailure(Exception):
     """Feed-level collector failure classified at the collector boundary.
 
     ``status_reason`` is the bounded operator grouping key. ``reason`` is the
-    diagnostic text preserved for logs and quarantine_reason so users and
-    engineers can debug the threshold-crossing failure episode.
+    diagnostic text preserved for logs and status reason detail so users and
+    engineers can debug the current failure episode.
     """
 
     status_reason: FeedStatusReason
