@@ -1,4 +1,5 @@
-import { type AudioSegment, AudioClassification } from '@transcription/common';
+import { AudioClassification, type AudioSegment } from '@transcription/common';
+
 import { type RenderableAudioSegment } from '../hooks/useConsolidatedAudioSegments';
 
 /**

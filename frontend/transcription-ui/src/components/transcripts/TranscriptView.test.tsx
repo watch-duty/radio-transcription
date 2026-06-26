@@ -11,7 +11,6 @@ import {
   fireEvent,
   screen,
   waitFor,
-  within,
 } from '@testing-library/react';
 import {
   AnnotationType,

@@ -77,7 +77,9 @@ export function TranscriptView({
 
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [playLatestAudio, setPlayLatestAudio] = useState(true);
-  const [playbackIntent, setPlaybackIntent] = useState<'playing' | 'paused'>('playing');
+  const [playbackIntent, setPlaybackIntent] = useState<'playing' | 'paused'>(
+    'playing'
+  );
 
   const playLatestAudioRef = useRef(playLatestAudio);
   useEffect(() => {
@@ -164,7 +166,13 @@ export function TranscriptView({
         }
       }
     },
-    [triggerSnackbar, isAudioPlaying, playLatestAudio, playbackIntent, togglePlay]
+    [
+      triggerSnackbar,
+      isAudioPlaying,
+      playLatestAudio,
+      playbackIntent,
+      togglePlay,
+    ]
   );
 
   const {
@@ -276,7 +284,9 @@ export function TranscriptView({
   useEffect(() => {
     if (playbackIntent !== 'playing' || audioSegments.length === 0) return;
 
-    const hasSelectionChange = highlightedSegmentId && highlightedSegmentId !== currentlyPlayingSegmentId;
+    const hasSelectionChange =
+      highlightedSegmentId &&
+      highlightedSegmentId !== currentlyPlayingSegmentId;
     const shouldStartPlaying = !currentlyPlayingSegmentId || hasSelectionChange;
 
     if (shouldStartPlaying) {
@@ -285,13 +295,22 @@ export function TranscriptView({
       if (segment && segment.playbackAudioUri) {
         togglePlay(segment.id, segment.playbackAudioUri);
       } else {
-        const audioSegment = audioSegments.find((t) => isWithinSegment(t, targetId));
+        const audioSegment = audioSegments.find((t) =>
+          isWithinSegment(t, targetId)
+        );
         if (audioSegment && audioSegment.playbackAudioUri) {
           togglePlay(audioSegment.id, audioSegment.playbackAudioUri);
         }
       }
     }
-  }, [playbackIntent, audioSegments, rawAudioSegments, currentlyPlayingSegmentId, highlightedSegmentId, togglePlay]);
+  }, [
+    playbackIntent,
+    audioSegments,
+    rawAudioSegments,
+    currentlyPlayingSegmentId,
+    highlightedSegmentId,
+    togglePlay,
+  ]);
 
   const {
     skipToNext,
@@ -419,7 +438,9 @@ export function TranscriptView({
     if (playbackIntent === 'playing') {
       setPlaybackIntent('paused');
       if (isAudioPlaying && currentlyPlayingSegmentId) {
-        const segment = rawAudioSegments.find((s) => s.id === currentlyPlayingSegmentId);
+        const segment = rawAudioSegments.find(
+          (s) => s.id === currentlyPlayingSegmentId
+        );
         if (segment && segment.playbackAudioUri) {
           togglePlay(segment.id, segment.playbackAudioUri);
         }
@@ -427,7 +448,10 @@ export function TranscriptView({
     } else {
       setPlaybackIntent('playing');
 
-      const targetId = highlightedSegmentId || currentlyPlayingSegmentId || audioSegments[0]?.id;
+      const targetId =
+        highlightedSegmentId ||
+        currentlyPlayingSegmentId ||
+        audioSegments[0]?.id;
       if (!targetId) return;
 
       const shouldPlayNext =
@@ -435,7 +459,9 @@ export function TranscriptView({
         currentAudioRef.current === null;
 
       if (shouldPlayNext) {
-        const idx = audioSegments.findIndex((s) => isWithinSegment(s, targetId));
+        const idx = audioSegments.findIndex((s) =>
+          isWithinSegment(s, targetId)
+        );
         if (idx !== -1 && idx > 0) {
           const nextAudioSegment = audioSegments[idx - 1];
           if (nextAudioSegment.playbackAudioUri) {
@@ -450,7 +476,9 @@ export function TranscriptView({
               nextAudioSegment.bundledSegmentIds.length > 0
             ) {
               const firstId = nextAudioSegment.bundledSegmentIds[0];
-              const firstSegment = rawAudioSegments.find((s) => s.id === firstId);
+              const firstSegment = rawAudioSegments.find(
+                (s) => s.id === firstId
+              );
               if (firstSegment && firstSegment.playbackAudioUri) {
                 togglePlay(firstSegment.id, firstSegment.playbackAudioUri);
                 return;
@@ -467,7 +495,9 @@ export function TranscriptView({
       if (segment && segment.playbackAudioUri) {
         togglePlay(segment.id, segment.playbackAudioUri);
       } else {
-        const audioSegment = audioSegments.find((t) => isWithinSegment(t, targetId));
+        const audioSegment = audioSegments.find((t) =>
+          isWithinSegment(t, targetId)
+        );
         if (audioSegment && audioSegment.playbackAudioUri) {
           togglePlay(audioSegment.id, audioSegment.playbackAudioUri);
         }

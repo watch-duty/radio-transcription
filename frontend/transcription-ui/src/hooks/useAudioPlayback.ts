@@ -59,6 +59,7 @@ export function useAudioPlayback({
   const volumeDbRef = useRef(volumeDb);
   const panRef = useRef(pan);
   const speedRef = useRef(speed);
+  const onPlaybackEndedRef = useRef(onPlaybackEnded);
 
   // Push control changes into the engine; the player is created lazily on first
   // play, so before then these only update the refs that `togglePlay` reads.
@@ -74,6 +75,9 @@ export function useAudioPlayback({
     speedRef.current = speed;
     playerRef.current?.setSpeed(speed);
   }, [speed]);
+  useEffect(() => {
+    onPlaybackEndedRef.current = onPlaybackEnded;
+  }, [onPlaybackEnded]);
 
   const [currentlyPlayingSegmentId, setCurrentlyPlayingSegmentId] = useState<
     string | null
@@ -149,7 +153,7 @@ export function useAudioPlayback({
               setIsAudioPlaying(false);
               isAudioPlayingRef.current = false;
               currentAudio.current = null;
-              onPlaybackEnded?.(segmentId);
+              onPlaybackEndedRef.current?.(segmentId);
             }
           },
         });
