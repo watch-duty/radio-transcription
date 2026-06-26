@@ -86,9 +86,7 @@ class TestEmitFeedAuditNotification(unittest.TestCase):
                     feed_audit_notifications.logger,
                     "info",
                 ) as mock_info:
-                    feed_audit_notifications.emit_feed_audit_notification(
-                        value
-                    )
+                    feed_audit_notifications.emit_feed_audit_notification(value)
 
                 mock_info.assert_not_called()
 
