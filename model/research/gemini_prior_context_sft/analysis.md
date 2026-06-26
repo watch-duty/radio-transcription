@@ -224,11 +224,18 @@ count-8 text-turn data shape taught a subset of requests to stop immediately,
 while a single current user turn with prior transcripts as a context block
 removes the repeated text-only user turns that trigger that behavior.
 
-The confirmatory next run should be fresh SFT from `gemini-3.1-flash-lite`,
-not continuous tuning from the empty-prone text-turn checkpoint. It should use
-count 8, adapter size 16, LR multiplier 0.5, 8 epochs, the short strict-ASR
-system prompt, and the best `force_words` current prompt. Scoring remains
-no-fallback WER/CER/empty rate over the same four eval manifests.
+Before the confirmatory SFT, run Vertex AI Prompt Optimizer over prompt
+families seeded from the existing repo prompts: canonical Gemini, production
+Gemini/manual-context, Chirp default-style, compact shared ASR, Gemma
+output-only, Canary terse dispatch, and transcript-context probe wording. Keep
+the non-prompt setup fixed and choose the optimizer winner by no-fallback
+WER/CER/empty rate.
+
+The confirmatory next run should then be fresh SFT from
+`gemini-3.1-flash-lite`, not continuous tuning from the empty-prone text-turn
+checkpoint. It should use count 8, adapter size 16, LR multiplier 0.5, 8
+epochs, and the optimized prompt package. Scoring remains no-fallback
+WER/CER/empty rate over the same four eval manifests.
 
 Detailed plan:
 `model/research/gemini_prior_context_sft/next_round_sft_plan.md`
