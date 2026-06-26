@@ -459,7 +459,7 @@ def submit_batch_inference(
     model: str,
     project: str,
     location: str,
-    poll_interval: int = 60,
+    poll_interval: int = 300,
     timeout_hours: float = 24.0,
 ) -> str:
     """Submit a Vertex AI batch inference job and poll until a terminal state.
@@ -470,7 +470,8 @@ def submit_batch_inference(
         model: Model resource name or base model ID to use for inference.
         project: GCP project ID (required — no silent default).
         location: GCP region for the batch job.
-        poll_interval: Seconds between state-poll requests.
+        poll_interval: Seconds between state-poll requests (default 300, or
+            5 minutes).
         timeout_hours: Max wall-clock hours to poll before raising TimeoutError
             (default 24) -- guards against an indefinite hang on an API/network stall.
 

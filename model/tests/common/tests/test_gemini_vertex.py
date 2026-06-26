@@ -702,6 +702,36 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.time.sleep")
     @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_batch_default_poll_interval_is_five_minutes(
+        self, mock_genai, mock_sleep
+    ) -> None:
+        mock_dest = unittest.mock.MagicMock()
+        mock_dest.gcs_uri = "gs://bucket/output/"
+        mock_batch_job = unittest.mock.MagicMock()
+        mock_batch_job.name = "projects/p/locations/l/batchPredictionJobs/1"
+        running = unittest.mock.MagicMock()
+        running.state.name = "JOB_STATE_RUNNING"
+        succeeded = unittest.mock.MagicMock()
+        succeeded.state.name = "JOB_STATE_SUCCEEDED"
+        succeeded.dest = mock_dest
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.return_value = mock_batch_job
+        mock_client.batches.get.side_effect = [running, succeeded]
+        mock_genai.Client.return_value = mock_client
+
+        result = submit_batch_inference(
+            input_uri="gs://bucket/input.jsonl",
+            output_uri="gs://bucket/output/",
+            model="gemini-2.5-flash",
+            project="p",
+            location="us-central1",
+        )
+
+        self.assertEqual(result, "gs://bucket/output/")
+        mock_sleep.assert_called_once_with(300)
+
+    @unittest.mock.patch("common.gemini.vertex.time.sleep")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_batch_poll_retries_transient_get_error(
         self, mock_genai, mock_sleep
     ) -> None:
