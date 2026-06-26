@@ -35,8 +35,11 @@ Decimal phases appear between their surrounding integers in numeric order.
   5. A notification log contains `event_type="radio_transcription.feed_audit_notification"`, `schema_version=1`, and the flat allowlisted audit fields without extra database reads or repeated JSON encode/decode cycles.
 **Plans**: 3 plans
 Plans:
+**Wave 1**
 - [ ] 01-01-PLAN.md — SQL payload contract and nullable `feed_audit_event` result columns
 - [ ] 01-02-PLAN.md — Shared failure-isolated notification logging helper
+
+**Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 01-03-PLAN.md — Async and sync store integration with focused verification
 
 ### Phase 2: Cloud Logging and Pub/Sub Routing
