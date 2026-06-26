@@ -98,7 +98,7 @@ class TestFeedAuditEventSqlContract(unittest.TestCase):
     def test_shared_notification_payload_builder_renders_flat_contract(
         self,
     ) -> None:
-        sql = getattr(feed_audit_sql, "feed_audit_event_payload_sql")()
+        sql = feed_audit_sql.feed_audit_event_payload_sql()
 
         expected_keys = [
             "'event_type'",
