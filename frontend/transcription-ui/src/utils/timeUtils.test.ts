@@ -1,8 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { formatDuration, getRelativeTimeString } from './timeUtils';
+import {
+  formatClockTime,
+  formatDuration,
+  getRelativeTimeString,
+} from './timeUtils';
 
 describe('timeUtils', () => {
+  describe('formatClockTime', () => {
+    it('formats as 24-hour HH:MM without AM/PM', () => {
+      const out = formatClockTime(new Date('2026-04-20T13:05:00Z').getTime());
+      expect(out).toMatch(/^\d{2}:\d{2}$/);
+      expect(out).not.toMatch(/[AP]M/i);
+    });
+  });
+
   describe('getRelativeTimeString', () => {
     beforeEach(() => {
       vi.useFakeTimers();

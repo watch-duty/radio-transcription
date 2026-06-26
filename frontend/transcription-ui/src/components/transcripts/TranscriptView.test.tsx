@@ -169,6 +169,7 @@ vi.mock('@wavesurfer/react', () => ({
 
 const audioEngineMock = vi.hoisted(() => ({
   playSpy: vi.fn(),
+  stopSpy: vi.fn(),
   lastSrc: null as string | null,
   lastCallbacks: null as {
     onPlay?: () => void;
@@ -186,7 +187,9 @@ vi.mock('../../audio/WebAudioPlayer', async (importOriginal) => ({
     setVolumeDb() {}
     setPan() {}
     setSpeed() {}
-    stop() {}
+    stop() {
+      audioEngineMock.stopSpy();
+    }
     dispose() {}
     load(
       src: string,
@@ -1018,6 +1021,211 @@ describe('TranscriptView', () => {
     });
 
     // Verify that audio was NOT automatically played when disabled
+    expect(playSpy).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it('pauses playback when navigating to an out-of-window clip', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const { playSpy, stopSpy } = audioEngineMock;
+
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        'recent',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Recent transcript',
+        'gs:://foo.m4a',
+        []
+      ),
+      makeMockAudioSegment(
+        'old',
+        'feed123',
+        '2026-04-10T11:00:00Z',
+        '2026-04-10T11:00:05Z',
+        'Old transcript',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+    const newerAudioSegments = [
+      makeMockAudioSegment(
+        'newer',
+        'feed123',
+        '2026-04-10T12:05:00Z',
+        '2026-04-10T12:05:05Z',
+        'Newer transcript',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+
+    vi.mocked(listAudioSegments)
+      .mockResolvedValueOnce({
+        segments: initialAudioSegments,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        segments: newerAudioSegments,
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Recent transcript')).toBeTruthy();
+    });
+
+    // Autoplay at the live edge starts playback.
+    vi.advanceTimersByTime(15000);
+    await waitFor(() => {
+      expect(playSpy).toHaveBeenCalled();
+    });
+
+    // Selecting an old, out-of-window clip moves the window → playback pauses.
+    fireEvent.click(screen.getByText('Old transcript'));
+    expect(stopSpy).toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it('does not pause playback when selecting an already-visible clip', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const { playSpy, stopSpy } = audioEngineMock;
+
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        'recent',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Recent transcript',
+        'gs:://foo.m4a',
+        []
+      ),
+      makeMockAudioSegment(
+        'old',
+        'feed123',
+        '2026-04-10T11:00:00Z',
+        '2026-04-10T11:00:05Z',
+        'Old transcript',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+    const newerAudioSegments = [
+      makeMockAudioSegment(
+        'newer',
+        'feed123',
+        '2026-04-10T12:05:00Z',
+        '2026-04-10T12:05:05Z',
+        'Newer transcript',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+
+    vi.mocked(listAudioSegments)
+      .mockResolvedValueOnce({
+        segments: initialAudioSegments,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        segments: newerAudioSegments,
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Recent transcript')).toBeTruthy();
+    });
+
+    // Autoplay at the live edge starts playback.
+    vi.advanceTimersByTime(15000);
+    await waitFor(() => {
+      expect(playSpy).toHaveBeenCalled();
+    });
+
+    // 'Recent' is inside the live window, so selecting it doesn't move the
+    // window — playback keeps going.
+    fireEvent.click(screen.getByText('Recent transcript'));
+    expect(stopSpy).not.toHaveBeenCalled();
+
+    vi.useRealTimers();
+  });
+
+  it('does not autoplay incoming clips while viewing the past', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    const { playSpy } = audioEngineMock;
+
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        'recent',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Recent transcript',
+        'gs:://foo.m4a',
+        []
+      ),
+      makeMockAudioSegment(
+        'old',
+        'feed123',
+        '2026-04-10T11:00:00Z',
+        '2026-04-10T11:00:05Z',
+        'Old transcript',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+    const newerAudioSegments = [
+      makeMockAudioSegment(
+        'newer',
+        'feed123',
+        '2026-04-10T12:05:00Z',
+        '2026-04-10T12:05:05Z',
+        'Newer transcript',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+
+    vi.mocked(listAudioSegments)
+      .mockResolvedValueOnce({
+        segments: initialAudioSegments,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        segments: newerAudioSegments,
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Recent transcript')).toBeTruthy();
+    });
+
+    // Move the window off the live edge by selecting an old clip.
+    fireEvent.click(screen.getByText('Old transcript'));
+
+    // A newer clip arrives via polling, but we're viewing the past → no autoplay.
+    vi.advanceTimersByTime(15000);
+    await waitFor(() => {
+      expect(screen.getByText('Newer transcript')).toBeTruthy();
+    });
     expect(playSpy).not.toHaveBeenCalled();
 
     vi.useRealTimers();
