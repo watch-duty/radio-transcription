@@ -50,7 +50,6 @@ export function useTranscriptPlayback({
         index: displayIdx,
         align: 'center',
         behavior: 'smooth',
-        offset: 0,
       });
     }
   };
