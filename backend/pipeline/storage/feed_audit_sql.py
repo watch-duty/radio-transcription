@@ -4,6 +4,11 @@ from __future__ import annotations
 
 # ruff: noqa: S608
 
+FEED_AUDIT_NOTIFICATION_EVENT_TYPE = (
+    "radio_transcription.feed_audit_notification"
+)
+FEED_AUDIT_NOTIFICATION_SCHEMA_VERSION = 1
+
 AUDITED_FEED_STATE_FIELDS = (
     ("id", "id"),
     ("name", "name"),
@@ -18,6 +23,24 @@ AUDITED_FEED_STATE_FIELDS = (
     ("feed_properties.source_feed_id", "source_feed_id"),
     ("feed_properties.tags", "tags"),
 )
+
+
+def feed_audit_event_payload_sql(
+    alias: str = "feed_audit_events",
+) -> str:
+    """Return the schema version 1 Feed Audit Notification JSONB payload."""
+    return f"""jsonb_build_object(
+        'event_type', {FEED_AUDIT_NOTIFICATION_EVENT_TYPE!r},
+        'schema_version', {FEED_AUDIT_NOTIFICATION_SCHEMA_VERSION},
+        'event_id', {alias}.id,
+        'action', {alias}.action,
+        'occurred_at', {alias}.occurred_at,
+        'actor_id', {alias}.actor_id,
+        'feed_id', {alias}.feed_id,
+        'feed_revision', {alias}.feed_revision,
+        'before_values', {alias}.before_values,
+        'after_values', {alias}.after_values
+    )"""
 
 
 def audit_snapshot_sql(alias: str) -> str:
