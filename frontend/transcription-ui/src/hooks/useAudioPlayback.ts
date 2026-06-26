@@ -1,7 +1,5 @@
 import {
-  type Dispatch,
   type RefObject,
-  type SetStateAction,
   useCallback,
   useEffect,
   useRef,
@@ -32,8 +30,6 @@ interface UseAudioPlaybackParams {
 interface UseAudioPlayback {
   isAudioPlaying: boolean;
   currentlyPlayingSegmentId: string | null;
-  playbackEndedForId: string | null;
-  setPlaybackEndedForId: Dispatch<SetStateAction<string | null>>;
   currentAudioRef: RefObject<PlaybackController | null>;
   togglePlay: (segmentId: string, audioUri: string) => void;
   stop: () => void;
@@ -54,9 +50,6 @@ export function useAudioPlayback({
   const [currentlyPlayingSegmentId, setCurrentlyPlayingSegmentId] = useState<
     string | null
   >(null);
-  const [playbackEndedForId, setPlaybackEndedForId] = useState<string | null>(
-    null
-  );
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
 
   // Mutable refs to keep state fresh and avoid stale closures in audio event listeners
@@ -124,7 +117,6 @@ export function useAudioPlayback({
             } else {
               setIsAudioPlaying(false);
               isAudioPlayingRef.current = false;
-              setPlaybackEndedForId(segmentId);
               currentAudio.current = null;
             }
           },
@@ -145,14 +137,11 @@ export function useAudioPlayback({
     currentAudio.current = null;
     setCurrentlyPlayingSegmentId(null);
     currentlyPlayingSegmentIdRef.current = null;
-    setPlaybackEndedForId(null);
   }, []);
 
   return {
     isAudioPlaying,
     currentlyPlayingSegmentId,
-    playbackEndedForId,
-    setPlaybackEndedForId,
     currentAudioRef: currentAudio,
     togglePlay,
     stop,

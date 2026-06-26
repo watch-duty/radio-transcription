@@ -147,13 +147,12 @@ describe('useAudioPlayback', () => {
     expect(engineMock.playSpy).toHaveBeenCalledTimes(2);
   });
 
-  it('flags the ended segment for autoplay and clears the playing flag when it was last', () => {
+  it('clears the playing flag and releases the handle when the last segment ends', () => {
     const { result } = renderPlayback([makeSegment('a')]);
 
     act(() => result.current.togglePlay('a', 'a.m4a'));
     act(() => engineMock.lastCallbacks?.onEnd?.());
 
-    expect(result.current.playbackEndedForId).toBe('a');
     // 'a' is at index 0 (newest), so there is no newer segment to advance to.
     expect(result.current.isAudioPlaying).toBe(false);
     // The handle is released so AudioDisplay stops polling the finished clip.
@@ -170,7 +169,6 @@ describe('useAudioPlayback', () => {
     // It should have transitioned synchronously to playing segment 'b'
     expect(result.current.currentlyPlayingSegmentId).toBe('b');
     expect(result.current.isAudioPlaying).toBe(true);
-    expect(result.current.playbackEndedForId).toBeNull();
   });
 
   it('stop() halts the engine and resets playback identity', () => {
@@ -181,7 +179,6 @@ describe('useAudioPlayback', () => {
 
     expect(engineMock.stopSpy).toHaveBeenCalled();
     expect(result.current.currentlyPlayingSegmentId).toBeNull();
-    expect(result.current.playbackEndedForId).toBeNull();
     expect(result.current.currentAudioRef.current).toBeNull();
   });
 
