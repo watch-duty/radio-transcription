@@ -127,15 +127,15 @@ def download_gcs_directory(
         msg = f"No files found under {gcs_uri}"
         raise FileNotFoundError(msg)
 
-    os.makedirs(local_dir, exist_ok=True)
+    Path(local_dir).mkdir(parents=True, exist_ok=True)
     for blob in blobs:
         # Compute relative path within the directory.
         rel_path = blob.name[len(blob_prefix) :].lstrip("/")
         if not rel_path:
             continue
-        local_file = os.path.join(local_dir, rel_path)
-        os.makedirs(os.path.dirname(local_file), exist_ok=True)
-        blob.download_to_filename(local_file, retry=DEFAULT_RETRY)
+        local_file = Path(local_dir) / rel_path
+        local_file.parent.mkdir(parents=True, exist_ok=True)
+        blob.download_to_filename(str(local_file), retry=DEFAULT_RETRY)
         logger.info(f"Downloaded gs://{bucket_name}/{blob.name} to {local_file}")
 
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import types
 from pathlib import Path
 from typing import Any
 
