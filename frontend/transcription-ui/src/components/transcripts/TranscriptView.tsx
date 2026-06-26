@@ -312,6 +312,11 @@ export function TranscriptView({
     togglePlay,
   ]);
 
+  const [seekTrigger, setSeekTrigger] = useState(0);
+  const handleSeek = useCallback(() => {
+    setSeekTrigger((prev) => prev + 1);
+  }, []);
+
   const {
     skipToNext,
     skipToPrevious,
@@ -327,6 +332,7 @@ export function TranscriptView({
     currentAudioRef,
     virtuosoRef,
     toggleAudio: handleToggleAudio,
+    onSeek: handleSeek,
   });
 
   useEffect(() => {
@@ -705,6 +711,7 @@ export function TranscriptView({
         onClipClick={handleClipClick}
         isAudioPlaying={isAudioPlaying}
         currentAudioRef={currentAudioRef}
+        seekTrigger={seekTrigger}
       />
 
       <Box

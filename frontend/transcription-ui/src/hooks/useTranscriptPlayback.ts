@@ -22,6 +22,7 @@ interface UseTranscriptPlaybackProps {
   currentAudioRef: RefObject<PlaybackController | null>;
   virtuosoRef: RefObject<VirtuosoHandle | null>;
   toggleAudio: (id: string, uri: string) => void;
+  onSeek: () => void;
 }
 
 export function useTranscriptPlayback({
@@ -33,6 +34,7 @@ export function useTranscriptPlayback({
   currentAudioRef,
   virtuosoRef,
   toggleAudio,
+  onSeek,
 }: UseTranscriptPlaybackProps) {
   const getTargetId = () => {
     return isAudioPlaying
@@ -140,6 +142,7 @@ export function useTranscriptPlayback({
       }
       currentAudioRef.current?.setCurrentTime(dest.seekTime);
       scrollSegmentIntoView(dest.segmentId);
+      onSeek();
     }
   };
 
