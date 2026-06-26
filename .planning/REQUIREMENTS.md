@@ -9,18 +9,18 @@ lifecycle writes.
 
 ### Audit Emission
 
-- [ ] **AUDIT-01**: Every newly inserted `feed_audit_events` row emits exactly one best-effort structured Feed Audit Notification log.
-- [ ] **AUDIT-02**: Feed state changes that do not insert a `feed_audit_events` row emit no Feed Audit Notification.
+- [x] **AUDIT-01**: Every newly inserted `feed_audit_events` row emits exactly one best-effort structured Feed Audit Notification log.
+- [x] **AUDIT-02**: Feed state changes that do not insert a `feed_audit_events` row emit no Feed Audit Notification.
 - [ ] **AUDIT-03**: Notification emission never raises to callers and never changes the result of ingestion, feed lifecycle writes, or audit row persistence.
 - [ ] **AUDIT-04**: Async `FeedStore` and sync `SyncFeedStore` audited write paths use one shared notification helper instead of duplicate payload/logging logic.
-- [ ] **AUDIT-05**: Storage SQL returns notification payload data from the same audited statement without adding an extra database round trip.
+- [x] **AUDIT-05**: Storage SQL returns notification payload data from the same audited statement without adding an extra database round trip.
 
 ### Payload Contract
 
-- [ ] **PAYLOAD-01**: Each notification log includes `event_type="radio_transcription.feed_audit_notification"` and `schema_version=1`.
-- [ ] **PAYLOAD-02**: Each notification payload is flat and includes `event_id`, `action`, `occurred_at`, `actor_id`, `feed_id`, `feed_revision`, `before_values`, and `after_values`.
-- [ ] **PAYLOAD-03**: The payload mirrors the existing feed audit snapshot allowlist and does not add raw request bodies, secrets, or extra fields solely for the webhook.
-- [ ] **PAYLOAD-04**: Payload construction avoids repeated JSON encode/decode cycles; producers pass structured dictionaries to logging.
+- [x] **PAYLOAD-01**: Each notification log includes `event_type="radio_transcription.feed_audit_notification"` and `schema_version=1`.
+- [x] **PAYLOAD-02**: Each notification payload is flat and includes `event_id`, `action`, `occurred_at`, `actor_id`, `feed_id`, `feed_revision`, `before_values`, and `after_values`.
+- [x] **PAYLOAD-03**: The payload mirrors the existing feed audit snapshot allowlist and does not add raw request bodies, secrets, or extra fields solely for the webhook.
+- [x] **PAYLOAD-04**: Payload construction avoids repeated JSON encode/decode cycles; producers pass structured dictionaries to logging.
 
 ### Cloud Routing
 
@@ -81,15 +81,15 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| AUDIT-01 | Phase 1 | Pending |
-| AUDIT-02 | Phase 1 | Pending |
+| AUDIT-01 | Phase 1 | Complete |
+| AUDIT-02 | Phase 1 | Complete |
 | AUDIT-03 | Phase 1 | Pending |
 | AUDIT-04 | Phase 1 | Pending |
-| AUDIT-05 | Phase 1 | Pending |
-| PAYLOAD-01 | Phase 1 | Pending |
-| PAYLOAD-02 | Phase 1 | Pending |
-| PAYLOAD-03 | Phase 1 | Pending |
-| PAYLOAD-04 | Phase 1 | Pending |
+| AUDIT-05 | Phase 1 | Complete |
+| PAYLOAD-01 | Phase 1 | Complete |
+| PAYLOAD-02 | Phase 1 | Complete |
+| PAYLOAD-03 | Phase 1 | Complete |
+| PAYLOAD-04 | Phase 1 | Complete |
 | ROUTE-01 | Phase 2 | Pending |
 | ROUTE-02 | Phase 2 | Pending |
 | ROUTE-03 | Phase 2 | Pending |

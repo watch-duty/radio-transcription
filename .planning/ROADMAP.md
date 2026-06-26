@@ -36,7 +36,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
 Plans:
 **Wave 1**
-- [ ] 01-01-PLAN.md — SQL payload contract and nullable `feed_audit_event` result columns
+- [x] 01-01-PLAN.md — SQL payload contract and nullable `feed_audit_event` result columns
 - [ ] 01-02-PLAN.md — Shared failure-isolated notification logging helper
 
 **Wave 2** *(blocked on Wave 1 completion)*
