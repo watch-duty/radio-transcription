@@ -111,6 +111,34 @@ class TestBuildExample(unittest.TestCase):
             "gs://bucket/current.flac",
         )
 
+    def test_transcript_history_mode_keeps_one_audio_part(self) -> None:
+        example = build_audio_tuning_example(
+            audio_uri="gs://bucket/current.flac",
+            gt_text="current text",
+            system_prompt="sys",
+            user_prompt="current prompt",
+            history=[
+                ContextTurn("gs://bucket/prev-1.flac", "first"),
+                ContextTurn("gs://bucket/prev-2.flac", "second"),
+            ],
+            history_mode="transcript",
+        )
+
+        self.assertEqual(len(example["contents"]), 2)
+        self.assertEqual(
+            [turn["role"] for turn in example["contents"]],
+            ["user", "model"],
+        )
+        self.assertEqual(
+            _first_file_part(example["contents"][0])["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
+        )
+        user_text = example["contents"][0]["parts"][0]["text"]
+        self.assertIn("Prior same-source transcripts", user_text)
+        self.assertIn("1. first", user_text)
+        self.assertIn("2. second", user_text)
+        self.assertIn("current prompt", user_text)
+
 
 class TestValidateExample(unittest.TestCase):
     def test_accepts_well_formed_example(self) -> None:

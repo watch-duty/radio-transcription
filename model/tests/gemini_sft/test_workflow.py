@@ -577,7 +577,9 @@ class TestPrepareRun(unittest.TestCase):
             storage.has("gs://test-bucket/sft/runs/round-a/config.json")
         )
 
-    def test_prepare_builds_same_source_prior_context_examples(self) -> None:
+    def test_prepare_builds_same_source_prior_transcript_context_examples(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = Path(tmp_s)
             storage = FakeStorageClient()
@@ -666,18 +668,18 @@ class TestPrepareRun(unittest.TestCase):
         second_contents = train_examples[1]["contents"]
         self.assertEqual(
             [turn["role"] for turn in second_contents],
-            ["user", "model", "user", "model"],
+            ["user", "model"],
         )
-        self.assertEqual(
-            second_contents[0]["parts"][0]["fileData"]["fileUri"],
-            "gs://audio/source-a/001.flac",
+        user_parts = second_contents[0]["parts"]
+        self.assertTrue(
+            user_parts[0]["text"].startswith("Prior same-source transcripts")
         )
-        self.assertEqual(second_contents[1]["parts"][0]["text"], "first")
-        self.assertEqual(second_contents[2]["parts"][0]["text"][:8], "Transcri")
+        self.assertIn("1. first", user_parts[0]["text"])
         self.assertEqual(
-            second_contents[2]["parts"][1]["fileData"]["fileUri"],
+            user_parts[1]["fileData"]["fileUri"],
             "gs://audio/source-a/002.flac",
         )
+        self.assertEqual(second_contents[1]["parts"][0]["text"], "second")
 
 
 class TestTuneRun(unittest.TestCase):
@@ -1275,15 +1277,15 @@ class TestEvaluateRun(unittest.TestCase):
         contents = batch_rows[1]["request"]["contents"]
         self.assertEqual(
             [turn["role"] for turn in contents],
-            ["user", "model", "user"],
+            ["user"],
         )
-        self.assertEqual(
-            contents[0]["parts"][0]["file_data"]["file_uri"],
-            "gs://audio/eval-1.flac",
+        user_parts = contents[0]["parts"]
+        self.assertTrue(
+            user_parts[0]["text"].startswith("Prior same-source transcripts")
         )
-        self.assertEqual(contents[1]["parts"][0]["text"], "first")
+        self.assertIn("1. first", user_parts[0]["text"])
         self.assertEqual(
-            contents[2]["parts"][1]["file_data"]["file_uri"],
+            user_parts[1]["file_data"]["file_uri"],
             "gs://audio/eval-2.flac",
         )
 

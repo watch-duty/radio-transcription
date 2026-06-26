@@ -15,6 +15,7 @@ from common.gemini.prompts import (
 from common.inference_manifest import validate_inference_dataset_slug
 
 ADAPTER_SIZES: Final = frozenset({"ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"})
+PRIOR_CONTEXT_MODES: Final = frozenset({"transcript"})
 ROUND_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
@@ -65,6 +66,7 @@ class RunConfig:
     adapter_size: str
     learning_rate_multiplier: float
     prior_context_count: int
+    prior_context_mode: str
     system_prompt: str
     user_prompt: str
     paths: RunPaths
@@ -86,6 +88,7 @@ class RunConfig:
             "adapter_size": self.adapter_size,
             "learning_rate_multiplier": self.learning_rate_multiplier,
             "prior_context_count": self.prior_context_count,
+            "prior_context_mode": self.prior_context_mode,
             "system_prompt": self.system_prompt,
             "user_prompt": self.user_prompt,
             "canonical_train_uri": self.paths.canonical_train_uri,
@@ -172,6 +175,10 @@ def _load_run_config(
         "context.prior_turn_count",
         default=0,
     )
+    prior_context_mode = _optional_prior_context_mode(
+        context,
+        "context.prior_context_mode",
+    )
 
     prompts = data.get("prompts", {})
     if prompts is None:
@@ -210,6 +217,7 @@ def _load_run_config(
         adapter_size=adapter_size,
         learning_rate_multiplier=learning_rate_multiplier,
         prior_context_count=prior_context_count,
+        prior_context_mode=prior_context_mode,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         paths=paths,
@@ -329,6 +337,23 @@ def _optional_nonnegative_int(
         msg = f"{key} must be a non-negative integer"
         raise RunConfigError(msg)
     return value
+
+
+def _optional_prior_context_mode(data: dict[str, Any], key: str) -> str:
+    value = _lookup(data, key)
+    if value is None:
+        return "transcript"
+    if not isinstance(value, str):
+        msg = f"{key} must be transcript"
+        raise RunConfigError(msg)
+    mode = value.strip().lower()
+    if mode not in PRIOR_CONTEXT_MODES:
+        msg = (
+            f"{key} must be transcript; Vertex SFT examples can contain "
+            "only one audio part"
+        )
+        raise RunConfigError(msg)
+    return mode
 
 
 def _required_adapter_size(data: dict[str, Any], key: str) -> str:

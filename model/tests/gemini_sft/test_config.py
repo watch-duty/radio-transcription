@@ -87,6 +87,7 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
         record = cfg.to_record_dict()
         self.assertEqual(record["dataset"], "wd-internal")
         self.assertEqual(record["prior_context_count"], 0)
+        self.assertEqual(record["prior_context_mode"], "transcript")
         self.assertEqual(record["inference_dataset_slug"], "echo/eval")
         self.assertEqual(record["gemini_train_uri"], cfg.paths.gemini_train_uri)
         self.assertEqual(
@@ -186,13 +187,18 @@ user = "custom user"
             context="""
 [context]
 prior_turn_count = 8
+prior_context_mode = "transcript"
 """
         )
 
         cfg = load_run_config(self._write_config(body))
 
         self.assertEqual(cfg.prior_context_count, 8)
+        self.assertEqual(cfg.prior_context_mode, "transcript")
         self.assertEqual(cfg.to_record_dict()["prior_context_count"], 8)
+        self.assertEqual(
+            cfg.to_record_dict()["prior_context_mode"], "transcript"
+        )
 
     def test_context_prior_turn_count_must_be_nonnegative_int(self) -> None:
         for value in ("-1", "true"):
@@ -206,6 +212,17 @@ prior_turn_count = {value}
 
                 with self.assertRaisesRegex(RunConfigError, "prior_turn_count"):
                     load_run_config(self._write_config(body))
+
+    def test_context_prior_context_mode_must_be_transcript(self) -> None:
+        body = self._valid_toml(
+            context="""
+[context]
+prior_context_mode = "audio"
+"""
+        )
+
+        with self.assertRaisesRegex(RunConfigError, "prior_context_mode"):
+            load_run_config(self._write_config(body))
 
     def test_prompt_file_keys_are_rejected(self) -> None:
         body = self._valid_toml(

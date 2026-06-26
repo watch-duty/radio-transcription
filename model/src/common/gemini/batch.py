@@ -47,6 +47,7 @@ def run_batch_audio_inference(
     system_prompt: str,
     user_prompt: str,
     histories: Sequence[Sequence[ContextTurn]] | None = None,
+    history_mode: str = "audio",
     submit_fn: BatchSubmitFn = submit_batch_inference,
 ) -> BatchPredictionMap | None:
     """Run Gemini batch inference for audio URIs and return parsed predictions."""
@@ -67,6 +68,7 @@ def run_batch_audio_inference(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             histories=histories,
+            history_mode=history_mode,
             tmp_dir=Path(tmp),
         )
         try:
@@ -123,6 +125,7 @@ def build_batch_jsonl(
     system_prompt: str,
     user_prompt: str,
     histories: Sequence[Sequence[ContextTurn]] | None = None,
+    history_mode: str = "audio",
     tmp_dir: Path,
 ) -> tuple[str, str]:
     """Write and upload a Vertex batch input JSONL file."""
@@ -140,6 +143,7 @@ def build_batch_jsonl(
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
                         history=history,
+                        history_mode=history_mode,
                     )
                 )
                 + "\n"

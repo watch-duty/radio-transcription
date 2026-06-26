@@ -99,6 +99,10 @@ def evaluate_run(
         config,
         "prior_context_count",
     )
+    prior_context_mode = _optional_config_prior_context_mode(
+        config,
+        "prior_context_mode",
+    )
     tuned_endpoint = config.get("endpoint")
     base_only = bool(getattr(args, "base_only", False))
     if not base_only and not tuned_endpoint:
@@ -133,6 +137,7 @@ def evaluate_run(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         histories=histories,
+        history_mode=prior_context_mode,
     )
     if base_preds is None:
         return 1
@@ -178,6 +183,7 @@ def evaluate_run(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             histories=histories,
+            history_mode=prior_context_mode,
         )
         if tuned_preds is None:
             return 1
@@ -246,6 +252,7 @@ def batch_infer(
     system_prompt: str,
     user_prompt: str,
     histories: list[Any] | None = None,
+    history_mode: str = "transcript",
 ) -> PredictionMap | None:
     """Build batch input JSONL, submit, download outputs, and parse predictions."""
     return run_batch_audio_inference(
@@ -259,6 +266,7 @@ def batch_infer(
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         histories=histories,
+        history_mode=history_mode,
         submit_fn=submit_batch_inference,
     )
 
@@ -277,6 +285,20 @@ def _optional_config_nonnegative_int(config: dict[str, Any], key: str) -> int:
         msg = f"config.json field must be a non-negative integer: {key}"
         raise ValueError(msg)
     return value
+
+
+def _optional_config_prior_context_mode(
+    config: dict[str, Any], key: str
+) -> str:
+    value = config.get(key, "transcript")
+    if not isinstance(value, str):
+        msg = f"config.json field must be transcript: {key}"
+        raise TypeError(msg)
+    mode = value.strip().lower()
+    if mode != "transcript":
+        msg = f"config.json field must be transcript: {key}"
+        raise ValueError(msg)
+    return mode
 
 
 def build_metrics(

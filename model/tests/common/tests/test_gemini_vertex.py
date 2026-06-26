@@ -458,6 +458,33 @@ class TestBuildRequest(unittest.TestCase):
             "gs://bucket/current.flac",
         )
 
+    def test_transcript_history_mode_keeps_one_audio_part(self) -> None:
+        result = self.build_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt="U",
+            history=[
+                ContextTurn("gs://bucket/prev-1.flac", "first"),
+                ContextTurn("gs://bucket/prev-2.flac", "second"),
+            ],
+            history_mode="transcript",
+        )
+
+        contents = result["request"]["contents"]
+        self.assertEqual([turn["role"] for turn in contents], ["user"])
+        file_parts = [
+            part for part in contents[0]["parts"] if "file_data" in part
+        ]
+        self.assertEqual(len(file_parts), 1)
+        self.assertEqual(
+            file_parts[0]["file_data"]["file_uri"],
+            "gs://bucket/current.flac",
+        )
+        self.assertIn(
+            "Prior same-source transcripts",
+            contents[0]["parts"][0]["text"],
+        )
+
 
 class TestParseBatchOutput(unittest.TestCase):
     def test_parses_camel_case_request_echo(self) -> None:

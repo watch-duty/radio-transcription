@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,6 +15,25 @@ class ContextTurn:
 
     audio_uri: str
     text: str
+
+
+def build_transcript_context_prompt(
+    history: Sequence[ContextTurn],
+    user_prompt: str,
+) -> str:
+    """Return a user prompt with prior same-source transcripts as text context."""
+    if not history:
+        return user_prompt
+    lines = [
+        "Prior same-source transcripts for situational awareness only. "
+        "Do not re-transcribe them; transcribe only the current audio clip.",
+        "Prior same-source transcripts, oldest to newest:",
+    ]
+    lines.extend(
+        f"{index}. {turn.text}" for index, turn in enumerate(history, 1)
+    )
+    lines.extend(["", user_prompt])
+    return "\n".join(lines)
 
 
 def build_context_histories(

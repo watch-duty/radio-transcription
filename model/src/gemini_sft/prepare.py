@@ -204,6 +204,7 @@ def prepare_artifacts(
         system_prompt=run_cfg.system_prompt,
         user_prompt=run_cfg.user_prompt,
         prior_context_count=run_cfg.prior_context_count,
+        prior_context_mode=run_cfg.prior_context_mode,
     )
     write_gemini_jsonl(
         validation_entries,
@@ -211,6 +212,7 @@ def prepare_artifacts(
         system_prompt=run_cfg.system_prompt,
         user_prompt=run_cfg.user_prompt,
         prior_context_count=run_cfg.prior_context_count,
+        prior_context_mode=run_cfg.prior_context_mode,
     )
 
     return PreparedRunArtifacts(
@@ -235,6 +237,7 @@ def write_gemini_jsonl(
     system_prompt: str,
     user_prompt: str,
     prior_context_count: int = 0,
+    prior_context_mode: str = "transcript",
 ) -> None:
     """Write Gemini audio-SFT JSONL from canonical rows."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -248,6 +251,7 @@ def write_gemini_jsonl(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 history=history,
+                history_mode=prior_context_mode,
             )
             if not validate_audio_tuning_example(example):
                 msg = f"invalid Gemini SFT example for {audio_uri}"

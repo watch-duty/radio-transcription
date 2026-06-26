@@ -12,7 +12,7 @@ import logging
 from collections.abc import Sequence
 from typing import Any
 
-from common.gemini.context import ContextTurn
+from common.gemini.context import ContextTurn, build_transcript_context_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,7 @@ def build_audio_tuning_example(
     system_prompt: str,
     user_prompt: str,
     history: Sequence[ContextTurn] | None = None,
+    history_mode: str = "audio",
 ) -> dict[str, Any]:
     """Build a single Gemini/Vertex AI audio-SFT JSONL example.
 
@@ -38,28 +39,42 @@ def build_audio_tuning_example(
             ``common.gemini.prompts``).
         history: Previous audio/transcript pairs from the same source
             recording. Each pair is emitted as ``user(audio) -> model(text)``.
+        history_mode: ``audio`` emits notebook-style audio/text prior turns.
+            ``transcript`` folds prior transcripts into the current user prompt
+            so Vertex tuning sees only one audio part.
 
     Returns:
         A dict matching the current Vertex AI audio-SFT JSONL schema:
         ``{systemInstruction, contents: [history..., current user, target]}``.
     """
     contents: list[dict[str, Any]] = []
-    for turn in history or ():
-        contents.extend(
-            [
-                {
-                    "role": "user",
-                    "parts": [_audio_file_data_part(turn.audio_uri)],
-                },
-                {"role": "model", "parts": [{"text": turn.text}]},
-            ]
+    if history_mode not in {"audio", "transcript"}:
+        msg = "history_mode must be 'audio' or 'transcript'"
+        raise ValueError(msg)
+    history_turns = list(history or ())
+    if history_mode == "audio":
+        for turn in history_turns:
+            contents.extend(
+                [
+                    {
+                        "role": "user",
+                        "parts": [_audio_file_data_part(turn.audio_uri)],
+                    },
+                    {"role": "model", "parts": [{"text": turn.text}]},
+                ]
+            )
+        current_user_prompt = user_prompt
+    else:
+        current_user_prompt = build_transcript_context_prompt(
+            history_turns,
+            user_prompt,
         )
     contents.extend(
         [
             {
                 "role": "user",
                 "parts": [
-                    {"text": user_prompt},
+                    {"text": current_user_prompt},
                     _audio_file_data_part(audio_uri),
                 ],
             },
