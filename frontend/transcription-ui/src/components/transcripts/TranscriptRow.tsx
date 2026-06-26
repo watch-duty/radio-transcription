@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { useState } from 'react';
 
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LinkIcon from '@mui/icons-material/Link';
@@ -17,7 +17,7 @@ import {
   findTranscriptAnnotationData,
 } from '../../utils/annotationUtils';
 import { formatDuration } from '../../utils/timeUtils';
-import AudioPlayer from '../audio/AudioPlayer';
+import TranscriptPlayControl from '../audio/TranscriptPlayControl';
 import AlertTooltip from './AlertTooltip';
 import HighlightedTranscript from './HighlightedTranscript';
 import { SegmentInfoPopover } from './SegmentInfoPopover';
@@ -57,6 +57,9 @@ export function TranscriptRow({
 }: TranscriptRowProps) {
   const theme = useTheme();
   const { isAdmin } = useAuth();
+
+  const [isHovered, setIsHovered] = useState(false);
+
   const currentDate = new Date(audioSegment.startTimestamp);
 
   const isSilence = !!audioSegment.isSilenceBundle;
@@ -113,7 +116,10 @@ export function TranscriptRow({
   };
 
   return (
-    <Fragment>
+    <Box
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
       {showHeader && (
         <ListItem
           sx={{
@@ -220,7 +226,7 @@ export function TranscriptRow({
             </Typography>
           )}
         </Box>
-        <AudioPlayer
+        <TranscriptPlayControl
           audioUri={audioSegment.playbackAudioUri ?? ''}
           segmentId={audioSegment.id}
           onToggleAudio={onToggleAudio}
@@ -228,6 +234,7 @@ export function TranscriptRow({
           currentlyPlayingSegmentId={
             isCurrentlyPlaying ? audioSegment.id : currentlyPlayingSegmentId
           }
+          hideButton={!isHovered}
         />
         <Typography
           variant={isSilence ? 'caption' : 'body1'}
@@ -314,7 +321,7 @@ export function TranscriptRow({
           )}
         </Box>
       </ListItem>
-    </Fragment>
+    </Box>
   );
 }
 

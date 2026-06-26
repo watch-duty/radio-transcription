@@ -1,26 +1,34 @@
 import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
 import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
+import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
+import { useTheme } from '@mui/material/styles';
 
-export interface AudioPlayerProps {
+export interface TranscriptPlayControlProps {
   audioUri: string;
   segmentId: string;
   onToggleAudio: (segmentId: string, audioUri: string) => void;
   isAudioPlaying: boolean;
   currentlyPlayingSegmentId: string | null;
-  size?: 'small' | 'medium';
+  hideButton?: boolean;
 }
 
-function AudioPlayer({
+function TranscriptPlayControl({
   audioUri,
   segmentId,
   onToggleAudio,
   isAudioPlaying,
   currentlyPlayingSegmentId,
-  size = 'medium',
-}: AudioPlayerProps) {
-  const showPauseIcon =
-    isAudioPlaying && segmentId === currentlyPlayingSegmentId;
+  hideButton = false,
+}: TranscriptPlayControlProps) {
+  const theme = useTheme();
+
+  const isPlayingSegment = segmentId === currentlyPlayingSegmentId;
+  const showPauseIcon = isAudioPlaying && isPlayingSegment;
+
+  if (!isPlayingSegment && hideButton) {
+    return <Box sx={{ height: theme.spacing(5), width: theme.spacing(5) }} />;
+  }
 
   return (
     <IconButton
@@ -33,15 +41,10 @@ function AudioPlayer({
       color="primary"
       aria-label={showPauseIcon ? 'pause' : 'play'}
       disabled={!audioUri}
-      size={size}
     >
-      {showPauseIcon ? (
-        <PauseIcon fontSize={size === 'small' ? 'small' : 'inherit'} />
-      ) : (
-        <PlayArrowIcon fontSize={size === 'small' ? 'small' : 'inherit'} />
-      )}
+      {showPauseIcon ? <PauseIcon /> : <PlayArrowIcon />}
     </IconButton>
   );
 }
 
-export default AudioPlayer;
+export default TranscriptPlayControl;
