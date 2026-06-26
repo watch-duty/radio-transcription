@@ -130,7 +130,7 @@ export function TranscriptView({
     volumeDb,
     pan,
     speed,
-    onPlaybackEnded: (lastSegmentId) => {
+    onPlaybackEnded: () => {
       if (!playLatestAudioRef.current) {
         setPlaybackIntent('paused');
       }
