@@ -49,12 +49,21 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
     null
   );
   const [localDateTime, setLocalDateTime] = useState<Date | null>(dateTime);
-  const [localAlertFilter, setLocalAlertFilter] = useState<AlertFilter>('all');
+  const [localAlertFilter, setLocalAlertFilter] =
+    useState<AlertFilter>(alertFilter);
 
-  React.useEffect(() => {
+  const [prevDateTime, setPrevDateTime] = useState<Date | null>(dateTime);
+  const [prevAlertFilter, setPrevAlertFilter] =
+    useState<AlertFilter>(alertFilter);
+
+  if (dateTime !== prevDateTime) {
+    setPrevDateTime(dateTime);
     setLocalDateTime(dateTime);
+  }
+  if (alertFilter !== prevAlertFilter) {
+    setPrevAlertFilter(alertFilter);
     setLocalAlertFilter(alertFilter);
-  }, [dateTime, alertFilter]);
+  }
 
   const handleFilterOpen = (event: React.MouseEvent<HTMLElement>) => {
     setFilterAnchorEl(event.currentTarget);
@@ -101,6 +110,10 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         display: 'flex',
         justifyContent: 'space-between',
         mb: 0.5,
+        // Lift the bar (and its overflowing speaker badges) above the list's
+        // sticky headers (zIndex 1) so they aren't clipped behind them.
+        position: 'relative',
+        zIndex: 2,
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
