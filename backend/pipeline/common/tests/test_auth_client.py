@@ -5,26 +5,29 @@ from unittest.mock import patch
 
 import google.auth.credentials
 import google.auth.exceptions
+
 from backend.pipeline.common.auth_client import (
     _default_manager,
     get_id_token,
 )
 
 
-from typing import Optional
-
 class MockCredentials(google.auth.credentials.Credentials):
-    def __init__(self, initial_token: Optional[str] = None) -> None:
+    def __init__(self, initial_token: str | None = None) -> None:
         super().__init__()
         self.token = initial_token
         self.refresh_count = 0
         self._valid = initial_token is not None
+        self.should_fail = False
 
     @property
     def valid(self) -> bool:
         return self._valid
 
     def refresh(self, request) -> None:
+        if self.should_fail:
+            err_msg = "Network error"
+            raise google.auth.exceptions.RefreshError(err_msg)
         self.refresh_count += 1
         self.token = f"refreshed-token-{self.refresh_count}"
         self._valid = True
@@ -114,12 +117,11 @@ class TestAuthClient(unittest.TestCase):
         self.assertLess(duration, 0.35)
 
     @patch("google.oauth2.id_token.fetch_id_token_credentials")
-    def test_refresh_failure_does_not_cache_token(self, mock_fetch_creds) -> None:
-        class FailingMockCredentials(MockCredentials):
-            def refresh(self, request) -> None:
-                raise google.auth.exceptions.RefreshError("Network error")
-
-        mock_creds = FailingMockCredentials()
+    def test_refresh_failure_does_not_cache_token(
+        self, mock_fetch_creds
+    ) -> None:
+        mock_creds = MockCredentials()
+        mock_creds.should_fail = True
         mock_fetch_creds.return_value = mock_creds
 
         # First call: should try to refresh and fail
@@ -127,15 +129,11 @@ class TestAuthClient(unittest.TestCase):
             get_id_token("http://audience-failed")
 
         # Subsequent call: should still try to refresh (because .valid remains False)
-        # Mocking the refresh method to succeed on next call
-        def successful_refresh(request) -> None:
-            mock_creds.token = "success"
-            mock_creds._valid = True
-
-        mock_creds.refresh = successful_refresh
+        # We disable should_fail so it succeeds this time
+        mock_creds.should_fail = False
 
         token = get_id_token("http://audience-failed")
-        self.assertEqual(token, "success")
+        self.assertEqual(token, "refreshed-token-1")
 
 
 if __name__ == "__main__":

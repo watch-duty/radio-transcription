@@ -1,6 +1,5 @@
 import logging
 import threading
-from typing import Dict
 
 import google.auth.credentials
 import google.auth.exceptions
@@ -14,11 +13,13 @@ class OIDCTokenManager:
     def __init__(self) -> None:
         # Cache mapping audience to its Credentials object
         self._cache_lock = threading.Lock()
-        self._credentials_cache: Dict[str, google.auth.credentials.Credentials] = {}
+        self._credentials_cache: dict[
+            str, google.auth.credentials.Credentials
+        ] = {}
 
         # Locks mapping audience to its specific Lock to avoid thundering herd
         self._locks_lock = threading.Lock()
-        self._audience_locks: Dict[str, threading.Lock] = {}
+        self._audience_locks: dict[str, threading.Lock] = {}
 
     def get_id_token(self, audience: str) -> str:
         """
@@ -28,7 +29,9 @@ class OIDCTokenManager:
         with self._cache_lock:
             creds = self._credentials_cache.get(audience)
             if creds is None:
-                creds = google.oauth2.id_token.fetch_id_token_credentials(audience)
+                creds = google.oauth2.id_token.fetch_id_token_credentials(
+                    audience
+                )
                 self._credentials_cache[audience] = creds
 
         # 2. Get or create a lock specific to this audience
@@ -47,13 +50,13 @@ class OIDCTokenManager:
                 request = google.auth.transport.requests.Request()
                 creds.refresh(request)
 
-                # If refresh succeeded but token is still not set or invalid, raise
-                if not creds.token:
-                    raise google.auth.exceptions.RefreshError(
-                        f"Refresh completed but token is empty for audience {audience}"
-                    )
+            token = creds.token
+            # If refresh succeeded but token is still not set or invalid, raise
+            if not token:
+                error_msg = f"Refresh completed but token is empty for audience {audience}"
+                raise google.auth.exceptions.RefreshError(error_msg)
 
-            return creds.token
+            return token
 
     def clear(self) -> None:
         """Clear caches and locks for testing."""
