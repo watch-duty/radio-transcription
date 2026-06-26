@@ -136,8 +136,9 @@ def download_gcs_directory(
         local_file = Path(local_dir) / rel_path
         local_file.parent.mkdir(parents=True, exist_ok=True)
         blob.download_to_filename(str(local_file), retry=DEFAULT_RETRY)
-        logger.info(f"Downloaded gs://{bucket_name}/{blob.name} to {local_file}")
-
+        logger.info(
+            f"Downloaded gs://{bucket_name}/{blob.name} to {local_file}"
+        )
 
 
 def upload_local_file(

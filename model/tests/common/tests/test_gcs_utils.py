@@ -180,8 +180,12 @@ class TestGcsObjectHelpers(unittest.TestCase):
             tmp_dir = Path(tmp_s)
             download_gcs_directory(storage, "gs://bucket/dir", tmp_dir)
 
-            self.assertEqual((tmp_dir / "a.txt").read_text(encoding="utf-8"), "file a")
-            self.assertEqual((tmp_dir / "subdir/b.txt").read_text(encoding="utf-8"), "file b")
+            self.assertEqual(
+                (tmp_dir / "a.txt").read_text(encoding="utf-8"), "file a"
+            )
+            self.assertEqual(
+                (tmp_dir / "subdir/b.txt").read_text(encoding="utf-8"), "file b"
+            )
             self.assertFalse((tmp_dir / "other.txt").exists())
 
     def test_download_gcs_directory_not_found(self) -> None:
@@ -189,8 +193,9 @@ class TestGcsObjectHelpers(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp_dir = Path(tmp_s)
             with self.assertRaises(FileNotFoundError):
-                download_gcs_directory(storage, "gs://bucket/nonexistent", tmp_dir)
-
+                download_gcs_directory(
+                    storage, "gs://bucket/nonexistent", tmp_dir
+                )
 
 
 if __name__ == "__main__":

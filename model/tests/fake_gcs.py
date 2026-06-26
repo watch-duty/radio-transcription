@@ -73,7 +73,10 @@ class FakeBucket:
         ]
         if max_results is not None:
             names = names[:max_results]
-        return [FakeBlob(self._store, self._uploads, self.name, name) for name in names]
+        return [
+            FakeBlob(self._store, self._uploads, self.name, name)
+            for name in names
+        ]
 
 
 class FakeStorageClient:
