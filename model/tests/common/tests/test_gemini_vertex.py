@@ -790,6 +790,35 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
             vertexai=True, project="p", location="us"
         )
 
+    @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_batch_uses_us_location_for_31_flash_lite(
+        self, mock_genai
+    ) -> None:
+        """Gemini 3.1 Flash-Lite batch jobs are served from Vertex location us."""
+        mock_dest = unittest.mock.MagicMock()
+        mock_dest.gcs_uri = "gs://bucket/output/"
+        mock_batch_job = unittest.mock.MagicMock()
+        mock_batch_job.name = "projects/p/locations/us/batchPredictionJobs/1"
+        mock_cur = unittest.mock.MagicMock()
+        mock_cur.state.name = "JOB_STATE_SUCCEEDED"
+        mock_cur.dest = mock_dest
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.return_value = mock_batch_job
+        mock_client.batches.get.return_value = mock_cur
+        mock_genai.Client.return_value = mock_client
+
+        submit_batch_inference(
+            input_uri="gs://bucket/input.jsonl",
+            output_uri="gs://bucket/output/",
+            model="gemini-3.1-flash-lite",
+            project="p",
+            location="us-central1",
+        )
+
+        mock_genai.Client.assert_called_once_with(
+            vertexai=True, project="p", location="us"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -51,6 +51,8 @@ GEMINI_SAFETY_SETTINGS = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
 ]
 
+_US_BATCH_MODEL_IDS = {"gemini-3.1-flash-lite"}
+
 
 def build_request(
     audio_uri: str,
@@ -485,7 +487,7 @@ def submit_batch_inference(
         TimeoutError: If no terminal state is reached within timeout_hours.
     """
     _require_vertex()
-    batch_location = _resource_location(model) or location
+    batch_location = _batch_location(model, location)
     if batch_location != location:
         logger.info(
             "Using model resource location %s for batch inference instead of %s",
@@ -568,3 +570,13 @@ def _resource_location(resource_name: str) -> str | None:
     """Extract a Vertex resource location from a full resource name."""
     match = _RESOURCE_LOCATION_RE.search(resource_name)
     return match.group(1) if match else None
+
+
+def _batch_location(model: str, location: str) -> str:
+    """Return the Vertex location to use for batch inference."""
+    resource_location = _resource_location(model)
+    if resource_location:
+        return resource_location
+    if model.rsplit("/", maxsplit=1)[-1] in _US_BATCH_MODEL_IDS:
+        return "us"
+    return location
