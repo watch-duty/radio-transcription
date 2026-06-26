@@ -427,28 +427,15 @@ export function TranscriptView({
     } else {
       setPlaybackIntent('playing');
 
-      let targetId: string | null = null;
-      let shouldPlayNext = false;
-
-      if (highlightedSegmentId && highlightedSegmentId !== currentlyPlayingSegmentId) {
-        targetId = highlightedSegmentId;
-      } else if (currentlyPlayingSegmentId) {
-        if (currentAudioRef.current === null) {
-          shouldPlayNext = true;
-          targetId = currentlyPlayingSegmentId;
-        } else {
-          targetId = currentlyPlayingSegmentId;
-        }
-      } else if (highlightedSegmentId) {
-        targetId = highlightedSegmentId;
-      } else if (audioSegments.length > 0) {
-        targetId = audioSegments[0].id;
-      }
-
+      const targetId = highlightedSegmentId || currentlyPlayingSegmentId || audioSegments[0]?.id;
       if (!targetId) return;
 
+      const shouldPlayNext =
+        currentlyPlayingSegmentId === targetId &&
+        currentAudioRef.current === null;
+
       if (shouldPlayNext) {
-        const idx = audioSegments.findIndex((s) => isWithinSegment(s, targetId!));
+        const idx = audioSegments.findIndex((s) => isWithinSegment(s, targetId));
         if (idx !== -1 && idx > 0) {
           const nextAudioSegment = audioSegments[idx - 1];
           if (nextAudioSegment.playbackAudioUri) {
@@ -465,17 +452,19 @@ export function TranscriptView({
               }
             }
             toggleAudio(nextAudioSegment.id, nextAudioSegment.playbackAudioUri);
-          }
-        } else {
-          const segment = rawAudioSegments.find((s) => s.id === targetId!);
-          if (segment && segment.playbackAudioUri) {
-            toggleAudio(segment.id, segment.playbackAudioUri);
+            return;
           }
         }
+      }
+
+      // Default fallback: play targetId directly
+      const segment = rawAudioSegments.find((s) => s.id === targetId);
+      if (segment && segment.playbackAudioUri) {
+        toggleAudio(segment.id, segment.playbackAudioUri);
       } else {
-        const segment = rawAudioSegments.find((s) => s.id === targetId!);
-        if (segment && segment.playbackAudioUri) {
-          toggleAudio(segment.id, segment.playbackAudioUri);
+        const audioSegment = audioSegments.find((t) => isWithinSegment(t, targetId));
+        if (audioSegment && audioSegment.playbackAudioUri) {
+          toggleAudio(audioSegment.id, audioSegment.playbackAudioUri);
         }
       }
     }
