@@ -1,11 +1,11 @@
 import { useState } from 'react';
 
-
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import Popover from '@mui/material/Popover';
 import Slider from '@mui/material/Slider';
@@ -243,19 +243,19 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
             </Tooltip>
           </Box>
 
+          <Divider />
+
           <Box
             sx={{
               display: 'flex',
               justifyContent: 'flex-end',
-              borderTop: 1,
-              borderColor: 'divider',
-              pt: 1,
             }}
           >
             {/* Always enabled (not hidden when at defaults) so keyboard focus
                 isn't lost the moment a reset returns everything to default. */}
             <Button
               size="small"
+              variant="outlined"
               onClick={onReset}
               sx={{ textTransform: 'none' }}
             >

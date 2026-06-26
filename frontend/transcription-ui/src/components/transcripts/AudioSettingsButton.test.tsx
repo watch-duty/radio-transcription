@@ -115,6 +115,8 @@ describe('AudioSettingsButton', () => {
 
   it('disables the button when disableControls is true', () => {
     renderButton({ disableControls: true });
-    expect(screen.getByRole('button', { name: 'audio controls' })).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'audio controls' })
+    ).toBeDisabled();
   });
 });
