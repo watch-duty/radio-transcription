@@ -7,7 +7,7 @@ import subprocess
 from dataclasses import dataclass
 from enum import StrEnum
 
-from backend.pipeline.ingestion import quarantine_reason
+from backend.pipeline.ingestion import status_reason_detail
 from backend.pipeline.ingestion.failure_classifiers import (
     http_status,
 )
@@ -81,7 +81,7 @@ def classify_ffmpeg_failure(
 
     Callers own ffmpeg execution, timeout handling, and same-endpoint probing.
     This helper only interprets bounded evidence; callers render the final
-    quarantine reason with the source context and bounded stderr tail.
+    status reason detail with the source context and bounded stderr tail.
     """
     if not timed_out and exit_code in (None, 0):
         return None
@@ -215,7 +215,7 @@ def ffprobe_exception_failure_reason(exc: BaseException) -> str:
     """Render ffprobe subprocess evidence, falling back to exception text."""
     return render_ffprobe_exception_diagnostic(
         exc
-    ) or quarantine_reason.exception_text(exc)
+    ) or status_reason_detail.exception_text(exc)
 
 
 def _render_with_diagnostic_text(

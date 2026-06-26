@@ -145,6 +145,12 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             "transcription", "start"
         )
         self.mock_record_pipeline_stage.assert_any_call(
+            "transcription_status", "attempts"
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription_status", "success"
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
             "transcription", "success"
         )
 
@@ -228,6 +234,18 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
                 "errors": ["Empty transcription from Speech Model"],
             },
         )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription", "start"
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription_status", "attempts"
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription_status", "unintelligible"
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription", "success"
+        )
 
     async def test_process_event_transcribe_error_silent_drop(self) -> None:
         """Verifies that a permanent exception raised during transcription is caught and silently dropped."""
@@ -279,6 +297,19 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
 
         # Permanent transcription exception must be caught gracefully without propagating
         await processor.process_event(cloud_event)
+
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription", "start"
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription_status", "attempts"
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription", "error"
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription_status", "error"
+        )
 
         # Egress publishing must never be called (event silently dropped)
         mock_publisher.publish.assert_not_called()

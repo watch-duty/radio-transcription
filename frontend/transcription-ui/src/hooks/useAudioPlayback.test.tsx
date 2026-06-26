@@ -5,6 +5,7 @@ import { act, renderHook } from '@testing-library/react';
 import { type AudioSegment } from '@transcription/common';
 
 import { useAudioPlayback } from './useAudioPlayback';
+import { type RenderableAudioSegment } from './useConsolidatedAudioSegments';
 
 const engineMock = vi.hoisted(() => ({
   contextCreated: 0,
@@ -78,22 +79,35 @@ vi.mock('../utils/audioUtils', () => ({
 }));
 
 function makeSegment(id: string): AudioSegment {
-  return { id } as AudioSegment;
+  return { id, playbackAudioUri: `${id}.m4a` } as AudioSegment;
 }
 
-function renderPlayback(segments: AudioSegment[] = []) {
+function renderPlayback(
+  segments: AudioSegment[] = [],
+  initialProps: { volumeDb?: number; pan?: number; speed?: number } = {}
+) {
   const onPlaySegment = vi.fn();
-  const audioSegmentsRef = { current: segments };
-  const view = renderHook(() =>
-    useAudioPlayback({
-      audioSegmentsRef,
-      onPlaySegment,
-      volumeDb: 0,
-      pan: 0,
-      speed: 1,
-    })
+  const audioSegmentsRef = { current: segments as RenderableAudioSegment[] };
+  const rawAudioSegmentsRef = { current: segments };
+  const view = renderHook(
+    (props: { volumeDb: number; pan: number; speed: number }) =>
+      useAudioPlayback({
+        audioSegmentsRef,
+        rawAudioSegmentsRef,
+        onPlaySegment,
+        volumeDb: props.volumeDb,
+        pan: props.pan,
+        speed: props.speed,
+      }),
+    {
+      initialProps: {
+        volumeDb: initialProps.volumeDb ?? 0,
+        pan: initialProps.pan ?? 0,
+        speed: initialProps.speed ?? 1,
+      },
+    }
   );
-  return { ...view, onPlaySegment, audioSegmentsRef };
+  return { ...view, onPlaySegment, audioSegmentsRef, rawAudioSegmentsRef };
 }
 
 describe('useAudioPlayback', () => {
@@ -126,17 +140,11 @@ describe('useAudioPlayback', () => {
   });
 
   it('applies the current control values to the player on toggle', () => {
-    const onPlaySegment = vi.fn();
-    const audioSegmentsRef = { current: [makeSegment('a')] };
-    const { result } = renderHook(() =>
-      useAudioPlayback({
-        audioSegmentsRef,
-        onPlaySegment,
-        volumeDb: -6,
-        pan: 1,
-        speed: 1.5,
-      })
-    );
+    const { result } = renderPlayback([makeSegment('a')], {
+      volumeDb: -6,
+      pan: 1,
+      speed: 1.5,
+    });
 
     act(() => result.current.togglePlay('a', 'a.m4a'));
 
@@ -146,13 +154,11 @@ describe('useAudioPlayback', () => {
   });
 
   it('pushes later control changes into the live player', () => {
-    const onPlaySegment = vi.fn();
-    const audioSegmentsRef = { current: [makeSegment('a')] };
-    const { result, rerender } = renderHook(
-      (props: { volumeDb: number; pan: number; speed: number }) =>
-        useAudioPlayback({ audioSegmentsRef, onPlaySegment, ...props }),
-      { initialProps: { volumeDb: 0, pan: 0, speed: 1 } }
-    );
+    const { result, rerender } = renderPlayback([makeSegment('a')], {
+      volumeDb: 0,
+      pan: 0,
+      speed: 1,
+    });
 
     // The player is built on first toggle; only then can changes reach it.
     act(() => result.current.togglePlay('a', 'a.m4a'));
@@ -201,13 +207,12 @@ describe('useAudioPlayback', () => {
     expect(engineMock.playSpy).toHaveBeenCalledTimes(2);
   });
 
-  it('flags the ended segment for autoplay and clears the playing flag when it was last', () => {
+  it('clears the playing flag and releases the handle when the last segment ends', () => {
     const { result } = renderPlayback([makeSegment('a')]);
 
     act(() => result.current.togglePlay('a', 'a.m4a'));
     act(() => engineMock.lastCallbacks?.onEnd?.());
 
-    expect(result.current.playbackEndedForId).toBe('a');
     // 'a' is at index 0 (newest), so there is no newer segment to advance to.
     expect(result.current.isAudioPlaying).toBe(false);
     // The handle is released so AudioDisplay stops polling the finished clip.
@@ -221,7 +226,8 @@ describe('useAudioPlayback', () => {
     act(() => result.current.togglePlay('a', 'a.m4a'));
     act(() => engineMock.lastCallbacks?.onEnd?.());
 
-    expect(result.current.playbackEndedForId).toBe('a');
+    // It should have transitioned synchronously to playing segment 'b'
+    expect(result.current.currentlyPlayingSegmentId).toBe('b');
     expect(result.current.isAudioPlaying).toBe(true);
   });
 
@@ -233,7 +239,6 @@ describe('useAudioPlayback', () => {
 
     expect(engineMock.stopSpy).toHaveBeenCalled();
     expect(result.current.currentlyPlayingSegmentId).toBeNull();
-    expect(result.current.playbackEndedForId).toBeNull();
     expect(result.current.currentAudioRef.current).toBeNull();
   });
 
