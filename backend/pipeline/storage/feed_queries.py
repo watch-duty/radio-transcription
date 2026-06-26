@@ -20,6 +20,9 @@ if TYPE_CHECKING:
 
 _AUDIT_BEFORE_SNAPSHOT_SQL = feed_audit_sql.audit_snapshot_sql("before_row")
 _AUDIT_AFTER_SNAPSHOT_SQL = feed_audit_sql.audit_snapshot_sql("after_row")
+_AUDIT_EVENT_RETURNING_SQL = (
+    f"{feed_audit_sql.feed_audit_event_payload_sql()} AS feed_audit_event"
+)
 
 UPDATE_PROGRESS_SQL = f"""\
 WITH before_row AS (
@@ -69,10 +72,13 @@ after_row AS (
             "    CROSS JOIN audit_action"
         ),
         where_sql="audit_action.action IS NOT NULL",
+        returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
-SELECT after_row.*
+SELECT after_row.*,
+       write_audit.feed_audit_event
 FROM after_row
+LEFT JOIN write_audit ON TRUE
 """
 
 RECORD_SOURCE_OBSERVATION_SQL = f"""\
@@ -125,6 +131,7 @@ after_row AS (
             "    CROSS JOIN audit_action"
         ),
         where_sql="audit_action.action IS NOT NULL",
+        returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
 SELECT
@@ -145,10 +152,12 @@ SELECT
     do_update.created_at,
     do_update.feed_revision,
     after_row.source_feed_id,
-    after_row.tags
+    after_row.tags,
+    write_audit.feed_audit_event
 FROM current_state
 LEFT JOIN do_update ON current_state.id = do_update.id
-LEFT JOIN after_row ON after_row.id = do_update.id;
+LEFT JOIN after_row ON after_row.id = do_update.id
+LEFT JOIN write_audit ON TRUE;
 """
 
 RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
@@ -503,10 +512,13 @@ after_row AS (
             "    CROSS JOIN audit_action"
         ),
         where_sql="audit_action.action IS NOT NULL",
+        returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
-SELECT after_row.*
+SELECT after_row.*,
+       write_audit.feed_audit_event
 FROM after_row
+LEFT JOIN write_audit ON TRUE
 """
 
 RELEASE_NON_BUDGETED_FAILURE_SQL = f"""\
@@ -559,10 +571,13 @@ after_row AS (
             "    CROSS JOIN audit_action"
         ),
         where_sql="audit_action.action IS NOT NULL",
+        returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
-SELECT after_row.*
+SELECT after_row.*,
+       write_audit.feed_audit_event
 FROM after_row
+LEFT JOIN write_audit ON TRUE
 """
 
 CREATE_FEED_SQL = f"""\
@@ -591,10 +606,13 @@ after_row AS (
         before_values_sql="        '{}'::jsonb",
         after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
         from_sql="FROM after_row",
+        returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
-SELECT after_row.*
-FROM after_row;
+SELECT after_row.*,
+       write_audit.feed_audit_event
+FROM after_row
+LEFT JOIN write_audit ON TRUE;
 """
 
 GET_FEED_SQL = """\
@@ -699,9 +717,11 @@ after_row AS (
         before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
         after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
         from_sql="FROM before_row\n    JOIN after_row ON after_row.id = before_row.id",
+        returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
-SELECT before_row.id
+SELECT before_row.id,
+       write_audit.feed_audit_event
 FROM before_row
 LEFT JOIN write_audit ON TRUE
 """
@@ -730,7 +750,7 @@ before_row AS (
         before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
         after_values_sql="        '{}'::jsonb",
         from_sql="FROM before_row",
-        returning_sql="feed_id",
+        returning_sql=f"feed_id, {_AUDIT_EVENT_RETURNING_SQL}",
     )
 },
 deleted_audio_segments AS (
@@ -754,9 +774,11 @@ deleted_feed AS (
 SELECT target_feed.id,
        target_feed.status::text AS current_status,
        target_feed.status = 'active'::feed_status AS blocked_active,
-       deleted_feed.id IS NOT NULL AS deleted
+       deleted_feed.id IS NOT NULL AS deleted,
+       write_audit.feed_audit_event
 FROM target_feed
 LEFT JOIN deleted_feed ON deleted_feed.id = target_feed.id
+LEFT JOIN write_audit ON write_audit.feed_id = target_feed.id
 """
 
 
@@ -815,13 +837,16 @@ after_row AS (
         before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
         after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
         from_sql="FROM before_row\n    JOIN after_row ON after_row.id = before_row.id",
+        returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
 SELECT target_feed.status::text AS current_status,
        target_feed.status = 'active'::feed_status AS blocked_active,
-       after_row.*
+       after_row.*,
+       write_audit.feed_audit_event
 FROM target_feed
 LEFT JOIN after_row ON after_row.id = target_feed.id
+LEFT JOIN write_audit ON TRUE
 """
 
 UPDATE_FEED_SQL = f"""\
@@ -884,6 +909,7 @@ result_row AS (
         before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
         after_values_sql=feed_audit_sql.audit_snapshot_sql("updated_row"),
         from_sql="FROM before_row\n    JOIN updated_row ON updated_row.id = before_row.id",
+        returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
 SELECT result_row.*,
@@ -894,8 +920,10 @@ SELECT result_row.*,
              AND s.classification = 'SPEECH'::audio_classification
            ORDER BY s.end_timestamp DESC, s.id DESC
            LIMIT 1
-       ) AS last_speech_segment_timestamp
-FROM result_row;
+       ) AS last_speech_segment_timestamp,
+       write_audit.feed_audit_event
+FROM result_row
+LEFT JOIN write_audit ON TRUE;
 """
 
 
