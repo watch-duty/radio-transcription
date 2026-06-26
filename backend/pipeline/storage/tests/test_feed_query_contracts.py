@@ -95,6 +95,48 @@ class TestFeedAuditEventSqlContract(unittest.TestCase):
         self.assertIn("before_values, after_values", sql)
         self.assertIn("RETURNING id", sql)
 
+    def test_shared_notification_payload_builder_renders_flat_contract(
+        self,
+    ) -> None:
+        sql = getattr(feed_audit_sql, "feed_audit_event_payload_sql")()
+
+        expected_keys = [
+            "'event_type'",
+            "'schema_version'",
+            "'event_id'",
+            "'action'",
+            "'occurred_at'",
+            "'actor_id'",
+            "'feed_id'",
+            "'feed_revision'",
+            "'before_values'",
+            "'after_values'",
+        ]
+        rendered_keys = [
+            line.strip().split(",", maxsplit=1)[0]
+            for line in sql.splitlines()
+            if line.strip().startswith("'")
+        ]
+
+        self.assertIn("jsonb_build_object(", sql)
+        self.assertEqual(expected_keys, rendered_keys)
+        self.assertIn(
+            "'event_type', 'radio_transcription.feed_audit_notification'",
+            sql,
+        )
+        self.assertIn("'schema_version', 1", sql)
+        for column in (
+            "id",
+            "action",
+            "occurred_at",
+            "actor_id",
+            "feed_id",
+            "feed_revision",
+            "before_values",
+            "after_values",
+        ):
+            self.assertIn(f"feed_audit_events.{column}", sql)
+
     def test_audited_mutation_sql_embeds_audit_insert(self) -> None:
         audited_sql = (
             feed_queries.CREATE_FEED_SQL,
