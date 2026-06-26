@@ -24,9 +24,10 @@ def compute_waveform(flac_bytes: bytes) -> WaveformAnnotationData:
     duration_seconds = len(samples) / sample_rate
     num_buckets = math.ceil(duration_seconds / MAX_BIN_SIZE_SECONDS)
 
+    magnitudes = np.abs(samples)
     peaks = [
-        round(float(np.abs(bucket).max()), PEAK_DECIMALS)
-        for bucket in np.array_split(samples, num_buckets)
+        round(float(bucket.max()), PEAK_DECIMALS)
+        for bucket in np.array_split(magnitudes, num_buckets)
     ]
     return WaveformAnnotationData(
         peaks=[peaks], duration_seconds=duration_seconds
