@@ -37,7 +37,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 Plans:
 **Wave 1**
 - [x] 01-01-PLAN.md — SQL payload contract and nullable `feed_audit_event` result columns
-- [ ] 01-02-PLAN.md — Shared failure-isolated notification logging helper
+- [x] 01-02-PLAN.md — Shared failure-isolated notification logging helper
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 01-03-PLAN.md — Async and sync store integration with focused verification
@@ -83,7 +83,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Audit Contract and Emission | 0/3 | Not started | - |
+| 1. Audit Contract and Emission | 2/3 | In Progress | - |
 | 2. Cloud Logging and Pub/Sub Routing | 0/TBD | Not started | - |
 | 3. Webhook Relay Delivery | 0/TBD | Not started | - |
 | 4. Operations and Rollout Proof | 0/TBD | Not started | - |

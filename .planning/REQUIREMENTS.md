@@ -11,8 +11,8 @@ lifecycle writes.
 
 - [x] **AUDIT-01**: Every newly inserted `feed_audit_events` row emits exactly one best-effort structured Feed Audit Notification log.
 - [x] **AUDIT-02**: Feed state changes that do not insert a `feed_audit_events` row emit no Feed Audit Notification.
-- [ ] **AUDIT-03**: Notification emission never raises to callers and never changes the result of ingestion, feed lifecycle writes, or audit row persistence.
-- [ ] **AUDIT-04**: Async `FeedStore` and sync `SyncFeedStore` audited write paths use one shared notification helper instead of duplicate payload/logging logic.
+- [x] **AUDIT-03**: Notification emission never raises to callers and never changes the result of ingestion, feed lifecycle writes, or audit row persistence.
+- [x] **AUDIT-04**: Async `FeedStore` and sync `SyncFeedStore` audited write paths use one shared notification helper instead of duplicate payload/logging logic.
 - [x] **AUDIT-05**: Storage SQL returns notification payload data from the same audited statement without adding an extra database round trip.
 
 ### Payload Contract
@@ -83,8 +83,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | AUDIT-01 | Phase 1 | Complete |
 | AUDIT-02 | Phase 1 | Complete |
-| AUDIT-03 | Phase 1 | Pending |
-| AUDIT-04 | Phase 1 | Pending |
+| AUDIT-03 | Phase 1 | Complete |
+| AUDIT-04 | Phase 1 | Complete |
 | AUDIT-05 | Phase 1 | Complete |
 | PAYLOAD-01 | Phase 1 | Complete |
 | PAYLOAD-02 | Phase 1 | Complete |
