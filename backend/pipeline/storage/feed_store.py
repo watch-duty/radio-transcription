@@ -15,7 +15,11 @@ from backend.pipeline.common.exceptions import (
     FeedNameAlreadyExistsError,
     FeedStateConflictError,
 )
-from backend.pipeline.storage import feed_lifecycle, feed_queries
+from backend.pipeline.storage import (
+    feed_audit_notifications,
+    feed_lifecycle,
+    feed_queries,
+)
 from backend.pipeline.storage.pagination_utils import (
     SortOrder,
     decode_cursor,
@@ -372,7 +376,12 @@ class FeedStore:
             last_bookmark_time,
             _require_actor_id(actor_id),
         )
-        return row is not None
+        if row is None:
+            return False
+        feed_audit_notifications.emit_feed_audit_notification(
+            row.get("feed_audit_event")
+        )
+        return True
 
     async def record_source_observation(
         self,
@@ -405,13 +414,17 @@ class FeedStore:
                 current_fencing_token=None,
                 recorded=False,
             )
-        return SourceObservationResult(
+        result = SourceObservationResult(
             id=row["id"],
             current_worker=row["current_worker"],
             current_status=row["current_status"],
             current_fencing_token=row["current_fencing_token"],
             recorded=row["recorded"],
         )
+        feed_audit_notifications.emit_feed_audit_notification(
+            row.get("feed_audit_event")
+        )
+        return result
 
     async def renew_heartbeats_batch_diagnostic(
         self,
@@ -526,25 +539,9 @@ class FeedStore:
             return None
 
         status: str = row["status"]
-        if status == "quarantined":
-            logger.critical(
-                "Feed failure threshold reached — status set to quarantined",
-                extra={
-                    "feed_id": str(feed_id),
-                    "failure_count": row["failure_count"],
-                    "reason": reason,
-                },
-            )
-        else:
-            logger.info(
-                "Feed failure recorded",
-                extra={
-                    "feed_id": str(feed_id),
-                    "failure_count": row["failure_count"],
-                    "retry_after": str(row["retry_after"]),
-                    "reason": reason,
-                },
-            )
+        feed_audit_notifications.emit_feed_audit_notification(
+            row.get("feed_audit_event")
+        )
         return status
 
     async def release_non_budgeted_failure(
@@ -580,7 +577,11 @@ class FeedStore:
             )
         if row is None:
             return None
-        return row["status"]
+        status: str = row["status"]
+        feed_audit_notifications.emit_feed_audit_notification(
+            row.get("feed_audit_event")
+        )
+        return status
 
     async def release_feed(
         self,
@@ -854,7 +855,11 @@ class FeedStore:
             msg = f"Invalid source type '{source_type_str}'"
             raise ValueError(msg) from e
 
-        return self._row_to_feed(row)
+        feed = self._row_to_feed(row)
+        feed_audit_notifications.emit_feed_audit_notification(
+            row.get("feed_audit_event")
+        )
+        return feed
 
     async def update_feed(
         self,
@@ -902,7 +907,11 @@ class FeedStore:
                 "feed_name": name,
             },
         )
-        return self._row_to_feed(row)
+        feed = self._row_to_feed(row)
+        feed_audit_notifications.emit_feed_audit_notification(
+            row.get("feed_audit_event")
+        )
+        return feed
 
     async def get_feed(self, feed_id: uuid.UUID) -> Feed | None:
         """Fetch a specific feed by ID.
@@ -1000,7 +1009,12 @@ class FeedStore:
                 feed_id,
                 required_actor_id,
             )
-        return row is not None
+        if row is None:
+            return False
+        feed_audit_notifications.emit_feed_audit_notification(
+            row.get("feed_audit_event")
+        )
+        return True
 
     async def delete_feed(
         self,
@@ -1030,7 +1044,11 @@ class FeedStore:
                 "deleted",
                 row["current_status"],
             )
-        return bool(row["deleted"])
+        deleted = bool(row["deleted"])
+        feed_audit_notifications.emit_feed_audit_notification(
+            row.get("feed_audit_event")
+        )
+        return deleted
 
     async def reset_feed(
         self,
@@ -1070,4 +1088,8 @@ class FeedStore:
             )
         if row["id"] is None:
             return None
-        return self._row_to_feed(row)
+        feed = self._row_to_feed(row)
+        feed_audit_notifications.emit_feed_audit_notification(
+            row.get("feed_audit_event")
+        )
+        return feed
