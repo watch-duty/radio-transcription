@@ -63,7 +63,7 @@ class TranscriptionEventProcessor:
         self.publisher = publisher
         self.audio_segments_client = audio_segments_client
 
-    async def process_event(self, cloud_event: CloudEvent | dict) -> None:
+    async def process_event(self, cloud_event: CloudEvent | dict) -> None:  # noqa: PLR0915
         """Decodes, processes, and transcribes the given CloudEvent or raw dictionary."""
         record_pipeline_stage("transcription", "start")
         try:
@@ -107,6 +107,7 @@ class TranscriptionEventProcessor:
                 return
 
             try:
+                record_pipeline_stage("transcription_status", "attempts")
                 # Determine audio duration from start and end timestamps
                 duration_ms = self._get_duration_ms(claim)
 
@@ -128,6 +129,11 @@ class TranscriptionEventProcessor:
                     )
                     errors.append("Empty transcription from Speech Model")
                     transcript = CHIRP_UNINTELLIGIBLE_MARKER
+                    record_pipeline_stage(
+                        "transcription_status", "unintelligible"
+                    )
+                else:
+                    record_pipeline_stage("transcription_status", "success")
 
                 # Build TranscribedAudio egress protobuf message
                 out_proto = self._build_egress_message(claim, transcript)
@@ -145,6 +151,7 @@ class TranscriptionEventProcessor:
                 )
             except Exception as e:
                 record_pipeline_stage("transcription", "error")
+                record_pipeline_stage("transcription_status", "error")
                 if _is_transient_exception(e):
                     logger.warning(
                         "Transient failure processing transcription claim for transmission %s (feed %s): %s. "
