@@ -63,13 +63,19 @@ contain only one audio part:
 Dataset example 2 of 16919 contains 2 audio parts, which exceeds the maximum limit of 1 per example.
 ```
 
-The revised SFT-compatible schema keeps the same source grouping and count-8
-window but folds prior conversations into text context:
+The first fallback folded prior conversations into one text block on the final
+user turn. That job was cancelled before completion because it did not preserve
+the requested multi-turn conversation structure.
 
-1. Current `user` turn contains a chronological list of up to 8 prior
-   same-source gold transcripts, followed by the current TURN_PROMPT.
-2. The same current `user` turn contains exactly one audio part: the current
-   clip to transcribe.
+The active SFT-compatible schema keeps the same source grouping and count-8
+window while preserving prior user/model turns:
+
+1. For each prior turn: `user(TURN_PROMPT text only)` followed by
+   `model(gold prior transcript)`. This user text is byte-for-byte the same
+   configured prompt used by the current turn; only the prior audio part is
+   omitted.
+2. Current `user` turn contains TURN_PROMPT and exactly one audio part: the
+   current clip to transcribe.
 3. Final target: `model(current gold transcript)`.
 
 The current prompt is the manual-context notebook command:
@@ -82,7 +88,8 @@ Apply all CRITICAL RULES.
 
 This is teacher-forced prior context: validation/eval use gold prior transcripts,
 not self-fed predicted transcripts. The revised run therefore tests count-8
-same-source transcript context for SFT, not multi-audio SFT context.
+same-source multi-turn text transcript context for SFT, not multi-audio SFT
+context.
 
 ## SFT Settings
 
@@ -92,16 +99,17 @@ same-source transcript context for SFT, not multi-audio SFT context.
 - Epoch count: `8`
 - GCP location: `us-central1`
 - Artifact prefix: `gs://wd-transcription-data/sft/runs/<round_id>`
-- Revised round id: `20260625-prior-context-count8-transcript-sft`
+- Revised round id: `20260625-prior-context-count8-text-turns-sft`
 
 ## Execution
 
 1. Build combined canonical train, validation, and eval manifests under
    `gs://wd-transcription-data/sft/experiments/gemini-prior-context-sft-v20260625/manifests/`.
 2. Run `gemini-sft prepare` with `[context] prior_turn_count = 8` and
-   `prior_context_mode = "transcript"`.
+   `prior_context_mode = "text_turns"`.
 3. Inspect prepared Gemini JSONL to verify second and later same-source rows
-   contain prior transcript text before the single current audio part.
+   contain prior text-only user/model transcript turns before the single
+   current audio part.
 4. Run `gemini-sft tune --confirm`.
 5. Run `gemini-sft eval` to batch-score base and tuned models with the same
    count-8 prior context.
