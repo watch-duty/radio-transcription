@@ -77,6 +77,14 @@ export function TranscriptView({
 
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [playLatestAudio, setPlayLatestAudio] = useState(true);
+  const [playbackIntent, setPlaybackIntent] = useState<'playing' | 'paused'>(
+    'playing'
+  );
+
+  const playLatestAudioRef = useRef(playLatestAudio);
+  useEffect(() => {
+    playLatestAudioRef.current = playLatestAudio;
+  }, [playLatestAudio]);
 
   const [redactTranscripts, setRedactTranscripts] = useState(false);
   const [alertFilter, setAlertFilter] = useState<AlertFilter>('all');
@@ -115,7 +123,7 @@ export function TranscriptView({
     isAudioPlaying,
     currentlyPlayingSegmentId,
     currentAudioRef,
-    togglePlay: toggleAudio,
+    togglePlay,
     stop: stopPlayback,
   } = useAudioPlayback({
     audioSegmentsRef,
@@ -124,6 +132,11 @@ export function TranscriptView({
     volumeDb,
     pan,
     speed,
+    onPlaybackEnded: () => {
+      if (!playLatestAudioRef.current) {
+        setPlaybackIntent('paused');
+      }
+    },
   });
 
   // Side effects for segments that arrive from a live poll: notify, bump the
@@ -146,14 +159,20 @@ export function TranscriptView({
         }
       }
 
-      if (!isAudioPlaying && playLatestAudio) {
+      if (playbackIntent === 'playing' && !isAudioPlaying && playLatestAudio) {
         const audioToPlay = newAudioSegments[newAudioSegments.length - 1];
         if (audioToPlay.playbackAudioUri) {
-          toggleAudio(audioToPlay.id, audioToPlay.playbackAudioUri);
+          togglePlay(audioToPlay.id, audioToPlay.playbackAudioUri);
         }
       }
     },
-    [triggerSnackbar, isAudioPlaying, playLatestAudio, toggleAudio]
+    [
+      triggerSnackbar,
+      isAudioPlaying,
+      playLatestAudio,
+      playbackIntent,
+      togglePlay,
+    ]
   );
 
   const {
@@ -248,9 +267,55 @@ export function TranscriptView({
     audioSegmentsRef.current = audioSegments;
   }, [audioSegments]);
 
+  const handleToggleAudio = useCallback(
+    (segmentId: string, audioUri: string) => {
+      togglePlay(segmentId, audioUri);
+
+      if (currentlyPlayingSegmentId === segmentId && isAudioPlaying) {
+        setPlaybackIntent('paused');
+      } else {
+        setPlaybackIntent('playing');
+      }
+    },
+    [currentlyPlayingSegmentId, isAudioPlaying, togglePlay]
+  );
+
+  // Automatically play the highlighted/selected segment, or the most recent segment, if play mode is active.
   useEffect(() => {
-    rawAudioSegmentsRef.current = rawAudioSegments;
-  }, [rawAudioSegments]);
+    if (playbackIntent !== 'playing' || audioSegments.length === 0) return;
+
+    const hasSelectionChange =
+      highlightedSegmentId &&
+      highlightedSegmentId !== currentlyPlayingSegmentId;
+    const shouldStartPlaying = !currentlyPlayingSegmentId || hasSelectionChange;
+
+    if (shouldStartPlaying) {
+      const targetId = highlightedSegmentId || audioSegments[0].id;
+      const segment = rawAudioSegments.find((s) => s.id === targetId);
+      if (segment && segment.playbackAudioUri) {
+        togglePlay(segment.id, segment.playbackAudioUri);
+      } else {
+        const audioSegment = audioSegments.find((t) =>
+          isWithinSegment(t, targetId)
+        );
+        if (audioSegment && audioSegment.playbackAudioUri) {
+          togglePlay(audioSegment.id, audioSegment.playbackAudioUri);
+        }
+      }
+    }
+  }, [
+    playbackIntent,
+    audioSegments,
+    rawAudioSegments,
+    currentlyPlayingSegmentId,
+    highlightedSegmentId,
+    togglePlay,
+  ]);
+
+  const [seekTrigger, setSeekTrigger] = useState(0);
+  const handleSeek = useCallback(() => {
+    setSeekTrigger((prev) => prev + 1);
+  }, []);
 
   const {
     skipToNext,
@@ -266,8 +331,13 @@ export function TranscriptView({
     isAudioPlaying,
     currentAudioRef,
     virtuosoRef,
-    toggleAudio,
+    toggleAudio: handleToggleAudio,
+    onSeek: handleSeek,
   });
+
+  useEffect(() => {
+    rawAudioSegmentsRef.current = rawAudioSegments;
+  }, [rawAudioSegments]);
 
   // This is used to group audio segments by date and display them in the UI.
   // groupCounts is an array of numbers representing the number of audio segments in each group.
@@ -371,24 +441,73 @@ export function TranscriptView({
   };
 
   const handleTogglePlayPause = () => {
-    const targetId = isAudioPlaying
-      ? currentlyPlayingSegmentId || highlightedSegmentId
-      : highlightedSegmentId ||
+    if (playbackIntent === 'playing') {
+      setPlaybackIntent('paused');
+      if (isAudioPlaying && currentlyPlayingSegmentId) {
+        const segment = rawAudioSegments.find(
+          (s) => s.id === currentlyPlayingSegmentId
+        );
+        if (segment && segment.playbackAudioUri) {
+          togglePlay(segment.id, segment.playbackAudioUri);
+        }
+      }
+    } else {
+      setPlaybackIntent('playing');
+
+      const targetId =
+        highlightedSegmentId ||
         currentlyPlayingSegmentId ||
         audioSegments[0]?.id;
-    if (!targetId) return;
+      if (!targetId) return;
 
-    const specificSegment = rawAudioSegments.find((s) => s.id === targetId);
-    if (specificSegment && specificSegment.playbackAudioUri) {
-      toggleAudio(specificSegment.id, specificSegment.playbackAudioUri);
-      return;
-    }
+      const shouldPlayNext =
+        currentlyPlayingSegmentId === targetId &&
+        currentAudioRef.current === null;
 
-    const audioSegment = audioSegments.find((t) =>
-      isWithinSegment(t, targetId)
-    );
-    if (audioSegment && audioSegment.playbackAudioUri) {
-      toggleAudio(audioSegment.id, audioSegment.playbackAudioUri);
+      if (shouldPlayNext) {
+        const idx = audioSegments.findIndex((s) =>
+          isWithinSegment(s, targetId)
+        );
+        if (idx !== -1 && idx > 0) {
+          const nextAudioSegment = audioSegments[idx - 1];
+          if (nextAudioSegment.playbackAudioUri) {
+            // If the next segment is a silence bundle, we must explicitly start playing
+            // its first raw segment ID (rather than the bundle's consolidated ID).
+            // This ensures that when the first track finishes, the continuous playback
+            // engine's onEnd listener can correctly identify the parent bundle, map the
+            // finished raw ID, and seamlessly transition to the next raw silence segment.
+            if (
+              nextAudioSegment.isSilenceBundle &&
+              nextAudioSegment.bundledSegmentIds &&
+              nextAudioSegment.bundledSegmentIds.length > 0
+            ) {
+              const firstId = nextAudioSegment.bundledSegmentIds[0];
+              const firstSegment = rawAudioSegments.find(
+                (s) => s.id === firstId
+              );
+              if (firstSegment && firstSegment.playbackAudioUri) {
+                togglePlay(firstSegment.id, firstSegment.playbackAudioUri);
+                return;
+              }
+            }
+            togglePlay(nextAudioSegment.id, nextAudioSegment.playbackAudioUri);
+            return;
+          }
+        }
+      }
+
+      // Default fallback: play targetId directly
+      const segment = rawAudioSegments.find((s) => s.id === targetId);
+      if (segment && segment.playbackAudioUri) {
+        togglePlay(segment.id, segment.playbackAudioUri);
+      } else {
+        const audioSegment = audioSegments.find((t) =>
+          isWithinSegment(t, targetId)
+        );
+        if (audioSegment && audioSegment.playbackAudioUri) {
+          togglePlay(audioSegment.id, audioSegment.playbackAudioUri);
+        }
+      }
     }
   };
 
@@ -497,6 +616,7 @@ export function TranscriptView({
     setNewMessageCount(0);
     setHighlightedSegmentId(null);
     setIsViewAtTopOfAudioSegments(true);
+    setPlaybackIntent('playing');
     // Update URL params
     setSearchParams((prev) => {
       prev.set('feedId', feedId);
@@ -561,7 +681,7 @@ export function TranscriptView({
       >
         <AudioControl
           sx={{ flex: 1, mb: 0 }}
-          isAudioPlaying={isAudioPlaying}
+          isAudioPlaying={playbackIntent === 'playing'}
           onTogglePlayPause={handleTogglePlayPause}
           onSkipToNext={skipToNext}
           onSkipToPrevious={skipToPrevious}
@@ -591,6 +711,7 @@ export function TranscriptView({
         onClipClick={handleClipClick}
         isAudioPlaying={isAudioPlaying}
         currentAudioRef={currentAudioRef}
+        seekTrigger={seekTrigger}
       />
 
       <Box
@@ -630,7 +751,7 @@ export function TranscriptView({
             triggerSnackbar={triggerSnackbar}
             ruleIdToNameMap={ruleIdToNameMap}
             rulesLoading={rulesLoading}
-            onToggleAudio={toggleAudio}
+            onToggleAudio={handleToggleAudio}
             isAudioPlaying={isAudioPlaying}
             currentlyPlayingSegmentId={currentlyPlayingSegmentId}
             highlightedSegmentId={highlightedSegmentId}
