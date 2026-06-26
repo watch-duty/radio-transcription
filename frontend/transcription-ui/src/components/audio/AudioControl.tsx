@@ -50,14 +50,14 @@ export function AudioControl({
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Tooltip title="Rewind to previous transmission">
+        <Tooltip title="Rewind to previous segment">
           <span>
             <IconButton
               onClick={onSkipToPrevious}
               size="large"
               color="primary"
               sx={{ p: 0.5 }}
-              aria-label="rewind to previous transmission"
+              aria-label="rewind to previous segment"
               disabled={disableControls}
             >
               <SkipPreviousIcon fontSize="large" />
