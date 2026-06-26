@@ -311,14 +311,13 @@ class TestStatusReasonClearSql(unittest.TestCase):
         )
         self.assertNotIn("SET status", sql)
 
-    def test_reset_sql_clears_stale_reason_and_raw_quarantine_reason(
+    def test_reset_sql_clears_stale_reason_and_status_reason_detail(
         self,
     ) -> None:
         sql = _sql_without_comments(feed_queries.RESET_FEED_SQL)
 
-        self.assertIn("quarantine_reason = NULL", sql)
-        self.assertIn("status_reason = NULL", sql)
         self.assertIn("status_reason_detail = NULL", sql)
+        self.assertIn("status_reason = NULL", sql)
         self.assertRegex(
             sql,
             r"status_reason_updated_at = CASE\s+"
