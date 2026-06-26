@@ -158,6 +158,40 @@ class TestFeedAuditEventSqlContract(unittest.TestCase):
             self.assertIn("INSERT INTO feed_audit_events", stripped)
             self.assertIn("feed_revision", stripped)
 
+    def test_async_audited_mutation_sql_returns_feed_audit_event(
+        self,
+    ) -> None:
+        audited_sql = {
+            "CREATE_FEED_SQL": feed_queries.CREATE_FEED_SQL,
+            "UPDATE_FEED_SQL": feed_queries.UPDATE_FEED_SQL,
+            "DEACTIVATE_FEED_SQL": feed_queries.DEACTIVATE_FEED_SQL,
+            "DELETE_FEED_SQL": feed_queries.DELETE_FEED_SQL,
+            "RESET_FEED_SQL": feed_queries.RESET_FEED_SQL,
+            "UPDATE_PROGRESS_SQL": feed_queries.UPDATE_PROGRESS_SQL,
+            "RECORD_SOURCE_OBSERVATION_SQL": (
+                feed_queries.RECORD_SOURCE_OBSERVATION_SQL
+            ),
+            "REPORT_FAILURE_SQL": feed_queries.REPORT_FAILURE_SQL,
+            "RELEASE_NON_BUDGETED_FAILURE_SQL": (
+                feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
+            ),
+        }
+
+        for name, sql in audited_sql.items():
+            with self.subTest(sql=name):
+                stripped = _sql_without_comments(sql)
+                self.assertIn("AS feed_audit_event", stripped)
+                self.assertIn("write_audit.feed_audit_event", stripped)
+                self.assertIn("LEFT JOIN write_audit", stripped)
+
+    def test_delete_feed_sql_keeps_audit_feed_id_for_child_deletes(
+        self,
+    ) -> None:
+        sql = _sql_without_comments(feed_queries.DELETE_FEED_SQL)
+
+        self.assertIn("RETURNING feed_id,", sql)
+        self.assertIn("WHERE feed_id IN (SELECT feed_id FROM write_audit)", sql)
+
 
 class TestStatusReasonLifecycleIsolation(unittest.TestCase):
     """Tests that lifecycle SQL remains independent of status_reason."""
