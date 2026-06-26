@@ -2,6 +2,7 @@ import RelativeTimeFormat from 'relative-time-format';
 import en from 'relative-time-format/locale/en';
 
 export const AUDIO_WINDOW_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+export const TIMELINE_RANGE_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 RelativeTimeFormat.addLocale(en);
 const rtf = new RelativeTimeFormat('en');

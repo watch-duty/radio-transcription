@@ -1,6 +1,7 @@
 import {
   type Annotation,
   AnnotationType,
+  type AudioSegment,
   type EvaluationAnnotationData,
   type TranscriptAnnotationData,
 } from '@transcription/common';
@@ -14,6 +15,11 @@ export function findEvaluationAnnotationData(
     }
   }
   return null;
+}
+
+export function segmentHasAlert(segment: AudioSegment): boolean {
+  const evaluation = findEvaluationAnnotationData(segment.annotations);
+  return !!evaluation && evaluation.decisions.length > 0;
 }
 
 export function findTranscriptAnnotationData(
