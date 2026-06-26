@@ -182,16 +182,30 @@ def submit_prepared_tune(
     lr_multiplier = require_config_float(config, "learning_rate_multiplier")
     project = require_config_str(config, "gcp_project")
     location = require_config_str(config, "location")
+    continuous_tuned_model = _optional_config_str(
+        config, "continuous_tuned_model_name"
+    )
+    submit_base_model = continuous_tuned_model or base_model
+    if continuous_tuned_model:
+        logger.info(
+            "Submitting continuous tuning from %s checkpoint %s",
+            continuous_tuned_model,
+            _optional_config_str(config, "continuous_checkpoint_id")
+            or "default",
+        )
     job_name = submit_tuning_job(
         train_uri=require_config_str(config, "gemini_train_uri"),
         display_name=display_name,
         project=project,
         location=location,
-        base_model=base_model,
+        base_model=submit_base_model,
         val_uri=require_config_str(config, "gemini_validation_uri"),
         epoch_count=epoch_count,
         adapter_size=adapter_size,
         lr_multiplier=lr_multiplier,
+        pre_tuned_model_checkpoint_id=_optional_config_str(
+            config, "continuous_checkpoint_id"
+        ),
     )
     config.update(
         {
@@ -277,3 +291,11 @@ def _config_str(
         return fallback
     text = str(value)
     return text or fallback
+
+
+def _optional_config_str(config: dict[str, Any], key: str) -> str | None:
+    value = config.get(key)
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None

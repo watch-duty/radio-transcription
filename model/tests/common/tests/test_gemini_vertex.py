@@ -151,6 +151,34 @@ class TestSubmitTuningJob(unittest.TestCase):
             call_kwargs["config"]["adapter_size"], "ADAPTER_SIZE_TWO"
         )
 
+    @unittest.mock.patch("common.gemini.vertex.types")
+    @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_wires_pre_tuned_model_checkpoint_id(
+        self, mock_genai, mock_types
+    ) -> None:
+        """Continuous tuning checkpoint id is passed through SDK config."""
+        mock_client = _make_mock_client()
+        mock_genai.Client.return_value = mock_client
+        mock_types.TuningDataset.return_value = "train-dataset"
+        mock_types.CreateTuningJobConfig.side_effect = lambda **kwargs: kwargs
+
+        submit_tuning_job(
+            train_uri="gs://b/train.jsonl",
+            display_name="test",
+            project="p",
+            location="us-central1",
+            base_model="projects/p/locations/us/models/m@1",
+            pre_tuned_model_checkpoint_id="7",
+        )
+
+        call_kwargs = mock_client.tunings.tune.call_args.kwargs
+        self.assertEqual(
+            call_kwargs["base_model"], "projects/p/locations/us/models/m@1"
+        )
+        self.assertEqual(
+            call_kwargs["config"]["pre_tuned_model_checkpoint_id"], "7"
+        )
+
 
 class TestPollTuningJob(unittest.TestCase):
     """Tests for common.gemini.vertex.poll_tuning_job."""
