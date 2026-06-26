@@ -50,14 +50,14 @@ export function AudioControl({
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Tooltip title="Skip to previous transmission">
+        <Tooltip title="Rewind to previous transmission">
           <span>
             <IconButton
               onClick={onSkipToPrevious}
               size="large"
               color="primary"
               sx={{ p: 0.5 }}
-              aria-label="skip to previous transmission"
+              aria-label="rewind to previous transmission"
               disabled={disableControls}
             >
               <SkipPreviousIcon fontSize="large" />
@@ -141,14 +141,14 @@ export function AudioControl({
           </span>
         </Tooltip>
 
-        <Tooltip title="Skip to next transmission">
+        <Tooltip title="Advance to next transmission">
           <span>
             <IconButton
               onClick={onSkipToNext}
               size="large"
               color="primary"
               sx={{ p: 0.5 }}
-              aria-label="skip to next transmission"
+              aria-label="advance to next transmission"
               disabled={disableControls}
             >
               <SkipNextIcon fontSize="large" />

@@ -40,11 +40,11 @@ describe('AudioControl', () => {
     expect(
       screen.getByLabelText('rewind to previous detected speech')
     ).toBeTruthy();
-    expect(screen.getByLabelText('skip to previous transmission')).toBeTruthy();
+    expect(screen.getByLabelText('rewind to previous transmission')).toBeTruthy();
     expect(screen.getByLabelText('rewind 5 seconds')).toBeTruthy();
     expect(screen.getByLabelText('play')).toBeTruthy();
     expect(screen.getByLabelText('advance 5 seconds')).toBeTruthy();
-    expect(screen.getByLabelText('skip to next transmission')).toBeTruthy();
+    expect(screen.getByLabelText('advance to next transmission')).toBeTruthy();
     expect(
       screen.getByLabelText('advance to next detected speech')
     ).toBeTruthy();
@@ -67,9 +67,9 @@ describe('AudioControl', () => {
     expect(mockOnFastRewind).toHaveBeenCalledTimes(1);
   });
 
-  it('triggers callback for skip to previous transmission button', () => {
+  it('triggers callback for rewind to previous transmission button', () => {
     render(<AudioControl {...defaultProps} />);
-    fireEvent.click(screen.getByLabelText('skip to previous transmission'));
+    fireEvent.click(screen.getByLabelText('rewind to previous transmission'));
     expect(mockOnSkipToPrevious).toHaveBeenCalledTimes(1);
   });
 
@@ -91,9 +91,9 @@ describe('AudioControl', () => {
     expect(mockOnSkipTime).toHaveBeenCalledWith(5);
   });
 
-  it('triggers callback for skip to next transmission button', () => {
+  it('triggers callback for advance to next transmission button', () => {
     render(<AudioControl {...defaultProps} />);
-    fireEvent.click(screen.getByLabelText('skip to next transmission'));
+    fireEvent.click(screen.getByLabelText('advance to next transmission'));
     expect(mockOnSkipToNext).toHaveBeenCalledTimes(1);
   });
 
@@ -118,11 +118,11 @@ describe('AudioControl', () => {
     expect(
       screen.getByLabelText('rewind to previous detected speech')
     ).toBeDisabled();
-    expect(screen.getByLabelText('skip to previous transmission')).toBeDisabled();
+    expect(screen.getByLabelText('rewind to previous transmission')).toBeDisabled();
     expect(screen.getByLabelText('rewind 5 seconds')).toBeDisabled();
     expect(screen.getByLabelText('play')).toBeDisabled();
     expect(screen.getByLabelText('advance 5 seconds')).toBeDisabled();
-    expect(screen.getByLabelText('skip to next transmission')).toBeDisabled();
+    expect(screen.getByLabelText('advance to next transmission')).toBeDisabled();
     expect(
       screen.getByLabelText('advance to next detected speech')
     ).toBeDisabled();
