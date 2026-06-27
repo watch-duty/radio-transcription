@@ -290,7 +290,7 @@ def _optional_config_nonnegative_int(config: dict[str, Any], key: str) -> int:
 def _optional_config_prior_context_mode(
     config: dict[str, Any], key: str
 ) -> str:
-    allowed = {"text_turns", "transcript"}
+    allowed = {"text_turns", "transcript", "vapo_p3_transcript"}
     value = config.get(key, "text_turns")
     if not isinstance(value, str):
         msg = (

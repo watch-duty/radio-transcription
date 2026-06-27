@@ -17,6 +17,21 @@ class ContextTurn:
     text: str
 
 
+VAPO_P3_CONTEXT_HEADER = "\n".join(
+    [
+        "The following prior same-source transcripts are for situational "
+        "awareness only.",
+        "Do not re-transcribe them. Do not continue them.",
+        "Transcribe exclusively the current audio clip.",
+        "",
+        "Prior transcripts, oldest to newest:",
+    ]
+)
+VAPO_P3_NO_HISTORY_TEXT = (
+    "There are no prior transcripts for this original recording."
+)
+
+
 def build_transcript_context_prompt(
     history: Sequence[ContextTurn],
     user_prompt: str,
@@ -34,6 +49,27 @@ def build_transcript_context_prompt(
     )
     lines.extend(["", user_prompt])
     return "\n".join(lines)
+
+
+def build_vapo_p3_transcript_context_prompt(
+    history: Sequence[ContextTurn],
+    user_prompt: str,
+) -> str:
+    """Return the exact transcript-block prompt shape used by the P3/P13 VAPO gate."""
+    prior_context = (
+        "\n".join(
+            f"{index}. {' '.join(turn.text.split())}"
+            for index, turn in enumerate(history, 1)
+        )
+        if history
+        else VAPO_P3_NO_HISTORY_TEXT
+    )
+    return "\n\n".join(
+        [
+            "\n".join([VAPO_P3_CONTEXT_HEADER, prior_context]),
+            user_prompt,
+        ]
+    )
 
 
 def build_prior_text_user_turn(user_prompt: str) -> str:

@@ -35,6 +35,7 @@ from common.gemini.context import (
     ContextTurn,
     build_prior_text_user_turn,
     build_transcript_context_prompt,
+    build_vapo_p3_transcript_context_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,8 +80,16 @@ def build_request(
     casings.
     """
     contents: list[dict[str, Any]] = []
-    if history_mode not in {"audio", "text_turns", "transcript"}:
-        msg = "history_mode must be 'audio', 'text_turns', or 'transcript'"
+    if history_mode not in {
+        "audio",
+        "text_turns",
+        "transcript",
+        "vapo_p3_transcript",
+    }:
+        msg = (
+            "history_mode must be 'audio', 'text_turns', 'transcript', "
+            "or 'vapo_p3_transcript'"
+        )
         raise ValueError(msg)
     history_turns = list(history or ())
     if history_mode == "audio":
@@ -109,8 +118,13 @@ def build_request(
                 ]
             )
         current_user_prompt = user_prompt
-    else:
+    elif history_mode == "transcript":
         current_user_prompt = build_transcript_context_prompt(
+            history_turns,
+            user_prompt,
+        )
+    else:
+        current_user_prompt = build_vapo_p3_transcript_context_prompt(
             history_turns,
             user_prompt,
         )

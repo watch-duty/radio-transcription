@@ -536,6 +536,46 @@ class TestBuildRequest(unittest.TestCase):
             contents[0]["parts"][0]["text"],
         )
 
+    def test_vapo_p3_transcript_history_mode_uses_exact_template(self) -> None:
+        result = self.build_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt="IMPORTANT: current prompt",
+            history=[
+                ContextTurn("gs://bucket/prev-1.flac", " first   transcript "),
+                ContextTurn("gs://bucket/prev-2.flac", "second transcript"),
+            ],
+            history_mode="vapo_p3_transcript",
+        )
+
+        contents = result["request"]["contents"]
+        self.assertEqual([turn["role"] for turn in contents], ["user"])
+        file_parts = [
+            part for part in contents[0]["parts"] if "file_data" in part
+        ]
+        self.assertEqual(len(file_parts), 1)
+        self.assertEqual(
+            file_parts[0]["file_data"]["file_uri"],
+            "gs://bucket/current.flac",
+        )
+        self.assertEqual(
+            contents[0]["parts"][0]["text"],
+            "\n".join(
+                [
+                    "The following prior same-source transcripts are for "
+                    "situational awareness only.",
+                    "Do not re-transcribe them. Do not continue them.",
+                    "Transcribe exclusively the current audio clip.",
+                    "",
+                    "Prior transcripts, oldest to newest:",
+                    "1. first transcript",
+                    "2. second transcript",
+                    "",
+                    "IMPORTANT: current prompt",
+                ]
+            ),
+        )
+
     def test_text_turn_history_mode_uses_prior_user_model_turns_with_one_audio(
         self,
     ) -> None:

@@ -238,6 +238,24 @@ prior_context_mode = "text_turns"
             cfg.to_record_dict()["prior_context_mode"], "text_turns"
         )
 
+    def test_vapo_p3_context_mode_is_accepted(self) -> None:
+        body = self._valid_toml(
+            context="""
+[context]
+prior_turn_count = 8
+prior_context_mode = "vapo_p3_transcript"
+"""
+        )
+
+        cfg = load_run_config(self._write_config(body))
+
+        self.assertEqual(cfg.prior_context_count, 8)
+        self.assertEqual(cfg.prior_context_mode, "vapo_p3_transcript")
+        self.assertEqual(
+            cfg.to_record_dict()["prior_context_mode"],
+            "vapo_p3_transcript",
+        )
+
     def test_context_prior_turn_count_must_be_nonnegative_int(self) -> None:
         for value in ("-1", "true"):
             with self.subTest(value=value):

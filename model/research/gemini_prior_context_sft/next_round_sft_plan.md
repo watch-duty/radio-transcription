@@ -102,6 +102,8 @@ Prior transcripts, oldest to newest:
 {prior_context}
 
 IMPORTANT: The current audio is the only clip to transcribe. Use prior transcripts only as context. Return one line: the verbatim transcript of the attached radio audio clip.
+
+Current audio clip:
 ```
 
 If there is no prior context, use the same no-history sentence used by the VAPO
@@ -116,6 +118,8 @@ There are no prior transcripts for this original recording.
 Before launching SFT, add or verify an exact VAPO-template context mode. The
 current `prior_context_mode = "transcript"` path is not sufficient because its
 hard-coded header differs from the P3/P13 VAPO template.
+
+Implemented mode for this run: `prior_context_mode = "vapo_p3_transcript"`.
 
 Required checks:
 

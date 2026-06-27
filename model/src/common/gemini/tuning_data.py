@@ -16,6 +16,7 @@ from common.gemini.context import (
     ContextTurn,
     build_prior_text_user_turn,
     build_transcript_context_prompt,
+    build_vapo_p3_transcript_context_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,15 +47,24 @@ def build_audio_tuning_example(
         history_mode: ``audio`` emits notebook-style audio/text prior turns.
             ``text_turns`` emits prior user/model turns with text-only user
             turns and transcript model turns. ``transcript`` folds prior
-            transcripts into the current user prompt.
+            transcripts into the current user prompt. ``vapo_p3_transcript``
+            uses the exact transcript-block template from the P3/P13 VAPO gate.
 
     Returns:
         A dict matching the current Vertex AI audio-SFT JSONL schema:
         ``{systemInstruction, contents: [history..., current user, target]}``.
     """
     contents: list[dict[str, Any]] = []
-    if history_mode not in {"audio", "text_turns", "transcript"}:
-        msg = "history_mode must be 'audio', 'text_turns', or 'transcript'"
+    if history_mode not in {
+        "audio",
+        "text_turns",
+        "transcript",
+        "vapo_p3_transcript",
+    }:
+        msg = (
+            "history_mode must be 'audio', 'text_turns', 'transcript', "
+            "or 'vapo_p3_transcript'"
+        )
         raise ValueError(msg)
     history_turns = list(history or ())
     if history_mode == "audio":
@@ -83,8 +93,13 @@ def build_audio_tuning_example(
                 ]
             )
         current_user_prompt = user_prompt
-    else:
+    elif history_mode == "transcript":
         current_user_prompt = build_transcript_context_prompt(
+            history_turns,
+            user_prompt,
+        )
+    else:
+        current_user_prompt = build_vapo_p3_transcript_context_prompt(
             history_turns,
             user_prompt,
         )

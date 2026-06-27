@@ -15,7 +15,9 @@ from common.gemini.prompts import (
 from common.inference_manifest import validate_inference_dataset_slug
 
 ADAPTER_SIZES: Final = frozenset({"ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"})
-PRIOR_CONTEXT_MODES: Final = frozenset({"text_turns", "transcript"})
+PRIOR_CONTEXT_MODES: Final = frozenset(
+    {"text_turns", "transcript", "vapo_p3_transcript"}
+)
 ROUND_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
