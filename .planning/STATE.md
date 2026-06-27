@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 live verification required
-last_updated: "2026-06-27T06:28:00Z"
-last_activity: 2026-06-27 -- Phase 04 automated execution complete; live UAT pending
+stopped_at: Phase 4 live verification blocked on dev route deployment
+last_updated: "2026-06-27T19:20:00Z"
+last_activity: 2026-06-27 -- Phase 04 UAT attempted; dev route not deployed
 progress:
   total_phases: 4
   completed_phases: 3
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-06-26)
 
 ## Current Position
 
-Phase: 04 (operations-and-rollout-proof) — HUMAN VERIFICATION REQUIRED
+Phase: 04 (operations-and-rollout-proof) — HUMAN VERIFICATION BLOCKED
 Plan: 4 of 4
-Status: Awaiting live dev/staging UAT
-Last activity: 2026-06-27 -- Phase 04 automated execution complete; live UAT pending
+Status: Awaiting dev route deployment before live UAT
+Last activity: 2026-06-27 -- Phase 04 UAT attempted; dev route not deployed
 
 Progress: [██████████] 100%
 
@@ -74,9 +74,11 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-- Phase 04 live UAT pending:
-  - Run the dev/staging Feed Audit Notification proof against live GCP/WD.
-  - Run the controlled staging DLQ and restore proof.
+- Phase 04 live UAT is blocked until the deployment repo branch is deployed to dev:
+  - Dev project `probable-symbol-492218-i7` has no `feed-audit-notification-route-dev` logging sink and no feed-audit notification Pub/Sub topics.
+  - Local Terraform plan/apply is not possible without GitHub environment variables/secrets.
+  - After dev infra deploy, rerun the dev/staging Feed Audit Notification proof.
+  - Then run the controlled staging DLQ and restore proof with an explicitly approved failure mode.
 
 ### Blockers/Concerns
 
