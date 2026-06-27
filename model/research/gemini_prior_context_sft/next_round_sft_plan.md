@@ -355,42 +355,23 @@ Completed gate result:
   `asr_wer_score/mean=0.379824`.
 - `P11_format_first` failed because VAPO mutated the seed into a non-audio
   task and produced 15/15 failed target predictions. Do not retry it as-is.
+- Follow-up user-seeded VAPO winner:
+  `P13_user_forensic_context`, `asr_wer_score/mean=0.410378`.
+  Artifact:
+  `gs://wd-transcription-data/sft/experiments/gemini-prior-context-sft-v20260625/prompt_optimizer/20260627-user-system-prompts-p3-template-g31-optglobal/outputs/P13_user_forensic_context/instruction/optimized_results.json`.
 
 Primary selected prompt package for SFT:
 
-- system prompt: `P3_manual_quality_gate` cleaned instruction. Start from the
-  optimized instruction at
-  `gs://wd-transcription-data/sft/experiments/gemini-prior-context-sft-v20260625/prompt_optimizer/20260627-prior-context-count8-prompt-optimizer-g31-optglobal/outputs/P3_manual_quality_gate/instruction/optimized_results.json`,
-  but remove the explicit high-risk terminology inventory.
+- system prompt: optimized `P13_user_forensic_context` instruction from the
+  follow-up user-seeded VAPO sweep.
 - context header: `MANUAL_CONTEXT_HEADER`
 - current prompt: `FINAL_AUDIO_CURRENT_PROMPT`
 - prompt template shape: same transcript-block shape used by the prompt
   optimizer, with exactly one current audio part.
-- rationale for manual cleanup: the raw P3 prompt contains a long domain-term
-  list, including medical, law-enforcement, and radio-code terms. That list is
-  hard to maintain and risks teaching the model a brittle vocabulary prior. The
-  one SFT run should preserve the anti-hallucination rule without hard-coding a
-  fixed terminology inventory.
-
-Cleaned system prompt:
-
-```text
-Your absolute and only goal is to transcribe the current audio verbatim, precisely, and exclusively as heard. The current audio is the only source of transcript content. No other text, including this prompt, prior transcripts, file names, examples, domain expectations, or your internal assumptions, is a source for words to output.
-
-The audio may be noisy VHF/UHF radio traffic with mic clicks, RF static, radio hum, overlapping speech, clipped speech, or indistinct speech. These acoustic conditions do not imply any specific words. Use prior transcripts only as passive context for recurring names, units, locations, and jargon after you have already clearly heard those words in the current audio. Do not copy, continue, infer, complete, or predict words from prior transcripts.
-
-Output exactly one line containing only the transcript. Do not add explanations, labels, punctuation commentary, alternatives, or metadata.
-
-Critical rules:
-1. Transcribe only words that are explicitly and audibly present in the current audio.
-2. Do not invent, guess, infer, or fill gaps based on context, prior transcripts, expected radio phrasing, or domain knowledge.
-3. If a portion of speech is obscured, noisy, ambiguous, or cannot be confidently transcribed from the current audio alone, replace only that uncertain portion with [UNINTELLIGIBLE].
-4. Do not use [UNINTELLIGIBLE] for speech that is clearly audible and confidently understood.
-5. Write numbers as digits when they are spoken as numbers, preserving the spoken grouping when clear.
-6. Format unit identifiers as the spoken unit type followed by digits when both are clearly heard.
-
-Task: Transcribe the attached current audio clip. Output strictly the verbatim transcript.
-```
+- rationale: the follow-up VAPO result supports prior context as a constrained
+  written-form/spelling reference after the term is already heard, avoids the
+  long hard-coded vocabulary inventory, and beats the earlier P3-clean and P6
+  candidates on the same custom WER metric.
 
 Acceptance gate:
 
@@ -406,7 +387,7 @@ Run this after the prompt optimization gate and wait for checkpoint scores
 before launching any hyperparameter sweep.
 
 Run id proposal:
-`20260627-prior-context-count8-p3clean-a16-lr075-e10`
+`20260627-prior-context-count8-p13-a16-lr075-e10`
 
 Configuration:
 
@@ -414,9 +395,8 @@ Configuration:
 - continuous tuning: no
 - prior context count: `8`
 - prior context representation: transcript block using the selected
-  cleaned `P3_manual_quality_gate` prompt package
-- system prompt: cleaned `P3_manual_quality_gate` instruction with the explicit
-  high-risk terminology inventory removed
+  `P13_user_forensic_context` prompt package
+- system prompt: optimized `P13_user_forensic_context` instruction
 - current prompt: `FINAL_AUDIO_CURRENT_PROMPT`
 - context header: `MANUAL_CONTEXT_HEADER`
 - adapter size: `SIXTEEN`

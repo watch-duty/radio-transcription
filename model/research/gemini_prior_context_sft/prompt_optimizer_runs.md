@@ -522,3 +522,30 @@ Launch:
 | `P12_user_clean_context` | `projects/781667204380/locations/us-central1/customJobs/6224355124639170560` |
 | `P13_user_forensic_context` | `projects/781667204380/locations/us-central1/customJobs/4924222207212650496` |
 | `P14_user_dispatch_glossary` | `projects/781667204380/locations/us-central1/customJobs/1419014322234851328` |
+
+All three jobs succeeded.
+
+Result ranking:
+
+| rank | family | best stage | step | `asr_wer_score/mean` | optimized prompt chars |
+|---:|---|---|---:|---:|---:|
+| 1 | `P13_user_forensic_context` | `instruction` | 7 | 0.410378 | 5721 |
+| 2 | `P12_user_clean_context` | `instruction` | 0 | 0.393718 | 1726 |
+| 3 | `P14_user_dispatch_glossary` | `instruction` | 9 | 0.373961 | 7237 |
+
+Artifact root:
+
+`gs://wd-transcription-data/sft/experiments/gemini-prior-context-sft-v20260625/prompt_optimizer/20260627-user-system-prompts-p3-template-g31-optglobal/outputs/`
+
+Conclusion:
+
+- `P13_user_forensic_context` is the best VAPO candidate from this sweep.
+- It supports prior context only as a written-form/spelling aid after a term has
+  already been clearly heard in the current audio.
+- It avoids the long hard-coded vocabulary inventory from raw
+  `P3_manual_quality_gate`.
+- It beats the previous reusable instruction winner from the earlier sweep
+  (`P3_manual_quality_gate`, `0.379824`) on the same VAPO metric.
+- `P14_user_dispatch_glossary` retained a compact glossary, but VAPO made the
+  prompt much longer and kept the empty-string protocol, so it is not the best
+  SFT candidate from this gate.
