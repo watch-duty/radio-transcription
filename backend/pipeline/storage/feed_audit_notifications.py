@@ -30,7 +30,7 @@ def emit_feed_audit_notification(
             "Feed audit notification emitted",
             extra={"json_fields": payload},
         )
-    except Exception:  # noqa: S110
+    except Exception:
         try:
             logger.exception("Failed to emit feed audit notification")
         except Exception:  # noqa: S110
