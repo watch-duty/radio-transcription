@@ -583,7 +583,44 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 duration_ms=1000,
             )
 
-            self.assertIsNone(transcript)
+            self.assertEqual(transcript, "[UNINTELLIGIBLE]")
+
+    async def test_gemini_transcriber_recitation_fallback(self) -> None:
+        """Verifies that RECITATION finish reason maps to [UNINTELLIGIBLE] fallback."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+
+            # Mock finish_reason as an object with a .name attribute
+            mock_finish_reason = MagicMock()
+            mock_finish_reason.name = "RECITATION"
+            mock_candidate.finish_reason = mock_finish_reason
+
+            mock_candidate.content.parts = []
+            mock_response.candidates = [mock_candidate]
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            transcript = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
+            )
+
+            self.assertEqual(transcript, "[UNINTELLIGIBLE]")
 
 
 if __name__ == "__main__":
