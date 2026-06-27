@@ -34,12 +34,11 @@ Required environment variables:
 The relay returns HTTP `204` to Pub/Sub only after Watch Duty returns a `2xx`
 response. Malformed Pub/Sub messages, unsupported event contracts, missing
 runtime config, Watch Duty auth/config failures, and exhausted transient
-failures return non-2xx so Pub/Sub can retry and eventually dead-letter the
-message.
+failures return non-2xx so Pub/Sub can retry according to the subscription
+policy.
 
 ## Storage Boundary
 
 The relay does not read or write AlloyDB. It does not poll `feed_audit_events`,
 does not create delivery state, and does not import storage-layer SQL or feed
 store modules. `feed_audit_events` remains the canonical durable audit ledger.
-
