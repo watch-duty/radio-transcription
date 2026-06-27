@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
-stopped_at: Phase 3 context gathered
-last_updated: "2026-06-27T01:23:59.385Z"
-last_activity: 2026-06-27
+status: executing
+stopped_at: Phase 3 planning complete
+last_updated: "2026-06-27T01:36:13.579Z"
+last_activity: 2026-06-27 -- Phase 03 planning complete
 progress:
   total_phases: 4
   completed_phases: 2
-  total_plans: 6
+  total_plans: 10
   completed_plans: 6
-  percent: 100
+  percent: 60
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-26)
 
 **Core value:** Feed audit notifications must make feed lifecycle and ingestion problems visible to Watch Duty quickly without affecting ingestion or feed lifecycle writes.
-**Current focus:** Phase 02 — cloud-logging-and-pub-sub-routing
+**Current focus:** Phase 03 — webhook-relay-delivery
 
 ## Current Position
 
-Phase: 02 (cloud-logging-and-pub-sub-routing) — EXECUTING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
-Last activity: 2026-06-27
+Phase: 03 (webhook-relay-delivery) — PLANNED
+Plan: 0 of 4
+Status: Ready to execute
+Last activity: 2026-06-27 -- Phase 03 planning complete
 
-Progress: [██████████] 100%
+Progress: [██████░░░░] 60%
 
 ## Performance Metrics
 
@@ -64,6 +64,8 @@ Recent decisions affecting current work:
 - [Phase 1]: Do not add direct WD calls, DB polling, DB triggers, LISTEN/NOTIFY, CDC, outbox payload tables, or delivery state in the feed write path.
 - [Phase 2]: Use Cloud Logging sink to Pub/Sub with a DLQ capped at 10 delivery attempts.
 - [Phase 3]: Use a Cloud Run relay to forward flat audit payloads to the Watch Duty webhook.
+- [Phase 3]: Plan the relay as reusable public FastAPI/urllib3 application code plus deployment-repo Cloud Run/Secret Manager/workflow wiring.
+- [Phase 3]: Raise the Pub/Sub push ack deadline to 60 seconds in deployment so two 15-second WD attempts plus jitter can complete before Pub/Sub times out the push request.
 - [Phase 1]: Build feed_audit_event from write_audit RETURNING values using one shared SQL helper.
 - [Phase 1]: Expose feed_audit_event as one nullable JSONB result column on audited async and sync SQL.
 - [Phase 1]: Preserve DELETE_FEED_SQL feed_id in write_audit RETURNING for child-delete CTEs while also returning the payload.
@@ -88,6 +90,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-27T01:23:59.381Z
-Stopped at: Phase 3 context gathered
-Resume file: .planning/phases/03-webhook-relay-delivery/03-CONTEXT.md
+Last session: 2026-06-27T01:36:13.579Z
+Stopped at: Phase 3 planning complete
+Resume file: .planning/phases/03-webhook-relay-delivery/03-01-PLAN.md

@@ -51,7 +51,14 @@ Plans:
   2. The Log Router sink writer can publish to the notification topic with only the required Pub/Sub publisher IAM.
   3. The Pub/Sub push subscription invokes the relay endpoint through authenticated Cloud Run IAM/OIDC.
   4. The Pub/Sub subscription has 10 second minimum backoff, 60 second maximum backoff, and a dead-letter policy capped at 10 delivery attempts.
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+**Wave 1**
+- [x] 02-01-PLAN.md — Pub/Sub topic and DLQ foundation
+- [x] 02-02-PLAN.md — Log Router sink, authenticated push subscription, retry, and DLQ policy
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [x] 02-03-PLAN.md — App-level route wiring and deployment outputs
 
 ### Phase 3: Webhook Relay Delivery
 **Goal**: A stateless Cloud Run relay turns Pub/Sub-delivered Cloud Logging entries into authenticated Watch Duty webhook calls without touching AlloyDB.
@@ -63,7 +70,15 @@ Plans:
   3. The relay performs two total Watch Duty POST attempts for timeouts, connection failures, `429`, and `5xx` responses.
   4. Watch Duty `2xx` responses produce a `204` response to Pub/Sub, while malformed messages, unsupported schema, auth/config errors, and exhausted transient failures return non-2xx for Pub/Sub retry and eventual DLQ.
   5. Relay request handling is stateless and never reads from or writes to AlloyDB.
-**Plans**: TBD
+**Plans**: 4 plans
+Plans:
+**Wave 1**
+- [ ] 03-01-PLAN.md — Relay service scaffold, config contract, Docker packaging, and no-DB guardrails
+- [ ] 03-02-PLAN.md — Pub/Sub LogEntry parser and Feed Audit Notification v1 validation
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 03-03-PLAN.md — Watch Duty client, retry policy, and Pub/Sub ACK/NACK behavior
+- [ ] 03-04-PLAN.md — Deployment Cloud Run service wiring, route ack deadline, and app-deploy support
 
 ### Phase 4: Operations and Rollout Proof
 **Goal**: Operators can verify, deploy, and diagnose the notification path from producer logs through Pub/Sub, relay delivery, Watch Duty response, and DLQ.
@@ -84,8 +99,8 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Audit Contract and Emission | 3/3 | Complete    | 2026-06-26 |
-| 2. Cloud Logging and Pub/Sub Routing | 0/TBD | Not started | - |
-| 3. Webhook Relay Delivery | 0/TBD | Not started | - |
+| 2. Cloud Logging and Pub/Sub Routing | 3/3 | Complete    | 2026-06-27 |
+| 3. Webhook Relay Delivery | 0/4 | Planned     | - |
 | 4. Operations and Rollout Proof | 0/TBD | Not started | - |
 
 ## Coverage
