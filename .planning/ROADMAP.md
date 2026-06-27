@@ -99,7 +99,7 @@ Plans:
 - [x] 04-03-PLAN.md — Feed audit delivery health monitoring
 
 **Wave 3** *(blocked on 04-01, 04-02, and 04-03 completion)*
-- [ ] 04-04-PLAN.md — Rollout proof runbook and triage documentation
+- [x] 04-04-PLAN.md — Rollout proof runbook and triage documentation
 
 ## Progress
 
