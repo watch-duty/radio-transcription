@@ -22,7 +22,7 @@ _SENSITIVE_LOG_MARKERS = ("before_values", "after_values", "test-api-key")
 
 
 class _FakeWDClient:
-    def __init__(self, error: WatchDutyWebhookError | None = None) -> None:
+    def __init__(self, error: Exception | None = None) -> None:
         self.error = error
         self.payloads: list[Mapping[str, Any]] = []
 
@@ -179,6 +179,30 @@ def test_missing_wd_client_returns_non_2xx_with_structured_config_log(
     assert any(
         field.get("relay_event")
         == "feed_audit_webhook_client_not_initialized"
+        for field in fields
+    )
+    _assert_no_sensitive_log_values(caplog, fields)
+
+
+def test_unexpected_wd_client_error_returns_non_2xx_with_structured_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    wd_client = _FakeWDClient(RuntimeError("transport unavailable"))
+    app = create_app(settings=_settings(), wd_client=wd_client)
+
+    with caplog.at_level(logging.ERROR, logger=main_module.__name__):
+        with TestClient(app) as client:
+            response = client.post(
+                "/pubsub/feed-audit-notifications",
+                json=_envelope(_payload()),
+            )
+
+    assert response.status_code == 502
+    assert len(wd_client.payloads) == 1
+    fields = _json_fields(caplog)
+    assert any(
+        field.get("relay_event")
+        == "feed_audit_webhook_unhandled_delivery_error"
         for field in fields
     )
     _assert_no_sensitive_log_values(caplog, fields)

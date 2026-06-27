@@ -37,6 +37,10 @@ _CLIENT_NOT_INITIALIZED_LOG_FIELDS = {
     "relay_event": "feed_audit_webhook_client_not_initialized",
     "failure_class": "configuration_error",
 }
+_UNHANDLED_DELIVERY_ERROR_LOG_FIELDS = {
+    "relay_event": "feed_audit_webhook_unhandled_delivery_error",
+    "failure_class": "unexpected_delivery_error",
+}
 
 
 class WebhookSender(Protocol):
@@ -92,6 +96,12 @@ def create_app(
         try:
             await asyncio.to_thread(sender.send, payload)
         except WatchDutyWebhookError:
+            return Response(status_code=status.HTTP_502_BAD_GATEWAY)
+        except Exception:
+            logger.exception(
+                "Unexpected Feed Audit Notification relay failure",
+                extra={"json_fields": _UNHANDLED_DELIVERY_ERROR_LOG_FIELDS},
+            )
             return Response(status_code=status.HTTP_502_BAD_GATEWAY)
 
         return Response(status_code=status.HTTP_204_NO_CONTENT)
