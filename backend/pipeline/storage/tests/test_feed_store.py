@@ -101,10 +101,7 @@ def _full_feed_row(**overrides: object) -> dict[str, object]:
 
 
 def _audit_snapshot_row(**overrides: object) -> dict[str, object]:
-    row = _full_feed_row(**overrides)
-    row["feed_properties.source_feed_id"] = row["source_feed_id"]
-    row["feed_properties.tags"] = row["tags"]
-    return row
+    return _full_feed_row(**overrides)
 
 
 def _feed_audit_event(action: str = "feed.recovered") -> dict[str, object]:
@@ -529,8 +526,8 @@ class TestFeedAuditSql(unittest.TestCase):
             "'status_reason_updated_at'",
             "'status_reason_detail'",
             "'created_at'",
-            "'feed_properties.source_feed_id'",
-            "'feed_properties.tags'",
+            "'source_feed_id'",
+            "'tags'",
         ):
             self.assertIn(key, snapshot_sql)
 
@@ -544,8 +541,8 @@ class TestFeedAuditSql(unittest.TestCase):
         ):
             stripped = _sql_without_comments(sql)
             self.assertRegex(stripped, r"SELECT\s+f\.\*")
-            self.assertIn("'feed_properties.source_feed_id'", stripped)
-            self.assertIn("'feed_properties.tags'", stripped)
+            self.assertIn("'source_feed_id'", stripped)
+            self.assertIn("'tags'", stripped)
             self.assertNotIn("SELECT fp.*", stripped)
 
     def test_runtime_audit_actions_are_selected_in_sql(self) -> None:

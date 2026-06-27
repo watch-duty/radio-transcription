@@ -1742,8 +1742,8 @@ async def test_create_feed_succeeds(
     assert after_values["name"] == "New Integration Feed"
     assert after_values["source_type"] == "bcfy_feeds"
     assert after_values["status"] == "unclaimed"
-    assert after_values["feed_properties.source_feed_id"] == "src_123"
-    assert after_values["feed_properties.tags"] == []
+    assert after_values["source_feed_id"] == "src_123"
+    assert after_values["tags"] == []
     assert "worker_id" not in after_values
     assert "last_heartbeat" not in after_values
 
@@ -1817,9 +1817,9 @@ async def test_update_feed_succeeds(
     after_values = _decode_json_object(audit_row["after_values"])
     assert audit_row["actor_id"] == _TEST_ACTOR_ID
     assert before_values["name"] == "Original Name"
-    assert before_values["feed_properties.tags"] == []
+    assert before_values["tags"] == []
     assert after_values["name"] == "Updated Name"
-    assert after_values["feed_properties.source_feed_id"] == "src_123"
+    assert after_values["source_feed_id"] == "src_123"
     assert "worker_id" not in before_values
     assert "last_heartbeat" not in after_values
 
@@ -2486,10 +2486,10 @@ async def test_deactivate_feed_succeeds(
     assert before_values["status"] == "active"
     assert after_values["status"] == "deactivated"
     source_feed_id = cast(
-        "str", before_values["feed_properties.source_feed_id"]
+        "str", before_values["source_feed_id"]
     )
     assert source_feed_id.startswith("deactivate-")
-    assert after_values["feed_properties.tags"] == []
+    assert after_values["tags"] == []
     assert "worker_id" not in before_values
     assert "last_heartbeat" not in after_values
 
@@ -2613,10 +2613,10 @@ async def test_delete_feed_succeeds(
     assert before_values["id"] == str(feed_id)
     assert before_values["name"] == "Hard Delete Test Feed"
     source_feed_id = cast(
-        "str", before_values["feed_properties.source_feed_id"]
+        "str", before_values["source_feed_id"]
     )
     assert source_feed_id.startswith("src_")
-    assert before_values["feed_properties.tags"] == []
+    assert before_values["tags"] == []
     assert after_values == {}
     assert "worker_id" not in before_values
     assert "last_heartbeat" not in before_values
@@ -2694,7 +2694,7 @@ async def test_reset_feed_succeeds(
     assert before_values["failure_count"] == 5
     assert after_values["status"] == "unclaimed"
     assert after_values["failure_count"] == 0
-    assert after_values["feed_properties.tags"] == []
+    assert after_values["tags"] == []
     assert "worker_id" not in before_values
     assert "last_heartbeat" not in after_values
 

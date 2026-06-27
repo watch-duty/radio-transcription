@@ -20,8 +20,8 @@ AUDITED_FEED_STATE_FIELDS = (
     ("status_reason_updated_at", "status_reason_updated_at"),
     ("status_reason_detail", "status_reason_detail"),
     ("created_at", "created_at"),
-    ("feed_properties.source_feed_id", "source_feed_id"),
-    ("feed_properties.tags", "tags"),
+    ("source_feed_id", "source_feed_id"),
+    ("tags", "tags"),
 )
 
 
