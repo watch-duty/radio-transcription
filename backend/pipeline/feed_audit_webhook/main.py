@@ -29,6 +29,15 @@ if TYPE_CHECKING:
 setup_logging()
 logger = logging.getLogger(__name__)
 
+_INVALID_PUBSUB_MESSAGE_LOG_FIELDS = {
+    "relay_event": "feed_audit_webhook_invalid_pubsub_message",
+    "failure_class": "malformed_pubsub_message",
+}
+_CLIENT_NOT_INITIALIZED_LOG_FIELDS = {
+    "relay_event": "feed_audit_webhook_client_not_initialized",
+    "failure_class": "configuration_error",
+}
+
 
 class WebhookSender(Protocol):
     def send(self, payload: Mapping[str, Any]) -> object: ...
@@ -62,7 +71,10 @@ def create_app(
         try:
             payload = extract_feed_audit_payload(envelope)
         except InvalidPubSubMessage:
-            logger.warning("Invalid Feed Audit Notification Pub/Sub message")
+            logger.warning(
+                "Invalid Feed Audit Notification Pub/Sub message",
+                extra={"json_fields": _INVALID_PUBSUB_MESSAGE_LOG_FIELDS},
+            )
             return Response(status_code=status.HTTP_400_BAD_REQUEST)
 
         sender: WebhookSender | None = getattr(
@@ -72,7 +84,8 @@ def create_app(
         )
         if sender is None:
             logger.warning(
-                "Feed audit webhook relay WD client is not initialized"
+                "Feed audit webhook relay WD client is not initialized",
+                extra={"json_fields": _CLIENT_NOT_INITIALIZED_LOG_FIELDS},
             )
             return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
 
