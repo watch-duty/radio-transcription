@@ -1,0 +1,249 @@
+"""Watch Duty backend webhook client for Feed Audit Notifications."""
+
+from __future__ import annotations
+
+import json
+import logging
+import random
+import time
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
+
+from urllib3 import PoolManager, Timeout
+from urllib3.exceptions import (
+    ConnectTimeoutError,
+    HTTPError,
+    MaxRetryError,
+    NewConnectionError,
+    ReadTimeoutError,
+)
+from urllib3.exceptions import (
+    TimeoutError as Urllib3TimeoutError,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
+logger = logging.getLogger(__name__)
+
+_MAX_ATTEMPTS = 2
+_REQUEST_TIMEOUT_SECONDS = 15.0
+_RETRY_JITTER_MIN_SECONDS = 0.25
+_RETRY_JITTER_MAX_SECONDS = 0.5
+_RETRYABLE_STATUS_CODES = {408, 429}
+_TRANSIENT_EXCEPTIONS = (
+    ConnectTimeoutError,
+    MaxRetryError,
+    NewConnectionError,
+    ReadTimeoutError,
+    Urllib3TimeoutError,
+)
+
+
+@dataclass(frozen=True)
+class WatchDutyWebhookResult:
+    status_code: int
+    response_body: str
+    attempts: int
+
+
+class WatchDutyWebhookError(RuntimeError):
+    """Raised when a Feed Audit Notification cannot be delivered to WD."""
+
+    def __init__(
+        self,
+        *,
+        status_code: int | None,
+        response_body: str,
+        retryable: bool,
+        attempts: int,
+    ) -> None:
+        self.status_code = status_code
+        self.response_body = response_body
+        self.retryable = retryable
+        self.attempts = attempts
+        super().__init__(
+            "Watch Duty audit webhook delivery failed "
+            f"(status_code={status_code}, retryable={retryable}, attempts={attempts})"
+        )
+
+
+class WatchDutyWebhookClient:
+    def __init__(
+        self,
+        *,
+        webhook_url: str,
+        api_key: str,
+        http: Any | None = None,
+        sleep_func: Callable[[float], None] = time.sleep,
+        jitter_func: Callable[[float, float], float] = random.uniform,
+    ) -> None:
+        self._webhook_url = webhook_url
+        self._api_key = api_key
+        self._http = http if http is not None else PoolManager(retries=False)
+        self._sleep = sleep_func
+        self._jitter = jitter_func
+
+    def send(
+        self,
+        payload: Mapping[str, Any],
+    ) -> WatchDutyWebhookResult:
+        request_body = json.dumps(
+            payload,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "X-Api-Key": self._api_key,
+        }
+
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            try:
+                response = self._http.request(
+                    "POST",
+                    self._webhook_url,
+                    body=request_body,
+                    headers=headers,
+                    timeout=Timeout(total=_REQUEST_TIMEOUT_SECONDS),
+                    retries=False,
+                )
+            except _TRANSIENT_EXCEPTIONS as exc:
+                response_body = str(exc)
+                self._log_delivery_failure(
+                    payload,
+                    status_code=None,
+                    response_body=response_body,
+                    retryable=True,
+                    attempts=attempt,
+                    log_level=logging.WARNING,
+                )
+                if attempt < _MAX_ATTEMPTS:
+                    self._sleep(self._retry_sleep_seconds())
+                    continue
+                raise WatchDutyWebhookError(
+                    status_code=None,
+                    response_body=response_body,
+                    retryable=True,
+                    attempts=attempt,
+                ) from exc
+            except HTTPError as exc:
+                response_body = str(exc)
+                self._log_delivery_failure(
+                    payload,
+                    status_code=None,
+                    response_body=response_body,
+                    retryable=False,
+                    attempts=attempt,
+                    log_level=logging.ERROR,
+                )
+                raise WatchDutyWebhookError(
+                    status_code=None,
+                    response_body=response_body,
+                    retryable=False,
+                    attempts=attempt,
+                ) from exc
+
+            status_code = int(response.status)
+            response_body = _decode_response_body(response.data)
+            if 200 <= status_code < 300:
+                logger.info(
+                    "Feed Audit Notification delivered to Watch Duty",
+                    extra={
+                        "json_fields": _log_fields(
+                            payload,
+                            status_code=status_code,
+                            attempts=attempt,
+                        )
+                    },
+                )
+                return WatchDutyWebhookResult(
+                    status_code=status_code,
+                    response_body=response_body,
+                    attempts=attempt,
+                )
+
+            retryable = _is_retryable_status(status_code)
+            self._log_delivery_failure(
+                payload,
+                status_code=status_code,
+                response_body=response_body,
+                retryable=retryable,
+                attempts=attempt,
+                log_level=logging.WARNING if retryable else logging.ERROR,
+            )
+            if retryable and attempt < _MAX_ATTEMPTS:
+                self._sleep(self._retry_sleep_seconds())
+                continue
+
+            raise WatchDutyWebhookError(
+                status_code=status_code,
+                response_body=response_body,
+                retryable=retryable,
+                attempts=attempt,
+            )
+
+        msg = "unreachable webhook retry state"
+        raise AssertionError(msg)
+
+    def _retry_sleep_seconds(self) -> float:
+        return self._jitter(
+            _RETRY_JITTER_MIN_SECONDS,
+            _RETRY_JITTER_MAX_SECONDS,
+        )
+
+    def _log_delivery_failure(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        status_code: int | None,
+        response_body: str,
+        retryable: bool,
+        attempts: int,
+        log_level: int,
+    ) -> None:
+        logger.log(
+            log_level,
+            "Feed Audit Notification delivery to Watch Duty failed",
+            extra={
+                "json_fields": _log_fields(
+                    payload,
+                    status_code=status_code,
+                    attempts=attempts,
+                    retryable=retryable,
+                    response_body=response_body,
+                )
+            },
+        )
+
+
+def _is_retryable_status(status_code: int) -> bool:
+    return status_code in _RETRYABLE_STATUS_CODES or status_code >= 500
+
+
+def _decode_response_body(data: object) -> str:
+    if isinstance(data, bytes):
+        return data.decode("utf-8", errors="replace")
+    return str(data)
+
+
+def _log_fields(
+    payload: Mapping[str, Any],
+    *,
+    status_code: int | None,
+    attempts: int,
+    retryable: bool | None = None,
+    response_body: str | None = None,
+) -> dict[str, Any]:
+    fields: dict[str, Any] = {
+        "relay_event": "feed_audit_webhook_delivery",
+        "event_id": payload.get("event_id"),
+        "feed_id": payload.get("feed_id"),
+        "feed_revision": payload.get("feed_revision"),
+        "wd_status_code": status_code,
+        "attempts": attempts,
+    }
+    if retryable is not None:
+        fields["retryable"] = retryable
+    if response_body is not None:
+        fields["wd_response_body"] = response_body
+    return fields

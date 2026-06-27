@@ -120,9 +120,7 @@ def test_extract_feed_audit_payload_preserves_extra_fields() -> None:
 
 
 def test_endpoint_returns_bad_request_for_malformed_pubsub_message() -> None:
-    app = create_app(
-        settings=_test_settings(), delivery_handler=lambda _payload: None
-    )
+    app = create_app(settings=_test_settings(), wd_client=_FakeWDClient())
 
     with TestClient(app) as client:
         response = client.post("/pubsub/feed-audit-notifications", json={})
@@ -132,8 +130,8 @@ def test_endpoint_returns_bad_request_for_malformed_pubsub_message() -> None:
 
 def test_endpoint_passes_valid_payload_to_downstream_handler() -> None:
     payload = _feed_audit_payload()
-    seen: list[dict[str, Any]] = []
-    app = create_app(settings=_test_settings(), delivery_handler=seen.append)
+    wd_client = _FakeWDClient()
+    app = create_app(settings=_test_settings(), wd_client=wd_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -142,4 +140,12 @@ def test_endpoint_passes_valid_payload_to_downstream_handler() -> None:
         )
 
     assert response.status_code == 204
-    assert seen == [payload]
+    assert wd_client.payloads == [payload]
+
+
+class _FakeWDClient:
+    def __init__(self) -> None:
+        self.payloads: list[dict[str, Any]] = []
+
+    def send(self, payload: dict[str, Any]) -> None:
+        self.payloads.append(payload)

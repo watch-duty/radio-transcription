@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 import os
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 WD_BACKEND_BASE_URL_ENV = "WD_BACKEND_BASE_URL"
 WD_BACKEND_API_KEY_ENV = "WD_BACKEND_API_KEY"
