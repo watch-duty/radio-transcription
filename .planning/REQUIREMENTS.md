@@ -24,10 +24,10 @@ lifecycle writes.
 
 ### Cloud Routing
 
-- [ ] **ROUTE-01**: Cloud Logging routes Feed Audit Notification logs to a dedicated Pub/Sub topic with a filter on `jsonPayload.event_type` and `jsonPayload.schema_version`.
-- [ ] **ROUTE-02**: The Log Router sink writer has the minimal Pub/Sub publisher IAM needed for the notification topic.
-- [ ] **ROUTE-03**: The Pub/Sub push subscription invokes the relay through authenticated Cloud Run IAM/OIDC.
-- [ ] **ROUTE-04**: The Pub/Sub subscription uses retry backoff with 10 second minimum, 60 second maximum, and a dead-letter policy with 10 delivery attempts.
+- [x] **ROUTE-01**: Cloud Logging routes Feed Audit Notification logs to a dedicated Pub/Sub topic with a filter on `jsonPayload.event_type` and `jsonPayload.schema_version`.
+- [x] **ROUTE-02**: The Log Router sink writer has the minimal Pub/Sub publisher IAM needed for the notification topic.
+- [x] **ROUTE-03**: The Pub/Sub push subscription invokes the relay through authenticated Cloud Run IAM/OIDC.
+- [x] **ROUTE-04**: The Pub/Sub subscription uses retry backoff with 10 second minimum, 60 second maximum, and a dead-letter policy with 10 delivery attempts.
 
 ### Webhook Relay
 
@@ -90,10 +90,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PAYLOAD-02 | Phase 1 | Complete |
 | PAYLOAD-03 | Phase 1 | Complete |
 | PAYLOAD-04 | Phase 1 | Complete |
-| ROUTE-01 | Phase 2 | Pending |
-| ROUTE-02 | Phase 2 | Pending |
-| ROUTE-03 | Phase 2 | Pending |
-| ROUTE-04 | Phase 2 | Pending |
+| ROUTE-01 | Phase 2 | Complete |
+| ROUTE-02 | Phase 2 | Complete |
+| ROUTE-03 | Phase 2 | Complete |
+| ROUTE-04 | Phase 2 | Complete |
 | RELAY-01 | Phase 3 | Pending |
 | RELAY-02 | Phase 3 | Pending |
 | RELAY-03 | Phase 3 | Pending |
