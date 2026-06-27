@@ -1,5 +1,192 @@
 # Next Round Gemini Prior-Context SFT Plan
 
+## Latest Optimized One-SFT Plan
+
+This is the current execution plan after the 2026-06-27 user-seeded VAPO
+sweep. It supersedes the older P3-clean plan in this document.
+
+### Decision
+
+Run exactly one fresh SFT:
+
+`20260627-prior-context-count8-p13-a16-lr075-e10`
+
+Do not run `P12` or `P14` SFTs, do not continue from the empty-prone text-turn
+checkpoint, and do not start a hyperparameter sweep before scoring this run.
+
+### Why This Candidate
+
+The latest VAPO sweep used the fixed `P3_manual_quality_gate` user-template
+shape and compared the three user-provided system prompts. The metric is
+`asr_wer_score`, where higher is better because the custom metric maps WER to a
+bounded score before Prompt Optimizer maximizes it.
+
+| rank | family | step | `asr_wer_score/mean` | decision |
+|---:|---|---:|---:|---|
+| 1 | `P13_user_forensic_context` | 7 | 0.410378 | use for SFT |
+| 2 | `P12_user_clean_context` | 0 | 0.393718 | do not train |
+| 3 | `P14_user_dispatch_glossary` | 9 | 0.373961 | do not train |
+
+Artifact:
+
+`gs://wd-transcription-data/sft/experiments/gemini-prior-context-sft-v20260625/prompt_optimizer/20260627-user-system-prompts-p3-template-g31-optglobal/outputs/P13_user_forensic_context/instruction/optimized_results.json`
+
+The selected prompt supports prior context, but only as a constrained written
+form/spelling reference for names, units, locations, or specialized terms that
+are already clearly heard in the current audio. It avoids the long hard-coded
+vocabulary list and uses `[UNINTELLIGIBLE]` rather than an empty-string
+protocol for no intelligible speech.
+
+### Hypothesis
+
+Training the model directly on the P13 transcript-block prompt schema will
+preserve the strong non-empty-row transcription quality seen in the prior
+count-8 SFT while removing the immediate-empty failure mode caused by the older
+text-turn schema.
+
+Expected result:
+
+- WER below `23.17`, the best no-fallback prompt-only mitigation.
+- Empty response rate below `1.5%`.
+- Stretch target: WER `<=22.34` and empty response rate `<=0.5%`, matching or
+  beating the old corrected checkpoint.
+
+### Fixed Data Setup
+
+Training manifests:
+
+- `gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/per_dataset/bcfy_calls/train.jsonl`
+- `gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/per_dataset/bcfy_feeds/train.jsonl`
+- `gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/per_dataset/echo/train.jsonl`
+- `gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/per_dataset/fire_notifications/train.jsonl`
+
+Validation and final eval manifests:
+
+- `gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/per_dataset/bcfy_calls/eval.jsonl`
+- `gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/per_dataset/bcfy_feeds/eval.jsonl`
+- `gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/per_dataset/echo/eval.jsonl`
+- `gs://wd-transcription-data/sft/dataset_versions/radio-transcription-sft-v20260528/manifests/per_dataset/fire_notifications/eval.jsonl`
+
+Use the existing combined canonical manifests under:
+
+`gs://wd-transcription-data/sft/experiments/gemini-prior-context-sft-v20260625/manifests/`
+
+Regenerate Gemini train/validation JSONL under the new run prefix so the
+resolved prompt text and context schema are stored with this run.
+
+### Prompt Schema
+
+Use exactly one current user turn with:
+
+1. A transcript-only prior-context block.
+2. Up to `8` prior same-source transcripts, oldest to newest.
+3. The fixed current-audio instruction.
+4. Exactly one audio part: the current clip.
+
+Prior transcripts must be selected with the same source-grouping logic as the
+manual-context notebooks and existing `build_context_histories` helper:
+
+- group by `original_audio_uri` or equivalent source recording/session key
+- sort by source offset
+- include only non-empty prior transcripts that are not `[UNINTELLIGIBLE]`
+- no prior audio in SFT context
+
+The user template must byte-match the VAPO gate shape:
+
+```text
+The following prior same-source transcripts are for situational awareness only.
+Do not re-transcribe them. Do not continue them.
+Transcribe exclusively the current audio clip.
+
+Prior transcripts, oldest to newest:
+{prior_context}
+
+IMPORTANT: The current audio is the only clip to transcribe. Use prior transcripts only as context. Return one line: the verbatim transcript of the attached radio audio clip.
+```
+
+If there is no prior context, use the same no-history sentence used by the VAPO
+sample builder:
+
+```text
+There are no prior transcripts for this original recording.
+```
+
+### Required Preflight Implementation
+
+Before launching SFT, add or verify an exact VAPO-template context mode. The
+current `prior_context_mode = "transcript"` path is not sufficient because its
+hard-coded header differs from the P3/P13 VAPO template.
+
+Required checks:
+
+- Prepared Gemini SFT examples contain exactly one audio part.
+- Prior turns contain text only, no prior audio.
+- The current user prompt byte-matches the VAPO template above for both
+  history and no-history rows.
+- The stored `config.json` contains the exact optimized P13 system prompt from
+  `optimized_results.json`.
+- Train rows do not overlap validation/eval by target audio URI.
+
+### Tuning Configuration
+
+- base model: `gemini-3.1-flash-lite`
+- tuning type: fresh SFT, not continuous tuning
+- adapter size: `SIXTEEN`
+- learning-rate multiplier: `0.75`
+- epoch count: `10`
+- export/checkpoint policy: keep all intermediate checkpoints
+- tuned model display name: `wd-radio-sft-20260627-prior-context-count8-p13-a16-lr075-e10`
+- GCS run prefix:
+  `gs://wd-transcription-data/sft/runs/20260627-prior-context-count8-p13-a16-lr075-e10/`
+
+Vertex docs confirm these are the relevant supervised-tuning knobs:
+`training_dataset`, optional `validation_dataset`, `epoch_count`,
+`learning_rate_multiplier`, and `adapter_size`; checkpoint export should remain
+enabled so external WER scoring can select the best checkpoint.
+
+### Execution
+
+1. Create the run config:
+   `model/research/gemini_prior_context_sft/run_20260627_prior_context_count8_p13_a16_lr075_e10.local.toml`
+2. Prepare and preflight:
+   `safe-run -- uv run --project model --extra all gemini-sft prepare --config model/research/gemini_prior_context_sft/run_20260627_prior_context_count8_p13_a16_lr075_e10.local.toml`
+3. Inspect the preflight report and spot-check at least:
+   - one row with zero history
+   - one row with partial history
+   - one row with full count-8 history
+4. Submit tuning:
+   `safe-run -- uv run --project model --extra all gemini-sft tune --config model/research/gemini_prior_context_sft/run_20260627_prior_context_count8_p13_a16_lr075_e10.local.toml --confirm`
+5. Poll every 5 minutes.
+6. Score all exported checkpoints with no fallback:
+   `safe-run -- uv run --project model --extra all python model/scripts/sft/score_gemini_sft_checkpoints_online.py --config model/research/gemini_prior_context_sft/run_20260627_prior_context_count8_p13_a16_lr075_e10.local.toml --concurrency 16 --log-every 100 --sync-every 100`
+
+### Evaluation Gate
+
+Primary scorer settings:
+
+- no fallback
+- temperature `0.0`
+- max output tokens `512`
+- safety settings consistent with the prompt probes
+- same prompt/context builder as SFT train and validation
+
+Report for every checkpoint:
+
+- overall WER, CER, empty response rate
+- per-dataset WER/CER/empty rate
+- old-empty-slice performance from the 275 rows where the prior count-8
+  checkpoint returned empty
+- non-empty-row subset WER
+- large-regression examples against the old corrected checkpoint
+
+Decision rule:
+
+- Accept if best checkpoint has WER `<=22.34` and empty rate `<=0.5%`.
+- Tentatively accept for further review if WER is `22.34-23.17` and empty rate
+  is `<=1.5%`.
+- Stop and do error analysis before any more SFT if WER is worse than `23.17`
+  or empty rate exceeds `1.5%`.
+
 ## Objective
 
 Recover or beat the old corrected checkpoint on the v20260528 four-dataset eval
