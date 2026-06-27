@@ -20,4 +20,3 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY backend/ ./backend/
 
 CMD ["uvicorn", "backend.pipeline.feed_audit_webhook.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
-
