@@ -239,3 +239,56 @@ WER/CER/empty rate over the same four eval manifests.
 
 Detailed plan:
 `model/research/gemini_prior_context_sft/next_round_sft_plan.md`
+
+## 2026-06-26: Continuous +4 Epoch Checkpoint Scores
+
+Continuous tuning from text-turn checkpoint 7 completed:
+
+`projects/781667204380/locations/us-central1/tuningJobs/4171056742186090496`
+
+It continued from:
+
+- tuned model: `projects/781667204380/locations/us/models/2885118511284224000@1`
+- checkpoint id: `7`
+- additional epochs: `4`
+- adapter size: `SIXTEEN`
+- learning rate multiplier: `0.5`
+
+The scorer reused the same four-dataset eval manifest and count-8 text-turn
+request construction as the parent run. Because the base model, prompt, and eval
+rows were unchanged, the parent run's base batch predictions were copied into
+the continuation run prefix before checkpoint scoring.
+
+Combined checkpoint scores:
+
+| continuation checkpoint | epoch | step | WER | CER | empty rate |
+|---|---:|---:|---:|---:|---:|
+| 3 | 4 | 909 | 24.53 | 19.14 | 2.95 |
+| 4 | 4 | 1088 | 25.58 | 20.09 | 4.41 |
+| 1 | 2 | 303 | 27.94 | 23.12 | 7.50 |
+| 2 | 3 | 606 | 28.85 | 23.92 | 8.50 |
+
+Best continuation checkpoint:
+
+- checkpoint endpoint: `projects/781667204380/locations/us/endpoints/4123326933834399744`
+- prediction manifest:
+  `gs://wd-transcription-data/sft/runs/20260626-prior-context-count8-text-turns-exact-sft-continue4-ckpt7/evals/checkpoints/checkpoint_3/online_predictions.jsonl`
+- combined summary:
+  `gs://wd-transcription-data/sft/runs/20260626-prior-context-count8-text-turns-exact-sft-continue4-ckpt7/evals/checkpoints/checkpoint_score_summary.json`
+
+Compared with the previous best text-turn checkpoint 7, continuous tuning
+improved WER from `27.63` to `24.53`, CER from `22.67` to `19.14`, and empty
+rate from `6.69%` to `2.95%`.
+
+However, it still trails both stronger baselines:
+
+- old corrected checkpoint:
+  `20260619-gemini31-flash-lite-corrected-a16-lr05-e10/checkpoint_5_epoch6_step1665`
+  scored WER `22.34`, CER `15.46`, empty rate `0.27%`.
+- the best no-fallback prompt-only mitigation for the parent checkpoint scored
+  WER `23.17`, CER `16.59`, empty rate `53/4108`.
+
+Conclusion: continuing from the empty-prone text-turn checkpoint helps, but it
+does not remove the remaining degradation. The result strengthens the next-run
+plan to train a fresh model with an optimized prompt/context representation
+instead of continuing the repeated text-only prior-turn schema.

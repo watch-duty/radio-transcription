@@ -194,10 +194,19 @@ def main() -> int:
         default=DEFAULT_METRIC_FUNCTION_LOCATION,
         help="Cloud Functions region for the custom VAPO metric endpoint.",
     )
-    parser.add_argument("--metric-mode", choices=("custom", "bleu"), default="custom")
+    parser.add_argument(
+        "--metric-mode",
+        choices=("custom", "bleu", "bleu_rouge"),
+        default="custom",
+    )
     parser.add_argument("--optimization-mode", default=None)
     parser.add_argument("--target-model-qps", type=float, default=3.0)
     parser.add_argument("--eval-qps", type=float, default=3.0)
+    parser.add_argument(
+        "--optimizer-model-location",
+        default=None,
+        help="Optional VAPO optimizer_model_location override.",
+    )
     parser.add_argument("--thinking-budget", type=int, default=0)
     parser.add_argument(
         "--target-model-harm-block-threshold",
@@ -208,6 +217,15 @@ def main() -> int:
         ),
     )
     parser.add_argument("--num-steps", type=int, default=10)
+    parser.add_argument(
+        "--dataset-shape",
+        choices=("prior_context", "pr800_plain", "pr800_marker"),
+        default="prior_context",
+        help=(
+            "VAPO input/template shape. prior_context is the count-8 SFT "
+            "gate shape; pr800_* reproduces PR 800's audio-only shape."
+        ),
+    )
     parser.add_argument("--families", nargs="*", default=None)
     parser.add_argument("--wait", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
@@ -258,7 +276,8 @@ def prepare_optimizer_artifacts(
     output_prefix = args.output_prefix.rstrip("/")
     sample_uri = f"{output_prefix}/sample_prompts.jsonl"
     sample_text = "".join(
-        json.dumps(_sample_record(row, history), ensure_ascii=False) + "\n"
+        json.dumps(_sample_record(row, history, args), ensure_ascii=False)
+        + "\n"
         for row, history in samples
     )
     (local_dir / "sample_prompts.jsonl").write_text(sample_text, encoding="utf-8")
@@ -314,6 +333,7 @@ def prepare_optimizer_artifacts(
             if args.metric_mode == "custom"
             else None
         ),
+        "dataset_shape": args.dataset_shape,
         "families": family_records,
     }
     manifest_text = json.dumps(manifest, indent=2, ensure_ascii=False) + "\n"
@@ -377,7 +397,7 @@ def _vapo_config(
     config: dict[str, Any] = {
         "project": args.project,
         "system_instruction": family.system_instruction,
-        "prompt_template": family.prompt_template,
+        "prompt_template": _prompt_template(args, family),
         "target_model": args.target_model,
         "thinking_budget": args.thinking_budget,
         "optimization_mode": optimization_mode,
@@ -395,6 +415,8 @@ def _vapo_config(
         config["target_model_harm_block_threshold"] = (
             args.target_model_harm_block_threshold
         )
+    if args.optimizer_model_location:
+        config["optimizer_model_location"] = args.optimizer_model_location
     if args.metric_mode == "custom":
         config.update(
             {
@@ -405,12 +427,36 @@ def _vapo_config(
                 "custom_metric_cloud_function_name": args.metric_function,
             }
         )
-    else:
+    elif args.metric_mode == "bleu":
         config["eval_metric"] = "bleu"
+    else:
+        config.update(
+            {
+                "eval_metrics_types": ["bleu", "rouge_l"],
+                "eval_metrics_weights": [0.5, 0.5],
+            }
+        )
     return config
 
 
-def _sample_record(row: dict[str, Any], history: list[Any]) -> dict[str, Any]:
+def _prompt_template(args: argparse.Namespace, family: PromptFamily) -> str:
+    if args.dataset_shape == "pr800_plain":
+        return "{input_text}\n{target}"
+    if args.dataset_shape == "pr800_marker":
+        return "{input_text} @@@audio/flac\n{target}"
+    if args.metric_mode != "custom":
+        return "\n".join([family.prompt_template, "{target}"])
+    return family.prompt_template
+
+
+def _sample_record(
+    row: dict[str, Any], history: list[Any], args: argparse.Namespace
+) -> dict[str, Any]:
+    if args.dataset_shape in {"pr800_plain", "pr800_marker"}:
+        return {
+            "input_text": str(row["audio_filepath"]),
+            "target": str(row["text"]),
+        }
     return {
         "audio": str(row["audio_filepath"]),
         "target": str(row["text"]),

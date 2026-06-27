@@ -320,26 +320,50 @@ should not be used as-is for the primary confirmatory run.
 Run this before any new SFT spending.
 
 Run id proposal:
-`20260627-prior-context-count8-prompt-optimizer`
+`20260627-prior-context-count8-prompt-optimizer-g31-optglobal`
 
 Configuration held fixed:
 
-- target model for prompt search: start with `gemini-3.1-flash-lite`
+- target model for prompt search: `gemini-3.1-flash-lite`
+- target model location: `global`
+- optimizer model location: `global`
 - context count: `8`
 - prior context: same-source transcript block
 - decoding: temperature `0.0`, max output tokens `512`, no fallback
 - optimizer sample source: train manifests only
+- metric: custom `asr_wer_score`
 - final prompt selection scorer: full eval manifests, no fallback
 
 Execution:
 
 1. Prepare optimizer data from train rows with target transcripts.
-2. Run VAPO P1-P8 with the custom ASR metric.
-3. Parse `templates.json` and `eval_results.json` from the optimizer output.
+2. Run VAPO P1-P11 with the custom ASR metric.
+3. Parse `optimized_results.json`, `templates.json`, and `eval_results.json`
+   from the optimizer output.
 4. Run the existing no-fallback online scorer for the top prompt packages on
    the full eval set.
 5. Select the prompt package by lowest full-eval WER, breaking ties by lower
    empty rate, then lower CER.
+
+Completed gate result:
+
+- Overall VAPO winner: `P9_instruction_and_demo` demonstration stage,
+  `asr_wer_score/mean=0.818351`. This prompt includes fixed train-sampled
+  few-shot examples, so treat it as a separate few-shot schema rather than the
+  default SFT instruction.
+- Primary reusable instruction winner: `P3_manual_quality_gate`,
+  `asr_wer_score/mean=0.379824`.
+- `P11_format_first` failed because VAPO mutated the seed into a non-audio
+  task and produced 15/15 failed target predictions. Do not retry it as-is.
+
+Primary selected prompt package for SFT:
+
+- system prompt: `P3_manual_quality_gate` optimized instruction from
+  `gs://wd-transcription-data/sft/experiments/gemini-prior-context-sft-v20260625/prompt_optimizer/20260627-prior-context-count8-prompt-optimizer-g31-optglobal/outputs/P3_manual_quality_gate/instruction/optimized_results.json`
+- context header: `MANUAL_CONTEXT_HEADER`
+- current prompt: `FINAL_AUDIO_CURRENT_PROMPT`
+- prompt template shape: same transcript-block shape used by the prompt
+  optimizer, with exactly one current audio part.
 
 Acceptance gate:
 
@@ -362,10 +386,11 @@ Configuration:
 - base model: `gemini-3.1-flash-lite`
 - continuous tuning: no
 - prior context count: `8`
-- prior context representation: exact transcript block from Prompt Optimizer
-  winner
-- system prompt: Prompt Optimizer winner
-- current prompt: Prompt Optimizer winner
+- prior context representation: transcript block using the selected
+  `P3_manual_quality_gate` prompt package
+- system prompt: `P3_manual_quality_gate` optimized instruction
+- current prompt: `FINAL_AUDIO_CURRENT_PROMPT`
+- context header: `MANUAL_CONTEXT_HEADER`
 - adapter size: `SIXTEEN`
 - learning-rate multiplier: `0.5`
 - epoch count: `8`
@@ -387,6 +412,15 @@ Decision:
 - If best WER is `22.34-23.17`, run the LR/adapter refinement.
 - If best WER is worse than `23.17`, stop and do error analysis before further
   SFT spending.
+
+Optional follow-up branch:
+
+- Run a separate SFT only if we intentionally want a static few-shot prompt
+  package: use the `P9_instruction_and_demo` demonstration prompt as the prompt
+  prefix and ensure all demonstrations are train-only.
+- Do not mix this into the primary run, because it changes the prompt schema
+  from reusable instruction plus dynamic prior context into static
+  demonstrations plus dynamic prior context.
 
 ### C. Hyperparameter Refinement
 

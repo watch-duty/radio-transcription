@@ -292,3 +292,184 @@ Important differences from the prior-context prompt-optimizer gate:
 - The successful run's `error.json` contains a stale/earlier validation error
   for rows using `output_text` instead of `target`, but the job itself
   ultimately succeeded after the dataset was rewritten with `target`.
+
+## 2026-06-26: PR 800 Isolation Smokes
+
+Added launcher support for:
+
+- `optimizer_model_location`
+- `target_model_harm_block_threshold`
+- PR800-style audio-only sample rows:
+  `{"input_text": audio_filepath, "target": text}`
+- PR800-style prompt templates:
+  - plain: `{input_text}\n{target}`
+  - marker: `{input_text} @@@audio/flac\n{target}`
+- BLEU/ROUGE composite metric:
+  `eval_metrics_types=["bleu", "rouge_l"]`,
+  `eval_metrics_weights=[0.5, 0.5]`
+
+Submitted four isolation jobs against `gemini-3.1-flash-lite`:
+
+| experiment | dataset shape | metric | target location | optimizer location | job | status |
+|---|---|---|---|---|---|---|
+| PR800 plain | `pr800_plain` | BLEU/ROUGE | `global` | `global` | `projects/781667204380/locations/us-central1/customJobs/7109479577184894976` | pending at submission |
+| PR800 marker | `pr800_marker` | BLEU/ROUGE | `global` | `global` | `projects/781667204380/locations/us-central1/customJobs/7700858503253983232` | pending at submission |
+| prior context custom | `prior_context` | custom WER | `global` | `global` | `projects/781667204380/locations/us-central1/customJobs/4745089772815384576` | pending at submission |
+| prior context BLEU/ROUGE | `prior_context` | BLEU/ROUGE | `global` | `global` | `projects/781667204380/locations/us-central1/customJobs/2900865725407166464` | failed validation |
+
+Submitted one additional closer PR800 reproduction:
+
+| experiment | dataset shape | metric | optimization mode | rows | job | status |
+|---|---|---|---|---:|---|---|
+| PR800 plain demo | `pr800_plain` | BLEU/ROUGE | `instruction_and_demo` | 50 | `projects/781667204380/locations/us-central1/customJobs/6847144898890563584` | pending at submission |
+
+The first prior-context BLEU/ROUGE job failed before target-model inference:
+VAPO's built-in metrics require a prompt-template placeholder named `target`.
+Submitted a corrected built-in-metric prior-context job with `{target}` appended
+to the prompt template:
+
+- job:
+  `projects/781667204380/locations/us-central1/customJobs/7531692042250878976`
+- status: pending at submission
+
+First isolation poll:
+
+- `pr800_plain` BLEU/ROUGE:
+  `projects/781667204380/locations/us-central1/customJobs/7109479577184894976`
+  succeeded.
+- `pr800_marker` BLEU/ROUGE:
+  `projects/781667204380/locations/us-central1/customJobs/7700858503253983232`
+  succeeded.
+- `prior_context` custom WER:
+  `projects/781667204380/locations/us-central1/customJobs/4745089772815384576`
+  succeeded.
+- `pr800_plain` `instruction_and_demo`:
+  `projects/781667204380/locations/us-central1/customJobs/6847144898890563584`
+  still running.
+- corrected `prior_context` BLEU/ROUGE:
+  `projects/781667204380/locations/us-central1/customJobs/7531692042250878976`
+  still running.
+
+The successful prior-context custom WER smoke produced
+`outputs/P2_canonical_gemini/instruction/optimized_results.json` with
+`asr_wer_score/mean=0.1961`. Its nested config confirmed the working VAPO
+setup:
+
+- `target_model_location="global"`
+- `optimizer_model_location="global"`
+- `target_model_harm_block_threshold="OFF"`
+- `eval_metric="custom_metric"`
+- `custom_metric_cloud_function_location="us-central1"`
+
+Final isolation status:
+
+- `pr800_plain` BLEU/ROUGE succeeded.
+- `pr800_marker` BLEU/ROUGE succeeded.
+- `pr800_plain` `instruction_and_demo` succeeded.
+- corrected `prior_context` BLEU/ROUGE succeeded.
+- `prior_context` custom WER succeeded.
+- the only isolation failure was the expected validation failure for the
+  built-in-metric prior-context template that omitted a `target` placeholder.
+
+Conclusion: the current VAPO backend can run `gemini-3.1-flash-lite` with
+multimodal audio, prior transcript context, and the custom WER Cloud Function.
+The required settings are `target_model_location="global"`,
+`optimizer_model_location="global"`, and
+`target_model_harm_block_threshold="OFF"`.
+
+## 2026-06-26: Full Prompt-Family Sweep Relaunch
+
+Since the prior-context custom WER smoke succeeded, relaunched the full
+prompt-family sweep with the working setup:
+
+- output prefix:
+  `gs://wd-transcription-data/sft/experiments/gemini-prior-context-sft-v20260625/prompt_optimizer/20260627-prior-context-count8-prompt-optimizer-g31-optglobal`
+- sample rows: `600`
+- VAPO `data_limit`: `100`
+- metric: custom `asr_wer_score`
+- target model: `gemini-3.1-flash-lite`
+- target model location: `global`
+- optimizer model location: `global`
+- target model harm block threshold: `OFF`
+- custom metric function location: `us-central1`
+
+| family | custom job |
+|---|---|
+| `P1_force_words_incumbent` | `projects/781667204380/locations/us-central1/customJobs/6292639194770571264` |
+| `P2_canonical_gemini` | `projects/781667204380/locations/us-central1/customJobs/2269235877668454400` |
+| `P3_manual_quality_gate` | `projects/781667204380/locations/us-central1/customJobs/5106503642911866880` |
+| `P4_chirp_phrase_hints` | `projects/781667204380/locations/us-central1/customJobs/1377523151449096192` |
+| `P5_compact_common_asr` | `projects/781667204380/locations/us-central1/customJobs/606281715261898752` |
+| `P6_output_only` | `projects/781667204380/locations/us-central1/customJobs/2897488025686638592` |
+| `P7_error_aware_context` | `projects/781667204380/locations/us-central1/customJobs/5171805837508739072` |
+| `P8_no_empty_unintelligible` | `projects/781667204380/locations/us-central1/customJobs/7815418818775220224` |
+| `P9_instruction_and_demo` | `projects/781667204380/locations/us-central1/customJobs/3928812340354482176` |
+| `P10_canary_minimal` | `projects/781667204380/locations/us-central1/customJobs/8927244976782311424` |
+| `P11_format_first` | `projects/781667204380/locations/us-central1/customJobs/3294930692802084864` |
+
+First five-minute full-sweep poll: all 11 jobs were `JOB_STATE_RUNNING`.
+
+Final status:
+
+- `P1_force_words_incumbent`: succeeded
+- `P2_canonical_gemini`: succeeded
+- `P3_manual_quality_gate`: succeeded
+- `P4_chirp_phrase_hints`: succeeded
+- `P5_compact_common_asr`: succeeded
+- `P6_output_only`: succeeded
+- `P7_error_aware_context`: succeeded
+- `P8_no_empty_unintelligible`: succeeded
+- `P9_instruction_and_demo`: succeeded
+- `P10_canary_minimal`: succeeded
+- `P11_format_first`: failed
+
+Final optimizer-sample ranking:
+
+| rank | family | stage | `asr_wer_score/mean` | step | prompt chars |
+|---:|---|---|---:|---:|---:|
+| 1 | `P9_instruction_and_demo` | `instruction/demonstration` | 0.818351 | 10 | 3201 |
+| 2 | `P3_manual_quality_gate` | `instruction` | 0.379824 | 7 | 8024 |
+| 3 | `P1_force_words_incumbent` | `instruction` | 0.362314 | 10 | 2750 |
+| 4 | `P6_output_only` | `instruction` | 0.357437 | 10 | 4563 |
+| 5 | `P8_no_empty_unintelligible` | `instruction` | 0.345953 | 9 | 4383 |
+| 6 | `P9_instruction_and_demo` | `instruction` | 0.317367 | 2 | 1187 |
+| 7 | `P2_canonical_gemini` | `instruction` | 0.313137 | 10 | 6419 |
+| 8 | `P5_compact_common_asr` | `instruction` | 0.307074 | 9 | 4140 |
+| 9 | `P4_chirp_phrase_hints` | `instruction` | 0.304320 | 4 | 4996 |
+| 10 | `P7_error_aware_context` | `instruction` | 0.303005 | 5 | 2985 |
+| 11 | `P10_canary_minimal` | `instruction` | 0.300115 | 4 | 2261 |
+
+Selection interpretation:
+
+- Overall VAPO winner is `P9_instruction_and_demo` in
+  `instruction/demonstration` mode. This prompt includes fixed train-sampled
+  few-shot examples in the prompt body, so it is a different schema from a pure
+  reusable instruction prompt.
+- Best reusable instruction-only winner is `P3_manual_quality_gate` with
+  `asr_wer_score/mean=0.379824`.
+- Use `P3_manual_quality_gate` as the primary next SFT prompt. Treat P9
+  demonstration mode as an optional follow-up branch only if we intentionally
+  want static train-only few-shot examples in every SFT/eval request.
+
+`P11_format_first` failure diagnosis:
+
+- The job used the same working VAPO infrastructure settings as the successful
+  jobs: `target_model_location="global"`,
+  `optimizer_model_location="global"`,
+  `target_model_harm_block_threshold="OFF"`, and custom WER metric in
+  `us-central1`.
+- The failure was prompt-family-specific. The format-first seed let VAPO mutate
+  the instruction into a non-audio task, including candidates that said the
+  model was not an audio-to-text transcriber and should ignore audio file paths.
+- The terminal error was:
+
+```text
+No successful per-example results found (15 failures).
+```
+
+This happened after a candidate produced 15/15 failed target predictions, with
+`nan` entering the UCB stats. Treat `P11` as an invalid family, not as a missing
+infrastructure result. Do not reschedule it for the current sweep. If a
+formatting-focused family is still desired later, create a new `P11b` that
+hard-pins the task as audio transcription and only optimizes a small formatting
+clause such as one-line output and digit formatting.
