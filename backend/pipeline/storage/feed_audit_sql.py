@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-# ruff: noqa: S608
-
-FEED_AUDIT_NOTIFICATION_EVENT_TYPE = (
-    "radio_transcription.feed_audit_notification"
+from backend.pipeline.common.feed_audit_notification_contract import (
+    FEED_AUDIT_NOTIFICATION_EVENT_TYPE,
+    FEED_AUDIT_NOTIFICATION_SCHEMA_VERSION,
 )
-FEED_AUDIT_NOTIFICATION_SCHEMA_VERSION = 1
+
+# ruff: noqa: S608
 
 AUDITED_FEED_STATE_FIELDS = (
     ("id", "id"),
