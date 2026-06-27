@@ -92,8 +92,8 @@ Plans:
 **Plans**: 4 plans
 Plans:
 **Wave 1**
-- [ ] 04-01-PLAN.md — Relay structured operational log hardening
-- [ ] 04-02-PLAN.md — Deployment route enablement and safe environment outputs
+- [x] 04-01-PLAN.md — Relay structured operational log hardening
+- [x] 04-02-PLAN.md — Deployment route enablement and safe environment outputs
 
 **Wave 2** *(blocked on 04-01 completion)*
 - [ ] 04-03-PLAN.md — Feed audit delivery health monitoring
