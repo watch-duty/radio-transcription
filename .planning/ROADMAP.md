@@ -89,7 +89,17 @@ Plans:
   2. Deployment configuration documents the Cloud Logging sink, Pub/Sub topic, DLQ topic, push subscription, relay service, secret/env vars, and IAM bindings required for the path.
   3. A staging verification creates a real feed audit row and observes a Pub/Sub message plus Watch Duty webhook call without modifying the feed write path for delivery.
   4. The production rollout runbook lets an operator check routed logs, Pub/Sub backlog, push failures, and DLQ messages.
-**Plans**: TBD
+**Plans**: 4 plans
+Plans:
+**Wave 1**
+- [ ] 04-01-PLAN.md — Relay structured operational log hardening
+- [ ] 04-02-PLAN.md — Deployment route enablement and safe environment outputs
+
+**Wave 2** *(blocked on 04-01 completion)*
+- [ ] 04-03-PLAN.md — Feed audit delivery health monitoring
+
+**Wave 3** *(blocked on 04-01, 04-02, and 04-03 completion)*
+- [ ] 04-04-PLAN.md — Rollout proof runbook and triage documentation
 
 ## Progress
 
@@ -101,7 +111,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4
 | 1. Audit Contract and Emission | 3/3 | Complete    | 2026-06-26 |
 | 2. Cloud Logging and Pub/Sub Routing | 3/3 | Complete    | 2026-06-27 |
 | 3. Webhook Relay Delivery | 0/4 | Planned     | - |
-| 4. Operations and Rollout Proof | 0/TBD | Not started | - |
+| 4. Operations and Rollout Proof | 0/4 | Planned     | - |
 
 ## Coverage
 
