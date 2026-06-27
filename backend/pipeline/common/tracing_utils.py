@@ -1,10 +1,12 @@
 """Utilities for distributed tracing in Apache Beam."""
 
+import asyncio
 import logging
 import os
 import threading
+import time
 import uuid
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any, cast
 
@@ -21,7 +23,9 @@ from opentelemetry.sdk.resources import (
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
+    ConsoleSpanExporter,
     SimpleSpanProcessor,
+    SpanExporter,
 )
 from opentelemetry.trace import (
     Span,
@@ -94,6 +98,18 @@ class ContextPropagationValidator(SpanProcessor):
         pass
 
 
+def _resolve_exporter(*, is_console: bool) -> SpanExporter:
+    """Resolves and returns the appropriate OpenTelemetry SpanExporter."""
+    if is_console:
+        return ConsoleSpanExporter()
+
+    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
+    if not project_id:
+        msg = "GOOGLE_CLOUD_PROJECT environment variable must be set in GCP environment."
+        raise ValueError(msg)
+    return CloudTraceSpanExporter(project_id=project_id)
+
+
 def setup_tracing(
     *,
     service_name: str | None = None,
@@ -108,7 +124,9 @@ def setup_tracing(
     within a single Python worker process space. Distributed Dataflow worker instances
     will spin up separate process environments.
     """
-    if not is_gcp_env():
+    is_console = os.environ.get("OTEL_TRACES_EXPORTER") == "console"
+
+    if not is_gcp_env() and not is_console:
         # Do not set up tracing for local development or tests
         return
 
@@ -123,8 +141,6 @@ def setup_tracing(
         # Double check locking pattern after acquiring lock
         if _state.custom_provider is not None:
             return
-
-        project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
 
         # Resolve service metadata from environment if not explicitly provided
         if service_name is None:
@@ -143,11 +159,8 @@ def setup_tracing(
             }
         )
 
-        if not project_id:
-            msg = "GOOGLE_CLOUD_PROJECT environment variable must be set in GCP environment."
-            raise ValueError(msg)
         provider = TracerProvider(resource=resource)
-        exporter = CloudTraceSpanExporter(project_id=project_id)
+        exporter = _resolve_exporter(is_console=is_console)
 
         if is_ingestion is None:
             is_ingestion = os.environ.get("IS_INGESTION_SERVICE") == "true"
@@ -391,13 +404,17 @@ def extract_cloud_event_attributes(
     if hasattr(cloud_event, "data"):
         data = cloud_event.data
         ce_attrs = getattr(cloud_event, "attributes", None)
+        pubsub_container = data
     else:
         data_dict: Mapping[Any, Any] = cloud_event
         data = data_dict.get("data") or data_dict.get(b"data")
         ce_attrs = data_dict.get("attributes") or data_dict.get(b"attributes")
+        pubsub_container = data if data is not None else data_dict
 
     # 1. Extract from nested Pub/Sub message attributes
-    combined_attributes.update(_extract_nested_pubsub_attributes(data))
+    combined_attributes.update(
+        _extract_nested_pubsub_attributes(pubsub_container)
+    )
 
     # 2. Extract from top-level CloudEvent attributes
     if isinstance(ce_attrs, dict):
@@ -474,3 +491,38 @@ def parse_pubsub_cloudevent(
     combined_attributes = extract_cloud_event_attributes(cloud_event)
 
     return combined_attributes, raw_data
+
+
+async def traced_to_thread[T](
+    span_name: str,
+    func: Callable[..., T],
+    *args: Any,
+    **kwargs: Any,
+) -> T:
+    """Wraps asyncio.to_thread in a child span, recording thread execution start and end.
+
+    This captures thread pool queue delay, actual execution duration, and dispatch delay.
+    """
+    tracer = get_tracer(__name__)
+    with tracer.start_as_current_span(span_name) as span:
+
+        def worker() -> T:
+            # Under asyncio.to_thread, contextvars are automatically propagated.
+            # Record when execution starts inside the thread pool worker thread.
+            start_time = time.time()
+            span.set_attribute("thread.start_time", start_time)
+            span.add_event("thread_execution_start")
+            telemetry_logger.info(
+                "Thread execution for span '%s' started", span_name
+            )
+            try:
+                return func(*args, **kwargs)
+            finally:
+                end_time = time.time()
+                span.set_attribute("thread.end_time", end_time)
+                span.add_event("thread_execution_end")
+                telemetry_logger.info(
+                    "Thread execution for span '%s' finished", span_name
+                )
+
+        return await asyncio.to_thread(worker)

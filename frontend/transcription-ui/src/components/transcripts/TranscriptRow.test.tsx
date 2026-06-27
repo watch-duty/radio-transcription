@@ -13,16 +13,16 @@ import {
 import { type RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import TranscriptRow from './TranscriptRow';
 
-// Mocking AudioPlayer to verify it's being called with the correct props.
+// Mocking TranscriptPlayControl to verify it's being called with the correct props.
 // We do not need to test the actual audio player functionality here
-// as that is tested separately in AudioPlayer.test.tsx
-vi.mock('../audio/AudioPlayer', () => ({
+// as that is tested separately in TranscriptPlayControl.test.tsx
+vi.mock('../audio/TranscriptPlayControl', () => ({
   default: (props: { audioUri: string; segmentId: string }) => (
     <div
       data-testid={`audio-player-${props.segmentId}`}
       data-audio-uri={props.audioUri}
     >
-      AudioPlayer Mock
+      TranscriptPlayControl Mock
     </div>
   ),
 }));
@@ -442,5 +442,44 @@ describe('TranscriptRow', () => {
     );
 
     expect(screen.getByLabelText('view segment info')).toBeInTheDocument();
+  });
+
+  it('renders transcription failure correctly with placeholder text and disabled copy', () => {
+    const mockFailedTranscript: AudioSegment = {
+      ...mockAudioSegment,
+      annotations: [
+        {
+          type: AnnotationType.TRANSCRIPT,
+          createdAt: '2026-04-15T16:00:00Z',
+          data: {
+            text: '',
+            errors: ['some API error'],
+          },
+        },
+      ],
+    };
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={mockFailedTranscript}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('[Transcription failed]')).toBeTruthy();
+
+    const copyButton = screen.getByLabelText('copy transcript');
+    expect((copyButton as HTMLButtonElement).disabled).toBe(true);
   });
 });

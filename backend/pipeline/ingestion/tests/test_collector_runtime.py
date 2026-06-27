@@ -2780,7 +2780,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("post_bookmark_publish_failure", event_types)
 
     async def test_failure_log_includes_runtime_reason_fields(self) -> None:
-        """Runtime failure logs include status and quarantine reason fields."""
+        """Runtime failure logs include status and status reason detail fields."""
 
         async def _failing_capture(feed, shutdown, _resources):
             msg = "capture_failed"

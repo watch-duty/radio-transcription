@@ -298,24 +298,18 @@ def _manage_out_of_order_timers(
     """
     if has_buffer_elements:
         if clamped:
-            emitted_duration_ms = (
-                (new_expected_next_ts - old_expected_ts)
-                if (
-                    old_expected_ts is not None
-                    and new_expected_next_ts is not None
-                )
-                else 0
-            )
-            advance_sec = max(
-                WINDMILL_TIMER_MIN_ADVANCE_SECS,
-                float(emitted_duration_ms)
-                / float(common_constants.MS_PER_SECOND),
-            )
-            gap_timer_event.set(timestamp + advance_sec)
+            # Loop control: Always advance by the minimum 1ms safety epsilon
+            # to satisfy the Runner V2 gate without triggering artificial
+            # watermark delays or Pub/Sub source gridlocks.
+            gap_timer_event.set(timestamp + WINDMILL_TIMER_MIN_ADVANCE_SECS)
             if is_backfill:
                 gap_timer_proc.clear()
             else:
-                gap_timer_proc.set(Timestamp(seconds=time.time() + advance_sec))
+                gap_timer_proc.set(
+                    Timestamp(
+                        seconds=time.time() + WINDMILL_TIMER_MIN_ADVANCE_SECS
+                    )
+                )
             return True
 
         if not order_timer_active:
@@ -716,12 +710,12 @@ class OrderedStitchAudioFn(beam.DoFn):
             _write_transmission_context(
                 transmission_context_state, curr_context
             )
-            advance_sec = max(
-                trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
-                float(metadata.duration_ms)
-                / float(common_constants.MS_PER_SECOND),
+            # Loop control: Always advance by the minimum 1ms safety epsilon
+            # to satisfy the Runner V2 gate without triggering artificial
+            # watermark delays or Pub/Sub source gridlocks.
+            deferred_drain_timer.set(
+                timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
             )
-            deferred_drain_timer.set(timestamp + advance_sec)
             return
 
         results = []
@@ -1105,24 +1099,14 @@ class OrderedStitchAudioFn(beam.DoFn):
                 - self.processed_in_bundle
             )
             if new_buffer_elements and clamped:
-                # Still clamped, re-arm the deferral timer to self-chain into another bundle!
-                emitted_duration_ms = (
-                    (
-                        new_expected_next_ts
-                        - curr_context.expected_next_chunk_start_ms
-                    )
-                    if (
-                        curr_context.expected_next_chunk_start_ms is not None
-                        and new_expected_next_ts is not None
-                    )
-                    else 0
+                # Still clamped, re-arm the deferral timer to self-chain into
+                # another bundle!
+                # Loop control: Always advance by the minimum 1ms safety
+                # epsilon to satisfy the Runner V2 gate without triggering
+                # artificial watermark delays or Pub/Sub source gridlocks.
+                deferred_drain_timer.set(
+                    timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
                 )
-                advance_sec = max(
-                    trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
-                    float(emitted_duration_ms)
-                    / float(common_constants.MS_PER_SECOND),
-                )
-                deferred_drain_timer.set(timestamp + advance_sec)
 
             curr_context = replace(
                 curr_context,
