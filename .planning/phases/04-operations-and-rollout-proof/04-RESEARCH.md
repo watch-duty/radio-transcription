@@ -428,22 +428,22 @@ The first command checks code intent; the outputs confirm whether the app module
 | A1 | A staging/dev environment is available and acceptable for the end-to-end proof before production rollout. [ASSUMED] | Summary, Environment Availability, Open Questions | If no staging/dev environment is available, OPS-03 needs a different safe proof target or user approval to prove in production. |
 | A2 | High-cardinality log metric labels such as event IDs and response bodies should be avoided. [ASSUMED] | Common Pitfalls | If the project's Monitoring quota/cost posture allows it, the plan might be too conservative, but the safer default is low-cardinality labels. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should Phase 4 flip `feed_audit_notification_route_enabled` in dev/staging and prod, or only document the enablement step?**
    - What we know: The app module flag defaults to false and environment roots currently do not pass it. [VERIFIED: ../../feed-audit-notification-routing-deployment/terraform/modules/app/variables.tf; VERIFIED: ../../feed-audit-notification-routing-deployment/terraform/environments/dev/main.tf; VERIFIED: ../../feed-audit-notification-routing-deployment/terraform/environments/prod/main.tf]
-   - What's unclear: Whether the user wants Phase 4 to commit route enablement for prod or stage it as an operator-run rollout step. [ASSUMED]
-   - Recommendation: Plan Wave 0 to enable/verify dev/staging route first, and make prod enablement a final explicit rollout task gated by staging proof. [VERIFIED: .planning/phases/04-operations-and-rollout-proof/04-CONTEXT.md]
+   - Resolution: Phase 4 should plan concrete route enablement/config where appropriate. Dev/staging should be enabled and verified before the live proof, while production rollout remains gated by the rollout docs/runbook when environment-specific values or operator action are required. [VERIFIED: .planning/phases/04-operations-and-rollout-proof/04-CONTEXT.md]
+   - Planning impact: Plan environment-level route posture explicitly: enable dev/staging for OPS-03 proof, keep production activation tied to the production checklist, Terraform plan review, and post-deploy operator verification. [VERIFIED: .planning/phases/04-operations-and-rollout-proof/04-02-PLAN.md]
 
 2. **What exact WD staging endpoint and API key should receive the proof event?**
-   - What we know: The relay gets `WD_BACKEND_BASE_URL` and `WD_BACKEND_API_KEY` from deployment configuration/Secret Manager. [VERIFIED: backend/pipeline/feed_audit_webhook/README.md; VERIFIED: ../../feed-audit-notification-routing-deployment/terraform/modules/services/feed_audit_webhook/main.tf]
-   - What's unclear: The concrete staging WD backend origin/secret are environment-specific and not in the public repo. [VERIFIED: .planning/phases/04-operations-and-rollout-proof/04-CONTEXT.md]
-   - Recommendation: Keep exact values in the deployment repo/environment secrets and write runbook placeholders that resolve from Terraform outputs or GitHub environment variables. [VERIFIED: ../../feed-audit-notification-routing-deployment/README.md]
+   - What we know: The concrete staging WD backend origin/secret are environment-specific and must not be stored in public docs. [VERIFIED: .planning/phases/04-operations-and-rollout-proof/04-CONTEXT.md]
+   - Resolution: Phase 4 should document the required deployment variable/secret contract and require staging proof to use environment-provided `WD_BACKEND_ENDPOINT` / `WD_BACKEND_ENDPOINT_API_KEY` or the configured feed-audit webhook Secret Manager secret. Secret values must remain in the deployment environment/secret store, not markdown. [VERIFIED: ../../feed-audit-notification-routing-deployment/terraform/modules/services/feed_audit_webhook/main.tf]
+   - Planning impact: Rollout docs should name the variable/secret contract, show redacted placeholders only, and instruct operators to verify the configured endpoint/key source without printing or copying secret values into logs or docs. [VERIFIED: ../../feed-audit-notification-routing-deployment/README.md]
 
 3. **Does OPS-01 require a custom log entry when Pub/Sub forwards to DLQ?**
    - What we know: Pub/Sub exposes a dead-letter forwarded-message metric and the DLQ topic/subscription can be inspected. [CITED: https://docs.cloud.google.com/pubsub/docs/monitoring; VERIFIED: ../../feed-audit-notification-routing-deployment/terraform/modules/message_queues/main.tf]
-   - What's unclear: The requirement wording says DLQ paths emit structured operational logs, but adding a DLQ consumer solely to log forwarding would expand the architecture. [VERIFIED: .planning/REQUIREMENTS.md; VERIFIED: .planning/phases/04-operations-and-rollout-proof/04-CONTEXT.md]
-   - Recommendation: Treat Pub/Sub DLQ platform metrics plus DLQ message inspection as the v1 DLQ operational signal; ask the user only if they insist on a custom DLQ log producer. [CITED: https://docs.cloud.google.com/pubsub/docs/monitoring]
+   - Resolution: Pub/Sub DLQ platform metrics plus DLQ subscription/message inspection are acceptable for OPS-01. No custom DLQ log producer, custom DLQ consumer, replay service, or delivery table is required. [CITED: https://docs.cloud.google.com/pubsub/docs/monitoring; VERIFIED: .planning/phases/04-operations-and-rollout-proof/04-CONTEXT.md]
+   - Planning impact: Plans should use `pubsub.googleapis.com/subscription/dead_letter_message_count`, DLQ backlog metrics, and pull-based inspection from the existing DLQ subscription as the operational proof for DLQ behavior. [VERIFIED: ../../feed-audit-notification-routing-deployment/terraform/modules/message_queues/main.tf]
 
 ## Environment Availability
 
