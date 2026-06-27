@@ -492,7 +492,7 @@ Families added to `model/scripts/sft/run_prompt_optimizer_gate.py`:
 | family | seed |
 |---|---|
 | `P12_user_clean_context` | cleaned anti-hallucination prompt with passive prior-context use |
-| `P13_user_prior_forbidden` | strict prompt that forbids using prior transcripts |
+| `P13_user_forensic_context` | forensic prompt with limited prior-context use |
 | `P14_user_dispatch_glossary` | compact dispatcher/transcriptionist prompt with small glossary |
 
 Fixed VAPO configuration:
@@ -514,3 +514,11 @@ Preflight:
   passed.
 - dry-run prepare with the three families, sample size `12`, and data limit `5`
   successfully built the intended family configs.
+
+Launch:
+
+| family | custom job |
+|---|---|
+| `P12_user_clean_context` | `projects/781667204380/locations/us-central1/customJobs/6224355124639170560` |
+| `P13_user_forensic_context` | `projects/781667204380/locations/us-central1/customJobs/4924222207212650496` |
+| `P14_user_dispatch_glossary` | `projects/781667204380/locations/us-central1/customJobs/1419014322234851328` |
