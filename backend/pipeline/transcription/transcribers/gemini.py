@@ -47,6 +47,7 @@ class GeminiConfig(utils.ConfigBase):
     """Strongly typed configuration for the Gemini Transcriber."""
 
     model: str = DEFAULT_GEMINI_MODEL
+    location: str = DEFAULT_GEMINI_LOCATION
     mime_type: str = "audio/flac"
     temperature: float = _DEFAULT_TEMPERATURE
     max_output_tokens: int = _DEFAULT_MAX_OUTPUT_TOKENS
@@ -68,13 +69,13 @@ class GeminiTranscriber(base.Transcriber):
         self,
         project_id: str,
         config: GeminiConfig,
-        location: str = DEFAULT_GEMINI_LOCATION,
+        location: str | None = None,
     ) -> None:
         """Binds the GCP Project ID and parsed configuration."""
         self.project_id = project_id
         self.config = config
         self.client: genai.Client | None = None
-        self.location = location
+        self.location = location or config.location
 
     def setup(self) -> None:
         """Instantiate the GenAI API client with a robust retry policy."""
