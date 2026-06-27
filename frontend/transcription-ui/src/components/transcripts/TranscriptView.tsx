@@ -701,6 +701,7 @@ export function TranscriptView({
           speed={speed}
           setSpeed={setSpeed}
           onReset={reset}
+          disableControls={rawAudioSegments.length === 0}
         />
       </Box>
 
