@@ -6,7 +6,6 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi.testclient import TestClient
-import pytest
 
 from backend.pipeline.feed_audit_webhook import main as main_module
 from backend.pipeline.feed_audit_webhook.main import create_app
@@ -17,6 +16,8 @@ from backend.pipeline.feed_audit_webhook.wd_client import WatchDutyWebhookError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    import pytest
 
 _SENSITIVE_LOG_MARKERS = ("before_values", "after_values", "test-api-key")
 
@@ -152,8 +153,7 @@ def test_malformed_pubsub_message_returns_non_2xx_without_calling_wd(
     assert wd_client.payloads == []
     fields = _json_fields(caplog)
     assert any(
-        field.get("relay_event")
-        == "feed_audit_webhook_invalid_pubsub_message"
+        field.get("relay_event") == "feed_audit_webhook_invalid_pubsub_message"
         for field in fields
     )
     _assert_no_sensitive_log_values(caplog, fields)
@@ -177,8 +177,7 @@ def test_missing_wd_client_returns_non_2xx_with_structured_config_log(
     assert wd_client.payloads == []
     fields = _json_fields(caplog)
     assert any(
-        field.get("relay_event")
-        == "feed_audit_webhook_client_not_initialized"
+        field.get("relay_event") == "feed_audit_webhook_client_not_initialized"
         for field in fields
     )
     _assert_no_sensitive_log_values(caplog, fields)

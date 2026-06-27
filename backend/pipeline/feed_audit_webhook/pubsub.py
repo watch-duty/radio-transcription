@@ -6,7 +6,7 @@ import base64
 import binascii
 import json
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 from backend.pipeline.common.feed_audit_notification_contract import (
     FEED_AUDIT_NOTIFICATION_EVENT_TYPE,
@@ -75,4 +75,4 @@ def _require_mapping(value: object, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         msg = f"{label} must be an object"
         raise InvalidPubSubMessage(msg)
-    return value
+    return cast("Mapping[str, Any]", value)

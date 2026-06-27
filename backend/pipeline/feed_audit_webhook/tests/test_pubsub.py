@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +15,9 @@ from backend.pipeline.feed_audit_webhook.pubsub import (
 from backend.pipeline.feed_audit_webhook.settings import (
     FeedAuditWebhookSettings,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 
 def _feed_audit_payload(**overrides: object) -> dict[str, object]:
@@ -145,7 +148,7 @@ def test_endpoint_passes_valid_payload_to_downstream_handler() -> None:
 
 class _FakeWDClient:
     def __init__(self) -> None:
-        self.payloads: list[dict[str, Any]] = []
+        self.payloads: list[Mapping[str, Any]] = []
 
-    def send(self, payload: dict[str, Any]) -> None:
+    def send(self, payload: Mapping[str, Any]) -> None:
         self.payloads.append(payload)

@@ -28,7 +28,7 @@ FEED_AUDIT_NOTIFICATION_REQUIRED_FIELDS = frozenset(
 def missing_feed_audit_notification_fields(
     payload: Mapping[str, Any],
 ) -> set[str]:
-    return FEED_AUDIT_NOTIFICATION_REQUIRED_FIELDS - payload.keys()
+    return set(FEED_AUDIT_NOTIFICATION_REQUIRED_FIELDS - payload.keys())
 
 
 def is_valid_feed_audit_notification_payload(

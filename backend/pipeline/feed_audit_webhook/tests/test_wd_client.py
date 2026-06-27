@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from urllib3.exceptions import ReadTimeoutError
@@ -105,7 +105,11 @@ def test_send_retries_transient_statuses_once(status_code: int) -> None:
 def test_send_retries_timeout_once() -> None:
     client, http, sleeps = _client(
         [
-            ReadTimeoutError(None, "https://backend.watchduty.test", "timeout"),
+            ReadTimeoutError(
+                cast("Any", None),
+                "https://backend.watchduty.test",
+                "timeout",
+            ),
             _Response(status=204),
         ]
     )
