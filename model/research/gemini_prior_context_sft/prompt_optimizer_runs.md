@@ -473,3 +473,44 @@ infrastructure result. Do not reschedule it for the current sweep. If a
 formatting-focused family is still desired later, create a new `P11b` that
 hard-pins the task as audio transcription and only optimizes a small formatting
 clause such as one-line output and digit formatting.
+
+## 2026-06-27: User-Seeded System Prompt VAPO Sweep
+
+Protocol locked before launch.
+
+Goal: run VAPO against three user-specified system prompts and their optimizer
+variations, while holding the prior-context user template fixed to the
+`P3_manual_quality_gate` shape:
+
+- context header: `MANUAL_CONTEXT_HEADER`
+- current prompt: `FINAL_AUDIO_CURRENT_PROMPT`
+- prior context format: transcript block
+- current audio: exactly one `{audio} @@@audio/flac` marker
+
+Families added to `model/scripts/sft/run_prompt_optimizer_gate.py`:
+
+| family | seed |
+|---|---|
+| `P12_user_clean_context` | cleaned anti-hallucination prompt with passive prior-context use |
+| `P13_user_prior_forbidden` | strict prompt that forbids using prior transcripts |
+| `P14_user_dispatch_glossary` | compact dispatcher/transcriptionist prompt with small glossary |
+
+Fixed VAPO configuration:
+
+- output prefix:
+  `gs://wd-transcription-data/sft/experiments/gemini-prior-context-sft-v20260625/prompt_optimizer/20260627-user-system-prompts-p3-template-g31-optglobal`
+- sample rows: `600`
+- VAPO `data_limit`: `100`
+- metric: custom `asr_wer_score`
+- target model: `gemini-3.1-flash-lite`
+- target model location: `global`
+- optimizer model location: `global`
+- target model harm block threshold: `OFF`
+- custom metric function location: `us-central1`
+
+Preflight:
+
+- `python3 -m py_compile model/scripts/sft/run_prompt_optimizer_gate.py`
+  passed.
+- dry-run prepare with the three families, sample size `12`, and data limit `5`
+  successfully built the intended family configs.
