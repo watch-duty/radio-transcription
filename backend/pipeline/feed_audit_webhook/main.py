@@ -96,6 +96,9 @@ def create_app(
         try:
             await asyncio.to_thread(sender.send, payload)
         except WatchDutyWebhookError:
+            # NACK every WD delivery failure, including non-retryable WD 4xx
+            # responses, so Pub/Sub retains the message for retry/DLQ handling
+            # instead of acknowledging and dropping a misconfigured route.
             return Response(status_code=status.HTTP_502_BAD_GATEWAY)
         except Exception:
             logger.exception(
