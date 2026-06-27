@@ -2485,9 +2485,7 @@ async def test_deactivate_feed_succeeds(
     assert audit_row["feed_revision"] == 1
     assert before_values["status"] == "active"
     assert after_values["status"] == "deactivated"
-    source_feed_id = cast(
-        "str", before_values["source_feed_id"]
-    )
+    source_feed_id = cast("str", before_values["source_feed_id"])
     assert source_feed_id.startswith("deactivate-")
     assert after_values["tags"] == []
     assert "worker_id" not in before_values
@@ -2612,9 +2610,7 @@ async def test_delete_feed_succeeds(
     assert audit_row["feed_revision"] == 1
     assert before_values["id"] == str(feed_id)
     assert before_values["name"] == "Hard Delete Test Feed"
-    source_feed_id = cast(
-        "str", before_values["source_feed_id"]
-    )
+    source_feed_id = cast("str", before_values["source_feed_id"])
     assert source_feed_id.startswith("src_")
     assert before_values["tags"] == []
     assert after_values == {}
