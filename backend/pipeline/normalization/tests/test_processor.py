@@ -14,6 +14,10 @@ from backend.pipeline.normalization.processor import (
 )
 from backend.pipeline.schema_types.normalized_audio_pb2 import NormalizedAudio
 from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
+from backend.services.audio_segments.models import (
+    AnnotationType,
+    WaveformAnnotationData,
+)
 
 
 class NormalizationEventProcessorTest(unittest.TestCase):
@@ -605,6 +609,120 @@ class NormalizationEventProcessorTest(unittest.TestCase):
                 mock_with_tracer_context.call_args[0][0]["traceparent"],
                 "test-tp-2",
             )
+
+    def _wire_flac_speech_event(
+        self, mock_uploader_cls: MagicMock, mock_processor_cls: MagicMock
+    ) -> tuple[NormalizationEventProcessor, CloudEvent]:
+        """Wires mocks for a FLAC/SPEECH segment; returns processor + event."""
+        mock_processor = mock_processor_cls.return_value
+        mock_processor.transcode_to_m4a.return_value = b"fake-m4a-data"
+        mock_processor.transcode_to_mono_flac.return_value = b"fake-mono-flac"
+
+        mock_blob = MagicMock()
+        mock_blob.download_as_bytes.return_value = b"fake-flac-data"
+        self.mock_gcs.return_value.bucket.return_value.get_blob.return_value = (
+            mock_blob
+        )
+
+        mock_uploader = mock_uploader_cls.return_value
+        mock_uploader.upload_bytes.side_effect = (
+            lambda data, bucket_name, destination_path, content_type: (
+                f"gs://{bucket_name}/{destination_path}"
+            )
+        )
+
+        mock_future = MagicMock()
+        mock_future.result.return_value = "msg-12345"
+        self.mock_publisher.return_value.publish.return_value = mock_future
+        self.mock_publisher.return_value.topic_path.return_value = (
+            self.output_topic
+        )
+
+        claim = SegmentedAudio(
+            segment_id="tx-1111",
+            feed_id="feed-2222",
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            start_timestamp=Timestamp(seconds=1000, nanos=0),
+            end_timestamp=Timestamp(seconds=1001, nanos=0),
+            start_audio_offset=Duration(seconds=0, nanos=0),
+            end_audio_offset=Duration(seconds=1, nanos=0),
+            audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH,
+            raw_audio_uri="gs://staging-bucket/raw_segments/tx-1111.flac",
+        )
+        envelope = {
+            "message": {
+                "data": base64.b64encode(claim.SerializeToString()).decode(
+                    "utf-8"
+                ),
+                "attributes": {},
+                "messageId": "msg-1",
+            }
+        }
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+        processor = NormalizationEventProcessor(
+            project_id=self.project_id,
+            canonical_audio_bucket=self.canonical_bucket,
+            output_topic=self.output_topic,
+            audio_segments_client=self.mock_segments_client,
+            publisher=self.mock_publisher.return_value,
+            gcs_client=self.mock_gcs.return_value,
+        )
+        return processor, cloud_event
+
+    @patch("backend.pipeline.normalization.processor.waveform.compute_waveform")
+    @patch("backend.pipeline.normalization.audio_processor.AudioProcessor")
+    @patch("backend.pipeline.common.storage.gcs_uploader.GCSAudioUploader")
+    def test_process_event_persists_waveform_annotation(
+        self,
+        mock_uploader_cls: MagicMock,
+        mock_processor_cls: MagicMock,
+        mock_compute_waveform: MagicMock,
+    ) -> None:
+        """Verifies the computed peaks are posted as a WAVEFORM annotation."""
+        mock_compute_waveform.return_value = WaveformAnnotationData(
+            peaks=[[0.1, 0.5, 0.25]], duration_seconds=1.5
+        )
+        processor, cloud_event = self._wire_flac_speech_event(
+            mock_uploader_cls, mock_processor_cls
+        )
+
+        processor.process_event(cloud_event)
+
+        mock_compute_waveform.assert_called_once_with(b"fake-flac-data")
+        self.mock_segments_client.add_audio_segment_annotation.assert_called_once_with(
+            "tx-1111",
+            AnnotationType.WAVEFORM,
+            {"peaks": [[0.1, 0.5, 0.25]], "duration_seconds": 1.5},
+        )
+
+    @patch("backend.pipeline.normalization.processor.waveform.compute_waveform")
+    @patch("backend.pipeline.normalization.audio_processor.AudioProcessor")
+    @patch("backend.pipeline.common.storage.gcs_uploader.GCSAudioUploader")
+    def test_process_event_waveform_failure_does_not_abort(
+        self,
+        mock_uploader_cls: MagicMock,
+        mock_processor_cls: MagicMock,
+        mock_compute_waveform: MagicMock,
+    ) -> None:
+        """A waveform failure is swallowed; the segment still persists."""
+        mock_compute_waveform.side_effect = RuntimeError("decode boom")
+        processor, cloud_event = self._wire_flac_speech_event(
+            mock_uploader_cls, mock_processor_cls
+        )
+
+        processor.process_event(cloud_event)
+
+        self.mock_segments_client.add_audio_segment_annotation.assert_not_called()
+        self.mock_segments_client.add_audio_segment.assert_called_once()
+        self.mock_record_pipeline_stage.assert_any_call(
+            "normalization", "success"
+        )
 
 
 if __name__ == "__main__":

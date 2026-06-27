@@ -76,7 +76,7 @@ describe('AudioControl', () => {
   it('triggers callback for rewind 5 seconds button', () => {
     render(<AudioControl {...defaultProps} />);
     fireEvent.click(screen.getByLabelText('rewind 5 seconds'));
-    expect(mockOnSkipTime).toHaveBeenCalledTimes(1);
+    expect(mockOnSkipTime).toHaveBeenCalledWith(-5);
   });
 
   it('triggers callback for play/pause button', () => {

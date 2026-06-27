@@ -1,11 +1,11 @@
 import { useState } from 'react';
 
-import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import VolumeOffIcon from '@mui/icons-material/VolumeOff';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import Divider from '@mui/material/Divider';
 import IconButton from '@mui/material/IconButton';
 import Popover from '@mui/material/Popover';
 import Slider from '@mui/material/Slider';
@@ -49,6 +49,7 @@ export interface AudioSettingsButtonProps {
   speed: number;
   setSpeed: (speed: number) => void;
   onReset: () => void;
+  disableControls: boolean;
 }
 
 export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
@@ -59,6 +60,7 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
   speed,
   setSpeed,
   onReset,
+  disableControls,
 }) => {
   const theme = useTheme();
   const [audioAnchorEl, setAudioAnchorEl] = useState<HTMLElement | null>(null);
@@ -115,6 +117,7 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
               color="primary"
               size="small"
               aria-label="audio controls"
+              disabled={disableControls}
               onClick={(e) => setAudioAnchorEl(e.currentTarget)}
               sx={{ border: 1, borderColor: 'divider' }}
             >
@@ -240,20 +243,19 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
             </Tooltip>
           </Box>
 
+          <Divider />
+
           <Box
             sx={{
               display: 'flex',
               justifyContent: 'flex-end',
-              borderTop: 1,
-              borderColor: 'divider',
-              pt: 1,
             }}
           >
             {/* Always enabled (not hidden when at defaults) so keyboard focus
                 isn't lost the moment a reset returns everything to default. */}
             <Button
               size="small"
-              startIcon={<RestartAltIcon />}
+              variant="outlined"
               onClick={onReset}
               sx={{ textTransform: 'none' }}
             >

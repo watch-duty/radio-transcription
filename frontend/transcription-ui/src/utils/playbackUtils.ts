@@ -1,4 +1,4 @@
-import { type AudioSegment } from '@transcription/common';
+import { AudioClassification, type AudioSegment } from '@transcription/common';
 
 import { type RenderableAudioSegment } from '../hooks/useConsolidatedAudioSegments';
 
@@ -10,14 +10,15 @@ export function isWithinSegment(
   segment: RenderableAudioSegment,
   id: string
 ): boolean {
-  return (
-    segment.id === id || (segment.bundledSegmentIds?.includes(id) ?? false)
-  );
+  if (segment.id === id) {
+    return true;
+  }
+  if (segment.isSilenceBundle && segment.bundledSegmentIds) {
+    return segment.bundledSegmentIds.includes(id);
+  }
+  return false;
 }
 
-/**
- * Gets the duration of a segment in seconds based on its start and end timestamps.
- */
 export function getSegmentDuration(segment: {
   startTimestamp: string;
   endTimestamp: string;
@@ -55,7 +56,8 @@ export function findNextAudioSegment(
 }
 
 /**
- * Finds the adjacent speech (non-silence) segment in the consolidated list.
+ * Finds the adjacent speech segment in the specified direction.
+ * Newer segments have lower indices, older segments have higher indices.
  */
 export function findAdjacentSpeechSegment(
   audioSegments: RenderableAudioSegment[],
@@ -68,18 +70,18 @@ export function findAdjacentSpeechSegment(
   if (currentConsolidatedIdx === -1) return null;
 
   const step = direction === 'forward' ? -1 : 1; // forward = next newer = index decreasing; backward = next older = index increasing
-  let nextIdx = currentConsolidatedIdx + step;
-
-  while (nextIdx >= 0 && nextIdx < audioSegments.length) {
-    const nextSegment = audioSegments[nextIdx];
-    if (!nextSegment.isSilenceBundle && nextSegment.playbackAudioUri) {
-      return {
-        id: nextSegment.id,
-        uri: nextSegment.playbackAudioUri,
-        index: nextIdx,
-      };
+  for (
+    let i = currentConsolidatedIdx + step;
+    i >= 0 && i < audioSegments.length;
+    i += step
+  ) {
+    const segment = audioSegments[i];
+    if (
+      segment.classification === AudioClassification.SPEECH &&
+      segment.playbackAudioUri
+    ) {
+      return { id: segment.id, uri: segment.playbackAudioUri, index: i };
     }
-    nextIdx += step;
   }
   return null;
 }

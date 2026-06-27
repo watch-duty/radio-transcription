@@ -6,6 +6,7 @@ import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
+import Divider from '@mui/material/Divider';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import MenuItem from '@mui/material/MenuItem';
 import Popover from '@mui/material/Popover';
@@ -186,6 +187,9 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                 <MenuItem value="alerts">Alerts only</MenuItem>
               </Select>
             </FormControl>
+
+            <Divider />
+
             <Box
               sx={{
                 display: 'flex',
@@ -193,11 +197,21 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                 alignItems: 'center',
               }}
             >
-              <Button size="small" onClick={handleFilterClear}>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={handleFilterClear}
+                sx={{ textTransform: 'none' }}
+              >
                 Clear
               </Button>
               <Box sx={{ display: 'flex', gap: 1 }}>
-                <Button size="small" onClick={handleFilterClose}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={handleFilterClose}
+                  sx={{ textTransform: 'none' }}
+                >
                   Cancel
                 </Button>
                 <Button
@@ -205,6 +219,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                   variant="contained"
                   color="primary"
                   onClick={handleFilterApply}
+                  sx={{ textTransform: 'none' }}
                 >
                   Apply
                 </Button>

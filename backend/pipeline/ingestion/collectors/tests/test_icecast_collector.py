@@ -1,11 +1,15 @@
 import asyncio
 import datetime
 import os
+import shutil
+import tempfile
 import unittest
 import uuid
 from pathlib import Path
 from typing import Any, Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import soundfile as sf
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
 from backend.pipeline.ingestion.collectors.icecast import icecast_collector
@@ -1200,6 +1204,40 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
 
         self.assertGreaterEqual(len(chunks), 1)
         self.assertEqual(chunks[0].receipt_time, fixed_time)
+
+
+_BAD_STREAMINFO_FLAC = (
+    Path(__file__).parent / "test_data" / "streamed_segment_bad_STREAMINFO.flac"
+)
+_ffmpeg_available = shutil.which("ffmpeg") is not None
+
+
+class TestFixFlacHeader(unittest.IsolatedAsyncioTestCase):
+    """Guards the contract that no segment leaves ingestion unreadable."""
+
+    @unittest.skipIf(not _ffmpeg_available, "ffmpeg not available")
+    async def test_repairs_unreadable_segment_muxer_output(self) -> None:
+        raw = _BAD_STREAMINFO_FLAC.read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            segment = Path(tmp) / "chunk_000000.flac"
+            segment.write_bytes(raw)
+
+            # The muxer's STREAMINFO advertises an unknown frame count, so
+            # libsndfile cannot open it until the header is rewritten.
+            with self.assertRaises(sf.LibsndfileError):
+                sf.read(str(segment))
+
+            await icecast_collector._fix_flac_header(segment)
+
+            info = sf.info(str(segment))
+            samples, sample_rate = sf.read(str(segment), dtype="float32")
+
+        # The rewritten header advertises the true frame count rather than the
+        # unknown-length sentinel, so the duration downstream derives from it
+        # (len / sample_rate) is correct.
+        self.assertEqual(info.frames, len(samples))
+        self.assertEqual(sample_rate, 16000)
+        self.assertAlmostEqual(len(samples) / sample_rate, 15.0, delta=0.5)
 
 
 if __name__ == "__main__":
