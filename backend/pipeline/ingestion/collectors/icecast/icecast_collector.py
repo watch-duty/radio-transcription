@@ -25,7 +25,7 @@ from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
-from backend.pipeline.ingestion import quarantine_reason
+from backend.pipeline.ingestion import status_reason_detail
 from backend.pipeline.ingestion.collectors.failure_classification import (
     collector_failure,
     missing_source_feed_id_failure,
@@ -192,7 +192,7 @@ async def _probe_stream_once(
             _StreamProbeOutcome.TERMINAL_FAILURE,
             collector_failure(
                 FeedStatusReason.SOURCE_UNREACHABLE,
-                f"stream_probe_failed: {quarantine_reason.exception_text(exc)}",
+                f"stream_probe_failed: {status_reason_detail.exception_text(exc)}",
             ),
         )
 
