@@ -3,9 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 4 live verification blocked on dev route deployment
-last_updated: "2026-06-27T19:20:00Z"
-last_activity: 2026-06-27 -- Phase 04 UAT attempted; dev route not deployed
+stopped_at: Phase 4 live verification blocked on audited mutation credentials
+last_updated: "2026-06-27T14:18:00Z"
+last_activity: 2026-06-27 -- Dev route and relay deployed; UAT blocked by local auth constraints
 progress:
   total_phases: 4
   completed_phases: 3
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-06-26)
 
 Phase: 04 (operations-and-rollout-proof) — HUMAN VERIFICATION BLOCKED
 Plan: 4 of 4
-Status: Awaiting dev route deployment before live UAT
-Last activity: 2026-06-27 -- Phase 04 UAT attempted; dev route not deployed
+Status: Awaiting credential path for live audited feed mutation proof
+Last activity: 2026-06-27 -- Dev route and relay deployed; UAT blocked by local auth constraints
 
 Progress: [██████████] 100%
 
@@ -74,10 +74,12 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-- Phase 04 live UAT is blocked until the deployment repo branch is deployed to dev:
-  - Dev project `probable-symbol-492218-i7` has no `feed-audit-notification-route-dev` logging sink and no feed-audit notification Pub/Sub topics.
-  - Local Terraform plan/apply is not possible without GitHub environment variables/secrets.
-  - After dev infra deploy, rerun the dev/staging Feed Audit Notification proof.
+- Phase 04 live UAT is blocked on audited mutation credentials:
+  - Dev infrastructure and relay are deployed.
+  - Live sink, topics, subscriptions, and `feed-audit-webhook-dev` Ready state are verified.
+  - BFF proof with local `gcloud auth print-identity-token` fails because the token lacks the user email claim needed by the BFF actor helper.
+  - Direct feeds-service proof fails because this local account cannot mint an audience-bound Cloud Run token or impersonate a dev service account.
+  - Rerun the dev/staging proof from a browser-authenticated admin BFF session or approved temporary impersonation path.
   - Then run the controlled staging DLQ and restore proof with an explicitly approved failure mode.
 
 ### Blockers/Concerns

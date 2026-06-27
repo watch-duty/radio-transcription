@@ -4,16 +4,17 @@ phase: 04-operations-and-rollout-proof
 source:
   - 04-VERIFICATION.md
 started: 2026-06-27T05:53:24Z
-updated: 2026-06-27T19:20:00Z
+updated: 2026-06-27T14:18:00Z
 ---
 
 # Human UAT: Phase 04 Operations and Rollout Proof
 
 ## Current Test
 
-Live dev/staging verification attempted from local credentials. The proof is
-blocked before the feed mutation because the Feed Audit Notification route is
-not deployed in the dev project yet.
+Live dev deployment was completed and route resources were verified. The
+end-to-end proof is now blocked at the disposable feed mutation because local
+operator credentials cannot mint the user-email BFF token or impersonated
+service-account audience token needed for an authenticated audited mutation.
 
 ## Tests
 
@@ -25,14 +26,24 @@ result: blocked
 evidence:
 - Dev project resolved from deployment Terraform: `probable-symbol-492218-i7`.
 - Dev API gateway exists: `radio-transcription-api-gateway-dev` is `ACTIVE`.
-- Dev Cloud Run API/feed services exist, but `feed-audit-webhook-dev` is not deployed.
-- `gcloud logging sinks describe feed-audit-notification-route-dev --project=probable-symbol-492218-i7` returned `NOT_FOUND`.
-- `gcloud pubsub topics list --project=probable-symbol-492218-i7 | rg 'feed-audit-notification'` returned no route topics.
-- Local `terraform plan -input=false` cannot run because required variables are only supplied by GitHub environment variables/secrets, including `WD_BACKEND_ENDPOINT`, `WD_BACKEND_ENDPOINT_API_KEY`, bucket names, Broadcastify credentials, Google OAuth values, and notification credentials.
+- Deployment branch `gsd/phase-02-cloud-logging-and-pub-sub-routing` was pushed to `watch-duty/radio-transcription-deployment`.
+- Public source SHA `a6c663e815f146c1d480c772d509814e3d328c67` was pushed under `gsd/feed-audit-notification-public-20260627`.
+- First dev infra workflow run `28290929662` failed because the Terraform deployer lacked `logging.sinks.create`.
+- Deployment fix `1ee4264` grants the deployer `roles/logging.configWriter` and makes the route wait for that IAM binding.
+- Dev infra workflow run `28291121846` passed plan, apply, and triggered app deployment.
+- Full dev app workflow run `28291244373` succeeded, including Firebase hosting and existing service deploys.
+- Branch app workflow run `28291535856` deployed `feed_audit_webhook` successfully.
+- Live sink `feed-audit-notification-route-dev` exists and routes `radio_transcription.feed_audit_notification` schema version `1` to `feed-audit-notification-dev`.
+- Live Pub/Sub topics/subscriptions exist: `feed-audit-notification-dev`, `feed-audit-notification-dlq-dev`, `feed-audit-notification-subscription-dev`, and `feed-audit-notification-dlq-subscription-dev`.
+- Live Cloud Run service `feed-audit-webhook-dev` is Ready at revision `feed-audit-webhook-dev-00002-fgm`.
+- Temporary proof subscriptions were cleaned up after failed mutation attempts.
+- BFF-path proof using `gcloud auth print-identity-token` returned HTTP 403 because the local token lacks the user email claim needed by `feedMutationActorHeaders`.
+- Direct feeds-service proof with local user token returned HTTP 401 because local user credentials cannot mint an audience-bound Cloud Run ID token.
+- Attempted impersonation of `radio-transcription-api-dev@probable-symbol-492218-i7.iam.gserviceaccount.com` failed with `iam.serviceAccounts.getAccessToken` denied.
 
 next:
-- Push the deployment branch and run the deployment repo's `Deploy Infrastructure` workflow for `environment=dev`, `deploy_release=true`, with the desired public repo SHA.
-- Then rerun the dev/staging proof.
+- Rerun the disposable feed mutation proof from a browser-authenticated admin BFF session, or grant a controlled temporary impersonation path that can mint an audience-bound token for the dev feeds service.
+- Then verify producer log, routed Pub/Sub LogEntry, relay delivery log, and WD 2xx for the captured `event_id`.
 
 ### 2. Controlled staging DLQ and restore proof
 
@@ -40,11 +51,11 @@ expected: Follow the runbook's controlled staging DLQ proof using an approved st
 result: blocked
 
 evidence:
-- Depends on the Feed Audit Notification route, push subscription, DLQ, and relay being deployed first.
+- Route infrastructure and relay are now deployed in dev.
 - Also requires an explicit approved staging-only WD failure endpoint or bad credential reference and a restore/rollback action against live staging configuration.
 
 next:
-- Run only after the dev route deployment succeeds.
+- Run only after the successful event delivery proof completes.
 - Require an explicit operator-approved failure mode before mutating staging relay configuration.
 
 ## Summary
@@ -58,5 +69,5 @@ blocked: 2
 
 ## Gaps
 
-- Dev/staging route infrastructure is not yet deployed from the deployment repo branch.
-- Local Terraform apply is intentionally not possible without GitHub environment variables/secrets.
+- End-to-end feed mutation proof needs a credential path that can create an audited feed through the BFF or feeds-service without bypassing the intended security boundary.
+- Controlled DLQ/restore proof still needs an explicit approved staging failure mode.
