@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 from fastapi.testclient import TestClient
+import pytest
 
+from backend.pipeline.feed_audit_webhook import main as main_module
 from backend.pipeline.feed_audit_webhook.main import create_app
 from backend.pipeline.feed_audit_webhook.settings import (
     FeedAuditWebhookSettings,
@@ -14,6 +17,8 @@ from backend.pipeline.feed_audit_webhook.wd_client import WatchDutyWebhookError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+_SENSITIVE_LOG_MARKERS = ("before_values", "after_values", "test-api-key")
 
 
 class _FakeWDClient:
@@ -56,6 +61,24 @@ def _envelope(payload: object) -> dict[str, object]:
         json.dumps({"jsonPayload": payload}).encode()
     ).decode()
     return {"message": {"data": data}}
+
+
+def _json_fields(caplog: pytest.LogCaptureFixture) -> list[dict[str, object]]:
+    return [
+        getattr(record, "json_fields", {})
+        for record in caplog.records
+        if record.name == main_module.__name__
+    ]
+
+
+def _assert_no_sensitive_log_values(
+    caplog: pytest.LogCaptureFixture,
+    fields: list[dict[str, object]],
+) -> None:
+    rendered_fields = json.dumps(fields, sort_keys=True)
+    for marker in _SENSITIVE_LOG_MARKERS:
+        assert marker not in rendered_fields
+        assert marker not in caplog.text
 
 
 def test_valid_message_and_wd_success_returns_204() -> None:
@@ -115,12 +138,47 @@ def test_wd_auth_failure_returns_non_2xx() -> None:
     assert len(wd_client.payloads) == 1
 
 
-def test_malformed_pubsub_message_returns_non_2xx_without_calling_wd() -> None:
+def test_malformed_pubsub_message_returns_non_2xx_without_calling_wd(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    wd_client = _FakeWDClient()
+    app = create_app(settings=_settings(), wd_client=wd_client)
+
+    with caplog.at_level(logging.WARNING, logger=main_module.__name__):
+        with TestClient(app) as client:
+            response = client.post("/pubsub/feed-audit-notifications", json={})
+
+    assert response.status_code == 400
+    assert wd_client.payloads == []
+    fields = _json_fields(caplog)
+    assert any(
+        field.get("relay_event")
+        == "feed_audit_webhook_invalid_pubsub_message"
+        for field in fields
+    )
+    _assert_no_sensitive_log_values(caplog, fields)
+
+
+def test_missing_wd_client_returns_non_2xx_with_structured_config_log(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     wd_client = _FakeWDClient()
     app = create_app(settings=_settings(), wd_client=wd_client)
 
     with TestClient(app) as client:
-        response = client.post("/pubsub/feed-audit-notifications", json={})
+        app.state.wd_client = None
+        with caplog.at_level(logging.WARNING, logger=main_module.__name__):
+            response = client.post(
+                "/pubsub/feed-audit-notifications",
+                json=_envelope(_payload()),
+            )
 
-    assert response.status_code == 400
+    assert response.status_code == 503
     assert wd_client.payloads == []
+    fields = _json_fields(caplog)
+    assert any(
+        field.get("relay_event")
+        == "feed_audit_webhook_client_not_initialized"
+        for field in fields
+    )
+    _assert_no_sensitive_log_values(caplog, fields)
