@@ -379,7 +379,7 @@ Run this after the prompt optimization gate and wait for checkpoint scores
 before launching any hyperparameter sweep.
 
 Run id proposal:
-`20260627-prior-context-count8-optimized-prompt-a16-lr05-e8`
+`20260627-prior-context-count8-optimized-prompt-a16-lr075-e10`
 
 Configuration:
 
@@ -392,8 +392,8 @@ Configuration:
 - current prompt: `FINAL_AUDIO_CURRENT_PROMPT`
 - context header: `MANUAL_CONTEXT_HEADER`
 - adapter size: `SIXTEEN`
-- learning-rate multiplier: `0.5`
-- epoch count: `8`
+- learning-rate multiplier: `0.75`
+- epoch count: `10`
 - validation set: requested four eval manifests
 - checkpoint export: all checkpoints retained
 - scorer: no fallback, temperature `0.0`, max output tokens `512`,
