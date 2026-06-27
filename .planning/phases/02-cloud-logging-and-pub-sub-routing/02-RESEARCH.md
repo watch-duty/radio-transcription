@@ -499,17 +499,17 @@ These static checks can validate HCL shape and repository conventions before the
 | A2 | Phase 2 can merge a route module and app input contract before requiring deploy-time relay values. [ASSUMED] | Open Questions | If deployment policy requires every merged app module to be immediately applyable, Phase 2 must land with Phase 3 or use a reviewed feature gate. |
 | A3 | Research validity windows of 30 days for deployment patterns and 7 days for provider/GCP docs are sufficient. [ASSUMED] | Metadata | If provider or GCP IAM behavior changes sooner, planner should re-run docs lookup before implementation. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should Phase 2 merge app-module instantiation before the relay module exists?**
    - What we know: Phase 2 must define the full route shape with relay inputs and no placeholder relay. [VERIFIED: .planning/phases/02-cloud-logging-and-pub-sub-routing/02-CONTEXT.md]
    - What's unclear: A concrete `module "feed_audit_notification_route"` call in `modules/app` needs relay service URL/name values that Phase 3 has not created yet. [VERIFIED: .planning/ROADMAP.md]
-   - Recommendation: Implement the route module and message queue outputs in Phase 2; add app-module variables/contracts now, but only require deploy-time values once the Phase 3 relay module exists unless the user wants Phase 2 and Phase 3 to land in the same deployment branch. [VERIFIED: deployment repo module structure; ASSUMED]
+   - Resolution: Implement the route module and app-module wiring in Phase 2 behind `feed_audit_notification_route_enabled = false` by default, with nullable relay URL/name variables. This makes the app module validate and apply before the Phase 3 relay exists. Phase 3 supplies the real relay outputs and flips the enable flag when the relay can receive Pub/Sub push. [VERIFIED: deployment repo module structure; ASSUMED]
 
 2. **Does the WIF Terraform deployer already have `iam.serviceAccounts.actAs` on push auth service accounts?**
    - What we know: Pub/Sub docs say the subscription creator/updater must have `iam.serviceAccounts.actAs` on the push auth service account. [CITED: https://docs.cloud.google.com/pubsub/docs/authenticate-push-subscriptions]
    - What's unclear: The deployment repo may grant this outside Terraform, because existing push subscriptions already use OIDC. [VERIFIED: /tmp/radio-transcription-deployment-main-14ac7c4/terraform/modules/services/transcription/main.tf; VERIFIED: /tmp/radio-transcription-deployment-main-14ac7c4/.github/workflows/terraform_deploy.yml]
-   - Recommendation: Planner should include either a deployer `google_service_account_iam_member` for the new push invoker or an explicit verification step that existing deployer IAM covers `iam.serviceAccounts.actAs`. [CITED: https://docs.cloud.google.com/pubsub/docs/authenticate-push-subscriptions]
+   - Resolution: The route module should own an explicit least-privilege deployer grant for the new push invoker service account. Add `deployer_service_account_email` as a route input, create `google_service_account_iam_member.deployer_push_invoker_user` on `google_service_account.push_invoker.name` with `roles/iam.serviceAccountUser`, and have the app module pass `local.deployer_sa_email` derived from the existing WIF deployer configuration. [CITED: https://docs.cloud.google.com/pubsub/docs/authenticate-push-subscriptions; VERIFIED: /tmp/radio-transcription-deployment-main-14ac7c4/terraform/modules/app/main.tf]
 
 ## Environment Availability
 
