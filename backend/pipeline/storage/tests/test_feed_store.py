@@ -2640,7 +2640,8 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
             sql,
         )
         self.assertIn("SELECT before_row.id", sql)
-        self.assertIn("LEFT JOIN write_audit ON TRUE", sql)
+        self.assertIn("(SELECT write_audit.feed_audit_event", sql)
+        self.assertNotIn("LEFT JOIN write_audit", sql)
 
     async def test_missing_feed_returns_false_without_audit(self) -> None:
         """Missing deactivate target does not allocate sequence or audit."""

@@ -182,7 +182,8 @@ class TestFeedAuditEventSqlContract(unittest.TestCase):
                 stripped = _sql_without_comments(sql)
                 self.assertIn("AS feed_audit_event", stripped)
                 self.assertIn("write_audit.feed_audit_event", stripped)
-                self.assertIn("LEFT JOIN write_audit", stripped)
+                self.assertIn("(SELECT write_audit.feed_audit_event", stripped)
+                self.assertNotIn("LEFT JOIN write_audit", stripped)
 
     def test_delete_feed_sql_keeps_audit_feed_id_for_child_deletes(
         self,
@@ -208,7 +209,8 @@ class TestFeedAuditEventSqlContract(unittest.TestCase):
                 stripped = _sql_without_comments(sql)
                 self.assertIn("AS feed_audit_event", stripped)
                 self.assertIn("write_audit.feed_audit_event", stripped)
-                self.assertIn("LEFT JOIN write_audit", stripped)
+                self.assertIn("(SELECT write_audit.feed_audit_event", stripped)
+                self.assertNotIn("LEFT JOIN write_audit", stripped)
                 self.assertIn("%s", stripped)
                 self.assertNotIn("$", stripped)
 

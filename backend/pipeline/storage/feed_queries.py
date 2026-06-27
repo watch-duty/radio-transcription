@@ -23,6 +23,7 @@ _AUDIT_AFTER_SNAPSHOT_SQL = feed_audit_sql.audit_snapshot_sql("after_row")
 _AUDIT_EVENT_RETURNING_SQL = (
     f"{feed_audit_sql.feed_audit_event_payload_sql()} AS feed_audit_event"
 )
+_AUDIT_EVENT_SELECT_SQL = feed_audit_sql.feed_audit_event_scalar_sql()
 
 UPDATE_PROGRESS_SQL = f"""\
 WITH before_row AS (
@@ -75,10 +76,9 @@ after_row AS (
         returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
-SELECT after_row.*,
-       write_audit.feed_audit_event
+SELECT after_row.id,
+       {_AUDIT_EVENT_SELECT_SQL}
 FROM after_row
-LEFT JOIN write_audit ON TRUE
 """
 
 RECORD_SOURCE_OBSERVATION_SQL = f"""\
@@ -140,24 +140,9 @@ SELECT
     current_state.status::text AS current_status,
     current_state.fencing_token AS current_fencing_token,
     (do_update.id IS NOT NULL) AS recorded,
-    do_update.name,
-    do_update.source_type,
-    do_update.status,
-    do_update.failure_count,
-    do_update.retry_after,
-    do_update.status_reason,
-    do_update.status_reason_updated_at,
-    do_update.status_reason_detail,
-    do_update.last_bookmark_time,
-    do_update.created_at,
-    do_update.feed_revision,
-    after_row.source_feed_id,
-    after_row.tags,
-    write_audit.feed_audit_event
+    {_AUDIT_EVENT_SELECT_SQL}
 FROM current_state
 LEFT JOIN do_update ON current_state.id = do_update.id
-LEFT JOIN after_row ON after_row.id = do_update.id
-LEFT JOIN write_audit ON TRUE;
 """
 
 RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
@@ -515,10 +500,9 @@ after_row AS (
         returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
-SELECT after_row.*,
-       write_audit.feed_audit_event
+SELECT after_row.status,
+       {_AUDIT_EVENT_SELECT_SQL}
 FROM after_row
-LEFT JOIN write_audit ON TRUE
 """
 
 RELEASE_NON_BUDGETED_FAILURE_SQL = f"""\
@@ -574,10 +558,9 @@ after_row AS (
         returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
-SELECT after_row.*,
-       write_audit.feed_audit_event
+SELECT after_row.status,
+       {_AUDIT_EVENT_SELECT_SQL}
 FROM after_row
-LEFT JOIN write_audit ON TRUE
 """
 
 CREATE_FEED_SQL = f"""\
@@ -610,9 +593,8 @@ after_row AS (
     )
 }
 SELECT after_row.*,
-       write_audit.feed_audit_event
+       {_AUDIT_EVENT_SELECT_SQL}
 FROM after_row
-LEFT JOIN write_audit ON TRUE;
 """
 
 GET_FEED_SQL = """\
@@ -721,9 +703,8 @@ after_row AS (
     )
 }
 SELECT before_row.id,
-       write_audit.feed_audit_event
+       {_AUDIT_EVENT_SELECT_SQL}
 FROM before_row
-LEFT JOIN write_audit ON TRUE
 """
 # TODO(hard-delete): remove transcripts PR https://linear.app/watchduty/issue/GOO-458/remaining-legacy-cleanup
 DELETE_FEED_SQL = f"""\
@@ -775,10 +756,9 @@ SELECT target_feed.id,
        target_feed.status::text AS current_status,
        target_feed.status = 'active'::feed_status AS blocked_active,
        deleted_feed.id IS NOT NULL AS deleted,
-       write_audit.feed_audit_event
+       {_AUDIT_EVENT_SELECT_SQL}
 FROM target_feed
 LEFT JOIN deleted_feed ON deleted_feed.id = target_feed.id
-LEFT JOIN write_audit ON write_audit.feed_id = target_feed.id
 """
 
 
@@ -843,10 +823,9 @@ after_row AS (
 SELECT target_feed.status::text AS current_status,
        target_feed.status = 'active'::feed_status AS blocked_active,
        after_row.*,
-       write_audit.feed_audit_event
+       {_AUDIT_EVENT_SELECT_SQL}
 FROM target_feed
 LEFT JOIN after_row ON after_row.id = target_feed.id
-LEFT JOIN write_audit ON TRUE
 """
 
 UPDATE_FEED_SQL = f"""\
@@ -921,9 +900,8 @@ SELECT result_row.*,
            ORDER BY s.end_timestamp DESC, s.id DESC
            LIMIT 1
        ) AS last_speech_segment_timestamp,
-       write_audit.feed_audit_event
+       {_AUDIT_EVENT_SELECT_SQL}
 FROM result_row
-LEFT JOIN write_audit ON TRUE;
 """
 
 

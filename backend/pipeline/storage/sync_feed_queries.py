@@ -14,6 +14,7 @@ _AUDIT_AFTER_SNAPSHOT_SQL = feed_audit_sql.audit_snapshot_sql("after_row")
 _AUDIT_EVENT_RETURNING_SQL = (
     f"{feed_audit_sql.feed_audit_event_payload_sql()} AS feed_audit_event"
 )
+_AUDIT_EVENT_SELECT_SQL = feed_audit_sql.feed_audit_event_scalar_sql()
 _AUDIT_ACTOR_CTE_SQL = """audit_actor AS (
     SELECT %s::text AS actor_id
 )"""
@@ -85,10 +86,8 @@ after_row AS (
         returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
-SELECT after_row.*,
-       write_audit.feed_audit_event
+SELECT {_AUDIT_EVENT_SELECT_SQL}
 FROM after_row
-LEFT JOIN write_audit ON TRUE
 """
 
 # Backoff formula: base * 2^(failure_count), capped at max, plus 0-10s jitter.
@@ -159,10 +158,8 @@ after_row AS (
         returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
-SELECT after_row.*,
-       write_audit.feed_audit_event
+SELECT {_AUDIT_EVENT_SELECT_SQL}
 FROM after_row
-LEFT JOIN write_audit ON TRUE
 """
 
 RECORD_NON_BUDGETED_FAILURE_SQL = f"""\
@@ -219,8 +216,6 @@ after_row AS (
         returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
-SELECT after_row.*,
-       write_audit.feed_audit_event
+SELECT {_AUDIT_EVENT_SELECT_SQL}
 FROM after_row
-LEFT JOIN write_audit ON TRUE
 """

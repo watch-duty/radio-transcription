@@ -43,6 +43,11 @@ def feed_audit_event_payload_sql(
     )"""
 
 
+def feed_audit_event_scalar_sql(alias: str = "write_audit") -> str:
+    """Return nullable notification payload from a one-row audit CTE."""
+    return f"(SELECT {alias}.feed_audit_event FROM {alias}) AS feed_audit_event"
+
+
 def audit_snapshot_sql(alias: str) -> str:
     """Return a JSONB object expression for the maintained audit allowlist."""
     parts: list[str] = []
