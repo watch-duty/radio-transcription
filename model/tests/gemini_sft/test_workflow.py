@@ -1208,17 +1208,21 @@ class TestEvaluateRun(unittest.TestCase):
                     encoding="utf-8"
                 )
             )
-            self.assertEqual(metrics["base_batch_output_uri"], output_uri)
+            self.assertIn("targets", metrics)
+            base_target = metrics["targets"][0]
+            self.assertEqual(base_target["target_label"], "base")
+            artifacts = base_target["artifacts"]
+            self.assertEqual(artifacts["raw_output_uri"], output_uri)
             self.assertEqual(
-                metrics["base_inference_manifest_uri"],
+                artifacts["normalized_manifest_uri"],
                 "gs://test-bucket/inference_manifests/echo/eval/"
                 "gemini_3_1_flash_lite/round-a/base.jsonl",
             )
-            self.assertEqual(metrics["base_wer"], 0.0)
+            self.assertEqual(base_target["wer"], 0.0)
             manifest_rows = [
                 json.loads(line)
                 for line in storage.get(
-                    metrics["base_inference_manifest_uri"]
+                    artifacts["normalized_manifest_uri"]
                 ).splitlines()
             ]
             self.assertEqual(
@@ -1436,7 +1440,7 @@ class TestEvaluateRun(unittest.TestCase):
             )
 
         self.assertEqual(rc, 0)
-        self.assertEqual(metrics["base_wer"], 0.0)
+        self.assertEqual(metrics["targets"][0]["wer"], 0.0)
 
     def test_eval_normalized_manifest_omits_missing_prediction_field(
         self,
@@ -1487,7 +1491,13 @@ class TestEvaluateRun(unittest.TestCase):
                         },
                         "response": {
                             "candidates": [
-                                {"content": {"parts": [{"text": "first"}]}}
+                                {
+                                    "content": {
+                                        "parts": [
+                                            {"text": "[UNINTELLIGIBLE]"}
+                                        ]
+                                    }
+                                }
                             ]
                         },
                     }
@@ -1519,14 +1529,32 @@ class TestEvaluateRun(unittest.TestCase):
             manifest_rows = [
                 json.loads(line)
                 for line in storage.get(
-                    metrics["base_inference_manifest_uri"]
+                    metrics["targets"][0]["artifacts"][
+                        "normalized_manifest_uri"
+                    ]
                 ).splitlines()
             ]
+            base_target = metrics["targets"][0]
 
         self.assertEqual(rc, 0)
+        self.assertEqual(base_target["missing_prediction_count"], 1)
+        self.assertEqual(base_target["empty_response_rate"], 50.0)
+        self.assertEqual(base_target["empty_or_unintelligible_rate"], 100.0)
+        self.assertIn("total_reference_words", base_target)
+        self.assertIsInstance(base_target["insertions"], int)
+        self.assertIsInstance(base_target["deletions"], int)
+        self.assertIsInstance(base_target["substitutions"], int)
+        self.assertEqual(
+            base_target["artifacts"]["raw_output_uri"],
+            output_uri,
+        )
+        self.assertIn(
+            "normalized_manifest_uri",
+            base_target["artifacts"],
+        )
         self.assertEqual(
             manifest_rows[0]["pred_text_gemini_3_1_flash_lite"],
-            "first",
+            "[UNINTELLIGIBLE]",
         )
         self.assertNotIn("pred_text_gemini_3_1_flash_lite", manifest_rows[1])
 
