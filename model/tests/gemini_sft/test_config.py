@@ -14,7 +14,7 @@ from gemini_sft.config import (  # noqa: E402
     load_eval_run_config,
     load_run_config,
     require_config_eval_execution,
-    require_config_eval_models,
+    require_config_eval_model,
 )
 
 
@@ -75,18 +75,18 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
             line for line in body.splitlines() if not line.startswith(prefixes)
         )
 
-    def _eval_models_section(self, *targets: tuple[str, str]) -> str:
-        lines = ["[eval]"]
-        for label, model in targets:
-            lines.extend(
-                [
-                    "",
-                    "[[eval.models]]",
-                    f'label = "{label}"',
-                    f'model = "{model}"',
-                ]
-            )
-        return "\n".join(lines)
+    def _eval_model_section(
+        self,
+        label: str = "base",
+        model: str = "gemini-3.1-flash-lite",
+    ) -> str:
+        return f"""
+[eval]
+
+[eval.model]
+label = "{label}"
+model = "{model}"
+"""
 
     def test_valid_minimal_toml_resolves_required_fields_and_paths(
         self,
@@ -112,7 +112,8 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
         self.assertEqual(
             record["gemini_validation_uri"], cfg.paths.gemini_validation_uri
         )
-        self.assertEqual(cfg.eval_models, ())
+        self.assertIsNone(cfg.eval_model)
+        self.assertNotIn("eval_model", record)
         self.assertNotIn("eval_models", record)
         legacy_aliases = {
             "datasets",
@@ -165,7 +166,7 @@ checkpoint_id = "7"
         with self.assertRaisesRegex(RunConfigError, "validation_manifest_uri"):
             load_run_config(self._write_config(body))
 
-    def test_eval_config_requires_explicit_eval_models(
+    def test_eval_config_requires_explicit_eval_model(
         self,
     ) -> None:
         body = self._without_manifest_lines(
@@ -176,21 +177,18 @@ checkpoint_id = "7"
 
         with self.assertRaisesRegex(
             RunConfigError,
-            r"\[\[eval\.models\]\].*label.*model.*base_model/endpoint",
+            r"\[eval\.model\].*label.*model.*base_model/endpoint",
         ):
             load_eval_run_config(self._write_config(body))
 
-    def test_eval_config_with_models_allows_missing_training_manifests(
+    def test_eval_config_with_model_allows_missing_training_manifests(
         self,
     ) -> None:
         body = self._without_manifest_lines(
             self._valid_toml(
-                eval_section=self._eval_models_section(
-                    ("base", "gemini-3.1-flash-lite"),
-                    (
-                        "checkpoint_6",
-                        "projects/p/locations/us-central1/endpoints/123",
-                    ),
+                eval_section=self._eval_model_section(
+                    "checkpoint_6",
+                    "projects/p/locations/us-central1/endpoints/123",
                 )
             ),
             "train_manifest_uri",
@@ -210,22 +208,24 @@ checkpoint_id = "7"
             "gs://bucket/sft/runs/round/config.json",
         )
         self.assertEqual(
-            cfg.to_record_dict()["eval_models"],
-            [
-                {"label": "base", "model": "gemini-3.1-flash-lite"},
-                {
-                    "label": "checkpoint_6",
-                    "model": "projects/p/locations/us-central1/endpoints/123",
-                },
-            ],
+            cfg.eval_model.to_record_dict(),
+            {
+                "label": "checkpoint_6",
+                "model": "projects/p/locations/us-central1/endpoints/123",
+            },
+        )
+        self.assertEqual(
+            cfg.to_record_dict()["eval_model"],
+            {
+                "label": "checkpoint_6",
+                "model": "projects/p/locations/us-central1/endpoints/123",
+            },
         )
 
     def test_masked_and_unmasked_eval_configs_are_separate_runs(
         self,
     ) -> None:
-        eval_section = self._eval_models_section(
-            ("base", "gemini-3.1-flash-lite")
-        )
+        eval_section = self._eval_model_section()
         unmasked_body = self._without_manifest_lines(
             self._valid_toml(
                 round_id='"round-unmasked"',
@@ -272,7 +272,7 @@ checkpoint_id = "7"
             masked_config.inference_dataset_slug,
             "radio/masked_v2/eval",
         )
-        self.assertEqual(unmasked_config.eval_models, masked_config.eval_models)
+        self.assertEqual(unmasked_config.eval_model, masked_config.eval_model)
 
         unmasked_record = unmasked_config.to_record_dict()
         masked_record = masked_config.to_record_dict()
@@ -298,39 +298,25 @@ checkpoint_id = "7"
             self.assertNotIn("eval_label", record)
             self.assertNotIn("masked", record)
 
-    def test_run_config_serializes_optional_eval_models(self) -> None:
+    def test_run_config_serializes_optional_eval_model(self) -> None:
         body = self._valid_toml(
-            eval_section=self._eval_models_section(
-                ("base", "gemini-3.1-flash-lite"),
-                (
-                    "checkpoint_6",
-                    "projects/p/locations/us-central1/endpoints/123",
-                ),
+            eval_section=self._eval_model_section(
+                "base",
+                "gemini-3.1-flash-lite",
             )
         )
 
         cfg = load_run_config(self._write_config(body))
 
         self.assertEqual(
-            [target.to_record_dict() for target in cfg.eval_models],
-            [
-                {"label": "base", "model": "gemini-3.1-flash-lite"},
-                {
-                    "label": "checkpoint_6",
-                    "model": "projects/p/locations/us-central1/endpoints/123",
-                },
-            ],
+            cfg.eval_model.to_record_dict(),
+            {"label": "base", "model": "gemini-3.1-flash-lite"},
         )
         self.assertEqual(
-            cfg.to_record_dict()["eval_models"],
-            [
-                {"label": "base", "model": "gemini-3.1-flash-lite"},
-                {
-                    "label": "checkpoint_6",
-                    "model": "projects/p/locations/us-central1/endpoints/123",
-                },
-            ],
+            cfg.to_record_dict()["eval_model"],
+            {"label": "base", "model": "gemini-3.1-flash-lite"},
         )
+        self.assertNotIn("eval_models", cfg.to_record_dict())
 
     def test_eval_execution_config_serializes_defaults(self) -> None:
         cfg = load_run_config(self._write_config(self._valid_toml()))
@@ -356,7 +342,7 @@ limit = 100
 concurrency = 8
 max_retries = 4
 
-[[eval.models]]
+[eval.model]
 label = "checkpoint_6"
 model = "projects/p/locations/us-central1/endpoints/123"
 """
@@ -400,7 +386,7 @@ model = "projects/p/locations/us-central1/endpoints/123"
 [eval.execution]
 {execution_body}
 
-[[eval.models]]
+[eval.model]
 label = "base"
 model = "gemini-3.1-flash-lite"
 """
@@ -414,9 +400,7 @@ model = "gemini-3.1-flash-lite"
     def test_eval_config_rejects_non_string_optional_manifest_uri(self) -> None:
         body = self._valid_toml(
             train_manifest_uri="123",
-            eval_section=self._eval_models_section(
-                ("base", "gemini-3.1-flash-lite")
-            ),
+            eval_section=self._eval_model_section(),
         )
 
         with self.assertRaisesRegex(RunConfigError, "train_manifest_uri"):
@@ -425,9 +409,7 @@ model = "gemini-3.1-flash-lite"
     def test_eval_config_requires_eval_manifest_uri(self) -> None:
         body = self._without_manifest_lines(
             self._valid_toml(
-                eval_section=self._eval_models_section(
-                    ("base", "gemini-3.1-flash-lite")
-                )
+                eval_section=self._eval_model_section()
             ),
             "eval_manifest_uri",
         )
@@ -435,7 +417,7 @@ model = "gemini-3.1-flash-lite"
         with self.assertRaisesRegex(RunConfigError, "eval_manifest_uri"):
             load_eval_run_config(self._write_config(body))
 
-    def test_eval_model_targets_reject_invalid_labels(self) -> None:
+    def test_eval_model_target_rejects_invalid_labels(self) -> None:
         for label in (
             "",
             ".",
@@ -446,40 +428,45 @@ model = "gemini-3.1-flash-lite"
         ):
             with self.subTest(label=label):
                 body = self._valid_toml(
-                    eval_section=self._eval_models_section(
-                        (label, "gemini-3.1-flash-lite")
-                    )
+                    eval_section=self._eval_model_section(label)
                 )
 
                 with self.assertRaisesRegex(
-                    RunConfigError, r"eval\.models\[0\]\.label"
+                    RunConfigError, r"eval\.model\.label"
                 ):
                     load_run_config(self._write_config(body))
 
-    def test_eval_model_targets_reject_duplicate_labels(self) -> None:
+    def test_eval_model_target_rejects_plural_tables(self) -> None:
         body = self._valid_toml(
-            eval_section=self._eval_models_section(
-                ("base", "gemini-3.1-flash-lite"),
-                ("base", "projects/p/locations/us-central1/endpoints/123"),
-            )
+            eval_section="""
+[eval]
+
+[[eval.models]]
+label = "base"
+model = "gemini-3.1-flash-lite"
+"""
         )
 
-        with self.assertRaisesRegex(RunConfigError, "duplicate"):
+        with self.assertRaisesRegex(
+            RunConfigError,
+            r"no plural eval target support.*\[eval\.model\].*"
+            r"\[\[eval\.models\]\]",
+        ):
             load_run_config(self._write_config(body))
 
-    def test_eval_model_targets_reject_invalid_model_strings(self) -> None:
+    def test_eval_model_target_rejects_invalid_model_strings(self) -> None:
         invalid_sections = {
             "empty": """
 [eval]
 
-[[eval.models]]
+[eval.model]
 label = "base"
 model = "   "
 """,
             "non-string": """
 [eval]
 
-[[eval.models]]
+[eval.model]
 label = "base"
 model = 123
 """,
@@ -489,29 +476,29 @@ model = 123
                 body = self._valid_toml(eval_section=eval_section)
 
                 with self.assertRaisesRegex(
-                    RunConfigError, r"eval\.models\[0\]\.model"
+                    RunConfigError, r"eval\.model\.model"
                 ):
                     load_run_config(self._write_config(body))
 
-    def test_eval_model_targets_reject_non_table_entries(self) -> None:
+    def test_eval_model_target_rejects_non_table_entry(self) -> None:
         body = self._valid_toml(
             eval_section="""
 [eval]
-models = ["not-a-table"]
+model = "not-a-table"
 """
         )
 
         with self.assertRaisesRegex(RunConfigError, "TOML table"):
             load_run_config(self._write_config(body))
 
-    def test_eval_model_targets_reject_unsupported_fields(self) -> None:
+    def test_eval_model_target_rejects_unsupported_fields(self) -> None:
         for field_name in ("type", "description"):
             with self.subTest(field_name=field_name):
                 body = self._valid_toml(
                     eval_section=f"""
 [eval]
 
-[[eval.models]]
+[eval.model]
 label = "base"
 model = "gemini-3.1-flash-lite"
 {field_name} = "unsupported"
@@ -534,7 +521,7 @@ model = "gemini-3.1-flash-lite"
 [eval]
 {field_name} = {field_value}
 
-[[eval.models]]
+[eval.model]
 label = "base"
 model = "gemini-3.1-flash-lite"
 """
@@ -543,92 +530,79 @@ model = "gemini-3.1-flash-lite"
                 with self.assertRaisesRegex(RunConfigError, field_name):
                     load_run_config(self._write_config(body))
 
-    def test_require_config_eval_models_returns_valid_targets(self) -> None:
-        targets = require_config_eval_models(
+    def test_require_config_eval_model_returns_valid_target(self) -> None:
+        target = require_config_eval_model(
             {
-                "eval_models": [
-                    {"label": "base", "model": " gemini-3.1-flash-lite "},
-                    {
-                        "label": "checkpoint_6",
-                        "model": "projects/p/locations/us/endpoints/123",
-                    },
-                ]
+                "eval_model": {
+                    "label": "base",
+                    "model": " gemini-3.1-flash-lite ",
+                }
             }
         )
 
         self.assertEqual(
-            [target.to_record_dict() for target in targets],
-            [
-                {"label": "base", "model": "gemini-3.1-flash-lite"},
-                {
-                    "label": "checkpoint_6",
-                    "model": "projects/p/locations/us/endpoints/123",
-                },
-            ],
+            target.to_record_dict(),
+            {"label": "base", "model": "gemini-3.1-flash-lite"},
         )
 
-    def test_require_config_eval_models_requires_eval_models(self) -> None:
+    def test_require_config_eval_model_requires_eval_model(self) -> None:
         with self.assertRaisesRegex(
             ValueError,
-            r"config\.json missing required eval_models.*"
-            r"\[\[eval\.models\]\].*label.*model.*"
+            r"config\.json missing required eval_model.*"
+            r"\[eval\.model\].*label.*model.*"
             r"base_model/endpoint fallback is not supported",
         ):
-            require_config_eval_models(
+            require_config_eval_model(
                 {
                     "base_model": "gemini-3.1-flash-lite",
                     "endpoint": "projects/p/locations/us/endpoints/123",
                 }
             )
 
-    def test_require_config_eval_models_rejects_duplicate_labels(self) -> None:
-        with self.assertRaisesRegex(ValueError, "duplicate"):
-            require_config_eval_models(
+    def test_require_config_eval_model_rejects_old_eval_models(self) -> None:
+        with self.assertRaisesRegex(ValueError, "eval_models is not supported"):
+            require_config_eval_model(
                 {
                     "eval_models": [
-                        {"label": "base", "model": "gemini-3.1-flash-lite"},
-                        {
-                            "label": "base",
-                            "model": "projects/p/locations/us/endpoints/123",
-                        },
+                        {"label": "base", "model": "gemini-3.1-flash-lite"}
                     ]
                 }
             )
 
-    def test_require_config_eval_models_rejects_invalid_labels(self) -> None:
+    def test_require_config_eval_model_rejects_invalid_labels(self) -> None:
         for label in ("", ".", "..", "bad label", "nested/label", "base.jsonl"):
             with self.subTest(label=label):
-                with self.assertRaisesRegex(ValueError, "eval_models\\[0\\]"):
-                    require_config_eval_models(
+                with self.assertRaisesRegex(ValueError, "eval_model"):
+                    require_config_eval_model(
                         {
-                            "eval_models": [
-                                {
-                                    "label": label,
-                                    "model": "gemini-3.1-flash-lite",
-                                }
-                            ]
+                            "eval_model": {
+                                "label": label,
+                                "model": "gemini-3.1-flash-lite",
+                            }
                         }
                     )
 
-    def test_require_config_eval_models_rejects_empty_model(self) -> None:
-        with self.assertRaisesRegex(ValueError, r"eval_models\[0\]\.model"):
-            require_config_eval_models(
-                {"eval_models": [{"label": "base", "model": "   "}]}
+    def test_require_config_eval_model_rejects_empty_model(self) -> None:
+        with self.assertRaisesRegex(ValueError, r"eval_model\.model"):
+            require_config_eval_model(
+                {"eval_model": {"label": "base", "model": "   "}}
             )
 
-    def test_require_config_eval_models_rejects_unsupported_fields(
+    def test_require_config_eval_model_rejects_non_object(self) -> None:
+        with self.assertRaisesRegex(TypeError, "eval_model must be an object"):
+            require_config_eval_model({"eval_model": "not-an-object"})
+
+    def test_require_config_eval_model_rejects_unsupported_fields(
         self,
     ) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported: type"):
-            require_config_eval_models(
+            require_config_eval_model(
                 {
-                    "eval_models": [
-                        {
-                            "label": "base",
-                            "model": "gemini-3.1-flash-lite",
-                            "type": "publisher",
-                        }
-                    ]
+                    "eval_model": {
+                        "label": "base",
+                        "model": "gemini-3.1-flash-lite",
+                        "type": "publisher",
+                    }
                 }
             )
 
