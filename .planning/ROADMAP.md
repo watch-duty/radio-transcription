@@ -101,7 +101,14 @@ Plans:
   3. Operator can view dataset breakdowns for `bcfy_calls`, `bcfy_feeds`, `echo`, and `fire_notifications` when present, including WER, CER, keyword accuracy, empty rates, edit counts, total reference word count, and row count.
   4. Operator can follow report links to raw Vertex output, online prediction JSONL, normalized inference manifests, and GCS summary artifacts.
   5. Maintainer can verify existing batch or online outputs are reused only when they match the current config, target, prompt, eval manifest, and context settings.
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+**Wave 1**
+- [ ] 05-01-PLAN.md — OKF runbook and README entrypoint
+- [ ] 05-02-PLAN.md — Config, metric, artifact, and hygiene references
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 05-03-PLAN.md — Ignore rules and lightweight drift guards
 **UI hint**: no
 
 ### Phase 5: Operator Docs
@@ -165,7 +172,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 2. Target Config | 3/3 | Complete   | 2026-06-28 |
 | 3. Target Execution | 0/TBD | Not started | - |
 | 4. Durable Eval | 0/TBD | Not started | - |
-| 5. Operator Docs | 0/TBD | Not started | - |
+| 5. Operator Docs | 0/3 | Not started | - |
 
 ---
 *Roadmap created: 2026-06-28*
