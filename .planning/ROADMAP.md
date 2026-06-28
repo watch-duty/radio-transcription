@@ -76,7 +76,19 @@ Plans:
   2. Operator can run evals where prior-context histories are built dynamically from same-source rows, source-order sorting, and usable previous transcripts, with no audio in prior turns when text-only prior context is selected.
   3. Operator can evaluate publisher/base and tuned targets through batch inference, and checkpoint endpoints through resumable online `generate_content`, unless live validation proves batch support.
   4. Operator can run smoke-limited or interrupted online evals with retry, sync cadence, log cadence, row limit, and bounded concurrency controls while preserving partial predictions.
-**Plans**: TBD
+**Plans**: 4 plans
+Plans:
+**Wave 1**
+- [ ] 03-01-PLAN.md - Execution config and backend resolver
+
+**Wave 2** *(blocked on 03-01 completion)*
+- [ ] 03-02-PLAN.md - Resumable online target execution
+
+**Wave 3** *(blocked on 03-01 and 03-02 completion)*
+- [ ] 03-03-PLAN.md - Target-driven packaged eval integration
+
+**Wave 4** *(blocked on 03-02 and 03-03 completion)*
+- [ ] 03-04-PLAN.md - Checkpoint scorer parity and execution docs
 **UI hint**: no
 
 ### Phase 4: Durable Eval
