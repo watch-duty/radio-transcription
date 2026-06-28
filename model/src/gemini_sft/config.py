@@ -12,13 +12,21 @@ from common.gemini.prompts import (
     GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
     GEMINI_TRANSCRIBE_USER_PROMPT,
 )
-from common.inference_manifest import validate_inference_dataset_slug
+from common.inference_manifest import (
+    validate_artifact_label,
+    validate_inference_dataset_slug,
+)
 
 ADAPTER_SIZES: Final = frozenset({"ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"})
 PRIOR_CONTEXT_MODES: Final = frozenset(
     {"text_turns", "transcript", "vapo_p3_transcript"}
 )
 ROUND_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+EVAL_MODELS_REQUIRED_MESSAGE: Final = (
+    "eval configs must define at least one [[eval.models]] target with "
+    "required label and model fields; no legacy base_model/endpoint fallback "
+    "is used"
+)
 
 
 class RunConfigError(ValueError):
@@ -49,6 +57,23 @@ class RunPaths:
 
 
 @dataclass(frozen=True)
+class EvalModelTarget:
+    """Static eval target config for one model or endpoint string.
+
+    Attributes:
+        label: Safe artifact/report label for the target.
+        model: Unclassified model or endpoint string supplied by the operator.
+    """
+
+    label: str
+    model: str
+
+    def to_record_dict(self) -> dict[str, str]:
+        """Return the JSON-compatible config.json record for this target."""
+        return {"label": self.label, "model": self.model}
+
+
+@dataclass(frozen=True)
 class RunConfig:
     """Validated operator config with defaults and derived paths resolved."""
 
@@ -60,6 +85,7 @@ class RunConfig:
     train_manifest_uri: str | None
     validation_manifest_uri: str | None
     eval_manifest_uri: str
+    eval_models: tuple[EvalModelTarget, ...]
     gcp_project: str
     gcs_bucket: str
     location: str
@@ -111,6 +137,10 @@ class RunConfig:
             record["train_manifest_uri"] = self.train_manifest_uri
         if self.validation_manifest_uri is not None:
             record["validation_manifest_uri"] = self.validation_manifest_uri
+        if self.eval_models:
+            record["eval_models"] = [
+                target.to_record_dict() for target in self.eval_models
+            ]
         return record
 
 
@@ -161,6 +191,10 @@ def _load_run_config(
             "validation_manifest_uri",
         )
     eval_manifest_uri = _required_gcs_uri(data, "eval_manifest_uri")
+    eval_models = _eval_model_targets(
+        data,
+        required=not require_training_manifests,
+    )
 
     gcp = _required_table(data, "gcp")
     gcp_project = _required_str(gcp, "gcp.project")
@@ -239,6 +273,7 @@ def _load_run_config(
         train_manifest_uri=train_manifest_uri,
         validation_manifest_uri=validation_manifest_uri,
         eval_manifest_uri=eval_manifest_uri,
+        eval_models=eval_models,
         gcp_project=gcp_project,
         gcs_bucket=gcs_bucket,
         location=location,
@@ -289,6 +324,83 @@ def _required_table(data: dict[str, Any], key: str) -> dict[str, Any]:
         msg = f"missing required [{key}] table"
         raise RunConfigError(msg)
     return value
+
+
+def _eval_model_targets(
+    data: dict[str, Any],
+    *,
+    required: bool,
+) -> tuple[EvalModelTarget, ...]:
+    eval_table = data.get("eval")
+    if eval_table is None:
+        if required:
+            raise RunConfigError(EVAL_MODELS_REQUIRED_MESSAGE)
+        return ()
+    if not isinstance(eval_table, dict):
+        msg = "eval must be a TOML table"
+        raise RunConfigError(msg)
+
+    raw_targets = eval_table.get("models")
+    if raw_targets is None:
+        if required:
+            raise RunConfigError(EVAL_MODELS_REQUIRED_MESSAGE)
+        return ()
+    if not isinstance(raw_targets, list):
+        msg = (
+            "eval.models must be a list of [[eval.models]] tables with "
+            "label and model fields"
+        )
+        raise RunConfigError(msg)
+    if not raw_targets:
+        raise RunConfigError(EVAL_MODELS_REQUIRED_MESSAGE)
+
+    targets: list[EvalModelTarget] = []
+    labels: set[str] = set()
+    expected_keys = {"label", "model"}
+    for index, raw_target in enumerate(raw_targets):
+        if not isinstance(raw_target, dict):
+            msg = (
+                f"eval.models[{index}] must be a TOML table with exactly "
+                "label and model fields"
+            )
+            raise RunConfigError(msg)
+
+        keys = set(raw_target)
+        if keys != expected_keys:
+            missing = sorted(expected_keys - keys)
+            unsupported = sorted(keys - expected_keys)
+            details = []
+            if missing:
+                details.append(f"missing: {', '.join(missing)}")
+            if unsupported:
+                details.append(f"unsupported: {', '.join(unsupported)}")
+            msg = (
+                f"eval.models[{index}] must contain exactly label and model "
+                f"fields ({'; '.join(details)})"
+            )
+            raise RunConfigError(msg)
+
+        label = _required_artifact_label(
+            raw_target,
+            f"eval.models[{index}].label",
+        )
+        if label in labels:
+            msg = f"duplicate eval.models label: {label}"
+            raise RunConfigError(msg)
+        labels.add(label)
+        model = _required_str(raw_target, f"eval.models[{index}].model")
+        targets.append(EvalModelTarget(label=label, model=model))
+
+    return tuple(targets)
+
+
+def _required_artifact_label(data: dict[str, Any], key: str) -> str:
+    label = _required_str(data, key)
+    try:
+        return validate_artifact_label(label)
+    except ValueError as exc:
+        msg = f"{key} is invalid: {exc}"
+        raise RunConfigError(msg) from exc
 
 
 def _required_str(data: dict[str, Any], key: str) -> str:
