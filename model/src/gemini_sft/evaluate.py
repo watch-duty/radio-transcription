@@ -41,7 +41,7 @@ from gemini_sft.config import (
     RunConfigError,
     load_eval_run_config,
     require_config_eval_execution,
-    require_config_eval_models,
+    require_config_eval_model,
     require_config_int,
     require_config_str,
 )
@@ -118,7 +118,7 @@ def evaluate_run(
         config,
         "prior_context_mode",
     )
-    eval_model_targets = require_config_eval_models(config)
+    eval_model_targets = (require_config_eval_model(config),)
     eval_execution = require_config_eval_execution(config)
     logger.info(
         "Validated %d eval model target(s) from config.json.",
@@ -163,6 +163,9 @@ def evaluate_run(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 histories=histories,
+                prior_context_count=prior_context_count,
+                prior_context_mode=prior_context_mode,
+                eval_manifest_uri=eval_manifest_uri,
                 history_mode=prior_context_mode,
             )
             if preds is None:
@@ -328,6 +331,9 @@ def batch_infer(
     eval_rows: list[Any],
     system_prompt: str,
     user_prompt: str,
+    prior_context_count: int,
+    prior_context_mode: str,
+    eval_manifest_uri: str,
     histories: list[Any] | None = None,
     history_mode: str = "text_turns",
 ) -> PredictionMap | None:
@@ -342,6 +348,9 @@ def batch_infer(
         audio_uris=[str(row.audio_filepath) for row in eval_rows],
         system_prompt=system_prompt,
         user_prompt=user_prompt,
+        prior_context_count=prior_context_count,
+        prior_context_mode=prior_context_mode,
+        eval_manifest_uri=eval_manifest_uri,
         histories=histories,
         history_mode=history_mode,
         submit_fn=submit_batch_inference,
