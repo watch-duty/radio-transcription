@@ -16,6 +16,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from gemini_sft.reporting import (
+    EvalReport,
+    render_markdown_report,
+    report_to_dict,
+)
+
 
 def _git_sha() -> str:
     """Return HEAD short SHA of the radio-transcription repo, or 'unknown'."""
@@ -78,23 +84,26 @@ def write_config(
 
 
 def write_wer_summary(
-    results_dir: Path, round_id: str, metrics: dict[str, Any]
+    results_dir: Path, round_id: str, metrics: dict[str, Any] | EvalReport
 ) -> None:
     """Write results/<round-id>/wer_summary.{json,md}.
 
-    Includes WER, CER, ins/del/sub, empty/hallucination rate, duration buckets,
-    keyword accuracy, and bootstrap paired CI. Degrades gracefully when tuned metrics
-    are absent.
+    Shared EvalReport inputs use the canonical target-oriented schema. Dict
+    inputs keep the previous flat-summary behavior for compatibility.
     """
     out_dir = results_dir / round_id
     out_dir.mkdir(parents=True, exist_ok=True)
+    if isinstance(metrics, EvalReport):
+        payload = report_to_dict(metrics)
+        markdown = render_markdown_report(metrics)
+    else:
+        payload = metrics
+        markdown = _render_wer_md(metrics)
     (out_dir / "wer_summary.json").write_text(
-        json.dumps(metrics, indent=2, default=str),
+        json.dumps(payload, indent=2, default=str),
         encoding="utf-8",
     )
-    (out_dir / "wer_summary.md").write_text(
-        _render_wer_md(metrics), encoding="utf-8"
-    )
+    (out_dir / "wer_summary.md").write_text(markdown, encoding="utf-8")
 
 
 def _render_wer_md(metrics: dict[str, Any]) -> str:

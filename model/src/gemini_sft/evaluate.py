@@ -43,6 +43,12 @@ from gemini_sft.config import (
     require_config_str,
 )
 from gemini_sft.records import append_ledger, write_wer_summary
+from gemini_sft.reporting import (
+    EvalReport,
+    ReportArtifacts,
+    build_target_metrics,
+    render_console_report,
+)
 
 if TYPE_CHECKING:
     import argparse
@@ -160,7 +166,7 @@ def evaluate_run(
     # Store raw batch output locations alongside metrics so future reviewers can
     # recalculate WER from Vertex responses without rerunning inference.
     metrics["base_batch_output_uri"] = base_preds.output_uri
-    metrics["base_inference_manifest_uri"] = upload_inference_manifest(
+    base_inference_manifest_uri = upload_inference_manifest(
         storage_client,
         bucket_name=gcs_bucket,
         inference_dataset_slug=inference_dataset_slug,
@@ -170,6 +176,25 @@ def evaluate_run(
         source_rows=source_rows,
         predictions_by_audio_uri=base_preds,
     )
+    metrics["base_inference_manifest_uri"] = base_inference_manifest_uri
+    missing_prediction_count = sum(
+        1 for row in eval_rows if row.audio_filepath not in base_preds
+    )
+    report_targets = [
+        build_target_metrics(
+            label="base",
+            model=base_model,
+            refs=refs,
+            hyps=base_hyps,
+            normalizer=normalizer,
+            keywords=GEMINI_TRANSCRIBE_KEYWORDS,
+            missing_prediction_count=missing_prediction_count,
+            artifacts=ReportArtifacts(
+                raw_output_uri=base_preds.output_uri,
+                normalized_manifest_uri=base_inference_manifest_uri,
+            ),
+        )
+    ]
 
     if not base_only and tuned_endpoint:
         tuned_preds = batch_infer(
@@ -194,7 +219,7 @@ def evaluate_run(
             metrics, refs, durations, base_hyps, tuned_hyps, normalizer
         )
         metrics["tuned_batch_output_uri"] = tuned_preds.output_uri
-        metrics["tuned_inference_manifest_uri"] = upload_inference_manifest(
+        tuned_inference_manifest_uri = upload_inference_manifest(
             storage_client,
             bucket_name=gcs_bucket,
             inference_dataset_slug=inference_dataset_slug,
@@ -204,8 +229,37 @@ def evaluate_run(
             source_rows=source_rows,
             predictions_by_audio_uri=tuned_preds,
         )
+        metrics["tuned_inference_manifest_uri"] = tuned_inference_manifest_uri
+        missing_prediction_count = sum(
+            1 for row in eval_rows if row.audio_filepath not in tuned_preds
+        )
+        report_targets.append(
+            build_target_metrics(
+                label="tuned",
+                model=str(tuned_endpoint),
+                refs=refs,
+                hyps=tuned_hyps,
+                normalizer=normalizer,
+                keywords=GEMINI_TRANSCRIBE_KEYWORDS,
+                missing_prediction_count=missing_prediction_count,
+                artifacts=ReportArtifacts(
+                    raw_output_uri=tuned_preds.output_uri,
+                    normalized_manifest_uri=tuned_inference_manifest_uri,
+                ),
+            )
+        )
 
-    write_wer_summary(RESULTS_DIR, run_cfg.round_id, metrics)
+    report = EvalReport(
+        round_id=run_cfg.round_id,
+        generated_at=datetime.now(UTC).isoformat(),
+        targets=report_targets,
+        metadata={
+            "eval_manifest_uri": eval_manifest_uri,
+            "n_eval_examples": len(eval_rows),
+        },
+    )
+    write_wer_summary(RESULTS_DIR, run_cfg.round_id, report)
+    logger.info("\n%s", render_console_report(report))
     config.update(
         {
             "base_model": base_model,
