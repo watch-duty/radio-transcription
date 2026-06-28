@@ -27,6 +27,11 @@ EVAL_MODELS_REQUIRED_MESSAGE: Final = (
     "required label and model fields; no legacy base_model/endpoint fallback "
     "is used"
 )
+CONFIG_EVAL_MODELS_REQUIRED_MESSAGE: Final = (
+    "config.json missing required eval_models list; configure at least one "
+    "[[eval.models]] target with required label and model fields; "
+    "base_model/endpoint fallback is not supported"
+)
 
 
 class RunConfigError(ValueError):
@@ -316,6 +321,74 @@ def require_config_float(config: dict[str, Any], key: str) -> float:
         msg = f"config.json missing required numeric field: {key}"
         raise TypeError(msg)
     return float(value)
+
+
+def require_config_eval_models(
+    config: dict[str, Any],
+) -> tuple[EvalModelTarget, ...]:
+    """Return validated eval targets from durable GCS config.json state."""
+    raw_targets = config.get("eval_models")
+    if raw_targets is None:
+        raise ValueError(CONFIG_EVAL_MODELS_REQUIRED_MESSAGE)
+    if not isinstance(raw_targets, list):
+        msg = (
+            "config.json field eval_models must be a list of objects with "
+            "required label and model fields copied from [[eval.models]]"
+        )
+        raise TypeError(msg)
+    if not raw_targets:
+        raise ValueError(CONFIG_EVAL_MODELS_REQUIRED_MESSAGE)
+
+    targets: list[EvalModelTarget] = []
+    labels: set[str] = set()
+    expected_keys = {"label", "model"}
+    for index, raw_target in enumerate(raw_targets):
+        field = f"eval_models[{index}]"
+        if not isinstance(raw_target, dict):
+            msg = (
+                f"config.json field {field} must be an object with exactly "
+                "label and model fields"
+            )
+            raise TypeError(msg)
+
+        keys = set(raw_target)
+        if keys != expected_keys:
+            missing = sorted(expected_keys - keys)
+            unsupported = sorted(keys - expected_keys)
+            details = []
+            if missing:
+                details.append(f"missing: {', '.join(missing)}")
+            if unsupported:
+                details.append(f"unsupported: {', '.join(unsupported)}")
+            msg = (
+                f"config.json field {field} must contain exactly label and "
+                f"model fields ({'; '.join(details)})"
+            )
+            raise ValueError(msg)
+
+        label_value = raw_target["label"]
+        if not isinstance(label_value, str) or not label_value.strip():
+            msg = f"config.json field {field}.label must be a non-empty string"
+            raise ValueError(msg)
+        try:
+            label = validate_artifact_label(label_value.strip())
+        except ValueError as exc:
+            msg = f"config.json field {field}.label is invalid: {exc}"
+            raise ValueError(msg) from exc
+        if label in labels:
+            msg = f"duplicate config.json eval_models label: {label}"
+            raise ValueError(msg)
+        labels.add(label)
+
+        model_value = raw_target["model"]
+        if not isinstance(model_value, str) or not model_value.strip():
+            msg = f"config.json field {field}.model must be a non-empty string"
+            raise ValueError(msg)
+        targets.append(
+            EvalModelTarget(label=label, model=model_value.strip())
+        )
+
+    return tuple(targets)
 
 
 def _required_table(data: dict[str, Any], key: str) -> dict[str, Any]:

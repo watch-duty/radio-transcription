@@ -13,6 +13,7 @@ from gemini_sft.config import (  # noqa: E402
     RunConfigError,
     load_eval_run_config,
     load_run_config,
+    require_config_eval_models,
 )
 
 
@@ -361,6 +362,95 @@ model = "gemini-3.1-flash-lite"
 
                 with self.assertRaisesRegex(RunConfigError, field_name):
                     load_run_config(self._write_config(body))
+
+    def test_require_config_eval_models_returns_valid_targets(self) -> None:
+        targets = require_config_eval_models(
+            {
+                "eval_models": [
+                    {"label": "base", "model": " gemini-3.1-flash-lite "},
+                    {
+                        "label": "checkpoint_6",
+                        "model": "projects/p/locations/us/endpoints/123",
+                    },
+                ]
+            }
+        )
+
+        self.assertEqual(
+            [target.to_record_dict() for target in targets],
+            [
+                {"label": "base", "model": "gemini-3.1-flash-lite"},
+                {
+                    "label": "checkpoint_6",
+                    "model": "projects/p/locations/us/endpoints/123",
+                },
+            ],
+        )
+
+    def test_require_config_eval_models_requires_eval_models(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            r"config\.json missing required eval_models.*"
+            r"\[\[eval\.models\]\].*label.*model.*"
+            r"base_model/endpoint fallback is not supported",
+        ):
+            require_config_eval_models(
+                {
+                    "base_model": "gemini-3.1-flash-lite",
+                    "endpoint": "projects/p/locations/us/endpoints/123",
+                }
+            )
+
+    def test_require_config_eval_models_rejects_duplicate_labels(self) -> None:
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            require_config_eval_models(
+                {
+                    "eval_models": [
+                        {"label": "base", "model": "gemini-3.1-flash-lite"},
+                        {
+                            "label": "base",
+                            "model": "projects/p/locations/us/endpoints/123",
+                        },
+                    ]
+                }
+            )
+
+    def test_require_config_eval_models_rejects_invalid_labels(self) -> None:
+        for label in ("", ".", "..", "bad label", "nested/label", "base.jsonl"):
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(ValueError, "eval_models\\[0\\]"):
+                    require_config_eval_models(
+                        {
+                            "eval_models": [
+                                {
+                                    "label": label,
+                                    "model": "gemini-3.1-flash-lite",
+                                }
+                            ]
+                        }
+                    )
+
+    def test_require_config_eval_models_rejects_empty_model(self) -> None:
+        with self.assertRaisesRegex(ValueError, r"eval_models\[0\]\.model"):
+            require_config_eval_models(
+                {"eval_models": [{"label": "base", "model": "   "}]}
+            )
+
+    def test_require_config_eval_models_rejects_unsupported_fields(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(ValueError, "unsupported: type"):
+            require_config_eval_models(
+                {
+                    "eval_models": [
+                        {
+                            "label": "base",
+                            "model": "gemini-3.1-flash-lite",
+                            "type": "publisher",
+                        }
+                    ]
+                }
+            )
 
     def test_round_id_must_be_safe_single_path_component(self) -> None:
         for round_id in (
