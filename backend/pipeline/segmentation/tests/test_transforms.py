@@ -6,6 +6,7 @@ import logging as std_logging
 import time
 import unittest
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -879,6 +880,427 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     assert 32000 in lengths or 16000 in lengths
 
             assert_that(results, assert_results)
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_backlog_timer_loop_direct(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Directly tests the DoFn's backlog clamping and self-chaining timer loop to ensure it drains fully and terminates without infinite loops."""
+        mock_processor_inst = mock_audio_processor.return_value
+
+        # Mock processor to return dummy audio chunk data
+        def download_side_effect(gcs_uri, timestamp_ms, *args, **kwargs):
+            return AudioChunkData(
+                start_ms=timestamp_ms,
+                audio=np.ones(16000, dtype=np.int16),
+                sample_rate=16000,
+                speech_segments=[TimeRange(0, 1000)],
+                gcs_uri=gcs_uri,
+                duration_ms=1000,
+            )
+
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            download_side_effect
+        )
+        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
+
+        order_config = OrderRestorerConfig(
+            out_of_order_timeout_ms=5000, chunk_duration_ms=1000
+        )
+        stitch_config = get_test_stitch_config(
+            stale_timeout_ms=5000, significant_gap_ms=5000
+        )
+
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.audio_processor = mock_processor_inst
+        fn.setup()
+
+        # Mock state cells
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        transmission_context_state = MockValueState(IdleFeedState())
+        last_start_ms_state = MockValueState(None)
+
+        # Mock timers to record deadlines
+        class MockTimer:
+            def __init__(self, name="timer") -> None:
+                self.name = name
+                self.deadline = None
+
+            def set(self, deadline):
+                self.deadline = deadline
+
+            def clear(self):
+                self.deadline = None
+
+        gap_timer_event = MockTimer("gap_event")
+        gap_timer_event_v2 = MockTimer("gap_event_v2")
+        gap_timer_proc = MockTimer("gap_proc")
+        stale_timer_event = MockTimer("stale_event")
+        stale_timer_proc = MockTimer("stale_proc")
+        deferred_drain_timer = MockTimer("deferred_drain")
+
+        # Create 5 chunks for the backlog
+        chunks = []
+        for i in range(1, 6):
+            chunks.append(
+                ChunkMetadata(
+                    gcs_uri=f"gs://test-bucket/path/to/chunk{i}.flac",
+                    session_id="mock-session-id",
+                    duration_ms=1000,
+                    feed_metadata=FeedMetadata(feed_name="mock-feed"),
+                )
+            )
+
+        results = []
+
+        # We monkey-patch MAX_CHUNKS_PER_WINDMILL_BUNDLE to 2 to force clamping.
+        with (
+            patch(
+                "backend.pipeline.segmentation.constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE",
+                2,
+            ),
+            patch(
+                "backend.pipeline.segmentation.transforms.stateful.MAX_CHUNKS_PER_WINDMILL_BUNDLE",
+                2,
+            ),
+            patch(
+                "backend.pipeline.segmentation.transforms.stateful.trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE",
+                2,
+            ),
+        ):
+            # 1. Process all 5 chunks in a single bundle (simulating backlog arrival)
+            # Reset bundle counter
+            fn.processed_in_bundle = 0
+
+            for i, chunk in enumerate(chunks):
+                # Call process directly
+                outputs = list(
+                    fn.process(
+                        element=("test-feed", chunk),
+                        timestamp=Timestamp(100 + i),
+                        transmission_context_state=transmission_context_state,  # type: ignore
+                        last_start_ms_state=last_start_ms_state,  # type: ignore
+                        gap_timer_event=gap_timer_event,  # type: ignore
+                        gap_timer_event_v2=gap_timer_event_v2,  # type: ignore
+                        gap_timer_proc=gap_timer_proc,  # type: ignore
+                        stale_timer_event=stale_timer_event,  # type: ignore
+                        stale_timer_proc=stale_timer_proc,  # type: ignore
+                        deferred_drain_timer=deferred_drain_timer,  # type: ignore
+                    )
+                )
+                results.extend(outputs)
+
+            # Assert that the first bundle processed exactly 2 chunks, and deferred the rest,
+            # scheduling the deferral timer.
+            self.assertEqual(fn.processed_in_bundle, 2)
+            self.assertIsNotNone(deferred_drain_timer.deadline)
+
+            # The last element was processed at timestamp 104, so the timer was set to 104 + 1ms
+            self.assertEqual(deferred_drain_timer.deadline, Timestamp(104.001))
+
+            # 2. Simulate the timer firing to drain the backlog.
+            # We run a loop to fire the timer recursively as long as it gets rescheduled.
+            # We set a safety limit of 100 iterations to prevent infinite loops during test failure.
+            iterations = 0
+            max_iterations = 100
+
+            while deferred_drain_timer.deadline is not None:
+                iterations += 1
+                if iterations > max_iterations:
+                    self.fail(
+                        "Infinite loop detected! Timer keeps rescheduling itself indefinitely."
+                    )
+
+                firing_timestamp = deferred_drain_timer.deadline
+                # Clear the timer before firing (representing runner behavior)
+                deferred_drain_timer.clear()
+
+                # Reset bundle counter for the new timer-activated bundle
+                fn.processed_in_bundle = 0
+
+                outputs = list(
+                    fn.handle_deferred_drain(
+                        feed_id="test-feed",
+                        transmission_context_state=transmission_context_state,  # type: ignore
+                        last_start_ms_state=last_start_ms_state,  # type: ignore
+                        stale_timer_event=stale_timer_event,  # type: ignore
+                        stale_timer_proc=stale_timer_proc,  # type: ignore
+                        timestamp=firing_timestamp,
+                        deferred_drain_timer=deferred_drain_timer,  # type: ignore
+                    )
+                )
+                results.extend(outputs)
+
+            # 3. Flush the remaining active stitching state at the end of the test
+            outputs = list(
+                fn.handle_stale_transmission_event(
+                    key="test-feed",
+                    transmission_context=transmission_context_state,  # type: ignore
+                    last_start_ms_state=last_start_ms_state,  # type: ignore
+                    stale_timer_event=stale_timer_event,  # type: ignore
+                    stale_timer_proc=stale_timer_proc,  # type: ignore
+                )
+            )
+            results.extend(outputs)
+
+            # 4. Assertions
+            # We expect the timer to have fired exactly 2 times:
+            # - Fire 1 (at 104.001): drains chunks 3 and 4, reschedules timer at 104.002
+            # - Fire 2 (at 104.002): drains chunk 5, buffer is now empty, timer is cleared (deadline is None)
+            self.assertEqual(iterations, 2)
+
+            # Extract all processed GCS URIs
+            processed_uris = set()
+            for res in results:
+                if isinstance(res, tuple) and isinstance(res[1], FlushRequest):
+                    for chunk in res[1].contributing_chunks:
+                        processed_uris.add(chunk.gcs_uri)
+
+            # Verify that ALL 5 chunks were fully processed and emitted without any data loss!
+            self.assertEqual(len(processed_uris), 5)
+            self.assertEqual(
+                processed_uris,
+                {
+                    f"gs://test-bucket/path/to/chunk{i}.flac"
+                    for i in range(1, 6)
+                },
+            )
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_backlog_timer_loop_gap_leapfrog(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that the dynamic leap-frog timer correctly leaps over large sequence gaps in exactly 1 step, preventing watermark-jump loop storms."""
+        mock_processor_inst = mock_audio_processor.return_value
+
+        # Mock processor to return dummy audio chunk data
+        def download_side_effect(gcs_uri, timestamp_ms, *args, **kwargs):
+            return AudioChunkData(
+                start_ms=timestamp_ms,
+                audio=np.ones(16000, dtype=np.int16),
+                sample_rate=16000,
+                speech_segments=[TimeRange(0, 1000)],
+                gcs_uri=gcs_uri,
+                duration_ms=1000,
+            )
+
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            download_side_effect
+        )
+        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
+
+        order_config = OrderRestorerConfig(
+            out_of_order_timeout_ms=5000, chunk_duration_ms=1000
+        )
+        stitch_config = get_test_stitch_config(
+            stale_timeout_ms=5000, significant_gap_ms=5000
+        )
+
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.audio_processor = mock_processor_inst
+        fn.setup()
+
+        # Mock state cells
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        transmission_context_state = MockValueState(IdleFeedState())
+        last_start_ms_state = MockValueState(None)
+
+        # Mock timers to record deadlines
+        class MockTimer:
+            def __init__(self, name="timer") -> None:
+                self.name = name
+                self.deadline = None
+
+            def set(self, deadline):
+                self.deadline = deadline
+
+            def clear(self):
+                self.deadline = None
+
+        gap_timer_event, gap_timer_event_v2 = (
+            MockTimer("gap_event"),
+            MockTimer("gap_event_v2"),
+        )
+        gap_timer_proc, stale_timer_event = (
+            MockTimer("gap_proc"),
+            MockTimer("stale_event"),
+        )
+        stale_timer_proc, deferred_drain_timer = (
+            MockTimer("stale_proc"),
+            MockTimer("deferred_drain"),
+        )
+
+        # Create 3 chunks: Chunk 1 and 2 are contiguous (100, 101).
+        # Chunk 3 is after a 9-second gap (110)!
+        chunks = [
+            ChunkMetadata(
+                gcs_uri="gs://test-bucket/path/to/chunk1.flac",
+                session_id="mock-session-id",
+                duration_ms=1000,
+                feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            ),
+            ChunkMetadata(
+                gcs_uri="gs://test-bucket/path/to/chunk2.flac",
+                session_id="mock-session-id",
+                duration_ms=1000,
+                feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            ),
+            ChunkMetadata(
+                gcs_uri="gs://test-bucket/path/to/chunk3.flac",
+                session_id="mock-session-id",
+                duration_ms=1000,
+                feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            ),
+        ]
+        chunk_timestamps = [100, 101, 110]
+
+        results = []
+
+        # We monkey-patch MAX_CHUNKS_PER_WINDMILL_BUNDLE to 2 to force clamping.
+        with (
+            patch(
+                "backend.pipeline.segmentation.constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE",
+                2,
+            ),
+            patch(
+                "backend.pipeline.segmentation.transforms.stateful.MAX_CHUNKS_PER_WINDMILL_BUNDLE",
+                2,
+            ),
+            patch(
+                "backend.pipeline.segmentation.transforms.stateful.trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE",
+                2,
+            ),
+        ):
+            # 1. Process all 3 chunks in a single bundle
+            # Chunks 1 and 2 will be processed. Chunk 3 (110) will be clamped and deferred because
+            # we processed 2 chunks in the bundle.
+            fn.processed_in_bundle = 0
+
+            for chunk, ts in zip(chunks, chunk_timestamps, strict=True):
+                # Call process directly
+                outputs = list(
+                    fn.process(
+                        element=("test-feed", chunk),
+                        timestamp=Timestamp(ts),
+                        transmission_context_state=transmission_context_state,  # type: ignore
+                        last_start_ms_state=last_start_ms_state,  # type: ignore
+                        gap_timer_event=gap_timer_event,  # type: ignore
+                        gap_timer_event_v2=gap_timer_event_v2,  # type: ignore
+                        gap_timer_proc=gap_timer_proc,  # type: ignore
+                        stale_timer_event=stale_timer_event,  # type: ignore
+                        stale_timer_proc=stale_timer_proc,  # type: ignore
+                        deferred_drain_timer=deferred_drain_timer,  # type: ignore
+                    )
+                )
+                results.extend(outputs)
+
+            # Enforce that Chunk 1 and 2 were processed, Chunk 3 was deferred.
+            self.assertEqual(fn.processed_in_bundle, 2)
+            self.assertIsNotNone(deferred_drain_timer.deadline)
+            # The clamp happened during Chunk 3 (timestamp 110), so the timer was set to 110.001
+            # proving that the timer has already leaped over the 9-second gap to 110!
+            self.assertEqual(deferred_drain_timer.deadline, Timestamp(110.001))
+
+            # 2. Now simulate the gap timeout flushing by resetting the expected next timestamp
+            # to 110,000 in the state context, so that when the timer fires, the sequence buffer
+            # is ready to drain Chunk 3.
+            curr_context = transmission_context_state.read()
+            curr_context = replace(
+                curr_context, expected_next_chunk_start_ms=110000
+            )
+            transmission_context_state.write(curr_context)
+
+            # 3. Simulate the timer firing to drain Chunk 3.
+            # Under the old static 1ms code, if the timer fired at 101.001, it would have had to
+            # do 9,000 iterations of 1ms steps to cross the gap to 110.
+            # Under our dynamic leap-frog code, the timer was set directly to 110.001 after Chunk 3,
+            # and it will drain Chunk 3 in exactly 1 iteration!
+            iterations = 0
+            while deferred_drain_timer.deadline is not None:
+                iterations += 1
+                if (
+                    iterations > 10
+                ):  # If it loops more than 10 times, it failed to leap-frog!
+                    self.fail(
+                        "Loop storm detected! Timer failed to leap-frog the gap and is looping in 1ms steps."
+                    )
+
+                firing_timestamp = deferred_drain_timer.deadline
+                deferred_drain_timer.clear()
+                fn.processed_in_bundle = 0
+
+                outputs = list(
+                    fn.handle_deferred_drain(
+                        feed_id="test-feed",
+                        transmission_context_state=transmission_context_state,  # type: ignore
+                        last_start_ms_state=last_start_ms_state,  # type: ignore
+                        stale_timer_event=stale_timer_event,  # type: ignore
+                        stale_timer_proc=stale_timer_proc,  # type: ignore
+                        timestamp=firing_timestamp,
+                        deferred_drain_timer=deferred_drain_timer,  # type: ignore
+                    )
+                )
+                results.extend(outputs)
+
+            # Assert that it took exactly 1 iteration of the timer to complete the drain!
+            self.assertEqual(iterations, 1)
+
+            # 4. Flush the remaining active stitching state at the end of the test
+            outputs = list(
+                fn.handle_stale_transmission_event(
+                    key="test-feed",
+                    transmission_context=transmission_context_state,  # type: ignore
+                    last_start_ms_state=last_start_ms_state,  # type: ignore
+                    stale_timer_event=stale_timer_event,  # type: ignore
+                    stale_timer_proc=stale_timer_proc,  # type: ignore
+                )
+            )
+            results.extend(outputs)
+
+            processed_uris = set()
+            for res in results:
+                if isinstance(res, tuple) and isinstance(res[1], FlushRequest):
+                    for chunk in res[1].contributing_chunks:
+                        processed_uris.add(chunk.gcs_uri)
+
+            # Verify all 3 chunks were processed with zero data loss!
+            self.assertEqual(len(processed_uris), 3)
+            self.assertEqual(
+                processed_uris,
+                {f"gs://test-bucket/path/to/chunk{i}.flac" for i in [1, 2, 3]},
+            )
 
 
 class OrderedStitchSpeechSegmentsTest(unittest.TestCase):

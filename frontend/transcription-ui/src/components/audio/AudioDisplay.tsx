@@ -23,6 +23,7 @@ interface AudioDisplayProps {
   userDuration?: string | null;
   isAudioPlaying: boolean;
   currentAudioRef?: React.RefObject<PlaybackController | null>;
+  seekTrigger?: number;
 }
 
 const PLAYING_CURSOR_WIDTH_PX = 1;
@@ -212,6 +213,7 @@ export function AudioDisplay({
   userDuration,
   isAudioPlaying,
   currentAudioRef,
+  seekTrigger,
 }: AudioDisplayProps) {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';
@@ -244,6 +246,13 @@ export function AudioDisplay({
       cancelAnimationFrame(animationFrameId);
     };
   }, [isAudioPlaying, currentlyPlayingSegmentId, currentAudioRef]);
+
+  // Sync progress instantly on discrete seek events (e.g. skip buttons when paused)
+  useEffect(() => {
+    if (currentAudioRef?.current) {
+      setLocalCurrentTimeSeconds(currentAudioRef.current.getCurrentTime());
+    }
+  }, [seekTrigger, currentAudioRef]);
 
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
 

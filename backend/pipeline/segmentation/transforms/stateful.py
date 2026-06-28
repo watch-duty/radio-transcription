@@ -1101,12 +1101,17 @@ class OrderedStitchAudioFn(beam.DoFn):
             if new_buffer_elements and clamped:
                 # Still clamped, re-arm the deferral timer to self-chain into
                 # another bundle!
-                # Loop control: Always advance by the minimum 1ms safety
-                # epsilon to satisfy the Runner V2 gate without triggering
-                # artificial watermark delays or Pub/Sub source gridlocks.
-                deferred_drain_timer.set(
-                    timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
+                # Dynamic leap-frog: Align the timer deadline with the start time
+                # of the oldest unprocessed chunk currently waiting in the buffer.
+                # If there's a gap (e.g. downtime), this leaps the entire gap in exactly 1 step!
+                oldest_chunk_ts_sec = (
+                    new_buffer_elements[0].timestamp_ms / 1000.0
                 )
+                next_deadline = max(
+                    timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                    Timestamp(seconds=oldest_chunk_ts_sec),
+                )
+                deferred_drain_timer.set(next_deadline)
 
             curr_context = replace(
                 curr_context,

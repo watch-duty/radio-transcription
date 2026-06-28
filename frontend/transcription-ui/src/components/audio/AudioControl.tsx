@@ -177,11 +177,11 @@ export function AudioControl({
             <Checkbox
               checked={playLatestAudio}
               onChange={(e) => togglePlayLatestAudio(e.target.checked)}
-              disabled={disableCheckbox}
             />
           }
           label="Always play latest audio"
           slotProps={{ typography: { variant: 'body2' } }}
+          disabled={disableCheckbox || disableControls}
         />
       </Box>
     </Box>

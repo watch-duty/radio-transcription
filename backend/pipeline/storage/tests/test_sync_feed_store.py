@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from backend.pipeline.storage import quarantine_reason, sync_feed_queries
+from backend.pipeline.storage import status_reason_detail, sync_feed_queries
 from backend.pipeline.storage.feed_store import FeedStatus, FeedStatusReason
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
 
@@ -210,7 +210,9 @@ class TestRecordFailure:
         conn = _make_mock_conn()
         store = _make_store(conn)
         feed_id = uuid.uuid4()
-        long_reason = "x" * (quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1)
+        long_reason = "x" * (
+            status_reason_detail.MAX_STATUS_REASON_DETAIL_LENGTH + 1
+        )
 
         store.record_failure(
             feed_id,
@@ -219,7 +221,10 @@ class TestRecordFailure:
         )
 
         reason_arg = conn.execute.call_args[0][1][6]
-        assert len(reason_arg) == quarantine_reason.MAX_QUARANTINE_REASON_LENGTH
+        assert (
+            len(reason_arg)
+            == status_reason_detail.MAX_STATUS_REASON_DETAIL_LENGTH
+        )
         assert reason_arg.endswith("[truncated]")
 
     def test_always_logs_failure(self) -> None:
