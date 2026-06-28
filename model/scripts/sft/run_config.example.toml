@@ -38,9 +38,10 @@ learning_rate_multiplier = 1.0
 label = "base"
 model = "gemini-3.1-flash-lite"
 
-[[eval.models]]
-label = "checkpoint_6"
-model = "projects/your-project/locations/us/endpoints/your-endpoint-id"
+# Until target-driven eval execution lands, the current eval runner can execute
+# this same-config target only as a base-only eval. Tuned/checkpoint endpoint
+# labels such as "checkpoint_6" are valid config labels, but require the later
+# target-driven runner before they can be used directly by `gemini-sft eval`.
 
 [prompts]
 # Optional inline overrides only. Prompt files are intentionally unsupported so

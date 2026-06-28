@@ -70,10 +70,6 @@ learning_rate_multiplier = 1.0
 label = "base"
 model = "gemini-3.1-flash-lite"
 
-[[eval.models]]
-label = "checkpoint_6"
-model = "projects/your-project/locations/us/endpoints/your-endpoint-id"
-
 [prompts]
 # Optional inline overrides only.
 # system = "..."
@@ -95,6 +91,12 @@ Eval requires explicit `[[eval.models]]` targets. Each target contains only a
 endpoint/checkpoint resource string by operator intent. Eval does not
 synthesize targets from `[sft].base_model` or the tuned `endpoint` stored in
 GCS `config.json`.
+
+At this phase, `gemini-sft eval` still uses the existing base/tuned execution
+path behind the target-config guard. A same-config run with the example above
+supports base-only eval. Arbitrary endpoint labels such as `checkpoint_6` are
+valid target config, but direct execution of those configured targets is a
+later runner change.
 
 Masked and unmasked evals are separate config files/runs with distinct
 `round_id`, `eval_manifest_uri`, and `inference_dataset_slug` values. There is
