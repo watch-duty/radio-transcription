@@ -29,23 +29,28 @@ from common.gcs_utils import (
 )
 from common.gemini.batch import BatchPredictionMap
 from common.gemini.context import build_context_histories
+from common.gemini.prompts import GEMINI_TRANSCRIBE_KEYWORDS
 from common.gemini.vertex import (
     GEMINI_GENERATION_CONFIG,
     GEMINI_SAFETY_SETTINGS,
     build_request,
     parse_batch_output,
 )
-from common.scoring import (
-    build_normalizer,
-    compute_cer,
-    compute_wer,
-    hallucination_rate,
-)
+from common.scoring import build_normalizer
 from gemini_sft.artifacts import (
     DEFAULT_RESULTS_DIR,
     canonical_rows_from_entries,
 )
 from gemini_sft.config import load_eval_run_config, require_config_str
+from gemini_sft.reporting import (
+    EvalReport,
+    ReportArtifacts,
+    TargetMetrics,
+    build_target_metrics,
+    render_console_report,
+    render_markdown_report,
+    report_to_dict,
+)
 from google import genai
 from google.auth.transport.requests import Request
 from google.cloud import storage
@@ -325,22 +330,26 @@ async def score_checkpoint_online(
 def score_predictions(
     *,
     label: str,
+    model: str,
     refs: list[str],
     hyps: list[str],
     normalizer: Any,
-) -> dict[str, Any]:
-    wer_result = compute_wer(refs, hyps, normalizer=normalizer)
-    cer_result = compute_cer(refs, hyps, normalizer=normalizer)
-    return {
-        "label": label,
-        "wer": wer_result["wer"],
-        "cer": cer_result["cer"],
-        "empty_rate": hallucination_rate(hyps),
-        "insertions": wer_result["insertions"],
-        "deletions": wer_result["deletions"],
-        "substitutions": wer_result["substitutions"],
-        "hits": wer_result["hits"],
-    }
+    missing_prediction_count: int = 0,
+    artifacts: ReportArtifacts | None = None,
+    metadata: dict[str, Any] | None = None,
+    keywords: list[str] | None = None,
+) -> TargetMetrics:
+    return build_target_metrics(
+        label=label,
+        model=model,
+        refs=refs,
+        hyps=hyps,
+        normalizer=normalizer,
+        keywords=keywords or [],
+        missing_prediction_count=missing_prediction_count,
+        artifacts=artifacts,
+        metadata=metadata,
+    )
 
 
 def write_summary(
@@ -348,33 +357,26 @@ def write_summary(
     local_dir: Path,
     storage_client: storage.Client,
     run_gcs_prefix: str,
-    summary: dict[str, Any],
-) -> None:
+    report: EvalReport,
+    checkpoint_rankings: list[dict[str, Any]],
+) -> dict[str, Any]:
     local_dir.mkdir(parents=True, exist_ok=True)
     json_path = local_dir / "checkpoint_score_summary.json"
     md_path = local_dir / "checkpoint_score_summary.md"
-    json_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    lines = [
-        "# Gemini SFT Checkpoint Scores",
-        "",
-        f"- base WER: {summary['base']['wer']:.2f}",
-        f"- base CER: {summary['base']['cer']:.2f}",
-        "",
-        "| checkpoint | epoch | step | WER | CER | empty_rate | delta_vs_base |",
-        "|---|---:|---:|---:|---:|---:|---:|",
-    ]
-    for row in summary["checkpoints"]:
-        lines.append(
-            "| {checkpoint_id} | {epoch} | {step} | {wer:.2f} | {cer:.2f} | "
-            "{empty_rate:.2f} | {delta_vs_base:.2f} |".format(**row)
-        )
-    md_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    payload = report_to_dict(report)
+    payload["checkpoint_rankings"] = checkpoint_rankings
+    payload["best_checkpoint"] = (
+        checkpoint_rankings[0] if checkpoint_rankings else None
+    )
+    json_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    md_path.write_text(render_markdown_report(report), encoding="utf-8")
     for path in (json_path, md_path):
         upload_predictions(
             storage_client,
             path,
             f"{run_gcs_prefix}/evals/checkpoints/{path.name}",
         )
+    return payload
 
 
 async def run_async(args: argparse.Namespace) -> dict[str, Any]:
@@ -404,11 +406,18 @@ async def run_async(args: argparse.Namespace) -> dict[str, Any]:
         storage_client, f"{run_gcs_prefix}/evals/base/output/"
     )
     base_hyps = [base_preds.get(row.audio_filepath, "") for row in eval_rows]
+    missing_prediction_count = sum(
+        1 for row in eval_rows if row.audio_filepath not in base_preds
+    )
     base_score = score_predictions(
         label="base",
+        model=require_config_str(config, "base_model"),
         refs=refs,
         hyps=base_hyps,
         normalizer=normalizer,
+        missing_prediction_count=missing_prediction_count,
+        artifacts=ReportArtifacts(raw_output_uri=base_preds.output_uri),
+        keywords=GEMINI_TRANSCRIBE_KEYWORDS,
     )
 
     tuning_job = fetch_tuning_job(
@@ -416,13 +425,11 @@ async def run_async(args: argparse.Namespace) -> dict[str, Any]:
         require_config_str(config, "location"),
     )
     checkpoints = checkpoint_records(tuning_job, set(args.checkpoint_id))
-    local_dir = (
-        DEFAULT_RESULTS_DIR
-        / run_cfg.round_id
-        / "evals"
-        / "checkpoints"
-    )
-    scored: list[dict[str, Any]] = []
+    local_dir = DEFAULT_RESULTS_DIR / run_cfg.round_id / "evals" / "checkpoints"
+    checkpoint_targets: list[TargetMetrics] = []
+    ranking_rows: list[dict[str, Any]] = []
+    summary: dict[str, Any] | None = None
+    report: EvalReport | None = None
     for checkpoint in checkpoints:
         label = f"checkpoint_{checkpoint['checkpoint_id']}"
         local_path = local_dir / label / "online_predictions.jsonl"
@@ -444,34 +451,66 @@ async def run_async(args: argparse.Namespace) -> dict[str, Any]:
             args=args,
         )
         hyps = [
-            str(rows_by_audio.get(row.audio_filepath, {}).get("pred_text") or "")
+            str(
+                rows_by_audio.get(row.audio_filepath, {}).get("pred_text") or ""
+            )
             for row in eval_rows
         ]
-        score = score_predictions(
-            label=label, refs=refs, hyps=hyps, normalizer=normalizer
+        missing_prediction_count = sum(
+            1 for row in eval_rows if row.audio_filepath not in rows_by_audio
         )
-        scored.append(
+        score = score_predictions(
+            label=label,
+            model=checkpoint["endpoint"],
+            refs=refs,
+            hyps=hyps,
+            normalizer=normalizer,
+            missing_prediction_count=missing_prediction_count,
+            artifacts=ReportArtifacts(online_predictions_uri=gcs_uri),
+            metadata={
+                "checkpoint_id": checkpoint["checkpoint_id"],
+                "epoch": checkpoint["epoch"],
+                "step": checkpoint["step"],
+            },
+            keywords=GEMINI_TRANSCRIBE_KEYWORDS,
+        )
+        checkpoint_targets.append(score)
+        ranking_rows.append(
             {
-                **checkpoint,
-                **{key: value for key, value in score.items() if key != "label"},
-                "delta_vs_base": round(score["wer"] - base_score["wer"], 2),
-                "prediction_gcs_uri": gcs_uri,
+                "target_label": label,
+                "checkpoint_id": checkpoint["checkpoint_id"],
+                "epoch": checkpoint["epoch"],
+                "step": checkpoint["step"],
+                "endpoint": checkpoint["endpoint"],
+                "delta_vs_base": round(score.wer - base_score.wer, 2),
+                "online_predictions_uri": gcs_uri,
             }
         )
-        summary = {
-            "round_id": run_cfg.round_id,
-            "job_name": config.get("job_name"),
-            "base": base_score,
-            "checkpoints": sorted(scored, key=lambda item: item["wer"]),
-            "updated_at": datetime.now(UTC).isoformat(),
-        }
-        write_summary(
+        ranked_pairs = sorted(
+            zip(checkpoint_targets, ranking_rows, strict=True),
+            key=lambda item: item[0].wer,
+        )
+        ranked_targets = [target for target, _ in ranked_pairs]
+        checkpoint_rankings = [row for _, row in ranked_pairs]
+        report = EvalReport(
+            round_id=run_cfg.round_id,
+            generated_at=datetime.now(UTC).isoformat(),
+            targets=[base_score, *ranked_targets],
+            metadata={
+                "job_name": config.get("job_name"),
+                "updated_at": datetime.now(UTC).isoformat(),
+            },
+        )
+        summary = write_summary(
             local_dir=local_dir,
             storage_client=storage_client,
             run_gcs_prefix=run_gcs_prefix,
-            summary=summary,
+            report=report,
+            checkpoint_rankings=checkpoint_rankings,
         )
-    return summary
+    if summary is None or report is None:
+        raise RuntimeError("No checkpoint summaries were written.")
+    return {"summary": summary, "report": report}
 
 
 def main() -> int:
@@ -486,8 +525,9 @@ def main() -> int:
         "google_genai.models",
     ):
         logging.getLogger(logger_name).setLevel(logging.WARNING)
-    summary = asyncio.run(run_async(args))
-    best = summary["checkpoints"][0]
+    result = asyncio.run(run_async(args))
+    print(render_console_report(result["report"]))
+    best = result["summary"]["best_checkpoint"]
     print(json.dumps({"best_checkpoint": best}, indent=2))
     return 0
 
