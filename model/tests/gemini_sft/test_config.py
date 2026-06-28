@@ -219,6 +219,84 @@ checkpoint_id = "7"
             ],
         )
 
+    def test_masked_and_unmasked_eval_configs_are_separate_runs(
+        self,
+    ) -> None:
+        eval_section = self._eval_models_section(
+            ("base", "gemini-3.1-flash-lite")
+        )
+        unmasked_body = self._without_manifest_lines(
+            self._valid_toml(
+                round_id='"round-unmasked"',
+                eval_manifest_uri='"gs://source/manifests/eval.jsonl"',
+                inference_dataset_slug='"radio/eval"',
+                eval_section=eval_section,
+            ),
+            "train_manifest_uri",
+            "validation_manifest_uri",
+        )
+        masked_body = self._without_manifest_lines(
+            self._valid_toml(
+                round_id='"round-masked"',
+                eval_manifest_uri=(
+                    '"gs://source/manifests/masked_v2/eval.jsonl"'
+                ),
+                inference_dataset_slug='"radio/masked_v2/eval"',
+                eval_section=eval_section,
+            ),
+            "train_manifest_uri",
+            "validation_manifest_uri",
+        )
+
+        unmasked_config = load_eval_run_config(
+            self._write_config(unmasked_body)
+        )
+        masked_config = load_eval_run_config(self._write_config(masked_body))
+
+        self.assertEqual(unmasked_config.round_id, "round-unmasked")
+        self.assertEqual(masked_config.round_id, "round-masked")
+        self.assertEqual(
+            unmasked_config.eval_manifest_uri,
+            "gs://source/manifests/eval.jsonl",
+        )
+        self.assertEqual(
+            masked_config.eval_manifest_uri,
+            "gs://source/manifests/masked_v2/eval.jsonl",
+        )
+        self.assertEqual(
+            unmasked_config.inference_dataset_slug,
+            "radio/eval",
+        )
+        self.assertEqual(
+            masked_config.inference_dataset_slug,
+            "radio/masked_v2/eval",
+        )
+        self.assertEqual(unmasked_config.eval_models, masked_config.eval_models)
+
+        unmasked_record = unmasked_config.to_record_dict()
+        masked_record = masked_config.to_record_dict()
+        self.assertEqual(unmasked_record["round_id"], "round-unmasked")
+        self.assertEqual(masked_record["round_id"], "round-masked")
+        self.assertEqual(
+            unmasked_record["eval_manifest_uri"],
+            "gs://source/manifests/eval.jsonl",
+        )
+        self.assertEqual(
+            masked_record["eval_manifest_uri"],
+            "gs://source/manifests/masked_v2/eval.jsonl",
+        )
+        self.assertEqual(
+            unmasked_record["inference_dataset_slug"],
+            "radio/eval",
+        )
+        self.assertEqual(
+            masked_record["inference_dataset_slug"],
+            "radio/masked_v2/eval",
+        )
+        for record in (unmasked_record, masked_record):
+            self.assertNotIn("eval_label", record)
+            self.assertNotIn("masked", record)
+
     def test_run_config_serializes_optional_eval_models(self) -> None:
         body = self._valid_toml(
             eval_section=self._eval_models_section(
