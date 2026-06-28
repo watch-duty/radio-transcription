@@ -79,6 +79,9 @@ def _publish_and_verify(
             and any(
                 ann["type"] == "EVALUATION" for ann in s.get("annotations", [])
             )
+            and any(
+                ann["type"] == "WAVEFORM" for ann in s.get("annotations", [])
+            )
         ),
     )
 

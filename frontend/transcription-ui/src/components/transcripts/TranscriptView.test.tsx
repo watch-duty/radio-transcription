@@ -11,7 +11,6 @@ import {
   fireEvent,
   screen,
   waitFor,
-  within,
 } from '@testing-library/react';
 import {
   AnnotationType,
@@ -170,6 +169,8 @@ vi.mock('@wavesurfer/react', () => ({
 const audioEngineMock = vi.hoisted(() => ({
   playSpy: vi.fn(),
   lastSrc: null as string | null,
+  lastSeekTime: null as number | null,
+  currentTime: 0,
   lastCallbacks: null as {
     onPlay?: () => void;
     onPause?: () => void;
@@ -201,8 +202,10 @@ vi.mock('../../audio/WebAudioPlayer', async (importOriginal) => ({
         },
         pause: () => callbacks.onPause?.(),
         stop: () => {},
-        getCurrentTime: () => 0,
-        setCurrentTime: () => {},
+        getCurrentTime: () => audioEngineMock.currentTime,
+        setCurrentTime: (time: number) => {
+          audioEngineMock.lastSeekTime = time;
+        },
         unload: () => {},
         off: () => {},
       };
@@ -952,8 +955,13 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Newer Transcript 1')).toBeTruthy();
     });
 
-    // Verify that audio was automatically played since "Always play latest audio" is checked by default
-    expect(playSpy).toHaveBeenCalled();
+    // Simulate Transcript 1 ending naturally
+    act(() => {
+      audioEngineMock.lastCallbacks?.onEnd?.();
+    });
+
+    // Verify that the new segment was automatically played
+    expect(playSpy).toHaveBeenCalledTimes(2);
 
     vi.useRealTimers();
   });
@@ -1017,8 +1025,284 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Newer Transcript 1')).toBeTruthy();
     });
 
-    // Verify that audio was NOT automatically played when disabled
-    expect(playSpy).not.toHaveBeenCalled();
+    // Verify that audio was NOT automatically played when disabled (so it was only called once on mount)
+    expect(playSpy).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
+  it('should transition playback intent to paused and not play new audio when track ends with playLatestAudio unchecked', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+    const playSpy = audioEngineMock.playSpy;
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+    const newerAudioSegments = [
+      makeMockAudioSegment(
+        '2',
+        'feed123',
+        '2026-04-10T12:05:00Z',
+        '2026-04-10T12:05:05Z',
+        'Newer Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+
+    vi.mocked(listAudioSegments)
+      .mockResolvedValueOnce({
+        segments: initialAudioSegments,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        segments: newerAudioSegments,
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    // Since play is on by default and playLatestAudio is true, it starts playing automatically!
+    expect(playSpy).toHaveBeenCalledTimes(1);
+
+    // The global button shows "pause" (since we are in play mode)
+    expect(screen.getAllByLabelText('pause')[0]).toBeInTheDocument();
+
+    // Now, uncheck "Always play latest audio"
+    const autoplayCheckbox = screen.getByLabelText(/Always play latest audio/i);
+    fireEvent.click(autoplayCheckbox);
+
+    // Now, let's simulate the audio ending naturally
+    act(() => {
+      audioEngineMock.lastCallbacks?.onEnd?.();
+    });
+
+    // Since playLatestAudio is unchecked and we reached the end of the track,
+    // the global control button should change to "play" (indicating paused mode)
+    await waitFor(() => {
+      expect(screen.getAllByLabelText('play')[0]).toBeInTheDocument();
+    });
+
+    // Advance time by 15 seconds to trigger background polling and get the new segment
+    vi.advanceTimersByTime(15000);
+
+    await waitFor(() => {
+      expect(screen.getByText('Newer Transcript 1')).toBeTruthy();
+    });
+
+    // Verify that the new segment was NOT automatically played
+    expect(playSpy).toHaveBeenCalledTimes(1); // Still only called once (for Transcript 1)
+
+    vi.useRealTimers();
+  });
+
+  it('should resume from where left off when global play is pressed after being paused mid-way', async () => {
+    const playSpy = audioEngineMock.playSpy;
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments: initialAudioSegments,
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    // Since play is on by default, it starts playing automatically!
+    expect(playSpy).toHaveBeenCalledTimes(1);
+
+    // The global button shows "pause"
+    const pauseButton = screen.getAllByLabelText('pause')[0];
+    // Click pause to pause it mid-way
+    fireEvent.click(pauseButton);
+
+    // Verify it is paused (the global button shows "play")
+    const playBtnAgain = screen.getAllByLabelText('play')[0];
+
+    // Click play again to resume
+    fireEvent.click(playBtnAgain);
+
+    // It should have called play again on the same segment
+    expect(playSpy).toHaveBeenCalledTimes(2);
+
+    // Since it was paused mid-way, the audio source should not have changed
+    expect(audioEngineMock.lastSrc).toContain('gs:://foo.m4a');
+  });
+
+  it('should play next segment after the finished one when global play is pressed with playLatestAudio unchecked', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+    const playSpy = audioEngineMock.playSpy;
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+    const newerAudioSegments = [
+      makeMockAudioSegment(
+        '2',
+        'feed123',
+        '2026-04-10T12:05:00Z',
+        '2026-04-10T12:05:05Z',
+        'Newer Transcript 1',
+        'gs:://newer.m4a',
+        []
+      ),
+    ];
+
+    vi.mocked(listAudioSegments)
+      .mockResolvedValueOnce({
+        segments: initialAudioSegments,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        segments: newerAudioSegments,
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    // Play is on by default, so it starts playing automatically
+    expect(playSpy).toHaveBeenCalledTimes(1);
+    expect(audioEngineMock.lastSrc).toContain('gs:://foo.m4a');
+
+    // Uncheck "Always play latest audio"
+    const autoplayCheckbox = screen.getByLabelText(/Always play latest audio/i);
+    fireEvent.click(autoplayCheckbox);
+
+    // Simulate natural end of Transcript 1
+    act(() => {
+      audioEngineMock.lastCallbacks?.onEnd?.();
+    });
+
+    // Global button should now show "play" (paused/ended mode)
+    await waitFor(() => {
+      expect(screen.getAllByLabelText('play')[0]).toBeInTheDocument();
+    });
+
+    // Advance time by 15 seconds to fetch the new segment
+    vi.advanceTimersByTime(15000);
+
+    await waitFor(() => {
+      expect(screen.getByText('Newer Transcript 1')).toBeTruthy();
+    });
+
+    // Since playLatestAudio is unchecked, it should NOT have played the new segment automatically
+    expect(playSpy).toHaveBeenCalledTimes(1);
+
+    // Click play again
+    fireEvent.click(screen.getAllByLabelText('play')[0]);
+
+    // It should now play "Newer Transcript 1" (which is the next segment after the finished one)
+    expect(playSpy).toHaveBeenCalledTimes(2);
+    expect(audioEngineMock.lastSrc).toContain('gs:://newer.m4a');
+
+    vi.useRealTimers();
+  });
+
+  it('should stop playing when advancing past the end of the last segment, and rewind from the end back into the segment', async () => {
+    const mockSegment = makeMockAudioSegment(
+      '1',
+      'feed123',
+      '2026-04-10T12:00:00Z',
+      '2026-04-10T12:00:10Z',
+      'Transcript 1',
+      'gs:://foo.m4a'
+    );
+
+    vi.mocked(listAudioSegments).mockResolvedValueOnce({
+      segments: [mockSegment],
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+    // Play starts automatically
+    expect(audioEngineMock.lastSrc).toContain('gs:://foo.m4a');
+
+    // We mock getCurrentTime to return 8 seconds (near the end)
+    audioEngineMock.currentTime = 8;
+
+    // Click "Advance 5 seconds" button. It will overshoot the 10-second duration.
+    // 8 + 5 = 13 > 10.
+    // This should seek to 10 (the end) and since it is playing, it will trigger natural track end.
+    const advanceButton = screen.getByLabelText('advance 5 seconds');
+    fireEvent.click(advanceButton);
+
+    // It should seek to 10
+    expect(audioEngineMock.lastSeekTime).toBe(10);
+
+    // Simulate natural end of Transcript 1 due to seeking to the end
+    act(() => {
+      audioEngineMock.lastCallbacks?.onEnd?.();
+    });
+
+    // It should now stop playing and set playbackIntent to paused (which shows the play icon)
+    await waitFor(() => {
+      expect(screen.getAllByLabelText('play')[0]).toBeInTheDocument();
+    });
+
+    // Now, clicking "Rewind 5 seconds" while stopped/unloaded at the end
+    // should recognize the baseline currentTime is 10, targetTime is 5.
+    // So it should reload Transcript 1 and seek to 5.
+    const rewindButton = screen.getByLabelText('rewind 5 seconds');
+    fireEvent.click(rewindButton);
+
+    expect(audioEngineMock.lastSrc).toContain('gs:://foo.m4a');
+    expect(audioEngineMock.lastSeekTime).toBe(5);
 
     vi.useRealTimers();
   });
@@ -1240,13 +1524,7 @@ describe('TranscriptView', () => {
       expect(screen.getByText('[No speech detected]')).toBeTruthy();
     });
 
-    const row = screen.getByText('[No speech detected]').closest('li');
-    expect(row).toBeTruthy();
-    fireEvent.mouseEnter(row!);
-
-    const playButton = within(row!).getByLabelText('play');
-    fireEvent.click(playButton);
-
+    // It should have started playing automatically because play is on by default
     expect(audioEngineMock.lastSrc).toContain('silence-1.m4a');
     expect(playSpy).toHaveBeenCalled();
 

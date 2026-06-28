@@ -443,4 +443,43 @@ describe('TranscriptRow', () => {
 
     expect(screen.getByLabelText('view segment info')).toBeInTheDocument();
   });
+
+  it('renders transcription failure correctly with placeholder text and disabled copy', () => {
+    const mockFailedTranscript: AudioSegment = {
+      ...mockAudioSegment,
+      annotations: [
+        {
+          type: AnnotationType.TRANSCRIPT,
+          createdAt: '2026-04-15T16:00:00Z',
+          data: {
+            text: '',
+            errors: ['some API error'],
+          },
+        },
+      ],
+    };
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={mockFailedTranscript}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('[Transcription failed]')).toBeTruthy();
+
+    const copyButton = screen.getByLabelText('copy transcript');
+    expect((copyButton as HTMLButtonElement).disabled).toBe(true);
+  });
 });
