@@ -59,9 +59,9 @@ or prior chat history.
 
 ### Durable Artifacts And Dataset Reports
 
-- [ ] **DATA-01**: Eval loads durable run state from GCS `config.json` and does
+- [x] **DATA-01**: Eval loads durable run state from GCS `config.json` and does
   not require local `results/` as source of truth.
-- [ ] **DATA-02**: Eval writes one normalized inference manifest per evaluated
+- [x] **DATA-02**: Eval writes one normalized inference manifest per evaluated
   target, with artifact labels derived from validated target labels.
 - [ ] **DATA-03**: Reports include dataset breakdowns for bcfy_calls,
   bcfy_feeds, echo, and fire_notifications when those groups are present.
@@ -70,7 +70,7 @@ or prior chat history.
   deletion count, substitution count, total reference word count, and row count.
 - [ ] **DATA-05**: Report output links to raw Vertex output, online prediction
   JSONL, normalized inference manifests, and GCS summary artifacts.
-- [ ] **DATA-06**: Existing batch or online outputs are reused only when they
+- [x] **DATA-06**: Existing batch or online outputs are reused only when they
   match the current config, target, prompt, eval manifest, and context settings.
 
 ### Operator Documentation And Hygiene
@@ -146,12 +146,12 @@ Traceability populated during roadmap creation.
 | EXEC-04 | Phase 3 | Pending |
 | EXEC-05 | Phase 4 | Pending |
 | EXEC-06 | Phase 3 | Pending |
-| DATA-01 | Phase 4 | Pending |
-| DATA-02 | Phase 4 | Pending |
+| DATA-01 | Phase 4 | Complete |
+| DATA-02 | Phase 4 | Complete |
 | DATA-03 | Phase 4 | Pending |
 | DATA-04 | Phase 4 | Pending |
 | DATA-05 | Phase 4 | Pending |
-| DATA-06 | Phase 4 | Pending |
+| DATA-06 | Phase 4 | Complete |
 | DOC-01 | Phase 5 | Pending |
 | DOC-02 | Phase 5 | Pending |
 | DOC-03 | Phase 5 | Pending |
