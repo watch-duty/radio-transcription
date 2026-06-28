@@ -20,7 +20,7 @@ automation, and no prompt file references.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Reporting Contract** - Stabilize metric semantics and shared report rendering across console, JSON, Markdown, batch eval, and checkpoint scoring.
+- [x] **Phase 1: Reporting Contract** - Stabilize metric semantics and shared report rendering across console, JSON, Markdown, batch eval, and checkpoint scoring. (completed 2026-06-28)
 - [ ] **Phase 2: Target Config** - Introduce unified model target configuration, validation, migration compatibility, and explicit masked/unmasked config paths.
 - [ ] **Phase 3: Target Execution** - Package backend-specific execution while preserving shared prompt, request, and prior-context behavior.
 - [ ] **Phase 4: Durable Eval** - Run GCS-authoritative multi-target evals, write normalized target manifests, and produce dataset breakdown reports.
@@ -142,7 +142,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Reporting Contract | 2/3 | In Progress|  |
+| 1. Reporting Contract | 3/3 | Complete   | 2026-06-28 |
 | 2. Target Config | 0/TBD | Not started | - |
 | 3. Target Execution | 0/TBD | Not started | - |
 | 4. Durable Eval | 0/TBD | Not started | - |

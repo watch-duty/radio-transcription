@@ -9,17 +9,17 @@ or prior chat history.
 
 ### Reporting Contract
 
-- [ ] **RPT-01**: Operator can view a console-first eval report with WER, CER,
+- [x] **RPT-01**: Operator can view a console-first eval report with WER, CER,
   keyword accuracy, empty-or-unintelligible rate, exact empty response rate,
   insertion count, deletion count, substitution count, total reference word
   count, missing prediction count, and artifact URIs.
-- [ ] **RPT-02**: JSON and Markdown reports use the same structured metric
+- [x] **RPT-02**: JSON and Markdown reports use the same structured metric
   schema as the console report.
-- [ ] **RPT-03**: Reports distinguish exact empty responses from the historical
+- [x] **RPT-03**: Reports distinguish exact empty responses from the historical
   empty-or-unintelligible rate.
-- [ ] **RPT-04**: Missing model predictions are scored as empty hypotheses and
+- [x] **RPT-04**: Missing model predictions are scored as empty hypotheses and
   remain in the WER/CER denominator.
-- [ ] **RPT-05**: Existing batch eval and checkpoint scoring paths can produce
+- [x] **RPT-05**: Existing batch eval and checkpoint scoring paths can produce
   equivalent report columns for comparable targets.
 
 ### Config And Model Targets
@@ -129,11 +129,11 @@ Traceability populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| RPT-01 | Phase 1 | Pending |
-| RPT-02 | Phase 1 | Pending |
-| RPT-03 | Phase 1 | Pending |
-| RPT-04 | Phase 1 | Pending |
-| RPT-05 | Phase 1 | Pending |
+| RPT-01 | Phase 1 | Complete |
+| RPT-02 | Phase 1 | Complete |
+| RPT-03 | Phase 1 | Complete |
+| RPT-04 | Phase 1 | Complete |
+| RPT-05 | Phase 1 | Complete |
 | CFG-01 | Phase 2 | Pending |
 | CFG-02 | Phase 2 | Pending |
 | CFG-03 | Phase 2 | Pending |
