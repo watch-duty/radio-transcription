@@ -126,7 +126,9 @@ describe('RuleConfigurationView', () => {
     it('renders both the creation form and the existing rules list', async () => {
       renderView();
 
-      expect(screen.getByText('Rules')).toBeInTheDocument();
+      expect(
+        screen.getByRole('heading', { name: 'Rules', level: 4 })
+      ).toBeInTheDocument();
       expect(screen.getByText('Create New Rule')).toBeInTheDocument();
 
       const formCard = screen.getByTestId('rule-config-card');
@@ -419,7 +421,9 @@ describe('RuleConfigurationView', () => {
     it('renders only the rules list and hides the creation form', async () => {
       renderView();
 
-      expect(screen.getByText('Rules')).toBeInTheDocument();
+      expect(
+        screen.getByRole('heading', { name: 'Rules', level: 4 })
+      ).toBeInTheDocument();
       expect(screen.queryByText('Create New Rule')).not.toBeInTheDocument();
       expect(screen.queryByTestId('rule-config-card')).not.toBeInTheDocument();
 
