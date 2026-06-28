@@ -84,9 +84,18 @@ def write_config(
     return config_with_meta
 
 
+def wer_summary_gcs_uris(run_gcs_prefix: str) -> tuple[str, str]:
+    """Return stable run-level WER summary GCS artifact URIs."""
+    prefix = run_gcs_prefix.rstrip("/")
+    return (
+        f"{prefix}/evals/wer_summary.json",
+        f"{prefix}/evals/wer_summary.md",
+    )
+
+
 def write_wer_summary(
     results_dir: Path, round_id: str, metrics: dict[str, Any] | EvalReport
-) -> None:
+) -> tuple[Path, Path]:
     """Write results/<round-id>/wer_summary.{json,md}.
 
     Shared EvalReport inputs use the canonical target-oriented schema. Dict
@@ -100,11 +109,14 @@ def write_wer_summary(
     else:
         payload = metrics
         markdown = _render_wer_md(metrics)
-    (out_dir / "wer_summary.json").write_text(
+    json_path = out_dir / "wer_summary.json"
+    markdown_path = out_dir / "wer_summary.md"
+    json_path.write_text(
         json.dumps(payload, indent=2, default=str),
         encoding="utf-8",
     )
-    (out_dir / "wer_summary.md").write_text(markdown, encoding="utf-8")
+    markdown_path.write_text(markdown, encoding="utf-8")
+    return json_path, markdown_path
 
 
 def _render_wer_md(metrics: dict[str, Any]) -> str:

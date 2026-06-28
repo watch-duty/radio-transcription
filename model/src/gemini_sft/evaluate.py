@@ -11,6 +11,7 @@ from common.gcs_utils import (
     download_json_text,
     download_jsonl_manifest,
     gcs_uri_exists,
+    upload_local_file,
 )
 from common.gemini.context import build_context_histories
 from common.gemini.batch import BatchPredictionMap, run_batch_audio_inference
@@ -45,11 +46,14 @@ from gemini_sft.config import (
     require_config_int,
     require_config_str,
 )
-from gemini_sft.records import append_ledger, write_wer_summary
+from gemini_sft.records import (
+    append_ledger,
+    wer_summary_gcs_uris,
+    write_wer_summary,
+)
 from gemini_sft.reporting import (
     EvalReport,
     ReportArtifacts,
-    TargetMetrics,
     build_target_metrics,
     render_console_report,
 )
@@ -118,11 +122,11 @@ def evaluate_run(
         config,
         "prior_context_mode",
     )
-    eval_model_targets = (require_config_eval_model(config),)
+    target = require_config_eval_model(config)
     eval_execution = require_config_eval_execution(config)
     logger.info(
-        "Validated %d eval model target(s) from config.json.",
-        len(eval_model_targets),
+        "Validated eval model target %s from config.json.",
+        target.label,
     )
 
     eval_entries = download_jsonl_manifest(storage_client, eval_manifest_uri)
@@ -147,132 +151,132 @@ def evaluate_run(
         "base_model": base_model,
         "n_eval_examples": len(eval_rows),
     }
-    report_targets = []
-
-    for target in eval_model_targets:
-        backend = resolve_target_backend(target, eval_execution)
-        if backend == "batch":
-            preds = batch_infer(
+    backend = resolve_target_backend(target, eval_execution)
+    if backend == "batch":
+        preds = batch_infer(
+            storage_client=storage_client,
+            run_gcs_prefix=run_gcs_prefix,
+            gcp_project=gcp_project,
+            location=location,
+            model_id=target.model,
+            label=target.label,
+            eval_rows=eval_rows,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            histories=histories,
+            prior_context_count=prior_context_count,
+            prior_context_mode=prior_context_mode,
+            eval_manifest_uri=eval_manifest_uri,
+            history_mode=prior_context_mode,
+        )
+        if preds is None:
+            return 1
+        raw_output_uri = preds.output_uri
+        online_predictions_uri = None
+        metadata: dict[str, Any] = {"backend": "batch"}
+    elif backend == "online":
+        preds = asyncio.run(
+            run_online_target_inference(
                 storage_client=storage_client,
                 run_gcs_prefix=run_gcs_prefix,
-                gcp_project=gcp_project,
-                location=location,
-                model_id=target.model,
-                label=target.label,
-                eval_rows=eval_rows,
+                project=gcp_project,
+                default_location=location,
+                target_label=target.label,
+                target_model=target.model,
+                audio_uris=audio_uris,
+                histories=histories,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
-                histories=histories,
                 prior_context_count=prior_context_count,
                 prior_context_mode=prior_context_mode,
                 eval_manifest_uri=eval_manifest_uri,
-                history_mode=prior_context_mode,
+                local_dir=RESULTS_DIR / run_cfg.round_id / "online",
+                concurrency=eval_execution.concurrency,
+                max_retries=eval_execution.max_retries,
             )
-            if preds is None:
-                return 1
-            raw_output_uri = preds.output_uri
-            online_predictions_uri = None
-            metadata: dict[str, Any] = {"backend": "batch"}
-        elif backend == "online":
-            preds = asyncio.run(
-                run_online_target_inference(
-                    storage_client=storage_client,
-                    run_gcs_prefix=run_gcs_prefix,
-                    project=gcp_project,
-                    default_location=location,
-                    target_label=target.label,
-                    target_model=target.model,
-                    audio_uris=audio_uris,
-                    histories=histories,
-                    system_prompt=system_prompt,
-                    user_prompt=user_prompt,
-                    prior_context_count=prior_context_count,
-                    prior_context_mode=prior_context_mode,
-                    eval_manifest_uri=eval_manifest_uri,
-                    local_dir=RESULTS_DIR / run_cfg.round_id / "online",
-                    concurrency=eval_execution.concurrency,
-                    max_retries=eval_execution.max_retries,
-                )
-            )
-            raw_output_uri = None
-            online_predictions_uri = preds.online_predictions_uri
-            metadata = {
-                "backend": "online",
-                "online_error_count": preds.error_count,
-            }
-            request_identity_hash = getattr(
-                preds, "request_identity_hash", None
-            )
-            if request_identity_hash:
-                metadata["request_identity_hash"] = request_identity_hash
-        else:
-            msg = f"unsupported eval backend: {backend}"
-            raise ValueError(msg)
+        )
+        raw_output_uri = None
+        online_predictions_uri = preds.online_predictions_uri
+        metadata = {
+            "backend": "online",
+            "online_error_count": preds.error_count,
+        }
+        request_identity_hash = getattr(preds, "request_identity_hash", None)
+        if request_identity_hash:
+            metadata["request_identity_hash"] = request_identity_hash
+    else:
+        msg = f"unsupported eval backend: {backend}"
+        raise ValueError(msg)
 
-        inference_manifest_uri = upload_inference_manifest(
-            storage_client,
-            bucket_name=gcs_bucket,
-            inference_dataset_slug=inference_dataset_slug,
-            model_family_slug=model_family_slug,
-            run_id=run_cfg.round_id,
-            artifact_label=target.label,
-            source_rows=source_rows,
-            predictions_by_audio_uri=preds,
+    inference_manifest_uri = upload_inference_manifest(
+        storage_client,
+        bucket_name=gcs_bucket,
+        inference_dataset_slug=inference_dataset_slug,
+        model_family_slug=model_family_slug,
+        run_id=run_cfg.round_id,
+        artifact_label=target.label,
+        source_rows=source_rows,
+        predictions_by_audio_uri=preds,
+    )
+    summary_json_uri, summary_markdown_uri = wer_summary_gcs_uris(
+        run_gcs_prefix
+    )
+    artifacts = ReportArtifacts(
+        raw_output_uri=raw_output_uri,
+        online_predictions_uri=online_predictions_uri,
+        normalized_manifest_uri=inference_manifest_uri,
+        summary_json_uri=summary_json_uri,
+        summary_markdown_uri=summary_markdown_uri,
+    )
+    # Empty-string fallback is intentional: skipped/missing provider outputs
+    # score as deletions instead of disappearing from the denominator.
+    hyps = [preds.get(row.audio_filepath, "") for row in eval_rows]
+    missing_prediction_count = sum(
+        1 for row in eval_rows if row.audio_filepath not in preds
+    )
+    target_metrics = build_target_metrics(
+        label=target.label,
+        model=target.model,
+        refs=refs,
+        hyps=hyps,
+        normalizer=normalizer,
+        keywords=GEMINI_TRANSCRIBE_KEYWORDS,
+        missing_prediction_count=missing_prediction_count,
+        artifacts=artifacts,
+        metadata=metadata,
+    )
+    metrics[f"{target.label}_wer"] = target_metrics.wer
+    metrics[f"{target.label}_cer"] = target_metrics.cer
+    metrics[f"{target.label}_inference_manifest_uri"] = inference_manifest_uri
+    if raw_output_uri:
+        metrics[f"{target.label}_batch_output_uri"] = raw_output_uri
+    if online_predictions_uri:
+        metrics[f"{target.label}_online_predictions_uri"] = (
+            online_predictions_uri
         )
-        artifacts = ReportArtifacts(
-            raw_output_uri=raw_output_uri,
-            online_predictions_uri=online_predictions_uri,
-            normalized_manifest_uri=inference_manifest_uri,
-        )
-        # Empty-string fallback is intentional: skipped/missing provider outputs
-        # score as deletions instead of disappearing from the denominator.
-        hyps = [preds.get(row.audio_filepath, "") for row in eval_rows]
-        missing_prediction_count = sum(
-            1 for row in eval_rows if row.audio_filepath not in preds
-        )
-        target_metrics = build_target_metrics(
-            label=target.label,
-            model=target.model,
-            refs=refs,
-            hyps=hyps,
-            normalizer=normalizer,
-            keywords=GEMINI_TRANSCRIBE_KEYWORDS,
-            missing_prediction_count=missing_prediction_count,
-            artifacts=artifacts,
-            metadata=metadata,
-        )
-        report_targets.append(target_metrics)
-        metrics[f"{target.label}_wer"] = target_metrics.wer
-        metrics[f"{target.label}_cer"] = target_metrics.cer
-        metrics[f"{target.label}_inference_manifest_uri"] = (
-            inference_manifest_uri
-        )
-        if raw_output_uri:
-            metrics[f"{target.label}_batch_output_uri"] = raw_output_uri
-        if online_predictions_uri:
-            metrics[f"{target.label}_online_predictions_uri"] = (
-                online_predictions_uri
-            )
-
-    base_target = _target_by_label(report_targets, "base")
-    if base_target is not None:
-        metrics["base_wer"] = base_target.wer
-        metrics["base_cer"] = base_target.cer
-    tuned_target = _target_by_label(report_targets, "tuned")
-    if tuned_target is not None:
-        metrics["tuned_wer"] = tuned_target.wer
-        metrics["tuned_cer"] = tuned_target.cer
+    if target.label == "base":
+        metrics["base_wer"] = target_metrics.wer
+        metrics["base_cer"] = target_metrics.cer
+    if target.label == "tuned":
+        metrics["tuned_wer"] = target_metrics.wer
+        metrics["tuned_cer"] = target_metrics.cer
 
     report = EvalReport(
         round_id=run_cfg.round_id,
         generated_at=datetime.now(UTC).isoformat(),
-        targets=report_targets,
+        targets=[target_metrics],
         metadata={
             "eval_manifest_uri": eval_manifest_uri,
             "n_eval_examples": len(eval_rows),
         },
     )
-    write_wer_summary(RESULTS_DIR, run_cfg.round_id, report)
+    summary_json_path, summary_markdown_path = write_wer_summary(
+        RESULTS_DIR, run_cfg.round_id, report
+    )
+    upload_local_file(storage_client, summary_json_path, summary_json_uri)
+    upload_local_file(
+        storage_client, summary_markdown_path, summary_markdown_uri
+    )
     logger.info("\n%s", render_console_report(report))
     config.update(
         {
@@ -297,7 +301,7 @@ def evaluate_run(
             "datasets": [dataset],
             "epochs": epoch_count,
             "git_sha": config.get("git_sha", "—"),
-            "targets": report_targets,
+            "targets": [target_metrics],
             "timestamp": datetime.now(UTC).strftime("%Y-%m-%d"),
         },
     )
@@ -309,15 +313,6 @@ def evaluate_run(
 
 
 PredictionMap = BatchPredictionMap
-
-
-def _target_by_label(
-    targets: list[TargetMetrics], label: str
-) -> TargetMetrics | None:
-    for target in targets:
-        if target.target_label == label:
-            return target
-    return None
 
 
 def batch_infer(

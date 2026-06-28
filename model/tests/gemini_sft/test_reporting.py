@@ -26,6 +26,8 @@ class TestReportingContract(unittest.TestCase):
             artifacts=ReportArtifacts(
                 raw_output_uri="gs://bucket/raw/",
                 normalized_manifest_uri="gs://bucket/normalized.jsonl",
+                summary_json_uri="gs://bucket/evals/wer_summary.json",
+                summary_markdown_uri="gs://bucket/evals/wer_summary.md",
             ),
         )
         report = EvalReport(
@@ -54,6 +56,14 @@ class TestReportingContract(unittest.TestCase):
             row["artifacts"]["normalized_manifest_uri"],
             "gs://bucket/normalized.jsonl",
         )
+        self.assertEqual(
+            row["artifacts"]["summary_json_uri"],
+            "gs://bucket/evals/wer_summary.json",
+        )
+        self.assertEqual(
+            row["artifacts"]["summary_markdown_uri"],
+            "gs://bucket/evals/wer_summary.md",
+        )
 
     def test_total_reference_words_matches_wer_denominator(self) -> None:
         refs = ["engine copy", "brush"]
@@ -68,9 +78,7 @@ class TestReportingContract(unittest.TestCase):
         )
         wer = compute_wer(refs, hyps, normalizer=None)
         expected_total = (
-            int(wer["hits"])
-            + int(wer["substitutions"])
-            + int(wer["deletions"])
+            int(wer["hits"]) + int(wer["substitutions"]) + int(wer["deletions"])
         )
 
         self.assertEqual(target.total_reference_words, expected_total)
