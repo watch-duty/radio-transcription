@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
 import re
@@ -18,6 +17,7 @@ from common.gcs_utils import (
     upload_local_file,
 )
 from common.gemini.context import ContextTurn
+from common.gemini import request_identity as request_identity_lib
 from common.gemini.vertex import (
     GEMINI_GENERATION_CONFIG,
     GEMINI_SAFETY_SETTINGS,
@@ -111,29 +111,22 @@ def build_online_request_identity(
     safety_settings: Sequence[dict[str, Any]],
 ) -> dict[str, Any]:
     """Return the durable identity for online prediction reuse."""
-    return {
-        "schema_version": 1,
-        "target_label": target_label,
-        "model": model,
-        "eval_manifest_uri": eval_manifest_uri,
-        "audio_uris": list(audio_uris),
-        "system_prompt": system_prompt,
-        "user_prompt": user_prompt,
-        "prior_context_count": prior_context_count,
-        "prior_context_mode": prior_context_mode,
-        "generation_config": _json_safe_copy(generation_config),
-        "safety_settings": _json_safe_copy(list(safety_settings)),
-    }
+    return request_identity_lib.build_request_identity(
+        target_label=target_label,
+        model=model,
+        eval_manifest_uri=eval_manifest_uri,
+        audio_uris=audio_uris,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        prior_context_count=prior_context_count,
+        prior_context_mode=prior_context_mode,
+        generation_config=generation_config,
+        safety_settings=safety_settings,
+    )
 
 
 def request_identity_hash(identity: dict[str, Any]) -> str:
-    payload = json.dumps(
-        identity,
-        ensure_ascii=True,
-        separators=(",", ":"),
-        sort_keys=True,
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return request_identity_lib.request_identity_hash(identity)
 
 
 def load_existing_online_predictions(
@@ -322,49 +315,22 @@ async def run_online_target_inference(
     )
 
 
-def _json_safe_copy(value: Any) -> Any:
-    return json.loads(json.dumps(value, sort_keys=True))
-
-
 def _load_metadata_identity(path: Path) -> dict[str, Any]:
-    metadata = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(metadata, dict):
-        msg = "online prediction request identity mismatch: invalid metadata"
-        raise ValueError(msg)
-    identity = metadata.get("request_identity")
-    if not isinstance(identity, dict):
-        msg = "online prediction request identity mismatch: missing identity"
-        raise ValueError(msg)
-    expected_hash = metadata.get("request_identity_hash")
-    if expected_hash and expected_hash != request_identity_hash(identity):
-        msg = "online prediction request identity mismatch: hash mismatch"
-        raise ValueError(msg)
-    return identity
+    return request_identity_lib.load_metadata_identity(
+        path,
+        error_message="online prediction request identity mismatch",
+    )
 
 
 def _validate_existing_identity(
     existing_identity: dict[str, Any],
-    request_identity: dict[str, Any],
+    expected_identity: dict[str, Any],
 ) -> None:
-    existing_audio = list(existing_identity.get("audio_uris") or [])
-    request_audio = list(request_identity.get("audio_uris") or [])
-    if _identity_without_audio(existing_identity) != _identity_without_audio(
-        request_identity
-    ):
-        msg = "online prediction request identity mismatch"
-        raise ValueError(msg)
-    if existing_audio == request_audio:
-        return
-    if request_audio[: len(existing_audio)] == existing_audio:
-        return
-    msg = "online prediction request identity mismatch"
-    raise ValueError(msg)
-
-
-def _identity_without_audio(identity: dict[str, Any]) -> dict[str, Any]:
-    result = dict(identity)
-    result.pop("audio_uris", None)
-    return result
+    request_identity_lib.validate_prefix_identity(
+        existing_identity,
+        expected_identity,
+        "online prediction request identity mismatch",
+    )
 
 
 def _validate_existing_rows(
@@ -397,10 +363,7 @@ def _write_metadata(path: Path, identity: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
-            {
-                "request_identity_hash": request_identity_hash(identity),
-                "request_identity": identity,
-            },
+            request_identity_lib.metadata_payload(identity),
             sort_keys=True,
         )
         + "\n",
