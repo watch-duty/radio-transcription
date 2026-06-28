@@ -88,7 +88,7 @@ Plans:
 - [x] 03-03-PLAN.md - Target-driven packaged eval integration
 
 **Wave 4** *(blocked on 03-02 and 03-03 completion)*
-- [ ] 03-04-PLAN.md - Checkpoint scorer parity and execution docs
+- [x] 03-04-PLAN.md - Checkpoint scorer parity and execution docs
 **UI hint**: no
 
 ### Phase 4: Durable Eval
