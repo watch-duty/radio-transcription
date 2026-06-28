@@ -52,7 +52,7 @@ or prior chat history.
 - [ ] **EXEC-04**: Online checkpoint execution supports resumable prediction
   writing, retry settings, sync cadence, log cadence, row limits, and bounded
   concurrency.
-- [ ] **EXEC-05**: Multiple configured targets run in parallel by default when
+- [x] **EXEC-05**: Multiple configured targets run in parallel by default when
   doing so is safe for their backend and configured concurrency.
 - [ ] **EXEC-06**: Operator can run a smoke-limited eval before full inference
   without changing the target config semantics.
@@ -63,9 +63,9 @@ or prior chat history.
   not require local `results/` as source of truth.
 - [x] **DATA-02**: Eval writes one normalized inference manifest per evaluated
   target, with artifact labels derived from validated target labels.
-- [ ] **DATA-03**: Reports include dataset breakdowns for bcfy_calls,
+- [x] **DATA-03**: Reports include dataset breakdowns for bcfy_calls,
   bcfy_feeds, echo, and fire_notifications when those groups are present.
-- [ ] **DATA-04**: Dataset breakdowns include WER, CER, keyword accuracy,
+- [x] **DATA-04**: Dataset breakdowns include WER, CER, keyword accuracy,
   empty-or-unintelligible rate, exact empty response rate, insertion count,
   deletion count, substitution count, total reference word count, and row count.
 - [x] **DATA-05**: Report output links to raw Vertex output, online prediction
@@ -144,12 +144,12 @@ Traceability populated during roadmap creation.
 | EXEC-02 | Phase 3 | Pending |
 | EXEC-03 | Phase 3 | Pending |
 | EXEC-04 | Phase 3 | Pending |
-| EXEC-05 | Phase 4 | Pending |
+| EXEC-05 | Phase 4 | Complete |
 | EXEC-06 | Phase 3 | Pending |
 | DATA-01 | Phase 4 | Complete |
 | DATA-02 | Phase 4 | Complete |
-| DATA-03 | Phase 4 | Pending |
-| DATA-04 | Phase 4 | Pending |
+| DATA-03 | Phase 4 | Complete |
+| DATA-04 | Phase 4 | Complete |
 | DATA-05 | Phase 4 | Complete |
 | DATA-06 | Phase 4 | Complete |
 | DOC-01 | Phase 5 | Pending |
