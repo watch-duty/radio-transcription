@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: verifying
+status: executing
 stopped_at: Completed 04-DISCUSSION
-last_updated: "2026-06-28T21:00:23.000Z"
-last_activity: 2026-06-28
+last_updated: "2026-06-28T21:21:23.552Z"
+last_activity: 2026-06-28 -- Phase 04 planning complete
 progress:
   total_phases: 5
   completed_phases: 3
-  total_plans: 10
+  total_plans: 14
   completed_plans: 10
-  percent: 100
+  percent: 71
 ---
 
 # Project State
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-06-28)
 
 Phase: 04 (durable-eval) — DISCUSSED
 Plan: 0 of 0
-Status: Discussion complete — ready for planning
-Last activity: 2026-06-28
+Status: Ready to execute
+Last activity: 2026-06-28 -- Phase 04 planning complete
 
 Progress: [██████████] 100%
 
@@ -79,6 +79,7 @@ None yet.
 - [Phase 3]: Confirm online `generate_content` request requirements, quota/concurrency behavior, retry semantics, and endpoint location extraction before paid validation.
 - [Phase 4]: Discussion resolved stale-output validation: batch and online
   prediction reuse must require matching request-identity metadata.
+
 - [Phase 4]: Discussion narrowed eval scope to one `[eval.model]` per run;
   plural `[[eval.models]]`/`eval_models`, internal target parallelism, and
   dataset breakdowns are out of scope for Phase 4.
