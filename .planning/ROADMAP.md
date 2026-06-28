@@ -85,7 +85,7 @@ Plans:
 - [x] 03-02-PLAN.md - Resumable online target execution
 
 **Wave 3** *(blocked on 03-01 and 03-02 completion)*
-- [ ] 03-03-PLAN.md - Target-driven packaged eval integration
+- [x] 03-03-PLAN.md - Target-driven packaged eval integration
 
 **Wave 4** *(blocked on 03-02 and 03-03 completion)*
 - [ ] 03-04-PLAN.md - Checkpoint scorer parity and execution docs
