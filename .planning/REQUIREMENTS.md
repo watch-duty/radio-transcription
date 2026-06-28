@@ -125,44 +125,45 @@ or prior chat history.
 
 ## Traceability
 
-Traceability is populated during roadmap creation.
+Traceability populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| RPT-01 | TBD | Pending |
-| RPT-02 | TBD | Pending |
-| RPT-03 | TBD | Pending |
-| RPT-04 | TBD | Pending |
-| RPT-05 | TBD | Pending |
-| CFG-01 | TBD | Pending |
-| CFG-02 | TBD | Pending |
-| CFG-03 | TBD | Pending |
-| CFG-04 | TBD | Pending |
-| CFG-05 | TBD | Pending |
-| CFG-06 | TBD | Pending |
-| EXEC-01 | TBD | Pending |
-| EXEC-02 | TBD | Pending |
-| EXEC-03 | TBD | Pending |
-| EXEC-04 | TBD | Pending |
-| EXEC-05 | TBD | Pending |
-| EXEC-06 | TBD | Pending |
-| DATA-01 | TBD | Pending |
-| DATA-02 | TBD | Pending |
-| DATA-03 | TBD | Pending |
-| DATA-04 | TBD | Pending |
-| DATA-05 | TBD | Pending |
-| DATA-06 | TBD | Pending |
-| DOC-01 | TBD | Pending |
-| DOC-02 | TBD | Pending |
-| DOC-03 | TBD | Pending |
-| DOC-04 | TBD | Pending |
-| DOC-05 | TBD | Pending |
+| RPT-01 | Phase 1 | Pending |
+| RPT-02 | Phase 1 | Pending |
+| RPT-03 | Phase 1 | Pending |
+| RPT-04 | Phase 1 | Pending |
+| RPT-05 | Phase 1 | Pending |
+| CFG-01 | Phase 2 | Pending |
+| CFG-02 | Phase 2 | Pending |
+| CFG-03 | Phase 2 | Pending |
+| CFG-04 | Phase 2 | Pending |
+| CFG-05 | Phase 2 | Pending |
+| CFG-06 | Phase 2 | Pending |
+| EXEC-01 | Phase 3 | Pending |
+| EXEC-02 | Phase 3 | Pending |
+| EXEC-03 | Phase 3 | Pending |
+| EXEC-04 | Phase 3 | Pending |
+| EXEC-05 | Phase 4 | Pending |
+| EXEC-06 | Phase 3 | Pending |
+| DATA-01 | Phase 4 | Pending |
+| DATA-02 | Phase 4 | Pending |
+| DATA-03 | Phase 4 | Pending |
+| DATA-04 | Phase 4 | Pending |
+| DATA-05 | Phase 4 | Pending |
+| DATA-06 | Phase 4 | Pending |
+| DOC-01 | Phase 5 | Pending |
+| DOC-02 | Phase 5 | Pending |
+| DOC-03 | Phase 5 | Pending |
+| DOC-04 | Phase 5 | Pending |
+| DOC-05 | Phase 5 | Pending |
 
 **Coverage:**
 - v1 requirements: 28 total
-- Mapped to phases: 0
-- Unmapped: 28
+- Mapped to phases: 28
+- Unmapped: 0
+- Duplicate mappings: 0
 
 ---
 *Requirements defined: 2026-06-28*
-*Last updated: 2026-06-28 after initial definition*
+*Last updated: 2026-06-28 after roadmap creation*
