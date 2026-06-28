@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 03-04-PLAN.md
-last_updated: "2026-06-28T20:18:18.402Z"
+stopped_at: Completed 04-DISCUSSION
+last_updated: "2026-06-28T21:00:23.000Z"
 last_activity: 2026-06-28
 progress:
   total_phases: 5
@@ -21,13 +21,13 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-28)
 
 **Core value:** A new operator can run and compare Gemini SFT/eval experiments from explicit configs and console reports without reverse-engineering notebooks or prior chat history.
-**Current focus:** Phase 03 — target-execution
+**Current focus:** Phase 04 — durable-eval
 
 ## Current Position
 
-Phase: 03 (target-execution) — EXECUTING
-Plan: 4 of 4
-Status: Phase complete — ready for verification
+Phase: 04 (durable-eval) — DISCUSSED
+Plan: 0 of 0
+Status: Discussion complete — ready for planning
 Last activity: 2026-06-28
 
 Progress: [██████████] 100%
@@ -77,7 +77,11 @@ None yet.
 
 - [Phase 2]: Verify current Google GenAI/Vertex resource forms, locations, and batch support before hard-coding backend defaults.
 - [Phase 3]: Confirm online `generate_content` request requirements, quota/concurrency behavior, retry semantics, and endpoint location extraction before paid validation.
-- [Phase 4]: Define stale-output validation fields against the existing GCS artifact layout.
+- [Phase 4]: Discussion resolved stale-output validation: batch and online
+  prediction reuse must require matching request-identity metadata.
+- [Phase 4]: Discussion narrowed eval scope to one `[eval.model]` per run;
+  plural `[[eval.models]]`/`eval_models`, internal target parallelism, and
+  dataset breakdowns are out of scope for Phase 4.
 
 ## Deferred Items
 
@@ -89,6 +93,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-28T20:18:18.398Z
-Stopped at: Completed 03-04-PLAN.md
-Resume file: .planning/phases/03-target-execution/03-04-SUMMARY.md
+Last session: 2026-06-28T21:00:23.000Z
+Stopped at: Completed 04-DISCUSSION
+Resume file: .planning/phases/04-durable-eval/04-CONTEXT.md
