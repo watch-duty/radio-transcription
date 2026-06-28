@@ -68,7 +68,7 @@ or prior chat history.
 - [ ] **DATA-04**: Dataset breakdowns include WER, CER, keyword accuracy,
   empty-or-unintelligible rate, exact empty response rate, insertion count,
   deletion count, substitution count, total reference word count, and row count.
-- [ ] **DATA-05**: Report output links to raw Vertex output, online prediction
+- [x] **DATA-05**: Report output links to raw Vertex output, online prediction
   JSONL, normalized inference manifests, and GCS summary artifacts.
 - [x] **DATA-06**: Existing batch or online outputs are reused only when they
   match the current config, target, prompt, eval manifest, and context settings.
@@ -150,7 +150,7 @@ Traceability populated during roadmap creation.
 | DATA-02 | Phase 4 | Complete |
 | DATA-03 | Phase 4 | Pending |
 | DATA-04 | Phase 4 | Pending |
-| DATA-05 | Phase 4 | Pending |
+| DATA-05 | Phase 4 | Complete |
 | DATA-06 | Phase 4 | Complete |
 | DOC-01 | Phase 5 | Pending |
 | DOC-02 | Phase 5 | Pending |
