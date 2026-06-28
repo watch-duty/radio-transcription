@@ -1,7 +1,7 @@
 # Phase 2 Research: Target Config
 
-**Phase:** 02-target-config  
-**Date:** 2026-06-28  
+**Phase:** 02-target-config
+**Date:** 2026-06-28
 **Status:** Complete
 
 ## Question
@@ -111,4 +111,3 @@ ordinary separate config files/runs:
 - Batch versus online backend routing.
 - Multi-target execution or parallelism.
 - Full operator documentation for every workflow; that remains Phase 5.
-

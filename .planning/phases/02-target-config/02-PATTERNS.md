@@ -1,7 +1,7 @@
 # Phase 2 Patterns: Target Config
 
-**Phase:** 02-target-config  
-**Date:** 2026-06-28  
+**Phase:** 02-target-config
+**Date:** 2026-06-28
 **Status:** Complete
 
 ## Existing Patterns To Preserve
@@ -86,4 +86,3 @@ newer decision:
 - No legacy target synthesis from GCS `endpoint`.
 - Missing `[[eval.models]]` tells the operator to add `label` and `model` and
   states that there is no `base_model`/`endpoint` fallback.
-
