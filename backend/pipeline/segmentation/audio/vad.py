@@ -630,7 +630,7 @@ class VoiceActivityDetector:
         """Slices the preprocessed audio to extract the VAD input and calculates the time offset.
 
         Extracts the VAD input chunk, optionally including a warmup segment from the prior tail
-        (Lookback Priming) to warm up the VAD RNN states.
+        (prior tail warmup) to warm up the VAD RNN states.
         """
         preamble_samples = int(prior_len_sec * TARGET_SAMPLE_RATE)
         if is_fallback_priming:
@@ -678,7 +678,7 @@ class VoiceActivityDetector:
         ):
             prior_audio = prior_audio.astype(np.float32) / 32768.0
 
-        # Dither Stabilization (GOO-714 / PyAV Migration):
+        # Dither Stabilization:
         # We inject a tiny, deterministic Gaussian dither (-120dB RMS) to stabilize the downstream
         # recurrent denoiser (UL-UNAS) RNN.
         #
@@ -696,6 +696,16 @@ class VoiceActivityDetector:
         # 16-bit quantization floor of -96dB), we "swamp" the 1 LSB decoder rounding mismatch.
         # This keeps the RNN states locked in phase across all platforms/decoders, recovering VAD
         # sensitivity and restoring F1 accuracy without introducing false positives on static.
+        #
+        # Why dither is applied BEFORE peak normalization:
+        # The 1-LSB decoder rounding mismatches exist in the original, un-normalized audio. If the
+        # audio is extremely quiet, peak normalization will apply a massive gain (up to 1000x / +60dB)
+        # to the signal, which also amplifies the decoder noise. If we added dither *after* normalization
+        # at a fixed -120dB, it would be far too quiet to swamp the now-amplified decoder noise (which
+        # could be at -60dB). Applying dither *before* normalization ensures that the dither scales
+        # proportionally with the signal and the decoder noise, maintaining the correct swamping ratio.
+        # The amplified dither on quiet files is harmless because it is completely masked by the
+        # also-amplified real channel static.
         if self.dither_rms > 0:
             rng = np.random.default_rng(seed=self.seed)
             audio_array = audio_array + rng.normal(

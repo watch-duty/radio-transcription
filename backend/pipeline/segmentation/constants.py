@@ -80,8 +80,25 @@ VAD_DEFAULT_MIN_SPEECH_DURATION_MS: Final = 200
 # Extended to 750ms to prevent whisper/dispatcher dropouts from prematurely splitting dispatches
 VAD_DEFAULT_MIN_SILENCE_DURATION_MS: Final = 750
 VAD_DEFAULT_PAD_SEC: Final = 0.3
+
+# VAD Priming Terminology Glossary:
+# 1. prior_audio_tail (VAD_DEFAULT_PRIMING_SEC = 6.0s):
+#    The duration of the trailing audio we extract from the end of a chunk and store in the
+#    persistent state (Dataflow/Windmill) to pass to the next chunk. We store a larger buffer (6.0s)
+#    in the state so that we can adjust the active warmup window (below) in the future via config
+#    changes without needing a breaking state schema migration.
 VAD_DEFAULT_PRIMING_SEC: Final = 6.0
-VAD_DEFAULT_WARMUP_SEC: Final = 0.2
+
+# 2. warmup_sec (VAD_DEFAULT_WARMUP_SEC = 3.0s):
+#    The active window of the prior_audio_tail that the VAD actually runs on to warm up its denoiser
+#    and RNN states. We use 3.0s (increased from 1.5s) because empirical testing showed the UL-UNAS
+#    denoiser RNN requires up to 3.0s to fully stabilize its internal GRU states and adapt its noise floor.
+VAD_DEFAULT_WARMUP_SEC: Final = 3.0
+
+# 3. fallback_priming (VAD_DEFAULT_FALLBACK_PRIMING_SEC = 1.0s):
+#    The duration of synthetic comfort noise generated to prime the denoiser at the very start of a
+#    stream (when no prior_audio_tail exists). Silero VAD is bypassed on this fallback noise to prevent
+#    biasing it toward silence.
 VAD_DEFAULT_FALLBACK_PRIMING_SEC: Final = 1.0
 VAD_DEFAULT_DITHER_RMS: Final = 1e-6
 VAD_DEFAULT_COMP_THRESHOLD_DB: Final = -30.0

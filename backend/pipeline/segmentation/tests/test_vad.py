@@ -163,8 +163,9 @@ class TestVadEngine(unittest.TestCase):
         baseline_f1: float,
         tolerance: float = 0.02,
         vad_instance: vad.VoiceActivityDetector | None = None,
+        chunk_len_sec: float = 15.0,
     ) -> None:
-        """Helper to run VAD over an audio file in simulated 15s chunks and assert F1 differentially."""
+        """Helper to run VAD over an audio file in simulated chunks and assert F1 differentially."""
         audio_path = Path(__file__).parent / "test_data" / filename
         if not audio_path.exists():
             self.skipTest(f"Audio file not found at: {audio_path}")
@@ -176,8 +177,7 @@ class TestVadEngine(unittest.TestCase):
             detector.setup()
 
         # Production continuous stream parameters:
-        # Audio chunks are captured in 15.0s intervals
-        chunk_len_sec = 15.0
+        # Audio chunks are captured in intervals
         chunk_samples = int(chunk_len_sec * sample_rate)
         # Match production: the stitcher caches VAD_DEFAULT_PRIMING_SEC (6.0s) of prior tail
         priming_samples = int(VAD_DEFAULT_PRIMING_SEC * sample_rate)
@@ -198,10 +198,20 @@ class TestVadEngine(unittest.TestCase):
                     (start + chunk_offset_sec, end + chunk_offset_sec)
                 )
 
-            # Cache trailing prior audio tail for the next chunk boundary priming
-            prior_audio_tail = (
-                chunk[-priming_samples:] if len(chunk) > 0 else None
-            )
+            # Cache trailing prior audio tail for the next chunk boundary priming (Conditional State Continuity)
+            chunk_dur = len(chunk) / float(sample_rate)
+            ended_in_speech = False
+            if raw_chunk_segments:
+                last_seg = raw_chunk_segments[-1]
+                if last_seg[1] >= chunk_dur - 0.05:  # 50ms tolerance
+                    ended_in_speech = True
+
+            if ended_in_speech:
+                prior_audio_tail = (
+                    chunk[-priming_samples:] if len(chunk) > 0 else None
+                )
+            else:
+                prior_audio_tail = None
 
         audio_len = len(audio_data) / float(sample_rate)
 
@@ -233,7 +243,7 @@ class TestVadEngine(unittest.TestCase):
         self._run_integration_test(
             "test_joined.flac",
             [(8.3, 10.7), (12.3, 15.6), (20.3, 23.0), (26.2, 27.0)],
-            baseline_f1=0.890,
+            baseline_f1=0.895,
         )
 
     def test_integration_bcfy_file(self) -> None:
@@ -264,7 +274,7 @@ class TestVadEngine(unittest.TestCase):
                 (56.2, 60.6),
                 (62.6, 65.3),
             ],
-            baseline_f1=0.892,
+            baseline_f1=0.903,
         )
 
     def test_integration_dispatch_sku_file(self) -> None:
@@ -292,7 +302,7 @@ class TestVadEngine(unittest.TestCase):
                 (49.373, 51.884),
                 (52.768, 54.178),
             ],
-            baseline_f1=0.871,
+            baseline_f1=0.890,
         )
 
     def test_integration_middlebury_quiet_segments_file(self) -> None:
@@ -325,6 +335,39 @@ class TestVadEngine(unittest.TestCase):
                 (2.037, 3.869),
             ],
             baseline_f1=0.669,
+        )
+
+    def test_integration_deafening_dispatcher_ems(self) -> None:
+        """Integration test to verify VAD recovers sensitivity after a loud dispatcher.
+
+        Verifies that a loud dispatcher segment (3.0s - 4.609s) does not deafen the VAD
+        for the subsequent quiet EMS speech segments (5.984s - 6.611s and 7.865s - 11.605s)
+        when processed in 5.0-second chunks.
+        """
+        self._run_integration_test(
+            "test_vad_deafening_dispatcher_ems.flac",
+            [
+                (3.0, 4.609),
+                (5.984, 6.611),
+                (7.865, 11.605),
+            ],
+            baseline_f1=0.494,
+            chunk_len_sec=5.0,
+        )
+
+    def test_integration_deafening_static_preamble(self) -> None:
+        """Integration test to verify VAD performance on quiet speech preceded by static noise.
+
+        Verifies that a quiet speech segment (4.418s - 15.570s) preceded by 1.4s of static noise
+        is successfully detected across chunk boundaries when processed in 5.0-second chunks.
+        """
+        self._run_integration_test(
+            "test_vad_deafening_static_preamble.flac",
+            [
+                (4.418, 15.570),
+            ],
+            baseline_f1=0.640,
+            chunk_len_sec=5.0,
         )
 
     def test_integration_static_middlebury_file(self) -> None:
