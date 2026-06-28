@@ -125,6 +125,24 @@ def evaluate_run(
             "No tuned endpoint in config.json; running base-only eval."
         )
         base_only = True
+    supported_eval_targets = [{"label": "base", "model": base_model}]
+    if not base_only and tuned_endpoint:
+        supported_eval_targets.append(
+            {"label": "tuned", "model": str(tuned_endpoint)}
+        )
+    configured_eval_targets = [
+        target.to_record_dict() for target in eval_model_targets
+    ]
+    if configured_eval_targets != supported_eval_targets:
+        msg = (
+            "configured eval_models do not match the eval targets supported "
+            "by this runner; configured eval_models must exactly match the "
+            "base_model/endpoint targets this runner can execute "
+            f"(configured={configured_eval_targets!r}, "
+            f"supported={supported_eval_targets!r}). Refusing paid eval "
+            "instead of falling back to base_model/endpoint."
+        )
+        raise ValueError(msg)
 
     eval_entries = download_jsonl_manifest(storage_client, eval_manifest_uri)
     source_rows, eval_rows = canonical_rows_from_entries(

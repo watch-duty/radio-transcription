@@ -441,6 +441,28 @@ model = "gemini-3.1-flash-lite"
                 with self.assertRaisesRegex(RunConfigError, field_name):
                     load_run_config(self._write_config(body))
 
+    def test_eval_model_targets_reject_unsupported_eval_table_fields(
+        self,
+    ) -> None:
+        for field_name, field_value in (
+            ("masked", "true"),
+            ("eval_label", '"masked"'),
+        ):
+            with self.subTest(field_name=field_name):
+                body = self._valid_toml(
+                    eval_section=f"""
+[eval]
+{field_name} = {field_value}
+
+[[eval.models]]
+label = "base"
+model = "gemini-3.1-flash-lite"
+"""
+                )
+
+                with self.assertRaisesRegex(RunConfigError, field_name):
+                    load_run_config(self._write_config(body))
+
     def test_require_config_eval_models_returns_valid_targets(self) -> None:
         targets = require_config_eval_models(
             {

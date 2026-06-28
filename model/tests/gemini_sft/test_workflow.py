@@ -1652,6 +1652,42 @@ class TestEvaluateRun(unittest.TestCase):
         download_manifest.assert_not_called()
         submit.assert_not_called()
 
+    def test_eval_rejects_unsupported_eval_models_before_submit(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage)
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            config = run_cfg.to_record_dict()
+            config["eval_models"] = [
+                {
+                    "label": "checkpoint_6",
+                    "model": "projects/p/locations/us/endpoints/123",
+                }
+            ]
+            storage.put(run_cfg.paths.config_uri, json.dumps(config))
+            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module.storage, "Client", return_value=storage
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module, "download_jsonl_manifest"
+                ) as download_manifest,
+                unittest.mock.patch.object(
+                    evaluate_module, "submit_batch_inference"
+                ) as submit,
+            ):
+                rc = evaluate_module.evaluate(args)
+
+        self.assertEqual(rc, 1)
+        download_manifest.assert_not_called()
+        submit.assert_not_called()
+
     def test_batch_infer_fails_when_vertex_writes_no_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = Path(tmp_s)

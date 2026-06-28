@@ -413,6 +413,14 @@ def _eval_model_targets(
         msg = "eval must be a TOML table"
         raise RunConfigError(msg)
 
+    unsupported_eval_fields = sorted(set(eval_table) - {"models"})
+    if unsupported_eval_fields:
+        msg = (
+            "eval must contain only [[eval.models]]; unsupported fields: "
+            f"{', '.join(unsupported_eval_fields)}"
+        )
+        raise RunConfigError(msg)
+
     raw_targets = eval_table.get("models")
     if raw_targets is None:
         if required:
