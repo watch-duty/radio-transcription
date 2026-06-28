@@ -54,10 +54,17 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Requirements**: CFG-01, CFG-02, CFG-03, CFG-04, CFG-05, CFG-06
 **Success Criteria** (what must be TRUE):
   1. Operator can configure one or more eval targets with a unified `models`-style shape that covers publisher/base models, tuned endpoints, and checkpoint endpoints.
-  2. Operator can run existing migration-period configs that still use `base_model` plus the tuned endpoint stored in GCS `config.json`.
+  2. Operator gets a clear validation error for old eval configs that rely only on `base_model` plus the tuned endpoint stored in GCS `config.json`; the new `[[eval.models]]` target config is required.
   3. Operator gets validation errors for missing, invalid, duplicate, or unsupported target fields before any paid Vertex operation starts.
   4. Operator can run masked and unmasked evals as separate labeled configs or manifests without an eval-sibling abstraction.
-**Plans**: TBD
+**Plans**: 3 plans
+Plans:
+**Wave 1**
+- [ ] 02-01-PLAN.md — Target config parser and artifact-label validation
+
+**Wave 2** *(blocked on 02-01 completion)*
+- [ ] 02-02-PLAN.md — Durable config eval target guard
+- [ ] 02-03-PLAN.md — Target examples and masked/unmasked config shape
 **UI hint**: no
 
 ### Phase 3: Target Execution
@@ -143,7 +150,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Reporting Contract | 3/3 | Complete   | 2026-06-28 |
-| 2. Target Config | 0/TBD | Not started | - |
+| 2. Target Config | 0/3 | Ready to execute | - |
 | 3. Target Execution | 0/TBD | Not started | - |
 | 4. Durable Eval | 0/TBD | Not started | - |
 | 5. Operator Docs | 0/TBD | Not started | - |
