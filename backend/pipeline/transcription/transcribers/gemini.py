@@ -12,6 +12,7 @@ from backend.pipeline.transcription.transcribers import base, prompts
 
 DEFAULT_GEMINI_LOCATION = "us"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+# Defensively handle both proto (UPPERCASE) and pythonic (PascalCase) SDK enum casings
 _VALID_FINISH_REASONS = {"STOP", "MAX_TOKENS", "Stop", "MaxTokens"}
 
 # Model configuration defaults

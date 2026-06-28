@@ -578,7 +578,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(categories, expected_categories)
 
     async def test_gemini_transcriber_unintelligible(self) -> None:
-        """Verifies that [UNINTELLIGIBLE] response maps to None."""
+        """Verifies that [UNINTELLIGIBLE] response maps to "[UNINTELLIGIBLE]"."""
         with patch(
             "backend.pipeline.transcription.transcribers.gemini.genai.Client"
         ) as mock_client_cls:

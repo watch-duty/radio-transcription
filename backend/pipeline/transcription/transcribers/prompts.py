@@ -1,7 +1,7 @@
 """Transcription model prompts."""
 
 # TODO: https://linear.app/watchduty/issue/GOO-687/update-prompt-to-allow-for-dynamic-text
-# Update the prompt to allow for dynamic text to be specified for the expected terminology.
+# Update the prompt to allow for dynamic text to be specified.
 GEMINI_PROMPT = """\
 Your primary task is to produce a strict, verbatim transcription of the spoken audio. Your absolute highest priority is to transcribe only what you hear with high acoustic certainty. Do not add, invent, or infer any speech that is not clearly audible. The audio may originate from VHF/UHF radio traffic and can include mic clicks, RF static, radio hum, and potentially unintelligible speech. When the audio is unequivocally confirmed as fire-related dispatch, speakers often use heavy jargon, and specific formatting rules apply.
 
