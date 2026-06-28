@@ -101,14 +101,19 @@ Plans:
   3. Operator can view dataset breakdowns for `bcfy_calls`, `bcfy_feeds`, `echo`, and `fire_notifications` when present, including WER, CER, keyword accuracy, empty rates, edit counts, total reference word count, and row count.
   4. Operator can follow report links to raw Vertex output, online prediction JSONL, normalized inference manifests, and GCS summary artifacts.
   5. Maintainer can verify existing batch or online outputs are reused only when they match the current config, target, prompt, eval manifest, and context settings.
-**Plans**: 3 plans
+**Plans**: 4/4 plans complete
 Plans:
 **Wave 1**
-- [ ] 05-01-PLAN.md — OKF runbook and README entrypoint
-- [ ] 05-02-PLAN.md — Config, metric, artifact, and hygiene references
+- [x] 04-01-PLAN.md — Singular eval model contract
 
-**Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 05-03-PLAN.md — Ignore rules and lightweight drift guards
+**Wave 2** *(blocked on 04-01 completion)*
+- [x] 04-02-PLAN.md — Batch request identity validation
+
+**Wave 3** *(blocked on 04-01 and 04-02 completion)*
+- [x] 04-03-PLAN.md — Durable single-target eval summaries
+
+**Wave 4** *(blocked on 04-03 completion)*
+- [x] 04-04-PLAN.md — Durable eval docs and checkpoint compatibility
 **UI hint**: no
 
 ### Phase 5: Operator Docs
@@ -121,7 +126,14 @@ Plans:
   3. Operator can read the docs and understand every report metric, including exact empty response rate versus empty-or-unintelligible rate.
   4. Operator can distinguish durable GCS state from local cache/mirror outputs and identify files that must not be committed.
   5. Maintainer can run or follow a final artifact hygiene check that catches accidental commits of local `.local.toml`, raw prediction JSONL, inference outputs, or `results/` files.
-**Plans**: TBD
+**Plans**: 0/3 plans executed
+Plans:
+**Wave 1**
+- [ ] 05-01-PLAN.md — OKF runbook and README entrypoint
+- [ ] 05-02-PLAN.md — Config, metric, artifact, and hygiene references
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 05-03-PLAN.md — Ignore rules and lightweight drift guards
 **UI hint**: no
 
 ## Coverage
