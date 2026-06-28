@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import argparse
 import json
 import sys
 import tempfile
@@ -12,7 +14,70 @@ sys.path.append(str(Path(__file__).resolve().parents[2] / "scripts" / "sft"))
 import score_gemini_sft_checkpoints_online as scorer  # noqa: E402
 
 
+class _OnlinePredictionMap(dict[str, str]):
+    online_predictions_uri = "gs://bucket/run/evals/checkpoint_7/online_predictions.jsonl"
+    metadata_uri = "gs://bucket/run/evals/checkpoint_7/online_predictions.meta.json"
+    error_count = 0
+    request_identity_hash = "hash"
+
+
 class TestCheckpointScorerSummary(unittest.TestCase):
+    def test_score_checkpoint_online_delegates_to_package_executor(
+        self,
+    ) -> None:
+        async def run_test() -> None:
+            predictions = _OnlinePredictionMap(
+                {"gs://audio/eval.flac": "eval transcript"}
+            )
+            with (
+                tempfile.TemporaryDirectory() as tmp,
+                unittest.mock.patch.object(
+                    scorer,
+                    "run_online_target_inference",
+                    unittest.mock.AsyncMock(return_value=predictions),
+                    create=True,
+                ) as run_online_target_inference,
+            ):
+                result = await scorer.score_checkpoint_online(
+                    checkpoint={
+                        "checkpoint_id": "7",
+                        "epoch": "8",
+                        "step": "2961",
+                        "endpoint": "projects/p/locations/us/endpoints/7",
+                    },
+                    source_rows=[
+                        {"audio_filepath": "gs://audio/eval.flac"}
+                    ],
+                    histories=[["prior"]],
+                    system_prompt="system",
+                    user_prompt="user",
+                    history_mode="text_turns",
+                    project="project",
+                    default_location="us-central1",
+                    run_gcs_prefix="gs://bucket/run",
+                    eval_manifest_uri="gs://bucket/eval.jsonl",
+                    local_dir=Path(tmp),
+                    storage_client=FakeStorageClient(),
+                    args=argparse.Namespace(concurrency=9, max_retries=4),
+                )
+
+            self.assertEqual(result["gs://audio/eval.flac"], "eval transcript")
+            run_online_target_inference.assert_awaited_once()
+            kwargs = run_online_target_inference.call_args.kwargs
+            self.assertEqual(kwargs["target_label"], "checkpoint_7")
+            self.assertEqual(
+                kwargs["target_model"],
+                "projects/p/locations/us/endpoints/7",
+            )
+            self.assertEqual(kwargs["histories"], [["prior"]])
+            self.assertEqual(kwargs["system_prompt"], "system")
+            self.assertEqual(kwargs["user_prompt"], "user")
+            self.assertEqual(kwargs["prior_context_mode"], "text_turns")
+            self.assertEqual(kwargs["concurrency"], 9)
+            self.assertEqual(kwargs["max_retries"], 4)
+
+        asyncio.run(run_test())
+
     def test_score_predictions_uses_canonical_report_metrics(
         self,
     ) -> None:
