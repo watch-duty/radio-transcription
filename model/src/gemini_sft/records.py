@@ -18,6 +18,7 @@ from typing import Any
 
 from gemini_sft.reporting import (
     EvalReport,
+    TargetMetrics,
     render_markdown_report,
     report_to_dict,
 )
@@ -266,9 +267,13 @@ def _append_inference_artifacts(
 def append_ledger(results_dir: Path, row: dict[str, Any]) -> None:
     """Append one row to results/ledger.md (creates header on first write).
 
-    Row fields: round_id, datasets, base_model, epochs, base_wer, tuned_wer (optional),
-    delta (optional), git_sha, timestamp.
+    Target-oriented rows pass ``targets`` as ``TargetMetrics`` records. Legacy
+    rows may still pass base/tuned WER fields.
     """
+    if row.get("targets"):
+        _append_target_ledger(results_dir, row)
+        return
+
     ledger_path = results_dir / "ledger.md"
     header = (
         "| round_id | datasets | base_model | epochs | base_wer | tuned_wer | delta | git_sha | timestamp |\n"
@@ -305,3 +310,45 @@ def append_ledger(results_dir: Path, row: dict[str, Any]) -> None:
     )
     with ledger_path.open("a", encoding="utf-8") as f:
         f.write(md_row)
+
+
+def _append_target_ledger(results_dir: Path, row: dict[str, Any]) -> None:
+    ledger_path = results_dir / "ledger.md"
+    header = (
+        "| round_id | datasets | targets | best_target | best_wer | epochs | git_sha | timestamp |\n"
+        "|----------|----------|---------|-------------|----------|--------|---------|----------|\n"
+    )
+    if not ledger_path.exists():
+        ledger_path.write_text(
+            "# SFT Pipeline Run Ledger\n\n" + header, encoding="utf-8"
+        )
+
+    target_rows = [_target_ledger_row(target) for target in row["targets"]]
+    best_target = min(target_rows, key=lambda target: target["wer"])
+    targets_cell = ",".join(
+        f"{target['label']}:{target['wer']:.2f}%" for target in target_rows
+    )
+    md_row = (
+        f"| {row.get('round_id', '—')} "
+        f"| {','.join(row.get('datasets') or [])} "
+        f"| {targets_cell} "
+        f"| {best_target['label']} "
+        f"| {best_target['wer']:.2f}% "
+        f"| {row.get('epochs', '—')} "
+        f"| {row.get('git_sha', '—')} "
+        f"| {row.get('timestamp', datetime.now(UTC).strftime('%Y-%m-%d'))} |\n"
+    )
+    with ledger_path.open("a", encoding="utf-8") as f:
+        f.write(md_row)
+
+
+def _target_ledger_row(target: Any) -> dict[str, Any]:
+    if isinstance(target, TargetMetrics):
+        return {"label": target.target_label, "wer": float(target.wer)}
+    if isinstance(target, dict):
+        return {
+            "label": str(target.get("target_label") or target.get("label")),
+            "wer": float(target["wer"]),
+        }
+    msg = "ledger target rows must be TargetMetrics or dictionaries"
+    raise TypeError(msg)

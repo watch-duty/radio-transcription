@@ -1807,6 +1807,9 @@ class TestEvaluateRun(unittest.TestCase):
             targets = {
                 target["target_label"]: target for target in metrics["targets"]
             }
+            ledger_text = (tmp / "results" / "ledger.md").read_text(
+                encoding="utf-8"
+            )
 
         self.assertEqual(rc, 0)
         batch.assert_called_once()
@@ -1842,6 +1845,7 @@ class TestEvaluateRun(unittest.TestCase):
             targets["checkpoint_6"]["empty_response_rate"],
             100.0,
         )
+        self.assertIn("checkpoint_6", ledger_text)
 
     def test_eval_execution_forced_backend_overrides_target_shape(self) -> None:
         online_backend_toml = 'backend = "online"'
@@ -2040,7 +2044,7 @@ class TestEvaluateRun(unittest.TestCase):
         download_manifest.assert_not_called()
         submit.assert_not_called()
 
-    def test_eval_rejects_unsupported_eval_models_before_submit(
+    def test_eval_endpoint_eval_model_runs_as_online_target(
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
@@ -2057,6 +2061,17 @@ class TestEvaluateRun(unittest.TestCase):
                 }
             ]
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
+            online_preds = _OnlinePredictionMap(
+                {"gs://audio/eval.flac": "eval transcript"},
+                online_predictions_uri=(
+                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/"
+                    "online_predictions.jsonl"
+                ),
+                metadata_uri=(
+                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/"
+                    "online_predictions.meta.json"
+                ),
+            )
             args = argparse.Namespace(config=str(cfg_path), base_only=True)
 
             with (
@@ -2064,17 +2079,31 @@ class TestEvaluateRun(unittest.TestCase):
                     evaluate_module.storage, "Client", return_value=storage
                 ),
                 unittest.mock.patch.object(
-                    evaluate_module, "download_jsonl_manifest"
+                    evaluate_module,
+                    "download_jsonl_manifest",
+                    return_value=[
+                        _row("gs://audio/eval.flac", "eval transcript")
+                    ],
                 ) as download_manifest,
                 unittest.mock.patch.object(
-                    evaluate_module, "submit_batch_inference"
-                ) as submit,
+                    evaluate_module,
+                    "run_online_target_inference",
+                    unittest.mock.AsyncMock(return_value=online_preds),
+                ) as run_online,
+                unittest.mock.patch.object(
+                    evaluate_module, "batch_infer"
+                ) as batch,
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "results"
+                ),
+                _patched_eval_scoring(),
             ):
                 rc = evaluate_module.evaluate(args)
 
-        self.assertEqual(rc, 1)
-        download_manifest.assert_not_called()
-        submit.assert_not_called()
+        self.assertEqual(rc, 0)
+        download_manifest.assert_called_once()
+        run_online.assert_awaited_once()
+        batch.assert_not_called()
 
     def test_batch_infer_fails_when_vertex_writes_no_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:

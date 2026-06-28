@@ -52,11 +52,13 @@ class OnlinePredictionMap(dict[str, str]):
         online_predictions_uri: str,
         metadata_uri: str,
         error_count: int,
+        request_identity_hash: str,
     ) -> None:
         super().__init__(rows)
         self.online_predictions_uri = online_predictions_uri
         self.metadata_uri = metadata_uri
         self.error_count = error_count
+        self.request_identity_hash = request_identity_hash
 
 
 def resolve_target_backend(
@@ -231,6 +233,7 @@ async def run_online_target_inference(
             completed,
             predictions_uri=predictions_uri,
             metadata_uri=metadata_uri,
+            request_identity_hash=request_identity_hash(identity),
         )
 
     _require_vertex_sdk()
@@ -315,6 +318,7 @@ async def run_online_target_inference(
         completed,
         predictions_uri=predictions_uri,
         metadata_uri=metadata_uri,
+        request_identity_hash=request_identity_hash(identity),
     )
 
 
@@ -445,6 +449,7 @@ def _prediction_map(
     *,
     predictions_uri: str,
     metadata_uri: str,
+    request_identity_hash: str,
 ) -> OnlinePredictionMap:
     return OnlinePredictionMap(
         {
@@ -454,6 +459,7 @@ def _prediction_map(
         online_predictions_uri=predictions_uri,
         metadata_uri=metadata_uri,
         error_count=sum(1 for row in rows.values() if row.get("error")),
+        request_identity_hash=request_identity_hash,
     )
 
 
