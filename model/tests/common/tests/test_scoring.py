@@ -18,6 +18,7 @@ from common.scoring import (
     compute_wer,
     count_keyword_occurrences,
     duration_bucket_wer,
+    empty_response_rate,
     hallucination_rate,
     keyword_metrics,
 )
@@ -186,6 +187,25 @@ class TestHallucinationRate(unittest.TestCase):
         self.assertEqual(
             hallucination_rate(["engine 41", "", "copy", ""]), 50.0
         )
+
+    def test_mixed_unintelligible_and_empty_rate(self) -> None:
+        self.assertEqual(
+            hallucination_rate(["", "[UNINTELLIGIBLE]", "copy"]), 66.67
+        )
+
+
+class TestEmptyResponseRate(unittest.TestCase):
+    def test_empty_list_returns_zero(self) -> None:
+        self.assertEqual(empty_response_rate([]), 0.0)
+
+    def test_flags_empty_string(self) -> None:
+        self.assertEqual(empty_response_rate([""]), 100.0)
+
+    def test_ignores_unintelligible_token(self) -> None:
+        self.assertEqual(empty_response_rate(["[UNINTELLIGIBLE]"]), 0.0)
+
+    def test_mixed_list_partial_rate(self) -> None:
+        self.assertEqual(empty_response_rate(["", "copy", "  "]), 66.67)
 
 
 class TestKeywordMetrics(unittest.TestCase):

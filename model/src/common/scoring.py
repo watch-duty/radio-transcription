@@ -11,9 +11,10 @@ a version bump can silently change normalization output and therefore WER.
 The WER-bearing functions (``build_normalizer``, ``compute_wer``,
 ``compute_cer``, ``duration_bucket_wer``, ``bootstrap_paired``) require the
 ``[scoring]`` extra (``jiwer`` + ``nemo_text_processing``). The pure-Python
-helpers (``hallucination_rate``, ``count_keyword_occurrences``,
-``keyword_metrics``) work without it. Importing this module WITHOUT the
-extra is always safe — the heavy deps are loaded lazily so
+helpers (``hallucination_rate``, ``empty_response_rate``,
+``count_keyword_occurrences``, ``keyword_metrics``) work without it.
+Importing this module WITHOUT the extra is always safe — the heavy deps
+are loaded lazily so
 ``import common.scoring`` never triggers NeMo.
 """
 
@@ -258,6 +259,21 @@ def hallucination_rate(hypotheses: list[str]) -> float:
         if not h.strip() or h.strip() == "[UNINTELLIGIBLE]"
     )
     return round(100 * flagged / len(hypotheses), 2)
+
+
+def empty_response_rate(hypotheses: list[str]) -> float:
+    """Percentage of hypotheses whose stripped text is exactly empty.
+
+    Args:
+        hypotheses: List of model-predicted transcript strings.
+
+    Returns:
+        Float between 0.0 and 100.0 (percentage of empty hypotheses).
+    """
+    if not hypotheses:
+        return 0.0
+    empty = sum(1 for h in hypotheses if not h.strip())
+    return round(100 * empty / len(hypotheses), 2)
 
 
 def duration_bucket_wer(
