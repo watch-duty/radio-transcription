@@ -25,7 +25,7 @@ export function RuleConfigurationView({
   triggerSnackbar,
   onError,
 }: RuleConfigurationViewProps) {
-  const { token } = useAuth();
+  const { token, isAdmin } = useAuth();
   const queryClient = useQueryClient();
 
   const [isEditing, setIsEditing] = useState(false);
@@ -238,7 +238,7 @@ export function RuleConfigurationView({
           }}
         />
         <Typography variant="h4" sx={{ fontWeight: 600 }}>
-          Rule Configuration
+          Rules
         </Typography>
       </Box>
 
@@ -250,37 +250,39 @@ export function RuleConfigurationView({
           minHeight: 0,
         }}
       >
-        <Grid
-          size={{ xs: 12, sm: 4 }}
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            height: { xs: 'auto', sm: '100%' },
-            minHeight: { xs: 'auto', sm: 0 },
-          }}
-        >
-          <RuleConfigurationEdit
-            key={isEditing ? `edit-${id}` : 'register'}
-            isEditing={isEditing}
-            editingRule={editingRule}
-            setEditingRule={setEditingRule}
-            editingRuleId={isEditing ? id : undefined}
-            feeds={sortedFeeds}
-            rules={rules}
-            onCreateRule={handleCreateRule}
-            onUpdateRule={(payload: RuleUpdate) =>
-              handleUpdateRule(id, payload)
-            }
-            onDeleteRule={() => {
-              deleteMutation.mutate(id);
+        {isAdmin && (
+          <Grid
+            size={{ xs: 12, sm: 4 }}
+            sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              height: { xs: 'auto', sm: '100%' },
+              minHeight: { xs: 'auto', sm: 0 },
             }}
-            onCancel={handleCancelEdit}
-            isSubmitting={isSubmitting}
-          />
-        </Grid>
+          >
+            <RuleConfigurationEdit
+              key={isEditing ? `edit-${id}` : 'register'}
+              isEditing={isEditing}
+              editingRule={editingRule}
+              setEditingRule={setEditingRule}
+              editingRuleId={isEditing ? id : undefined}
+              feeds={sortedFeeds}
+              rules={rules}
+              onCreateRule={handleCreateRule}
+              onUpdateRule={(payload: RuleUpdate) =>
+                handleUpdateRule(id, payload)
+              }
+              onDeleteRule={() => {
+                deleteMutation.mutate(id);
+              }}
+              onCancel={handleCancelEdit}
+              isSubmitting={isSubmitting}
+            />
+          </Grid>
+        )}
 
         <Grid
-          size={{ xs: 12, sm: 8 }}
+          size={{ xs: 12, sm: isAdmin ? 8 : 12 }}
           sx={{
             display: 'flex',
             flexDirection: 'column',
@@ -292,7 +294,7 @@ export function RuleConfigurationView({
             rules={rules}
             feeds={feeds}
             isLoading={rulesLoading || feedsLoading}
-            allowEdit
+            allowEdit={isAdmin}
             editingRuleId={isEditing ? id : undefined}
             onEditRule={handleStartEdit}
             isSubmitting={isSubmitting}

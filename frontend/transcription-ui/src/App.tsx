@@ -224,13 +224,13 @@ function App() {
             <Route
               path="/rules"
               element={
-                <RequireAdmin>
+                <>
                   <title>Rules - Radio Transcription</title>
                   <RuleConfigurationView
                     triggerSnackbar={triggerSnackbar}
                     onError={handleError}
                   />
-                </RequireAdmin>
+                </>
               }
             />
             <Route
