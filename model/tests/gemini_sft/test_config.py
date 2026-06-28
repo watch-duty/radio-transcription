@@ -13,6 +13,7 @@ from gemini_sft.config import (  # noqa: E402
     RunConfigError,
     load_eval_run_config,
     load_run_config,
+    require_config_eval_execution,
     require_config_eval_models,
 )
 
@@ -331,6 +332,85 @@ checkpoint_id = "7"
             ],
         )
 
+    def test_eval_execution_config_serializes_defaults(self) -> None:
+        cfg = load_run_config(self._write_config(self._valid_toml()))
+
+        self.assertIsNone(cfg.eval_execution.backend)
+        self.assertIsNone(cfg.eval_execution.limit)
+        self.assertEqual(cfg.eval_execution.concurrency, 16)
+        self.assertEqual(cfg.eval_execution.max_retries, 3)
+        self.assertEqual(
+            cfg.to_record_dict()["eval_execution"],
+            {"concurrency": 16, "max_retries": 3},
+        )
+
+    def test_eval_execution_config_serializes_optional_fields(self) -> None:
+        body = self._without_manifest_lines(
+            self._valid_toml(
+                eval_section="""
+[eval]
+
+[eval.execution]
+backend = "online"
+limit = 100
+concurrency = 8
+max_retries = 4
+
+[[eval.models]]
+label = "checkpoint_6"
+model = "projects/p/locations/us-central1/endpoints/123"
+"""
+            ),
+            "train_manifest_uri",
+            "validation_manifest_uri",
+        )
+
+        cfg = load_eval_run_config(self._write_config(body))
+
+        self.assertEqual(cfg.eval_execution.backend, "online")
+        self.assertEqual(cfg.eval_execution.limit, 100)
+        self.assertEqual(cfg.eval_execution.concurrency, 8)
+        self.assertEqual(cfg.eval_execution.max_retries, 4)
+        self.assertEqual(
+            cfg.to_record_dict()["eval_execution"],
+            {
+                "backend": "online",
+                "limit": 100,
+                "concurrency": 8,
+                "max_retries": 4,
+            },
+        )
+
+    def test_eval_execution_config_rejects_invalid_values(self) -> None:
+        cases = {
+            "unsupported": 'unknown = "value"',
+            "auto": 'backend = "auto"',
+            "non-string-backend": "backend = 123",
+            "zero-limit": "limit = 0",
+            "bool-limit": "limit = true",
+            "zero-concurrency": "concurrency = 0",
+            "zero-max-retries": "max_retries = 0",
+        }
+        for name, execution_body in cases.items():
+            with self.subTest(name=name):
+                body = self._valid_toml(
+                    eval_section=f"""
+[eval]
+
+[eval.execution]
+{execution_body}
+
+[[eval.models]]
+label = "base"
+model = "gemini-3.1-flash-lite"
+"""
+                )
+
+                with self.assertRaisesRegex(
+                    RunConfigError, r"eval\.execution"
+                ):
+                    load_run_config(self._write_config(body))
+
     def test_eval_config_rejects_non_string_optional_manifest_uri(self) -> None:
         body = self._valid_toml(
             train_manifest_uri="123",
@@ -551,6 +631,53 @@ model = "gemini-3.1-flash-lite"
                     ]
                 }
             )
+
+    def test_require_config_eval_execution_defaults_when_missing(self) -> None:
+        execution = require_config_eval_execution({})
+
+        self.assertIsNone(execution.backend)
+        self.assertIsNone(execution.limit)
+        self.assertEqual(execution.concurrency, 16)
+        self.assertEqual(execution.max_retries, 3)
+
+    def test_require_config_eval_execution_returns_valid_config(self) -> None:
+        execution = require_config_eval_execution(
+            {
+                "eval_execution": {
+                    "backend": "batch",
+                    "limit": 25,
+                    "concurrency": 4,
+                    "max_retries": 2,
+                }
+            }
+        )
+
+        self.assertEqual(execution.backend, "batch")
+        self.assertEqual(execution.limit, 25)
+        self.assertEqual(execution.concurrency, 4)
+        self.assertEqual(execution.max_retries, 2)
+
+    def test_require_config_eval_execution_rejects_invalid_config(
+        self,
+    ) -> None:
+        cases = (
+            {"unexpected": "value"},
+            {"backend": "auto"},
+            {"backend": 123},
+            {"limit": 0},
+            {"limit": True},
+            {"concurrency": 0},
+            {"max_retries": 0},
+        )
+        for execution in cases:
+            with self.subTest(execution=execution):
+                with self.assertRaisesRegex(
+                    (TypeError, ValueError),
+                    "config.json field eval_execution",
+                ):
+                    require_config_eval_execution(
+                        {"eval_execution": execution}
+                    )
 
     def test_round_id_must_be_safe_single_path_component(self) -> None:
         for round_id in (
