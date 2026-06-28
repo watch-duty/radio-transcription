@@ -70,6 +70,13 @@ learning_rate_multiplier = 1.0
 label = "base"
 model = "gemini-3.1-flash-lite"
 
+[eval.execution]
+# Optional. Omit backend for default routing.
+# backend = "online"
+# limit = 100
+concurrency = 16
+max_retries = 3
+
 [prompts]
 # Optional inline overrides only.
 # system = "..."
@@ -92,11 +99,18 @@ endpoint/checkpoint resource string by operator intent. Eval does not
 synthesize targets from `[sft].base_model` or the tuned `endpoint` stored in
 GCS `config.json`.
 
-At this phase, `gemini-sft eval` still uses the existing base/tuned execution
-path behind the target-config guard. A same-config run with the example above
-supports base-only eval. Arbitrary endpoint labels such as `checkpoint_6` are
-valid target config, but direct execution of those configured targets is a
-later runner change.
+`[eval.execution]` is optional. When `backend` is omitted, publisher/model IDs
+default to batch inference and full endpoint resources default to online
+generate-content. Set `backend = "batch"` or `backend = "online"` only when the
+whole run should force one backend; use separate config files/runs to compare
+forced backends. `limit = 100` is an optional smoke row cap applied to the
+evaluated prefix before prior-context histories are built. `concurrency` and
+`max_retries` control online target execution.
+
+The legacy `score_gemini_sft_checkpoints_online.py` script still discovers
+checkpoint endpoints from a tuning job for sweep/ranking workflows. Packaged
+`gemini-sft eval` does not discover checkpoints; list each checkpoint endpoint
+explicitly in `[[eval.models]]` when using the packaged eval path.
 
 Masked and unmasked evals are separate config files/runs with distinct
 `round_id`, `eval_manifest_uri`, and `inference_dataset_slug` values. There is
@@ -139,13 +153,15 @@ gs://<bucket>/sft/runs/<round-id>/
 ```
 
 After `eval`, the same prefix also contains batch inference inputs and outputs.
-The tuned paths are present only when eval runs against a tuned endpoint:
+Each target label gets its own artifact directory. Batch targets contain
+`input.jsonl` and `output/`; online targets contain
+`online_predictions.jsonl` and `online_predictions.meta.json`:
 
 ```text
 evals/base/input.jsonl
 evals/base/output/
-evals/tuned/input.jsonl
-evals/tuned/output/
+evals/checkpoint_6/online_predictions.jsonl
+evals/checkpoint_6/online_predictions.meta.json
 ```
 
 `gemini-sft eval` also writes normalized inference manifests under the shared
@@ -155,7 +171,7 @@ prediction record:
 
 ```text
 gs://<bucket>/inference_manifests/<inference_dataset_slug>/<model_family_slug>/<round_id>/base.jsonl
-gs://<bucket>/inference_manifests/<inference_dataset_slug>/<model_family_slug>/<round_id>/tuned.jsonl
+gs://<bucket>/inference_manifests/<inference_dataset_slug>/<model_family_slug>/<round_id>/<target-label>.jsonl
 ```
 
 Local `results/<round-id>/` files are a mirror/cache only. `config.json` in GCS
@@ -166,20 +182,20 @@ WER can be recalculated from provider responses or from the scorer-ready JSONL.
 
 ## Evaluation Semantics
 
-`eval` can run base-only when `--base-only` is passed or when `config.json` has
-no tuned endpoint. Missing Vertex batch predictions are scored as empty
-hypotheses, which makes them count as full deletions instead of removing those
-segments from the denominator. The normalized inference manifests leave
-`pred_text_*` absent for those missing prediction records; explicit empty model
-outputs are written as `pred_text_* = ""`.
+`eval` runs the durable `eval_models` targets from GCS `config.json`. Missing
+provider predictions are scored as empty hypotheses, which makes them count as
+full deletions instead of removing those segments from the denominator. The
+normalized inference manifests leave `pred_text_*` absent for missing
+prediction records; explicit empty model outputs are written as
+`pred_text_* = ""`.
 
 Eval manifests must use one unique model-ready `audio_filepath` clip URI per
 row. The batch path rejects duplicate audio URIs because one provider prediction
 record cannot be assigned to multiple manifest rows.
 
-Base-model batch inference uses `[gcp].location`. If the tuned endpoint stored
-in `config.json` is a full Vertex resource name, tuned batch inference uses the
-endpoint's own resource location, for example `locations/us`.
+Batch inference uses `[gcp].location` unless a full resource name carries its
+own location. Online endpoint targets use the endpoint resource location when
+present.
 
 ## Prompt Parity
 

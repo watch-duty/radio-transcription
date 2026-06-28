@@ -38,10 +38,18 @@ learning_rate_multiplier = 1.0
 label = "base"
 model = "gemini-3.1-flash-lite"
 
-# Until target-driven eval execution lands, the current eval runner can execute
-# this same-config target only as a base-only eval. Tuned/checkpoint endpoint
-# labels such as "checkpoint_6" are valid config labels, but require the later
-# target-driven runner before they can be used directly by `gemini-sft eval`.
+#[[eval.models]]
+#label = "checkpoint_6"
+#model = "projects/PROJECT/locations/us-central1/endpoints/ENDPOINT_ID"
+
+# Optional eval execution controls. Omit `backend` for default routing:
+# publisher/model IDs use batch inference, full endpoint resources use online
+# generate-content. To compare forced backends, use separate config files/runs.
+[eval.execution]
+# backend = "online"
+# limit = 100
+concurrency = 16
+max_retries = 3
 
 [prompts]
 # Optional inline overrides only. Prompt files are intentionally unsupported so

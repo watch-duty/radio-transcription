@@ -12,7 +12,6 @@ import argparse
 import asyncio
 import json
 import logging
-import re
 import tempfile
 import urllib.request
 from datetime import UTC, datetime
@@ -31,9 +30,6 @@ from common.gemini.batch import BatchPredictionMap
 from common.gemini.context import build_context_histories
 from common.gemini.prompts import GEMINI_TRANSCRIBE_KEYWORDS
 from common.gemini.vertex import (
-    GEMINI_GENERATION_CONFIG,
-    GEMINI_SAFETY_SETTINGS,
-    build_request,
     parse_batch_output,
 )
 from common.scoring import build_normalizer
@@ -51,13 +47,11 @@ from gemini_sft.reporting import (
     render_markdown_report,
     report_to_dict,
 )
-from google import genai
+from gemini_sft.target_execution import run_online_target_inference
 from google.auth.transport.requests import Request
 from google.cloud import storage
-from google.genai import types
 
 LOGGER = logging.getLogger(__name__)
-_LOCATION_RE = re.compile(r"/locations/([^/]+)/")
 
 
 def parse_args() -> argparse.Namespace:
@@ -73,9 +67,6 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--concurrency", type=int, default=16)
     parser.add_argument("--max-retries", type=int, default=3)
-    parser.add_argument("--retry-sleep-seconds", type=float, default=2.0)
-    parser.add_argument("--sync-every", type=int, default=100)
-    parser.add_argument("--log-every", type=int, default=100)
     parser.add_argument(
         "--limit",
         type=int,
@@ -83,11 +74,6 @@ def parse_args() -> argparse.Namespace:
         help="Optional row limit for smoke testing. Defaults to all rows.",
     )
     return parser.parse_args()
-
-
-def resource_location(resource_name: str, default: str) -> str:
-    match = _LOCATION_RE.search(resource_name)
-    return match.group(1) if match else default
 
 
 def fetch_tuning_job(job_name: str, location: str) -> dict[str, Any]:
@@ -153,74 +139,11 @@ def load_base_batch_predictions(
     return preds
 
 
-def load_prediction_rows(path: Path) -> dict[str, dict[str, Any]]:
-    if not path.exists():
-        return {}
-    rows: dict[str, dict[str, Any]] = {}
-    with path.open(encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            row = json.loads(line)
-            audio_uri = str(row.get("audio_filepath") or "")
-            if audio_uri:
-                rows[audio_uri] = row
-    return rows
-
-
-def download_existing_predictions(
-    storage_client: storage.Client, gcs_uri: str, local_path: Path
-) -> None:
-    bucket, blob = parse_gcs_uri(gcs_uri)
-    gcs_blob = storage_client.bucket(bucket).blob(blob)
-    if not gcs_blob.exists():
-        return
-    local_path.parent.mkdir(parents=True, exist_ok=True)
-    download_blob_to_file(storage_client, bucket, blob, str(local_path))
-
-
 def upload_predictions(
     storage_client: storage.Client, local_path: Path, gcs_uri: str
 ) -> None:
     bucket, blob = parse_gcs_uri(gcs_uri)
     upload_file_to_blob(storage_client, bucket, blob, str(local_path))
-
-
-def append_prediction(path: Path, row: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(row) + "\n")
-
-
-async def generate_with_retries(
-    *,
-    client: genai.Client,
-    model_id: str,
-    contents: list[dict[str, Any]],
-    config: types.GenerateContentConfig,
-    max_retries: int,
-    retry_sleep_seconds: float,
-) -> tuple[str, str | None]:
-    last_error = "unknown error"
-    for attempt in range(1, max_retries + 1):
-        try:
-            response = await client.aio.models.generate_content(
-                model=model_id,
-                contents=contents,
-                config=config,
-            )
-        except Exception as exc:
-            last_error = f"{type(exc).__name__}: {exc}"
-            if attempt < max_retries:
-                await asyncio.sleep(retry_sleep_seconds * attempt)
-            continue
-        text = (response.text or "").strip()
-        if text:
-            return text, None
-        last_error = "empty response"
-        if attempt < max_retries:
-            await asyncio.sleep(retry_sleep_seconds * attempt)
-    return "", last_error
 
 
 async def score_checkpoint_online(
@@ -230,101 +153,40 @@ async def score_checkpoint_online(
     histories: list[Any],
     system_prompt: str,
     user_prompt: str,
+    prior_context_count: int,
     history_mode: str,
     project: str,
     default_location: str,
-    local_path: Path,
-    gcs_uri: str,
+    run_gcs_prefix: str,
+    eval_manifest_uri: str,
+    local_dir: Path,
     storage_client: storage.Client,
     args: argparse.Namespace,
-) -> dict[str, dict[str, Any]]:
+) -> dict[str, str]:
     endpoint = checkpoint["endpoint"]
-    client = genai.Client(
-        vertexai=True,
-        project=project,
-        location=resource_location(endpoint, default_location),
-    )
-    completed = load_prediction_rows(local_path)
     LOGGER.info(
-        "Scoring checkpoint %s: %s rows already complete.",
+        "Scoring checkpoint %s through packaged online target executor.",
         checkpoint["checkpoint_id"],
-        len(completed),
     )
-    config = types.GenerateContentConfig(
-        system_instruction=system_prompt,
-        safety_settings=GEMINI_SAFETY_SETTINGS,
-        temperature=float(GEMINI_GENERATION_CONFIG["temperature"]),
-        max_output_tokens=int(GEMINI_GENERATION_CONFIG["max_output_tokens"]),
+    label = f"checkpoint_{checkpoint['checkpoint_id']}"
+    return await run_online_target_inference(
+        storage_client=storage_client,
+        run_gcs_prefix=run_gcs_prefix,
+        project=project,
+        default_location=default_location,
+        target_label=label,
+        target_model=endpoint,
+        audio_uris=[str(row["audio_filepath"]) for row in source_rows],
+        histories=histories,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        prior_context_count=prior_context_count,
+        prior_context_mode=history_mode,
+        eval_manifest_uri=eval_manifest_uri,
+        local_dir=local_dir,
+        concurrency=args.concurrency,
+        max_retries=args.max_retries,
     )
-    lock = asyncio.Lock()
-    semaphore = asyncio.Semaphore(args.concurrency)
-    existing_errors = sum(1 for row in completed.values() if row.get("error"))
-    progress = {
-        "done": len(completed),
-        "since_sync": 0,
-        "errors": existing_errors,
-    }
-    total = len(source_rows)
-
-    async def process_one(index: int, row: dict[str, Any]) -> None:
-        audio_uri = str(row["audio_filepath"])
-        if audio_uri in completed:
-            return
-        request = build_request(
-            audio_uri,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            history=histories[index],
-            history_mode=history_mode,
-        )["request"]
-        async with semaphore:
-            prediction, error = await generate_with_retries(
-                client=client,
-                model_id=endpoint,
-                contents=request["contents"],
-                config=config,
-                max_retries=args.max_retries,
-                retry_sleep_seconds=args.retry_sleep_seconds,
-            )
-        out_row = {
-            "audio_filepath": audio_uri,
-            "pred_text": prediction,
-            "error": error,
-            "checkpoint_id": checkpoint["checkpoint_id"],
-            "epoch": checkpoint["epoch"],
-            "step": checkpoint["step"],
-            "endpoint": endpoint,
-        }
-        async with lock:
-            completed[audio_uri] = out_row
-            append_prediction(local_path, out_row)
-            progress["done"] += 1
-            progress["since_sync"] += 1
-            if error:
-                progress["errors"] += 1
-            should_sync = (
-                args.sync_every > 0
-                and progress["since_sync"] >= args.sync_every
-            )
-            if should_sync:
-                upload_predictions(storage_client, local_path, gcs_uri)
-                progress["since_sync"] = 0
-            if progress["done"] == total or (
-                args.log_every > 0 and progress["done"] % args.log_every == 0
-            ):
-                LOGGER.info(
-                    "checkpoint=%s progress=%s/%s errors=%s",
-                    checkpoint["checkpoint_id"],
-                    progress["done"],
-                    total,
-                    progress["errors"],
-                )
-
-    await asyncio.gather(
-        *(process_one(index, row) for index, row in enumerate(source_rows))
-    )
-    upload_predictions(storage_client, local_path, gcs_uri)
-    return completed
 
 
 def score_predictions(
@@ -394,9 +256,10 @@ async def run_async(args: argparse.Namespace) -> dict[str, Any]:
     if args.limit:
         source_rows = source_rows[: args.limit]
         eval_rows = eval_rows[: args.limit]
+    prior_context_count = int(config.get("prior_context_count", 0))
     histories = build_context_histories(
         source_rows,
-        max_turns=int(config.get("prior_context_count", 0)),
+        max_turns=prior_context_count,
     )
     history_mode = str(config.get("prior_context_mode", "text_turns"))
     refs = [row.text for row in eval_rows]
@@ -432,33 +295,41 @@ async def run_async(args: argparse.Namespace) -> dict[str, Any]:
     report: EvalReport | None = None
     for checkpoint in checkpoints:
         label = f"checkpoint_{checkpoint['checkpoint_id']}"
-        local_path = local_dir / label / "online_predictions.jsonl"
-        gcs_uri = f"{run_gcs_prefix}/evals/checkpoints/{label}/online_predictions.jsonl"
-        if not local_path.exists():
-            download_existing_predictions(storage_client, gcs_uri, local_path)
-        rows_by_audio = await score_checkpoint_online(
+        checkpoint_preds = await score_checkpoint_online(
             checkpoint=checkpoint,
             source_rows=source_rows,
             histories=histories,
             system_prompt=require_config_str(config, "system_prompt"),
             user_prompt=require_config_str(config, "user_prompt"),
+            prior_context_count=prior_context_count,
             history_mode=history_mode,
             project=require_config_str(config, "gcp_project"),
             default_location=require_config_str(config, "location"),
-            local_path=local_path,
-            gcs_uri=gcs_uri,
+            run_gcs_prefix=run_gcs_prefix,
+            eval_manifest_uri=require_config_str(config, "canonical_eval_uri"),
+            local_dir=local_dir,
             storage_client=storage_client,
             args=args,
         )
         hyps = [
-            str(
-                rows_by_audio.get(row.audio_filepath, {}).get("pred_text") or ""
-            )
+            str(checkpoint_preds.get(row.audio_filepath, ""))
             for row in eval_rows
         ]
         missing_prediction_count = sum(
-            1 for row in eval_rows if row.audio_filepath not in rows_by_audio
+            1 for row in eval_rows if row.audio_filepath not in checkpoint_preds
         )
+        online_predictions_uri = checkpoint_preds.online_predictions_uri
+        checkpoint_metadata = {
+            "checkpoint_id": checkpoint["checkpoint_id"],
+            "epoch": checkpoint["epoch"],
+            "step": checkpoint["step"],
+            "online_error_count": checkpoint_preds.error_count,
+        }
+        request_identity_hash = getattr(
+            checkpoint_preds, "request_identity_hash", None
+        )
+        if request_identity_hash:
+            checkpoint_metadata["request_identity_hash"] = request_identity_hash
         score = score_predictions(
             label=label,
             model=checkpoint["endpoint"],
@@ -466,12 +337,10 @@ async def run_async(args: argparse.Namespace) -> dict[str, Any]:
             hyps=hyps,
             normalizer=normalizer,
             missing_prediction_count=missing_prediction_count,
-            artifacts=ReportArtifacts(online_predictions_uri=gcs_uri),
-            metadata={
-                "checkpoint_id": checkpoint["checkpoint_id"],
-                "epoch": checkpoint["epoch"],
-                "step": checkpoint["step"],
-            },
+            artifacts=ReportArtifacts(
+                online_predictions_uri=online_predictions_uri
+            ),
+            metadata=checkpoint_metadata,
             keywords=GEMINI_TRANSCRIBE_KEYWORDS,
         )
         checkpoint_targets.append(score)
@@ -483,7 +352,7 @@ async def run_async(args: argparse.Namespace) -> dict[str, Any]:
                 "step": checkpoint["step"],
                 "endpoint": checkpoint["endpoint"],
                 "delta_vs_base": round(score.wer - base_score.wer, 2),
-                "online_predictions_uri": gcs_uri,
+                "online_predictions_uri": online_predictions_uri,
             }
         )
         ranked_pairs = sorted(

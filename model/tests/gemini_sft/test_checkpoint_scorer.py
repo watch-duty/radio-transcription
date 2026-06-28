@@ -15,8 +15,12 @@ import score_gemini_sft_checkpoints_online as scorer  # noqa: E402
 
 
 class _OnlinePredictionMap(dict[str, str]):
-    online_predictions_uri = "gs://bucket/run/evals/checkpoint_7/online_predictions.jsonl"
-    metadata_uri = "gs://bucket/run/evals/checkpoint_7/online_predictions.meta.json"
+    online_predictions_uri = (
+        "gs://bucket/run/evals/checkpoint_7/online_predictions.jsonl"
+    )
+    metadata_uri = (
+        "gs://bucket/run/evals/checkpoint_7/online_predictions.meta.json"
+    )
     error_count = 0
     request_identity_hash = "hash"
 
@@ -45,12 +49,11 @@ class TestCheckpointScorerSummary(unittest.TestCase):
                         "step": "2961",
                         "endpoint": "projects/p/locations/us/endpoints/7",
                     },
-                    source_rows=[
-                        {"audio_filepath": "gs://audio/eval.flac"}
-                    ],
+                    source_rows=[{"audio_filepath": "gs://audio/eval.flac"}],
                     histories=[["prior"]],
                     system_prompt="system",
                     user_prompt="user",
+                    prior_context_count=8,
                     history_mode="text_turns",
                     project="project",
                     default_location="us-central1",
@@ -72,6 +75,7 @@ class TestCheckpointScorerSummary(unittest.TestCase):
             self.assertEqual(kwargs["histories"], [["prior"]])
             self.assertEqual(kwargs["system_prompt"], "system")
             self.assertEqual(kwargs["user_prompt"], "user")
+            self.assertEqual(kwargs["prior_context_count"], 8)
             self.assertEqual(kwargs["prior_context_mode"], "text_turns")
             self.assertEqual(kwargs["concurrency"], 9)
             self.assertEqual(kwargs["max_retries"], 4)
@@ -229,8 +233,7 @@ class TestCheckpointScorerSummary(unittest.TestCase):
         )
         self.assertEqual(
             storage.get(
-                "gs://bucket/run/evals/checkpoints/"
-                "checkpoint_score_summary.md"
+                "gs://bucket/run/evals/checkpoints/checkpoint_score_summary.md"
             ),
             markdown,
         )
