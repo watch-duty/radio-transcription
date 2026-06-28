@@ -65,6 +65,15 @@ epoch_count = 6
 adapter_size = "SIXTEEN"
 learning_rate_multiplier = 1.0
 
+[eval]
+[[eval.models]]
+label = "base"
+model = "gemini-3.1-flash-lite"
+
+[[eval.models]]
+label = "checkpoint_6"
+model = "projects/your-project/locations/us/endpoints/your-endpoint-id"
+
 [prompts]
 # Optional inline overrides only.
 # system = "..."
@@ -80,6 +89,16 @@ resume/eval runs.
 identifies the evaluated corpus/split used for normalized inference-manifest
 output placement, such as `echo/eval`. Older local `run.toml` files must add
 this field before they can be used with the current CLI.
+
+Eval requires explicit `[[eval.models]]` targets. Each target contains only a
+`label` and `model`; `model` is a publisher model ID or Vertex
+endpoint/checkpoint resource string by operator intent. Eval does not
+synthesize targets from `[sft].base_model` or the tuned `endpoint` stored in
+GCS `config.json`.
+
+Masked and unmasked evals are separate config files/runs with distinct
+`round_id`, `eval_manifest_uri`, and `inference_dataset_slug` values. There is
+no `eval_label`, `masked` field, or eval-sibling abstraction.
 
 ## Data Split Contract
 
