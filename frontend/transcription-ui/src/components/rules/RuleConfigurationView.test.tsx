@@ -42,7 +42,7 @@ vi.mock('../../service/listFeeds', () => ({
   listFeeds: vi.fn(),
 }));
 
-// // Mock AuthContext
+// Mock AuthContext
 const mockUseAuth = vi.fn();
 vi.mock('../../context/AuthContext', () => ({
   useAuth: () => mockUseAuth(),
@@ -134,7 +134,9 @@ describe('RuleConfigurationView', () => {
       expect(
         within(formCard).getByLabelText('Description (Optional)')
       ).toBeInTheDocument();
-      expect(within(formCard).getByLabelText('Scope Level')).toBeInTheDocument();
+      expect(
+        within(formCard).getByLabelText('Scope Level')
+      ).toBeInTheDocument();
 
       await waitFor(() => {
         expect(screen.getByText('Evacuation Trigger')).toBeInTheDocument();
@@ -341,7 +343,9 @@ describe('RuleConfigurationView', () => {
       expect(confirmDeleteBtn).toBeDisabled();
 
       const confirmInput = screen.getByPlaceholderText('Evacuation Trigger');
-      fireEvent.change(confirmInput, { target: { value: 'Evacuation Trigger' } });
+      fireEvent.change(confirmInput, {
+        target: { value: 'Evacuation Trigger' },
+      });
       expect(confirmDeleteBtn).toBeEnabled();
 
       fireEvent.click(confirmDeleteBtn);
@@ -406,7 +410,10 @@ describe('RuleConfigurationView', () => {
 
   describe('As Reporter', () => {
     beforeEach(() => {
-      mockUseAuth.mockReturnValue({ token: 'fake-jwt-token-xyz', isAdmin: false });
+      mockUseAuth.mockReturnValue({
+        token: 'fake-jwt-token-xyz',
+        isAdmin: false,
+      });
     });
 
     it('renders only the rules list and hides the creation form', async () => {
