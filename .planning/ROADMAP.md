@@ -21,7 +21,7 @@ automation, and no prompt file references.
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Reporting Contract** - Stabilize metric semantics and shared report rendering across console, JSON, Markdown, batch eval, and checkpoint scoring. (completed 2026-06-28)
-- [ ] **Phase 2: Target Config** - Introduce unified model target configuration, validation, migration compatibility, and explicit masked/unmasked config paths.
+- [x] **Phase 2: Target Config** - Introduce unified model target configuration, validation, and explicit masked/unmasked config paths. (completed 2026-06-28)
 - [ ] **Phase 3: Target Execution** - Package backend-specific execution while preserving shared prompt, request, and prior-context behavior.
 - [ ] **Phase 4: Durable Eval** - Run GCS-authoritative multi-target evals, write normalized target manifests, and produce dataset breakdown reports.
 - [ ] **Phase 5: Operator Docs** - Document the stable operator workflow, example configs, metric interpretation, artifact sources, and commit hygiene checks.
@@ -60,11 +60,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans**: 3 plans
 Plans:
 **Wave 1**
-- [ ] 02-01-PLAN.md — Target config parser and artifact-label validation
+- [x] 02-01-PLAN.md — Target config parser and artifact-label validation
 
 **Wave 2** *(blocked on 02-01 completion)*
-- [ ] 02-02-PLAN.md — Durable config eval target guard
-- [ ] 02-03-PLAN.md — Target examples and masked/unmasked config shape
+- [x] 02-02-PLAN.md — Durable config eval target guard
+- [x] 02-03-PLAN.md — Target examples and masked/unmasked config shape
 **UI hint**: no
 
 ### Phase 3: Target Execution
@@ -150,7 +150,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Reporting Contract | 3/3 | Complete   | 2026-06-28 |
-| 2. Target Config | 0/3 | Ready to execute | - |
+| 2. Target Config | 3/3 | Complete   | 2026-06-28 |
 | 3. Target Execution | 0/TBD | Not started | - |
 | 4. Durable Eval | 0/TBD | Not started | - |
 | 5. Operator Docs | 0/TBD | Not started | - |
