@@ -118,6 +118,33 @@ def _patched_eval_scoring() -> Any:
     )
 
 
+def _batch_prediction_map(
+    predictions: dict[str, str],
+    *,
+    output_uri: str = "gs://test-bucket/sft/runs/round-a/evals/base/output/",
+) -> Any:
+    preds = evaluate_module.PredictionMap(predictions)
+    preds.output_uri = output_uri
+    return preds
+
+
+class _OnlinePredictionMap(dict[str, str]):
+    def __init__(
+        self,
+        predictions: dict[str, str],
+        *,
+        online_predictions_uri: str,
+        metadata_uri: str,
+        error_count: int = 0,
+        request_identity_hash: str | None = "identity-hash",
+    ) -> None:
+        super().__init__(predictions)
+        self.online_predictions_uri = online_predictions_uri
+        self.metadata_uri = metadata_uri
+        self.error_count = error_count
+        self.request_identity_hash = request_identity_hash
+
+
 def _write_config_file(
     tmp: Path,
     round_id: str = "round-a",
@@ -192,7 +219,9 @@ class TestCli(unittest.TestCase):
 
         with (
             unittest.mock.patch("gemini_sft.cli.prepare", return_value=0),
-            unittest.mock.patch("logging.getLogger", side_effect=fake_get_logger),
+            unittest.mock.patch(
+                "logging.getLogger", side_effect=fake_get_logger
+            ),
         ):
             self.assertEqual(cli.main(["prepare", "--config", "run.toml"]), 0)
 
@@ -1497,9 +1526,7 @@ class TestEvaluateRun(unittest.TestCase):
                             "candidates": [
                                 {
                                     "content": {
-                                        "parts": [
-                                            {"text": "[UNINTELLIGIBLE]"}
-                                        ]
+                                        "parts": [{"text": "[UNINTELLIGIBLE]"}]
                                     }
                                 }
                             ]
@@ -1561,6 +1588,367 @@ class TestEvaluateRun(unittest.TestCase):
             "[UNINTELLIGIBLE]",
         )
         self.assertNotIn("pred_text_gemini_3_1_flash_lite", manifest_rows[1])
+
+    def test_eval_checkpoint_target_no_longer_fails_before_manifest_download(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage)
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            config = run_cfg.to_record_dict()
+            config["eval_models"] = [
+                {
+                    "label": "checkpoint_6",
+                    "model": "projects/p/locations/us-central1/endpoints/123",
+                }
+            ]
+            storage.put(run_cfg.paths.config_uri, json.dumps(config))
+            online_preds = _OnlinePredictionMap(
+                {"gs://audio/eval.flac": "eval transcript"},
+                online_predictions_uri=(
+                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/"
+                    "online_predictions.jsonl"
+                ),
+                metadata_uri=(
+                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/"
+                    "online_predictions.meta.json"
+                ),
+            )
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module.storage, "Client", return_value=storage
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "download_jsonl_manifest",
+                    return_value=[
+                        _row("gs://audio/eval.flac", "eval transcript")
+                    ],
+                ) as download_manifest,
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "run_online_target_inference",
+                    unittest.mock.AsyncMock(return_value=online_preds),
+                    create=True,
+                ) as run_online,
+                unittest.mock.patch.object(
+                    evaluate_module, "batch_infer"
+                ) as batch,
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "results"
+                ),
+                _patched_eval_scoring(),
+            ):
+                rc = evaluate_module.evaluate(
+                    args=argparse.Namespace(
+                        config=str(cfg_path), base_only=True
+                    )
+                )
+
+        self.assertEqual(rc, 0)
+        download_manifest.assert_called_once()
+        run_online.assert_awaited_once()
+        batch.assert_not_called()
+
+    def test_eval_execution_limit_scores_one_row_and_batch_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            config = run_cfg.to_record_dict()
+            config["eval_execution"]["limit"] = 1  # limit = 1
+            eval_rows = [
+                _row("gs://audio/eval-1.flac", "first"),
+                _row("gs://audio/eval-2.flac", "second"),
+            ]
+            storage.put(run_cfg.paths.canonical_eval_uri, _manifest(eval_rows))
+            storage.put(run_cfg.paths.config_uri, json.dumps(config))
+            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            storage.put(
+                f"{output_uri}predictions.jsonl",
+                json.dumps(
+                    {
+                        "request": {
+                            "contents": [
+                                {
+                                    "parts": [
+                                        {
+                                            "fileData": {
+                                                "fileUri": "gs://audio/eval-1.flac"
+                                            }
+                                        }
+                                    ]
+                                }
+                            ]
+                        },
+                        "response": {
+                            "candidates": [
+                                {"content": {"parts": [{"text": "first"}]}}
+                            ]
+                        },
+                    }
+                )
+                + "\n",
+            )
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "results"
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "submit_batch_inference",
+                    return_value=output_uri,
+                ),
+                _patched_eval_scoring(),
+            ):
+                rc = evaluate_module.evaluate_run(
+                    argparse.Namespace(config=str(cfg_path), base_only=True),
+                    run_cfg,
+                    storage,
+                    config,
+                )
+
+            metrics = json.loads(
+                (tmp / "results" / "round-a" / "wer_summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            batch_rows = [
+                json.loads(line)
+                for line in storage.get(
+                    f"{run_cfg.paths.gcs_prefix}/evals/base/input.jsonl"
+                ).splitlines()
+                if line.strip()
+            ]
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(metrics["metadata"]["n_eval_examples"], 1)
+        self.assertEqual(len(batch_rows), 1)
+        self.assertEqual(
+            batch_rows[0]["request"]["contents"][-1]["parts"][-1]["file_data"][
+                "file_uri"
+            ],
+            "gs://audio/eval-1.flac",
+        )
+
+    def test_eval_runs_batch_and_online_targets_and_reports_artifacts(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            config = run_cfg.to_record_dict()
+            config["eval_models"] = [
+                {"label": "base", "model": "gemini-3.1-flash-lite"},
+                {
+                    "label": "checkpoint_6",
+                    "model": "projects/p/locations/us-central1/endpoints/123",
+                },
+            ]
+            storage.put(
+                run_cfg.paths.canonical_eval_uri,
+                _manifest([_row("gs://audio/eval.flac", "eval transcript")]),
+            )
+            storage.put(run_cfg.paths.config_uri, json.dumps(config))
+            batch_preds = _batch_prediction_map(
+                {"gs://audio/eval.flac": "eval transcript"},
+                output_uri=f"{run_cfg.paths.gcs_prefix}/evals/base/output/",
+            )
+            online_preds = _OnlinePredictionMap(
+                {"gs://audio/eval.flac": ""},
+                online_predictions_uri=(
+                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/"
+                    "online_predictions.jsonl"
+                ),
+                metadata_uri=(
+                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/"
+                    "online_predictions.meta.json"
+                ),
+                error_count=1,
+            )
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "batch_infer",
+                    return_value=batch_preds,
+                ) as batch,
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "run_online_target_inference",
+                    unittest.mock.AsyncMock(return_value=online_preds),
+                    create=True,
+                ) as run_online,
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "results"
+                ),
+                _patched_eval_scoring(),
+            ):
+                rc = evaluate_module.evaluate_run(
+                    argparse.Namespace(config=str(cfg_path), base_only=False),
+                    run_cfg,
+                    storage,
+                    config,
+                )
+
+            metrics = json.loads(
+                (tmp / "results" / "round-a" / "wer_summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            targets = {
+                target["target_label"]: target for target in metrics["targets"]
+            }
+
+        self.assertEqual(rc, 0)
+        batch.assert_called_once()
+        self.assertEqual(batch.call_args.kwargs["label"], "base")
+        self.assertEqual(
+            batch.call_args.kwargs["model_id"], "gemini-3.1-flash-lite"
+        )
+        run_online.assert_awaited_once()
+        self.assertEqual(
+            run_online.call_args.kwargs["target_label"], "checkpoint_6"
+        )
+        self.assertEqual(
+            run_online.call_args.kwargs["audio_uris"],
+            ["gs://audio/eval.flac"],
+        )
+        self.assertEqual(set(targets), {"base", "checkpoint_6"})
+        self.assertEqual(
+            targets["checkpoint_6"]["artifacts"]["online_predictions_uri"],
+            online_preds.online_predictions_uri,
+        )
+        self.assertIn(
+            "normalized_manifest_uri",
+            targets["checkpoint_6"]["artifacts"],
+        )
+        self.assertEqual(
+            targets["checkpoint_6"]["metadata"]["online_error_count"], 1
+        )
+        self.assertEqual(
+            targets["checkpoint_6"]["metadata"]["request_identity_hash"],
+            "identity-hash",
+        )
+        self.assertEqual(
+            targets["checkpoint_6"]["empty_response_rate"],
+            100.0,
+        )
+
+    def test_eval_execution_forced_backend_overrides_target_shape(self) -> None:
+        online_backend_toml = 'backend = "online"'
+        batch_backend_toml = 'backend = "batch"'
+        self.assertIn("online", online_backend_toml)
+        self.assertIn("batch", batch_backend_toml)
+
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            config = run_cfg.to_record_dict()
+            config["eval_execution"]["backend"] = "online"
+            storage.put(
+                run_cfg.paths.canonical_eval_uri,
+                _manifest([_row("gs://audio/eval.flac", "eval transcript")]),
+            )
+            online_preds = _OnlinePredictionMap(
+                {"gs://audio/eval.flac": "eval transcript"},
+                online_predictions_uri=(
+                    f"{run_cfg.paths.gcs_prefix}/evals/base/"
+                    "online_predictions.jsonl"
+                ),
+                metadata_uri=(
+                    f"{run_cfg.paths.gcs_prefix}/evals/base/"
+                    "online_predictions.meta.json"
+                ),
+            )
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module, "batch_infer"
+                ) as batch,
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "run_online_target_inference",
+                    unittest.mock.AsyncMock(return_value=online_preds),
+                    create=True,
+                ) as run_online,
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "online-results"
+                ),
+                _patched_eval_scoring(),
+            ):
+                rc_online = evaluate_module.evaluate_run(
+                    argparse.Namespace(config=str(cfg_path), base_only=True),
+                    run_cfg,
+                    storage,
+                    config,
+                )
+
+        self.assertEqual(rc_online, 0)
+        run_online.assert_awaited_once()
+        batch.assert_not_called()
+
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            config = run_cfg.to_record_dict()
+            config["eval_models"] = [
+                {
+                    "label": "checkpoint_6",
+                    "model": "projects/p/locations/us-central1/endpoints/123",
+                }
+            ]
+            config["eval_execution"]["backend"] = "batch"
+            storage.put(
+                run_cfg.paths.canonical_eval_uri,
+                _manifest([_row("gs://audio/eval.flac", "eval transcript")]),
+            )
+            batch_preds = _batch_prediction_map(
+                {"gs://audio/eval.flac": "eval transcript"},
+                output_uri=(
+                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/output/"
+                ),
+            )
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "batch_infer",
+                    return_value=batch_preds,
+                ) as batch,
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "run_online_target_inference",
+                    unittest.mock.AsyncMock(),
+                    create=True,
+                ) as run_online,
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "batch-results"
+                ),
+                _patched_eval_scoring(),
+            ):
+                rc_batch = evaluate_module.evaluate_run(
+                    argparse.Namespace(config=str(cfg_path), base_only=True),
+                    run_cfg,
+                    storage,
+                    config,
+                )
+
+        self.assertEqual(rc_batch, 0)
+        batch.assert_called_once()
+        run_online.assert_not_awaited()
 
     def test_eval_requires_canonical_eval_uri_in_gcs_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
