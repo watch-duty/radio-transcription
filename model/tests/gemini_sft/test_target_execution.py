@@ -146,9 +146,7 @@ class TestOnlineRequestIdentity(unittest.TestCase):
         self.assertNotEqual(
             base,
             request_identity_hash(
-                _identity(
-                    audio_uris=["gs://audio/2.flac", "gs://audio/1.flac"]
-                )
+                _identity(audio_uris=["gs://audio/2.flac", "gs://audio/1.flac"])
             ),
         )
 
@@ -181,8 +179,7 @@ class TestOnlinePredictionResume(unittest.TestCase):
             predictions_uri=self.predictions_uri,
             metadata_uri=self.metadata_uri,
             local_predictions_path=self.local_dir / "online_predictions.jsonl",
-            local_metadata_path=self.local_dir
-            / "online_predictions.meta.json",
+            local_metadata_path=self.local_dir / "online_predictions.meta.json",
             request_identity=identity,
         )
 
@@ -202,7 +199,9 @@ class TestOnlinePredictionResume(unittest.TestCase):
 
         state = self._load(identity)
 
-        self.assertEqual(set(state.rows_by_audio_uri), set(identity["audio_uris"]))
+        self.assertEqual(
+            set(state.rows_by_audio_uri), set(identity["audio_uris"])
+        )
         self.assertEqual(state.error_count, 1)
 
     def test_prediction_without_metadata_fails_before_paid_calls(self) -> None:
@@ -261,6 +260,35 @@ class TestOnlinePredictionResume(unittest.TestCase):
         state = self._load(full_identity)
 
         self.assertEqual(list(state.rows_by_audio_uri), ["gs://audio/1.flac"])
+
+    def test_absent_gcs_predictions_clear_stale_local_mirror(self) -> None:
+        local_predictions = self.local_dir / "online_predictions.jsonl"
+        local_predictions.parent.mkdir(parents=True)
+        local_predictions.write_text(
+            '{"audio_filepath":"gs://audio/stale.flac","pred_text":"stale"}\n',
+            encoding="utf-8",
+        )
+
+        state = self._load(_identity())
+
+        self.assertEqual(state.rows_by_audio_uri, {})
+        self.assertFalse(local_predictions.exists())
+
+    def test_smoke_metadata_rejects_rows_outside_stored_identity(self) -> None:
+        smoke_identity = _identity(audio_uris=["gs://audio/1.flac"])
+        full_identity = _identity(
+            audio_uris=["gs://audio/1.flac", "gs://audio/2.flac"]
+        )
+        self.storage.put(
+            self.predictions_uri,
+            '{"audio_filepath":"gs://audio/2.flac","pred_text":"two"}\n',
+        )
+        self.storage.put(self.metadata_uri, _metadata(smoke_identity))
+
+        with self.assertRaisesRegex(
+            ValueError, "online prediction request identity mismatch"
+        ):
+            self._load(full_identity)
 
 
 class TestRunOnlineTargetInference(unittest.TestCase):
@@ -338,7 +366,9 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         self.assertEqual(
             calls[0]["config"]["safety_settings"], GEMINI_SAFETY_SETTINGS
         )
-        self.assertIn("empty response", self.storage.get(result.online_predictions_uri))
+        self.assertIn(
+            "empty response", self.storage.get(result.online_predictions_uri)
+        )
 
     @unittest.mock.patch("gemini_sft.target_execution.genai")
     def test_safe_resume_skips_existing_rows(self, mock_genai) -> None:
@@ -383,10 +413,13 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         )
 
         mock_genai.Client.assert_not_called()
-        self.assertEqual(dict(result), {
-            "gs://audio/1.flac": "one",
-            "gs://audio/2.flac": "two",
-        })
+        self.assertEqual(
+            dict(result),
+            {
+                "gs://audio/1.flac": "one",
+                "gs://audio/2.flac": "two",
+            },
+        )
 
 
 if __name__ == "__main__":
