@@ -41,6 +41,7 @@ class TestRunConfig(unittest.TestCase):
             "learning_rate_multiplier": "1.0",
             "context": "",
             "prompts": "",
+            "eval_section": "",
         }
         values.update(replacements)
         return f"""
@@ -63,6 +64,7 @@ adapter_size = {values["adapter_size"]}
 learning_rate_multiplier = {values["learning_rate_multiplier"]}
 {values["context"]}
 {values["prompts"]}
+{values["eval_section"]}
 """
 
     def _without_manifest_lines(self, body: str, *keys: str) -> str:
@@ -70,6 +72,19 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
         return "\n".join(
             line for line in body.splitlines() if not line.startswith(prefixes)
         )
+
+    def _eval_models_section(self, *targets: tuple[str, str]) -> str:
+        lines = ["[eval]"]
+        for label, model in targets:
+            lines.extend(
+                [
+                    "",
+                    "[[eval.models]]",
+                    f'label = "{label}"',
+                    f'model = "{model}"',
+                ]
+            )
+        return "\n".join(lines)
 
     def test_valid_minimal_toml_resolves_required_fields_and_paths(
         self,
@@ -95,6 +110,8 @@ learning_rate_multiplier = {values["learning_rate_multiplier"]}
         self.assertEqual(
             record["gemini_validation_uri"], cfg.paths.gemini_validation_uri
         )
+        self.assertEqual(cfg.eval_models, ())
+        self.assertNotIn("eval_models", record)
         legacy_aliases = {
             "datasets",
             "epochs",
@@ -146,11 +163,34 @@ checkpoint_id = "7"
         with self.assertRaisesRegex(RunConfigError, "validation_manifest_uri"):
             load_run_config(self._write_config(body))
 
-    def test_eval_config_allows_missing_train_and_validation_manifest_uris(
+    def test_eval_config_requires_explicit_eval_models(
         self,
     ) -> None:
         body = self._without_manifest_lines(
             self._valid_toml(),
+            "train_manifest_uri",
+            "validation_manifest_uri",
+        )
+
+        with self.assertRaisesRegex(
+            RunConfigError,
+            r"\[\[eval\.models\]\].*label.*model.*base_model/endpoint",
+        ):
+            load_eval_run_config(self._write_config(body))
+
+    def test_eval_config_with_models_allows_missing_training_manifests(
+        self,
+    ) -> None:
+        body = self._without_manifest_lines(
+            self._valid_toml(
+                eval_section=self._eval_models_section(
+                    ("base", "gemini-3.1-flash-lite"),
+                    (
+                        "checkpoint_6",
+                        "projects/p/locations/us-central1/endpoints/123",
+                    ),
+                )
+            ),
             "train_manifest_uri",
             "validation_manifest_uri",
         )
@@ -167,21 +207,160 @@ checkpoint_id = "7"
             cfg.paths.config_uri,
             "gs://bucket/sft/runs/round/config.json",
         )
+        self.assertEqual(
+            cfg.to_record_dict()["eval_models"],
+            [
+                {"label": "base", "model": "gemini-3.1-flash-lite"},
+                {
+                    "label": "checkpoint_6",
+                    "model": "projects/p/locations/us-central1/endpoints/123",
+                },
+            ],
+        )
+
+    def test_run_config_serializes_optional_eval_models(self) -> None:
+        body = self._valid_toml(
+            eval_section=self._eval_models_section(
+                ("base", "gemini-3.1-flash-lite"),
+                (
+                    "checkpoint_6",
+                    "projects/p/locations/us-central1/endpoints/123",
+                ),
+            )
+        )
+
+        cfg = load_run_config(self._write_config(body))
+
+        self.assertEqual(
+            [target.to_record_dict() for target in cfg.eval_models],
+            [
+                {"label": "base", "model": "gemini-3.1-flash-lite"},
+                {
+                    "label": "checkpoint_6",
+                    "model": "projects/p/locations/us-central1/endpoints/123",
+                },
+            ],
+        )
+        self.assertEqual(
+            cfg.to_record_dict()["eval_models"],
+            [
+                {"label": "base", "model": "gemini-3.1-flash-lite"},
+                {
+                    "label": "checkpoint_6",
+                    "model": "projects/p/locations/us-central1/endpoints/123",
+                },
+            ],
+        )
 
     def test_eval_config_rejects_non_string_optional_manifest_uri(self) -> None:
-        body = self._valid_toml(train_manifest_uri="123")
+        body = self._valid_toml(
+            train_manifest_uri="123",
+            eval_section=self._eval_models_section(
+                ("base", "gemini-3.1-flash-lite")
+            ),
+        )
 
         with self.assertRaisesRegex(RunConfigError, "train_manifest_uri"):
             load_eval_run_config(self._write_config(body))
 
     def test_eval_config_requires_eval_manifest_uri(self) -> None:
         body = self._without_manifest_lines(
-            self._valid_toml(),
+            self._valid_toml(
+                eval_section=self._eval_models_section(
+                    ("base", "gemini-3.1-flash-lite")
+                )
+            ),
             "eval_manifest_uri",
         )
 
         with self.assertRaisesRegex(RunConfigError, "eval_manifest_uri"):
             load_eval_run_config(self._write_config(body))
+
+    def test_eval_model_targets_reject_invalid_labels(self) -> None:
+        for label in (
+            "",
+            ".",
+            "..",
+            "bad label",
+            "nested/label",
+            "base.jsonl",
+        ):
+            with self.subTest(label=label):
+                body = self._valid_toml(
+                    eval_section=self._eval_models_section(
+                        (label, "gemini-3.1-flash-lite")
+                    )
+                )
+
+                with self.assertRaisesRegex(
+                    RunConfigError, r"eval\.models\[0\]\.label"
+                ):
+                    load_run_config(self._write_config(body))
+
+    def test_eval_model_targets_reject_duplicate_labels(self) -> None:
+        body = self._valid_toml(
+            eval_section=self._eval_models_section(
+                ("base", "gemini-3.1-flash-lite"),
+                ("base", "projects/p/locations/us-central1/endpoints/123"),
+            )
+        )
+
+        with self.assertRaisesRegex(RunConfigError, "duplicate"):
+            load_run_config(self._write_config(body))
+
+    def test_eval_model_targets_reject_invalid_model_strings(self) -> None:
+        invalid_sections = {
+            "empty": """
+[eval]
+
+[[eval.models]]
+label = "base"
+model = "   "
+""",
+            "non-string": """
+[eval]
+
+[[eval.models]]
+label = "base"
+model = 123
+""",
+        }
+        for name, eval_section in invalid_sections.items():
+            with self.subTest(name=name):
+                body = self._valid_toml(eval_section=eval_section)
+
+                with self.assertRaisesRegex(
+                    RunConfigError, r"eval\.models\[0\]\.model"
+                ):
+                    load_run_config(self._write_config(body))
+
+    def test_eval_model_targets_reject_non_table_entries(self) -> None:
+        body = self._valid_toml(
+            eval_section="""
+[eval]
+models = ["not-a-table"]
+"""
+        )
+
+        with self.assertRaisesRegex(RunConfigError, "TOML table"):
+            load_run_config(self._write_config(body))
+
+    def test_eval_model_targets_reject_unsupported_fields(self) -> None:
+        for field_name in ("type", "description"):
+            with self.subTest(field_name=field_name):
+                body = self._valid_toml(
+                    eval_section=f"""
+[eval]
+
+[[eval.models]]
+label = "base"
+model = "gemini-3.1-flash-lite"
+{field_name} = "unsupported"
+"""
+                )
+
+                with self.assertRaisesRegex(RunConfigError, field_name):
+                    load_run_config(self._write_config(body))
 
     def test_round_id_must_be_safe_single_path_component(self) -> None:
         for round_id in (
