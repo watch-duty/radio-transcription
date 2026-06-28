@@ -82,6 +82,10 @@ base_model = "gemini-3.1-flash-lite"
 epoch_count = 4
 adapter_size = "FOUR"
 learning_rate_multiplier = 1.0
+
+[eval.model]
+label = "base"
+model = "gemini-3.1-flash-lite"
 """,
                 encoding="utf-8",
             )
@@ -161,3 +165,14 @@ learning_rate_multiplier = 1.0
             ("gemini_sft.target_execution", "run_online_target_inference"),
             imports,
         )
+
+    def test_sft_example_config_uses_singular_eval_model(self) -> None:
+        text = (_SCRIPTS_DIR / "sft" / "run_config.example.toml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("[eval.model]", text)
+        self.assertIn("one model per config", text)
+        self.assertIn("[eval.execution]", text)
+        self.assertIn("max_retries = 3", text)
+        self.assertNotIn("[[eval.models]]", text)

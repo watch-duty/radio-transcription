@@ -65,8 +65,7 @@ epoch_count = 6
 adapter_size = "SIXTEEN"
 learning_rate_multiplier = 1.0
 
-[eval]
-[[eval.models]]
+[eval.model]
 label = "base"
 model = "gemini-3.1-flash-lite"
 
@@ -93,11 +92,12 @@ identifies the evaluated corpus/split used for normalized inference-manifest
 output placement, such as `echo/eval`. Older local `run.toml` files must add
 this field before they can be used with the current CLI.
 
-Eval requires explicit `[[eval.models]]` targets. Each target contains only a
-`label` and `model`; `model` is a publisher model ID or Vertex
-endpoint/checkpoint resource string by operator intent. Eval does not
-synthesize targets from `[sft].base_model` or the tuned `endpoint` stored in
-GCS `config.json`.
+Eval requires one explicit `[eval.model]` target per config. The durable
+`config.json` stores this as `eval_model` with only `label` and `model`;
+`model` is a publisher model ID or Vertex endpoint/checkpoint resource string
+by operator intent. Eval does not synthesize targets from `[sft].base_model` or
+the tuned `endpoint` stored in GCS `config.json`; plural [[eval.models]] is
+unsupported.
 
 `[eval.execution]` is optional. When `backend` is omitted, publisher/model IDs
 default to batch inference and full endpoint resources default to online
@@ -109,8 +109,9 @@ evaluated prefix before prior-context histories are built. `concurrency` and
 
 The legacy `score_gemini_sft_checkpoints_online.py` script still discovers
 checkpoint endpoints from a tuning job for sweep/ranking workflows. Packaged
-`gemini-sft eval` does not discover checkpoints; list each checkpoint endpoint
-explicitly in `[[eval.models]]` when using the packaged eval path.
+`gemini-sft eval` does not discover checkpoints and does not run internal
+multi-target parallelism. To compare base, tuned, or checkpoint models, use
+separate config files and run them in parallel with an external wrapper.
 
 Masked and unmasked evals are separate config files/runs with distinct
 `round_id`, `eval_manifest_uri`, and `inference_dataset_slug` values. There is
@@ -154,14 +155,17 @@ gs://<bucket>/sft/runs/<round-id>/
 
 After `eval`, the same prefix also contains batch inference inputs and outputs.
 Each target label gets its own artifact directory. Batch targets contain
-`input.jsonl` and `output/`; online targets contain
+`input.jsonl`, `output/`, and `batch_predictions.meta.json`; online targets contain
 `online_predictions.jsonl` and `online_predictions.meta.json`:
 
 ```text
 evals/base/input.jsonl
 evals/base/output/
+evals/base/batch_predictions.meta.json
 evals/checkpoint_6/online_predictions.jsonl
 evals/checkpoint_6/online_predictions.meta.json
+evals/wer_summary.json
+evals/wer_summary.md
 ```
 
 `gemini-sft eval` also writes normalized inference manifests under the shared
@@ -179,10 +183,19 @@ is the durable state machine: if it contains `job_name`, `tune` reattaches to
 that Vertex tuning job instead of submitting another one. Evaluation summaries
 include raw Vertex batch-output URIs and normalized inference-manifest URIs, so
 WER can be recalculated from provider responses or from the scorer-ready JSONL.
+The stable `evals/wer_summary.json` and `evals/wer_summary.md` files are
+overwritten after each successful eval rerun for the same `round_id`; failed
+evals do not advertise new summary artifacts.
+
+Batch and online prediction outputs are reused only when their request-identity
+metadata matches the current model, label, eval manifest, audio order, prompts,
+prior-context settings, generation config, and safety settings. Existing batch
+output without matching `batch_predictions.meta.json` fails closed before any
+paid submission.
 
 ## Evaluation Semantics
 
-`eval` runs the durable `eval_models` targets from GCS `config.json`. Missing
+`eval` runs the durable `eval_model` target from GCS `config.json`. Missing
 provider predictions are scored as empty hypotheses, which makes them count as
 full deletions instead of removing those segments from the denominator. The
 normalized inference manifests leave `pred_text_*` absent for missing
@@ -196,6 +209,10 @@ record cannot be assigned to multiple manifest rows.
 Batch inference uses `[gcp].location` unless a full resource name carries its
 own location. Online endpoint targets use the endpoint resource location when
 present.
+
+Dataset breakdowns and multiple eval manifests are follow-up work, not part of
+the packaged Phase 4 eval contract. For now, one config has one
+`eval_manifest_uri` and produces one overall report row for one model target.
 
 ## Prompt Parity
 
