@@ -21,6 +21,7 @@ ADAPTER_SIZES: Final = frozenset({"ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"})
 PRIOR_CONTEXT_MODES: Final = frozenset(
     {"text_turns", "transcript", "vapo_p3_transcript"}
 )
+EVAL_EXECUTION_BACKENDS: Final = frozenset({"batch", "online"})
 ROUND_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 EVAL_MODELS_REQUIRED_MESSAGE: Final = (
     "eval configs must define at least one [[eval.models]] target with "
@@ -79,6 +80,28 @@ class EvalModelTarget:
 
 
 @dataclass(frozen=True)
+class EvalExecutionConfig:
+    """Execution controls for eval target inference."""
+
+    backend: str | None = None
+    limit: int | None = None
+    concurrency: int = 16
+    max_retries: int = 3
+
+    def to_record_dict(self) -> dict[str, int | str]:
+        """Return the durable config.json execution record."""
+        record: dict[str, int | str] = {
+            "concurrency": self.concurrency,
+            "max_retries": self.max_retries,
+        }
+        if self.backend is not None:
+            record["backend"] = self.backend
+        if self.limit is not None:
+            record["limit"] = self.limit
+        return record
+
+
+@dataclass(frozen=True)
 class RunConfig:
     """Validated operator config with defaults and derived paths resolved."""
 
@@ -91,6 +114,7 @@ class RunConfig:
     validation_manifest_uri: str | None
     eval_manifest_uri: str
     eval_models: tuple[EvalModelTarget, ...]
+    eval_execution: EvalExecutionConfig
     gcp_project: str
     gcs_bucket: str
     location: str
@@ -146,6 +170,7 @@ class RunConfig:
             record["eval_models"] = [
                 target.to_record_dict() for target in self.eval_models
             ]
+        record["eval_execution"] = self.eval_execution.to_record_dict()
         return record
 
 
@@ -196,10 +221,12 @@ def _load_run_config(
             "validation_manifest_uri",
         )
     eval_manifest_uri = _required_gcs_uri(data, "eval_manifest_uri")
+    eval_table = _eval_table(data)
     eval_models = _eval_model_targets(
-        data,
+        eval_table,
         required=not require_training_manifests,
     )
+    eval_execution = _eval_execution_config(eval_table)
 
     gcp = _required_table(data, "gcp")
     gcp_project = _required_str(gcp, "gcp.project")
@@ -279,6 +306,7 @@ def _load_run_config(
         validation_manifest_uri=validation_manifest_uri,
         eval_manifest_uri=eval_manifest_uri,
         eval_models=eval_models,
+        eval_execution=eval_execution,
         gcp_project=gcp_project,
         gcs_bucket=gcs_bucket,
         location=location,
@@ -391,6 +419,17 @@ def require_config_eval_models(
     return tuple(targets)
 
 
+def require_config_eval_execution(config: dict[str, Any]) -> EvalExecutionConfig:
+    """Return validated eval execution controls from durable config.json."""
+    raw_execution = config.get("eval_execution")
+    if raw_execution is None:
+        return EvalExecutionConfig()
+    if not isinstance(raw_execution, dict):
+        msg = "config.json field eval_execution must be an object"
+        raise TypeError(msg)
+    return _config_eval_execution_config(raw_execution)
+
+
 def _required_table(data: dict[str, Any], key: str) -> dict[str, Any]:
     value = data.get(key)
     if not isinstance(value, dict):
@@ -399,27 +438,34 @@ def _required_table(data: dict[str, Any], key: str) -> dict[str, Any]:
     return value
 
 
-def _eval_model_targets(
-    data: dict[str, Any],
-    *,
-    required: bool,
-) -> tuple[EvalModelTarget, ...]:
+def _eval_table(data: dict[str, Any]) -> dict[str, Any] | None:
     eval_table = data.get("eval")
     if eval_table is None:
-        if required:
-            raise RunConfigError(EVAL_MODELS_REQUIRED_MESSAGE)
-        return ()
+        return None
     if not isinstance(eval_table, dict):
         msg = "eval must be a TOML table"
         raise RunConfigError(msg)
 
-    unsupported_eval_fields = sorted(set(eval_table) - {"models"})
+    unsupported_eval_fields = sorted(set(eval_table) - {"execution", "models"})
     if unsupported_eval_fields:
         msg = (
-            "eval must contain only [[eval.models]]; unsupported fields: "
+            "eval must contain only [[eval.models]] and [eval.execution]; "
+            "unsupported fields: "
             f"{', '.join(unsupported_eval_fields)}"
         )
         raise RunConfigError(msg)
+    return eval_table
+
+
+def _eval_model_targets(
+    eval_table: dict[str, Any] | None,
+    *,
+    required: bool,
+) -> tuple[EvalModelTarget, ...]:
+    if eval_table is None:
+        if required:
+            raise RunConfigError(EVAL_MODELS_REQUIRED_MESSAGE)
+        return ()
 
     raw_targets = eval_table.get("models")
     if raw_targets is None:
@@ -473,6 +519,115 @@ def _eval_model_targets(
         targets.append(EvalModelTarget(label=label, model=model))
 
     return tuple(targets)
+
+
+def _eval_execution_config(
+    eval_table: dict[str, Any] | None,
+) -> EvalExecutionConfig:
+    if eval_table is None:
+        return EvalExecutionConfig()
+    raw_execution = eval_table.get("execution")
+    if raw_execution is None:
+        return EvalExecutionConfig()
+    if not isinstance(raw_execution, dict):
+        msg = "eval.execution must be a TOML table"
+        raise RunConfigError(msg)
+
+    unsupported_fields = sorted(
+        set(raw_execution) - {"backend", "concurrency", "limit", "max_retries"}
+    )
+    if unsupported_fields:
+        msg = (
+            "eval.execution unsupported fields: "
+            f"{', '.join(unsupported_fields)}"
+        )
+        raise RunConfigError(msg)
+    return EvalExecutionConfig(
+        backend=_optional_eval_execution_backend(
+            raw_execution,
+            "eval.execution.backend",
+        ),
+        limit=_optional_positive_int(
+            raw_execution,
+            "eval.execution.limit",
+            default=None,
+        ),
+        concurrency=_optional_positive_int(
+            raw_execution,
+            "eval.execution.concurrency",
+            default=16,
+        ),
+        max_retries=_optional_positive_int(
+            raw_execution,
+            "eval.execution.max_retries",
+            default=3,
+        ),
+    )
+
+
+def _config_eval_execution_config(
+    raw_execution: dict[str, Any],
+) -> EvalExecutionConfig:
+    unsupported_fields = sorted(
+        set(raw_execution) - {"backend", "concurrency", "limit", "max_retries"}
+    )
+    if unsupported_fields:
+        msg = (
+            "config.json field eval_execution unsupported fields: "
+            f"{', '.join(unsupported_fields)}"
+        )
+        raise ValueError(msg)
+    return EvalExecutionConfig(
+        backend=_optional_config_eval_execution_backend(raw_execution),
+        limit=_optional_config_positive_int(
+            raw_execution,
+            "limit",
+            default=None,
+        ),
+        concurrency=_optional_config_positive_int(
+            raw_execution,
+            "concurrency",
+            default=16,
+        ),
+        max_retries=_optional_config_positive_int(
+            raw_execution,
+            "max_retries",
+            default=3,
+        ),
+    )
+
+
+def _optional_eval_execution_backend(
+    data: dict[str, Any],
+    key: str,
+) -> str | None:
+    value = _lookup(data, key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        msg = f"{key} must be one of batch, online"
+        raise RunConfigError(msg)
+    backend = value.strip()
+    if backend not in EVAL_EXECUTION_BACKENDS:
+        msg = f"{key} must be one of batch, online"
+        raise RunConfigError(msg)
+    return backend
+
+
+def _optional_config_eval_execution_backend(
+    data: dict[str, Any],
+) -> str | None:
+    value = data.get("backend")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        msg = "config.json field eval_execution.backend must be one of batch, online"
+        raise TypeError(msg)
+    backend = value.strip()
+    if backend not in EVAL_EXECUTION_BACKENDS:
+        msg = "config.json field eval_execution.backend must be one of batch, online"
+        raise ValueError(msg)
+    return backend
 
 
 def _required_artifact_label(data: dict[str, Any], key: str) -> str:
@@ -576,6 +731,40 @@ def _required_positive_int(data: dict[str, Any], key: str) -> int:
     if not isinstance(value, int) or value <= 0:
         msg = f"{key} must be a positive integer"
         raise RunConfigError(msg)
+    return value
+
+
+def _optional_positive_int(
+    data: dict[str, Any],
+    key: str,
+    *,
+    default: int | None,
+) -> int | None:
+    value = _lookup(data, key)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        msg = f"{key} must be a positive integer"
+        raise RunConfigError(msg)
+    return value
+
+
+def _optional_config_positive_int(
+    data: dict[str, Any],
+    key: str,
+    *,
+    default: int | None,
+) -> int | None:
+    value = data.get(key)
+    if value is None:
+        return default
+    field = f"config.json field eval_execution.{key}"
+    if isinstance(value, bool) or not isinstance(value, int):
+        msg = f"{field} must be a positive integer"
+        raise TypeError(msg)
+    if value <= 0:
+        msg = f"{field} must be a positive integer"
+        raise ValueError(msg)
     return value
 
 
