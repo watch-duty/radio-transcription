@@ -39,6 +39,7 @@ from gemini_sft.config import (
     RunConfig,
     RunConfigError,
     load_eval_run_config,
+    require_config_eval_models,
     require_config_int,
     require_config_str,
 )
@@ -108,6 +109,11 @@ def evaluate_run(
     prior_context_mode = _optional_config_prior_context_mode(
         config,
         "prior_context_mode",
+    )
+    eval_model_targets = require_config_eval_models(config)
+    logger.info(
+        "Validated %d eval model target(s) from config.json.",
+        len(eval_model_targets),
     )
     tuned_endpoint = config.get("endpoint")
     base_only = bool(getattr(args, "base_only", False))
