@@ -1,0 +1,79 @@
+{
+  "phase": "1",
+  "phase_name": "Reporting Contract",
+  "timestamp": "2026-06-28T08:39:23-07:00",
+  "areas_completed": [
+    "Metric vocabulary",
+    "Report schema",
+    "Missing predictions",
+    "Batch/checkpoint parity boundary"
+  ],
+  "areas_remaining": [],
+  "decisions": {
+    "Metric vocabulary": [
+      {
+        "question": "Which public names should report exact empty responses versus historical empty-or-unintelligible responses?",
+        "answer": "Use empty_or_unintelligible_rate and empty_response_rate as canonical report fields.",
+        "options_presented": [
+          "Keep legacy empty_rate",
+          "Canonical explicit names",
+          "Rename both later"
+        ]
+      }
+    ],
+    "Report schema": [
+      {
+        "question": "Should console, JSON, and Markdown use one schema or separate formatting paths?",
+        "answer": "Use one shared structured report object and render all formats from it.",
+        "options_presented": [
+          "Separate console/JSON/Markdown formatting",
+          "Shared structured report object",
+          "Console only"
+        ]
+      }
+    ],
+    "Missing predictions": [
+      {
+        "question": "How should missing model predictions affect scoring and reporting?",
+        "answer": "Score them as empty hypotheses and expose missing_prediction_count separately.",
+        "options_presented": [
+          "Drop missing predictions",
+          "Score missing as empty and count separately",
+          "Fail on any missing prediction"
+        ]
+      }
+    ],
+    "Batch/checkpoint parity boundary": [
+      {
+        "question": "How much batch/checkpoint parity belongs in Phase 1?",
+        "answer": "Align reporting and shared metric semantics only; defer target config and backend execution.",
+        "options_presented": [
+          "Reporting-only parity",
+          "Full target execution parity",
+          "Checkpoint-only CLI path"
+        ]
+      }
+    ]
+  },
+  "deferred_ideas": [
+    "Unified models target config",
+    "Masked and unmasked run setup",
+    "Checkpoint backend selection and parallel execution",
+    "Dataset breakdown reports",
+    "Operator docs and artifact hygiene guidance"
+  ],
+  "canonical_refs": [
+    ".planning/REQUIREMENTS.md",
+    ".planning/ROADMAP.md",
+    ".planning/codebase/CONCERNS.md",
+    ".planning/codebase/CONVENTIONS.md",
+    ".planning/codebase/TESTING.md",
+    "model/scripts/sft/README.md",
+    "model/src/gemini_sft/evaluate.py",
+    "model/src/gemini_sft/records.py",
+    "model/scripts/sft/score_gemini_sft_checkpoints_online.py",
+    "model/src/common/scoring.py",
+    "model/src/common/gemini/batch.py",
+    "model/tests/gemini_sft/test_workflow.py"
+  ]
+}
