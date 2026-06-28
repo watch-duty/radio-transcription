@@ -37,7 +37,15 @@ Decimal phases appear between their surrounding integers in numeric order.
   2. Operator can open JSON and Markdown reports and see the same structured metric schema and report columns as the console output.
   3. Maintainer can verify exact empty responses are reported separately from empty-or-unintelligible responses in every report format.
   4. Maintainer can verify missing predictions remain in the WER/CER denominator as empty hypotheses across comparable batch eval and checkpoint scoring paths.
-**Plans**: TBD
+**Plans**:
+  - **Wave 1**
+    - `01-01` - Shared reporting foundation: create shared metric helpers,
+      report schema, renderers, and contract tests.
+  - **Wave 2** *(blocked on Wave 1 completion)*
+    - `01-02` - Batch eval integration: render `gemini-sft eval` JSON,
+      Markdown, and console output from the shared report schema.
+    - `01-03` - Checkpoint scorer integration: render online checkpoint
+      summaries and console output from the shared report schema.
 **UI hint**: no
 
 ### Phase 2: Target Config
