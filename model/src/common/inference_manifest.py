@@ -88,6 +88,24 @@ def validate_inference_dataset_slug(inference_dataset_slug: str) -> str:
     return inference_dataset_slug
 
 
+def validate_artifact_label(artifact_label: str) -> str:
+    """Validate and return a single safe artifact label segment.
+
+    Args:
+        artifact_label: Artifact label such as ``base`` or ``checkpoint_6``.
+
+    Returns:
+        The original label when valid.
+
+    Raises:
+        ValueError: If the label is unsafe or includes the ``.jsonl`` suffix.
+    """
+    if artifact_label.endswith(".jsonl"):
+        msg = "artifact_label must not include the .jsonl suffix"
+        raise ValueError(msg)
+    return _validate_safe_segment(artifact_label, "artifact_label")
+
+
 def build_inference_manifest_blob_path(
     *,
     inference_dataset_slug: str,
@@ -112,10 +130,7 @@ def build_inference_manifest_blob_path(
     dataset_slug = validate_inference_dataset_slug(inference_dataset_slug)
     model_slug = _validate_safe_segment(model_family_slug, "model_family_slug")
     run_segment = _validate_safe_segment(run_id, "run_id")
-    if artifact_label.endswith(".jsonl"):
-        msg = "artifact_label must not include the .jsonl suffix"
-        raise ValueError(msg)
-    label_segment = _validate_safe_segment(artifact_label, "artifact_label")
+    label_segment = validate_artifact_label(artifact_label)
     return (
         f"inference_manifests/{dataset_slug}/{model_slug}/"
         f"{run_segment}/{label_segment}.jsonl"
