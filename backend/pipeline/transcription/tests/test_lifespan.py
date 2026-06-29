@@ -118,3 +118,32 @@ class TestLifespanExecutor(unittest.IsolatedAsyncioTestCase):
                 loop._default_executor = None
             else:
                 loop.set_default_executor(old_executor)
+
+    @mock.patch(
+        "backend.pipeline.transcription.main.TranscriptionServiceContainer"
+    )
+    async def test_lifespan_fallback_on_negative_or_zero_concurrency(
+        self, mock_container_class: mock.MagicMock
+    ) -> None:
+        mock_container = mock.MagicMock()
+        mock_container.processor = None
+        mock_container_class.return_value = mock_container
+
+        for invalid_val in ["0", "-10", "-1"]:
+            os.environ["CONTAINER_CONCURRENCY"] = invalid_val
+            app = FastAPI()
+            loop: Any = asyncio.get_running_loop()
+
+            old_executor = loop._default_executor
+
+            try:
+                async with transcription_main.lifespan(app):
+                    executor = loop._default_executor
+                    self.assertIsNotNone(executor)
+                    assert isinstance(executor, ThreadPoolExecutor)
+                    self.assertEqual(executor._max_workers, 128)
+            finally:
+                if old_executor is None:
+                    loop._default_executor = None
+                else:
+                    loop.set_default_executor(old_executor)

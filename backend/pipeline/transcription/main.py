@@ -161,10 +161,18 @@ def _setup_default_executor() -> ThreadPoolExecutor:
     concurrency_limit_str = os.environ.get("CONTAINER_CONCURRENCY", "128")
     try:
         concurrency_limit = int(concurrency_limit_str)
-    except ValueError:
+    except ValueError as e:
         logger.warning(
-            "Invalid CONTAINER_CONCURRENCY value: %r. Falling back to 128.",
+            "Invalid CONTAINER_CONCURRENCY value: %r (%s). Falling back to 128.",
             concurrency_limit_str,
+            e,
+        )
+        concurrency_limit = 128
+
+    if concurrency_limit <= 0:
+        logger.warning(
+            "Invalid CONTAINER_CONCURRENCY value: %d must be greater than 0. Falling back to 128.",
+            concurrency_limit,
         )
         concurrency_limit = 128
 
