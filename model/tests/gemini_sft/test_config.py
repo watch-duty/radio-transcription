@@ -29,7 +29,6 @@ class TestRunConfig(unittest.TestCase):
     def _valid_toml(self, **replacements: str) -> str:
         values = {
             "round_id": '"round"',
-            "dataset": '"wd-internal"',
             "inference_dataset_slug": '"echo/eval"',
             "train_manifest_uri": '"gs://source/manifests/train.jsonl"',
             "validation_manifest_uri": '"gs://source/manifests/validation.jsonl"',
@@ -48,7 +47,6 @@ class TestRunConfig(unittest.TestCase):
         values.update(replacements)
         return f"""
 round_id = {values["round_id"]}
-dataset = {values["dataset"]}
 inference_dataset_slug = {values["inference_dataset_slug"]}
 train_manifest_uri = {values["train_manifest_uri"]}
 validation_manifest_uri = {values["validation_manifest_uri"]}
@@ -94,7 +92,6 @@ model = "{model}"
         cfg = load_run_config(self._write_config(self._valid_toml()))
 
         self.assertEqual(cfg.round_id, "round")
-        self.assertEqual(cfg.dataset, "wd-internal")
         self.assertEqual(cfg.inference_dataset_slug, "echo/eval")
         self.assertEqual(cfg.paths.gcs_prefix, "gs://bucket/sft/runs/round")
         self.assertEqual(
@@ -102,7 +99,6 @@ model = "{model}"
             "gs://bucket/sft/runs/round/model_inputs/gemini/validation.jsonl",
         )
         record = cfg.to_record_dict()
-        self.assertEqual(record["dataset"], "wd-internal")
         self.assertEqual(record["prior_context_count"], 0)
         self.assertEqual(record["prior_context_mode"], "text_turns")
         self.assertNotIn("continuous_tuned_model_name", record)
@@ -114,15 +110,15 @@ model = "{model}"
         )
         self.assertIsNone(cfg.eval_model)
         self.assertNotIn("eval_model", record)
-        self.assertNotIn("eval_models", record)
-        legacy_aliases = {
+        removed_fields = {
+            "dataset",
             "datasets",
             "epochs",
             "lr_multiplier",
             "combined_train_uri",
             "combined_val_uri",
         }
-        self.assertFalse(legacy_aliases & set(record))
+        self.assertFalse(removed_fields & set(record))
 
     def test_continuous_tuning_config_serializes_source_checkpoint(
         self,
@@ -177,7 +173,7 @@ checkpoint_id = "7"
 
         with self.assertRaisesRegex(
             RunConfigError,
-            r"\[eval\.model\].*label.*model.*base_model/endpoint",
+            r"\[eval\.model\].*label.*model",
         ):
             load_eval_run_config(self._write_config(body))
 
@@ -295,8 +291,10 @@ checkpoint_id = "7"
             "radio/masked_v2/eval",
         )
         for record in (unmasked_record, masked_record):
-            self.assertNotIn("eval_label", record)
-            self.assertNotIn("masked", record)
+            self.assertEqual(
+                set(record["eval_model"]),
+                {"label", "model"},
+            )
 
     def test_run_config_serializes_optional_eval_model(self) -> None:
         body = self._valid_toml(
@@ -316,7 +314,6 @@ checkpoint_id = "7"
             cfg.to_record_dict()["eval_model"],
             {"label": "base", "model": "gemini-3.1-flash-lite"},
         )
-        self.assertNotIn("eval_models", cfg.to_record_dict())
 
     def test_eval_execution_config_serializes_defaults(self) -> None:
         cfg = load_run_config(self._write_config(self._valid_toml()))
@@ -436,24 +433,6 @@ model = "gemini-3.1-flash-lite"
                 ):
                     load_run_config(self._write_config(body))
 
-    def test_eval_model_target_rejects_plural_tables(self) -> None:
-        body = self._valid_toml(
-            eval_section="""
-[eval]
-
-[[eval.models]]
-label = "base"
-model = "gemini-3.1-flash-lite"
-"""
-        )
-
-        with self.assertRaisesRegex(
-            RunConfigError,
-            r"no plural eval target support.*\[eval\.model\].*"
-            r"\[\[eval\.models\]\]",
-        ):
-            load_run_config(self._write_config(body))
-
     def test_eval_model_target_rejects_invalid_model_strings(self) -> None:
         invalid_sections = {
             "empty": """
@@ -508,28 +487,6 @@ model = "gemini-3.1-flash-lite"
                 with self.assertRaisesRegex(RunConfigError, field_name):
                     load_run_config(self._write_config(body))
 
-    def test_eval_model_targets_reject_unsupported_eval_table_fields(
-        self,
-    ) -> None:
-        for field_name, field_value in (
-            ("masked", "true"),
-            ("eval_label", '"masked"'),
-        ):
-            with self.subTest(field_name=field_name):
-                body = self._valid_toml(
-                    eval_section=f"""
-[eval]
-{field_name} = {field_value}
-
-[eval.model]
-label = "base"
-model = "gemini-3.1-flash-lite"
-"""
-                )
-
-                with self.assertRaisesRegex(RunConfigError, field_name):
-                    load_run_config(self._write_config(body))
-
     def test_require_config_eval_model_returns_valid_target(self) -> None:
         target = require_config_eval_model(
             {
@@ -549,23 +506,12 @@ model = "gemini-3.1-flash-lite"
         with self.assertRaisesRegex(
             ValueError,
             r"config\.json missing required eval_model.*"
-            r"\[eval\.model\].*label.*model.*"
-            r"base_model/endpoint fallback is not supported",
+            r"\[eval\.model\].*label.*model",
         ):
             require_config_eval_model(
                 {
                     "base_model": "gemini-3.1-flash-lite",
                     "endpoint": "projects/p/locations/us/endpoints/123",
-                }
-            )
-
-    def test_require_config_eval_model_rejects_old_eval_models(self) -> None:
-        with self.assertRaisesRegex(ValueError, "eval_models is not supported"):
-            require_config_eval_model(
-                {
-                    "eval_models": [
-                        {"label": "base", "model": "gemini-3.1-flash-lite"}
-                    ]
                 }
             )
 

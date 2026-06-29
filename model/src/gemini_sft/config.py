@@ -26,13 +26,12 @@ EVAL_EXECUTION_FIELDS: Final = frozenset(
 )
 ROUND_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 EVAL_MODEL_REQUIRED_MESSAGE: Final = (
-    "eval configs must define one [eval.model] target with required label "
-    "and model fields; no legacy base_model/endpoint fallback is used"
+    "eval configs must define one [eval.model] target with required label and "
+    "model fields"
 )
 CONFIG_EVAL_MODEL_REQUIRED_MESSAGE: Final = (
     "config.json missing required eval_model object; configure one "
-    "[eval.model] target with required label and model fields; "
-    "base_model/endpoint fallback is not supported"
+    "[eval.model] target with required label and model fields"
 )
 
 
@@ -109,7 +108,6 @@ class RunConfig:
     source_path: Path
     raw_toml: str
     round_id: str
-    dataset: str
     inference_dataset_slug: str
     train_manifest_uri: str | None
     validation_manifest_uri: str | None
@@ -135,7 +133,6 @@ class RunConfig:
         """Return the resolved run config shape stored in config.json."""
         record = {
             "round_id": self.round_id,
-            "dataset": self.dataset,
             "inference_dataset_slug": self.inference_dataset_slug,
             "eval_manifest_uri": self.eval_manifest_uri,
             "gcp_project": self.gcp_project,
@@ -203,7 +200,6 @@ def _load_run_config(
         raise RunConfigError(msg) from exc
 
     round_id = _required_round_id(data, "round_id")
-    dataset = _required_str(data, "dataset")
     inference_dataset_slug = _required_inference_dataset_slug(
         data, "inference_dataset_slug"
     )
@@ -299,7 +295,6 @@ def _load_run_config(
         source_path=source_path,
         raw_toml=raw_toml,
         round_id=round_id,
-        dataset=dataset,
         inference_dataset_slug=inference_dataset_slug,
         train_manifest_uri=train_manifest_uri,
         validation_manifest_uri=validation_manifest_uri,
@@ -352,10 +347,6 @@ def require_config_float(config: dict[str, Any], key: str) -> float:
 
 def require_config_eval_model(config: dict[str, Any]) -> EvalModelTarget:
     """Return the validated eval target from durable GCS config.json state."""
-    if "eval_models" in config:
-        msg = "config.json field eval_models is not supported; use eval_model"
-        raise ValueError(msg)
-
     raw_target = config.get("eval_model")
     if raw_target is None:
         raise ValueError(CONFIG_EVAL_MODEL_REQUIRED_MESSAGE)
@@ -420,13 +411,6 @@ def _eval_table(data: dict[str, Any]) -> dict[str, Any] | None:
         return None
     if not isinstance(eval_table, dict):
         msg = "eval must be a TOML table"
-        raise RunConfigError(msg)
-
-    if "models" in eval_table:
-        msg = (
-            "eval has no plural eval target support: use [eval.model], "
-            "not [[eval.models]]"
-        )
         raise RunConfigError(msg)
 
     unsupported_eval_fields = sorted(set(eval_table) - {"execution", "model"})
@@ -624,15 +608,6 @@ def _optional_config_eval_execution_backend(
         msg = "config.json field eval_execution.backend must be one of batch, online"
         raise ValueError(msg)
     return backend
-
-
-def _required_artifact_label(data: dict[str, Any], key: str) -> str:
-    label = _required_str(data, key)
-    try:
-        return validate_artifact_label(label)
-    except ValueError as exc:
-        msg = f"{key} is invalid: {exc}"
-        raise RunConfigError(msg) from exc
 
 
 def _required_str(data: dict[str, Any], key: str) -> str:

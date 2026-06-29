@@ -6,11 +6,9 @@
 # a new experiment.
 round_id = "YYYY-MM-DD-short-description"
 
-# `dataset` identifies the SFT training recipe/version. `inference_dataset_slug`
-# identifies the evaluated corpus/split used for normalized inference-manifest
-# output placement, for example:
+# `inference_dataset_slug` identifies the evaluated corpus/split used for
+# normalized inference-manifest output placement, for example:
 # gs://<bucket>/inference_manifests/echo/eval/<model>/<round_id>/base.jsonl
-dataset = "dataset-version-name"
 inference_dataset_slug = "echo/eval"
 
 # These are canonical manifests. `prepare` derives Gemini SFT JSONL for train
@@ -33,10 +31,9 @@ adapter_size = "SIXTEEN"
 learning_rate_multiplier = 1.0
 
 [eval.model]
-# `gemini-sft eval` supports one model per config. Do not infer eval targets
-# from [sft].base_model or from a tuned endpoint stored in GCS config.json.
-# To compare base, tuned, or checkpoint models, run separate config files in
-# parallel with an external wrapper.
+# `gemini-sft eval` supports one model per config. To compare base, tuned, or
+# checkpoint models, run separate config files in parallel with an external
+# wrapper.
 label = "base"
 model = "gemini-3.1-flash-lite"
 

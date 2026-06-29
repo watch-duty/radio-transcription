@@ -70,7 +70,6 @@ class TestDriftGuard(unittest.TestCase):
             cfg_path.write_text(
                 """
 round_id = "round"
-dataset = "wd"
 inference_dataset_slug = "echo/eval"
 train_manifest_uri = "gs://bucket/train.jsonl"
 validation_manifest_uri = "gs://bucket/validation.jsonl"
@@ -168,7 +167,6 @@ model = "gemini-3.1-flash-lite"
         self.assertIn("one model per config", text)
         self.assertIn("[eval.execution]", text)
         self.assertIn("max_retries = 3", text)
-        self.assertNotIn("[[eval.models]]", text)
 
     def test_sft_operator_metric_docs_track_report_columns(self) -> None:
         text = (
@@ -268,7 +266,6 @@ model = "gemini-3.1-flash-lite"
             "model/scripts/sft/results/run/config.json",
             "model/scripts/sft/results/run/status.json",
             "model/scripts/sft/results/run/wer_summary.md",
-            "model/scripts/sft/results/run/ledger.md",
         )
         for path in allowed_paths:
             with self.subTest(staged_path=path):

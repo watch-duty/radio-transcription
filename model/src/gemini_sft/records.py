@@ -3,7 +3,6 @@
 Writes:
   config.json   — resolved config, git SHA, dep versions, tuned-model resource name
   wer_summary.{md,json} — target-oriented eval report
-  ledger.md     — appended one-row summary per eval run
 """
 
 from __future__ import annotations
@@ -18,7 +17,6 @@ from typing import Any
 
 from gemini_sft.reporting import (
     EvalReport,
-    TargetMetrics,
     render_markdown_report,
     report_to_dict,
 )
@@ -109,47 +107,3 @@ def write_wer_summary(
     )
     markdown_path.write_text(markdown, encoding="utf-8")
     return json_path, markdown_path
-
-
-def append_ledger(results_dir: Path, row: dict[str, Any]) -> None:
-    """Append one row to results/ledger.md (creates header on first write).
-
-    Rows pass ``targets`` as ``TargetMetrics`` records.
-    """
-    if not row.get("targets"):
-        msg = "ledger rows must include one or more targets"
-        raise ValueError(msg)
-    ledger_path = results_dir / "ledger.md"
-    header = (
-        "| round_id | datasets | targets | best_target | best_wer | epochs | git_sha | timestamp |\n"
-        "|----------|----------|---------|-------------|----------|--------|---------|----------|\n"
-    )
-    if not ledger_path.exists():
-        ledger_path.write_text(
-            "# SFT Pipeline Run Ledger\n\n" + header, encoding="utf-8"
-        )
-
-    target_rows = [_target_ledger_row(target) for target in row["targets"]]
-    best_target = min(target_rows, key=lambda target: target["wer"])
-    targets_cell = ",".join(
-        f"{target['label']}:{target['wer']:.2f}%" for target in target_rows
-    )
-    md_row = (
-        f"| {row.get('round_id', '—')} "
-        f"| {','.join(row.get('datasets') or [])} "
-        f"| {targets_cell} "
-        f"| {best_target['label']} "
-        f"| {best_target['wer']:.2f}% "
-        f"| {row.get('epochs', '—')} "
-        f"| {row.get('git_sha', '—')} "
-        f"| {row.get('timestamp', datetime.now(UTC).strftime('%Y-%m-%d'))} |\n"
-    )
-    with ledger_path.open("a", encoding="utf-8") as f:
-        f.write(md_row)
-
-
-def _target_ledger_row(target: Any) -> dict[str, Any]:
-    if isinstance(target, TargetMetrics):
-        return {"label": target.target_label, "wer": float(target.wer)}
-    msg = "ledger target rows must be TargetMetrics"
-    raise TypeError(msg)

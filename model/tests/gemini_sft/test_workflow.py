@@ -66,7 +66,6 @@ prior_turn_count = {prior_context_count}
 """
     return f"""
 round_id = "{round_id}"
-dataset = "wd-internal-v1"
 inference_dataset_slug = "echo/eval"
 train_manifest_uri = "gs://source/manifests/train.jsonl"
 validation_manifest_uri = "gs://source/manifests/validation.jsonl"
@@ -1887,9 +1886,6 @@ class TestEvaluateRun(unittest.TestCase):
             targets = {
                 target["target_label"]: target for target in metrics["targets"]
             }
-            ledger_text = (tmp / "results" / "ledger.md").read_text(
-                encoding="utf-8"
-            )
 
         self.assertEqual(rc, 0)
         self.assertEqual(len(metrics["targets"]), 1, "exactly one target")
@@ -1925,8 +1921,6 @@ class TestEvaluateRun(unittest.TestCase):
             storage.has(f"{run_cfg.paths.gcs_prefix}/evals/wer_summary.md")
         )
         self.assertEqual(targets["base"]["metadata"]["backend"], "batch")
-        self.assertIn("base:0.00%", ledger_text)
-        self.assertIn("base", ledger_text)
 
     def test_eval_execution_forced_backend_overrides_target_shape(self) -> None:
         online_backend_toml = 'backend = "online"'
@@ -2069,44 +2063,6 @@ class TestEvaluateRun(unittest.TestCase):
             run_cfg = load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
             config.pop("eval_model")
-            config["endpoint"] = "projects/p/locations/us/endpoints/123"
-            storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            args = argparse.Namespace(config=str(cfg_path))
-
-            with (
-                unittest.mock.patch.object(
-                    evaluate_module.storage, "Client", return_value=storage
-                ),
-                unittest.mock.patch.object(
-                    evaluate_module, "download_jsonl_manifest"
-                ) as download_manifest,
-                unittest.mock.patch.object(
-                    evaluate_module, "submit_batch_inference"
-                ) as submit,
-            ):
-                rc = evaluate_module.evaluate(args)
-
-        self.assertEqual(rc, 1)
-        download_manifest.assert_not_called()
-        submit.assert_not_called()
-
-    def test_eval_rejects_durable_eval_models_before_manifest_download(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
-            _seed_source_manifests(storage)
-            cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
-            config = run_cfg.to_record_dict()
-            config.pop("eval_model")
-            config["eval_models"] = [
-                {
-                    "label": "base",
-                    "model": "gemini-3.1-flash-lite",
-                }
-            ]
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
             args = argparse.Namespace(config=str(cfg_path))
 

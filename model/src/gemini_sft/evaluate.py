@@ -38,11 +38,9 @@ from gemini_sft.config import (
     optional_config_prior_context_mode,
     require_config_eval_execution,
     require_config_eval_model,
-    require_config_int,
     require_config_str,
 )
 from gemini_sft.records import (
-    append_ledger,
     wer_summary_gcs_uris,
     write_wer_summary,
 )
@@ -103,12 +101,10 @@ def evaluate_run(
     gcp_project = require_config_str(config, "gcp_project")
     location = require_config_str(config, "location")
     run_gcs_prefix = require_config_str(config, "run_gcs_prefix")
-    dataset = require_config_str(config, "dataset")
     inference_dataset_slug = require_config_str(
         config, "inference_dataset_slug"
     )
     gcs_bucket = require_config_str(config, "gcs_bucket")
-    epoch_count = require_config_int(config, "epoch_count")
     prior_context_count = _optional_config_nonnegative_int(
         config,
         "prior_context_count",
@@ -140,11 +136,6 @@ def evaluate_run(
     audio_uris = [row.audio_filepath for row in eval_rows]
     refs = [row.text for row in eval_rows]
     normalizer = build_normalizer()
-    metrics: dict[str, Any] = {
-        "round_id": run_cfg.round_id,
-        "base_model": base_model,
-        "n_eval_examples": len(eval_rows),
-    }
     backend = resolve_target_backend(target, eval_execution)
     if backend == "batch":
         preds = batch_infer(
@@ -239,21 +230,6 @@ def evaluate_run(
         artifacts=artifacts,
         metadata=metadata,
     )
-    metrics[f"{target.label}_wer"] = target_metrics.wer
-    metrics[f"{target.label}_cer"] = target_metrics.cer
-    metrics[f"{target.label}_inference_manifest_uri"] = inference_manifest_uri
-    if raw_output_uri:
-        metrics[f"{target.label}_batch_output_uri"] = raw_output_uri
-    if online_predictions_uri:
-        metrics[f"{target.label}_online_predictions_uri"] = (
-            online_predictions_uri
-        )
-    if target.label == "base":
-        metrics["base_wer"] = target_metrics.wer
-        metrics["base_cer"] = target_metrics.cer
-    if target.label == "tuned":
-        metrics["tuned_wer"] = target_metrics.wer
-        metrics["tuned_cer"] = target_metrics.cer
 
     report = EvalReport(
         round_id=run_cfg.round_id,
@@ -272,32 +248,12 @@ def evaluate_run(
         storage_client, summary_markdown_path, summary_markdown_uri
     )
     logger.info("\n%s", render_console_report(report))
-    config.update(
-        {
-            "base_model": base_model,
-            "last_eval_at": datetime.now(UTC).isoformat(),
-        }
-    )
-    if "base_wer" in metrics:
-        config["base_wer"] = metrics["base_wer"]
-    if "tuned_wer" in metrics:
-        config["tuned_wer"] = metrics["tuned_wer"]
+    config["last_eval_at"] = datetime.now(UTC).isoformat()
     config = write_and_upload_config(
         results_dir=RESULTS_DIR,
         run_cfg=run_cfg,
         storage_client=storage_client,
         config=config,
-    )
-    append_ledger(
-        RESULTS_DIR,
-        {
-            **metrics,
-            "datasets": [dataset],
-            "epochs": epoch_count,
-            "git_sha": config.get("git_sha", "—"),
-            "targets": [target_metrics],
-            "timestamp": datetime.now(UTC).strftime("%Y-%m-%d"),
-        },
     )
     logger.info(
         "Eval complete. WER summary: %s",
@@ -360,5 +316,4 @@ def _optional_config_nonnegative_int(config: dict[str, Any], key: str) -> int:
         msg = f"config.json field must be a non-negative integer: {key}"
         raise ValueError(msg)
     return value
-
 

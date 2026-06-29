@@ -16,8 +16,7 @@ check generated artifacts before committing.
 
 The packaged eval contract supports one `[eval.model]` per config/run. Base,
 tuned endpoint, and checkpoint endpoint comparisons use separate configs or an
-external wrapper. Internal multi-model orchestration, dataset-breakdown
-features, and multiple eval manifests inside one run are out of scope.
+external wrapper.
 
 ## Before You Start
 
@@ -63,9 +62,8 @@ label = "checkpoint_6"
 model = "projects/PROJECT/locations/us-central1/endpoints/ENDPOINT_ID"
 ```
 
-Do not use `[[eval.models]]`. To compare base, tuned, and checkpoint resources,
-create separate configs or use an external wrapper that invokes the CLI once per
-config.
+To compare base, tuned, and checkpoint resources, create separate configs or
+use an external wrapper that invokes the CLI once per config.
 
 ## 2. Build Gemini SFT Inputs
 
@@ -171,8 +169,7 @@ eval_manifest_uri = "gs://your-bucket/path/manifests/echo/masked_v2/eval.jsonl"
 ```
 
 Use a second config for the unmasked manifest with its own `round_id`,
-`inference_dataset_slug`, and `eval_manifest_uri`. There is no `masked` field,
-`eval_label`, or eval-sibling abstraction.
+`inference_dataset_slug`, and `eval_manifest_uri`.
 
 ## 7. Artifact Hygiene Before Commit
 

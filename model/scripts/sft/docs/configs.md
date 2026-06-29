@@ -70,21 +70,6 @@ eval_manifest_uri = "gs://your-bucket/path/manifests/echo/masked_v2/eval.jsonl"
 Unmasked eval uses the normal full placeholder config with its own `round_id`,
 `inference_dataset_slug`, and `eval_manifest_uri`.
 
-## Unsupported Shapes
-
-The current eval contract does not support:
-
-- Plural `[[eval.models]]` tables.
-- `eval_models` arrays or objects.
-- `eval_label` fields.
-- `masked` fields.
-- Prompt file fields such as `system_file` or `user_file`.
-- Committed local `.local.toml` examples.
-
-Use one `[eval.model]` table per config/run. Do not commit generated result
-artifact paths, local `.local.toml` values, live run IDs, local credentials, or
-real project-specific endpoint IDs as examples.
-
 ## Placeholder Safety
 
 Committed examples must stay placeholder-only. Acceptable example tokens include
