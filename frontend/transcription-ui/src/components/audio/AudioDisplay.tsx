@@ -31,11 +31,11 @@ const WAVEFORM_MIN_AMPLITUDE = 0.03; // so silent buckets still show a hairline
 
 // preserveAspectRatio="none" stretches the viewBox (one unit per peak) to fill
 // the clip box at any width.
-function Waveform({
+const Waveform = React.memo(function Waveform({
   peaks,
   color,
 }: {
-  peaks: (Float32Array | number[])[];
+  peaks: number[][];
   color: string;
 }) {
   const channel = peaks[0] ?? [];
@@ -61,7 +61,7 @@ function Waveform({
       <path d={bars} fill={color} />
     </Box>
   );
-}
+});
 
 const formatTime = (timestamp: number) => {
   const date = new Date(timestamp);
@@ -82,7 +82,7 @@ interface TimelineClipProps {
     hasAlert: boolean;
     // From the segment's WAVEFORM annotation; absent on older segments
     // (pre-rollout) or if waveform computation was skipped.
-    peaks?: (Float32Array | number[])[];
+    peaks?: number[][];
     duration?: number;
   };
   onClipClick: (segmentId: string) => void;
@@ -99,7 +99,7 @@ const TimelineClip = React.memo(
     theme,
     currentTimeSeconds,
   }: TimelineClipProps) => {
-    const renderWaveform = !!clip.peaks;
+    const renderWaveform = !!clip.peaks?.[0]?.length;
 
     const cursorLeftPct =
       clip.isAudioPlaying && currentTimeSeconds !== undefined && clip.duration
