@@ -1,12 +1,9 @@
-import logging
 import threading
 
 import google.auth.credentials
 import google.auth.exceptions
 import google.auth.transport.requests
 import google.oauth2.id_token
-
-logger = logging.getLogger(__name__)
 
 
 class OIDCTokenManager:
@@ -46,14 +43,18 @@ class OIDCTokenManager:
             # Check validity. Since we are inside the audience lock, we are safe
             # from concurrent refreshes for this audience.
             if not creds.valid:
-                # Create a fresh Request transport object to avoid sharing across threads/audiences.
+                # Create a fresh Request transport object to avoid sharing
+                # across threads/audiences.
                 request = google.auth.transport.requests.Request()
                 creds.refresh(request)
 
             token = creds.token
             # If refresh succeeded but token is still not set or invalid, raise
             if not token:
-                error_msg = f"Refresh completed but token is empty for audience {audience}"
+                error_msg = (
+                    f"Refresh completed but token is empty for "
+                    f"audience {audience}"
+                )
                 raise google.auth.exceptions.RefreshError(error_msg)
 
             return token

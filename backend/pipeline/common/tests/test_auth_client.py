@@ -117,6 +117,37 @@ class TestAuthClient(unittest.TestCase):
         self.assertLess(duration, 0.35)
 
     @patch("google.oauth2.id_token.fetch_id_token_credentials")
+    def test_concurrent_same_audience_only_refreshes_once(
+        self, mock_fetch_creds
+    ) -> None:
+        class SlowMockCredentials(MockCredentials):
+            def refresh(self, request) -> None:
+                time.sleep(0.1)
+                super().refresh(request)
+
+        mock_creds = SlowMockCredentials()
+        mock_fetch_creds.return_value = mock_creds
+
+        results = []
+
+        def worker():
+            results.append(get_id_token("http://same-aud"))
+
+        # Start 5 concurrent threads for the same audience
+        threads = [threading.Thread(target=worker) for _ in range(5)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # All threads should get the same refreshed token
+        for res in results:
+            self.assertEqual(res, "refreshed-token-1")
+
+        # The refresh method should have been called exactly once
+        self.assertEqual(mock_creds.refresh_count, 1)
+
+    @patch("google.oauth2.id_token.fetch_id_token_credentials")
     def test_refresh_failure_does_not_cache_token(
         self, mock_fetch_creds
     ) -> None:
@@ -128,7 +159,8 @@ class TestAuthClient(unittest.TestCase):
         with self.assertRaises(google.auth.exceptions.RefreshError):
             get_id_token("http://audience-failed")
 
-        # Subsequent call: should still try to refresh (because .valid remains False)
+        # Subsequent call: should still try to refresh (because .valid remains
+        # False)
         # We disable should_fail so it succeeds this time
         mock_creds.should_fail = False
 
