@@ -43,6 +43,12 @@
       "label": "Out Of Order Timeout (MS)",
       "helpText": "Milliseconds to wait for missing chunks before accepting a logical gap for audio feeds. Default: 60000ms.",
       "isOptional": true
+    },
+    {
+      "name": "stale_timeout_ms",
+      "label": "Stale Timeout (MS)",
+      "helpText": "Milliseconds before an incomplete transmission is flushed.",
+      "isOptional": true
     }
   ]
 }
