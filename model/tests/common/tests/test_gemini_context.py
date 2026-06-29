@@ -92,6 +92,26 @@ class TestGeminiContextHistories(unittest.TestCase):
             ],
         )
 
+    def test_source_group_does_not_group_unrelated_audio(self) -> None:
+        rows = [
+            {
+                "audio_filepath": "gs://audio/a.flac",
+                "source_group": "eval",
+                "offset": 1.0,
+                "text": "alpha",
+            },
+            {
+                "audio_filepath": "gs://audio/b.flac",
+                "source_group": "eval",
+                "offset": 2.0,
+                "text": "bravo",
+            },
+        ]
+
+        histories = build_context_histories(rows, max_turns=2)
+
+        self.assertEqual(histories, [[], []])
+
 
 if __name__ == "__main__":
     unittest.main()

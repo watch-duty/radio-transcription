@@ -18,6 +18,7 @@ from common.gemini.vertex import (  # noqa: E402
 from fake_gcs import FakeStorageClient  # noqa: E402
 from gemini_sft.config import EvalExecutionConfig, EvalModelTarget  # noqa: E402
 from gemini_sft.target_execution import (  # noqa: E402
+    _generate_with_retries,
     build_online_request_identity,
     load_existing_online_predictions,
     online_prediction_metadata_uri,
@@ -303,6 +304,37 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
     @unittest.mock.patch("gemini_sft.target_execution.types")
     @unittest.mock.patch("gemini_sft.target_execution.genai")
+    def test_rejects_duplicate_audio_uris_before_paid_calls(
+        self, mock_genai, mock_types
+    ) -> None:
+        mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
+
+        with self.assertRaisesRegex(ValueError, "duplicate audio_uri"):
+            asyncio.run(
+                run_online_target_inference(
+                    storage_client=self.storage,
+                    run_gcs_prefix="gs://bucket/run",
+                    project="project",
+                    default_location="us-central1",
+                    target_label="checkpoint_6",
+                    target_model="projects/p/locations/us-central1/endpoints/123",
+                    audio_uris=["gs://audio/1.flac", "gs://audio/1.flac"],
+                    histories=[[], []],
+                    system_prompt="system",
+                    user_prompt="user",
+                    prior_context_count=8,
+                    prior_context_mode="text_turns",
+                    eval_manifest_uri="gs://data/eval.jsonl",
+                    local_dir=self.local_dir,
+                    concurrency=2,
+                    max_retries=1,
+                )
+            )
+
+        mock_genai.Client.assert_not_called()
+
+    @unittest.mock.patch("gemini_sft.target_execution.types")
+    @unittest.mock.patch("gemini_sft.target_execution.genai")
     def test_runs_with_shared_request_builder_and_records_empty_error(
         self, mock_genai, mock_types
     ) -> None:
@@ -419,6 +451,39 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                 "gs://audio/1.flac": "one",
                 "gs://audio/2.flac": "two",
             },
+        )
+
+
+class TestGenerateWithRetries(unittest.TestCase):
+    def test_response_text_exception_is_returned_as_standard_error(
+        self,
+    ) -> None:
+        class Response:
+            @property
+            def text(self) -> str:
+                raise ValueError("response contains no candidates")
+
+        class Models:
+            async def generate_content(self, **kwargs):
+                return Response()
+
+        client = unittest.mock.MagicMock()
+        client.aio.models = Models()
+
+        prediction, error = asyncio.run(
+            _generate_with_retries(
+                client=client,
+                model_id="projects/p/locations/us-central1/endpoints/123",
+                contents=[],
+                config={},
+                max_retries=1,
+            )
+        )
+
+        self.assertEqual(prediction, "")
+        self.assertEqual(
+            error,
+            "ValueError: response contains no candidates",
         )
 
 

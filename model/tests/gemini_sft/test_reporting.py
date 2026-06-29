@@ -10,7 +10,21 @@ from gemini_sft.reporting import render_console_report
 from gemini_sft.reporting import render_markdown_report
 from gemini_sft.reporting import report_to_dict
 
+try:
+    import jiwer  # noqa: F401
+    import nemo_text_processing  # noqa: F401
 
+    _SCORING_AVAILABLE = True
+except ImportError:
+    _SCORING_AVAILABLE = False
+
+_scoring_required = unittest.skipIf(
+    not _SCORING_AVAILABLE,
+    "requires the [scoring] extra (jiwer + nemo_text_processing)",
+)
+
+
+@_scoring_required
 class TestReportingContract(unittest.TestCase):
     def test_target_metrics_use_canonical_public_keys(self) -> None:
         refs = ["engine copy", "brush"]

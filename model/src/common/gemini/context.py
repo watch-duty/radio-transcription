@@ -235,7 +235,6 @@ def _episode_key(row: dict[str, Any]) -> str:
             return value.strip()
     for key in (
         "audio_uri",
-        "source_group",
         "example_id",
         "audio_filepath",
     ):

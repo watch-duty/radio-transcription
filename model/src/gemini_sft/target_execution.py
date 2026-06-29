@@ -176,6 +176,12 @@ async def run_online_target_inference(
 ) -> OnlinePredictionMap:
     """Run resumable online Gemini inference for one eval target."""
     audio_uri_list = list(audio_uris)
+    if len(set(audio_uri_list)) != len(audio_uri_list):
+        msg = (
+            "duplicate audio_uri in online eval input; cannot map predictions "
+            "safely"
+        )
+        raise ValueError(msg)
     history_list = [list(history) for history in histories]
     if len(history_list) != len(audio_uri_list):
         msg = "histories length must match audio_uris length"
@@ -372,12 +378,12 @@ async def _generate_with_retries(
                 contents=contents,
                 config=config,
             )
+            text = (response.text or "").strip()
         except Exception as exc:  # pragma: no cover - exercised by callers.
             last_error = f"{type(exc).__name__}: {exc}"
             if attempt < max_retries:
                 await asyncio.sleep(ONLINE_RETRY_SLEEP_SECONDS * attempt)
             continue
-        text = (response.text or "").strip()
         if text:
             return text, None
         last_error = "empty response"
