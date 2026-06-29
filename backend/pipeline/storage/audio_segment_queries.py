@@ -38,6 +38,12 @@ WHERE ($1::uuid[] IS NULL OR s.feed_id = ANY($1))
   AND ($4::timestamptz IS NULL OR s.end_timestamp >= $4)
   AND ($5::timestamptz IS NULL OR s.end_timestamp <= $5)
   AND ($6::boolean IS NULL OR COALESCE(a.is_alert, False) = $6::boolean)
+  AND ($8::text IS NULL OR EXISTS (
+      SELECT 1 FROM annotations
+      WHERE audio_segment_id = s.id
+        AND type = 'TRANSCRIPT'
+        AND data->>'text' ILIKE '%' || $8 || '%'
+  ))
 ORDER BY s.end_timestamp {direction}, s.id {direction}
 LIMIT $7
 """
