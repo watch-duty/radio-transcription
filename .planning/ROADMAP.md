@@ -129,8 +129,8 @@ Plans:
 **Plans**: 0/3 plans executed
 Plans:
 **Wave 1**
-- [ ] 05-01-PLAN.md — OKF runbook and README entrypoint
-- [ ] 05-02-PLAN.md — Config, metric, artifact, and hygiene references
+- [x] 05-01-PLAN.md — OKF runbook and README entrypoint
+- [x] 05-02-PLAN.md — Config, metric, artifact, and hygiene references
 
 **Wave 2** *(blocked on Wave 1 completion)*
 - [ ] 05-03-PLAN.md — Ignore rules and lightweight drift guards
