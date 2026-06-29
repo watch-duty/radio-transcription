@@ -7,24 +7,31 @@ import pydantic
 from google import genai
 from google.genai import types
 
-from backend.pipeline.common.log_helper import get_task_logger
-from backend.pipeline.common.utils import ConfigBase
+from backend.pipeline.common import log_helper, utils
 from backend.pipeline.transcription.transcribers import base, prompts
 
-DEFAULT_GEMINI_LOCATION = "global"
+DEFAULT_GEMINI_LOCATION = "us"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+# Defensively handle both proto (UPPERCASE) and pythonic (PascalCase) SDK enum casings
 _VALID_FINISH_REASONS = {"STOP", "MAX_TOKENS", "Stop", "MaxTokens"}
+
 # Model configuration defaults
 _DEFAULT_TEMPERATURE = 0.0
 _DEFAULT_MAX_OUTPUT_TOKENS = 512
+
+# Emergency dispatch traffic frequently contains graphic descriptions of
+# violence, accidents, or criminal activity. To prevent dropping valid
+# dispatches, we must disable all safety filters (BLOCK_NONE).
 _DEFAULT_SAFETY_SETTINGS = [
     {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_CIVIC_INTEGRITY", "threshold": "BLOCK_NONE"},
+    {"category": "HARM_CATEGORY_JAILBREAK", "threshold": "BLOCK_NONE"},
 ]
 
-logger = get_task_logger(
+logger = log_helper.get_task_logger(
     __name__, {"system": "transcription", "component": "gemini"}
 )
 
@@ -37,10 +44,11 @@ class SafetySetting:
     threshold: str
 
 
-class GeminiConfig(ConfigBase):
+class GeminiConfig(utils.ConfigBase):
     """Strongly typed configuration for the Gemini Transcriber."""
 
     model: str = DEFAULT_GEMINI_MODEL
+    location: str = DEFAULT_GEMINI_LOCATION
     mime_type: str = "audio/flac"
     temperature: float = _DEFAULT_TEMPERATURE
     max_output_tokens: int = _DEFAULT_MAX_OUTPUT_TOKENS
@@ -52,7 +60,7 @@ class GeminiConfig(ConfigBase):
             for setting in _DEFAULT_SAFETY_SETTINGS
         ]
     )
-    prompt: str | None = prompts.GEMINI_TRANSCRIBE_WITH_CONTEXT_SYSTEM_PROMPT
+    prompt: str | None = prompts.GEMINI_PROMPT
 
 
 class GeminiTranscriber(base.Transcriber):
@@ -62,20 +70,25 @@ class GeminiTranscriber(base.Transcriber):
         self,
         project_id: str,
         config: GeminiConfig,
-        location: str = DEFAULT_GEMINI_LOCATION,
+        location: str | None = None,
     ) -> None:
         """Binds the GCP Project ID and parsed configuration."""
         self.project_id = project_id
         self.config = config
         self.client: genai.Client | None = None
-        self.location = location
+        self.location = location or config.location
 
     def setup(self) -> None:
-        """Instantiate the GenAI API client."""
+        """Instantiate the GenAI API client with a robust retry policy."""
         self.client = genai.Client(
             vertexai=True,
             project=self.project_id,
             location=self.location,
+            http_options=types.HttpOptions(
+                retry_options=types.HttpRetryOptions(
+                    attempts=5,  # Retry 5 times with exponential backoff
+                )
+            ),
         )
 
     async def transcribe(
@@ -88,6 +101,18 @@ class GeminiTranscriber(base.Transcriber):
         """Transcribes the audio payload using Gemini API.
 
         Accepts either raw bytes or a GCS URI reference.
+
+        Args:
+            audio_data: Optional raw audio bytes to transcribe.
+            uri: Optional GCS URI (gs://...) of the audio file.
+            duration_ms: Duration of the audio segment in milliseconds.
+
+        Returns:
+            The transcribed text, or None if transcription failed or the
+            audio was determined to be empty/unintelligible.
+
+        Raises:
+            RuntimeError: If called before setup() has been run.
         """
         if self.client is None:
             msg = "Transcriber client used before setup() was called."
@@ -124,6 +149,7 @@ class GeminiTranscriber(base.Transcriber):
             temperature=self.config.temperature,
             max_output_tokens=self.config.max_output_tokens,
             system_instruction=self.config.prompt,
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
             safety_settings=[
                 types.SafetySetting(
                     category=types.HarmCategory(setting.category),
@@ -135,7 +161,7 @@ class GeminiTranscriber(base.Transcriber):
             else None,
         )
 
-        # TODO(https://linear.app/watchduty/issue/GOO-579/add-retry-policy-for-gemini-transcriber): Add in retry policy
+        # Note: Retry policy is configured globally on the client in setup()
         response = await self.client.aio.models.generate_content(
             # TODO(https://linear.app/watchduty/issue/GOO-584/update-gemini-31-flash-lite-to-use-fine-tuned-model): Use fine tuned model
             model=self.config.model,
@@ -168,28 +194,26 @@ class GeminiTranscriber(base.Transcriber):
             logger.warning(
                 f"Gemini response finished with reason: {reason_str}"
             )
+            if reason_str == "RECITATION":
+                logger.info(
+                    "Treating RECITATION block as UNINTELLIGIBLE fallback."
+                )
+                return "[UNINTELLIGIBLE]"
             return None
 
-        has_parts = bool(candidate.content and candidate.content.parts)
-        if not has_parts:
-            logger.warning("Gemini response candidate had no content/parts.")
-            return None
-
-        transcript = None
-        try:
-            if response.text:
-                transcript = response.text.strip()
-        except ValueError as val_err:
+        if not candidate.content or not candidate.content.parts:
             logger.warning(
-                "Failed to retrieve text from Gemini response: %s", val_err
+                "Gemini response candidate had no content or parts. "
+                "Finish reason: %s. Candidate: %s",
+                reason_str,
+                candidate,
             )
             return None
 
-        if transcript == "[UNINTELLIGIBLE]":
-            logger.info(
-                "Transcription returned [UNINTELLIGIBLE] "
-                "(no discernable speech)."
-            )
+        text_parts = [p.text for p in candidate.content.parts if p.text]
+        if not text_parts:
+            logger.warning("Gemini response candidate had no text parts.")
             return None
 
-        return transcript
+        transcript = "".join(text_parts).strip()
+        return transcript or None

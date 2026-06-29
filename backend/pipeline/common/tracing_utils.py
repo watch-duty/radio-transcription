@@ -173,7 +173,15 @@ def setup_tracing(
         )
 
         if use_batch:
-            provider.add_span_processor(BatchSpanProcessor(exporter))
+            # Configure smaller, more frequent batches to avoid 504 Deadline Exceeded errors
+            # in high-throughput environments like the Dataflow segmentation pipeline.
+            provider.add_span_processor(
+                BatchSpanProcessor(
+                    exporter,
+                    max_export_batch_size=64,
+                    schedule_delay_millis=1000,
+                )
+            )
         else:
             provider.add_span_processor(SimpleSpanProcessor(exporter))
 
