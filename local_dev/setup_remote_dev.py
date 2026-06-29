@@ -100,9 +100,11 @@ def get_gcp_env():
         env_vars = service_data["spec"]["template"]["spec"]["containers"][0][
             "env"
         ]
-        return {x["name"]: x["value"] for x in env_vars}
+        return {x["name"]: x.get("value", "") for x in env_vars}
     except Exception as e:
-        print(f"\n[ERROR] Failed to fetch service configuration from GCP: {e}")
+        print(
+            f"\n[ERROR] Failed to fetch service configuration from GCP: {e.__class__}: {e}"
+        )
         print(
             "Please ensure you are logged into gcloud (`gcloud auth login`) and have access to the project.\n"
         )

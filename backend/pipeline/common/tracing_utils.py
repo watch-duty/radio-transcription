@@ -1,27 +1,20 @@
 """Utilities for distributed tracing in Apache Beam."""
 
+import asyncio
 import logging
 import os
 import threading
+import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
+from typing import Any, cast
 
 from cloudevents.http.event import CloudEvent
-from opentelemetry import baggage, metrics
+from opentelemetry import baggage
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.context import Context, attach, detach, get_current
-from opentelemetry.exporter.cloud_monitoring import (
-    CloudMonitoringMetricsExporter,
-)
 from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
-from opentelemetry.metrics import get_meter_provider, set_meter_provider
-from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
-from opentelemetry.sdk.metrics.view import (
-    ExplicitBucketHistogramAggregation,
-    View,
-)
 from opentelemetry.sdk.resources import (
     SERVICE_INSTANCE_ID,
     SERVICE_NAME,
@@ -30,14 +23,18 @@ from opentelemetry.sdk.resources import (
 from opentelemetry.sdk.trace import ReadableSpan, SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
+    ConsoleSpanExporter,
     SimpleSpanProcessor,
+    SpanExporter,
 )
 from opentelemetry.trace import (
     Span,
+    Tracer,
     get_current_span,
-    get_tracer,
-    get_tracer_provider,
     set_tracer_provider,
+)
+from opentelemetry.trace import (
+    get_tracer as otel_get_tracer,
 )
 from opentelemetry.trace.propagation.tracecontext import (
     TraceContextTextMapPropagator,
@@ -45,20 +42,36 @@ from opentelemetry.trace.propagation.tracecontext import (
 
 from backend.pipeline.common.env import is_gcp_env
 
+
+class _TracingState:
+    custom_provider: TracerProvider | None = None
+
+
 _setup_lock = threading.Lock()
+_state = _TracingState()
 telemetry_logger = logging.getLogger("telemetry.validation")
 
-# Shared pipeline stage counter
-_pipeline_meter = metrics.get_meter("pipeline_telemetry")
-_pipeline_stage_counter = _pipeline_meter.create_counter(
-    "pipeline_stage_count",
-    description="Number of audio chunks that reached each pipeline stage",
-)
 
+def get_tracer(
+    instrumenting_module_name: str,
+    instrumenting_library_version: str | None = None,
+    schema_url: str | None = None,
+) -> Tracer:
+    """Returns a tracer from our custom provider if initialized.
 
-def record_pipeline_stage(stage: str, status: str = "start") -> None:
-    """Records that an audio chunk has reached a stage/status in the pipeline."""
-    _pipeline_stage_counter.add(1, {"stage": stage, "status": status})
+    Falls back to the global OTel get_tracer if not initialized.
+    """
+    if _state.custom_provider is not None:
+        return _state.custom_provider.get_tracer(
+            instrumenting_module_name,
+            instrumenting_library_version,
+            schema_url,
+        )
+    return otel_get_tracer(
+        instrumenting_module_name,
+        instrumenting_library_version,
+        schema_url=schema_url,
+    )
 
 
 class ContextPropagationValidator(SpanProcessor):
@@ -85,12 +98,23 @@ class ContextPropagationValidator(SpanProcessor):
         pass
 
 
+def _resolve_exporter(*, is_console: bool) -> SpanExporter:
+    """Resolves and returns the appropriate OpenTelemetry SpanExporter."""
+    if is_console:
+        return ConsoleSpanExporter()
+
+    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
+    if not project_id:
+        msg = "GOOGLE_CLOUD_PROJECT environment variable must be set in GCP environment."
+        raise ValueError(msg)
+    return CloudTraceSpanExporter(project_id=project_id)
+
+
 def setup_tracing(
     *,
     service_name: str | None = None,
     is_ingestion: bool | None = None,
     use_batch: bool = True,
-    setup_metrics: bool = False,
 ) -> None:
     """Sets up tracing for the context thread-safely.
 
@@ -100,7 +124,9 @@ def setup_tracing(
     within a single Python worker process space. Distributed Dataflow worker instances
     will spin up separate process environments.
     """
-    if not is_gcp_env():
+    is_console = os.environ.get("OTEL_TRACES_EXPORTER") == "console"
+
+    if not is_gcp_env() and not is_console:
         # Do not set up tracing for local development or tests
         return
 
@@ -108,17 +134,13 @@ def setup_tracing(
     # from automatic metric collection (we only use OTel for tracing).
     os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
 
-    current_provider = get_tracer_provider()
-    if isinstance(current_provider, TracerProvider):
+    if _state.custom_provider is not None:
         return
 
     with _setup_lock:
         # Double check locking pattern after acquiring lock
-        current_provider = get_tracer_provider()
-        if isinstance(current_provider, TracerProvider):
+        if _state.custom_provider is not None:
             return
-
-        project_id = os.environ.get("GOOGLE_CLOUD_PROJECT") or ""
 
         # Resolve service metadata from environment if not explicitly provided
         if service_name is None:
@@ -137,11 +159,8 @@ def setup_tracing(
             }
         )
 
-        if not project_id:
-            msg = "GOOGLE_CLOUD_PROJECT environment variable must be set in GCP environment."
-            raise ValueError(msg)
         provider = TracerProvider(resource=resource)
-        exporter = CloudTraceSpanExporter(project_id=project_id)
+        exporter = _resolve_exporter(is_console=is_console)
 
         if is_ingestion is None:
             is_ingestion = os.environ.get("IS_INGESTION_SERVICE") == "true"
@@ -154,64 +173,28 @@ def setup_tracing(
         )
 
         if use_batch:
-            provider.add_span_processor(BatchSpanProcessor(exporter))
+            # Configure smaller, more frequent batches to avoid 504 Deadline Exceeded errors
+            # in high-throughput environments like the Dataflow segmentation pipeline.
+            provider.add_span_processor(
+                BatchSpanProcessor(
+                    exporter,
+                    max_export_batch_size=64,
+                    schedule_delay_millis=1000,
+                )
+            )
         else:
             provider.add_span_processor(SimpleSpanProcessor(exporter))
 
-        set_tracer_provider(provider)
-        if setup_metrics:
-            current_meter_provider = get_meter_provider()
-            if not isinstance(current_meter_provider, MeterProvider):
-                metrics_exporter = CloudMonitoringMetricsExporter(
-                    project_id=project_id
-                )
-                # Use default export interval
-                reader = PeriodicExportingMetricReader(metrics_exporter)
-
-                # Custom bucket boundaries for E2E latency. The default OTel boundaries cap at 10s,
-                # causing p99/p95 percentiles to flatline at 10s in Cloud Monitoring.
-                # This progressive scale goes from 500ms up to 30 minutes (1,800,000 ms) to capture
-                # normal runs, transcription times, and long queued jobs while keeping bucket count low.
-                latency_view = View(
-                    instrument_name="transcription_e2e_latency_ms",
-                    aggregation=ExplicitBucketHistogramAggregation(
-                        boundaries=[
-                            500.0,
-                            1000.0,
-                            2000.0,
-                            3000.0,
-                            4000.0,
-                            5000.0,
-                            7500.0,
-                            10000.0,
-                            15000.0,
-                            20000.0,
-                            30000.0,
-                            45000.0,
-                            60000.0,
-                            90000.0,
-                            120000.0,
-                            180000.0,
-                            240000.0,
-                            300000.0,
-                            420000.0,
-                            540000.0,
-                            660000.0,
-                            780000.0,
-                            900000.0,
-                            1200000.0,
-                            1500000.0,
-                            1800000.0,
-                        ]
-                    ),
-                )
-
-                meter_provider = MeterProvider(
-                    metric_readers=[reader],
-                    resource=resource,
-                    views=[latency_view],
-                )
-                set_meter_provider(meter_provider)
+        _state.custom_provider = provider
+        # Try to set as global provider for auto-instrumentation / standard libraries.
+        # This will log a warning if a global provider was already set, but that is fine.
+        try:
+            set_tracer_provider(provider)
+        except Exception:
+            telemetry_logger.debug(
+                "Failed to set global tracer provider; "
+                "utilizing fallback custom provider."
+            )
 
 
 def get_current_traceparent() -> str:
@@ -369,8 +352,52 @@ def with_baggage_and_span(
         yield span
 
 
+def _safe_str(val: Any) -> str:
+    """Safely converts string or bytes to a standard string."""
+    if isinstance(val, bytes):
+        return val.decode("utf-8", errors="ignore")
+    return str(val)
+
+
+def _extract_nested_pubsub_attributes(data: Any) -> dict[str, str]:
+    """Helper to extract attributes from nested Pub/Sub messages."""
+    attrs_dict: dict[str, str] = {}
+    if isinstance(data, dict):
+        data_dict: dict[Any, Any] = data
+        message = data_dict.get("message") or data_dict.get(b"message")
+
+        # Fallback: if there is no nested "message" field, but "attributes" is present at the top level,
+        # then the data dictionary itself is the message!
+        if message is None and (
+            "attributes" in data_dict or b"attributes" in data_dict
+        ):
+            message = data_dict
+
+        if isinstance(message, dict):
+            msg_dict: dict[Any, Any] = message
+            attrs = msg_dict.get("attributes") or msg_dict.get(b"attributes")
+            if isinstance(attrs, dict):
+                attrs_dict.update(
+                    {_safe_str(k): _safe_str(v) for k, v in attrs.items()}
+                )
+    return attrs_dict
+
+
+def _normalize_prefixed_attributes(attributes: dict[str, str]) -> None:
+    """Helper to normalize prefixed CloudEvent/PubSub attributes in-place."""
+    for k, v in list(attributes.items()):
+        clean_key = None
+        if k.startswith("x-goog-pubsub-attr-"):
+            clean_key = k[19:]
+        elif k.startswith("ce-"):
+            clean_key = k[3:]
+
+        if clean_key and clean_key not in attributes:
+            attributes[clean_key] = v
+
+
 def extract_cloud_event_attributes(
-    cloud_event: CloudEvent | dict[str, object],
+    cloud_event: CloudEvent | Mapping[Any, Any],
 ) -> dict[str, str]:
     """Extracts combined attributes from a CloudEvent payload and metadata.
 
@@ -382,50 +409,28 @@ def extract_cloud_event_attributes(
     """
     combined_attributes: dict[str, str] = {}
 
-    if isinstance(cloud_event, dict):
-        data = cloud_event.get("data")
-        ce_attrs = cloud_event.get("attributes")
-    else:
+    if hasattr(cloud_event, "data"):
         data = cloud_event.data
-        ce_attrs = None
+        ce_attrs = getattr(cloud_event, "attributes", None)
+        pubsub_container = data
+    else:
+        data_dict: Mapping[Any, Any] = cloud_event
+        data = data_dict.get("data") or data_dict.get(b"data")
+        ce_attrs = data_dict.get("attributes") or data_dict.get(b"attributes")
+        pubsub_container = data if data is not None else data_dict
 
-    # 1. Try to extract from nested Pub/Sub message attributes
-    try:
-        if isinstance(data, dict):
-            data_dict = {str(k): v for k, v in data.items()}
-            pubsub_message = data_dict.get("message")
-            if isinstance(pubsub_message, dict):
-                msg_dict = {str(k): v for k, v in pubsub_message.items()}
-                pubsub_attrs = msg_dict.get("attributes")
-                if isinstance(pubsub_attrs, dict):
-                    combined_attributes.update(
-                        {
-                            str(k): str(v)
-                            for k, v in pubsub_attrs.items()
-                            if isinstance(k, str) and isinstance(v, str)
-                        }
-                    )
-    except Exception as e:
-        telemetry_logger.debug(
-            "Failed to extract attributes from Pub/Sub message: %s", e
+    # 1. Extract from nested Pub/Sub message attributes
+    combined_attributes.update(
+        _extract_nested_pubsub_attributes(pubsub_container)
+    )
+
+    # 2. Extract from top-level CloudEvent attributes
+    if isinstance(ce_attrs, dict):
+        combined_attributes.update(
+            {_safe_str(k): _safe_str(v) for k, v in ce_attrs.items()}
         )
 
-    # 2. Try to extract from top-level CloudEvent attributes
-    try:
-        if isinstance(ce_attrs, dict):
-            combined_attributes.update(
-                {
-                    str(k): str(v)
-                    for k, v in ce_attrs.items()
-                    if isinstance(k, str) and isinstance(v, str)
-                }
-            )
-    except Exception as e:
-        telemetry_logger.debug(
-            "Failed to extract attributes from CloudEvent attributes: %s", e
-        )
-
-    # 3. Try to extract from top-level CloudEvent fields if dict-like or via get method
+    # 3. Extract from top-level CloudEvent fields if dict-like or via get method
     for k in [
         "traceparent",
         "baggage",
@@ -433,21 +438,27 @@ def extract_cloud_event_attributes(
         "ce-traceparent",
         "ce-baggage",
         "ce-tracestate",
+        "x-goog-pubsub-attr-traceparent",
+        "x-goog-pubsub-attr-baggage",
     ]:
         try:
             val = cloud_event.get(k)
-            if isinstance(val, str):
-                combined_attributes[k] = val
+            if isinstance(val, (str, bytes, int, float, bool)):
+                # We intentionally coerce scalar values to str to handle robust type conversion
+                # for keys like traceparent/baggage which are expected to be scalar strings,
+                # while ignoring complex objects or mock returns in unit tests.
+                combined_attributes[k] = _safe_str(val)
         except Exception as e:
-            telemetry_logger.debug(
-                "Field %s not found or extraction failed: %s", k, e
-            )
+            telemetry_logger.debug("Field %s extraction failed: %s", k, e)
+
+    # 4. Normalize prefixed attributes
+    _normalize_prefixed_attributes(combined_attributes)
 
     return combined_attributes
 
 
 def parse_pubsub_cloudevent(
-    cloud_event: CloudEvent | dict[str, object],
+    cloud_event: CloudEvent | Mapping[Any, Any],
 ) -> tuple[dict[str, str], str]:
     """Parses a CloudEvent containing a Pub/Sub message, validating its structure.
 
@@ -461,10 +472,10 @@ def parse_pubsub_cloudevent(
         ValueError: If the CloudEvent envelope or Pub/Sub message structure is invalid.
         TypeError: If the Pub/Sub message is not a dictionary.
     """
-    if isinstance(cloud_event, dict):
-        envelope = cloud_event
-    else:
+    if hasattr(cloud_event, "data"):
         envelope = cloud_event.data
+    else:
+        envelope = cloud_event
 
     if (
         not envelope
@@ -474,7 +485,7 @@ def parse_pubsub_cloudevent(
         err_msg = "Invalid CloudEvent envelope structure."
         raise ValueError(err_msg)
 
-    pubsub_message = envelope.get("message")
+    pubsub_message = cast("Any", envelope).get("message")
     if not isinstance(pubsub_message, dict):
         type_err = "Invalid Pub/Sub message structure inside CloudEvent."
         raise TypeError(type_err)
@@ -488,3 +499,38 @@ def parse_pubsub_cloudevent(
     combined_attributes = extract_cloud_event_attributes(cloud_event)
 
     return combined_attributes, raw_data
+
+
+async def traced_to_thread[T](
+    span_name: str,
+    func: Callable[..., T],
+    *args: Any,
+    **kwargs: Any,
+) -> T:
+    """Wraps asyncio.to_thread in a child span, recording thread execution start and end.
+
+    This captures thread pool queue delay, actual execution duration, and dispatch delay.
+    """
+    tracer = get_tracer(__name__)
+    with tracer.start_as_current_span(span_name) as span:
+
+        def worker() -> T:
+            # Under asyncio.to_thread, contextvars are automatically propagated.
+            # Record when execution starts inside the thread pool worker thread.
+            start_time = time.time()
+            span.set_attribute("thread.start_time", start_time)
+            span.add_event("thread_execution_start")
+            telemetry_logger.info(
+                "Thread execution for span '%s' started", span_name
+            )
+            try:
+                return func(*args, **kwargs)
+            finally:
+                end_time = time.time()
+                span.set_attribute("thread.end_time", end_time)
+                span.add_event("thread_execution_end")
+                telemetry_logger.info(
+                    "Thread execution for span '%s' finished", span_name
+                )
+
+        return await asyncio.to_thread(worker)

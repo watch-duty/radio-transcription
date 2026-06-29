@@ -18,19 +18,22 @@ from backend.pipeline.common.constants import (
     GCS_DOWNLOAD_TIMEOUT_SEC,
     NANOS_PER_SECOND,
 )
+from backend.pipeline.common.log_helper import record_pipeline_stage
 from backend.pipeline.common.storage import gcs_uploader
 from backend.pipeline.common.tracing_utils import (
     inject_otel_context,
     parse_pubsub_cloudevent,
-    record_pipeline_stage,
     with_tracer_context,
 )
-from backend.pipeline.normalization import audio_processor
+from backend.pipeline.normalization import audio_processor, waveform
 from backend.pipeline.schema_types.normalized_audio_pb2 import NormalizedAudio
 from backend.pipeline.schema_types.segmented_audio_pb2 import (
     SegmentedAudio,
 )
-from backend.services.audio_segments.models import AudioClassification
+from backend.services.audio_segments.models import (
+    AnnotationType,
+    AudioClassification,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +198,10 @@ class NormalizationEventProcessor:
                     playback_audio_uri=playback_audio_uri,
                     transcription_audio_uri=transcription_audio_uri,
                 )
+
+                # 6. Attach the timeline waveform (best-effort; never blocks the above)
+                self._persist_waveform_annotation(segment_id, flac_bytes)
+
                 record_pipeline_stage("normalization", "success")
 
             except Exception as e:
@@ -331,6 +338,29 @@ class NormalizationEventProcessor:
             segment_id,
         )
         self.audio_segments_client.add_audio_segment(segment_payload)
+
+    def _persist_waveform_annotation(
+        self, segment_id: str, flac_bytes: bytes
+    ) -> None:
+        """Attaches downsampled waveform peaks for timeline rendering (best-effort)."""
+        if not self.audio_segments_client:
+            logger.warning(
+                "No audio_segments_client configured; "
+                "skipping waveform annotation for segment %s",
+                segment_id,
+            )
+            return
+        try:
+            data = waveform.compute_waveform(flac_bytes).model_dump()
+            self.audio_segments_client.add_audio_segment_annotation(
+                segment_id, AnnotationType.WAVEFORM, data
+            )
+        except Exception:
+            # Never fail the pipeline for a missing waveform.
+            logger.exception(
+                "Failed to attach waveform annotation for segment %s",
+                segment_id,
+            )
 
     def _publish_downstream(
         self,

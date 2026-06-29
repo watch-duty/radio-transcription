@@ -12,7 +12,7 @@ from typing import Any, TypeVar, cast
 
 import aiohttp
 
-from backend.pipeline.ingestion import models, quarantine_reason
+from backend.pipeline.ingestion import models, status_reason_detail
 from backend.pipeline.ingestion.collectors import control_flow
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
@@ -178,7 +178,7 @@ async def fetch_json_with_retries(  # noqa: UP047
                         raise collector_failure(
                             invalid_payload_status_reason,
                             f"{invalid_payload_reason}: "
-                            f"{quarantine_reason.exception_text(exc)}",
+                            f"{status_reason_detail.exception_text(exc)}",
                         ) from exc
 
                 if _is_retryable_status(
@@ -214,13 +214,13 @@ async def fetch_json_with_retries(  # noqa: UP047
                     log_label=log_label,
                     message=(
                         "transport error: "
-                        f"{quarantine_reason.exception_text(exc)}"
+                        f"{status_reason_detail.exception_text(exc)}"
                     ),
                 )
                 continue
             raise collector_failure(
                 transport_status_reason,
-                f"{transport_reason}: {quarantine_reason.exception_text(exc)}",
+                f"{transport_reason}: {status_reason_detail.exception_text(exc)}",
             ) from exc
 
     msg = "unreachable retry loop exit"
@@ -304,13 +304,13 @@ async def download_item_media(
                     log_label=log_label,
                     message=(
                         "transport error: "
-                        f"{quarantine_reason.exception_text(exc)}"
+                        f"{status_reason_detail.exception_text(exc)}"
                     ),
                 )
                 continue
             return ItemFailure(
                 transport_status_reason,
-                f"{transport_reason}: {quarantine_reason.exception_text(exc)}",
+                f"{transport_reason}: {status_reason_detail.exception_text(exc)}",
             )
 
     msg = "unreachable retry loop exit"

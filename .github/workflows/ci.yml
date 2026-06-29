@@ -6,6 +6,7 @@ permissions:
   contents: read
   actions: read
   packages: read
+  checks: write
 
 jobs:
   setup:
@@ -96,6 +97,8 @@ jobs:
         run: uv sync
       - name: Generate Protobuf Python files
         run: mise run generate:protos
+      - name: Validate protobuf schemas
+        run: mise run lint:schemas
       - name: Run Python code quality checks
         run: mise run lint:python
 
@@ -185,14 +188,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 100
-      - name: Cache APT packages
-        uses: awalsh128/cache-apt-pkgs-action@v1
-        with:
-          packages: ffmpeg libomp5-18
-      - name: Install system dependencies (ffmpeg for pydub, libomp5 for TenVAD)
-        run: |
-          sudo apt-get update -o Acquire::http::Timeout="10"
-          sudo apt-get install -y ffmpeg libomp5 libc++1 libc++abi1
       - name: Install mise, install tools
         # mise installs uv and other project-specific tools. see: .tool-versions
         uses: jdx/mise-action@v3
@@ -220,7 +215,16 @@ jobs:
           docker pull google/alloydbomni:15 || true
           docker pull fsouza/fake-gcs-server:latest || true
       - name: Run tests
-        run: uv run python -m pytest backend/ -q
+        run: |
+          set -o pipefail
+          uv run python -m pytest backend/ -q --cov=backend/pipeline --cov-report=term-missing --color=no \
+            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o backend_unit_test_coverage.txt
+      - name: Create Coverage Check Run
+        uses: ./.github/actions/post-backend-coverage
+        if: always()
+        with:
+          name: "Backend Unit Test Coverage"
+          coverage-report-location: "backend_unit_test_coverage.txt"
 
   run-frontend-tests:
     needs: [setup]
@@ -241,10 +245,30 @@ jobs:
         run: yarn --cwd frontend/api install --frozen-lockfile --non-interactive && yarn --cwd frontend/transcription-ui install --frozen-lockfile --non-interactive
       - name: Run proxy tests
         working-directory: frontend/api
-        run: yarn test --watch=false
+        run: |
+          set -o pipefail
+          yarn test --watch=false --coverage --coverage.all --coverage.include=src/**/* --coverage.reporter=json-summary --coverage.reporter=text --no-color \
+            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o frontend_api_test_coverage.txt
+      - name: Create Frontend Proxy Coverage Check Run
+        uses: ./.github/actions/post-frontend-coverage
+        if: always()
+        with:
+          name: "Frontend Proxy API Coverage"
+          coverage-report-location: "frontend/api/frontend_api_test_coverage.txt"
+          json-summary-location: "frontend/api/coverage/coverage-summary.json"
       - name: Run UI tests
         working-directory: frontend/transcription-ui
-        run: yarn test --watch=false
+        run: |
+          set -o pipefail
+          yarn test --watch=false --coverage --coverage.all --coverage.include=src/**/* --coverage.reporter=json-summary --coverage.reporter=text --no-color \
+            | python3 $GITHUB_WORKSPACE/.github/scripts/filter_coverage.py -o frontend_ui_test_coverage.txt
+      - name: Create UI Coverage Check Run
+        uses: ./.github/actions/post-frontend-coverage
+        if: always()
+        with:
+          name: "Frontend UI Coverage"
+          coverage-report-location: "frontend/transcription-ui/frontend_ui_test_coverage.txt"
+          json-summary-location: "frontend/transcription-ui/coverage/coverage-summary.json"
 
   # Builds each service's Dockerfile and verifies all transitive imports resolve
   # and required environment variables are documented. This catches:
@@ -364,14 +388,64 @@ jobs:
           PGDATABASE: postgres
         run: |
           set -euo pipefail
-          violations=$(psql -v ON_ERROR_STOP=1 -t -A \
-            -f terraform/modules/alloydb/sql/ci/hot_protection_check.sql)
-          if [ -n "$violations" ]; then
-            echo "::error::HOT-protection violation(s) detected:"
-            echo "$violations"
-            echo "An index on the feeds table references a mutated hot-path"
-            echo "column. This will defeat HOT updates and cause table bloat."
-            echo "See sql/ci/hot_protection_check.sql for the guarded column list."
-            exit 1
-          fi
+
+          guard_sql="terraform/modules/alloydb/sql/ci/hot_protection_check.sql"
+
+          cleanup_hot_guard_fixtures() {
+            psql -v ON_ERROR_STOP=1 \
+              -c "DROP INDEX IF EXISTS hot_guard_direct_fixture" \
+              -c "DROP INDEX IF EXISTS hot_guard_predicate_fixture" \
+              -c "DROP INDEX IF EXISTS hot_guard_expression_fixture" \
+              >/dev/null
+          }
+          trap cleanup_hot_guard_fixtures EXIT
+
+          run_hot_guard() {
+            psql -v ON_ERROR_STOP=1 -t -A -f "$guard_sql"
+          }
+
+          assert_hot_guard_clean() {
+            local violations
+            violations=$(run_hot_guard)
+            if [ -n "$violations" ]; then
+              echo "::error::HOT-protection violation(s) detected:"
+              echo "$violations"
+              echo "An index on the feeds table references a mutated hot-path"
+              echo "column. This will defeat HOT updates and cause table bloat."
+              echo "See sql/ci/hot_protection_check.sql for the guarded column list."
+              exit 1
+            fi
+          }
+
+          assert_hot_guard_reports() {
+            local expected="$1"
+            local violations
+            violations=$(run_hot_guard)
+            if [ "$violations" != "$expected" ]; then
+              echo "::error::HOT-protection fixture did not report expected violation:"
+              echo "Expected: $expected"
+              echo "Actual:"
+              echo "$violations"
+              exit 1
+            fi
+          }
+
+          assert_hot_guard_clean
+
+          psql -v ON_ERROR_STOP=1 \
+            -c "CREATE INDEX hot_guard_direct_fixture ON feeds (last_heartbeat)"
+          assert_hot_guard_reports "hot_guard_direct_fixture|last_heartbeat|direct"
+          psql -v ON_ERROR_STOP=1 -c "DROP INDEX hot_guard_direct_fixture"
+
+          psql -v ON_ERROR_STOP=1 \
+            -c "CREATE INDEX hot_guard_predicate_fixture ON feeds (id) WHERE last_heartbeat IS NOT NULL"
+          assert_hot_guard_reports "hot_guard_predicate_fixture|last_heartbeat|derived"
+          psql -v ON_ERROR_STOP=1 -c "DROP INDEX hot_guard_predicate_fixture"
+
+          psql -v ON_ERROR_STOP=1 \
+            -c "CREATE INDEX hot_guard_expression_fixture ON feeds ((COALESCE(worker_id::text, 'missing')))"
+          assert_hot_guard_reports "hot_guard_expression_fixture|worker_id|derived"
+          psql -v ON_ERROR_STOP=1 -c "DROP INDEX hot_guard_expression_fixture"
+
+          assert_hot_guard_clean
           echo "HOT-protection check passed: no index references a guarded column."

@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -175,6 +175,28 @@ class RequestHandler(BaseHTTPRequestHandler):
         }
         self.wfile.write(json.dumps(payload).encode("utf-8"))
 
+    def _stream_live_audio(self, file_path: Path, byte_rate: float) -> None:
+        """Streams mock audio file in an infinite loop at the specified byte rate."""
+        chunk_size = 4096
+        logger.info(
+            f"Streaming mock audio {file_path.name} in an infinite loop to simulate live stream..."
+        )
+        try:
+            while True:
+                with open(file_path, "rb") as f:
+                    while True:
+                        chunk = f.read(chunk_size)
+                        if not chunk:
+                            break
+                        self.wfile.write(chunk)
+                        # Sleep to match real-time byte rate
+                        sleep_time = len(chunk) / byte_rate
+                        time.sleep(sleep_time)
+        except (BrokenPipeError, ConnectionResetError):
+            logger.info(
+                f"Client disconnected from live stream {file_path.name}."
+            )
+
     def _handle_file_download(self, parsed_url) -> None:
         path = parsed_url.path.lstrip("/")
         path = path.removeprefix("mock-s3/")
@@ -214,8 +236,28 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.send_header("Content-type", content_type)
             self.end_headers()
 
-            with open(file_path, "rb") as f:
-                self.wfile.write(f.read())
+            # Only simulate live stream (throttling and holding connection open)
+            # if this is a root-level request (simulating an Icecast mountpoint).
+            # One-shot calls downloads (which contain slashes in the path) should be
+            # served at maximum speed and closed immediately.
+            is_audio = file_path.suffix.lower() in {
+                ".flac",
+                ".mp3",
+                ".wav",
+                ".m4a",
+                ".ogg",
+            }
+            is_live_stream = is_audio and "/" not in path
+
+            if is_live_stream:
+                # Assume a standard mock duration of 15 seconds to calculate the byte rate
+                duration = 15.0
+                file_size = file_path.stat().st_size
+                byte_rate = file_size / duration  # bytes per second
+                self._stream_live_audio(file_path, byte_rate)
+            else:
+                with open(file_path, "rb") as f:
+                    self.wfile.write(f.read())
         else:
             self.send_response(404)
             self.end_headers()
@@ -224,7 +266,7 @@ class RequestHandler(BaseHTTPRequestHandler):
 
 def run(port: int = 8090) -> None:
     server_address = ("0.0.0.0", port)  # noqa: S104
-    httpd = HTTPServer(server_address, RequestHandler)
+    httpd = ThreadingHTTPServer(server_address, RequestHandler)
     logger.info(f"Starting Mock Audio Server on port {port}...")
     httpd.serve_forever()
 

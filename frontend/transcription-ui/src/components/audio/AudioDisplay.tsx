@@ -1,17 +1,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-import type { Howl } from 'howler';
 import type WaveSurfer from 'wavesurfer.js';
 
-import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
-import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
 import Box from '@mui/material/Box';
-import IconButton from '@mui/material/IconButton';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { type Theme, useTheme } from '@mui/material/styles';
 import WavesurferPlayer from '@wavesurfer/react';
 
+import type { PlaybackController } from '../../audio/WebAudioPlayer';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import { findEvaluationAnnotationData } from '../../utils/annotationUtils';
 import { getAudioUrl } from '../../utils/audioUtils';
@@ -25,9 +22,8 @@ interface AudioDisplayProps {
   onClipClick: (segmentId: string) => void;
   userDuration?: string | null;
   isAudioPlaying: boolean;
-  onTogglePlayPause: () => void;
-  currentTimeSeconds?: number;
-  currentAudioRef?: React.RefObject<Howl | null>;
+  currentAudioRef?: React.RefObject<PlaybackController | null>;
+  seekTrigger?: number;
 }
 
 const PLAYING_CURSOR_WIDTH_PX = 1;
@@ -249,9 +245,8 @@ export function AudioDisplay({
   onClipClick,
   userDuration,
   isAudioPlaying,
-  onTogglePlayPause,
-  currentTimeSeconds,
   currentAudioRef,
+  seekTrigger,
 }: AudioDisplayProps) {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';
@@ -262,7 +257,6 @@ export function AudioDisplay({
   // Poll current playback progress when audio is playing
   useEffect(() => {
     if (
-      currentTimeSeconds !== undefined ||
       !isAudioPlaying ||
       !currentlyPlayingSegmentId ||
       !currentAudioRef?.current
@@ -274,11 +268,7 @@ export function AudioDisplay({
 
     const updateProgress = () => {
       if (currentAudioRef.current) {
-        const seek = currentAudioRef.current.seek();
-        // seek could be the Howl instance if audio isn't yet loaded, so we should guard against that.
-        if (typeof seek === 'number') {
-          setLocalCurrentTimeSeconds(seek);
-        }
+        setLocalCurrentTimeSeconds(currentAudioRef.current.getCurrentTime());
       }
       animationFrameId = requestAnimationFrame(updateProgress);
     };
@@ -288,12 +278,14 @@ export function AudioDisplay({
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [
-    isAudioPlaying,
-    currentlyPlayingSegmentId,
-    currentAudioRef,
-    currentTimeSeconds,
-  ]);
+  }, [isAudioPlaying, currentlyPlayingSegmentId, currentAudioRef]);
+
+  // Sync progress instantly on discrete seek events (e.g. skip buttons when paused)
+  useEffect(() => {
+    if (currentAudioRef?.current) {
+      setLocalCurrentTimeSeconds(currentAudioRef.current.getCurrentTime());
+    }
+  }, [seekTrigger, currentAudioRef]);
 
   const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
 
@@ -459,19 +451,6 @@ export function AudioDisplay({
     <Box
       sx={{ display: 'flex', alignItems: 'flex-start', width: '100%', mb: 1 }}
     >
-      <Box
-        sx={{ display: 'flex', mr: 1, alignItems: 'center', height: '60px' }}
-      >
-        <IconButton
-          onClick={onTogglePlayPause}
-          size="small"
-          color="primary"
-          aria-label={isAudioPlaying ? 'pause' : 'play'}
-          disabled={audioSegments.length === 0}
-        >
-          {isAudioPlaying ? <PauseIcon /> : <PlayArrowIcon />}
-        </IconButton>
-      </Box>
       <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
         <Paper
           variant="outlined"
@@ -490,12 +469,8 @@ export function AudioDisplay({
               isDarkTheme={isDarkTheme}
               theme={theme}
               currentTimeSeconds={
-                clip.isAudioPlaying
-                  ? currentTimeSeconds !== undefined
-                    ? currentTimeSeconds
-                    : currentAudioRef
-                      ? localCurrentTimeSeconds
-                      : undefined
+                clip.isAudioPlaying && currentAudioRef
+                  ? localCurrentTimeSeconds
                   : undefined
               }
             />

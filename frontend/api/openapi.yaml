@@ -6,87 +6,6 @@ components:
   requestBodies: {}
   responses: {}
   schemas:
-    Transcript:
-      properties:
-        feedId:
-          type: string
-        segmentId:
-          type: string
-        transcript:
-          type: string
-        startTimestamp:
-          type: string
-        endTimestamp:
-          type: string
-        missingPriorContext:
-          type: boolean
-        missingPostContext:
-          type: boolean
-        sourceAudioUris:
-          items:
-            type: string
-          type: array
-        canonicalAudioUri:
-          type: string
-        playbackAudioUri:
-          type: string
-        startAudioOffset:
-          type: string
-        endAudioOffset:
-          type: string
-        evaluationDecisions:
-          items:
-            type: string
-          type: array
-      required:
-        - feedId
-        - segmentId
-        - transcript
-        - startTimestamp
-        - endTimestamp
-        - missingPriorContext
-        - missingPostContext
-        - sourceAudioUris
-        - canonicalAudioUri
-        - playbackAudioUri
-        - startAudioOffset
-        - endAudioOffset
-        - evaluationDecisions
-      type: object
-      additionalProperties: false
-    ListTranscriptsResponse:
-      properties:
-        transcripts:
-          items:
-            $ref: "#/components/schemas/Transcript"
-          type: array
-        nextToken:
-          type: string
-      required:
-        - transcripts
-      type: object
-      additionalProperties: false
-    ListTranscriptsQueryParams:
-      properties:
-        limit:
-          type: integer
-          format: int32
-          default: 100
-        nextToken:
-          type: string
-        startTime:
-          type: string
-        endTime:
-          type: string
-        order:
-          type: string
-          enum:
-            - asc
-            - desc
-        isAlert:
-          type: boolean
-      type: object
-      additionalProperties: false
     ScopeLevel:
       type: string
       enum:
@@ -321,15 +240,19 @@ components:
         substatus:
           $ref: "#/components/schemas/BackendFeedStatus"
         lastHeartbeat:
-          type: string
+          type: number
+          format: double
         tags:
           items:
             $ref: "#/components/schemas/Tag"
           type: array
-        quarantineReason:
-          type: string
         statusReason:
           $ref: "#/components/schemas/BackendFeedStatusReason"
+        lastSpeechSegmentTimestamp:
+          type: number
+          format: double
+        statusReasonDetail:
+          type: string
       required:
         - name
         - sourceType
@@ -449,6 +372,7 @@ components:
       enum:
         - TRANSCRIPT
         - EVALUATION
+        - WAVEFORM
       type: string
     TranscriptAnnotationData:
       properties:
@@ -463,6 +387,35 @@ components:
         - errors
       type: object
       additionalProperties: false
+    TextMatchSpan:
+      properties:
+        startIndex:
+          type: number
+          format: double
+        endIndex:
+          type: number
+          format: double
+        matchedText:
+          type: string
+      required:
+        - startIndex
+        - endIndex
+        - matchedText
+      type: object
+      additionalProperties: false
+    RuleAnnotation:
+      properties:
+        textMatch:
+          items:
+            $ref: "#/components/schemas/TextMatchSpan"
+          type: array
+      type: object
+      additionalProperties: false
+    RuleAnnotationMap:
+      properties: {}
+      type: object
+      additionalProperties:
+        $ref: "#/components/schemas/RuleAnnotation"
     EvaluationAnnotationData:
       properties:
         decisions:
@@ -473,9 +426,28 @@ components:
           items:
             type: string
           type: array
+        ruleAnnotations:
+          $ref: "#/components/schemas/RuleAnnotationMap"
       required:
         - decisions
         - errors
+      type: object
+      additionalProperties: false
+    WaveformAnnotationData:
+      properties:
+        peaks:
+          items:
+            items:
+              type: number
+              format: double
+            type: array
+          type: array
+        durationSeconds:
+          type: number
+          format: double
+      required:
+        - peaks
+        - durationSeconds
       type: object
       additionalProperties: false
     Annotation:
@@ -488,6 +460,7 @@ components:
           anyOf:
             - $ref: "#/components/schemas/TranscriptAnnotationData"
             - $ref: "#/components/schemas/EvaluationAnnotationData"
+            - $ref: "#/components/schemas/WaveformAnnotationData"
       required:
         - type
         - createdAt
@@ -581,106 +554,6 @@ info:
   version: 1.0.0
   contact: {}
 paths:
-  /api/v1/transcripts/{feedId}:
-    get:
-      operationId: ListTranscripts
-      responses:
-        "200":
-          description: Ok
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ListTranscriptsResponse"
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                properties:
-                  message:
-                    type: string
-                required:
-                  - message
-                type: object
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema:
-                properties:
-                  message:
-                    type: string
-                required:
-                  - message
-                type: object
-        "404":
-          description: Not Found
-          content:
-            application/json:
-              schema:
-                properties:
-                  message:
-                    type: string
-                required:
-                  - message
-                type: object
-        "500":
-          description: Internal Server Error
-          content:
-            application/json:
-              schema:
-                properties:
-                  message:
-                    type: string
-                required:
-                  - message
-                type: object
-      tags:
-        - Transcripts
-      security:
-        - google_id_token: []
-      parameters:
-        - in: path
-          name: feedId
-          required: true
-          schema:
-            type: string
-        - in: query
-          name: limit
-          required: false
-          schema:
-            default: 100
-            format: int32
-            type: integer
-        - in: query
-          name: nextToken
-          required: false
-          schema:
-            type: string
-        - in: query
-          name: startTime
-          required: false
-          schema:
-            type: string
-        - in: query
-          name: endTime
-          required: false
-          schema:
-            type: string
-        - in: query
-          name: order
-          required: false
-          schema:
-            type: string
-            enum:
-              - asc
-              - desc
-        - in: query
-          name: isAlert
-          required: false
-          schema:
-            type: boolean
-      x-google-backend: radio-transcription-api
   /api/v1/rules:
     get:
       operationId: ListRules
@@ -1114,6 +987,17 @@ paths:
                 required:
                   - message
                 type: object
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
         "500":
           description: Internal Server Error
           content:
@@ -1244,6 +1128,17 @@ paths:
                 required:
                   - message
                 type: object
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
         "500":
           description: Internal Server Error
           content:
@@ -1313,6 +1208,17 @@ paths:
                 required:
                   - message
                 type: object
+        "409":
+          description: Conflict
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
         "500":
           description: Internal Server Error
           content:
@@ -1372,6 +1278,17 @@ paths:
                 type: object
         "404":
           description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "409":
+          description: Conflict
           content:
             application/json:
               schema:

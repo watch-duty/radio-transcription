@@ -17,6 +17,15 @@ If this document disagrees with those files or their tests, the code and tests
 win. Update this guide when a behavior change would make the guidance
 misleading.
 
+## Overview
+
+| Method | Mechanism | Audio segmented? |
+|--------|----------|--------|
+| Continuous streaming icecast | VM | No |
+| Polling (API, fetching) | VM | Yes |
+| Push (Echo) | Cloud Function (on demand) | Yes|
+
+
 ## Feed Failure Runtime Boundary
 
 VM collectors have one job: turn a source-specific stream or polling API into
@@ -41,8 +50,12 @@ the source feed did not cause the already-advanced bookmark/publish gap.
 
 Echo is the exception to the VM runtime shape: it runs as a synchronous Cloud
 Function. It writes the same canonical status-reason field through
-`SyncFeedStore`, but the non-budgeted VM routing in this change does not yet
-apply to Echo; sync-store policy parity is a follow-up.
+`SyncFeedStore` and routes recorded failures through `failure_policy` before
+choosing the budgeted or non-budgeted sync-store path. Echo v1 centralizes its
+object-notification completion policy in the handler and returns success for
+object-scoped and pipeline failures after a best-effort non-budgeted status
+recording attempt so one object cannot quarantine the feed or create a retry
+loop.
 
 ## Status Reason Policy
 
@@ -52,8 +65,8 @@ is a nullable, current abnormal-condition label that helps operators answer:
 async progress, successful Echo heartbeat/progress, and manual reset clear
 stale status reasons.
 
-`quarantine_reason` is different. It preserves detailed diagnostic
-text for the failure episode that crosses the quarantine threshold. Do not
+`status_reason_detail` is different. It preserves bounded diagnostic text
+for the current abnormal condition. Do not
 parse it for canonical ownership, do not treat it as a stable code, and do not
 replace it with `status_reason`.
 
@@ -82,8 +95,8 @@ the likely owner:
 | `system_runtime_configuration_invalid` | Shared runtime, deployment, environment, source-class, or transport configuration is invalid and retry is not expected to repair it. |
 | `system_credential_access_failed` | Watch Duty could not retrieve or access internal credentials, such as Secret Manager access failure; this is not the same as upstream provider credential rejection. |
 | `system_source_payload_invalid` | A successful source response violates the collector payload contract, but v1 keeps it non-budgeted because the response may be transient, provider-owned, or later auto-recovered by a deploy. |
-| `system_collector_error` | The collector cannot turn apparently available source data into a chunk, or all item failures are mixed/ambiguous. |
-| `system_pipeline_error` | Runtime or Echo post-capture processing fails after source data was obtained, such as GCS upload, bookmark writes, staging, duration probing, or heartbeat writes. |
+| `system_collector_error` | The collector cannot turn apparently available source data into a chunk, all item failures are mixed/ambiguous, or an Echo duration/probe failure is limited to one object. |
+| `system_pipeline_error` | Runtime or Echo post-capture processing fails after source data was obtained, such as GCS upload, bookmark writes, Echo download/staging/publisher/publish failures, or heartbeat writes. |
 | `system_unexpected_error` | Defensive fallback for bugs or untyped exceptions that should become typed in a future collector fix. |
 
 Use pipeline-owned reasons when capture has already succeeded and the remaining
@@ -108,7 +121,7 @@ every eligible attempted item in that boundary fails:
 
 - If all failures have the same canonical reason, promote that reason.
 - If all attempted items failed but reasons are mixed, promote
-  `system_collector_error` with the quarantine reason `mixed_item_failures`.
+  `system_collector_error` with the detail `mixed_item_failures`.
 - If no eligible items were attempted, or at least one item succeeded, do not
   record a feed failure.
 
@@ -144,7 +157,7 @@ attempted item continue through `_process_file_list` item handling.
 ## Failure Classification Model
 
 `FailureInfo` is a lightweight container for a canonical `FeedStatusReason`
-plus quarantine-reason text before feed scope is applied. The text is operator
+plus status reason detail before feed scope is applied. The text is operator
 diagnostic material, not a machine-readable tag.
 
 `ItemFailure` is an item-scoped failure value. Use it when an individual
@@ -157,14 +170,14 @@ runtime.
 
 Shared failure classifiers own evidence-specific classification, and may render
 diagnostics for that evidence type, such as ffmpeg exit/signal/timeout details.
-Collectors and source helpers still own quarantine-reason text around source
+Collectors and source helpers still own status reason detail around source
 operations because they know the operation, available exception text, captured
 stderr tail, and source-specific semantics.
 For ffmpeg and ffprobe subprocess failures, shared helpers should expose or
 render bounded process evidence; collectors should log the source-scoped
 operation context and decide whether that evidence is item-scoped or
 feed-scoped.
-`backend.pipeline.ingestion.quarantine_reason` owns only shared storage-boundary
+`backend.pipeline.ingestion.status_reason_detail` owns only shared storage-boundary
 helpers: exception detail formatting and the database storage cap. It must not
 grow source-specific message construction helpers.
 Collectors still own:
@@ -172,27 +185,27 @@ Collectors still own:
 - retry and backoff policy;
 - same-endpoint probes;
 - item versus feed escalation;
-- final quarantine-reason construction for source-specific operations.
+- final status reason detail construction for source-specific operations.
 
-## Quarantine-Reason Policy
+## Status Reason Detail Policy
 
-Quarantine reasons should be useful for on-call debugging. Include the direct
+Status reason details should be useful for on-call debugging. Include the direct
 evidence that explains the failure: terminal HTTP status and reason phrase,
 exception class/message after retries are exhausted, ffmpeg exit/signal/timeout
 details, and the bounded stderr tail when it materially explains an ffmpeg
 failure.
 
-Do not derive quarantine reasons from Python stack frames or function names.
+Do not derive status reason details from Python stack frames or function names.
 Build them at the call site that has the evidence. Shared helpers may render
 generic operations they own, such as item media downloads or JSON fetches.
 Collectors render source-specific operations, such as stream capture and
 same-stream probes.
 
-Do not truncate quarantine-reason text in collectors or failure objects.
+Do not truncate status reason detail in collectors or failure objects.
 `FeedFailure` and runtime `_PipelineFailure` carry full diagnostics; async and
 sync feed stores cap the text immediately before persisting it.
 
-Do not branch on quarantine-reason text. If later behavior depends on a
+Do not branch on status reason detail. If later behavior depends on a
 classification, carry typed information such as HTTP status, ffmpeg failure
 kind, exit code, signal number, or a local probe outcome. For example, Icecast
 stream capture uses typed ffmpeg failure info to decide whether to run a
@@ -211,7 +224,7 @@ explain why policies are scoped by endpoint/stage, not restate every mapping.
 Do not append raw HTTP response bodies, full ffmpeg stderr, stack traces, or
 large request/response bodies. Exception text and bounded stderr tails may be
 preserved when they are the direct diagnostic evidence for the failure episode;
-storage applies the final quarantine-reason cap immediately before persistence.
+storage applies the final status-reason-detail cap immediately before persistence.
 
 ## Shared Collector Helpers
 

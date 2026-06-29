@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import os
+import shutil
 import unittest
 import uuid
 from pathlib import Path
@@ -10,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import asyncpg
 import docker
 import requests as sync_requests
+import soundfile as sf
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 from testcontainers.postgres import PostgresContainer
@@ -38,9 +41,14 @@ MOCK_ENV_VARS = {
 
 _FAKE_GCS_PORT = 4443
 _TEST_BUCKET = "test-audio-bucket"
+_RUNTIME_ACTOR_ID = "service_account:gcp:123456789012345678901"
 
 # Audio constants
 _FLAC_MAGIC = b"fLaC"
+_BAD_STREAMINFO_FLAC = (
+    Path(__file__).parent / "test_data" / "streamed_segment_bad_STREAMINFO.flac"
+)
+_ffmpeg_available = shutil.which("ffmpeg") is not None
 
 
 def _docker_available() -> bool:
@@ -275,6 +283,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 gcs_path,
                 feed["fencing_token"],
                 capture_chunk.chunk_end_time,
+                actor_id=_RUNTIME_ACTOR_ID,
             )
             self.assertTrue(ok)
             last_chunk_ts = capture_chunk.chunk_end_time
@@ -296,6 +305,50 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["last_processed_filename"], gcs_path)
         self.assertEqual(row["last_bookmark_time"], last_chunk_ts)
         self.assertEqual(row["failure_count"], 0)
+
+    @unittest.skipIf(not _ffmpeg_available, "ffmpeg not available")
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_uploaded_segment_has_readable_flac_header(
+        self, mock_create_ffmpeg
+    ) -> None:
+        """No segment leaves ingestion with the unreadable muxer header."""
+        feed = await self._lease_feed("flac-header-feed")
+
+        # The muxer emits a segment with a bad STREAMINFO header; the capture
+        # path must repair it before upload.
+        raw = _BAD_STREAMINFO_FLAC.read_bytes()
+        mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg([raw])
+
+        shutdown = asyncio.Event()
+        uploaded_paths = []
+        async for capture_chunk in icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        ):
+            uploaded_paths.append(
+                await gcp_helper.upload_staged_audio(
+                    self.gcs_client,
+                    capture_chunk.audio_bytes,
+                    feed,
+                    _TEST_BUCKET,
+                    len(uploaded_paths),
+                )
+            )
+
+        self.assertEqual(len(uploaded_paths), 1)
+        object_name = uploaded_paths[0].replace(f"gs://{_TEST_BUCKET}/", "")
+        downloaded = await self._download_gcs_object(object_name)
+
+        # The repaired bytes differ from the raw muxer output and are now
+        # decodable by libsndfile (header accuracy is covered by the unit test).
+        self.assertNotEqual(downloaded, raw)
+        samples, _ = sf.read(io.BytesIO(downloaded), dtype="float32")
+        self.assertGreater(len(samples), 0)
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
@@ -338,6 +391,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 gcs_path,
                 feed["fencing_token"],
                 capture_chunk.chunk_end_time,
+                actor_id=_RUNTIME_ACTOR_ID,
             )
             gcs_paths.append(gcs_path)
             chunk_timestamps.append(capture_chunk.chunk_end_time)
@@ -400,6 +454,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 gcs_path,
                 feed["fencing_token"],
                 capture_chunk.chunk_end_time,
+                actor_id=_RUNTIME_ACTOR_ID,
             )
             gcs_paths.append(gcs_path)
             last_chunk_ts = capture_chunk.chunk_end_time
@@ -457,6 +512,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             feed["id"],
             self.worker_id,
             feed["fencing_token"],
+            actor_id=_RUNTIME_ACTOR_ID,
             reason=str(ctx.exception),
             status_reason=ctx.exception.status_reason,
         )

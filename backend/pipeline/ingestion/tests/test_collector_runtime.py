@@ -40,6 +40,7 @@ from backend.pipeline.storage.settings import AlloyDBSettings
 
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
+_RUNTIME_ACTOR_ID = "service_account:gcp:123456789012345678901"
 
 
 def _make_captured_chunk(audio_bytes: bytes) -> CapturedChunk:
@@ -429,7 +430,11 @@ class TestProcessFeedSideEffectOrdering(unittest.IsolatedAsyncioTestCase):
             call_order.append("publish")
             return "message-1"
 
-        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -502,7 +507,11 @@ class TestProcessFeedShutdown(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
-        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
         rt._shutdown = asyncio.Event()
         rt._shutdown.set()
         rt._lease_lost = asyncio.Event()
@@ -526,7 +535,11 @@ class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
-        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -574,6 +587,7 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
         rt = CollectorRuntime(
             capture_fn=_one_observation,
             settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
         )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
@@ -612,6 +626,7 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
         rt = CollectorRuntime(
             capture_fn=_one_observation,
             settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
         )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
@@ -626,7 +641,10 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
         }
         rt._releasing_feeds = set()
 
-        with _mock_upload_audio(), _mock_pubsub_publish():
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+        ):
             await rt._process_feed(feed)
 
         rt._store.record_source_observation.assert_awaited_once_with(
@@ -634,6 +652,7 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
             resume_position,
+            actor_id=_RUNTIME_ACTOR_ID,
         )
         self.assertEqual(feed["failure_count"], 0)
         self.assertIsNone(feed["status_reason"])
@@ -667,6 +686,7 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
         rt = CollectorRuntime(
             capture_fn=_one_observation,
             settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
         )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
@@ -681,7 +701,10 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
         }
         rt._releasing_feeds = set()
 
-        with _mock_upload_audio(), _mock_pubsub_publish():
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+        ):
             await rt._process_feed(feed)
 
         rt._store.record_source_observation.assert_awaited_once_with(
@@ -689,6 +712,7 @@ class TestProcessFeedSourceObservation(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
             resume_position,
+            actor_id=_RUNTIME_ACTOR_ID,
         )
         self.assertEqual(feed["failure_count"], 0)
         self.assertIsNone(feed["status_reason"])
@@ -2032,7 +2056,9 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             yield _make_captured_chunk(b"audio")
 
         rt = CollectorRuntime(
-            capture_fn=_failing_capture, settings=_make_settings()
+            capture_fn=_failing_capture,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
         )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
@@ -2041,6 +2067,14 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._store.update_feed_progress.return_value = True
         rt._store.report_feed_failure.return_value = "quarantined"
         rt._releasing_feeds = set()
+        feed = cast(
+            "LeasedFeed",
+            dict(
+                _FEED,
+                failure_count=2,
+                status_reason=(FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED),
+            ),
+        )
 
         with (
             _mock_upload_audio(),
@@ -2054,9 +2088,15 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             ) as cm,
         ):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
-            await rt._process_feed(_FEED)
+            await rt._process_feed(feed)
 
         rt._store.report_feed_failure.assert_awaited_once()
+        failure_kwargs = rt._store.report_feed_failure.await_args.kwargs
+        self.assertEqual(
+            failure_kwargs["actor_id"],
+            _RUNTIME_ACTOR_ID,
+        )
+        self.assertEqual(failure_kwargs["reason"], "missing_source_feed_id")
         rt._store.release_non_budgeted_failure.assert_not_awaited()
         mock_telemetry.emit_quarantine_event.assert_awaited_once_with(
             feed_id=str(_FEED_ID),
@@ -2100,7 +2140,9 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             yield _make_captured_chunk(b"audio")
 
         rt = CollectorRuntime(
-            capture_fn=_failing_capture, settings=_make_settings()
+            capture_fn=_failing_capture,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
         )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
@@ -2108,6 +2150,14 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._store = mock.AsyncMock()
         rt._store.release_non_budgeted_failure.return_value = "failing"
         rt._releasing_feeds = set()
+        feed = cast(
+            "LeasedFeed",
+            dict(
+                _FEED,
+                failure_count=1,
+                status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+            ),
+        )
 
         with (
             mock.patch(
@@ -2115,11 +2165,21 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
             ) as mock_telemetry,
         ):
             mock_telemetry.emit_quarantine_event = mock.AsyncMock()
-            await rt._process_feed(_FEED)
+            await rt._process_feed(feed)
 
         mock_telemetry.emit_quarantine_event.assert_not_awaited()
         rt._store.report_feed_failure.assert_not_awaited()
         rt._store.release_non_budgeted_failure.assert_awaited_once()
+        release_kwargs = (
+            rt._store.release_non_budgeted_failure.await_args.kwargs
+        )
+        self.assertEqual(
+            release_kwargs["actor_id"],
+            _RUNTIME_ACTOR_ID,
+        )
+        self.assertEqual(
+            release_kwargs["reason"], "RuntimeError: capture_failed"
+        )
 
     async def test_untyped_runtime_exception_preserves_full_reason(
         self,
@@ -2530,7 +2590,11 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
-        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -2716,7 +2780,7 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("post_bookmark_publish_failure", event_types)
 
     async def test_failure_log_includes_runtime_reason_fields(self) -> None:
-        """Runtime failure logs include status and quarantine reason fields."""
+        """Runtime failure logs include status and status reason detail fields."""
 
         async def _failing_capture(feed, shutdown, _resources):
             msg = "capture_failed"
@@ -3148,13 +3212,9 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
 
     Contract: the feed's persisted last_bookmark_time is the chunk's
     resume_position when the collector sets it (bcfy_calls), and falls back
-    to chunk_end_time when it is None (stream/push collectors). The runtime
-    invokes update_feed_progress positionally via retry_with_lease_check as
-    (feed_id, worker_id, gcs_uri, fencing_token, last_bookmark_time) — so the
-    bookmark is the 5th positional argument.
+    to chunk_end_time when it is None (stream/push collectors). Runtime passes
+    the bookmark and audit causal inputs as named storage arguments.
     """
-
-    _BOOKMARK_ARG_INDEX = 4
 
     async def test_persists_resume_position_when_chunk_sets_it(self) -> None:
         """A chunk with resume_position set → that value is the bookmark."""
@@ -3169,22 +3229,36 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
                 resume_position=resume,
             )
 
-        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
+        feed = cast(
+            "LeasedFeed",
+            dict(
+                _FEED,
+                failure_count=2,
+                status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
+            ),
+        )
 
-        with _mock_upload_audio(), _mock_pubsub_publish():
-            await rt._process_feed(_FEED)
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+        ):
+            await rt._process_feed(feed)
 
         rt._store.update_feed_progress.assert_awaited_once()
-        bookmark = rt._store.update_feed_progress.await_args.args[
-            self._BOOKMARK_ARG_INDEX
-        ]
-        self.assertEqual(bookmark, resume)
+        kwargs = rt._store.update_feed_progress.await_args.kwargs
+        self.assertEqual(kwargs["last_bookmark_time"], resume)
+        self.assertEqual(kwargs["actor_id"], _RUNTIME_ACTOR_ID)
 
     async def test_falls_back_to_chunk_end_time_when_resume_position_none(
         self,
@@ -3200,7 +3274,11 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
                 # resume_position defaults to None (stream/push collectors).
             )
 
-        rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
         rt._shutdown = asyncio.Event()
         rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
@@ -3208,14 +3286,16 @@ class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):
         rt._store.update_feed_progress.return_value = True
         rt._releasing_feeds = set()
 
-        with _mock_upload_audio(), _mock_pubsub_publish():
+        with (
+            _mock_upload_audio(),
+            _mock_pubsub_publish(),
+        ):
             await rt._process_feed(_FEED)
 
         rt._store.update_feed_progress.assert_awaited_once()
-        bookmark = rt._store.update_feed_progress.await_args.args[
-            self._BOOKMARK_ARG_INDEX
-        ]
-        self.assertEqual(bookmark, end_time)
+        kwargs = rt._store.update_feed_progress.await_args.kwargs
+        self.assertEqual(kwargs["last_bookmark_time"], end_time)
+        self.assertEqual(kwargs["actor_id"], _RUNTIME_ACTOR_ID)
 
 
 if __name__ == "__main__":

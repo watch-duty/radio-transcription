@@ -2,7 +2,7 @@
 # sources: streaming_state.proto
 # plugin: python-betterproto
 # This file has been @generated
-
+import warnings
 from dataclasses import dataclass
 from typing import (
     List,
@@ -71,9 +71,24 @@ class ChunkMetadataProto(betterproto.Message):
 @dataclass(eq=False, repr=False)
 class FlushRequestProto(betterproto.Message):
     buffer: bytes = betterproto.bytes_field(1)
+    """
+    Deprecated: Raw 16-bit PCM audio bytes. Under the decoupled hybrid
+    architecture, raw audio bytes are retrieved from GCS via
+    contributing_chunks. This field is passed as b"" for backward-compatibility
+    and will be retired in Phase 2.
+    """
+
     feed_id: str = betterproto.string_field(2)
     session_id: str = betterproto.string_field(3)
     contributing_audio_uris: List[str] = betterproto.string_field(4)
+    """
+    Deprecated: Legacy list of contributing GCS URIs. Under the decoupled
+    hybrid architecture, this list has been superseded by contributing_chunks,
+    which carries both GCS URIs and absolute baseline timestamps. This field is
+    maintained for backward-compatibility during rolling upgrades and will be
+    retired in Phase 2.
+    """
+
     time_range: "TimeRangeProto" = betterproto.message_field(5)
     feed_metadata: "FeedMetadataProto" = betterproto.message_field(7)
     sample_rate: int = betterproto.int32_field(8)
@@ -96,6 +111,17 @@ class FlushRequestProto(betterproto.Message):
     baggage: Optional[str] = betterproto.string_field(
         17, optional=True, group="_baggage"
     )
+    contributing_chunks: List["BufferedChunkProto"] = betterproto.message_field(18)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.is_set("buffer"):
+            warnings.warn("FlushRequestProto.buffer is deprecated", DeprecationWarning)
+        if self.is_set("contributing_audio_uris"):
+            warnings.warn(
+                "FlushRequestProto.contributing_audio_uris is deprecated",
+                DeprecationWarning,
+            )
 
 
 @dataclass(eq=False, repr=False)
@@ -129,6 +155,14 @@ class ActiveStitchingStateProto(betterproto.Message):
         8, optional=True, group="_end_audio_offset_ms"
     )
     contributing_audio_uris: List[str] = betterproto.string_field(9)
+    """
+    Deprecated: Legacy list of contributing GCS URIs. Under the decoupled
+    hybrid architecture, this list has been superseded by contributing_chunks,
+    which carries both GCS URIs and absolute baseline timestamps. This field is
+    maintained for backward-compatibility during rolling upgrades and will be
+    retired in Phase 2.
+    """
+
     missing_prior_context: bool = betterproto.bool_field(10)
     missing_post_context: bool = betterproto.bool_field(11)
     buffer_duration_ms: int = betterproto.int64_field(12)
@@ -150,6 +184,15 @@ class ActiveStitchingStateProto(betterproto.Message):
     baggage: Optional[str] = betterproto.string_field(
         20, optional=True, group="_baggage"
     )
+    contributing_chunks: List["BufferedChunkProto"] = betterproto.message_field(21)
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if self.is_set("contributing_audio_uris"):
+            warnings.warn(
+                "ActiveStitchingStateProto.contributing_audio_uris is deprecated",
+                DeprecationWarning,
+            )
 
 
 @dataclass(eq=False, repr=False)

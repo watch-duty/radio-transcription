@@ -30,9 +30,10 @@ ENV PYTHONPATH=/app
 # time by the symlink below so LD_PRELOAD stays portable across
 # architectures (lets local M-series Mac dev work without
 # --platform linux/amd64). See https://packages.debian.org/bookworm/libjemalloc2.
+COPY --from=mwader/static-ffmpeg:6.1.1 /ffmpeg /usr/local/bin/
+COPY --from=mwader/static-ffmpeg:6.1.1 /ffprobe /usr/local/bin/
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        ffmpeg \
         libjemalloc2 && \
     rm -rf /var/lib/apt/lists/*
 

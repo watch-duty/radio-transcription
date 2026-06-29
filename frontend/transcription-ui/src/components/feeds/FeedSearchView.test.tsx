@@ -31,8 +31,9 @@ describe('FeedSearchView Condensed Mode', () => {
       status: 'error',
       substatus: 'quarantined',
       statusReason: 'system_unexpected_error',
-      quarantineReason: 'unsupported audio format',
-      lastHeartbeat: new Date().toISOString(),
+      statusReasonDetail: 'unsupported audio format',
+      lastHeartbeat: new Date().getTime(),
+      lastSpeechSegmentTimestamp: new Date().getTime(),
       tags: [{ key: 'county', value: 'Marin' }],
     },
   ];
@@ -49,7 +50,7 @@ describe('FeedSearchView Condensed Mode', () => {
     });
   });
 
-  it('passes statusReason and quarantineReason to FeedStatusIndicator in condensed search', async () => {
+  it('passes statusReason and statusReasonDetail to FeedStatusIndicator in condensed search', async () => {
     renderWithQueryClient(
       <FeedSearchView
         title="Search Feeds"
@@ -74,7 +75,7 @@ describe('FeedSearchView Condensed Mode', () => {
     // Hover over the status indicator to trigger the tooltip
     fireEvent.mouseOver(statusText);
 
-    // Wait for the tooltip content that formats statusReason and quarantineReason
+    // Wait for the tooltip content that formats statusReason and statusReasonDetail
     await waitFor(() => {
       expect(
         screen.getByText(

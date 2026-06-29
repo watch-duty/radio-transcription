@@ -8,6 +8,7 @@ import pytest
 import requests
 
 FEEDS_API_HOST = os.environ.get("FEEDS_API_HOST", "localhost:8089")
+_TEST_ACTOR_HEADERS = {"X-WD-Actor-Id": "user:google:e2e-admin@example.com"}
 
 
 def _create_and_cleanup_feed(
@@ -15,7 +16,12 @@ def _create_and_cleanup_feed(
 ) -> Generator[tuple[str, str]]:
     """Helper to create a feed via API and clean up after test."""
     url = f"http://{FEEDS_API_HOST}/v1/feeds"
-    response = requests.post(url, json=payload, timeout=10)
+    response = requests.post(
+        url,
+        json=payload,
+        headers=_TEST_ACTOR_HEADERS,
+        timeout=10,
+    )
     response.raise_for_status()
 
     feed_id = response.json().get("id", "")
@@ -49,7 +55,11 @@ def _create_and_cleanup_feed(
 
         # Delete feed via API
         del_url = f"http://{FEEDS_API_HOST}/v1/feeds/{feed_id}/deactivate"
-        del_response = requests.post(del_url, timeout=10)
+        del_response = requests.post(
+            del_url,
+            headers=_TEST_ACTOR_HEADERS,
+            timeout=10,
+        )
         del_response.raise_for_status()
 
 

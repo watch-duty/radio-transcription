@@ -117,6 +117,53 @@ record existed and contained empty text.
 A configured upstream audio source that the ingestion system may claim, poll,
 stream, and process. A feed has one lifecycle status at a time.
 
+### Current Feed State
+
+The authoritative current row for a feed in `feeds`. Current feed state answers
+what the system should do with the feed now, including lifecycle status,
+failure counters, retry timing, and current diagnostic fields.
+
+### Audit History
+
+The append-only history of meaningful feed mutations in `feed_audit_events`.
+Audit history answers what changed over time and must remain useful even when a
+current `feeds` row is later hard-deleted.
+
+### Feed Audit Event
+
+A durable domain event for a meaningful feed mutation, including action,
+`actor_id`, event time, feed-local `feed_revision`, and allowlisted
+before/after values. `feed_revision` is monotonically increasing per feed, but
+it is not guaranteed to be contiguous because some high-frequency internal
+state writes advance the current feed revision without emitting a durable audit
+event. The feed audit event schema and storage writers define the v1 contract
+in this PR; delivery, timeline APIs, and broader operational lifecycle work
+remain separate follow-up concerns.
+
+### Actor ID
+
+The required namespaced causal actor string on each Feed Audit Event. An
+`actor_id` identifies the human admin or service/runtime component that caused
+the event. Current v0.3 forms are `user:google:<email>` for trusted
+admin-originated writes, `service_account:gcp:<service-account-unique-id>`,
+`service_account:gcp:<service-account-email>`, or
+`service_account:gcp:<service-account-email>?uid=<service-account-unique-id>`
+for autonomous GCP runtime writers, `service_account:gcp:unresolved` when GCP
+actor configuration is missing or malformed, and
+`service_account:local:development` for local development.
+
+Autonomous audit-writing GCP workloads receive
+`FEED_AUDIT_ACTOR_ID` from deployment/IaC. Application code consumes that value
+and only enforces the `service_account:gcp:` namespace plus the same non-empty,
+bounded, no-whitespace storage hygiene as the database. Deployment owns whether
+the GCP suffix is the service account unique ID, email, or an email-plus-uid
+composite. Application code does not perform runtime metadata, IAM, or token
+calls just to discover its own audit actor. Missing or malformed GCP
+configuration records `service_account:gcp:unresolved` and emits an operational
+error log; it must not block ingestion work. Workloads in the same audit-writing
+path may share one service account, while different audit-writing paths should
+use different service accounts when actor attribution should remain meaningful.
+
 ### Leased Feed
 
 A feed currently owned by one worker through a fencing token. A leased feed can
@@ -138,6 +185,13 @@ synthetic chunk.
 The source-specific scope used to decide whether item failures are isolated or
 feed-level. For polling collectors this is usually one response page or file
 listing.
+
+### Object-Scoped Failure
+
+A failure limited to one source object, item, media URL, or Echo GCS object
+notification. It does not prove the whole feed is broken by itself, so it
+should not promote to feed-level quarantine evidence without broader
+observation-boundary evidence.
 
 ### Collector-Local Failure Streak
 
@@ -194,7 +248,9 @@ feed.
 A post-capture ingestion failure after source capture has succeeded or
 partially succeeded. The source feed may be healthy, so v1 keeps these failures
 outside the feed quarantine budget while preserving visibility for repair and
-replay work.
+replay work. Echo v1 records these failures as non-budgeted status; transient
+pipeline delivery failures still raise so the object notification can retry
+instead of silently losing captured audio.
 
 ### Post-Bookmark Publish Failure
 
@@ -240,6 +296,12 @@ promotes it to a more precise operator-actionable failure.
 The current canonical abnormal-condition label for a feed. It is visible to
 operators and is the v1 routing key for failure policy decisions.
 
+### Status Reason Detail
+
+The bounded explanatory text stored as `status_reason_detail` for current feed
+state and Feed Audit Events. It gives diagnostic context, does not drive
+control flow, and is not a stable machine-readable code.
+
 ### Status Reason Owner
 
 The coarse ownership namespace encoded by a status reason prefix: `source`,
@@ -248,36 +310,21 @@ condition and is distinct from retry, quarantine, and logging policy.
 
 ### Failure Policy Action
 
-The side-effect-free runtime action selected from a `FeedStatusReason`.
-Current actions are:
-
-- `increment_feed_failure_budget`: call `report_feed_failure`, which can move
-  a feed toward quarantine.
-- `retry_without_feed_budget`: release the feed for retry without consuming
-  feed quarantine budget.
-- `record_post_bookmark_publish_gap`: use the non-budgeted retry lane while
-  emitting explicit post-bookmark publish-gap telemetry.
+A runtime handling category selected from a canonical status reason. Budgeted
+actions can move a feed toward quarantine. Non-budgeted actions make the
+failure visible while keeping it out of the feed quarantine budget.
 
 ### Routing Policy
 
-The canonical `FeedStatusReason -> failure policy action` mapping in
-`backend/pipeline/ingestion/failure_policy.py`. The mapping is intentionally
-status-only in v1 so routing changes are localized to one policy table.
+The central mapping from canonical status reason to runtime handling category.
+In v1, this mapping is status-only so routing changes stay localized and can be
+switched without changing collector evidence extraction.
 
 ### Unexpected System Failure
 
 The residual fallback for untyped bugs or missing classification evidence. It
 is non-budgeted until a future change replaces it with a more precise status
 reason or switches its action in the policy table.
-
-### Quarantine Reason
-
-The detailed diagnostic message persisted when a feed failure episode
-crosses the quarantine threshold. It describes that threshold-crossing episode
-for debugging; it is not the lifecycle owner label and does not summarize the
-full failure budget history. It is not a stable machine-readable code and
-should not drive control flow. Ingestion keeps the full useful diagnostic in
-memory; storage caps it only at the database persistence boundary.
 
 ### Quarantine
 

@@ -25,7 +25,7 @@ class MockTranscriber(Transcriber):
         """Setup hook to reset index."""
         self.index = 0
 
-    def transcribe(
+    async def transcribe(
         self,
         *,
         audio_data: bytes | None = None,
