@@ -12,9 +12,11 @@ from common.gemini.prompts import (
     GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
     GEMINI_TRANSCRIBE_USER_PROMPT,
 )
+from gemini_sft import reporting
 from gemini_sft.config import load_run_config
 
 _MODEL_DIR = Path(__file__).resolve().parents[3]
+_REPO_ROOT = _MODEL_DIR.parent
 _NOTEBOOK = _MODEL_DIR / "colabs" / "gemini_transcribe_audio.ipynb"
 _SRC_DIR = _MODEL_DIR / "src"
 _SCRIPTS_DIR = _MODEL_DIR / "scripts"
@@ -176,3 +178,53 @@ model = "gemini-3.1-flash-lite"
         self.assertIn("[eval.execution]", text)
         self.assertIn("max_retries = 3", text)
         self.assertNotIn("[[eval.models]]", text)
+
+    def test_sft_operator_metric_docs_track_report_columns(self) -> None:
+        text = (
+            _SCRIPTS_DIR / "sft" / "docs" / "metrics.md"
+        ).read_text(encoding="utf-8")
+
+        for column in reporting.REPORT_COLUMNS:
+            with self.subTest(column=column):
+                self.assertIn(column, text)
+
+        legacy_terms = (
+            "empty_rate",
+            "hallucination_rate",
+            "hits",
+            "correct_words",
+        )
+        for term in legacy_terms:
+            with self.subTest(term=term):
+                self.assertNotIn(term, text)
+
+    def test_sft_operator_hygiene_docs_and_gitignore_cover_local_artifacts(
+        self,
+    ) -> None:
+        hygiene_text = (
+            _SCRIPTS_DIR / "sft" / "docs" / "hygiene.md"
+        ).read_text(encoding="utf-8")
+        gitignore_text = (_REPO_ROOT / ".gitignore").read_text(
+            encoding="utf-8"
+        )
+
+        expected_hygiene_terms = (
+            ".local.toml",
+            "results/",
+            "model/data/inference_manifests/*.jsonl",
+            "online_predictions.jsonl",
+            "git status --short --ignored",
+            "git diff --cached --name-only",
+        )
+        for term in expected_hygiene_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, hygiene_text)
+
+        expected_gitignore_terms = (
+            "*.local.toml",
+            "results/",
+            "model/data/inference_manifests/*.jsonl",
+        )
+        for term in expected_gitignore_terms:
+            with self.subTest(term=term):
+                self.assertIn(term, gitignore_text)
