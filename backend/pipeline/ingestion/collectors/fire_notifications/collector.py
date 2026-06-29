@@ -119,19 +119,22 @@ async def _process_file_list(
             if is_permanent:
                 logger.warning(
                     "Failed to compute duration for corrupt audio file in feed %s (%s): "
-                    "uuid=%s filename=%s size=%s start_time=%s reason=%s. "
+                    "source_feed_id=%s uuid=%s filename=%s listed_size=%s "
+                    "downloaded_bytes=%d start_time=%s reason=%s. "
                     "Permanently skipping corrupt audio file.",
                     feed["id"],
                     feed.get("name", "Unknown"),
+                    source_feed_id,
                     f.uuid,
                     f.filename,
                     f.size if f.size is not None else "unknown",
+                    len(audio_bytes),
                     f.start_time,
                     reason,
                 )
                 outcome.record_failure(
                     ItemFailure(
-                        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                        feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
                         reason,
                     )
                 )
@@ -139,13 +142,16 @@ async def _process_file_list(
             else:
                 logger.warning(
                     "Failed to compute duration for audio file in feed %s (%s): "
-                    "uuid=%s filename=%s size=%s start_time=%s reason=%s. "
-                    "This failure is retryable.",
+                    "source_feed_id=%s uuid=%s filename=%s listed_size=%s "
+                    "downloaded_bytes=%d start_time=%s reason=%s. This "
+                    "failure is retryable.",
                     feed["id"],
                     feed.get("name", "Unknown"),
+                    source_feed_id,
                     f.uuid,
                     f.filename,
                     f.size if f.size is not None else "unknown",
+                    len(audio_bytes),
                     f.start_time,
                     reason,
                 )
