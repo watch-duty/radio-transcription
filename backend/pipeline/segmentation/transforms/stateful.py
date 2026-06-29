@@ -189,7 +189,12 @@ def _migrate_legacy_buffer[
     if curr_context.out_of_order_buffer:
         for chunk in curr_context.out_of_order_buffer:
             out_of_order_buffer_state.add(chunk)
-        return replace(curr_context, out_of_order_buffer=[]), True
+        return (
+            replace(
+                curr_context, out_of_order_buffer=[], order_timer_active=True
+            ),
+            True,
+        )
     return curr_context, False
 
 

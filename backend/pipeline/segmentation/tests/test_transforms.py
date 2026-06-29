@@ -94,9 +94,6 @@ class MockBagState:
     def clear(self) -> None:
         self.items = []
 
-    def write(self, val: list[Any]) -> None:
-        self.items = val
-
 
 # Configure dynamic mock interception for process-level shared GCS clients
 # using standard unittest module lifecycle hooks to avoid any type ignore annotations.
@@ -1562,9 +1559,6 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
     def test_prior_audio_tail_cleared_on_stale_flush(
         self, mock_audio_processor: MagicMock
     ) -> None:
-        # We need to make sure we replace the process call inside this test.
-        # To do that, we can just replace the whole block or do it carefully.
-        # Let's do it by replacing the process call with unique context.
         """Verifies that the stale timer flush resets the context state to IdleFeedState,
         guaranteeing that the prior_audio_tail is cleanly cleared and never carried over
         to prime a new, post-flush transmission.
@@ -2151,9 +2145,6 @@ class DlqTaggingTest(unittest.TestCase):
 
             def clear(self) -> None:
                 self.items = []
-
-            def write(self, val: list[Any]) -> None:
-                self.items = val
 
         ctx = ActiveStitchingState(
             session_id="test-session",
