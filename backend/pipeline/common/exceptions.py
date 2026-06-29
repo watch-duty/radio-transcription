@@ -1,14 +1,6 @@
 """Common exceptions for the radio transcription pipeline."""
 
 
-class AlreadyExistsError(Exception):
-    """Raised when a resource already exists."""
-
-    def __init__(self, segment_id: str) -> None:
-        self.segment_id = segment_id
-        super().__init__(f"Transcript for segment {segment_id} already exists")
-
-
 class FeedAlreadyExistsError(Exception):
     """Raised when a feed with the same source feed ID and source type already exists."""
 

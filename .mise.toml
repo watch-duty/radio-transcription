@@ -57,6 +57,10 @@ depends = ["lint:ruff:check", "lint:ruff:format", "lint:ruff:sorted"]
 description = "Run ty Python type-checker"
 run = "uv run ty check"
 
+[tasks."lint:dead-code"]
+description = "Check for dead code using vulture"
+run = "uv run vulture"
+
 [tasks."lint:terraform"]
 description = "Validate Terraform code and check formatting for pre-submits"
 run = """
@@ -93,7 +97,7 @@ run = "uv run python scripts/validate_schemas.py"
 
 [tasks."lint:python"]
 description = "Run all Python code quality and type checks"
-depends = ["lint:ruff", "lint:ty", "lint:notebooks"]
+depends = ["lint:ruff", "lint:ty", "lint:notebooks", "lint:dead-code"]
 
 [tasks.format]
 depends = ["format:ruff", "format:terraform", "format:frontend"]
