@@ -38,6 +38,9 @@ chat history.
   response rate, and insertion/deletion/substitution counts.
 - [x] A codebase map exists under `.planning/codebase/` with stack,
   integrations, architecture, structure, conventions, testing, and concerns.
+- [x] The Gemini SFT operator docs include an OKF runbook, placeholder config
+  reference, metric glossary, artifact reference, hygiene checklist, and drift
+  guards for local artifact handling.
 
 ### Active
 
@@ -61,9 +64,6 @@ chat history.
   text-only prior context.
 - [ ] Preserve prompt parity across notebooks, SFT data generation, batch eval,
   and checkpoint scoring through shared `common.gemini` helpers.
-- [ ] Document the operator path so a teammate can start from manifests and a
-  config file and know which command to run, which GCS artifacts are produced,
-  and how to interpret the report.
 
 ### Out of Scope
 
@@ -123,11 +123,11 @@ Current terminology and constraints are documented in:
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Use GCS run prefixes as authoritative SFT state | Jobs and evals must survive local process exits and workstation cleanup | Pending |
-| Treat checkpoints as model resources in eval config | Avoids separate checkpoint-only CLI branches and matches the user's requested mental model | Pending |
-| Prefer separate configs/manifests for masked vs unmasked eval | Simpler than a special eval-sibling abstraction and easy to run independently | Pending |
-| Keep console reports first-class | Operators asked to inspect results directly without digging through local artifacts | Pending |
-| Keep Linear comment automation out of scope | Reporting automation is secondary to making the workflow runnable by a new teammate | Pending |
+| Use GCS run prefixes as authoritative SFT state | Jobs and evals must survive local process exits and workstation cleanup | Validated through durable eval records and operator docs |
+| Treat checkpoints as model resources in eval config | Avoids separate checkpoint-only CLI branches and matches the user's requested mental model | Validated as a documented `[eval.model]` resource shape |
+| Prefer separate configs/manifests for masked vs unmasked eval | Simpler than a special eval-sibling abstraction and easy to run independently | Validated through config docs and runbook guidance |
+| Keep console reports first-class | Operators asked to inspect results directly without digging through local artifacts | Validated through shared report contract and docs |
+| Keep Linear comment automation out of scope | Reporting automation is secondary to making the workflow runnable by a new teammate | Preserved through v1 milestone |
 
 ## Evolution
 
@@ -147,4 +147,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-28 after initialization*
+*Last updated: 2026-06-29 after Phase 05 operator docs verification*
