@@ -8,24 +8,15 @@ import Typography from '@mui/material/Typography';
 import { AnnotationType, AudioClassification } from '@transcription/common';
 
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
+import { createMockRenderableAudioSegment } from '../../test/mockDataUtils';
 import AudioDisplay from '../audio/AudioDisplay';
 import TranscriptRow from './TranscriptRow';
 
 const mockSegments: RenderableAudioSegment[] = [
-  {
+  createMockRenderableAudioSegment({
     id: 'seg-4',
-    feedId: 'feed-1',
-    classification: AudioClassification.SPEECH,
     startTimestamp: '2026-06-29T20:00:25Z',
     endTimestamp: '2026-06-29T20:00:30Z',
-    playbackAudioUri: '/test_middlebury.mp3',
-    canonicalAudioUri: '/test_middlebury.mp3',
-    missingPriorContext: false,
-    missingPostContext: false,
-    sourceAudioUris: [],
-    startAudioOffset: '0',
-    endAudioOffset: '0',
-    createdAt: '2026-06-29T20:00:25Z',
     annotations: [
       {
         type: AnnotationType.TRANSCRIPT,
@@ -36,21 +27,12 @@ const mockSegments: RenderableAudioSegment[] = [
         },
       },
     ],
-  },
-  {
+  }),
+  createMockRenderableAudioSegment({
     id: 'seg-3',
-    feedId: 'feed-1',
-    classification: AudioClassification.SPEECH,
     startTimestamp: '2026-06-29T20:00:20Z',
     endTimestamp: '2026-06-29T20:00:25Z',
-    playbackAudioUri: '/test_middlebury.mp3',
-    canonicalAudioUri: '/test_middlebury.mp3',
     missingPriorContext: true,
-    missingPostContext: false,
-    sourceAudioUris: [],
-    startAudioOffset: '0',
-    endAudioOffset: '0',
-    createdAt: '2026-06-29T20:00:20Z',
     annotations: [
       {
         type: AnnotationType.TRANSCRIPT,
@@ -61,38 +43,21 @@ const mockSegments: RenderableAudioSegment[] = [
         },
       },
     ],
-  },
-  {
+  }),
+  createMockRenderableAudioSegment({
     id: 'outage-1',
-    feedId: 'feed-1',
     classification: AudioClassification.UNSPECIFIED,
     startTimestamp: '2026-06-29T20:00:10Z',
     endTimestamp: '2026-06-29T20:00:20Z',
     playbackAudioUri: '',
     canonicalAudioUri: '',
-    missingPriorContext: false,
-    missingPostContext: false,
-    sourceAudioUris: [],
-    startAudioOffset: '0',
-    endAudioOffset: '0',
-    createdAt: '2026-06-29T20:00:10Z',
-    annotations: [],
     isOutageBundle: true,
-  },
-  {
+  }),
+  createMockRenderableAudioSegment({
     id: 'seg-2',
-    feedId: 'feed-1',
-    classification: AudioClassification.SPEECH,
     startTimestamp: '2026-06-29T20:00:05Z',
     endTimestamp: '2026-06-29T20:00:10Z',
-    playbackAudioUri: '/test_middlebury.mp3',
-    canonicalAudioUri: '/test_middlebury.mp3',
-    missingPriorContext: false,
     missingPostContext: true,
-    sourceAudioUris: [],
-    startAudioOffset: '0',
-    endAudioOffset: '0',
-    createdAt: '2026-06-29T20:00:05Z',
     annotations: [
       {
         type: AnnotationType.TRANSCRIPT,
@@ -103,21 +68,11 @@ const mockSegments: RenderableAudioSegment[] = [
         },
       },
     ],
-  },
-  {
+  }),
+  createMockRenderableAudioSegment({
     id: 'seg-1',
-    feedId: 'feed-1',
-    classification: AudioClassification.SPEECH,
     startTimestamp: '2026-06-29T20:00:00Z',
     endTimestamp: '2026-06-29T20:00:05Z',
-    playbackAudioUri: '/test_middlebury.mp3',
-    canonicalAudioUri: '/test_middlebury.mp3',
-    missingPriorContext: false,
-    missingPostContext: false,
-    sourceAudioUris: [],
-    startAudioOffset: '0',
-    endAudioOffset: '0',
-    createdAt: '2026-06-29T20:00:00Z',
     annotations: [
       {
         type: AnnotationType.TRANSCRIPT,
@@ -128,7 +83,7 @@ const mockSegments: RenderableAudioSegment[] = [
         },
       },
     ],
-  },
+  }),
 ];
 
 export function DemoOutageView() {
