@@ -4,8 +4,8 @@ milestone: v1.0
 milestone_name: milestone
 status: executing
 stopped_at: Phase 5 context gathered
-last_updated: "2026-06-28T23:10:33.847Z"
-last_activity: 2026-06-28 -- Phase 05 planning complete
+last_updated: "2026-06-29T02:34:15.006Z"
+last_activity: 2026-06-29 -- Phase 05 execution started
 progress:
   total_phases: 5
   completed_phases: 4
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-28)
 
 **Core value:** A new operator can run and compare Gemini SFT/eval experiments from explicit configs and console reports without reverse-engineering notebooks or prior chat history.
-**Current focus:** Phase 04 — durable-eval
+**Current focus:** Phase 05 — operator-docs
 
 ## Current Position
 
-Phase: 5
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-06-28 -- Phase 05 planning complete
+Phase: 05 (operator-docs) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 05
+Last activity: 2026-06-29 -- Phase 05 execution started
 
 Progress: [██████████] 100%
 
