@@ -100,7 +100,7 @@ async def _process_file_list(
             # to_thread: probe_audio_metadata shells out to ffprobe — keep
             # it off the event loop.
             duration_ms, mime_type = await asyncio.to_thread(
-                probe_audio_metadata, audio_bytes, input_format="mp3"
+                probe_audio_metadata, audio_bytes
             )
         except Exception as exc:
             info = ffmpeg_classifier.classify_ffprobe_exception(exc)
