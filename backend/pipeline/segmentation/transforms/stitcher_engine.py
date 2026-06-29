@@ -664,9 +664,33 @@ class StitcherEngine:
                             trans_constants.VAD_DEFAULT_PRIMING_SEC
                             * chunk_data.sample_rate
                         )
+                        # Conditional state propagation:
+                        # To prevent the VAD's internal denoiser (UL-UNAS) from adapting to loud static
+                        # or dispatch noise and "deafening" the VAD to subsequent quiet speech in the next
+                        # chunk, we only propagate the trailing audio tail (state) if the current chunk
+                        # ended in active speech (within a 50ms tolerance).
+                        #
+                        # If the chunk ended in silence or static, we discard the state (prior_tail = None).
+                        # This forces the next chunk to perform a clean cold-start, resetting the denoiser
+                        # noise floor. While a cold-start can cause minor onset clipping (100-300ms) if the
+                        # next speech starts immediately after the boundary, this is a much safer trade-off
+                        # than risking a complete deafening of a long, quiet transmission.
+                        chunk_dur_ms = (
+                            len(chunk_data.audio)
+                            * 1000
+                            // chunk_data.sample_rate
+                        )
+                        ended_in_speech = False
+                        if chunk_data.speech_segments:
+                            last_seg = chunk_data.speech_segments[-1]
+                            if (
+                                last_seg.end_ms >= chunk_dur_ms - 50
+                            ):  # 50ms tolerance
+                                ended_in_speech = True
+
                         prior_tail = (
                             chunk_data.audio[-priming_samples:].tobytes()
-                            if len(chunk_data.audio) > 0
+                            if (len(chunk_data.audio) > 0 and ended_in_speech)
                             else None
                         )
                         new_context = replace(
