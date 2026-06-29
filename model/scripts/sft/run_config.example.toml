@@ -1,5 +1,9 @@
-# `round_id` becomes gs://<bucket>/sft/runs/<round_id>/ and must be unique
-# for a new experiment.
+# This file is the canonical committed placeholder config. Copy it outside the
+# repo for real runs, replace every placeholder, and do not commit local
+# experiment configs.
+#
+# `round_id` becomes gs://<bucket>/sft/runs/<round_id>/ and must be unique for
+# a new experiment.
 round_id = "YYYY-MM-DD-short-description"
 
 # `dataset` identifies the SFT training recipe/version. `inference_dataset_slug`
