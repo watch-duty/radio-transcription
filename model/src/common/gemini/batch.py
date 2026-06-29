@@ -128,8 +128,6 @@ def run_batch_audio_inference(
                 batch_output_gcs,
             )
         else:
-            request_identity.write_metadata(metadata_path, identity)
-            upload_local_file(storage_client, metadata_path, metadata_uri)
             try:
                 output_loc = submit_fn(
                     input_uri=batch_input_gcs,
@@ -150,6 +148,8 @@ def run_batch_audio_inference(
             )
             if preds is None:
                 return None
+            request_identity.write_metadata(metadata_path, identity)
+            upload_local_file(storage_client, metadata_path, metadata_uri)
 
     extra_prediction_uris = set(preds) - expected_audio_uris
     if extra_prediction_uris:

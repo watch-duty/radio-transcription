@@ -125,13 +125,14 @@ def evaluate_run(
         split="eval",
         source=eval_manifest_uri,
     )
-    if eval_execution.limit is not None:
-        source_rows = source_rows[: eval_execution.limit]
-        eval_rows = eval_rows[: eval_execution.limit]
     histories = build_context_histories(
         source_rows,
         max_turns=prior_context_count,
     )
+    if eval_execution.limit is not None:
+        source_rows = source_rows[: eval_execution.limit]
+        eval_rows = eval_rows[: eval_execution.limit]
+        histories = histories[: eval_execution.limit]
     model_family_slug = model_family_slug_from_model_id(base_model)
     audio_uris = [row.audio_filepath for row in eval_rows]
     refs = [row.text for row in eval_rows]
@@ -316,4 +317,3 @@ def _optional_config_nonnegative_int(config: dict[str, Any], key: str) -> int:
         msg = f"config.json field must be a non-negative integer: {key}"
         raise ValueError(msg)
     return value
-

@@ -1745,13 +1745,35 @@ class TestEvaluateRun(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = Path(tmp_s)
             storage = FakeStorageClient()
-            cfg_path = _write_config_file(tmp)
+            cfg_path = _write_config_file(tmp, prior_context_count=1)
             run_cfg = load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
-            config["eval_execution"]["limit"] = 1  # limit = 1
+            config["eval_execution"]["limit"] = 1
             eval_rows = [
-                _row("gs://audio/eval-1.flac", "first"),
-                _row("gs://audio/eval-2.flac", "second"),
+                {
+                    **_row(
+                        "gs://audio/eval-current.flac",
+                        "current",
+                        example_id="source-a",
+                        segment_id="002",
+                        offset=10.0,
+                    ),
+                    "original_audio_uri": "gs://audio/source-a.flac",
+                    "original_offset": 10.0,
+                    "row_index": 2,
+                },
+                {
+                    **_row(
+                        "gs://audio/eval-prior.flac",
+                        "prior",
+                        example_id="source-a",
+                        segment_id="001",
+                        offset=0.0,
+                    ),
+                    "original_audio_uri": "gs://audio/source-a.flac",
+                    "original_offset": 0.0,
+                    "row_index": 1,
+                },
             ]
             storage.put(run_cfg.paths.canonical_eval_uri, _manifest(eval_rows))
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
@@ -1766,7 +1788,9 @@ class TestEvaluateRun(unittest.TestCase):
                                     "parts": [
                                         {
                                             "fileData": {
-                                                "fileUri": "gs://audio/eval-1.flac"
+                                                "fileUri": (
+                                                    "gs://audio/eval-current.flac"
+                                                )
                                             }
                                         }
                                     ]
@@ -1775,7 +1799,11 @@ class TestEvaluateRun(unittest.TestCase):
                         },
                         "response": {
                             "candidates": [
-                                {"content": {"parts": [{"text": "first"}]}}
+                                {
+                                    "content": {
+                                        "parts": [{"text": "current"}]
+                                    }
+                                }
                             ]
                         },
                     }
@@ -1786,9 +1814,10 @@ class TestEvaluateRun(unittest.TestCase):
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=config["canonical_eval_uri"],
-                audio_uris=["gs://audio/eval-1.flac"],
+                audio_uris=["gs://audio/eval-current.flac"],
                 system_prompt=config["system_prompt"],
                 user_prompt=config["user_prompt"],
+                prior_context_count=1,
             )
 
             with (
@@ -1826,10 +1855,18 @@ class TestEvaluateRun(unittest.TestCase):
         self.assertEqual(metrics["metadata"]["n_eval_examples"], 1)
         self.assertEqual(len(batch_rows), 1)
         self.assertEqual(
+            [turn["role"] for turn in batch_rows[0]["request"]["contents"]],
+            ["user", "model", "user"],
+        )
+        self.assertEqual(
+            batch_rows[0]["request"]["contents"][1]["parts"][0]["text"],
+            "prior",
+        )
+        self.assertEqual(
             batch_rows[0]["request"]["contents"][-1]["parts"][-1]["file_data"][
                 "file_uri"
             ],
-            "gs://audio/eval-1.flac",
+            "gs://audio/eval-current.flac",
         )
 
     def test_eval_runs_single_batch_target_and_reports_artifacts(
@@ -2209,19 +2246,9 @@ class TestEvaluateRun(unittest.TestCase):
                 run_cfg.paths.gcs_prefix,
                 "base",
             )
-            metadata = json.loads(storage.get(metadata_uri))
 
         self.assertIsNone(preds)
-        self.assertEqual(
-            metadata["request_identity"]["eval_manifest_uri"],
-            run_cfg.paths.canonical_eval_uri,
-        )
-        self.assertEqual(
-            metadata["request_identity"]["audio_uris"],
-            ["gs://audio/eval.flac"],
-        )
-        self.assertEqual(metadata["request_identity"]["system_prompt"], "sys")
-        self.assertEqual(metadata["request_identity"]["user_prompt"], "user")
+        self.assertFalse(storage.has(metadata_uri))
 
     def test_batch_infer_rejects_existing_output_without_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:

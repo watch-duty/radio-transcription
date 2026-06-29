@@ -211,6 +211,39 @@ class TestGeminiBatchInference(unittest.TestCase):
         self.assertEqual(preds.output_uri, output_uri)
         self.assertEqual(calls, [])
 
+    def test_run_batch_audio_inference_does_not_mark_failed_submit_reusable(
+        self,
+    ) -> None:
+        storage = FakeStorageClient()
+        run_gcs_prefix = "gs://bucket/sft/runs/run-a"
+        output_uri = f"{run_gcs_prefix}/evals/base/output/"
+
+        def fail_after_partial_output(**_: object) -> str:
+            storage.put(
+                f"{output_uri}prediction-model-1/predictions.jsonl",
+                _vertex_output("gs://audio/a.flac", "partial") + "\n",
+            )
+            raise RuntimeError("batch failed")
+
+        preds = run_batch_audio_inference(
+            storage_client=storage,
+            run_gcs_prefix=run_gcs_prefix,
+            gcp_project="project",
+            location="us-central1",
+            model_id="gemini-3.1-flash-lite",
+            label="base",
+            audio_uris=["gs://audio/a.flac"],
+            system_prompt="sys",
+            user_prompt="user",
+            **_batch_identity_kwargs(),
+            submit_fn=fail_after_partial_output,
+        )
+
+        self.assertIsNone(preds)
+        self.assertFalse(
+            storage.has(batch_prediction_metadata_uri(run_gcs_prefix, "base"))
+        )
+
     def test_run_batch_audio_inference_rejects_duplicate_audio_uris(
         self,
     ) -> None:
