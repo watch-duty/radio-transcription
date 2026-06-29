@@ -345,8 +345,8 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_duration.call_count, 2)
         mock_duration.assert_has_calls(
             [
-                call(b"mp3_bytes", input_format="mp3"),
-                call(b"mp3_bytes", input_format="mp3"),
+                call(b"mp3_bytes"),
+                call(b"mp3_bytes"),
             ]
         )
         chunk0 = chunks[0]
@@ -390,7 +390,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
                 chunks.append(chunk)
 
         self.assertEqual(len(chunks), 1)
-        mock_duration.assert_called_once_with(b"m4a_bytes", input_format="mp3")
+        mock_duration.assert_called_once_with(b"m4a_bytes")
         chunk0 = chunks[0]
         assert isinstance(chunk0, CapturedChunk)
         self.assertEqual(chunk0.session_id, "session-id")
