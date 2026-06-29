@@ -4,13 +4,14 @@
 
 This roadmap turns the existing Gemini SFT and evaluation workflow into a
 config-driven operator path. The phases follow the dependency chain surfaced by
-research: lock the reporting contract first, normalize target configuration,
-package target execution with prompt/context parity, make durable multi-target
-eval and dataset reports GCS-authoritative, then document the stable workflow
+research: lock the reporting contract first, normalize model target
+configuration, package target execution with prompt/context parity, make
+single-target durable eval GCS-authoritative, then document the stable workflow
 and artifact hygiene rules. Scope stays within the stated anti-features: no
-complex eval-sibling abstraction, no checkpoint-only primary CLI branch when
-unified target config works, no local `results/` as source of truth, no Linear
-automation, and no prompt file references.
+complex eval-sibling abstraction, no checkpoint-only primary CLI branch when a
+unified model string works, no internal multi-target eval fan-out, no dataset
+breakdown reports in this milestone, no local `results/` as source of truth, no
+Linear automation, and no prompt file references.
 
 ## Phases
 
@@ -22,8 +23,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Reporting Contract** - Stabilize metric semantics and shared report rendering across console, JSON, Markdown, batch eval, and checkpoint scoring. (completed 2026-06-28)
 - [x] **Phase 2: Target Config** - Introduce unified model target configuration, validation, and explicit masked/unmasked config paths. (completed 2026-06-28)
-- [ ] **Phase 3: Target Execution** - Package backend-specific execution while preserving shared prompt, request, and prior-context behavior.
-- [ ] **Phase 4: Durable Eval** - Run GCS-authoritative multi-target evals, write normalized target manifests, and produce dataset breakdown reports.
+- [x] **Phase 3: Target Execution** - Package backend-specific execution while preserving shared prompt, request, and prior-context behavior. (completed 2026-06-28)
+- [x] **Phase 4: Durable Eval** - Run GCS-authoritative single-target evals, write normalized target manifests, and publish stable summary reports. (completed 2026-06-28)
 - [x] **Phase 5: Operator Docs** - Document the stable operator workflow, example configs, metric interpretation, artifact sources, and commit hygiene checks. (completed 2026-06-29)
 
 ## Phase Details
@@ -53,8 +54,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Depends on**: Phase 1
 **Requirements**: CFG-01, CFG-02, CFG-03, CFG-04, CFG-05, CFG-06
 **Success Criteria** (what must be TRUE):
-  1. Operator can configure one or more eval targets with a unified `models`-style shape that covers publisher/base models, tuned endpoints, and checkpoint endpoints.
-  2. Operator gets a clear validation error for old eval configs that rely only on `base_model` plus the tuned endpoint stored in GCS `config.json`; the new `[[eval.models]]` target config is required.
+  1. Operator can configure explicit model targets with a unified label/model shape that covers publisher/base models, tuned endpoints, and checkpoint endpoints.
+  2. Operator gets a clear validation error for old eval configs that rely only on `base_model` plus the tuned endpoint stored in GCS `config.json`; the new explicit target config is required.
   3. Operator gets validation errors for missing, invalid, duplicate, or unsupported target fields before any paid Vertex operation starts.
   4. Operator can run masked and unmasked evals as separate labeled configs or manifests without an eval-sibling abstraction.
 **Plans**: 3 plans
@@ -68,15 +69,15 @@ Plans:
 **UI hint**: no
 
 ### Phase 3: Target Execution
-**Goal**: The packaged eval workflow executes each configured target through the correct backend while keeping prompt, request, and prior-context behavior identical across maintained paths.
+**Goal**: The packaged eval workflow executes the configured target through the correct backend while keeping prompt, request, and prior-context behavior identical across maintained paths.
 **Depends on**: Phase 2
 **Requirements**: EXEC-01, EXEC-02, EXEC-03, EXEC-04, EXEC-06
 **Success Criteria** (what must be TRUE):
   1. Maintainer can verify SFT data generation, batch eval, online checkpoint scoring, and maintained notebooks reuse shared `common.gemini` prompt, request, generation, safety, and prior-context helpers.
   2. Operator can run evals where prior-context histories are built dynamically from same-source rows, source-order sorting, and usable previous transcripts, with no audio in prior turns when text-only prior context is selected.
   3. Operator can evaluate publisher/base and tuned targets through batch inference, and checkpoint endpoints through resumable online `generate_content`, unless live validation proves batch support.
-  4. Operator can run smoke-limited or interrupted online evals with retry, sync cadence, log cadence, row limit, and bounded concurrency controls while preserving partial predictions.
-**Plans**: 4 plans
+  4. Operator can run smoke-limited or interrupted online evals with retry, row limit, and bounded concurrency controls while preserving partial predictions.
+**Plans**: 4/4 plans complete
 Plans:
 **Wave 1**
 - [x] 03-01-PLAN.md - Execution config and backend resolver
@@ -92,13 +93,13 @@ Plans:
 **UI hint**: no
 
 ### Phase 4: Durable Eval
-**Goal**: Operators can run and compare one or more targets from durable GCS run state, with normalized target manifests and dataset-level reports that do not depend on local result mirrors.
+**Goal**: Operators can run one configured target from durable GCS run state, with normalized target manifests and stable summary reports that do not depend on local result mirrors.
 **Depends on**: Phase 3
 **Requirements**: EXEC-05, DATA-01, DATA-02, DATA-03, DATA-04, DATA-05, DATA-06
 **Success Criteria** (what must be TRUE):
-  1. Operator can run multiple configured targets in parallel by default when the backend and configured concurrency make parallel execution safe.
-  2. Operator can evaluate from GCS `config.json` and receive one normalized inference manifest per target label without using local `results/` as source of truth.
-  3. Operator can view dataset breakdowns for `bcfy_calls`, `bcfy_feeds`, `echo`, and `fire_notifications` when present, including WER, CER, keyword accuracy, empty rates, edit counts, total reference word count, and row count.
+  1. Operator can run exactly one configured target per packaged eval run and compare multiple targets by launching separate configs externally.
+  2. Operator can evaluate from GCS `config.json` and receive one normalized inference manifest for the configured target label without using local `results/` as source of truth.
+  3. Operator can view shared report columns for the target, including WER, CER, keyword accuracy, empty rates, edit counts, total reference word count, and row count metadata.
   4. Operator can follow report links to raw Vertex output, online prediction JSONL, normalized inference manifests, and GCS summary artifacts.
   5. Maintainer can verify existing batch or online outputs are reused only when they match the current config, target, prompt, eval manifest, and context settings.
 **Plans**: 4/4 plans complete
@@ -182,8 +183,8 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 |-------|----------------|--------|-----------|
 | 1. Reporting Contract | 3/3 | Complete   | 2026-06-28 |
 | 2. Target Config | 3/3 | Complete   | 2026-06-28 |
-| 3. Target Execution | 0/TBD | Not started | - |
-| 4. Durable Eval | 0/TBD | Not started | - |
+| 3. Target Execution | 4/4 | Complete   | 2026-06-28 |
+| 4. Durable Eval | 4/4 | Complete   | 2026-06-28 |
 | 5. Operator Docs | 3/3 | Complete    | 2026-06-29 |
 
 ---

@@ -24,50 +24,52 @@ or prior chat history.
 
 ### Config And Model Targets
 
-- [ ] **CFG-01**: Operator can configure one or more eval targets through one
-  unified `models`-style config shape.
-- [ ] **CFG-02**: A model target can represent a publisher/base model, tuned
+- [x] **CFG-01**: Operator can configure one eval target per packaged eval run
+  through one unified `[eval.model]` config shape.
+- [x] **CFG-02**: A model target can represent a publisher/base model, tuned
   endpoint, or checkpoint endpoint without separate checkpoint-specific CLI
   options.
-- [ ] **CFG-03**: Target labels are validated for safe artifact paths and
+- [x] **CFG-03**: Target labels are validated for safe artifact paths and
   collision-free report columns.
-- [ ] **CFG-04**: Existing configs that use `base_model` and a tuned endpoint
-  in GCS `config.json` remain evaluable during migration.
-- [ ] **CFG-05**: Masked and unmasked evals can be run as separate
+- [x] **CFG-04**: Legacy eval target shapes, including `base_model` plus
+  endpoint fallback and plural `[[eval.models]]` / `eval_models`, fail loudly
+  so only the new config contract is supported.
+- [x] **CFG-05**: Masked and unmasked evals can be run as separate
   configs/manifests with explicit labels and without an eval-sibling
   abstraction.
-- [ ] **CFG-06**: Config validation errors identify missing, invalid, or
+- [x] **CFG-06**: Config validation errors identify missing, invalid, or
   unsupported fields before paid Vertex work starts.
 
 ### Execution And Parity
 
-- [ ] **EXEC-01**: Eval builds prior-context histories dynamically from
+- [x] **EXEC-01**: Eval builds prior-context histories dynamically from
   same-source rows, source-order sorting, and usable previous transcripts.
-- [ ] **EXEC-02**: SFT data generation, batch eval, online checkpoint scoring,
+- [x] **EXEC-02**: SFT data generation, batch eval, online checkpoint scoring,
   and maintained notebooks reuse shared `common.gemini` prompt, request,
   generation, safety, and prior-context helpers.
-- [ ] **EXEC-03**: The packaged eval workflow chooses batch inference for
+- [x] **EXEC-03**: The packaged eval workflow chooses batch inference for
   batch-supported publisher/tuned targets and online `generate_content` for
   checkpoint endpoints unless live validation proves batch support.
-- [ ] **EXEC-04**: Online checkpoint execution supports resumable prediction
-  writing, retry settings, sync cadence, log cadence, row limits, and bounded
-  concurrency.
-- [x] **EXEC-05**: Multiple configured targets run in parallel by default when
-  doing so is safe for their backend and configured concurrency.
-- [ ] **EXEC-06**: Operator can run a smoke-limited eval before full inference
+- [x] **EXEC-04**: Online checkpoint execution supports resumable prediction
+  writing, retry settings, row limits, and bounded concurrency.
+- [x] **EXEC-05**: Packaged eval supports exactly one model target per run;
+  operators compare base, tuned, and checkpoint targets by running separate
+  configs externally when parallel comparison is needed.
+- [x] **EXEC-06**: Operator can run a smoke-limited eval before full inference
   without changing the target config semantics.
 
-### Durable Artifacts And Dataset Reports
+### Durable Artifacts And Reports
 
 - [x] **DATA-01**: Eval loads durable run state from GCS `config.json` and does
   not require local `results/` as source of truth.
 - [x] **DATA-02**: Eval writes one normalized inference manifest per evaluated
   target, with artifact labels derived from validated target labels.
-- [x] **DATA-03**: Reports include dataset breakdowns for bcfy_calls,
-  bcfy_feeds, echo, and fire_notifications when those groups are present.
-- [x] **DATA-04**: Dataset breakdowns include WER, CER, keyword accuracy,
+- [x] **DATA-03**: Successful eval uploads stable run-level summary JSON and
+  Markdown reports under the GCS run prefix.
+- [x] **DATA-04**: Reports include WER, CER, keyword accuracy,
   empty-or-unintelligible rate, exact empty response rate, insertion count,
-  deletion count, substitution count, total reference word count, and row count.
+  deletion count, substitution count, total reference word count, and row count
+  metadata for the evaluated target.
 - [x] **DATA-05**: Report output links to raw Vertex output, online prediction
   JSONL, normalized inference manifests, and GCS summary artifacts.
 - [x] **DATA-06**: Existing batch or online outputs are reused only when they
@@ -101,6 +103,8 @@ or prior chat history.
 
 ### Additional Slices
 
+- **SLICE-00**: Reports can break down results by source dataset, including
+  bcfy_calls, bcfy_feeds, echo, and fire_notifications.
 - **SLICE-01**: Reports can break down results by duration bucket.
 - **SLICE-02**: Reports can break down results by prior-context depth.
 - **SLICE-03**: Reports can compare prompt/context families across experiments.
@@ -118,6 +122,8 @@ or prior chat history.
 | Production ingestion pipeline redesign | The target is research/operator workflow usability, not runtime pipeline behavior. |
 | Complex eval-sibling abstraction | User requested simpler separate configs/manifests for masked and unmasked eval. |
 | Checkpoint-only primary CLI branch | Checkpoints should be represented as model targets where possible. |
+| Internal multi-target eval fan-out | User requested one model per eval run; callers can run separate configs externally. |
+| Dataset breakdown reports | User chose to skip dataset breakdowns in this milestone and revisit them later. |
 | Local `results/` as authoritative state | GCS run prefixes and normalized inference manifests remain durable state. |
 | Linear comment automation | Useful later, but not required for a new operator to run and compare experiments. |
 | Local prompt files in config | Prompt text must be stored in GCS `config.json` for reproducible resume/eval. |
@@ -134,18 +140,18 @@ Traceability populated during roadmap creation.
 | RPT-03 | Phase 1 | Complete |
 | RPT-04 | Phase 1 | Complete |
 | RPT-05 | Phase 1 | Complete |
-| CFG-01 | Phase 2 | Pending |
-| CFG-02 | Phase 2 | Pending |
-| CFG-03 | Phase 2 | Pending |
-| CFG-04 | Phase 2 | Pending |
-| CFG-05 | Phase 2 | Pending |
-| CFG-06 | Phase 2 | Pending |
-| EXEC-01 | Phase 3 | Pending |
-| EXEC-02 | Phase 3 | Pending |
-| EXEC-03 | Phase 3 | Pending |
-| EXEC-04 | Phase 3 | Pending |
+| CFG-01 | Phase 2 | Complete |
+| CFG-02 | Phase 2 | Complete |
+| CFG-03 | Phase 2 | Complete |
+| CFG-04 | Phase 2 | Complete |
+| CFG-05 | Phase 2 | Complete |
+| CFG-06 | Phase 2 | Complete |
+| EXEC-01 | Phase 3 | Complete |
+| EXEC-02 | Phase 3 | Complete |
+| EXEC-03 | Phase 3 | Complete |
+| EXEC-04 | Phase 3 | Complete |
 | EXEC-05 | Phase 4 | Complete |
-| EXEC-06 | Phase 3 | Pending |
+| EXEC-06 | Phase 3 | Complete |
 | DATA-01 | Phase 4 | Complete |
 | DATA-02 | Phase 4 | Complete |
 | DATA-03 | Phase 4 | Complete |
@@ -166,4 +172,4 @@ Traceability populated during roadmap creation.
 
 ---
 *Requirements defined: 2026-06-28*
-*Last updated: 2026-06-28 after roadmap creation*
+*Last updated: 2026-06-29 after milestone audit reconciliation*

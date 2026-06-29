@@ -21,12 +21,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-28)
 
 **Core value:** A new operator can run and compare Gemini SFT/eval experiments from explicit configs and console reports without reverse-engineering notebooks or prior chat history.
-**Current focus:** Phase 05 — operator-docs
+**Current focus:** Milestone closeout
 
 ## Current Position
 
-Phase: 05
-Plan: Not started
+Phase: complete
+Plan: complete
 Status: Milestone complete
 Last activity: 2026-06-29
 
@@ -36,7 +36,7 @@ Progress: [██████████] 100%
 
 **Velocity:**
 
-- Total plans completed: 10
+- Total plans completed: 17
 - Average duration: N/A
 - Total execution time: 0.0 hours
 
@@ -44,7 +44,9 @@ Progress: [██████████] 100%
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
+| 01 | 3 | - | - |
 | 02 | 3 | - | - |
+| 03 | 4 | - | - |
 | 04 | 4 | - | - |
 | 05 | 3 | - | - |
 
