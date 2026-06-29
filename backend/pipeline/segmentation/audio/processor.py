@@ -177,8 +177,8 @@ class SegmentationAudioProcessor:
         arr = frame.to_ndarray()
 
         # Convert format to 16-bit signed PCM using NumPy
-        if "flt" in frame.format.name:
-            # float to int16 with clipping to prevent overflow wrapping
+        if "flt" in frame.format.name or "dbl" in frame.format.name:
+            # float/double to int16 with clipping to prevent overflow wrapping
             arr = np.clip(arr * 32768.0, -32768, 32767).astype(np.int16)
         elif "s32" in frame.format.name:
             # int32 to int16
@@ -187,6 +187,11 @@ class SegmentationAudioProcessor:
             # already int16
             arr = arr.astype(np.int16)
         else:
+            logger.warning(
+                "Encountered unexpected audio format '%s' during decoding. "
+                "Performing fallback cast to int16; audio quality may be degraded.",
+                frame.format.name,
+            )
             # Fallback cast
             arr = arr.astype(np.int16)
 
