@@ -11,44 +11,8 @@ import {
 } from '@transcription/common';
 
 import type { PlaybackController } from '../../audio/WebAudioPlayer';
-import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { AudioDisplay } from './AudioDisplay';
-
-const mockSetTime = vi.fn();
-const mockSetOptions = vi.fn();
-
-vi.mock('@wavesurfer/react', () => {
-  const MockWavesurferPlayer = (props: {
-    url: string;
-    onReady?: (ws: {
-      setTime: (time: number) => void;
-      setOptions: (opts: unknown) => void;
-    }) => void;
-    onDestroy?: () => void;
-  }) => {
-    const { onReady, onDestroy } = props;
-    React.useEffect(() => {
-      if (onReady) {
-        onReady({
-          setTime: mockSetTime,
-          setOptions: mockSetOptions,
-        });
-      }
-      return () => {
-        if (onDestroy) {
-          onDestroy();
-        }
-      };
-    }, [onReady, onDestroy]);
-
-    return <div data-testid="wavesurfer-player" data-url={props.url} />;
-  };
-
-  return {
-    default: MockWavesurferPlayer,
-  };
-});
 
 function makeMockAudioSegment(
   id: string,
@@ -82,6 +46,17 @@ function makeMockAudioSegment(
           errors: [],
         },
       },
+      {
+        type: AnnotationType.WAVEFORM,
+        createdAt: startTimestamp,
+        data: {
+          peaks: [[0.1, 0.5, 0.25]],
+          durationSeconds:
+            (new Date(endTimestamp).getTime() -
+              new Date(startTimestamp).getTime()) /
+            1000,
+        },
+      },
       ...(evaluationDecisions.length > 0
         ? [
             {
@@ -101,8 +76,6 @@ function makeMockAudioSegment(
 describe('AudioDisplay', () => {
   afterEach(() => {
     cleanup();
-    mockSetTime.mockClear();
-    mockSetOptions.mockClear();
   });
 
   it('should render empty state when no transcripts', () => {
@@ -337,7 +310,7 @@ describe('AudioDisplay', () => {
     });
   });
 
-  it('passes playbackAudioUri to WavesurferPlayer (transformed via getAudioUrl)', () => {
+  it('renders a waveform from the WAVEFORM annotation peaks', () => {
     const mockAudioSegments: AudioSegment[] = [
       makeMockAudioSegment(
         '1',
@@ -359,12 +332,33 @@ describe('AudioDisplay', () => {
       />
     );
 
-    const wavesurfer = screen.getByTestId('wavesurfer-player');
-    expect(wavesurfer).toBeTruthy();
-    expect(wavesurfer.getAttribute('data-url')).toBe(
-      getAudioUrl(mockAudioSegments[0].playbackAudioUri ?? '')
+    expect(screen.getByTestId('waveform')).toBeTruthy();
+  });
+
+  it('renders a placeholder when the segment has no WAVEFORM annotation', () => {
+    const segment = makeMockAudioSegment(
+      '1',
+      'feed1',
+      new Date('2026-04-20T09:00:00Z').toISOString(),
+      new Date('2026-04-20T09:00:05Z').toISOString(),
+      'Test 1',
+      'gs://bucket/audio1.m4a'
     );
-    expect(wavesurfer.getAttribute('data-url')).toContain('.m4a');
+    segment.annotations = segment.annotations.filter(
+      (a) => a.type !== AnnotationType.WAVEFORM
+    );
+
+    render(
+      <AudioDisplay
+        audioSegments={[segment]}
+        currentlyPlayingSegmentId={null}
+        onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        highlightedSegmentId={null}
+      />
+    );
+
+    expect(screen.queryByTestId('waveform')).toBeNull();
   });
 
   it('should shift window when highlighted segment is outside window', async () => {
@@ -419,7 +413,7 @@ describe('AudioDisplay', () => {
     });
   });
 
-  it('should poll progress from currentAudioRef and seek wavesurfer player', async () => {
+  it('polls progress and positions the playback cursor overlay', async () => {
     const mockAudioSegments: AudioSegment[] = [
       makeMockAudioSegment(
         '1',
@@ -454,6 +448,9 @@ describe('AudioDisplay', () => {
       expect(mockPlayer.getCurrentTime).toHaveBeenCalled();
     });
 
-    expect(mockSetTime).toHaveBeenCalledWith(2.5);
+    // 2.5s of a 5s clip -> cursor at 50%.
+    await waitFor(() => {
+      expect(screen.getByTestId('playing-cursor').style.left).toBe('50%');
+    });
   });
 });

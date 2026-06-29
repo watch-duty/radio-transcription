@@ -3,6 +3,7 @@ import {
   AnnotationType,
   type EvaluationAnnotationData,
   type TranscriptAnnotationData,
+  type WaveformAnnotationData,
 } from '@transcription/common';
 
 export function findEvaluationAnnotationData(
@@ -22,6 +23,17 @@ export function findTranscriptAnnotationData(
   for (const annotation of annotations) {
     if (annotation.type === AnnotationType.TRANSCRIPT) {
       return annotation.data as TranscriptAnnotationData;
+    }
+  }
+  return null;
+}
+
+export function findWaveformAnnotationData(
+  annotations: Annotation[]
+): WaveformAnnotationData | null {
+  for (const annotation of annotations) {
+    if (annotation.type === AnnotationType.WAVEFORM) {
+      return annotation.data as WaveformAnnotationData;
     }
   }
   return null;
