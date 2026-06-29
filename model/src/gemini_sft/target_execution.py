@@ -89,6 +89,19 @@ def online_prediction_metadata_uri(run_gcs_prefix: str, label: str) -> str:
     )
 
 
+async def _upload_local_file_async(
+    storage_client: Any,
+    local_path: Path,
+    gcs_uri: str,
+) -> None:
+    await asyncio.to_thread(
+        upload_local_file,
+        storage_client,
+        local_path,
+        gcs_uri,
+    )
+
+
 def build_online_request_identity(
     *,
     target_label: str,
@@ -229,7 +242,11 @@ async def run_online_target_inference(
 
     _require_vertex_sdk()
     request_identity_lib.write_metadata(local_metadata_path, identity)
-    upload_local_file(storage_client, local_metadata_path, metadata_uri)
+    await _upload_local_file_async(
+        storage_client,
+        local_metadata_path,
+        metadata_uri,
+    )
     client = genai.Client(
         vertexai=True,
         project=project,
@@ -283,8 +300,10 @@ async def run_online_target_inference(
             if error:
                 progress["errors"] += 1
             if progress["since_sync"] >= ONLINE_SYNC_EVERY:
-                upload_local_file(
-                    storage_client, local_predictions_path, predictions_uri
+                await _upload_local_file_async(
+                    storage_client,
+                    local_predictions_path,
+                    predictions_uri,
                 )
                 progress["since_sync"] = 0
             if progress["done"] == len(audio_uri_list) or (
@@ -304,7 +323,11 @@ async def run_online_target_inference(
             for index, audio_uri in enumerate(audio_uri_list)
         )
     )
-    upload_local_file(storage_client, local_predictions_path, predictions_uri)
+    await _upload_local_file_async(
+        storage_client,
+        local_predictions_path,
+        predictions_uri,
+    )
     return _prediction_map(
         completed,
         predictions_uri=predictions_uri,
@@ -356,6 +379,7 @@ def _load_prediction_rows(path: Path) -> dict[str, dict[str, Any]]:
                 rows[audio_uri] = row
     return rows
 
+
 def _append_prediction(path: Path, row: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -384,11 +408,7 @@ async def _generate_with_retries(
             if attempt < max_retries:
                 await asyncio.sleep(ONLINE_RETRY_SLEEP_SECONDS * attempt)
             continue
-        if text:
-            return text, None
-        last_error = "empty response"
-        if attempt < max_retries:
-            await asyncio.sleep(ONLINE_RETRY_SLEEP_SECONDS * attempt)
+        return text, None
     return "", last_error
 
 

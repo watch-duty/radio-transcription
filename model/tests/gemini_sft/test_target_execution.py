@@ -26,6 +26,7 @@ from gemini_sft.target_execution import (  # noqa: E402
     request_identity_hash,
     resolve_target_backend,
     run_online_target_inference,
+    upload_local_file,
 )
 
 
@@ -335,7 +336,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
     @unittest.mock.patch("gemini_sft.target_execution.types")
     @unittest.mock.patch("gemini_sft.target_execution.genai")
-    def test_runs_with_shared_request_builder_and_records_empty_error(
+    def test_runs_with_shared_request_builder_and_records_empty_prediction(
         self, mock_genai, mock_types
     ) -> None:
         class Response:
@@ -387,7 +388,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         )
         self.assertEqual(result["gs://audio/1.flac"], "recognized")
         self.assertEqual(result["gs://audio/2.flac"], "")
-        self.assertEqual(result.error_count, 1)
+        self.assertEqual(result.error_count, 0)
         self.assertTrue(self.storage.has(result.online_predictions_uri))
         self.assertTrue(self.storage.has(result.metadata_uri))
         self.assertEqual(len(calls), 2)
@@ -399,7 +400,57 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             calls[0]["config"]["safety_settings"], GEMINI_SAFETY_SETTINGS
         )
         self.assertIn(
-            "empty response", self.storage.get(result.online_predictions_uri)
+            '"error": null', self.storage.get(result.online_predictions_uri)
+        )
+
+    @unittest.mock.patch("gemini_sft.target_execution.types")
+    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    def test_uploads_run_in_thread_pool(self, mock_genai, mock_types) -> None:
+        class Response:
+            text = "recognized"
+
+        async def generate_content(**kwargs):
+            return Response()
+
+        to_thread_calls = []
+
+        async def fake_to_thread(fn, *args, **kwargs):
+            to_thread_calls.append((fn, args, kwargs))
+            return fn(*args, **kwargs)
+
+        mock_client = unittest.mock.MagicMock()
+        mock_client.aio.models.generate_content = generate_content
+        mock_genai.Client.return_value = mock_client
+        mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
+
+        with unittest.mock.patch(
+            "gemini_sft.target_execution.asyncio.to_thread",
+            fake_to_thread,
+        ):
+            asyncio.run(
+                run_online_target_inference(
+                    storage_client=self.storage,
+                    run_gcs_prefix="gs://bucket/run",
+                    project="project",
+                    default_location="us-central1",
+                    target_label="checkpoint_6",
+                    target_model="projects/p/locations/us-central1/endpoints/123",
+                    audio_uris=["gs://audio/1.flac"],
+                    histories=[[]],
+                    system_prompt="system",
+                    user_prompt="user",
+                    prior_context_count=8,
+                    prior_context_mode="text_turns",
+                    eval_manifest_uri="gs://data/eval.jsonl",
+                    local_dir=self.local_dir,
+                    concurrency=1,
+                    max_retries=1,
+                )
+            )
+
+        self.assertGreaterEqual(
+            sum(1 for fn, _, _ in to_thread_calls if fn is upload_local_file),
+            2,
         )
 
     @unittest.mock.patch("gemini_sft.target_execution.genai")
@@ -455,6 +506,30 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
 
 class TestGenerateWithRetries(unittest.TestCase):
+    def test_empty_text_is_successful_prediction(self) -> None:
+        class Response:
+            text = ""
+
+        class Models:
+            async def generate_content(self, **kwargs):
+                return Response()
+
+        client = unittest.mock.MagicMock()
+        client.aio.models = Models()
+
+        prediction, error = asyncio.run(
+            _generate_with_retries(
+                client=client,
+                model_id="projects/p/locations/us-central1/endpoints/123",
+                contents=[],
+                config={},
+                max_retries=3,
+            )
+        )
+
+        self.assertEqual(prediction, "")
+        self.assertIsNone(error)
+
     def test_response_text_exception_is_returned_as_standard_error(
         self,
     ) -> None:
