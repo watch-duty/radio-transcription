@@ -12,7 +12,7 @@ from typing import Any
 import grpc
 import requests
 from cloudevents.http.event import CloudEvent
-from google.api_core.exceptions import GoogleAPICallError
+from google.api_core import exceptions
 from google.cloud import pubsub_v1
 from google.genai import errors as genai_errors
 from opentelemetry.trace import StatusCode
@@ -293,37 +293,54 @@ class TranscriptionEventProcessor:
                 )
 
 
+def _is_grpc_transient(e: grpc.Call) -> bool:
+    """Determines if a gRPC call represents a transient failure status."""
+    try:
+        return e.code() in (
+            grpc.StatusCode.UNAVAILABLE,
+            grpc.StatusCode.DEADLINE_EXCEEDED,
+            grpc.StatusCode.RESOURCE_EXHAUSTED,
+            grpc.StatusCode.INTERNAL,
+            grpc.StatusCode.ABORTED,
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _is_http_transient(e: requests.exceptions.HTTPError) -> bool:
+    """Determines if a requests HTTPError is retryable based on status code."""
+    if e.response is None:
+        return False
+    return e.response.status_code == 429 or e.response.status_code >= 500
+
+
 def _is_transient_exception(e: Exception) -> bool:
     """Determines if an exception is transient and should be retried."""
-    is_transient = False
     match e:
-        case GoogleAPICallError() | genai_errors.APIError() if e.code in (
-            429,
-            409,
-        ) or (e.code and e.code >= 500):
-            is_transient = True
+        case exceptions.RetryError():
+            cause = getattr(e, "cause", None) or e.__cause__
+            return (
+                _is_transient_exception(cause)
+                if isinstance(cause, Exception)
+                else True
+            )
+
+        case exceptions.GoogleAPICallError() | genai_errors.APIError():
+            return e.code in (429, 409) or bool(e.code and e.code >= 500)
+
         case grpc.Call():
-            try:
-                match e.code():
-                    case (
-                        grpc.StatusCode.UNAVAILABLE
-                        | grpc.StatusCode.DEADLINE_EXCEEDED
-                        | grpc.StatusCode.RESOURCE_EXHAUSTED
-                        | grpc.StatusCode.INTERNAL
-                        | grpc.StatusCode.ABORTED
-                    ):
-                        is_transient = True
-            except (AttributeError, TypeError, ValueError):
-                pass
-        case ConnectionError() | TimeoutError():
-            is_transient = True
+            return _is_grpc_transient(e)
+
         case (
-            requests.exceptions.Timeout()
+            ConnectionError()
+            | TimeoutError()
+            | requests.exceptions.Timeout()
             | requests.exceptions.ConnectionError()
         ):
-            is_transient = True
-        case requests.exceptions.HTTPError() if e.response is not None and (
-            e.response.status_code == 429 or e.response.status_code >= 500
-        ):
-            is_transient = True
-    return is_transient
+            return True
+
+        case requests.exceptions.HTTPError():
+            return _is_http_transient(e)
+
+        case _:
+            return False
