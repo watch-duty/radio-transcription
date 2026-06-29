@@ -119,3 +119,10 @@ class DataflowSystemOptions(PipelineOptions):
         parser.add_argument(
             "--pipeline_type_check", action="store_true", required=False
         )
+        parser.add_argument(
+            "--number_of_worker_harness_threads",
+            type=int,
+            required=False,
+            default=4,
+            help="Number of worker harness threads to run per worker. Defaults to 4 to prevent GIL contention.",
+        )
