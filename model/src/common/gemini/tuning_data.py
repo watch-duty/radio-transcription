@@ -14,9 +14,7 @@ from typing import Any
 
 from common.gemini.context import (
     ContextTurn,
-    build_prior_text_user_turn,
-    build_transcript_context_prompt,
-    build_vapo_p3_transcript_context_prompt,
+    build_transcription_contents,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,67 +52,14 @@ def build_audio_tuning_example(
         A dict matching the current Vertex AI audio-SFT JSONL schema:
         ``{systemInstruction, contents: [history..., current user, target]}``.
     """
-    contents: list[dict[str, Any]] = []
-    if history_mode not in {
-        "audio",
-        "text_turns",
-        "transcript",
-        "vapo_p3_transcript",
-    }:
-        msg = (
-            "history_mode must be 'audio', 'text_turns', 'transcript', "
-            "or 'vapo_p3_transcript'"
-        )
-        raise ValueError(msg)
-    history_turns = list(history or ())
-    if history_mode == "audio":
-        for turn in history_turns:
-            contents.extend(
-                [
-                    {
-                        "role": "user",
-                        "parts": [_audio_file_data_part(turn.audio_uri)],
-                    },
-                    {"role": "model", "parts": [{"text": turn.text}]},
-                ]
-            )
-        current_user_prompt = user_prompt
-    elif history_mode == "text_turns":
-        for turn in history_turns:
-            contents.extend(
-                [
-                    {
-                        "role": "user",
-                        "parts": [
-                            {"text": build_prior_text_user_turn(user_prompt)}
-                        ],
-                    },
-                    {"role": "model", "parts": [{"text": turn.text}]},
-                ]
-            )
-        current_user_prompt = user_prompt
-    elif history_mode == "transcript":
-        current_user_prompt = build_transcript_context_prompt(
-            history_turns,
-            user_prompt,
-        )
-    else:
-        current_user_prompt = build_vapo_p3_transcript_context_prompt(
-            history_turns,
-            user_prompt,
-        )
-    contents.extend(
-        [
-            {
-                "role": "user",
-                "parts": [
-                    {"text": current_user_prompt},
-                    _audio_file_data_part(audio_uri),
-                ],
-            },
-            {"role": "model", "parts": [{"text": gt_text}]},
-        ]
+    contents = build_transcription_contents(
+        audio_uri=audio_uri,
+        user_prompt=user_prompt,
+        history=history,
+        history_mode=history_mode,
+        file_data_casing="camel",
     )
+    contents.append({"role": "model", "parts": [{"text": gt_text}]})
     return {
         "systemInstruction": {
             "role": "system",
@@ -163,15 +108,6 @@ def validate_audio_tuning_example(example: dict[str, Any]) -> bool:
         if not _extract_model_text(model_turn).strip():
             return False
     return audio_part_count == 1
-
-
-def _audio_file_data_part(audio_uri: str) -> dict[str, Any]:
-    return {
-        "fileData": {
-            "mimeType": "audio/flac",
-            "fileUri": audio_uri,
-        }
-    }
 
 
 def _extract_user_file_data(user_turn: dict[str, Any]) -> dict[str, Any] | None:

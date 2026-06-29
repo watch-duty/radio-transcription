@@ -22,13 +22,7 @@ from common.inference_manifest import (
     upload_inference_manifest,
 )
 from common.scoring import (
-    bootstrap_paired,
     build_normalizer,
-    compute_cer,
-    compute_wer,
-    duration_bucket_wer,
-    hallucination_rate,
-    keyword_metrics,
 )
 from google.cloud import storage
 
@@ -41,6 +35,7 @@ from gemini_sft.config import (
     RunConfig,
     RunConfigError,
     load_eval_run_config,
+    optional_config_prior_context_mode,
     require_config_eval_execution,
     require_config_eval_model,
     require_config_int,
@@ -118,9 +113,8 @@ def evaluate_run(
         config,
         "prior_context_count",
     )
-    prior_context_mode = _optional_config_prior_context_mode(
-        config,
-        "prior_context_mode",
+    prior_context_mode = optional_config_prior_context_mode(
+        config, "prior_context_mode"
     )
     target = require_config_eval_model(config)
     eval_execution = require_config_eval_execution(config)
@@ -368,143 +362,3 @@ def _optional_config_nonnegative_int(config: dict[str, Any], key: str) -> int:
     return value
 
 
-def _optional_config_prior_context_mode(
-    config: dict[str, Any], key: str
-) -> str:
-    allowed = {"text_turns", "transcript", "vapo_p3_transcript"}
-    value = config.get(key, "text_turns")
-    if not isinstance(value, str):
-        msg = (
-            f"config.json field must be one of {', '.join(sorted(allowed))}: "
-            f"{key}"
-        )
-        raise TypeError(msg)
-    mode = value.strip().lower()
-    if mode not in allowed:
-        msg = (
-            f"config.json field must be one of {', '.join(sorted(allowed))}: "
-            f"{key}"
-        )
-        raise ValueError(msg)
-    return mode
-
-
-def build_metrics(
-    *,
-    round_id: str,
-    base_model: str,
-    refs: list[str],
-    durations: list[float],
-    base_hyps: list[str],
-    normalizer: Any,
-    n_eval_examples: int,
-) -> dict[str, Any]:
-    """Build the base-model scoring panel."""
-    base_wer_result = compute_wer(refs, base_hyps, normalizer=normalizer)
-    base_cer_result = compute_cer(refs, base_hyps, normalizer=normalizer)
-    metrics: dict[str, Any] = {
-        "round_id": round_id,
-        "base_model": base_model,
-        "base_wer": base_wer_result["wer"],
-        "base_cer": base_cer_result["cer"],
-        "n_eval_examples": n_eval_examples,
-    }
-    add_error_breakdown(metrics, "base", base_wer_result)
-    # Historical reports called this "empty rate"; the scorer flags both empty
-    # strings and the explicit [UNINTELLIGIBLE] token emitted for unusable audio.
-    metrics["base_empty_rate"] = hallucination_rate(base_hyps)
-    base_keyword_rows = keyword_metrics(
-        refs, base_hyps, GEMINI_TRANSCRIBE_KEYWORDS
-    )
-    metrics["base_keyword_metrics"] = base_keyword_rows
-    metrics["base_keyword_accuracy"] = overall_keyword_accuracy(
-        base_keyword_rows
-    )
-    try:
-        metrics["duration_buckets"] = [
-            {"bucket": row["bucket"], "base_wer": row["wer"]}
-            for row in duration_bucket_wer(
-                refs, base_hyps, durations, normalizer=normalizer
-            )
-        ]
-    except Exception as exc:
-        logger.warning("Could not compute duration bucket WER: %s", exc)
-    return metrics
-
-
-def add_tuned_metrics(
-    metrics: dict[str, Any],
-    refs: list[str],
-    durations: list[float],
-    base_hyps: list[str],
-    tuned_hyps: list[str],
-    normalizer: Any,
-) -> None:
-    """Add tuned-model metrics to an existing base metrics dictionary."""
-    tuned_wer_result = compute_wer(refs, tuned_hyps, normalizer=normalizer)
-    tuned_cer_result = compute_cer(refs, tuned_hyps, normalizer=normalizer)
-    metrics["tuned_wer"] = tuned_wer_result["wer"]
-    metrics["tuned_cer"] = tuned_cer_result["cer"]
-    metrics["tuned_empty_rate"] = hallucination_rate(tuned_hyps)
-    add_error_breakdown(metrics, "tuned", tuned_wer_result)
-    tuned_keyword_rows = keyword_metrics(
-        refs, tuned_hyps, GEMINI_TRANSCRIBE_KEYWORDS
-    )
-    metrics["tuned_keyword_metrics"] = tuned_keyword_rows
-    metrics["tuned_keyword_accuracy"] = overall_keyword_accuracy(
-        tuned_keyword_rows
-    )
-    try:
-        bootstrap = bootstrap_paired(
-            refs, base_hyps, tuned_hyps, normalizer=normalizer
-        )
-        metrics["bootstrap_p_value"] = bootstrap.get("p_value_one_sided")
-        metrics["bootstrap_ci_low"] = bootstrap.get("ci_low")
-        metrics["bootstrap_ci_high"] = bootstrap.get("ci_high")
-        metrics["bootstrap_delta"] = bootstrap.get("delta")
-    except Exception as exc:
-        logger.warning("bootstrap_paired failed: %s", exc)
-    try:
-        tuned_by_bucket = {
-            row["bucket"]: row["wer"]
-            for row in duration_bucket_wer(
-                refs, tuned_hyps, durations, normalizer=normalizer
-            )
-        }
-        for entry in metrics.get("duration_buckets", []):
-            entry["tuned_wer"] = tuned_by_bucket.get(entry["bucket"])
-    except Exception as exc:
-        logger.warning("Could not compute tuned duration bucket WER: %s", exc)
-
-
-def add_error_breakdown(
-    metrics: dict[str, Any],
-    prefix: str,
-    wer_result: dict[str, Any],
-) -> None:
-    """Add insertion/deletion/substitution rates to a metrics dictionary."""
-    total_ref_words = (
-        int(wer_result["hits"])
-        + int(wer_result["substitutions"])
-        + int(wer_result["deletions"])
-    )
-    if total_ref_words <= 0:
-        return
-    metrics[f"{prefix}_insertions"] = (
-        wer_result["insertions"] / total_ref_words * 100
-    )
-    metrics[f"{prefix}_deletions"] = (
-        wer_result["deletions"] / total_ref_words * 100
-    )
-    metrics[f"{prefix}_substitutions"] = (
-        wer_result["substitutions"] / total_ref_words * 100
-    )
-
-
-def overall_keyword_accuracy(rows: list[dict[str, Any]]) -> float | None:
-    """Return occurrence-weighted keyword accuracy."""
-    total_occurrences = sum(row["occurrences"] for row in rows)
-    if total_occurrences == 0:
-        return None
-    total_correct = sum(row["correctly_identified"] for row in rows)
-    return total_correct / total_occurrences * 100

@@ -6,7 +6,7 @@ import math
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 
 @dataclass(frozen=True)
@@ -17,6 +17,12 @@ class ContextTurn:
     text: str
 
 
+HISTORY_MODES: Final = frozenset(
+    {"audio", "text_turns", "transcript", "vapo_p3_transcript"}
+)
+PRIOR_CONTEXT_MODES: Final = frozenset(
+    {"text_turns", "transcript", "vapo_p3_transcript"}
+)
 VAPO_P3_CONTEXT_HEADER = "\n".join(
     [
         "The following prior same-source transcripts are for situational "
@@ -80,6 +86,107 @@ def build_prior_text_user_turn(user_prompt: str) -> str:
     only omitted prior-turn part is the audio.
     """
     return user_prompt
+
+
+def build_transcription_contents(
+    *,
+    audio_uri: str,
+    user_prompt: str,
+    history: Sequence[ContextTurn] | None = None,
+    history_mode: str = "audio",
+    file_data_casing: str,
+) -> list[dict[str, Any]]:
+    """Return Gemini contents for prior context plus the current audio turn.
+
+    ``file_data_casing`` is the only schema difference between the Vertex batch
+    request shape (snake_case) and Gemini SFT JSONL shape (camelCase).
+    """
+    history_mode = validate_history_mode(history_mode)
+    contents: list[dict[str, Any]] = []
+    history_turns = list(history or ())
+    if history_mode == "audio":
+        for turn in history_turns:
+            contents.extend(
+                [
+                    {
+                        "role": "user",
+                        "parts": [
+                            audio_file_data_part(
+                                turn.audio_uri,
+                                casing=file_data_casing,
+                            )
+                        ],
+                    },
+                    {"role": "model", "parts": [{"text": turn.text}]},
+                ]
+            )
+        current_user_prompt = user_prompt
+    elif history_mode == "text_turns":
+        for turn in history_turns:
+            contents.extend(
+                [
+                    {
+                        "role": "user",
+                        "parts": [
+                            {"text": build_prior_text_user_turn(user_prompt)}
+                        ],
+                    },
+                    {"role": "model", "parts": [{"text": turn.text}]},
+                ]
+            )
+        current_user_prompt = user_prompt
+    elif history_mode == "transcript":
+        current_user_prompt = build_transcript_context_prompt(
+            history_turns,
+            user_prompt,
+        )
+    else:
+        current_user_prompt = build_vapo_p3_transcript_context_prompt(
+            history_turns,
+            user_prompt,
+        )
+    contents.append(
+        {
+            "role": "user",
+            "parts": [
+                {"text": current_user_prompt},
+                audio_file_data_part(audio_uri, casing=file_data_casing),
+            ],
+        }
+    )
+    return contents
+
+
+def validate_history_mode(history_mode: str) -> str:
+    """Return a normalized history mode or raise ``ValueError``."""
+    mode = history_mode.strip().lower()
+    if mode not in HISTORY_MODES:
+        msg = (
+            "history_mode must be 'audio', 'text_turns', 'transcript', "
+            "or 'vapo_p3_transcript'"
+        )
+        raise ValueError(msg)
+    return mode
+
+
+def audio_file_data_part(audio_uri: str, *, casing: str) -> dict[str, Any]:
+    """Return a Gemini audio file-data part in snake_case or camelCase."""
+    if casing == "snake":
+        return {
+            "file_data": {
+                "file_uri": audio_uri,
+                "mime_type": "audio/flac",
+            }
+        }
+    if casing == "camel":
+        return {
+            "fileData": {
+                "mimeType": "audio/flac",
+                "fileUri": audio_uri,
+            }
+        }
+    msg = "file_data_casing must be 'snake' or 'camel'"
+    raise ValueError(msg)
 
 
 def build_context_histories(

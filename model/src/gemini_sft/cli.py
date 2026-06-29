@@ -47,11 +47,6 @@ def build_parser() -> argparse.ArgumentParser:
         "eval", help="Batch-infer and score a Gemini SFT run"
     )
     eval_parser.add_argument("--config", required=True, help="Run TOML path")
-    eval_parser.add_argument(
-        "--base-only",
-        action="store_true",
-        help="Evaluate only the base model even when a tuned endpoint exists",
-    )
     eval_parser.set_defaults(func=evaluate)
     return parser
 

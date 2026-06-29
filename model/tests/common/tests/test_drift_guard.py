@@ -139,24 +139,23 @@ model = "gemini-3.1-flash-lite"
         self.assertIn(
             ("common.gemini.vertex", "GEMINI_SAFETY_SETTINGS"), imports
         )
+        self.assertIn(("common.gemini.vertex", "resource_location"), imports)
 
-    def test_tuning_data_uses_shared_context_prompt_helpers(self) -> None:
+    def test_tuning_data_uses_shared_content_builder(self) -> None:
         imports = _python_imports(
             _SRC_DIR / "common" / "gemini" / "tuning_data.py"
         )
 
         self.assertIn(
-            ("common.gemini.context", "build_prior_text_user_turn"), imports
-        )
-        self.assertIn(
-            ("common.gemini.context", "build_transcript_context_prompt"),
+            ("common.gemini.context", "build_transcription_contents"),
             imports,
         )
+
+    def test_vertex_request_uses_shared_content_builder(self) -> None:
+        imports = _python_imports(_SRC_DIR / "common" / "gemini" / "vertex.py")
+
         self.assertIn(
-            (
-                "common.gemini.context",
-                "build_vapo_p3_transcript_context_prompt",
-            ),
+            ("common.gemini.context", "build_transcription_contents"),
             imports,
         )
 

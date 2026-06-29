@@ -57,6 +57,15 @@ def metadata_payload(identity: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def write_metadata(path: Path, identity: dict[str, Any]) -> None:
+    """Write a request identity metadata sidecar."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(metadata_payload(identity), sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def load_metadata_identity(
     path: Path,
     *,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import tempfile
@@ -19,6 +20,7 @@ from common.gemini.vertex import (
 from fake_gcs import FakeStorageClient
 from gemini_sft import cli
 from gemini_sft import evaluate as evaluate_module
+from gemini_sft import reporting as reporting_module
 from gemini_sft import tune as tune_module
 from gemini_sft.config import load_run_config
 from gemini_sft.prepare import prepare_run
@@ -113,15 +115,18 @@ def _fake_cer(
     return {"cer": 0.0 if refs == hyps else 1.0}
 
 
+@contextlib.contextmanager
 def _patched_eval_scoring() -> Any:
-    return unittest.mock.patch.multiple(
-        evaluate_module,
-        build_normalizer=lambda: None,
-        compute_wer=_fake_wer,
-        compute_cer=_fake_cer,
-        duration_bucket_wer=lambda *_, **__: [],
-        keyword_metrics=lambda *_, **__: [],
-    )
+    with (
+        unittest.mock.patch.object(evaluate_module, "build_normalizer", lambda: None),
+        unittest.mock.patch.multiple(
+            reporting_module,
+            compute_wer=_fake_wer,
+            compute_cer=_fake_cer,
+            keyword_metrics=lambda *_, **__: [],
+        ),
+    ):
+        yield
 
 
 def _batch_prediction_map(
@@ -1127,7 +1132,7 @@ class TestEvaluateRun(unittest.TestCase):
             )
             config = run_cfg.to_record_dict()
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+            args = argparse.Namespace(config=str(cfg_path))
 
             with unittest.mock.patch.object(
                 evaluate_module,
@@ -1158,7 +1163,7 @@ class TestEvaluateRun(unittest.TestCase):
             storage.put(run_cfg.paths.canonical_eval_uri, "")
             config = run_cfg.to_record_dict()
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+            args = argparse.Namespace(config=str(cfg_path))
 
             with unittest.mock.patch.object(
                 evaluate_module,
@@ -1192,7 +1197,7 @@ class TestEvaluateRun(unittest.TestCase):
             )
             config = run_cfg.to_record_dict()
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+            args = argparse.Namespace(config=str(cfg_path))
 
             with (
                 unittest.mock.patch.object(
@@ -1264,7 +1269,7 @@ class TestEvaluateRun(unittest.TestCase):
                 system_prompt=config["system_prompt"],
                 user_prompt=config["user_prompt"],
             )
-            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+            args = argparse.Namespace(config=str(cfg_path))
 
             with (
                 unittest.mock.patch.object(
@@ -1430,7 +1435,7 @@ class TestEvaluateRun(unittest.TestCase):
                 user_prompt=config["user_prompt"],
                 prior_context_count=1,
             )
-            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+            args = argparse.Namespace(config=str(cfg_path))
 
             with (
                 unittest.mock.patch.object(
@@ -1527,7 +1532,7 @@ class TestEvaluateRun(unittest.TestCase):
                 system_prompt=config["system_prompt"],
                 user_prompt=config["user_prompt"],
             )
-            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+            args = argparse.Namespace(config=str(cfg_path))
 
             with (
                 unittest.mock.patch.object(
@@ -1620,7 +1625,7 @@ class TestEvaluateRun(unittest.TestCase):
                 system_prompt=config["system_prompt"],
                 user_prompt=config["user_prompt"],
             )
-            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+            args = argparse.Namespace(config=str(cfg_path))
 
             with (
                 unittest.mock.patch.object(
@@ -1728,7 +1733,7 @@ class TestEvaluateRun(unittest.TestCase):
             ):
                 rc = evaluate_module.evaluate(
                     args=argparse.Namespace(
-                        config=str(cfg_path), base_only=True
+                        config=str(cfg_path)
                     )
                 )
 
@@ -1799,7 +1804,7 @@ class TestEvaluateRun(unittest.TestCase):
                 _patched_eval_scoring(),
             ):
                 rc = evaluate_module.evaluate_run(
-                    argparse.Namespace(config=str(cfg_path), base_only=True),
+                    argparse.Namespace(config=str(cfg_path)),
                     run_cfg,
                     storage,
                     config,
@@ -1868,7 +1873,7 @@ class TestEvaluateRun(unittest.TestCase):
                 _patched_eval_scoring(),
             ):
                 rc = evaluate_module.evaluate_run(
-                    argparse.Namespace(config=str(cfg_path), base_only=False),
+                    argparse.Namespace(config=str(cfg_path)),
                     run_cfg,
                     storage,
                     config,
@@ -1968,7 +1973,7 @@ class TestEvaluateRun(unittest.TestCase):
                 _patched_eval_scoring(),
             ):
                 rc_online = evaluate_module.evaluate_run(
-                    argparse.Namespace(config=str(cfg_path), base_only=True),
+                    argparse.Namespace(config=str(cfg_path)),
                     run_cfg,
                     storage,
                     config,
@@ -2018,7 +2023,7 @@ class TestEvaluateRun(unittest.TestCase):
                 _patched_eval_scoring(),
             ):
                 rc_batch = evaluate_module.evaluate_run(
-                    argparse.Namespace(config=str(cfg_path), base_only=True),
+                    argparse.Namespace(config=str(cfg_path)),
                     run_cfg,
                     storage,
                     config,
@@ -2038,7 +2043,7 @@ class TestEvaluateRun(unittest.TestCase):
             config = run_cfg.to_record_dict()
             config.pop("canonical_eval_uri")
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+            args = argparse.Namespace(config=str(cfg_path))
 
             with (
                 unittest.mock.patch.object(
@@ -2066,7 +2071,7 @@ class TestEvaluateRun(unittest.TestCase):
             config.pop("eval_model")
             config["endpoint"] = "projects/p/locations/us/endpoints/123"
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            args = argparse.Namespace(config=str(cfg_path), base_only=False)
+            args = argparse.Namespace(config=str(cfg_path))
 
             with (
                 unittest.mock.patch.object(
@@ -2103,7 +2108,7 @@ class TestEvaluateRun(unittest.TestCase):
                 }
             ]
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+            args = argparse.Namespace(config=str(cfg_path))
 
             with (
                 unittest.mock.patch.object(
@@ -2137,7 +2142,7 @@ class TestEvaluateRun(unittest.TestCase):
                 "model": "gemini-3.1-flash-lite",
             }
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+            args = argparse.Namespace(config=str(cfg_path))
 
             with (
                 unittest.mock.patch.object(
@@ -2182,7 +2187,7 @@ class TestEvaluateRun(unittest.TestCase):
                     "online_predictions.meta.json"
                 ),
             )
-            args = argparse.Namespace(config=str(cfg_path), base_only=True)
+            args = argparse.Namespace(config=str(cfg_path))
 
             with (
                 unittest.mock.patch.object(
@@ -2572,21 +2577,3 @@ class TestEvaluateRun(unittest.TestCase):
                 )
 
         self.assertIsNone(preds)
-
-    def test_error_breakdown_denominator_matches_wer_denominator(self) -> None:
-        metrics: dict[str, Any] = {}
-
-        evaluate_module.add_error_breakdown(
-            metrics,
-            "base",
-            {
-                "hits": 2,
-                "substitutions": 1,
-                "deletions": 1,
-                "insertions": 1,
-            },
-        )
-
-        self.assertEqual(metrics["base_insertions"], 25.0)
-        self.assertEqual(metrics["base_deletions"], 25.0)
-        self.assertEqual(metrics["base_substitutions"], 25.0)

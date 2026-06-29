@@ -33,9 +33,7 @@ from typing import Any
 
 from common.gemini.context import (
     ContextTurn,
-    build_prior_text_user_turn,
-    build_transcript_context_prompt,
-    build_vapo_p3_transcript_context_prompt,
+    build_transcription_contents,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,63 +77,12 @@ def build_request(
     the request back in camelCase in batch OUTPUT, so output parsers must read both
     casings.
     """
-    contents: list[dict[str, Any]] = []
-    if history_mode not in {
-        "audio",
-        "text_turns",
-        "transcript",
-        "vapo_p3_transcript",
-    }:
-        msg = (
-            "history_mode must be 'audio', 'text_turns', 'transcript', "
-            "or 'vapo_p3_transcript'"
-        )
-        raise ValueError(msg)
-    history_turns = list(history or ())
-    if history_mode == "audio":
-        for turn in history_turns:
-            contents.extend(
-                [
-                    {
-                        "role": "user",
-                        "parts": [_audio_file_data_part(turn.audio_uri)],
-                    },
-                    {"role": "model", "parts": [{"text": turn.text}]},
-                ]
-            )
-        current_user_prompt = user_prompt
-    elif history_mode == "text_turns":
-        for turn in history_turns:
-            contents.extend(
-                [
-                    {
-                        "role": "user",
-                        "parts": [
-                            {"text": build_prior_text_user_turn(user_prompt)}
-                        ],
-                    },
-                    {"role": "model", "parts": [{"text": turn.text}]},
-                ]
-            )
-        current_user_prompt = user_prompt
-    elif history_mode == "transcript":
-        current_user_prompt = build_transcript_context_prompt(
-            history_turns,
-            user_prompt,
-        )
-    else:
-        current_user_prompt = build_vapo_p3_transcript_context_prompt(
-            history_turns,
-            user_prompt,
-        )
-    contents.append(
-        {
-            "role": "user",
-            "parts": [
-                {"text": current_user_prompt},
-                _audio_file_data_part(audio_uri),
-            ],
-        }
+    contents = build_transcription_contents(
+        audio_uri=audio_uri,
+        user_prompt=user_prompt,
+        history=history,
+        history_mode=history_mode,
+        file_data_casing="snake",
     )
     return {
         "request": {
@@ -146,16 +93,6 @@ def build_request(
             },
             "generation_config": generation_config.copy(),
             "safety_settings": list(safety_settings),
-        }
-    }
-
-
-def _audio_file_data_part(audio_uri: str) -> dict[str, Any]:
-    # snake_case keys are intentional; see ``build_request``.
-    return {
-        "file_data": {
-            "file_uri": audio_uri,
-            "mime_type": "audio/flac",
         }
     }
 
@@ -588,17 +525,19 @@ def submit_batch_inference(
     return output_location
 
 
-def _resource_location(resource_name: str) -> str | None:
+def resource_location(
+    resource_name: str, default: str | None = None
+) -> str | None:
     """Extract a Vertex resource location from a full resource name."""
     match = _RESOURCE_LOCATION_RE.search(resource_name)
-    return match.group(1) if match else None
+    return match.group(1) if match else default
 
 
 def _batch_location(model: str, location: str) -> str:
     """Return the Vertex location to use for batch inference."""
-    resource_location = _resource_location(model)
-    if resource_location:
-        return resource_location
+    model_location = resource_location(model)
+    if model_location:
+        return model_location
     if model.rsplit("/", maxsplit=1)[-1] in _US_BATCH_MODEL_IDS:
         return "us"
     return location

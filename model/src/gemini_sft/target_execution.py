@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,6 +22,7 @@ from common.gemini.vertex import (
     GEMINI_SAFETY_SETTINGS,
     build_request,
     genai,
+    resource_location,
     types,
 )
 from gemini_sft.config import EvalExecutionConfig, EvalModelTarget
@@ -32,8 +32,6 @@ LOGGER = logging.getLogger(__name__)
 ONLINE_RETRY_SLEEP_SECONDS = 2.0
 ONLINE_SYNC_EVERY = 100
 ONLINE_LOG_EVERY = 100
-_LOCATION_RE = re.compile(r"/locations/([^/]+)/")
-
 
 @dataclass(frozen=True)
 class OnlineResumeState:
@@ -76,12 +74,6 @@ def resolve_target_backend(
     if "/endpoints/" in target.model:
         return "online"
     return "batch"
-
-
-def resource_location(resource_name: str, default: str) -> str:
-    """Return a Vertex resource location or the caller's default location."""
-    match = _LOCATION_RE.search(resource_name)
-    return match.group(1) if match else default
 
 
 def online_prediction_uri(run_gcs_prefix: str, label: str) -> str:
@@ -230,7 +222,7 @@ async def run_online_target_inference(
         )
 
     _require_vertex_sdk()
-    _write_metadata(local_metadata_path, identity)
+    request_identity_lib.write_metadata(local_metadata_path, identity)
     upload_local_file(storage_client, local_metadata_path, metadata_uri)
     client = genai.Client(
         vertexai=True,
@@ -357,19 +349,6 @@ def _load_prediction_rows(path: Path) -> dict[str, dict[str, Any]]:
             if audio_uri:
                 rows[audio_uri] = row
     return rows
-
-
-def _write_metadata(path: Path, identity: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(
-            request_identity_lib.metadata_payload(identity),
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
 
 def _append_prediction(path: Path, row: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)

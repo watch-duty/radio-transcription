@@ -128,7 +128,7 @@ def run_batch_audio_inference(
                 batch_output_gcs,
             )
         else:
-            _write_batch_metadata(metadata_path, identity)
+            request_identity.write_metadata(metadata_path, identity)
             upload_local_file(storage_client, metadata_path, metadata_uri)
             try:
                 output_loc = submit_fn(
@@ -282,16 +282,6 @@ def _validate_reusable_batch_output(
         request_identity_payload,
         "batch prediction request identity mismatch",
     )
-
-
-def _write_batch_metadata(path: Path, identity: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(request_identity.metadata_payload(identity), sort_keys=True)
-        + "\n",
-        encoding="utf-8",
-    )
-
 
 def _unique_audio_uris(audio_uris: Sequence[str]) -> set[str] | None:
     seen: set[str] = set()

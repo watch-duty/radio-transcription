@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from common.gemini.context import PRIOR_CONTEXT_MODES
 from common.gemini.prompts import (
     GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
     GEMINI_TRANSCRIBE_USER_PROMPT,
@@ -18,10 +19,11 @@ from common.inference_manifest import (
 )
 
 ADAPTER_SIZES: Final = frozenset({"ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"})
-PRIOR_CONTEXT_MODES: Final = frozenset(
-    {"text_turns", "transcript", "vapo_p3_transcript"}
-)
 EVAL_EXECUTION_BACKENDS: Final = frozenset({"batch", "online"})
+EVAL_MODEL_FIELDS: Final = frozenset({"label", "model"})
+EVAL_EXECUTION_FIELDS: Final = frozenset(
+    {"backend", "concurrency", "limit", "max_retries"}
+)
 ROUND_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 EVAL_MODEL_REQUIRED_MESSAGE: Final = (
     "eval configs must define one [eval.model] target with required label "
@@ -363,38 +365,13 @@ def require_config_eval_model(config: dict[str, Any]) -> EvalModelTarget:
             "label and model fields"
         )
         raise TypeError(msg)
-
-    expected_keys = {"label", "model"}
-    keys = set(raw_target)
-    if keys != expected_keys:
-        missing = sorted(expected_keys - keys)
-        unsupported = sorted(keys - expected_keys)
-        details = []
-        if missing:
-            details.append(f"missing: {', '.join(missing)}")
-        if unsupported:
-            details.append(f"unsupported: {', '.join(unsupported)}")
-        msg = (
-            "config.json field eval_model must contain exactly label and "
-            f"model fields ({'; '.join(details)})"
-        )
-        raise ValueError(msg)
-
-    label_value = raw_target["label"]
-    if not isinstance(label_value, str) or not label_value.strip():
-        msg = "config.json field eval_model.label must be a non-empty string"
-        raise ValueError(msg)
-    try:
-        label = validate_artifact_label(label_value.strip())
-    except ValueError as exc:
-        msg = f"config.json field eval_model.label is invalid: {exc}"
-        raise ValueError(msg) from exc
-
-    model_value = raw_target["model"]
-    if not isinstance(model_value, str) or not model_value.strip():
-        msg = "config.json field eval_model.model must be a non-empty string"
-        raise ValueError(msg)
-    return EvalModelTarget(label=label, model=model_value.strip())
+    return _parse_eval_model_mapping(
+        raw_target,
+        object_name="config.json field eval_model",
+        label_name="config.json field eval_model.label",
+        model_name="config.json field eval_model.model",
+        error_cls=ValueError,
+    )
 
 
 def require_config_eval_execution(config: dict[str, Any]) -> EvalExecutionConfig:
@@ -406,6 +383,27 @@ def require_config_eval_execution(config: dict[str, Any]) -> EvalExecutionConfig
         msg = "config.json field eval_execution must be an object"
         raise TypeError(msg)
     return _config_eval_execution_config(raw_execution)
+
+
+def optional_config_prior_context_mode(
+    config: dict[str, Any], key: str
+) -> str:
+    """Return a validated durable prior-context mode."""
+    value = config.get(key, "text_turns")
+    if not isinstance(value, str):
+        msg = (
+            f"config.json field must be one of "
+            f"{', '.join(sorted(PRIOR_CONTEXT_MODES))}: {key}"
+        )
+        raise TypeError(msg)
+    mode = value.strip().lower()
+    if mode not in PRIOR_CONTEXT_MODES:
+        msg = (
+            f"config.json field must be one of "
+            f"{', '.join(sorted(PRIOR_CONTEXT_MODES))}: {key}"
+        )
+        raise ValueError(msg)
+    return mode
 
 
 def _required_table(data: dict[str, Any], key: str) -> dict[str, Any]:
@@ -463,26 +461,53 @@ def _eval_model_target(
             "fields"
         )
         raise RunConfigError(msg)
+    return _parse_eval_model_mapping(
+        raw_target,
+        object_name="eval.model",
+        label_name="eval.model.label",
+        model_name="eval.model.model",
+        error_cls=RunConfigError,
+    )
 
-    expected_keys = {"label", "model"}
+
+def _parse_eval_model_mapping(
+    raw_target: dict[str, Any],
+    *,
+    object_name: str,
+    label_name: str,
+    model_name: str,
+    error_cls: type[Exception],
+) -> EvalModelTarget:
     keys = set(raw_target)
-    if keys != expected_keys:
-        missing = sorted(expected_keys - keys)
-        unsupported = sorted(keys - expected_keys)
+    if keys != EVAL_MODEL_FIELDS:
+        missing = sorted(EVAL_MODEL_FIELDS - keys)
+        unsupported = sorted(keys - EVAL_MODEL_FIELDS)
         details = []
         if missing:
             details.append(f"missing: {', '.join(missing)}")
         if unsupported:
             details.append(f"unsupported: {', '.join(unsupported)}")
         msg = (
-            "eval.model must contain exactly label and model fields "
+            f"{object_name} must contain exactly label and model fields "
             f"({'; '.join(details)})"
         )
-        raise RunConfigError(msg)
+        raise error_cls(msg)
 
-    label = _required_artifact_label(raw_target, "eval.model.label")
-    model = _required_str(raw_target, "eval.model.model")
-    return EvalModelTarget(label=label, model=model)
+    label_value = raw_target["label"]
+    if not isinstance(label_value, str) or not label_value.strip():
+        msg = f"{label_name} must be a non-empty string"
+        raise error_cls(msg)
+    try:
+        label = validate_artifact_label(label_value.strip())
+    except ValueError as exc:
+        msg = f"{label_name} is invalid: {exc}"
+        raise error_cls(msg) from exc
+
+    model_value = raw_target["model"]
+    if not isinstance(model_value, str) or not model_value.strip():
+        msg = f"{model_name} must be a non-empty string"
+        raise error_cls(msg)
+    return EvalModelTarget(label=label, model=model_value.strip())
 
 
 def _eval_execution_config(
@@ -497,15 +522,12 @@ def _eval_execution_config(
         msg = "eval.execution must be a TOML table"
         raise RunConfigError(msg)
 
-    unsupported_fields = sorted(
-        set(raw_execution) - {"backend", "concurrency", "limit", "max_retries"}
+    _reject_unsupported_fields(
+        raw_execution,
+        allowed=EVAL_EXECUTION_FIELDS,
+        context="eval.execution",
+        error_cls=RunConfigError,
     )
-    if unsupported_fields:
-        msg = (
-            "eval.execution unsupported fields: "
-            f"{', '.join(unsupported_fields)}"
-        )
-        raise RunConfigError(msg)
     return EvalExecutionConfig(
         backend=_optional_eval_execution_backend(
             raw_execution,
@@ -532,15 +554,12 @@ def _eval_execution_config(
 def _config_eval_execution_config(
     raw_execution: dict[str, Any],
 ) -> EvalExecutionConfig:
-    unsupported_fields = sorted(
-        set(raw_execution) - {"backend", "concurrency", "limit", "max_retries"}
+    _reject_unsupported_fields(
+        raw_execution,
+        allowed=EVAL_EXECUTION_FIELDS,
+        context="config.json field eval_execution",
+        error_cls=ValueError,
     )
-    if unsupported_fields:
-        msg = (
-            "config.json field eval_execution unsupported fields: "
-            f"{', '.join(unsupported_fields)}"
-        )
-        raise ValueError(msg)
     return EvalExecutionConfig(
         backend=_optional_config_eval_execution_backend(raw_execution),
         limit=_optional_config_positive_int(
@@ -559,6 +578,19 @@ def _config_eval_execution_config(
             default=3,
         ),
     )
+
+
+def _reject_unsupported_fields(
+    data: dict[str, Any],
+    *,
+    allowed: frozenset[str],
+    context: str,
+    error_cls: type[Exception],
+) -> None:
+    unsupported_fields = sorted(set(data) - allowed)
+    if unsupported_fields:
+        msg = f"{context} unsupported fields: {', '.join(unsupported_fields)}"
+        raise error_cls(msg)
 
 
 def _optional_eval_execution_backend(
