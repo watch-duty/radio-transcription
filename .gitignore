@@ -93,7 +93,7 @@ model/scripts/sft/results/**/*.jsonl
 model/scripts/sft/results/**/*.jsonl.gz
 
 # Local SFT/operator experiment artifacts.
-results/
+/results/
 *.local.toml
 model/data/inference_manifests/*.jsonl
 model/data/inference_manifests/*.jsonl.gz

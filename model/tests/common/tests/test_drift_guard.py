@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -184,19 +185,29 @@ model = "gemini-3.1-flash-lite"
             _SCRIPTS_DIR / "sft" / "docs" / "metrics.md"
         ).read_text(encoding="utf-8")
 
-        for column in reporting.REPORT_COLUMNS:
-            with self.subTest(column=column):
-                self.assertIn(column, text)
+        documented_columns = set()
+        in_column_table = False
+        for line in text.splitlines():
+            if line == "| Column | Meaning |":
+                in_column_table = True
+                continue
+            if in_column_table and not line.startswith("|"):
+                break
+            if not in_column_table or not line.startswith("| `"):
+                continue
+            parts = line.split("|")
+            documented_columns.add(parts[1].strip().strip("`"))
 
-        legacy_terms = (
-            "empty_rate",
-            "hallucination_rate",
-            "hits",
-            "correct_words",
+        self.assertEqual(set(reporting.REPORT_COLUMNS), documented_columns)
+        self.assertFalse(
+            documented_columns
+            & {
+                "empty_rate",
+                "hallucination_rate",
+                "hits",
+                "correct_words",
+            }
         )
-        for term in legacy_terms:
-            with self.subTest(term=term):
-                self.assertNotIn(term, text)
 
     def test_sft_operator_hygiene_docs_and_gitignore_cover_local_artifacts(
         self,
@@ -220,11 +231,34 @@ model = "gemini-3.1-flash-lite"
             with self.subTest(term=term):
                 self.assertIn(term, hygiene_text)
 
+        gitignore_lines = {
+            line.strip()
+            for line in gitignore_text.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
+
         expected_gitignore_terms = (
             "*.local.toml",
-            "results/",
+            "/results/",
             "model/data/inference_manifests/*.jsonl",
         )
         for term in expected_gitignore_terms:
             with self.subTest(term=term):
-                self.assertIn(term, gitignore_text)
+                self.assertIn(term, gitignore_lines)
+
+        self.assertNotIn("results/", gitignore_lines)
+
+        nested_record_check = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(_REPO_ROOT),
+                "check-ignore",
+                "--no-index",
+                "model/scripts/sft/results/example/config.json",
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        self.assertNotEqual(0, nested_record_check.returncode)
