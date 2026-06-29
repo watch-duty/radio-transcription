@@ -659,12 +659,18 @@ class VoiceActivityDetector:
         if len(audio_array) == 0:
             return True
 
-        # 1. Overall true RMS check (much more robust than peak check against transient clicks)
-        chunk_rms = np.sqrt(np.mean(audio_array**2))
-        if chunk_rms < self.min_rms_threshold:
+        # 1. Absolute peak check: if the peak is too quiet to be normalized, VAD won't detect it anyway.
+        peak = np.max(np.abs(audio_array))
+        if peak < self.normalization_min_peak:
             return True
 
-        # 2. Constant Static / Tone-only Heuristic:
+        # 2. Transient Click / Spike Heuristic:
+        # If the energy is extremely concentrated (high peak, very low RMS), it's a transient click/pop.
+        chunk_rms = np.sqrt(np.mean(audio_array**2))
+        if chunk_rms / peak < 0.015:
+            return True
+
+        # 3. Constant Static / Tone-only Heuristic:
         # Analyze 100ms windows to detect constant static or clean flat tones.
         window_size = int(0.1 * sample_rate)
         if window_size > 0 and len(audio_array) >= sample_rate:
