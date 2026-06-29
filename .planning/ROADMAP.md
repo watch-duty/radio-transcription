@@ -24,7 +24,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 2: Target Config** - Introduce unified model target configuration, validation, and explicit masked/unmasked config paths. (completed 2026-06-28)
 - [ ] **Phase 3: Target Execution** - Package backend-specific execution while preserving shared prompt, request, and prior-context behavior.
 - [ ] **Phase 4: Durable Eval** - Run GCS-authoritative multi-target evals, write normalized target manifests, and produce dataset breakdown reports.
-- [ ] **Phase 5: Operator Docs** - Document the stable operator workflow, example configs, metric interpretation, artifact sources, and commit hygiene checks.
+- [x] **Phase 5: Operator Docs** - Document the stable operator workflow, example configs, metric interpretation, artifact sources, and commit hygiene checks. (completed 2026-06-29)
 
 ## Phase Details
 
@@ -126,7 +126,7 @@ Plans:
   3. Operator can read the docs and understand every report metric, including exact empty response rate versus empty-or-unintelligible rate.
   4. Operator can distinguish durable GCS state from local cache/mirror outputs and identify files that must not be committed.
   5. Maintainer can run or follow a final artifact hygiene check that catches accidental commits of local `.local.toml`, raw prediction JSONL, inference outputs, or `results/` files.
-**Plans**: 0/3 plans executed
+**Plans**: 3/3 plans complete
 Plans:
 **Wave 1**
 - [x] 05-01-PLAN.md — OKF runbook and README entrypoint
@@ -184,7 +184,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5
 | 2. Target Config | 3/3 | Complete   | 2026-06-28 |
 | 3. Target Execution | 0/TBD | Not started | - |
 | 4. Durable Eval | 0/TBD | Not started | - |
-| 5. Operator Docs | 0/3 | Not started | - |
+| 5. Operator Docs | 3/3 | Complete    | 2026-06-29 |
 
 ---
 *Roadmap created: 2026-06-28*

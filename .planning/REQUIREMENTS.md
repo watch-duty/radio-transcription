@@ -75,18 +75,18 @@ or prior chat history.
 
 ### Operator Documentation And Hygiene
 
-- [ ] **DOC-01**: `model/scripts/sft/README.md` explains the config-driven
+- [x] **DOC-01**: `model/scripts/sft/README.md` explains the config-driven
   operator path for prepare, tune, eval, checkpoint scoring, masked eval, and
   unmasked eval.
-- [ ] **DOC-02**: The repo contains placeholder example configs for common
+- [x] **DOC-02**: The repo contains placeholder example configs for common
   base-only, tuned, checkpoint, masked, and unmasked eval runs without real
   local run credentials or run artifacts.
-- [ ] **DOC-03**: Documentation explains every report metric, including exact
+- [x] **DOC-03**: Documentation explains every report metric, including exact
   empty response rate versus empty-or-unintelligible rate.
-- [ ] **DOC-04**: Documentation identifies which artifacts are durable GCS
+- [x] **DOC-04**: Documentation identifies which artifacts are durable GCS
   state, which are local cache/mirror outputs, and which files must not be
   committed.
-- [ ] **DOC-05**: Tests or docs include a final artifact hygiene check that
+- [x] **DOC-05**: Tests or docs include a final artifact hygiene check that
   prevents accidental commits of local `.local.toml`, raw prediction JSONL,
   inference outputs, or `results/` files.
 
@@ -152,11 +152,11 @@ Traceability populated during roadmap creation.
 | DATA-04 | Phase 4 | Complete |
 | DATA-05 | Phase 4 | Complete |
 | DATA-06 | Phase 4 | Complete |
-| DOC-01 | Phase 5 | Pending |
-| DOC-02 | Phase 5 | Pending |
-| DOC-03 | Phase 5 | Pending |
-| DOC-04 | Phase 5 | Pending |
-| DOC-05 | Phase 5 | Pending |
+| DOC-01 | Phase 5 | Complete |
+| DOC-02 | Phase 5 | Complete |
+| DOC-03 | Phase 5 | Complete |
+| DOC-04 | Phase 5 | Complete |
+| DOC-05 | Phase 5 | Complete |
 
 **Coverage:**
 - v1 requirements: 28 total
