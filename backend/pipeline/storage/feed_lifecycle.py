@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from backend.pipeline.storage import quarantine_reason
+from backend.pipeline.storage import status_reason_detail
 
 if TYPE_CHECKING:
     from backend.pipeline.storage import feed_store
@@ -20,7 +20,7 @@ def status_reason_storage_value(
 
     Args:
         status_reason: Canonical status reason enum, or ``None`` to let SQL use
-            its compatibility fallback.
+            its default fallback.
 
     Returns:
         The enum value to persist, or ``None``.
@@ -42,4 +42,4 @@ def status_reason_detail_storage_value(reason: str | None) -> str | None:
     """Return the bounded diagnostic detail for storage."""
     if reason is None:
         return None
-    return quarantine_reason.cap_quarantine_reason_for_storage(reason)
+    return status_reason_detail.cap_status_reason_detail_for_storage(reason)

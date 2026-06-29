@@ -226,21 +226,32 @@ export function TranscriptRow({
             </Typography>
           )}
         </Box>
-        <TranscriptPlayControl
-          audioUri={audioSegment.playbackAudioUri ?? ''}
-          segmentId={audioSegment.id}
-          onToggleAudio={onToggleAudio}
-          isAudioPlaying={isAudioPlaying}
-          currentlyPlayingSegmentId={
-            isCurrentlyPlaying ? audioSegment.id : currentlyPlayingSegmentId
-          }
-          hideButton={!isHovered}
-        />
+        <Box
+          sx={{
+            width: theme.spacing(5),
+            height: theme.spacing(5),
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <TranscriptPlayControl
+            audioUri={audioSegment.playbackAudioUri ?? ''}
+            segmentId={audioSegment.id}
+            onToggleAudio={onToggleAudio}
+            isAudioPlaying={isAudioPlaying}
+            currentlyPlayingSegmentId={
+              isCurrentlyPlaying ? audioSegment.id : currentlyPlayingSegmentId
+            }
+            hideButton={!isHovered}
+          />
+        </Box>
         <Typography
           variant={isSilence ? 'caption' : 'body1'}
           color={
             hasErrors
-              ? 'error.main'
+              ? 'error'
               : isPlaceholder
                 ? 'text.secondary'
                 : 'text.primary'

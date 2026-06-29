@@ -550,10 +550,35 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
 
             config = kwargs["config"]
             self.assertEqual(config.system_instruction, "Test Prompt")
+
+            # Verify thinking config is disabled
+            self.assertIsNotNone(config.thinking_config)
+            self.assertEqual(config.thinking_config.thinking_budget, 0)
+
+            # Verify all 6 safety settings are BLOCK_NONE
             self.assertIsNotNone(config.safety_settings)
+            self.assertEqual(len(config.safety_settings), 6)
+            for setting in config.safety_settings:
+                self.assertEqual(
+                    setting.threshold, types.HarmBlockThreshold.BLOCK_NONE
+                )
+
+            # Verify the exact categories are present
+            categories = {
+                setting.category for setting in config.safety_settings
+            }
+            expected_categories = {
+                types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                types.HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+                types.HarmCategory.HARM_CATEGORY_JAILBREAK,
+            }
+            self.assertEqual(categories, expected_categories)
 
     async def test_gemini_transcriber_unintelligible(self) -> None:
-        """Verifies that [UNINTELLIGIBLE] response maps to None."""
+        """Verifies that [UNINTELLIGIBLE] response maps to "[UNINTELLIGIBLE]"."""
         with patch(
             "backend.pipeline.transcription.transcribers.gemini.genai.Client"
         ) as mock_client_cls:
@@ -583,7 +608,68 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 duration_ms=1000,
             )
 
-            self.assertIsNone(transcript)
+            self.assertEqual(transcript, "[UNINTELLIGIBLE]")
+
+    async def test_gemini_transcriber_recitation_fallback(self) -> None:
+        """Verifies that RECITATION finish reason maps to [UNINTELLIGIBLE] fallback."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+
+            # Mock finish_reason as an object with a .name attribute
+            mock_finish_reason = MagicMock()
+            mock_finish_reason.name = "RECITATION"
+            mock_candidate.finish_reason = mock_finish_reason
+
+            mock_candidate.content.parts = []
+            mock_response.candidates = [mock_candidate]
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            transcript = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
+            )
+
+            self.assertEqual(transcript, "[UNINTELLIGIBLE]")
+
+    def test_gemini_transcriber_setup(self) -> None:
+        """Verifies that the Gemini transcriber initializes the GenAI client with correct options."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-test"}',
+            )
+            transcriber.setup()
+
+            mock_client_cls.assert_called_once()
+            _, kwargs = mock_client_cls.call_args
+            self.assertTrue(kwargs.get("vertexai"))
+            self.assertEqual(kwargs.get("project"), "test-project")
+            self.assertEqual(kwargs.get("location"), "us-test")
+
+            # Verify retry options are explicitly set to 5 attempts
+            http_options = kwargs.get("http_options")
+            self.assertIsNotNone(http_options)
+            self.assertIsNotNone(http_options.retry_options)
+            self.assertEqual(http_options.retry_options.attempts, 5)
 
 
 if __name__ == "__main__":
