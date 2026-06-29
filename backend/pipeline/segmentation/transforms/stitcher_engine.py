@@ -210,6 +210,7 @@ class StitcherEngine:
         transmission_context: Any,
         last_start_ms_state: Any,
         timer_manager: Any,
+        out_of_order_buffer_state: Any = None,
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | tuple[str, dict[str, Any]]
     ]:
@@ -220,6 +221,7 @@ class StitcherEngine:
             transmission_context: Runtime Beam state mapping for contexts.
             last_start_ms_state: Runtime Beam state mapping for last start time.
             timer_manager: Contextual timer scheduler interface.
+            out_of_order_buffer_state: Runtime Beam state mapping for out-of-order buffer.
 
         Yields:
             Emitted elements (FlushRequest or TaggedOutput DLQ).
@@ -304,6 +306,9 @@ class StitcherEngine:
 
         # Clear state context cleanly
         transmission_context.clear()
+        last_start_ms_state.clear()
+        if out_of_order_buffer_state:
+            out_of_order_buffer_state.clear()
         timer_manager.clear()
 
     def _apply_flush_action(
