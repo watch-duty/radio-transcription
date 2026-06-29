@@ -149,6 +149,17 @@ def _formatted_error_calls(mock_logger: MagicMock) -> str:
     )
 
 
+class TestPathDiagnostics(unittest.TestCase):
+    """Tests for local file diagnostics used in timeout logging."""
+
+    def test_stat_oserror_returns_none(self) -> None:
+        """Diagnostic helpers must not mask the original collector failure."""
+        path = Path("/tmp/unreadable_segment.flac")  # noqa: S108
+        with patch.object(Path, "stat", side_effect=PermissionError):
+            self.assertIsNone(icecast_collector._path_size(path))
+            self.assertIsNone(icecast_collector._path_mtime(path))
+
+
 async def _collect_chunks(
     gen,
     *,
@@ -272,6 +283,11 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.mock_logger = MagicMock()
         self.patchers = [
             patch.object(icecast_collector, "logger", self.mock_logger),
+            patch.object(
+                icecast_collector,
+                "_fix_flac_header",
+                new_callable=AsyncMock,
+            ),
             patch.dict(os.environ, MOCK_ENV_VARS),
         ]
         for p in self.patchers:
@@ -925,6 +941,12 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         )
         formatted = _formatted_error_calls(self.mock_logger)
         self.assertIn("no finalized segment within", formatted)
+        self.assertIn("next_index=0", formatted)
+        self.assertIn("current_segment_exists=False", formatted)
+        self.assertIn("next_segment_exists=False", formatted)
+        self.assertIn("current_segment_size=None", formatted)
+        self.assertIn("next_segment_size=None", formatted)
+        self.assertIn("ffmpeg_pid=8888", formatted)
         self.assertIn("Connection timed out", formatted)
 
     @patch(
@@ -980,18 +1002,14 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         fixed_anchor = datetime.datetime(
             2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
         )
-        # First call sets stream_anchor_time. Subsequent calls return a time slightly
-        # after each chunk's end time, so min() picks chunk_end_time, but lag remains low.
+        # First call sets stream_anchor_time. Subsequent calls return a time
+        # after every chunk's natural end so min() picks chunk_end_time even if
+        # wait_task.done() flips before an intermediate segment.
         t0 = fixed_anchor
-        mock_now_utc.side_effect = [
-            t0,  # stream_anchor_time
-            t0 + datetime.timedelta(seconds=21),  # receipt_time (chunk 0)
-            t0 + datetime.timedelta(seconds=21),  # clamp (chunk 0)
-            t0 + datetime.timedelta(seconds=41),  # receipt_time (chunk 1)
-            t0 + datetime.timedelta(seconds=41),  # clamp (chunk 1)
-            t0 + datetime.timedelta(seconds=61),  # receipt_time (chunk 2)
-            t0 + datetime.timedelta(seconds=61),  # clamp (chunk 2)
-        ]
+        after_all_chunks_done = t0 + datetime.timedelta(
+            seconds=CHUNK_DURATION_SECONDS * 4 + 1
+        )
+        mock_now_utc.side_effect = [t0] + [after_all_chunks_done] * 10
 
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=3333,
@@ -1194,13 +1212,18 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
 
         feed = _make_feed("test", source_feed_id="sid")
         shutdown = asyncio.Event()
-        gen = icecast_collector.capture_icecast_stream(
-            feed,
-            shutdown,
-            "http://example.com/",
-            resources=_default_resources(),
-        )
-        chunks = await _collect_chunks_with_timestamps(gen)
+        with patch.object(
+            icecast_collector,
+            "_fix_flac_header",
+            new_callable=AsyncMock,
+        ):
+            gen = icecast_collector.capture_icecast_stream(
+                feed,
+                shutdown,
+                "http://example.com/",
+                resources=_default_resources(),
+            )
+            chunks = await _collect_chunks_with_timestamps(gen)
 
         self.assertGreaterEqual(len(chunks), 1)
         self.assertEqual(chunks[0].receipt_time, fixed_time)
