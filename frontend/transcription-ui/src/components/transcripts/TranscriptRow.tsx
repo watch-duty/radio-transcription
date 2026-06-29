@@ -2,6 +2,7 @@ import { Fragment } from 'react';
 
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LinkIcon from '@mui/icons-material/Link';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import ListItem from '@mui/material/ListItem';
@@ -240,29 +241,60 @@ export function TranscriptRow({
           // Spacer to match AudioPlayer size and preserve alignment
           <Box sx={{ width: 34, height: 34, flexShrink: 0 }} />
         )}
-        <Typography
-          variant={isSilence ? 'caption' : 'body1'}
-          color={
-            hasErrors
-              ? 'error.main'
-              : isPlaceholder
-                ? 'text.secondary'
-                : 'text.primary'
-          }
+        <Box
           sx={{
             flexGrow: 1,
-            whiteSpace: 'pre-wrap',
-            transition: 'filter 0.3s ease, opacity 0.3s ease',
-            filter: redactTranscripts ? 'blur(6px)' : 'none',
-            opacity: redactTranscripts ? 0.6 : 1,
-            fontStyle:
-              isSilence || isWaiting || hasErrors || isOutage
-                ? 'italic'
-                : 'normal',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 1,
           }}
         >
-          {renderTranscriptionText(transcriptAnnotation)}
-        </Typography>
+          <Typography
+            variant={isSilence ? 'caption' : 'body1'}
+            color={
+              hasErrors
+                ? 'error.main'
+                : isPlaceholder
+                  ? 'text.secondary'
+                  : 'text.primary'
+            }
+            sx={{
+              flexGrow: 1,
+              whiteSpace: 'pre-wrap',
+              transition: 'filter 0.3s ease, opacity 0.3s ease',
+              filter: redactTranscripts ? 'blur(6px)' : 'none',
+              opacity: redactTranscripts ? 0.6 : 1,
+              fontStyle:
+                isSilence || isWaiting || hasErrors || isOutage
+                  ? 'italic'
+                  : 'normal',
+            }}
+          >
+            {renderTranscriptionText(transcriptAnnotation)}
+          </Typography>
+          {!isSilence &&
+            !isOutage &&
+            (audioSegment.missingPriorContext ||
+              audioSegment.missingPostContext) && (
+              <Tooltip
+                title={`Transcription may be degraded: missing ${[
+                  audioSegment.missingPriorContext && 'prior',
+                  audioSegment.missingPostContext && 'post',
+                ]
+                  .filter(Boolean)
+                  .join(' and ')} audio context.`}
+              >
+                <WarningAmberIcon
+                  color="warning"
+                  fontSize="small"
+                  sx={{
+                    flexShrink: 0,
+                    mt: 0.25, // Align slightly down to match text baseline
+                  }}
+                />
+              </Tooltip>
+            )}
+        </Box>
         <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
           {!isSilence && !isOutage && (
             <Tooltip title="Copy transcript">
