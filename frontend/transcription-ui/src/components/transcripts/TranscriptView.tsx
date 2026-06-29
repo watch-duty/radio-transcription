@@ -31,7 +31,10 @@ import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
-import { isWithinSegment } from '../../utils/playbackUtils';
+import {
+  getNextContinuousSegment,
+  isWithinSegment,
+} from '../../utils/playbackUtils';
 import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
 import FeedSearchView from '../feeds/FeedSearchView';
@@ -465,34 +468,14 @@ export function TranscriptView({
         currentAudioRef.current === null;
 
       if (shouldPlayNext) {
-        const idx = audioSegments.findIndex((s) =>
-          isWithinSegment(s, targetId)
+        const next = getNextContinuousSegment(
+          audioSegments,
+          rawAudioSegments,
+          targetId
         );
-        if (idx !== -1 && idx > 0) {
-          const nextAudioSegment = audioSegments[idx - 1];
-          if (nextAudioSegment.playbackAudioUri) {
-            // If the next segment is a silence bundle, we must explicitly start playing
-            // its first raw segment ID (rather than the bundle's consolidated ID).
-            // This ensures that when the first track finishes, the continuous playback
-            // engine's onEnd listener can correctly identify the parent bundle, map the
-            // finished raw ID, and seamlessly transition to the next raw silence segment.
-            if (
-              nextAudioSegment.isSilenceBundle &&
-              nextAudioSegment.bundledSegmentIds &&
-              nextAudioSegment.bundledSegmentIds.length > 0
-            ) {
-              const firstId = nextAudioSegment.bundledSegmentIds[0];
-              const firstSegment = rawAudioSegments.find(
-                (s) => s.id === firstId
-              );
-              if (firstSegment && firstSegment.playbackAudioUri) {
-                togglePlay(firstSegment.id, firstSegment.playbackAudioUri);
-                return;
-              }
-            }
-            togglePlay(nextAudioSegment.id, nextAudioSegment.playbackAudioUri);
-            return;
-          }
+        if (next) {
+          togglePlay(next.id, next.uri);
+          return;
         }
       }
 
@@ -706,7 +689,7 @@ export function TranscriptView({
       </Box>
 
       <AudioDisplay
-        audioSegments={rawAudioSegments}
+        audioSegments={audioSegments}
         currentlyPlayingSegmentId={currentlyPlayingSegmentId}
         highlightedSegmentId={highlightedSegmentId}
         onClipClick={handleClipClick}

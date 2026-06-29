@@ -345,8 +345,8 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_duration.call_count, 2)
         mock_duration.assert_has_calls(
             [
-                call(b"mp3_bytes", input_format="mp3"),
-                call(b"mp3_bytes", input_format="mp3"),
+                call(b"mp3_bytes"),
+                call(b"mp3_bytes"),
             ]
         )
         chunk0 = chunks[0]
@@ -390,7 +390,7 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
                 chunks.append(chunk)
 
         self.assertEqual(len(chunks), 1)
-        mock_duration.assert_called_once_with(b"m4a_bytes", input_format="mp3")
+        mock_duration.assert_called_once_with(b"m4a_bytes")
         chunk0 = chunks[0]
         assert isinstance(chunk0, CapturedChunk)
         self.assertEqual(chunk0.session_id, "session-id")
@@ -779,11 +779,15 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(str(ctx.exception), expected_reason)
         log_text = "\n".join(logs.output)
         self.assertIn(expected_reason, log_text)
+        self.assertIn("uuid1", log_text)
+        self.assertIn("CHAN 2026-05-20 12-00-00.mp3", log_text)
+        self.assertIn("listed_size=1000", log_text)
+        self.assertIn("downloaded_bytes=9", log_text)
         self.assertIn("Permanently skipping corrupt audio file.", log_text)
         self.assertIn("CHAN-feed", log_text)
         self.assertNotIn("Traceback", log_text)
@@ -975,11 +979,11 @@ class TestProcessFileList(unittest.IsolatedAsyncioTestCase):
 
         self.assertIs(
             ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
         self.assertEqual(str(ctx.exception), expected_reason)
         log_text = "\n".join(logs.output)
-        self.assertIn("size=unknown", log_text)
+        self.assertIn("listed_size=unknown", log_text)
         self.assertIn("Permanently skipping corrupt audio file.", log_text)
         self.assertNotIn("Traceback", log_text)
         mock_emit.assert_not_called()

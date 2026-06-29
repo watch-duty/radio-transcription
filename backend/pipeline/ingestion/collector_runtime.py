@@ -1034,6 +1034,13 @@ class CollectorRuntime:
                 feed["name"],
                 reason,
             )
+        elif status_reason is FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID:
+            logger.warning(
+                "Feed source payload failure suppressed from quarantine "
+                "budget: feed=%s reason=%s",
+                feed["name"],
+                reason,
+            )
         else:
             logger.exception(
                 "Feed processing error suppressed from quarantine budget: "

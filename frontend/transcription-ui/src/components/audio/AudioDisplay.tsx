@@ -4,9 +4,9 @@ import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { type Theme, useTheme } from '@mui/material/styles';
-import { type AudioSegment } from '@transcription/common';
 
 import type { PlaybackController } from '../../audio/WebAudioPlayer';
+import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import {
   findEvaluationAnnotationData,
   findWaveformAnnotationData,
@@ -15,7 +15,7 @@ import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
 
 interface AudioDisplayProps {
-  audioSegments: AudioSegment[];
+  audioSegments: RenderableAudioSegment[];
   currentlyPlayingSegmentId: string | null;
   highlightedSegmentId: string | null;
   onClipClick: (segmentId: string) => void;
@@ -84,6 +84,7 @@ interface TimelineClipProps {
     // (pre-rollout) or if waveform computation was skipped.
     peaks?: number[][];
     duration?: number;
+    isOutageBundle?: boolean;
   };
   onClipClick: (segmentId: string) => void;
   isDarkTheme: boolean;
@@ -105,6 +106,37 @@ const TimelineClip = React.memo(
       clip.isAudioPlaying && currentTimeSeconds !== undefined && clip.duration
         ? Math.min(100, Math.max(0, (currentTimeSeconds / clip.duration) * 100))
         : null;
+
+    if (clip.isOutageBundle) {
+      return (
+        <Box
+          sx={{
+            position: 'absolute',
+            left: `${clip.left}%`,
+            width: `${clip.width}%`,
+            height: '100%',
+            background: isDarkTheme
+              ? 'rgba(0, 0, 0, 0.25)'
+              : 'rgba(0, 0, 0, 0.06)',
+            borderLeft: isDarkTheme
+              ? '1px solid rgba(255, 255, 255, 0.05)'
+              : '1px solid rgba(0, 0, 0, 0.05)',
+            borderRight: isDarkTheme
+              ? '1px solid rgba(255, 255, 255, 0.05)'
+              : '1px solid rgba(0, 0, 0, 0.05)',
+            animation: 'outagePulse 2.5s ease-in-out infinite',
+            '@keyframes outagePulse': {
+              '0%, 100%': {
+                opacity: 0.4,
+              },
+              '50%': {
+                opacity: 0.85,
+              },
+            },
+          }}
+        />
+      );
+    }
 
     return (
       <Box
@@ -195,6 +227,7 @@ const TimelineClip = React.memo(
       prevProps.clip.hasAlert === nextProps.clip.hasAlert &&
       prevProps.clip.peaks === nextProps.clip.peaks &&
       prevProps.clip.duration === nextProps.clip.duration &&
+      prevProps.clip.isOutageBundle === nextProps.clip.isOutageBundle &&
       prevProps.isDarkTheme === nextProps.isDarkTheme &&
       prevProps.theme === nextProps.theme &&
       prevProps.currentTimeSeconds === nextProps.currentTimeSeconds
@@ -420,6 +453,7 @@ export function AudioDisplay({
             !!evaluationAnnotation && evaluationAnnotation.decisions.length > 0,
           peaks: waveform?.peaks,
           duration: waveform?.durationSeconds,
+          isOutageBundle: !!t.isOutageBundle,
         };
       });
 
