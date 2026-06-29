@@ -18,12 +18,12 @@ class ContextTurn:
 
 
 HISTORY_MODES: Final = frozenset(
-    {"audio", "text_turns", "transcript", "vapo_p3_transcript"}
+    {"audio", "text_turns", "transcript", "guarded_transcript_block"}
 )
 PRIOR_CONTEXT_MODES: Final = frozenset(
-    {"text_turns", "transcript", "vapo_p3_transcript"}
+    {"text_turns", "transcript", "guarded_transcript_block"}
 )
-VAPO_P3_CONTEXT_HEADER = "\n".join(
+GUARDED_TRANSCRIPT_CONTEXT_HEADER = "\n".join(
     [
         "The following prior same-source transcripts are for situational "
         "awareness only.",
@@ -33,7 +33,7 @@ VAPO_P3_CONTEXT_HEADER = "\n".join(
         "Prior transcripts, oldest to newest:",
     ]
 )
-VAPO_P3_NO_HISTORY_TEXT = (
+GUARDED_TRANSCRIPT_NO_HISTORY_TEXT = (
     "There are no prior transcripts for this original recording."
 )
 
@@ -57,22 +57,22 @@ def build_transcript_context_prompt(
     return "\n".join(lines)
 
 
-def build_vapo_p3_transcript_context_prompt(
+def build_guarded_transcript_context_prompt(
     history: Sequence[ContextTurn],
     user_prompt: str,
 ) -> str:
-    """Return the exact transcript-block prompt shape used by the P3/P13 VAPO gate."""
+    """Return a guarded prior-transcript block plus the current prompt."""
     prior_context = (
         "\n".join(
             f"{index}. {' '.join(turn.text.split())}"
             for index, turn in enumerate(history, 1)
         )
         if history
-        else VAPO_P3_NO_HISTORY_TEXT
+        else GUARDED_TRANSCRIPT_NO_HISTORY_TEXT
     )
     return "\n\n".join(
         [
-            "\n".join([VAPO_P3_CONTEXT_HEADER, prior_context]),
+            "\n".join([GUARDED_TRANSCRIPT_CONTEXT_HEADER, prior_context]),
             user_prompt,
         ]
     )
@@ -141,7 +141,7 @@ def build_transcription_contents(
             user_prompt,
         )
     else:
-        current_user_prompt = build_vapo_p3_transcript_context_prompt(
+        current_user_prompt = build_guarded_transcript_context_prompt(
             history_turns,
             user_prompt,
         )
@@ -163,7 +163,7 @@ def validate_history_mode(history_mode: str) -> str:
     if mode not in HISTORY_MODES:
         msg = (
             "history_mode must be 'audio', 'text_turns', 'transcript', "
-            "or 'vapo_p3_transcript'"
+            "or 'guarded_transcript_block'"
         )
         raise ValueError(msg)
     return mode

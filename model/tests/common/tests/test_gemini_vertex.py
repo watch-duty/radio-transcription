@@ -536,7 +536,9 @@ class TestBuildRequest(unittest.TestCase):
             contents[0]["parts"][0]["text"],
         )
 
-    def test_vapo_p3_transcript_history_mode_uses_exact_template(self) -> None:
+    def test_guarded_transcript_block_history_mode_uses_exact_template(
+        self,
+    ) -> None:
         result = self.build_request(
             "gs://bucket/current.flac",
             system_prompt="S",
@@ -545,7 +547,7 @@ class TestBuildRequest(unittest.TestCase):
                 ContextTurn("gs://bucket/prev-1.flac", " first   transcript "),
                 ContextTurn("gs://bucket/prev-2.flac", "second transcript"),
             ],
-            history_mode="vapo_p3_transcript",
+            history_mode="guarded_transcript_block",
         )
 
         contents = result["request"]["contents"]

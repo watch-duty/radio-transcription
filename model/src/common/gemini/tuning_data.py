@@ -45,8 +45,10 @@ def build_audio_tuning_example(
         history_mode: ``audio`` emits notebook-style audio/text prior turns.
             ``text_turns`` emits prior user/model turns with text-only user
             turns and transcript model turns. ``transcript`` folds prior
-            transcripts into the current user prompt. ``vapo_p3_transcript``
-            uses the exact transcript-block template from the P3/P13 VAPO gate.
+            transcripts into the current user prompt.
+            ``guarded_transcript_block`` folds prior transcripts into a
+            guarded block that explicitly says not to re-transcribe or continue
+            prior turns.
 
     Returns:
         A dict matching the current Vertex AI audio-SFT JSONL schema:

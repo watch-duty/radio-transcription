@@ -139,7 +139,7 @@ class TestBuildExample(unittest.TestCase):
         self.assertIn("2. second", user_text)
         self.assertIn("current prompt", user_text)
 
-    def test_vapo_p3_transcript_mode_uses_exact_template(self) -> None:
+    def test_guarded_transcript_block_mode_uses_exact_template(self) -> None:
         example = build_audio_tuning_example(
             audio_uri="gs://bucket/current.flac",
             gt_text="current text",
@@ -149,7 +149,7 @@ class TestBuildExample(unittest.TestCase):
                 ContextTurn("gs://bucket/prev-1.flac", " first   transcript "),
                 ContextTurn("gs://bucket/prev-2.flac", "second transcript"),
             ],
-            history_mode="vapo_p3_transcript",
+            history_mode="guarded_transcript_block",
         )
 
         self.assertEqual(len(example["contents"]), 2)
@@ -176,7 +176,7 @@ class TestBuildExample(unittest.TestCase):
             ),
         )
 
-    def test_vapo_p3_transcript_mode_includes_no_history_sentence(
+    def test_guarded_transcript_block_mode_includes_no_history_sentence(
         self,
     ) -> None:
         example = build_audio_tuning_example(
@@ -185,7 +185,7 @@ class TestBuildExample(unittest.TestCase):
             system_prompt="sys",
             user_prompt="IMPORTANT: current prompt",
             history=[],
-            history_mode="vapo_p3_transcript",
+            history_mode="guarded_transcript_block",
         )
 
         self.assertEqual(

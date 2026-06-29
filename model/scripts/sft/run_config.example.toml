@@ -30,6 +30,18 @@ epoch_count = 6
 adapter_size = "SIXTEEN"
 learning_rate_multiplier = 1.0
 
+[context]
+# Number of prior same-source transcripts to include. `text_turns` is the
+# recommended SFT shape: prior user turns contain text only, prior model turns
+# contain prior transcripts, and only the current user turn contains audio.
+prior_turn_count = 8
+# Supported SFT/eval context modes:
+# - text_turns: prior text-only user/model turns, closest to conversation setup.
+# - transcript: simple numbered prior-transcript block in the current prompt.
+# - guarded_transcript_block: guarded prior-transcript block that says not to
+#   re-transcribe or continue prior turns.
+prior_context_mode = "text_turns"
+
 [eval.model]
 # `gemini-sft eval` supports one model per config. To compare base, tuned, or
 # checkpoint models, run separate config files in parallel with an external

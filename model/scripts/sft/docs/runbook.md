@@ -48,10 +48,20 @@ resume, reuse, review, and handoff.
 Use one config per run and one eval target per config:
 
 ```toml
+[context]
+prior_turn_count = 8
+prior_context_mode = "text_turns"
+
 [eval.model]
 label = "base"
 model = "gemini-3.1-flash-lite"
 ```
+
+`text_turns` is the recommended prior-context shape for SFT: prior user turns
+contain text only, prior model turns contain prior transcripts, and only the
+current user turn contains audio. Use `transcript` for a simple inline prior
+transcript block, or `guarded_transcript_block` for an inline block with
+explicit instructions not to re-transcribe or continue prior turns.
 
 For a tuned endpoint or checkpoint endpoint, keep the same table shape and
 change only the label and model resource:

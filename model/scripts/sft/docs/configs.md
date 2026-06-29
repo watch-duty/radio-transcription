@@ -22,6 +22,28 @@ The example uses placeholder values only. In particular:
 - Prompt overrides are inline strings only; prompt file fields are unsupported.
 - `[eval.model]` is singular, with exactly `label` and `model`.
 
+## Prior Context Modes
+
+Use `[context]` to control prior same-source transcripts:
+
+```toml
+[context]
+prior_turn_count = 8
+prior_context_mode = "text_turns"
+```
+
+Supported SFT/eval modes:
+
+| Mode | Shape | Use |
+| --- | --- | --- |
+| `text_turns` | Prior `user(text prompt) -> model(prior transcript)` turns, then the current user turn with audio. | Recommended default for SFT prior context. |
+| `transcript` | One current user turn with a simple numbered prior-transcript block plus current audio. | Compact one-turn context. |
+| `guarded_transcript_block` | One current user turn with a guarded numbered prior-transcript block plus current audio. | Compact context with explicit "do not re-transcribe or continue prior turns" instructions. |
+
+`audio` is available only to lower-level inference helpers for notebook-style
+prior audio turns. Do not use it in SFT configs because Vertex SFT examples
+must contain only the current audio part.
+
 ## Eval Target Snippets
 
 Each eval run has one `[eval.model]` target. Compare base, tuned, and
