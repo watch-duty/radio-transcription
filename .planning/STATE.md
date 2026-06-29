@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
+milestone_name: Gemini SFT Workflow Onboarding
 status: completed
-stopped_at: Phase 5 context gathered
-last_updated: "2026-06-29T03:34:03.226Z"
+stopped_at: v1.0 archived
+last_updated: "2026-06-29T04:15:25.941Z"
 last_activity: 2026-06-29
 progress:
   total_phases: 5
@@ -18,16 +18,16 @@ progress:
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-06-28)
+See: .planning/PROJECT.md (updated 2026-06-29)
 
 **Core value:** A new operator can run and compare Gemini SFT/eval experiments from explicit configs and console reports without reverse-engineering notebooks or prior chat history.
-**Current focus:** Milestone closeout
+**Current focus:** Planning next milestone
 
 ## Current Position
 
 Phase: complete
 Plan: complete
-Status: Milestone complete
+Status: v1.0 archived
 Last activity: 2026-06-29
 
 Progress: [██████████] 100%
@@ -83,14 +83,11 @@ None yet.
 
 ### Blockers/Concerns
 
-- [Phase 2]: Verify current Google GenAI/Vertex resource forms, locations, and batch support before hard-coding backend defaults.
-- [Phase 3]: Confirm online `generate_content` request requirements, quota/concurrency behavior, retry semantics, and endpoint location extraction before paid validation.
-- [Phase 4]: Discussion resolved stale-output validation: batch and online
-  prediction reuse must require matching request-identity metadata.
-
-- [Phase 4]: Discussion narrowed eval scope to one `[eval.model]` per run;
-  plural `[[eval.models]]`/`eval_models`, internal target parallelism, and
-  dataset breakdowns are out of scope for Phase 4.
+- [Live validation]: Unit tests mock paid Vertex boundaries. Before promoting
+  new model families, validate current Google GenAI/Vertex resource forms,
+  locations, quota behavior, endpoint location extraction, and batch support.
+- [Next milestone]: Dataset breakdowns, promotion gates, and report slices are
+  active follow-up candidates.
 
 ## Deferred Items
 
@@ -102,6 +99,6 @@ Items acknowledged and carried forward from previous milestone close:
 
 ## Session Continuity
 
-Last session: 2026-06-28T22:40:30.958Z
-Stopped at: Phase 5 context gathered
-Resume file: .planning/phases/05-operator-docs/05-CONTEXT.md
+Last session: 2026-06-29T04:15:25.941Z
+Stopped at: v1.0 archived; start next milestone when ready
+Resume file: .planning/PROJECT.md
