@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import subprocess
 import tempfile
 import unittest
@@ -185,7 +186,7 @@ model = "gemini-3.1-flash-lite"
             _SCRIPTS_DIR / "sft" / "docs" / "metrics.md"
         ).read_text(encoding="utf-8")
 
-        documented_columns = set()
+        documented_columns = []
         in_column_table = False
         for line in text.splitlines():
             if line == "| Column | Meaning |":
@@ -196,11 +197,11 @@ model = "gemini-3.1-flash-lite"
             if not in_column_table or not line.startswith("| `"):
                 continue
             parts = line.split("|")
-            documented_columns.add(parts[1].strip().strip("`"))
+            documented_columns.append(parts[1].strip().strip("`"))
 
-        self.assertEqual(set(reporting.REPORT_COLUMNS), documented_columns)
+        self.assertEqual(list(reporting.REPORT_COLUMNS), documented_columns)
         self.assertFalse(
-            documented_columns
+            set(documented_columns)
             & {
                 "empty_rate",
                 "hallucination_rate",
@@ -214,6 +215,9 @@ model = "gemini-3.1-flash-lite"
     ) -> None:
         hygiene_text = (
             _SCRIPTS_DIR / "sft" / "docs" / "hygiene.md"
+        ).read_text(encoding="utf-8")
+        runbook_text = (
+            _SCRIPTS_DIR / "sft" / "docs" / "runbook.md"
         ).read_text(encoding="utf-8")
         gitignore_text = (_REPO_ROOT / ".gitignore").read_text(
             encoding="utf-8"
@@ -242,6 +246,8 @@ model = "gemini-3.1-flash-lite"
         expected_gitignore_terms = (
             "*.local.toml",
             "/results/",
+            "model/scripts/sft/results/**/*.jsonl",
+            "model/scripts/sft/results/**/*.jsonl.gz",
             "model/data/inference_manifests/*.jsonl",
         )
         for term in expected_gitignore_terms:
@@ -250,17 +256,73 @@ model = "gemini-3.1-flash-lite"
 
         self.assertNotIn("results/", gitignore_lines)
 
-        nested_record_check = subprocess.run(
-            [
-                "git",
-                "-C",
-                str(_REPO_ROOT),
-                "check-ignore",
-                "--no-index",
-                "model/scripts/sft/results/example/config.json",
-            ],
-            capture_output=True,
-            check=False,
-            text=True,
+        hygiene_patterns = re.findall(r"rg '([^']+)'", hygiene_text)
+        runbook_patterns = re.findall(r"rg '([^']+)'", runbook_text)
+        self.assertEqual(1, len(hygiene_patterns))
+        self.assertEqual(hygiene_patterns, runbook_patterns)
+        staged_artifact_pattern = re.compile(hygiene_patterns[0])
+
+        blocked_paths = (
+            "results/run/output.jsonl",
+            "model/scripts/sft/results/run/output.jsonl",
+            "model/scripts/sft/results/run/output.jsonl.gz",
+            "model/data/inference_manifests/base.jsonl",
+            "scratch.local.toml",
+            "online_predictions.jsonl",
+            "batch_predictions_output.jsonl",
         )
-        self.assertEqual(1, nested_record_check.returncode, nested_record_check.stderr)
+        for path in blocked_paths:
+            with self.subTest(staged_path=path):
+                self.assertRegex(path, staged_artifact_pattern)
+
+        allowed_paths = (
+            "model/scripts/sft/results/run/config.json",
+            "model/scripts/sft/results/run/status.json",
+            "model/scripts/sft/results/run/wer_summary.md",
+            "model/scripts/sft/results/run/ledger.md",
+        )
+        for path in allowed_paths:
+            with self.subTest(staged_path=path):
+                self.assertNotRegex(path, staged_artifact_pattern)
+
+        ignored_paths = (
+            "results/run/output.jsonl",
+            "model/scripts/sft/results/run/output.jsonl",
+            "model/scripts/sft/results/run/output.jsonl.gz",
+            "model/data/inference_manifests/base.jsonl",
+            "model/data/inference_manifests/base.jsonl.gz",
+            "scratch.local.toml",
+        )
+        for path in ignored_paths:
+            with self.subTest(ignored_path=path):
+                ignored_check = subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(_REPO_ROOT),
+                        "check-ignore",
+                        "--no-index",
+                        path,
+                    ],
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                )
+                self.assertEqual(0, ignored_check.returncode, ignored_check.stderr)
+
+        for path in allowed_paths:
+            with self.subTest(trackable_path=path):
+                trackable_check = subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(_REPO_ROOT),
+                        "check-ignore",
+                        "--no-index",
+                        path,
+                    ],
+                    capture_output=True,
+                    check=False,
+                    text=True,
+                )
+                self.assertEqual(1, trackable_check.returncode, trackable_check.stderr)
