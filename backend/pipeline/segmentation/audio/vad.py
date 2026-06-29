@@ -652,6 +652,39 @@ class VoiceActivityDetector:
             vad_offset_sec = warmup_sec
         return vad_input, vad_offset_sec
 
+    def _should_skip_vad(
+        self, audio_array: np.ndarray, sample_rate: int
+    ) -> bool:
+        """Applies true RMS and windowed RMS ratio checks to determine if VAD can be skipped."""
+        if len(audio_array) == 0:
+            return True
+
+        # 1. Overall true RMS check (much more robust than peak check against transient clicks)
+        chunk_rms = np.sqrt(np.mean(audio_array**2))
+        if chunk_rms < self.min_rms_threshold:
+            return True
+
+        # 2. Constant Static / Tone-only Heuristic:
+        # Analyze 100ms windows to detect constant static or clean flat tones.
+        window_size = int(0.1 * sample_rate)
+        if window_size > 0 and len(audio_array) >= sample_rate:
+            num_windows = len(audio_array) // window_size
+            windows = audio_array[: num_windows * window_size].reshape(
+                num_windows, window_size
+            )
+            win_rms = np.sqrt(np.mean(windows**2, axis=1))
+
+            p10 = np.percentile(win_rms, 10)
+            p90 = np.percentile(win_rms, 90)
+            ratio = p90 / p10 if p10 > 1e-5 else 999.0
+
+            # If the ratio is very low (energy is completely flat) and the overall RMS is below
+            # a safety threshold (0.015), it is classified as constant static/noise and we exit early.
+            if ratio < 1.8 and chunk_rms < 0.015:
+                return True
+
+        return False
+
     def detect_speech_segments(
         self,
         audio_array: np.ndarray,
@@ -667,12 +700,10 @@ class VoiceActivityDetector:
         if np.issubdtype(audio_array.dtype, np.integer):
             audio_array = audio_array.astype(np.float32) / 32768.0
 
-        # Check for silence early on the raw input audio to prevent redundant execution
-        if (
-            len(audio_array) == 0
-            or np.max(np.abs(audio_array)) < self.min_rms_threshold
-        ):
+        # Check for silence/static early on the raw input audio to prevent redundant execution
+        if self._should_skip_vad(audio_array, sample_rate):
             return []
+
         if prior_audio is not None and np.issubdtype(
             prior_audio.dtype, np.integer
         ):
