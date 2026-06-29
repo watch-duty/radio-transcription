@@ -1,0 +1,220 @@
+---
+type: runbook
+title: Gemini SFT Operator Runbook
+description: End-to-end prepare, tune, eval, and report workflow.
+tags: [gemini-sft, operator-docs]
+---
+
+# Gemini SFT Operator Runbook
+
+## Scope
+
+This is the canonical operator path for one Gemini SFT run: prepare the config,
+build Gemini SFT inputs, submit or resume Vertex tuning, run one configured eval
+target, inspect reports, optionally rank checkpoints, run masked or unmasked
+evals as separate configs, and check generated artifacts before committing.
+
+The packaged eval contract supports one `[eval.model]` per config/run. Base,
+tuned endpoint, and checkpoint endpoint comparisons use separate configs or an
+external wrapper. Internal multi-model orchestration, dataset-breakdown
+features, and multiple eval manifests inside one run are out of scope.
+
+## Before You Start
+
+Use the lightweight ASR runtime from the repo root:
+
+```bash
+docker compose -f asr-eval-docker-compose.yml run --rm notebooks-cpu \
+  bash -lc 'gemini-sft --help'
+```
+
+Create a local run TOML outside version control. Start from
+`model/scripts/sft/run_config.example.toml` and replace placeholder values with
+your GCS bucket, project, manifests, and run identity. Real run configs,
+`.local.toml` files, raw predictions, downloaded inference manifests, and
+`results/` output are local operator artifacts unless the user explicitly asks
+to commit them.
+
+Durable run state lives under:
+
+```text
+gs://BUCKET/sft/runs/ROUND_ID/
+```
+
+Local `results/ROUND_ID/` is only a cache or mirror. Use GCS artifacts for
+resume, reuse, review, and handoff.
+
+## 1. Prepare A Placeholder Config
+
+Use one config per run and one eval target per config:
+
+```toml
+[eval.model]
+label = "base"
+model = "gemini-3.1-flash-lite"
+```
+
+For a tuned endpoint or checkpoint endpoint, keep the same table shape and
+change only the label and model resource:
+
+```toml
+[eval.model]
+label = "checkpoint_6"
+model = "projects/PROJECT/locations/us-central1/endpoints/ENDPOINT_ID"
+```
+
+Do not use `[[eval.models]]`. To compare base, tuned, and checkpoint resources,
+create separate configs or use an external wrapper that invokes the CLI once per
+config.
+
+## 2. Build Gemini SFT Inputs
+
+`prepare` is the non-paid preflight and input-build step:
+
+```bash
+gemini-sft prepare --config /path/to/run.toml
+```
+
+It copies canonical manifests into the run prefix, validates train/validation
+overlap, derives Gemini JSONL for train and validation, writes preflight output,
+and stores resolved prompts in durable GCS `config.json`.
+
+Durable inspection points after prepare:
+
+- `config.json`
+- `status.json`
+- canonical manifests under `manifests/canonical/`
+- `model_inputs/gemini/*.jsonl`
+
+## 3. Submit Or Resume Vertex Tuning
+
+This is a paid Vertex operation. Before running it, confirm the expected tuning
+and run-state output prefix:
+
+```text
+gs://BUCKET/sft/runs/ROUND_ID/
+```
+
+Then submit or resume tuning:
+
+```bash
+gemini-sft tune --config /path/to/run.toml --confirm
+```
+
+If `config.json` already records a tuning job, `tune` resumes that job instead
+of submitting a new one. Review `tuning/status.json`, `status.json`, and
+`config.json` in GCS to confirm job identity and endpoint state.
+
+## 4. Run Eval
+
+This is a paid or potentially paid Vertex operation because it can submit batch
+inference or call online endpoint prediction. Before running it, confirm the
+expected target prediction artifact prefix:
+
+```text
+gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/
+```
+
+Also confirm the stable report summary paths:
+
+```text
+gs://BUCKET/sft/runs/ROUND_ID/evals/wer_summary.{json,md}
+```
+
+Run eval for the single `[eval.model]` target in the config:
+
+```bash
+gemini-sft eval --config /path/to/run.toml
+```
+
+Batch targets write `evals/LABEL/input.jsonl`, `evals/LABEL/output/`, and
+`evals/LABEL/batch_predictions.meta.json`. Online endpoint targets write
+`evals/LABEL/online_predictions.jsonl` and
+`evals/LABEL/online_predictions.meta.json`.
+
+Eval also writes normalized inference manifests under the shared
+`inference_manifests/` GCS tree and uploads `evals/wer_summary.json` and
+`evals/wer_summary.md` to the run prefix. Existing batch or online outputs are
+reused only when request-identity metadata matches the current target, prompts,
+eval manifest, audio order, prior-context settings, generation config, and
+safety settings.
+
+## 5. Read Reports
+
+Start with the console table from `gemini-sft eval`, then inspect the durable
+summary files:
+
+```text
+gs://BUCKET/sft/runs/ROUND_ID/evals/wer_summary.json
+gs://BUCKET/sft/runs/ROUND_ID/evals/wer_summary.md
+```
+
+The report row includes the configured target label and model, WER, CER,
+keyword accuracy, empty-or-unintelligible rate, exact empty response rate,
+insertions, deletions, substitutions, total reference words, missing prediction
+count, and artifact URIs.
+
+Missing provider predictions are scored as empty hypotheses and stay in the
+WER/CER denominator. Exact empty model responses are reported separately from
+missing prediction count.
+
+## 6. Optional Checkpoint Sweep
+
+Checkpoint scoring is a paid or potentially paid online Vertex ranking path,
+not the main packaged eval path. Before running it, confirm the same durable
+run-state prefix used by tuning:
+
+```text
+gs://BUCKET/sft/runs/ROUND_ID/
+```
+
+Then run a limited sweep:
+
+```bash
+python model/scripts/sft/score_gemini_sft_checkpoints_online.py \
+  --config /path/to/run.toml --limit 100
+```
+
+Use this when you need to rank checkpoint endpoints discovered from a tuning
+job. For a promoted checkpoint endpoint, put that endpoint resource into a
+separate `[eval.model]` config and run `gemini-sft eval`.
+
+## 7. Masked And Unmasked Eval Runs
+
+Masked and unmasked evals are separate config files and separate runs. Keep the
+same command sequence and change only the run identity and eval manifest
+placement fields:
+
+```toml
+round_id = "YYYY-MM-DD-short-description-masked"
+inference_dataset_slug = "echo/masked_v2/eval"
+eval_manifest_uri = "gs://your-bucket/path/manifests/echo/masked_v2/eval.jsonl"
+```
+
+Use a second config for the unmasked manifest with its own `round_id`,
+`inference_dataset_slug`, and `eval_manifest_uri`. There is no `masked` field,
+`eval_label`, or eval-sibling abstraction.
+
+## 8. Artifact Hygiene Before Commit
+
+Before committing, inspect tracked, untracked, and ignored files:
+
+```bash
+git status --short --ignored
+```
+
+Then check the staged set for local/generated experiment artifacts:
+
+```bash
+git diff --cached --name-only | rg '(^results/|^model/scripts/sft/results/|^model/data/inference_manifests/|\.local\.toml$|online_predictions\.jsonl$|batch_predictions.*\.jsonl$)'
+```
+
+Any match must be unstaged unless the user explicitly asked to commit that
+generated artifact. Durable artifacts to inspect in GCS include `config.json`,
+`status.json`, canonical manifests, `model_inputs/gemini/*.jsonl`,
+`evals/LABEL/input.jsonl`, `evals/LABEL/output/`,
+`evals/LABEL/batch_predictions.meta.json`,
+`evals/LABEL/online_predictions.jsonl`,
+`evals/LABEL/online_predictions.meta.json`, normalized inference manifests, and
+`evals/wer_summary.{json,md}`. Local `results/` is cache/mirror only. See
+`docs/hygiene.md` for the detailed explanation.
