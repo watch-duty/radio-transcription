@@ -79,7 +79,6 @@ def test_metadata_json_parameters_parity() -> None:
             "transcriber_config",
             "vad_config",
             "significant_gap_ms",
-            "stale_timeout_ms",
         )
     }
 
