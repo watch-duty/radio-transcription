@@ -27,7 +27,7 @@ interface AudioDisplayProps {
 
 const PLAYING_CURSOR_WIDTH_PX = 2;
 
-const WAVEFORM_MIN_AMPLITUDE = 0.03; // so silent buckets still show a hairline
+const WAVEFORM_MIN_AMPLITUDE = 0.0083; // silent buckets show a ~0.5px hairline at the 60px track height
 
 // preserveAspectRatio="none" stretches the viewBox (one unit per peak) to fill
 // the clip box at any width.
