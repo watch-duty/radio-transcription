@@ -1,11 +1,15 @@
 import asyncio
 import datetime
 import os
+import shutil
+import tempfile
 import unittest
 import uuid
 from pathlib import Path
 from typing import Any, Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import soundfile as sf
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
 from backend.pipeline.ingestion.collectors.icecast import icecast_collector
@@ -249,6 +253,28 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
         value_index = args.index("-reconnect_on_http_error") + 1
         self.assertEqual(args[value_index], "429,500,502,503,504")
 
+    @patch(
+        "asyncio.create_subprocess_exec",
+        new_callable=AsyncMock,
+    )
+    async def test_timeout_flag_is_set(self, mock_exec: AsyncMock) -> None:
+        """Ffmpeg should have a network timeout set to prevent blocking indefinitely."""
+        mock_exec.return_value = AsyncMock()
+
+        await icecast_collector._create_ffmpeg_process(
+            "http://example.com/stream.mp3",
+            "/tmp/chunk_%06d.flac",  # noqa: S108
+            "Authorization: Basic dGVzdDp0ZXN0\r\n",
+        )
+
+        args = mock_exec.call_args.args
+        self.assertIn("-timeout", args)
+        value_index = args.index("-timeout") + 1
+        self.assertEqual(
+            args[value_index],
+            str(icecast_collector.FFMPEG_TIMEOUT_SEC * 1_000_000),
+        )
+
 
 class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     """Tests for the public capture_icecast_stream API."""
@@ -257,6 +283,11 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.mock_logger = MagicMock()
         self.patchers = [
             patch.object(icecast_collector, "logger", self.mock_logger),
+            patch.object(
+                icecast_collector,
+                "_fix_flac_header",
+                new_callable=AsyncMock,
+            ),
             patch.dict(os.environ, MOCK_ENV_VARS),
         ]
         for p in self.patchers:
@@ -971,10 +1002,14 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         fixed_anchor = datetime.datetime(
             2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
         )
-        # First call sets stream_anchor_time; subsequent calls (the clamp) return a
-        # time far beyond any chunk_end_time so min() always returns chunk_end_time.
-        far_future = fixed_anchor + datetime.timedelta(hours=1)
-        mock_now_utc.side_effect = [fixed_anchor] + [far_future] * 10
+        # First call sets stream_anchor_time. Subsequent calls return a time
+        # after every chunk's natural end so min() picks chunk_end_time even if
+        # wait_task.done() flips before an intermediate segment.
+        t0 = fixed_anchor
+        after_all_chunks_done = t0 + datetime.timedelta(
+            seconds=CHUNK_DURATION_SECONDS * 4 + 1
+        )
+        mock_now_utc.side_effect = [t0] + [after_all_chunks_done] * 10
 
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=3333,
@@ -983,7 +1018,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
                 b"FLAC_SEGMENT_1",
                 b"FLAC_SEGMENT_2",
             ],
-            wait_delay=0.1,
+            wait_delay=0.0,
             wait_result=0,
         )
 
@@ -1100,6 +1135,48 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0].session_id, results[1].session_id)
         self.assertEqual(results[1].session_id, results[2].session_id)
 
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_stream_lag_logged(
+        self, mock_create_ffmpeg: MagicMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Test: stream lag exceeding threshold logs a warning but does not raise an error."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=8888,
+            segments=[b"FLAC_DATA_0", b"FLAC_DATA_1"],
+            wait_delay=0.5,
+            wait_result=0,
+        )
+
+        feed = _make_feed("lag-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        t0 = datetime.datetime(2026, 6, 20, 10, 0, 0, tzinfo=datetime.UTC)
+        mock_now_utc.side_effect = [
+            t0,  # stream_anchor_time
+            t0
+            + datetime.timedelta(seconds=85),  # receipt_time for first segment
+        ]
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+
+        chunk = await gen.__anext__()
+
+        self.assertEqual(chunk.audio_bytes, b"FLAC_DATA_0")
+        self.mock_logger.warning.assert_called_once()
+        log_args = self.mock_logger.warning.call_args.args
+        self.assertIn("Stream lag has exceeded threshold", log_args[0])
+
 
 class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
     """RCPT-02: Icecast stamps receipt_time at segment finalization."""
@@ -1135,16 +1212,55 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
 
         feed = _make_feed("test", source_feed_id="sid")
         shutdown = asyncio.Event()
-        gen = icecast_collector.capture_icecast_stream(
-            feed,
-            shutdown,
-            "http://example.com/",
-            resources=_default_resources(),
-        )
-        chunks = await _collect_chunks_with_timestamps(gen)
+        with patch.object(
+            icecast_collector,
+            "_fix_flac_header",
+            new_callable=AsyncMock,
+        ):
+            gen = icecast_collector.capture_icecast_stream(
+                feed,
+                shutdown,
+                "http://example.com/",
+                resources=_default_resources(),
+            )
+            chunks = await _collect_chunks_with_timestamps(gen)
 
         self.assertGreaterEqual(len(chunks), 1)
         self.assertEqual(chunks[0].receipt_time, fixed_time)
+
+
+_BAD_STREAMINFO_FLAC = (
+    Path(__file__).parent / "test_data" / "streamed_segment_bad_STREAMINFO.flac"
+)
+_ffmpeg_available = shutil.which("ffmpeg") is not None
+
+
+class TestFixFlacHeader(unittest.IsolatedAsyncioTestCase):
+    """Guards the contract that no segment leaves ingestion unreadable."""
+
+    @unittest.skipIf(not _ffmpeg_available, "ffmpeg not available")
+    async def test_repairs_unreadable_segment_muxer_output(self) -> None:
+        raw = _BAD_STREAMINFO_FLAC.read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            segment = Path(tmp) / "chunk_000000.flac"
+            segment.write_bytes(raw)
+
+            # The muxer's STREAMINFO advertises an unknown frame count, so
+            # libsndfile cannot open it until the header is rewritten.
+            with self.assertRaises(sf.LibsndfileError):
+                sf.read(str(segment))
+
+            await icecast_collector._fix_flac_header(segment)
+
+            info = sf.info(str(segment))
+            samples, sample_rate = sf.read(str(segment), dtype="float32")
+
+        # The rewritten header advertises the true frame count rather than the
+        # unknown-length sentinel, so the duration downstream derives from it
+        # (len / sample_rate) is correct.
+        self.assertEqual(info.frames, len(samples))
+        self.assertEqual(sample_rate, 16000)
+        self.assertAlmostEqual(len(samples) / sample_rate, 15.0, delta=0.5)
 
 
 if __name__ == "__main__":

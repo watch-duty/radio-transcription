@@ -1,16 +1,14 @@
 import * as express from 'express';
 
+import { GoogleUser } from '@transcription/common';
 import * as jose from 'jose';
 
 import { checkIsAdmin } from './config.js';
 
-export interface GoogleUser {
-  email: string;
-  email_verified: boolean;
-  sub: string; // The user's unique Google ID
-  aud: string; // The client ID or audience
-  iss: string; // The issuer (e.g., https://accounts.google.com)
-  isAdmin?: boolean; // Special admin user flag
+export { GoogleUser };
+
+export interface AuthenticatedRequest extends express.Request {
+  user?: GoogleUser;
 }
 
 export async function expressAuthentication(

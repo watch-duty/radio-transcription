@@ -9,7 +9,6 @@ FROM apache/beam_python3.13_sdk:2.74.0
 USER root
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    ffmpeg \
     libatomic1 \
     && rm -rf /var/lib/apt/lists/*
 

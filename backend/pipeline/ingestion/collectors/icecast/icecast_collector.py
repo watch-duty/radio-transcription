@@ -25,7 +25,7 @@ from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
-from backend.pipeline.ingestion import quarantine_reason
+from backend.pipeline.ingestion import status_reason_detail
 from backend.pipeline.ingestion.collectors.failure_classification import (
     collector_failure,
     missing_source_feed_id_failure,
@@ -43,6 +43,10 @@ from backend.pipeline.ingestion.models import (
 )
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
+_CHUNK_DURATION = int(
+    os.environ.get("INGESTION_SEGMENT_TIME_SEC", str(CHUNK_DURATION_SECONDS))
+)
+
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
@@ -58,6 +62,9 @@ POLL_INTERVAL_SEC = 0.25  # Polling interval for segment file checks
 STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
 _STREAM_PROBE_TIMEOUT_SEC = 10
+_MAX_ALLOWED_LAG_SECONDS = 60.0
+FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
+
 
 # Stream endpoint semantics differ from item/API endpoints: a stream 404 means
 # the configured mount/feed is currently unavailable, while other 4xx statuses
@@ -185,7 +192,7 @@ async def _probe_stream_once(
             _StreamProbeOutcome.TERMINAL_FAILURE,
             collector_failure(
                 FeedStatusReason.SOURCE_UNREACHABLE,
-                f"stream_probe_failed: {quarantine_reason.exception_text(exc)}",
+                f"stream_probe_failed: {status_reason_detail.exception_text(exc)}",
             ),
         )
 
@@ -281,7 +288,47 @@ def _path_mtime(path: Path) -> float | None:
         return None
 
 
-async def capture_icecast_stream(  # noqa: PLR0915
+async def _fix_flac_header(file_path: Path) -> None:
+    """Re-encodes a FLAC segment in-place to write a valid STREAMINFO header.
+
+    This is a critical performance and correctness fix: ffmpeg's segment muxer
+    writes sequential FLAC files without seek tables and with an unknown number of frames
+    in the header. When downstream services try to read these files, soundfile/libsndfile
+    attempts to allocate an infinite array (2^63 - 1 frames) and crashes or thrashes.
+    Re-encoding the segment in-place takes ~10ms but writes a perfect, standard FLAC header.
+    """
+    temp_path = file_path.with_name(f"{file_path.name}.fixed.flac")
+    try:
+        process = await asyncio.create_subprocess_exec(
+            "ffmpeg",
+            "-y",
+            "-nostdin",
+            "-i",
+            str(file_path),
+            "-acodec",
+            "flac",
+            str(temp_path),
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await process.wait()
+        if process.returncode == 0:
+            temp_path.replace(file_path)
+        else:
+            logger.error(
+                "ffmpeg header fix failed for %s with exit code %s",
+                file_path,
+                process.returncode,
+            )
+    except Exception as e:
+        logger.exception(
+            "Exception fixing FLAC header for %s: %s", file_path, e
+        )
+    finally:
+        temp_path.unlink(missing_ok=True)
+
+
+async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
@@ -389,6 +436,10 @@ async def capture_icecast_stream(  # noqa: PLR0915
                 ):
                     # SLO: receipt_time stamp — Icecast segment finalized, bytes available
                     receipt_time = _now_utc()
+
+                    # Fix the FLAC header in-place so downstream decoders don't crash
+                    await _fix_flac_header(current_segment)
+
                     segment_bytes = await asyncio.to_thread(
                         current_segment.read_bytes
                     )
@@ -397,14 +448,28 @@ async def capture_icecast_stream(  # noqa: PLR0915
                         chunk_start_time = (
                             stream_anchor_time
                             + datetime.timedelta(
-                                seconds=next_index * CHUNK_DURATION_SECONDS
+                                seconds=next_index * _CHUNK_DURATION
                             )
                         )
                         chunk_end_time = chunk_start_time + datetime.timedelta(
-                            seconds=CHUNK_DURATION_SECONDS
+                            seconds=_CHUNK_DURATION
                         )
                         if process_done:
                             chunk_end_time = min(chunk_end_time, _now_utc())
+
+                        # Guard against cumulative network or system lag by measuring the drift
+                        # between wall-clock receipt time and expected stream time.
+                        lag = (receipt_time - chunk_end_time).total_seconds()
+                        if lag > _MAX_ALLOWED_LAG_SECONDS:
+                            logger.warning(
+                                "Feed %s (%s): Stream lag has exceeded threshold "
+                                "(%.1fs > %.1fs).",
+                                feed_id,
+                                feed_name,
+                                lag,
+                                _MAX_ALLOWED_LAG_SECONDS,
+                            )
+
                         yield CapturedChunk(
                             audio_bytes=segment_bytes,
                             chunk_start_time=chunk_start_time,
@@ -545,8 +610,10 @@ async def _create_ffmpeg_process(
     # 3. discardcorrupt: Mitigates parsing crashes over TCP jitter, which is necessary
     #    since our micro probesize doesn't deeply validate stream integrity.
     # 4. -reconnect 1 / -reconnect_at_eof 1 / -reconnect_streamed 1: Enables native
-    #    HTTP/TCP reconnects for short internet drops. The external Python timeout
-    #    (30s) acts as a secondary dead-man's switch if ffmpeg stalls.
+    #    HTTP/TCP reconnects for short internet drops.
+    # 5. -timeout: Sets a socket I/O timeout to prevent ffmpeg from
+    #    hanging indefinitely on a stalled TCP connection, allowing it to exit
+    #    gracefully instead of requiring a hard force-kill.
     return await asyncio.create_subprocess_exec(
         "ffmpeg", "-nostdin",
         "-reconnect", "1",
@@ -557,6 +624,7 @@ async def _create_ffmpeg_process(
         "-analyzeduration", "0",
         "-probesize", "32768",
         "-fflags", "nobuffer+flush_packets+discardcorrupt",
+        "-timeout", str(FFMPEG_TIMEOUT_SEC * 1_000_000),
         "-headers", auth_header,
         "-i", url,
         "-vn", "-sn", "-dn",
@@ -566,7 +634,7 @@ async def _create_ffmpeg_process(
         "-ac", str(NUM_AUDIO_CHANNELS),
         "-compression_level", FLAC_COMPRESSION_LEVEL,
         "-f", "segment",
-        "-segment_time", str(CHUNK_DURATION_SECONDS),
+        "-segment_time", str(_CHUNK_DURATION),
         "-segment_format", AUDIO_FORMAT,
         "-reset_timestamps", "1",
         "-segment_start_number", "0",

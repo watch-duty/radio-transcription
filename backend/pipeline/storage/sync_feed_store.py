@@ -10,65 +10,37 @@ with ``concurrency=1`` behind pgBouncer).
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, LiteralString, TypedDict, cast
 
-from backend.pipeline.storage import quarantine_reason
+from backend.pipeline.storage import (
+    feed_lifecycle,
+    feed_store,
+    sync_feed_queries,
+)
 
 logger = logging.getLogger(__name__)
-
 if TYPE_CHECKING:
+    import datetime
     import uuid
     from collections.abc import Callable
 
     import psycopg
 
-    from backend.pipeline.storage.feed_store import FeedStatusReason
 
-# ---------------------------------------------------------------------------
-# SQL — psycopg v3 uses %s params (not asyncpg's $1)
-# ---------------------------------------------------------------------------
+def _require_actor_id(actor_id: str | None) -> str:
+    if actor_id is None:
+        msg = "actor_id is required for audited feed lifecycle writes"
+        raise ValueError(msg)
+    return actor_id
 
-_RESOLVE_ECHO_FEED_SQL = """\
-SELECT f.id, f.name, f.status, f.failure_count, f.created_at
-FROM feeds f
-JOIN feed_properties fp ON fp.feed_id = f.id
-WHERE fp.source_feed_id = %s
-AND fp.source_type = 'echo'
-"""
 
-_HEARTBEAT_SQL = """\
-UPDATE feeds
-SET last_heartbeat = NOW(),
-    failure_count = CASE WHEN failure_count > 0 THEN 0 ELSE failure_count END,
-    status = 'active'::feed_status,
-    status_reason_updated_at = CASE
-        WHEN status_reason IS NOT NULL THEN NOW()
-        ELSE status_reason_updated_at
-    END,
-    status_reason = NULL
-WHERE id = %s
-"""
+class ResolvedEchoFeed(TypedDict):
+    """Feed fields consumed by the Echo ingestion handler."""
 
-# Backoff formula: base * 2^(failure_count), capped at max, plus 0-10s jitter.
-# Matches _REPORT_FAILURE_SQL in feed_store.py (minus worker_id/fencing_token).
-_RECORD_FAILURE_SQL = """\
-UPDATE feeds
-SET status = CASE WHEN failure_count + 1 >= %s
-                  THEN 'quarantined'::feed_status
-                  ELSE 'failing'::feed_status END,
-    failure_count = failure_count + 1,
-    last_heartbeat = NOW(),
-    retry_after = CASE WHEN failure_count + 1 < %s
-                       THEN NOW() + LEAST(
-                            %s * INTERVAL '1 second',
-                            %s * INTERVAL '1 second' * POWER(2, failure_count)
-                       ) + (RANDOM() * INTERVAL '10 seconds')
-                       ELSE NULL END,
-    quarantine_reason = CASE WHEN failure_count + 1 >= %s THEN COALESCE(%s, quarantine_reason) ELSE quarantine_reason END,
-    status_reason = COALESCE(%s, 'system_unexpected_error'),
-    status_reason_updated_at = NOW()
-WHERE id = %s
-"""
+    id: uuid.UUID
+    name: str
+    status: feed_store.FeedStatus
+    created_at: datetime.datetime
 
 
 class SyncFeedStore:
@@ -88,9 +60,9 @@ class SyncFeedStore:
         self,
         connect_db: Callable[[], psycopg.Connection[dict[str, Any]]],
         *,
-        failure_threshold: int = 5,
-        base_backoff_sec: int = 15,
-        max_backoff_sec: int = 600,
+        failure_threshold: int = feed_lifecycle.DEFAULT_FAILURE_THRESHOLD,
+        base_backoff_sec: int = feed_lifecycle.DEFAULT_BACKOFF_BASE_SEC,
+        max_backoff_sec: int = feed_lifecycle.DEFAULT_BACKOFF_MAX_SEC,
     ) -> None:
         self._connect_db = connect_db
         self._failure_threshold = failure_threshold
@@ -101,36 +73,58 @@ class SyncFeedStore:
     # Source-specific resolution
     # ------------------------------------------------------------------
 
-    def resolve_echo_feed(self, channel_name: str) -> dict[str, Any] | None:
+    def resolve_echo_feed(self, channel_name: str) -> ResolvedEchoFeed | None:
         """Look up a feed by its Echo channel name.
 
-        Returns the feed row ``{id, name, status, failure_count}`` or
-        ``None`` if no feed is registered for *channel_name*.
+        Returns the fields Echo processing consumes, or ``None`` if no feed is
+        registered for *channel_name*.
         """
         with self._connect_db() as conn:
-            return conn.execute(
-                _RESOLVE_ECHO_FEED_SQL, (channel_name,)
+            row = conn.execute(
+                sync_feed_queries.RESOLVE_ECHO_FEED_SQL, (channel_name,)
             ).fetchone()
+        if row is None:
+            return None
+        try:
+            status = feed_store.FeedStatus(row["status"])
+        except ValueError as exc:
+            msg = f"Unknown feed status {row['status']!r} for Echo feed"
+            raise ValueError(msg) from exc
+        return {
+            "id": row["id"],
+            "name": row["name"],
+            "status": status,
+            "created_at": row["created_at"],
+        }
 
     # ------------------------------------------------------------------
     # Generic lifecycle operations
     # ------------------------------------------------------------------
 
-    def record_heartbeat(self, feed_id: uuid.UUID) -> None:
+    def record_heartbeat(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        actor_id: str,
+    ) -> None:
         """Record a successful processing heartbeat.
 
         Marks status as ``active``, and resets ``failure_count`` if the
         feed was previously in a failing state.
         """
         with self._connect_db() as conn:
-            conn.execute(_HEARTBEAT_SQL, (feed_id,))
+            conn.execute(
+                cast("LiteralString", sync_feed_queries.HEARTBEAT_SQL),
+                (feed_id, _require_actor_id(actor_id)),
+            )
 
     def record_failure(
         self,
         feed_id: uuid.UUID,
         *,
+        actor_id: str,
         reason: str | None = None,
-        status_reason: FeedStatusReason | None = None,
+        status_reason: feed_store.FeedStatusReason | None = None,
     ) -> None:
         """Record a processing failure with exponential backoff.
 
@@ -139,27 +133,67 @@ class SyncFeedStore:
         plus 0-10 s jitter).  Quarantines the feed when the threshold is
         reached.
         """
-        status_reason_value = status_reason.value if status_reason is not None else None  # fmt: skip
-        stored_reason = (
-            quarantine_reason.cap_quarantine_reason_for_storage(reason)
-            if reason is not None
-            else None
+        status_reason_value = feed_lifecycle.status_reason_storage_value(
+            status_reason
+        )
+        status_reason_detail = (
+            feed_lifecycle.status_reason_detail_storage_value(reason)
+        )
+        params = (
+            feed_id,
+            status_reason_value,
+            self._failure_threshold,
+            self._failure_threshold,
+            self._max_backoff_sec,
+            self._base_backoff_sec,
+            status_reason_detail,
+            _require_actor_id(actor_id),
         )
         with self._connect_db() as conn:
             conn.execute(
-                _RECORD_FAILURE_SQL,
-                (
-                    self._failure_threshold,
-                    self._failure_threshold,
-                    self._max_backoff_sec,
-                    self._base_backoff_sec,
-                    self._failure_threshold,
-                    stored_reason,
-                    status_reason_value,
-                    feed_id,
+                cast("LiteralString", sync_feed_queries.RECORD_FAILURE_SQL),
+                params,
+            )
+        logger.warning(
+            "Feed failure recorded",
+            extra={
+                "feed_id": str(feed_id),
+                "status_reason": status_reason_value,
+                "reason": status_reason_detail,
+            },
+        )
+
+    def record_non_budgeted_failure(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        actor_id: str,
+        status_reason: feed_store.FeedStatusReason,
+        reason: str | None = None,
+    ) -> None:
+        """Record a visible failure without consuming quarantine budget.
+
+        Echo receives source object notifications, so this sync path clears
+        ``retry_after`` instead of scheduling DB-based retry.
+        """
+        params = (
+            feed_id,
+            status_reason.value,
+            feed_lifecycle.status_reason_detail_storage_value(reason),
+            _require_actor_id(actor_id),
+        )
+        with self._connect_db() as conn:
+            conn.execute(
+                cast(
+                    "LiteralString",
+                    sync_feed_queries.RECORD_NON_BUDGETED_FAILURE_SQL,
                 ),
+                params,
             )
-            logger.warning(
-                "Feed failure recorded",
-                extra={"feed_id": str(feed_id)},
-            )
+        logger.info(
+            "Non-budgeted feed failure recorded",
+            extra={
+                "feed_id": str(feed_id),
+                "status_reason": status_reason.value,
+            },
+        )

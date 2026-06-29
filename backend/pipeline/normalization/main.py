@@ -155,6 +155,9 @@ def normalize_claim_check(cloud_event: CloudEvent) -> None:
     Args:
         cloud_event: The triggered Pub/Sub CloudEvent.
     """
-    setup_tracing(service_name="normalization-service", use_batch=False)
+    setup_tracing(
+        service_name="normalization-service",
+        use_batch=False,
+    )
     processor = container.get_processor()
     processor.process_event(cloud_event)

@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { useState } from 'react';
 
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LinkIcon from '@mui/icons-material/Link';
@@ -10,14 +10,17 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { type TranscriptAnnotationData } from '@transcription/common';
 
+import { useAuth } from '../../context/AuthContext';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import {
   findEvaluationAnnotationData,
   findTranscriptAnnotationData,
 } from '../../utils/annotationUtils';
 import { formatDuration } from '../../utils/timeUtils';
-import AudioPlayer from '../audio/AudioPlayer';
+import TranscriptPlayControl from '../audio/TranscriptPlayControl';
 import AlertTooltip from './AlertTooltip';
+import HighlightedTranscript from './HighlightedTranscript';
+import { SegmentInfoPopover } from './SegmentInfoPopover';
 
 interface TranscriptRowProps {
   audioSegment: RenderableAudioSegment;
@@ -53,6 +56,10 @@ export function TranscriptRow({
   isTopAudioSegmentRow = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
+  const { isAdmin } = useAuth();
+
+  const [isHovered, setIsHovered] = useState(false);
+
   const currentDate = new Date(audioSegment.startTimestamp);
 
   const isSilence = !!audioSegment.isSilenceBundle;
@@ -109,7 +116,10 @@ export function TranscriptRow({
   };
 
   return (
-    <Fragment>
+    <Box
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
       {showHeader && (
         <ListItem
           sx={{
@@ -216,20 +226,32 @@ export function TranscriptRow({
             </Typography>
           )}
         </Box>
-        <AudioPlayer
-          audioUri={audioSegment.playbackAudioUri ?? ''}
-          segmentId={audioSegment.id}
-          onToggleAudio={onToggleAudio}
-          isAudioPlaying={isAudioPlaying}
-          currentlyPlayingSegmentId={
-            isCurrentlyPlaying ? audioSegment.id : currentlyPlayingSegmentId
-          }
-        />
+        <Box
+          sx={{
+            width: theme.spacing(5),
+            height: theme.spacing(5),
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
+          }}
+        >
+          <TranscriptPlayControl
+            audioUri={audioSegment.playbackAudioUri ?? ''}
+            segmentId={audioSegment.id}
+            onToggleAudio={onToggleAudio}
+            isAudioPlaying={isAudioPlaying}
+            currentlyPlayingSegmentId={
+              isCurrentlyPlaying ? audioSegment.id : currentlyPlayingSegmentId
+            }
+            hideButton={!isHovered}
+          />
+        </Box>
         <Typography
           variant={isSilence ? 'caption' : 'body1'}
           color={
             hasErrors
-              ? 'error.main'
+              ? 'error'
               : isPlaceholder
                 ? 'text.secondary'
                 : 'text.primary'
@@ -244,7 +266,15 @@ export function TranscriptRow({
               isSilence || isWaiting || hasErrors ? 'italic' : 'normal',
           }}
         >
-          {renderTranscriptionText(transcriptAnnotation)}
+          {/* Placeholder strings (silence/waiting/error) have no real transcript to highlight. */}
+          {isPlaceholder ? (
+            renderTranscriptionText(transcriptAnnotation)
+          ) : (
+            <HighlightedTranscript
+              text={transcriptAnnotation?.text ?? ''}
+              ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
+            />
+          )}
         </Typography>
         <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
           {!isSilence && (
@@ -294,9 +324,15 @@ export function TranscriptRow({
               <LinkIcon fontSize="small" />
             </IconButton>
           </Tooltip>
+          {isAdmin && (
+            <SegmentInfoPopover
+              audioSegment={audioSegment}
+              triggerSnackbar={triggerSnackbar}
+            />
+          )}
         </Box>
       </ListItem>
-    </Fragment>
+    </Box>
   );
 }
 

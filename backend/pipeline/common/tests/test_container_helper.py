@@ -1,6 +1,6 @@
 import threading
 import unittest
-from unittest.mock import patch
+from unittest import mock
 
 from backend.pipeline.common.container_helper import ForkDetector, fork_checked
 
@@ -25,7 +25,7 @@ class TestForkDetector(unittest.TestCase):
         original_pid = detector._pid
 
         # Simulate fork by mocking os.getpid to return a different PID
-        with patch("os.getpid") as mock_getpid:
+        with mock.patch("os.getpid") as mock_getpid:
             new_pid = original_pid + 1
             mock_getpid.return_value = new_pid
 
@@ -43,7 +43,7 @@ class TestForkDetector(unittest.TestCase):
 
 
 class DummyContainer:
-    def __init__(self, on_fork: unittest.mock.Mock) -> None:
+    def __init__(self, on_fork: mock.Mock) -> None:
         self._fork_detector = ForkDetector(on_fork)
         self.call_count = 0
 
@@ -55,7 +55,7 @@ class DummyContainer:
 
 class TestForkCheckedDecorator(unittest.TestCase):
     def test_decorator_triggers_fork_check(self) -> None:
-        mock_reset = unittest.mock.Mock()
+        mock_reset = mock.Mock()
         container = DummyContainer(mock_reset)
 
         # First call, no fork
@@ -66,7 +66,7 @@ class TestForkCheckedDecorator(unittest.TestCase):
 
         # Simulate fork
         original_pid = container._fork_detector._pid
-        with patch("os.getpid") as mock_getpid:
+        with mock.patch("os.getpid") as mock_getpid:
             mock_getpid.return_value = original_pid + 1
 
             val = container.get_value()

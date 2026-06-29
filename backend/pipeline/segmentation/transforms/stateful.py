@@ -11,6 +11,21 @@ All high-level audio download/concatenation/VAD heuristics are cleanly
 decoupled from Beam timer variables and delegated to StitcherEngine.
 
 
+## Decoupled Stateful/Stateless Hybrid Architecture (Stage 2 & Stage 3)
+
+To prevent Dataflow Windmill state locking and GIL contention bottlenecks, the audio
+segmentation pipeline uses a decoupled, hybrid metadata/physical-retrieval flow:
+1. **Stage 2 (Stateful - OrderedStitchAudioFn)**: Performs chronological sequencing,
+   session FSM tracking, and VAD segment calculations. To keep persistent state sizes
+   extremely small (<1 KB) and lock times under microseconds, **no raw audio bytes are stored
+   in stateful cell persistent bag states**.
+2. **Stage 3 (Stateless - UploadRawSegmentFn)**: Performs the heavy physical work of
+   downloading contributing audio chunks from GCS, slicing them according to Stage 2's
+   VAD segments, stitching them, and compressing the result to FLAC. Since this stage is
+   completely stateless, Dataflow can distribute and execute these tasks in parallel across
+   unlimited worker threads.
+
+
 ## Dataflow Windmill Execution Model
 
 **This section is critical reading for anyone familiar with Beam on other runners
@@ -84,8 +99,6 @@ from typing import Any, override
 
 import apache_beam as beam
 from apache_beam.transforms.userstate import (
-    BagRuntimeState,
-    BagStateSpec,
     ReadModifyWriteRuntimeState,
     ReadModifyWriteStateSpec,
     RuntimeTimer,
@@ -100,7 +113,7 @@ from backend.pipeline.common import tracing_utils
 from backend.pipeline.common.log_helper import get_logger, get_task_logger
 from backend.pipeline.segmentation import coders as trans_coders
 from backend.pipeline.segmentation import constants as trans_constants
-from backend.pipeline.segmentation import datatypes
+from backend.pipeline.segmentation import datatypes, log_helper
 from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.constants import (
     MAX_CHUNKS_PER_WINDMILL_BUNDLE,
@@ -113,6 +126,12 @@ from backend.pipeline.segmentation.storage import (
 from backend.pipeline.segmentation.transforms import stitcher_engine
 
 SHARED_RESOURCE_HANDLE = Shared()
+
+# WARNING: Do NOT remove or bypass setup_logging().
+# It explicitly configures structured log propagation for the
+# Dataflow worker harness. Removing this will cause all worker logs
+# to be rendered as DEBUG severity in Cloud Logging.
+log_helper.setup_logging()
 
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "ordered-stitcher"}
@@ -279,24 +298,18 @@ def _manage_out_of_order_timers(
     """
     if has_buffer_elements:
         if clamped:
-            emitted_duration_ms = (
-                (new_expected_next_ts - old_expected_ts)
-                if (
-                    old_expected_ts is not None
-                    and new_expected_next_ts is not None
-                )
-                else 0
-            )
-            advance_sec = max(
-                WINDMILL_TIMER_MIN_ADVANCE_SECS,
-                float(emitted_duration_ms)
-                / float(common_constants.MS_PER_SECOND),
-            )
-            gap_timer_event.set(timestamp + advance_sec)
+            # Loop control: Always advance by the minimum 1ms safety epsilon
+            # to satisfy the Runner V2 gate without triggering artificial
+            # watermark delays or Pub/Sub source gridlocks.
+            gap_timer_event.set(timestamp + WINDMILL_TIMER_MIN_ADVANCE_SECS)
             if is_backfill:
                 gap_timer_proc.clear()
             else:
-                gap_timer_proc.set(Timestamp(seconds=time.time() + advance_sec))
+                gap_timer_proc.set(
+                    Timestamp(
+                        seconds=time.time() + WINDMILL_TIMER_MIN_ADVANCE_SECS
+                    )
+                )
             return True
 
         if not order_timer_active:
@@ -475,7 +488,7 @@ class OrderedStitchAudioFn(beam.DoFn):
     """Stateful Apache Beam DoFn orchestrating out-of-order and stale windowing for continuous audio feeds.
 
     Enterprise Architectural Rationale: Why implement an explicit Jitter Buffer in Beam User State (`BagState`)
-    rather than simply enabling native GCP Pub/Sub Subscription Ordering Keys?!
+    rather than simply enabling native GCP Pub/Sub Subscription Ordering Keys?
     1. Total Autoscaler Head-of-Line Starvation: Pub/Sub subscription ordering strictly blocks delivering message #2
        until message #1 is fully computed and its official distributed network Acknowledgement (`Ack()`) is returned.
        In Beam, workers pull tens of thousands of messages in highly parallel, un-ordered work-stealing bundles.
@@ -495,11 +508,6 @@ class OrderedStitchAudioFn(beam.DoFn):
 
     # --- State Specs ---
 
-    TRANSMISSION_BUFFER_SPEC = BagStateSpec(
-        "transmission_buffer", beam.coders.BytesCoder()
-    )
-    TRANSMISSION_BUFFER_STATE = beam.DoFn.StateParam(TRANSMISSION_BUFFER_SPEC)
-
     TRANSMISSION_CONTEXT_SPEC = ReadModifyWriteStateSpec(
         "transmission_context", trans_coders.TransmissionContextCoder()
     )
@@ -512,10 +520,26 @@ class OrderedStitchAudioFn(beam.DoFn):
 
     # --- Timers ---
 
+    # LEGACY — to be removed in a follow-up PR (GOO-667 incident recovery).
+    # This timer family name ("out_of_order_timer") is persisted in Windmill state for
+    # existing keys. It must remain until all pending firings have drained from prod.
+    # Once quiet, open a follow-up PR that removes this spec and its @on_timer handler.
+    # See: two-step timer rename process documented below on GAP_TIMER_EVENT_V2_SPEC.
     GAP_TIMER_EVENT_SPEC = TimerSpec(
-        "gap_timer_event", beam.TimeDomain.WATERMARK
+        "out_of_order_timer", beam.TimeDomain.WATERMARK
     )
     GAP_TIMER_EVENT = beam.DoFn.TimerParam(GAP_TIMER_EVENT_SPEC)
+
+    # Replacement for the legacy GAP_TIMER_EVENT_SPEC above. New elements schedule
+    # timers under this name. Once "out_of_order_timer" has fully drained from Windmill
+    # state (no more NOT_FOUND errors in logs), remove the legacy spec and its handler.
+    # NOTE: To rename this value again in the future, use the same two-step process:
+    #   Step 1 — Add the new TimerSpec alongside this one, deploy via --update, wait for drain.
+    #   Step 2 — Remove this spec and its @on_timer handler, deploy via --update.
+    GAP_TIMER_EVENT_V2_SPEC = TimerSpec(
+        "gap_timer_event", beam.TimeDomain.WATERMARK
+    )
+    GAP_TIMER_EVENT_V2 = beam.DoFn.TimerParam(GAP_TIMER_EVENT_V2_SPEC)
 
     GAP_TIMER_PROC_SPEC = TimerSpec("gap_timer_proc", beam.TimeDomain.REAL_TIME)
     GAP_TIMER_PROC = beam.DoFn.TimerParam(GAP_TIMER_PROC_SPEC)
@@ -608,10 +632,10 @@ class OrderedStitchAudioFn(beam.DoFn):
         self,
         element: tuple[str, datatypes.ChunkMetadata],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
-        gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore
+        gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore  # LEGACY — remove with GAP_TIMER_EVENT_SPEC
+        gap_timer_event_v2: RuntimeTimer = GAP_TIMER_EVENT_V2,  # type: ignore
         gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
@@ -686,7 +710,12 @@ class OrderedStitchAudioFn(beam.DoFn):
             _write_transmission_context(
                 transmission_context_state, curr_context
             )
-            deferred_drain_timer.set(timestamp)
+            # Loop control: Always advance by the minimum 1ms safety epsilon
+            # to satisfy the Runner V2 gate without triggering artificial
+            # watermark delays or Pub/Sub source gridlocks.
+            deferred_drain_timer.set(
+                timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
+            )
             return
 
         results = []
@@ -714,7 +743,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                 element,
                 timestamp,
                 curr_context,
-                gap_timer_event,
+                gap_timer_event_v2,
                 gap_timer_proc,
                 self.order_config,
                 is_backfill=is_backfill,
@@ -728,7 +757,6 @@ class OrderedStitchAudioFn(beam.DoFn):
             task_logger.debug(f"[Process] Processing chunk {metadata.gcs_uri}")
 
             if session_changed:
-                transmission_buffer_state.clear()
                 stale_timer_event.clear()
                 stale_timer_proc.clear()
                 curr_context = replace(
@@ -751,7 +779,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     self.stitch_config.backfill_lateness_threshold_ms,
                 )
 
-                for chunk in elements_to_emit:
+                for i, chunk in enumerate(elements_to_emit):
                     # Fetch current state context
                     curr_context = (
                         transmission_context_state.read()
@@ -772,11 +800,11 @@ class OrderedStitchAudioFn(beam.DoFn):
                             feed_id=feed_id,
                             curr_context=curr_context,
                             transmission_context_state=transmission_context_state,
-                            transmission_buffer_state=transmission_buffer_state,
                             last_start_ms_state=last_start_ms_state,
                             timer_manager=timer_manager,
                             previous_expected_ts=previous_expected_ts,
                             is_backfill=is_backfill,
+                            clear_buffer=(session_changed and i == 0),
                         )
                     )
                     results.extend(outputs)
@@ -785,17 +813,46 @@ class OrderedStitchAudioFn(beam.DoFn):
 
         yield from self._yield_tagged_outputs(results)
 
+    # LEGACY — remove alongside GAP_TIMER_EVENT_SPEC in the follow-up PR.
     @on_timer(GAP_TIMER_EVENT_SPEC)
     def handle_gap_timeout_event(
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
         gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore
+        gap_timer_event_v2: RuntimeTimer = GAP_TIMER_EVENT_V2,  # type: ignore
+        gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
+    ) -> Iterator[
+        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
+    ]:
+        """Handles the gap timeout triggered by the legacy event-time watermark timer."""
+        gap_timer_event.clear()
+        yield from self._handle_gap_timeout_common(
+            feed_id=feed_id,
+            transmission_context_state=transmission_context_state,
+            last_start_ms_state=last_start_ms_state,
+            stale_timer_event=stale_timer_event,
+            stale_timer_proc=stale_timer_proc,
+            timestamp=timestamp,
+            gap_timer_event=gap_timer_event_v2,
+            gap_timer_proc=gap_timer_proc,
+            timer_type="event",
+        )
+
+    @on_timer(GAP_TIMER_EVENT_V2_SPEC)
+    def handle_gap_timeout_event_v2(
+        self,
+        feed_id: str = beam.DoFn.KeyParam,  # type: ignore
+        transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
+        last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
+        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
+        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
+        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
+        gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT_V2,  # type: ignore
         gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
@@ -803,7 +860,6 @@ class OrderedStitchAudioFn(beam.DoFn):
         """Handles the gap timeout triggered by the event-time watermark."""
         yield from self._handle_gap_timeout_common(
             feed_id=feed_id,
-            transmission_buffer_state=transmission_buffer_state,
             transmission_context_state=transmission_context_state,
             last_start_ms_state=last_start_ms_state,
             stale_timer_event=stale_timer_event,
@@ -818,27 +874,27 @@ class OrderedStitchAudioFn(beam.DoFn):
     def handle_gap_timeout_processing(
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
         gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore
+        gap_timer_event_v2: RuntimeTimer = GAP_TIMER_EVENT_V2,  # type: ignore
         gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
     ]:
         """Handles the gap timeout triggered by the processing-time clock."""
+        gap_timer_event.clear()
         yield from self._handle_gap_timeout_common(
             feed_id=feed_id,
-            transmission_buffer_state=transmission_buffer_state,
             transmission_context_state=transmission_context_state,
             last_start_ms_state=last_start_ms_state,
             stale_timer_event=stale_timer_event,
             stale_timer_proc=stale_timer_proc,
             timestamp=timestamp,
-            gap_timer_event=gap_timer_event,
+            gap_timer_event=gap_timer_event_v2,
             gap_timer_proc=gap_timer_proc,
             timer_type="processing",
         )
@@ -846,7 +902,6 @@ class OrderedStitchAudioFn(beam.DoFn):
     def _handle_gap_timeout_common(
         self,
         feed_id: str,
-        transmission_buffer_state: BagRuntimeState,
         transmission_context_state: ReadModifyWriteRuntimeState,
         last_start_ms_state: ReadModifyWriteRuntimeState,
         stale_timer_event: RuntimeTimer,
@@ -978,7 +1033,6 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 feed_id=feed_id,
                                 curr_context=curr_context,
                                 transmission_context_state=transmission_context_state,
-                                transmission_buffer_state=transmission_buffer_state,
                                 last_start_ms_state=last_start_ms_state,
                                 timer_manager=timer_manager,
                                 previous_expected_ts=previous_expected_ts,
@@ -994,7 +1048,6 @@ class OrderedStitchAudioFn(beam.DoFn):
     def handle_deferred_drain(
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer_state: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
@@ -1046,8 +1099,19 @@ class OrderedStitchAudioFn(beam.DoFn):
                 - self.processed_in_bundle
             )
             if new_buffer_elements and clamped:
-                # Still clamped, re-arm the deferral timer to self-chain into another bundle!
-                deferred_drain_timer.set(timestamp)
+                # Still clamped, re-arm the deferral timer to self-chain into
+                # another bundle!
+                # Dynamic leap-frog: Align the timer deadline with the start time
+                # of the oldest unprocessed chunk currently waiting in the buffer.
+                # If there's a gap (e.g. downtime), this leaps the entire gap in exactly 1 step!
+                oldest_chunk_ts_sec = (
+                    new_buffer_elements[0].timestamp_ms / 1000.0
+                )
+                next_deadline = max(
+                    timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                    Timestamp(seconds=oldest_chunk_ts_sec),
+                )
+                deferred_drain_timer.set(next_deadline)
 
             curr_context = replace(
                 curr_context,
@@ -1088,7 +1152,6 @@ class OrderedStitchAudioFn(beam.DoFn):
                             feed_id=feed_id,
                             curr_context=curr_context,
                             transmission_context_state=transmission_context_state,
-                            transmission_buffer_state=transmission_buffer_state,
                             last_start_ms_state=last_start_ms_state,
                             timer_manager=timer_manager,
                             previous_expected_ts=previous_expected_ts,
@@ -1105,7 +1168,6 @@ class OrderedStitchAudioFn(beam.DoFn):
     def handle_stale_transmission_event(
         self,
         key: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
@@ -1120,7 +1182,6 @@ class OrderedStitchAudioFn(beam.DoFn):
         yield from self._yield_tagged_outputs(
             self.engine.handle_stale_transmission(
                 key,
-                transmission_buffer,
                 transmission_context,
                 last_start_ms_state,
                 timer_manager,
@@ -1131,7 +1192,6 @@ class OrderedStitchAudioFn(beam.DoFn):
     def handle_stale_transmission_proc(
         self,
         key: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_buffer: BagRuntimeState = TRANSMISSION_BUFFER_STATE,  # type: ignore
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
@@ -1146,7 +1206,6 @@ class OrderedStitchAudioFn(beam.DoFn):
         yield from self._yield_tagged_outputs(
             self.engine.handle_stale_transmission(
                 key,
-                transmission_buffer,
                 transmission_context,
                 last_start_ms_state,
                 timer_manager,

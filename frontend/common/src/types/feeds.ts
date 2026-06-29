@@ -48,10 +48,11 @@ export interface Feed extends BaseFeed {
   archiveUrl?: string;
   status: FeedStatus;
   substatus: BackendFeedStatus;
-  lastHeartbeat?: string;
+  lastHeartbeat?: number;
   tags?: Tag[];
-  quarantineReason?: string;
   statusReason?: BackendFeedStatusReason;
+  lastSpeechSegmentTimestamp?: number;
+  statusReasonDetail?: string;
 }
 
 export interface FeedCreate extends BaseFeed {

@@ -15,9 +15,11 @@ from backend.pipeline.notification.notification_deduplication import (
 from backend.pipeline.schema_types.evaluated_transcribed_audio_pb2 import (
     EvaluatedTranscribedAudio,
 )
+from integration_tests.test_utils import verify_notification_received
 from integration_tests.utils import assert_eventually
 
 FEEDS_API_HOST = os.environ.get("FEEDS_API_HOST", "localhost:8089")
+_TEST_ACTOR_HEADERS = {"X-WD-Actor-Id": "user:google:e2e-admin@example.com"}
 
 
 @pytest.fixture
@@ -44,7 +46,12 @@ def test_feed_with_tags() -> Generator[str]:
     }
 
     url = f"http://{FEEDS_API_HOST}/v1/feeds"
-    response = requests.post(url, json=payload, timeout=10)
+    response = requests.post(
+        url,
+        json=payload,
+        headers=_TEST_ACTOR_HEADERS,
+        timeout=10,
+    )
     response.raise_for_status()
 
     feed_id = response.json().get("id", "")
@@ -55,7 +62,11 @@ def test_feed_with_tags() -> Generator[str]:
     finally:
         # Deactivate feed via API
         del_url = f"http://{FEEDS_API_HOST}/v1/feeds/{feed_id}/deactivate"
-        del_response = requests.post(del_url, timeout=10)
+        del_response = requests.post(
+            del_url,
+            headers=_TEST_ACTOR_HEADERS,
+            timeout=10,
+        )
         del_response.raise_for_status()
 
 
@@ -108,33 +119,7 @@ def test_notification_sent(
         )
 
         # Check that the mock server received the notification
-        mock_host = os.environ.get("MOCK_SERVER_HOST", "localhost:8082")
-        mock_requests_url = f"http://{mock_host}/"
-
-        def mock_server_received() -> bool:
-            try:
-                mock_resp = requests.get(mock_requests_url, timeout=5)
-            except requests.exceptions.RequestException:
-                return False
-            else:
-                if mock_resp.status_code == 200:
-                    requests_data = mock_resp.json()
-                    filtered = list(
-                        filter(
-                            lambda r: (
-                                r.get("segmentId") == test_notification_id
-                            ),
-                            requests_data,
-                        )
-                    )
-                    return len(filtered) == 1
-                return False
-
-        assert_eventually(
-            mock_server_received,
-            timeout_sec=10.0,
-            error_msg="Mock server did not receive the first notification",
-        )
+        verify_notification_received(test_notification_id, timeout_sec=10.0)
 
     finally:
         # Clean up the key after the test completes

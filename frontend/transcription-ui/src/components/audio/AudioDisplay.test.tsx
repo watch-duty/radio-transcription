@@ -1,22 +1,16 @@
 // @vitest-environment jsdom
 import React from 'react';
 
-import type { Howl } from 'howler';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import {
-  cleanup,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import {
   AnnotationType,
   AudioClassification,
   type AudioSegment,
 } from '@transcription/common';
 
+import type { PlaybackController } from '../../audio/WebAudioPlayer';
 import { getAudioUrl } from '../../utils/audioUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { AudioDisplay } from './AudioDisplay';
@@ -118,7 +112,6 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
-        onTogglePlayPause={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -143,7 +136,6 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
-        onTogglePlayPause={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -174,7 +166,6 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
-        onTogglePlayPause={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -208,7 +199,6 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
-        onTogglePlayPause={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -223,7 +213,6 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId="2"
         onClipClick={vi.fn()}
         isAudioPlaying={false}
-        onTogglePlayPause={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -265,7 +254,6 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
-        onTogglePlayPause={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -280,7 +268,6 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
-        onTogglePlayPause={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -312,7 +299,6 @@ describe('AudioDisplay', () => {
         userDuration="5"
         onClipClick={vi.fn()}
         isAudioPlaying={false}
-        onTogglePlayPause={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -334,7 +320,6 @@ describe('AudioDisplay', () => {
         userDuration="30"
         onClipClick={vi.fn()}
         isAudioPlaying={false}
-        onTogglePlayPause={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -370,7 +355,6 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
-        onTogglePlayPause={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -381,69 +365,6 @@ describe('AudioDisplay', () => {
       getAudioUrl(mockAudioSegments[0].playbackAudioUri ?? '')
     );
     expect(wavesurfer.getAttribute('data-url')).toContain('.m4a');
-  });
-
-  it('should render play button and call onTogglePlayPause when clicked', () => {
-    const mockOnTogglePlayPause = vi.fn();
-    render(
-      <AudioDisplay
-        audioSegments={[
-          makeMockAudioSegment(
-            '1',
-            'feed1',
-            new Date('2026-04-20T09:00:00Z').toISOString(),
-            new Date('2026-04-20T09:00:05Z').toISOString(),
-            'Test 1',
-            'audio1.m4a'
-          ),
-        ]}
-        currentlyPlayingSegmentId={null}
-        onClipClick={vi.fn()}
-        isAudioPlaying={false}
-        onTogglePlayPause={mockOnTogglePlayPause}
-        highlightedSegmentId={null}
-      />
-    );
-
-    const playButton = screen.getByLabelText('play');
-    expect(playButton).toBeTruthy();
-    fireEvent.click(playButton);
-    expect(mockOnTogglePlayPause).toHaveBeenCalled();
-  });
-
-  it('should render disabled play button when transcripts list is empty and not call onTogglePlayPause when clicked', () => {
-    const mockOnTogglePlayPause = vi.fn();
-    render(
-      <AudioDisplay
-        audioSegments={[]}
-        currentlyPlayingSegmentId={null}
-        onClipClick={vi.fn()}
-        isAudioPlaying={false}
-        onTogglePlayPause={mockOnTogglePlayPause}
-        highlightedSegmentId={null}
-      />
-    );
-
-    const playButton = screen.getByLabelText('play');
-    expect(playButton).toBeTruthy();
-    expect(playButton).toBeDisabled();
-    fireEvent.click(playButton);
-    expect(mockOnTogglePlayPause).not.toHaveBeenCalled();
-  });
-
-  it('should render pause button when playing', () => {
-    render(
-      <AudioDisplay
-        audioSegments={[]}
-        currentlyPlayingSegmentId={null}
-        onClipClick={vi.fn()}
-        isAudioPlaying={true}
-        onTogglePlayPause={vi.fn()}
-        highlightedSegmentId={null}
-      />
-    );
-
-    expect(screen.getByLabelText('pause')).toBeTruthy();
   });
 
   it('should shift window when highlighted segment is outside window', async () => {
@@ -472,7 +393,6 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
-        onTogglePlayPause={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -487,7 +407,6 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
-        onTogglePlayPause={vi.fn()}
         highlightedSegmentId="2"
       />
     );
@@ -498,33 +417,6 @@ describe('AudioDisplay', () => {
         .map((el) => el.textContent);
       expect(labelsAfter).not.toEqual(labelsBefore);
     });
-  });
-
-  it('should call setTime on wavesurfer player when progress is provided', () => {
-    const mockAudioSegments: AudioSegment[] = [
-      makeMockAudioSegment(
-        '1',
-        'feed1',
-        new Date('2026-04-20T09:00:00Z').toISOString(),
-        new Date('2026-04-20T09:00:05Z').toISOString(),
-        'Test 1',
-        'audio1.m4a'
-      ),
-    ];
-
-    render(
-      <AudioDisplay
-        audioSegments={mockAudioSegments}
-        currentlyPlayingSegmentId="1"
-        onClipClick={vi.fn()}
-        isAudioPlaying={true}
-        onTogglePlayPause={vi.fn()}
-        highlightedSegmentId={null}
-        currentTimeSeconds={3.5}
-      />
-    );
-
-    expect(mockSetTime).toHaveBeenCalledWith(3.5);
   });
 
   it('should poll progress from currentAudioRef and seek wavesurfer player', async () => {
@@ -539,12 +431,12 @@ describe('AudioDisplay', () => {
       ),
     ];
 
-    const mockHowl = {
-      seek: vi.fn().mockReturnValue(2.5),
+    const mockPlayer = {
+      getCurrentTime: vi.fn().mockReturnValue(2.5),
     };
 
     const currentAudioRef = {
-      current: mockHowl as unknown as Howl,
+      current: mockPlayer as unknown as PlaybackController,
     };
 
     render(
@@ -553,14 +445,13 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId="1"
         onClipClick={vi.fn()}
         isAudioPlaying={true}
-        onTogglePlayPause={vi.fn()}
         highlightedSegmentId={null}
         currentAudioRef={currentAudioRef}
       />
     );
 
     await waitFor(() => {
-      expect(mockHowl.seek).toHaveBeenCalled();
+      expect(mockPlayer.getCurrentTime).toHaveBeenCalled();
     });
 
     expect(mockSetTime).toHaveBeenCalledWith(2.5);

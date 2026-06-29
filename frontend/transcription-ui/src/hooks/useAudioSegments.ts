@@ -1,8 +1,9 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import {
   type InfiniteData,
   useInfiniteQuery,
+  useQuery,
   useQueryClient,
 } from '@tanstack/react-query';
 import type { AudioSegment } from '@transcription/common';
@@ -21,6 +22,14 @@ export type ListAudioSegmentsData = {
 export type AlertFilter = 'all' | 'alerts';
 
 const MAX_AUDIO_SEGMENTS_POLLING_ITERATIONS = 10;
+// 90-second look-back buffer for late-arriving segments.
+// Stateful timers in the Dataflow pipeline can delay segment writing by up to 25 seconds.
+// A 90-second (3.6x margin) buffer ensures we don't miss these late writes due to polling
+// race conditions, while keeping query payloads small and cost-effective.
+const POLLING_LOOKBACK_BUFFER_MS = 90 * 1000;
+
+// How often the live "newer segments" poll runs while at the head of the stream.
+const POLL_INTERVAL_MS = 10000;
 
 interface UseAudioSegmentsOptions {
   token: string | null;
@@ -28,6 +37,13 @@ interface UseAudioSegmentsOptions {
   searchedTimestamp: Date | null;
   alertFilter: AlertFilter;
   isFeedsSuccess: boolean;
+  // Whether the view wants live polling (it gates this on the list being
+  // scrolled to the top). Polling is additionally suppressed unless the head of
+  // the stream is loaded.
+  pollingEnabled: boolean;
+  // Called once per poll with the brand-new segments that were merged into the
+  // cache, so the view can run UI side effects (snackbar, autoplay, unread).
+  onNewSegments?: (segments: AudioSegment[]) => void;
 }
 
 export function useAudioSegments({
@@ -36,6 +52,8 @@ export function useAudioSegments({
   searchedTimestamp,
   alertFilter,
   isFeedsSuccess,
+  pollingEnabled,
+  onNewSegments,
 }: UseAudioSegmentsOptions) {
   const queryClient = useQueryClient();
 
@@ -52,8 +70,8 @@ export function useAudioSegments({
 
   const {
     data: listAudioSegmentsResponse,
-    fetchNextPage: loadOlderAudioSegments,
-    fetchPreviousPage: loadNewerAudioSegments,
+    fetchNextPage,
+    fetchPreviousPage,
     hasNextPage: hasOlderAudioSegments,
     hasPreviousPage: hasNewerAudioSegments,
     isSuccess: isAudioSegmentsSuccess,
@@ -120,6 +138,16 @@ export function useAudioSegments({
     refetchOnWindowFocus: false,
   });
 
+  const loadOlderAudioSegments = useCallback(() => {
+    if (hasOlderAudioSegments && !isFetchingOlderAudioSegments) fetchNextPage();
+  }, [fetchNextPage, hasOlderAudioSegments, isFetchingOlderAudioSegments]);
+
+  const loadNewerAudioSegments = useCallback(() => {
+    if (hasNewerAudioSegments && !isFetchingNewerAudioSegments) {
+      fetchPreviousPage();
+    }
+  }, [fetchPreviousPage, hasNewerAudioSegments, isFetchingNewerAudioSegments]);
+
   const rawAudioSegments = useMemo(() => {
     const allSegments =
       listAudioSegmentsResponse?.pages.flatMap((page) => page.segments) ?? [];
@@ -166,7 +194,8 @@ export function useAudioSegments({
             token,
             /*limit=*/ undefined,
             currentNextToken,
-            /*startTime=*/ new Date(newestTimestamp).getTime(),
+            /*startTime=*/ new Date(newestTimestamp).getTime() -
+              POLLING_LOOKBACK_BUFFER_MS,
             /*endTime=*/ undefined,
             /*order=*/ 'asc',
             alertFilter === 'alerts' ? true : undefined
@@ -267,9 +296,68 @@ export function useAudioSegments({
     [token, queryKey, queryClient]
   );
 
+  // Live polling for newer segments at the head of the stream. React Query owns
+  // the timer to take advantage of its refetch-on-focus/reconnect/background behavior.
+  const pollingQuery = useQuery({
+    queryKey: ['liveAudioSegmentsPoll', searchedFeedId, alertFilter],
+    queryFn: pollNewerAudioSegments,
+    enabled:
+      isAudioSegmentsSuccess &&
+      pollingEnabled &&
+      !hasNewerAudioSegments &&
+      !!searchedFeedId,
+    // Seed with empty data so the query counts as "fresh" on enable (together
+    // with staleTime) and does not fetch immediately. Only the interval (and
+    // focus/reconnect) should drive polls. Without this, React Query fires a
+    // redundant poll the moment polling becomes enabled — right after the
+    // initial load, and again each time the user scrolls back to the top.
+    initialData: () => [],
+    refetchInterval: POLL_INTERVAL_MS,
+    staleTime: POLL_INTERVAL_MS,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchIntervalInBackground: true,
+  });
+
+  const lastProcessedPollRef = useRef(0);
+
+  // Merge each completed poll's segments into the cache exactly once, then hand
+  // the brand-new ones to the view for side effects. Guarded by dataUpdatedAt so
+  // unrelated re-renders don't re-run it.
+  useEffect(() => {
+    if (!pollingQuery.isSuccess) return;
+    if (pollingQuery.dataUpdatedAt === lastProcessedPollRef.current) return;
+    lastProcessedPollRef.current = pollingQuery.dataUpdatedAt;
+
+    const polledSegments = pollingQuery.data;
+    if (polledSegments.length === 0) return;
+
+    const brandNewAudioSegments =
+      updateCacheWithNewAudioSegments(polledSegments);
+    if (brandNewAudioSegments.length > 0) {
+      onNewSegments?.(brandNewAudioSegments);
+    }
+  }, [
+    pollingQuery.isSuccess,
+    pollingQuery.dataUpdatedAt,
+    pollingQuery.data,
+    updateCacheWithNewAudioSegments,
+    onNewSegments,
+  ]);
+
+  // "Last refresh" reflects the most recent of the paged load and the latest
+  // successful poll, so it advances on every poll even when nothing new arrives.
+  const audioSegmentsLastUpdated = useMemo(() => {
+    const lastRefreshedAt = Math.max(
+      audioSegmentsDataUpdatedAt,
+      pollingQuery.dataUpdatedAt
+    );
+    return lastRefreshedAt > 0 ? lastRefreshedAt : null;
+  }, [audioSegmentsDataUpdatedAt, pollingQuery.dataUpdatedAt]);
+
+  const { isFetching: isAudioSegmentsPolling } = pollingQuery;
   return {
     rawAudioSegments,
-    newestTimestamp,
     loadOlderAudioSegments,
     loadNewerAudioSegments,
     hasOlderAudioSegments,
@@ -277,11 +365,10 @@ export function useAudioSegments({
     isAudioSegmentsSuccess,
     isAudioSegmentsError,
     audioSegmentsError,
-    audioSegmentsDataUpdatedAt,
     isFetchingNewerAudioSegments,
     isFetchingOlderAudioSegments,
-    pollNewerAudioSegments,
-    updateCacheWithNewAudioSegments,
+    isAudioSegmentsPolling,
+    audioSegmentsLastUpdated,
     isLoading,
     isFetching,
   };

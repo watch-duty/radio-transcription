@@ -82,6 +82,43 @@ class TestAudioUtils(unittest.TestCase):
         self.assertNotIn("-f", mock_run.call_args.args[0])
 
     @patch("subprocess.run")
+    def test_probe_audio_metadata_success(self, mock_run: MagicMock) -> None:
+        """Test metadata extraction for various formats using JSON output."""
+        # 1. Test MP3
+        mock_result = MagicMock()
+        mock_result.stdout = (
+            b'{"format": {"duration": "15.500000", "format_name": "mp3"}}'
+        )
+        mock_run.return_value = mock_result
+
+        duration, mime = audio_helper.probe_audio_metadata(b"dummy mp3")
+        self.assertEqual(duration, 15500)
+        self.assertEqual(mime, audio_helper.models.AudioMimeType.MPEG)
+
+        # 2. Test M4A/MP4
+        mock_result.stdout = (
+            b'{"format": {"duration": "19.584000", "format_name": '
+            b'"mov,mp4,m4a,3g2,mj2"}}'
+        )
+        duration, mime = audio_helper.probe_audio_metadata(b"dummy m4a")
+        self.assertEqual(duration, 19584)
+        self.assertEqual(mime, audio_helper.models.AudioMimeType.MP4)
+
+        # 3. Test Unrecognized format defaults to MPEG and logs warning
+        mock_result.stdout = (
+            b'{"format": {"duration": "10.000000", "format_name": '
+            b'"unknown_format"}}'
+        )
+        with patch("backend.pipeline.common.audio.logger") as mock_logger:
+            duration, mime = audio_helper.probe_audio_metadata(b"dummy exotic")
+            self.assertEqual(duration, 10000)
+            self.assertEqual(mime, audio_helper.models.AudioMimeType.MPEG)
+            mock_logger.warning.assert_called_once_with(
+                "Unrecognized ffprobe audio format name %r; defaulting to MPEG/MP3",
+                "unknown_format",
+            )
+
+    @patch("subprocess.run")
     def test_get_audio_duration_forces_mp3_format(
         self, mock_run: MagicMock
     ) -> None:
@@ -122,7 +159,7 @@ class TestAudioUtils(unittest.TestCase):
 
     @patch("backend.pipeline.common.audio.tempfile.NamedTemporaryFile")
     @patch("subprocess.run")
-    def test_get_audio_duration_na_fallback_keeps_temp_file_alive(
+    def test_get_audio_duration_na_raises_called_process_error_keeps_temp_file_alive(
         self, mock_run: MagicMock, mock_temp_file: MagicMock
     ) -> None:
         temp_file = _NamedTemporaryFileStub()
@@ -133,19 +170,49 @@ class TestAudioUtils(unittest.TestCase):
             if "-show_format" in command:
                 verbose_probe_observed["temp_file_closed"] = temp_file.closed
                 verbose_probe_observed["timeout"] = kwargs.get("timeout")
-                return MagicMock(stdout="", stderr="")
-            return MagicMock(stdout=b"N/A\n")
+                return MagicMock(stdout="mock-stdout", stderr="mock-stderr")
+            res = MagicMock(stdout=b"N/A\n")
+            res.args = command
+            return res
 
         mock_run.side_effect = _run_side_effect
 
-        duration_ms = get_audio_duration(b"dummy audio")
+        with self.assertRaises(subprocess.CalledProcessError) as ctx:
+            get_audio_duration(b"dummy audio")
 
-        self.assertEqual(duration_ms, 5000)
+        self.assertEqual(ctx.exception.returncode, 1)
+        self.assertIn(
+            b"ffprobe returned N/A for duration", ctx.exception.stderr
+        )
+        self.assertIn(b"STDOUT:\nmock-stdout", ctx.exception.stderr)
+        self.assertIn(b"STDERR:\nmock-stderr", ctx.exception.stderr)
         self.assertFalse(verbose_probe_observed["temp_file_closed"])
         self.assertEqual(
             verbose_probe_observed["timeout"],
             audio_helper.FFPROBE_TIMEOUT_SEC,
         )
+
+    @patch("backend.pipeline.common.audio.tempfile.NamedTemporaryFile")
+    @patch("subprocess.run")
+    def test_get_audio_duration_fallback_to_autodetect(
+        self, mock_run: MagicMock, mock_temp_file: MagicMock
+    ) -> None:
+        temp_file = _NamedTemporaryFileStub()
+        mock_temp_file.return_value = temp_file
+
+        def _run_side_effect(command, **kwargs):
+            if "-f" in command:
+                raise subprocess.CalledProcessError(
+                    1, command, stderr=b"forced format error"
+                )
+            return MagicMock(stdout=b"19.584000\n")
+
+        mock_run.side_effect = _run_side_effect
+
+        duration_ms = get_audio_duration(b"dummy audio", input_format="mp3")
+
+        self.assertEqual(duration_ms, 19584)
+        self.assertEqual(mock_run.call_count, 2)
 
     @unittest.skipIf(not _ffmpeg_available, "ffmpeg not available")
     def test_get_audio_duration_handles_headerless_lame_mp3(self) -> None:

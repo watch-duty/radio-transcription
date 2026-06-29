@@ -17,6 +17,7 @@ from backend.pipeline.storage.audio_segment_store import (
 from backend.services.audio_segments.models import (
     AnnotationType,
     AudioClassification,
+    WaveformAnnotationData,
 )
 from integration_tests.storage.storage_feed_util import create_feed
 
@@ -223,6 +224,39 @@ async def test_add_annotation(
     )
 
 
+async def test_add_waveform_annotation(
+    db_pool: asyncpg.Pool, store: AudioSegmentStore
+) -> None:
+    feed_id = await create_feed(db_pool)
+
+    start_time = datetime.datetime(2026, 1, 1, 10, 0, 0, tzinfo=datetime.UTC)
+    end_time = datetime.datetime(2026, 1, 1, 10, 1, 0, tzinfo=datetime.UTC)
+
+    segment = await store.create_audio_segment(
+        segment_id=str(uuid.uuid4()),
+        feed_id=str(feed_id),
+        classification=AudioClassification.SPEECH,
+        start_timestamp=start_time,
+        end_timestamp=end_time,
+        source_audio_uris=["gs://bucket/audio1.ogg"],
+        missing_prior_context=False,
+        missing_post_context=False,
+    )
+
+    # Round-trips through the WAVEFORM enum value added in this migration.
+    waveform_data = {"peaks": [[0.0, 0.5, 0.25, 1.0]], "duration_seconds": 60.0}
+    annotation = await store.add_annotation(
+        segment_id=segment.id,
+        annotation_type=AnnotationType.WAVEFORM,
+        data=waveform_data,
+    )
+
+    assert annotation.type == AnnotationType.WAVEFORM
+    assert isinstance(annotation.data, WaveformAnnotationData)
+    assert annotation.data.peaks == [[0.0, 0.5, 0.25, 1.0]]
+    assert annotation.data.duration_seconds == 60.0
+
+
 class TestListAudioSegmentsFilters:
     async def test_is_alert_true(
         self, store: AudioSegmentStore, test_segments: dict
@@ -235,7 +269,11 @@ class TestListAudioSegmentsFilters:
             {
                 "audio_segment_id": test_segments["segment_no_transcript"].id,
                 "type": AnnotationType.EVALUATION,
-                "data": {"decisions": ["rule-1"], "errors": []},
+                "data": {
+                    "decisions": ["rule-1"],
+                    "errors": [],
+                    "rule_annotations": {},
+                },
             }
         ]
 
@@ -244,7 +282,11 @@ class TestListAudioSegmentsFilters:
             {
                 "audio_segment_id": test_segments["segment_is_alert"].id,
                 "type": AnnotationType.EVALUATION,
-                "data": {"decisions": ["rule-2"], "errors": []},
+                "data": {
+                    "decisions": ["rule-2"],
+                    "errors": [],
+                    "rule_annotations": {},
+                },
             },
             {
                 "audio_segment_id": test_segments["segment_is_alert"].id,
@@ -276,7 +318,11 @@ class TestListAudioSegmentsFilters:
             {
                 "audio_segment_id": test_segments["segment_no_alert"].id,
                 "type": AnnotationType.EVALUATION,
-                "data": {"decisions": [], "errors": []},
+                "data": {
+                    "decisions": [],
+                    "errors": [],
+                    "rule_annotations": {},
+                },
             },
             {
                 "audio_segment_id": test_segments["segment_no_alert"].id,

@@ -8,22 +8,34 @@ MAIN_TAG: Final = "main"
 # Pipeline Defaults
 DEFAULT_SIGNIFICANT_GAP_MS: Final = 800
 
-# Operational Sizing Sweet Spot: Maximum number of chunks emitted per Dataflow bundle
-# by our stateful ordering DoFns. Why exactly 10 chunks (~150 seconds of raw audio)?
+# Operational Sizing Sweet Spot: Maximum number of chunks emitted per
+# Dataflow bundle by our stateful ordering DoFns. Why exactly 10 chunks
+# (~150 seconds of raw audio)?
 #
-# 1. Multiprocessing Work-Stealing Parallelism: Python enforces the Global Interpreter Lock (GIL).
-#    If we computed 50+ chunks at a time, a single worker VM would entirely monopolize its CPU core,
-#    causing severe Head-of-Line starvation across our remaining autoscaled worker machines.
-#    Clamping at 10 chunks keeps DAG compute time at ~3-4 seconds, enabling central Windmill servers
-#    to instantly work-steal and distribute subsequent chained bundles to completely different idle VMs.
+# 1. Multiprocessing Work-Stealing Parallelism: Python enforces the Global
+#    Interpreter Lock (GIL). If we computed 50+ chunks at a time, a single
+#    worker VM would entirely monopolize its CPU core, causing severe Head-of-
+#    Line starvation across our remaining autoscaled worker machines.
+#    Clamping at 10 chunks keeps steady-state DAG compute time at ~6 seconds,
+#    enabling central Windmill servers to instantly work-steal and distribute
+#    subsequent chained bundles to completely different idle VMs.
 #
-# 2. Transaction Rollback "Blast Radius": If a sudden GCP network glitch or downstream database
-#    exception occurs, Windmill must entirely roll back the active bundle transaction. A 10-chunk
-#    clamp limits your re-drive compute penalty perfectly to just a few seconds of compute effort.
+# 2. Transaction Rollback "Blast Radius": If a sudden GCP network glitch or
+#    downstream database exception occurs, Windmill must entirely roll back
+#    the active bundle transaction. A 10-chunk clamp limits your re-drive
+#    compute penalty perfectly to just a few seconds of compute effort.
 #
-# 3. Synchronous Checkpointing: Committing SSD state Checkpoints every ~3-4 seconds guarantees that
-#    downstream windowed joins, active database deduplication FSMs, and live custom Stackdriver
-#    user execution counters (`chunks_received`) remain 100% active, live, and real-time.
+# 3. Synchronous Checkpointing: Committing SSD state Checkpoints every ~6
+#    seconds guarantees that downstream windowed joins, active database
+#    deduplication FSMs, and live custom Stackdriver user execution
+#    counters (`chunks_received`) remain 100% active, live, and real-time.
+#
+# 4. Resilient Backlog Recovery: Under heavy backlog catch-up load, GIL
+#    contention and GCS latency can slow down sequential chunk processing
+#    by ~30x (up to 18.5s per chunk). A 10-chunk clamp guarantees that even
+#    under worst-case load, the bundle completes in ~185s, keeping it safely
+#    below the hard 300-second Windmill lease limit and preventing infinite
+#    timeout rollback loops.
 MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 10
 
 # Resilient Runner V2 Gate: Minimum timer advancement (in seconds) to satisfy Dataflow Streaming
@@ -45,6 +57,7 @@ OVERLAPPING_TRANSMISSION_TOLERANCE_MS: Final = 100
 DEFAULT_FLOAT_TOLERANCE_MS: Final = 500
 GCS_CONNECTION_POOL_SIZE: Final = 100
 GCS_CONNECTION_MAX_RETRIES: Final = 3
+SHARED_DOWNLOAD_POOL_SIZE: Final = 20
 
 # Structured watermark and FSM recovery configurations
 DEFAULT_VAD_POST_ROLL_MS: Final = 500
@@ -67,8 +80,27 @@ VAD_DEFAULT_MIN_SPEECH_DURATION_MS: Final = 200
 # Extended to 750ms to prevent whisper/dispatcher dropouts from prematurely splitting dispatches
 VAD_DEFAULT_MIN_SILENCE_DURATION_MS: Final = 750
 VAD_DEFAULT_PAD_SEC: Final = 0.3
+
+# VAD Priming Terminology Glossary:
+# 1. prior_audio_tail (VAD_DEFAULT_PRIMING_SEC = 6.0s):
+#    The duration of the trailing audio we extract from the end of a chunk and store in the
+#    persistent state (Dataflow/Windmill) to pass to the next chunk. We store a larger buffer (6.0s)
+#    in the state so that we can adjust the active warmup window (below) in the future via config
+#    changes without needing a breaking state schema migration.
 VAD_DEFAULT_PRIMING_SEC: Final = 6.0
+
+# 2. warmup_sec (VAD_DEFAULT_WARMUP_SEC = 3.0s):
+#    The active window of the prior_audio_tail that the VAD actually runs on to warm up its denoiser
+#    and RNN states. We use 3.0s (increased from 1.5s) because empirical testing showed the UL-UNAS
+#    denoiser RNN requires up to 3.0s to fully stabilize its internal GRU states and adapt its noise floor.
+VAD_DEFAULT_WARMUP_SEC: Final = 3.0
+
+# 3. fallback_priming (VAD_DEFAULT_FALLBACK_PRIMING_SEC = 1.0s):
+#    The duration of synthetic comfort noise generated to prime the denoiser at the very start of a
+#    stream (when no prior_audio_tail exists). Silero VAD is bypassed on this fallback noise to prevent
+#    biasing it toward silence.
 VAD_DEFAULT_FALLBACK_PRIMING_SEC: Final = 1.0
+VAD_DEFAULT_DITHER_RMS: Final = 1e-6
 VAD_DEFAULT_COMP_THRESHOLD_DB: Final = -30.0
 VAD_DEFAULT_COMP_RATIO: Final = 6.0
 VAD_DEFAULT_COMP_ATTACK_MS: Final = 2.0
