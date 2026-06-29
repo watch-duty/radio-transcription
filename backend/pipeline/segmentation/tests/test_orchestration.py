@@ -67,19 +67,10 @@ def test_metadata_json_parameters_parity() -> None:
     parser = argparse.ArgumentParser()
     SegmentationOptions._add_argparse_args(parser)
 
-    # Read arguments from pipeline definition, excluding general plumbing args
     declared_options = {
         action.dest
         for action in parser._actions
-        if action.dest
-        not in (
-            "help",
-            "id_label",
-            "transcriber_type",
-            "transcriber_config",
-            "vad_config",
-            "significant_gap_ms",
-        )
+        if action.dest and action.dest != "help"
     }
 
     # Parse template specification
