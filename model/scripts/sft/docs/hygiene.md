@@ -14,7 +14,8 @@ for a specific file. This includes:
 
 - `.local.toml` run configs.
 - Root `results/`.
-- `model/scripts/sft/results/`.
+- `model/scripts/sft/results/**/*.jsonl`.
+- `model/scripts/sft/results/**/*.jsonl.gz`.
 - `model/data/inference_manifests/*.jsonl`.
 - `online_predictions.jsonl`.
 - batch prediction JSONL.
@@ -36,7 +37,7 @@ Then scan staged files for artifact classes that should not be committed by
 default:
 
 ```bash
-git diff --cached --name-only | rg '(^results/|^model/scripts/sft/results/|^model/data/inference_manifests/|\.local\.toml$|online_predictions\.jsonl$|batch_predictions.*\.jsonl$)'
+git diff --cached --name-only | rg '(^results/|^model/data/inference_manifests/|\.local\.toml$|^model/scripts/sft/results/.*\.jsonl(\.gz)?$|online_predictions\.jsonl$|batch_predictions.*\.jsonl$)'
 ```
 
 This docs-level check is intentionally lightweight. `.gitignore` should cover

@@ -222,6 +222,8 @@ model = "gemini-3.1-flash-lite"
         expected_hygiene_terms = (
             ".local.toml",
             "results/",
+            "model/scripts/sft/results/**/*.jsonl",
+            "model/scripts/sft/results/**/*.jsonl.gz",
             "model/data/inference_manifests/*.jsonl",
             "online_predictions.jsonl",
             "git status --short --ignored",
@@ -261,4 +263,4 @@ model = "gemini-3.1-flash-lite"
             check=False,
             text=True,
         )
-        self.assertNotEqual(0, nested_record_check.returncode)
+        self.assertEqual(1, nested_record_check.returncode, nested_record_check.stderr)

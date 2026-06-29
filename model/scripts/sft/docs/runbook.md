@@ -206,7 +206,7 @@ git status --short --ignored
 Then check the staged set for local/generated experiment artifacts:
 
 ```bash
-git diff --cached --name-only | rg '(^results/|^model/scripts/sft/results/|^model/data/inference_manifests/|\.local\.toml$|online_predictions\.jsonl$|batch_predictions.*\.jsonl$)'
+git diff --cached --name-only | rg '(^results/|^model/data/inference_manifests/|\.local\.toml$|^model/scripts/sft/results/.*\.jsonl(\.gz)?$|online_predictions\.jsonl$|batch_predictions.*\.jsonl$)'
 ```
 
 Any match must be unstaged unless the user explicitly asked to commit that
