@@ -18,10 +18,10 @@ const mockSegments: RenderableAudioSegment[] = [
     classification: AudioClassification.SPEECH,
     startTimestamp: '2026-06-29T20:00:25Z',
     endTimestamp: '2026-06-29T20:00:30Z',
-    playbackAudioUri: '',
-    canonicalAudioUri: '',
-    missingPriorContext: true,
-    missingPostContext: true,
+    playbackAudioUri: '/test_middlebury.mp3',
+    canonicalAudioUri: '/test_middlebury.mp3',
+    missingPriorContext: false,
+    missingPostContext: false,
     sourceAudioUris: [],
     startAudioOffset: '0',
     endAudioOffset: '0',
@@ -31,7 +31,7 @@ const mockSegments: RenderableAudioSegment[] = [
         type: AnnotationType.TRANSCRIPT,
         createdAt: '2026-06-29T20:00:25Z',
         data: {
-          text: 'This segment is extremely degraded because it is missing both prior and post context.',
+          text: 'This is the latest segment, which has full prior context and is at the live edge.',
           errors: [],
         },
       },
@@ -43,10 +43,10 @@ const mockSegments: RenderableAudioSegment[] = [
     classification: AudioClassification.SPEECH,
     startTimestamp: '2026-06-29T20:00:20Z',
     endTimestamp: '2026-06-29T20:00:25Z',
-    playbackAudioUri: '',
-    canonicalAudioUri: '',
-    missingPriorContext: false,
-    missingPostContext: true,
+    playbackAudioUri: '/test_middlebury.mp3',
+    canonicalAudioUri: '/test_middlebury.mp3',
+    missingPriorContext: true,
+    missingPostContext: false,
     sourceAudioUris: [],
     startAudioOffset: '0',
     endAudioOffset: '0',
@@ -56,7 +56,7 @@ const mockSegments: RenderableAudioSegment[] = [
         type: AnnotationType.TRANSCRIPT,
         createdAt: '2026-06-29T20:00:20Z',
         data: {
-          text: 'This segment is missing post context. The end might be cut off abruptly.',
+          text: 'This segment is missing prior context because of the outage before it. The beginning may be degraded.',
           errors: [],
         },
       },
@@ -85,10 +85,10 @@ const mockSegments: RenderableAudioSegment[] = [
     classification: AudioClassification.SPEECH,
     startTimestamp: '2026-06-29T20:00:05Z',
     endTimestamp: '2026-06-29T20:00:10Z',
-    playbackAudioUri: '',
-    canonicalAudioUri: '',
-    missingPriorContext: true,
-    missingPostContext: false,
+    playbackAudioUri: '/test_middlebury.mp3',
+    canonicalAudioUri: '/test_middlebury.mp3',
+    missingPriorContext: false,
+    missingPostContext: true,
     sourceAudioUris: [],
     startAudioOffset: '0',
     endAudioOffset: '0',
@@ -98,7 +98,7 @@ const mockSegments: RenderableAudioSegment[] = [
         type: AnnotationType.TRANSCRIPT,
         createdAt: '2026-06-29T20:00:05Z',
         data: {
-          text: 'This segment is missing prior context. The beginning might be cut off.',
+          text: 'This segment is missing post context because of the outage after it. The end may be degraded.',
           errors: [],
         },
       },
@@ -110,8 +110,8 @@ const mockSegments: RenderableAudioSegment[] = [
     classification: AudioClassification.SPEECH,
     startTimestamp: '2026-06-29T20:00:00Z',
     endTimestamp: '2026-06-29T20:00:05Z',
-    playbackAudioUri: '',
-    canonicalAudioUri: '',
+    playbackAudioUri: '/test_middlebury.mp3',
+    canonicalAudioUri: '/test_middlebury.mp3',
     missingPriorContext: false,
     missingPostContext: false,
     sourceAudioUris: [],
@@ -178,7 +178,6 @@ export function DemoOutageView() {
           highlightedSegmentId={highlightedId}
           onClipClick={(id) => setHighlightedId(id)}
           isAudioPlaying={false}
-          onTogglePlayPause={() => {}}
         />
       </Paper>
 

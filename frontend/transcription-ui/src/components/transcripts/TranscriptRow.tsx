@@ -70,7 +70,7 @@ export function TranscriptRow({
     transcriptAnnotation: TranscriptAnnotationData | null
   ): string {
     if (isOutage) {
-      return '[Audio capture interrupted]';
+      return '[Audio unavailable]';
     }
 
     if (isSilence) {
