@@ -133,7 +133,7 @@ Plans:
 - [x] 05-02-PLAN.md — Config, metric, artifact, and hygiene references
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 05-03-PLAN.md — Ignore rules and lightweight drift guards
+- [x] 05-03-PLAN.md — Ignore rules and lightweight drift guards
 **UI hint**: no
 
 ## Coverage
