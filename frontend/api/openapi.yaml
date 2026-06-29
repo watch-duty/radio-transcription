@@ -372,6 +372,7 @@ components:
       enum:
         - TRANSCRIPT
         - EVALUATION
+        - WAVEFORM
       type: string
     TranscriptAnnotationData:
       properties:
@@ -432,6 +433,23 @@ components:
         - errors
       type: object
       additionalProperties: false
+    WaveformAnnotationData:
+      properties:
+        peaks:
+          items:
+            items:
+              type: number
+              format: double
+            type: array
+          type: array
+        durationSeconds:
+          type: number
+          format: double
+      required:
+        - peaks
+        - durationSeconds
+      type: object
+      additionalProperties: false
     Annotation:
       properties:
         type:
@@ -442,6 +460,7 @@ components:
           anyOf:
             - $ref: "#/components/schemas/TranscriptAnnotationData"
             - $ref: "#/components/schemas/EvaluationAnnotationData"
+            - $ref: "#/components/schemas/WaveformAnnotationData"
       required:
         - type
         - createdAt
