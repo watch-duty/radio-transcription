@@ -11,8 +11,8 @@ tags: [gemini-sft, operator-docs]
 
 This is the canonical operator path for one Gemini SFT run: prepare the config,
 build Gemini SFT inputs, submit or resume Vertex tuning, run one configured eval
-target, inspect reports, optionally rank checkpoints, run masked or unmasked
-evals as separate configs, and check generated artifacts before committing.
+target, inspect reports, run masked or unmasked evals as separate configs, and
+check generated artifacts before committing.
 
 The packaged eval contract supports one `[eval.model]` per config/run. Base,
 tuned endpoint, and checkpoint endpoint comparisons use separate configs or an
@@ -158,28 +158,7 @@ Missing provider predictions are scored as empty hypotheses and stay in the
 WER/CER denominator. Exact empty model responses are reported separately from
 missing prediction count.
 
-## 6. Optional Checkpoint Sweep
-
-Checkpoint scoring is a paid or potentially paid online Vertex ranking path,
-not the main packaged eval path. Before running it, confirm the same durable
-run-state prefix used by tuning:
-
-```text
-gs://BUCKET/sft/runs/ROUND_ID/
-```
-
-Then run a limited sweep:
-
-```bash
-python model/scripts/sft/score_gemini_sft_checkpoints_online.py \
-  --config /path/to/run.toml --limit 100
-```
-
-Use this when you need to rank checkpoint endpoints discovered from a tuning
-job. For a promoted checkpoint endpoint, put that endpoint resource into a
-separate `[eval.model]` config and run `gemini-sft eval`.
-
-## 7. Masked And Unmasked Eval Runs
+## 6. Masked And Unmasked Eval Runs
 
 Masked and unmasked evals are separate config files and separate runs. Keep the
 same command sequence and change only the run identity and eval manifest
@@ -195,7 +174,7 @@ Use a second config for the unmasked manifest with its own `round_id`,
 `inference_dataset_slug`, and `eval_manifest_uri`. There is no `masked` field,
 `eval_label`, or eval-sibling abstraction.
 
-## 8. Artifact Hygiene Before Commit
+## 7. Artifact Hygiene Before Commit
 
 Before committing, inspect tracked, untracked, and ignored files:
 

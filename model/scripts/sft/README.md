@@ -33,8 +33,8 @@ gemini-sft eval --config /path/to/run.toml
 `prepare` builds and validates the durable run inputs. `tune` submits or resumes
 a paid Vertex tuning job. `eval` can spend money through Vertex batch inference
 or online endpoint prediction. See the runbook for command order, expected GCS
-prefixes, report inspection, checkpoint scoring, masked/unmasked evals, and
-artifact hygiene.
+prefixes, report inspection, checkpoint endpoint evals, masked/unmasked evals,
+and artifact hygiene.
 
 ## Verification Boundary
 

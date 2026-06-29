@@ -160,16 +160,6 @@ model = "gemini-3.1-flash-lite"
             imports,
         )
 
-    def test_checkpoint_scorer_uses_packaged_online_executor(self) -> None:
-        imports = _python_imports(
-            _SCRIPTS_DIR / "sft" / "score_gemini_sft_checkpoints_online.py"
-        )
-
-        self.assertIn(
-            ("gemini_sft.target_execution", "run_online_target_inference"),
-            imports,
-        )
-
     def test_sft_example_config_uses_singular_eval_model(self) -> None:
         text = (_SCRIPTS_DIR / "sft" / "run_config.example.toml").read_text(
             encoding="utf-8"
