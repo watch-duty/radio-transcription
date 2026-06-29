@@ -373,7 +373,15 @@ def _load_prediction_rows(path: Path) -> dict[str, dict[str, Any]]:
         for line in handle:
             if not line.strip():
                 continue
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                LOGGER.warning(
+                    "Skipping malformed online prediction row in %s: %s",
+                    path,
+                    exc,
+                )
+                continue
             audio_uri = str(row.get("audio_filepath") or "")
             if audio_uri:
                 rows[audio_uri] = row

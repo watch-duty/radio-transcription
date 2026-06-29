@@ -263,6 +263,33 @@ class TestOnlinePredictionResume(unittest.TestCase):
 
         self.assertEqual(list(state.rows_by_audio_uri), ["gs://audio/1.flac"])
 
+    def test_malformed_prediction_row_is_skipped_on_resume(self) -> None:
+        identity = _identity()
+        self.storage.put(
+            self.predictions_uri,
+            "\n".join(
+                [
+                    '{"audio_filepath":"gs://audio/1.flac","pred_text":"one","error":null}',
+                    '{"audio_filepath":"gs://audio/2.flac","pred_text":',
+                ]
+            )
+            + "\n",
+        )
+        self.storage.put(self.metadata_uri, _metadata(identity))
+
+        state = self._load(identity)
+
+        self.assertEqual(
+            state.rows_by_audio_uri,
+            {
+                "gs://audio/1.flac": {
+                    "audio_filepath": "gs://audio/1.flac",
+                    "pred_text": "one",
+                    "error": None,
+                }
+            },
+        )
+
     def test_absent_gcs_predictions_clear_stale_local_mirror(self) -> None:
         local_predictions = self.local_dir / "online_predictions.jsonl"
         local_predictions.parent.mkdir(parents=True)
