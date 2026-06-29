@@ -90,11 +90,9 @@ class SegmentationAudioProcessor:
         prior_audio: bytes | None = None,
     ) -> AudioChunkData:
         """Downloads audio bytes from GCS and runs the speech segment detection natively."""
-        in_mem_file = self.fetcher.download_audio_to_memory(gcs_path)
-
-        in_mem_file.seek(0)
-
-        samples, sr = self._decode_audio_in_memory(in_mem_file)
+        with self.fetcher.download_audio_to_memory(gcs_path) as in_mem_file:
+            in_mem_file.seek(0)
+            samples, sr = self._decode_audio_in_memory(in_mem_file)
 
         # Safeguard: Reject extremely long audio files (e.g. >300s) to prevent memory exhaustion
         # and Windmill timeouts at the engine level.
@@ -174,6 +172,31 @@ class SegmentationAudioProcessor:
             raise TypeError(_error())
         return container
 
+    def _normalize_frame_to_ndarray(self, frame: av.AudioFrame) -> np.ndarray:
+        """Converts an av.AudioFrame to a normalized int16 planar numpy array."""
+        arr = frame.to_ndarray()
+
+        # Convert format to 16-bit signed PCM using NumPy
+        if "flt" in frame.format.name:
+            # float to int16 with clipping to prevent overflow wrapping
+            arr = np.clip(arr * 32768.0, -32768, 32767).astype(np.int16)
+        elif "s32" in frame.format.name:
+            # int32 to int16
+            arr = (arr.astype(np.int32) >> 16).astype(np.int16)
+        elif "s16" in frame.format.name:
+            # already int16
+            arr = arr.astype(np.int16)
+        else:
+            # Fallback cast
+            arr = arr.astype(np.int16)
+
+        # De-interleave packed channels to match planar (channels, samples) layout
+        if not frame.format.is_planar:
+            channels = len(frame.layout.channels)
+            arr = arr.reshape(-1, channels).T
+
+        return arr
+
     def _decode_audio_in_memory(
         self, in_mem_file: io.BytesIO
     ) -> tuple[np.ndarray, int]:
@@ -181,31 +204,22 @@ class SegmentationAudioProcessor:
         try:
             with self._open_container(in_mem_file) as container:
                 stream = container.streams.audio[PRIMARY_AUDIO_STREAM_INDEX]
-                resampler = av.AudioResampler(format="s16p")
                 decoded_frames = []
                 expected_channels = None
                 try:
                     for packet in container.demux(stream):
                         try:
                             for frame in packet.decode():
-                                reframed = resampler.resample(frame)
-                                if reframed is None:
+                                arr = self._normalize_frame_to_ndarray(frame)
+
+                                if expected_channels is None:
+                                    expected_channels = arr.shape[0]
+                                elif arr.shape[0] != expected_channels:
+                                    logger.warning(
+                                        "Channel count changed mid-stream, skipping frame"
+                                    )
                                     continue
-                                frames_to_process = (
-                                    reframed
-                                    if isinstance(reframed, (list, tuple))
-                                    else [reframed]
-                                )
-                                for f in frames_to_process:
-                                    arr = f.to_ndarray()
-                                    if expected_channels is None:
-                                        expected_channels = arr.shape[0]
-                                    elif arr.shape[0] != expected_channels:
-                                        logger.warning(
-                                            "Channel count changed mid-stream, skipping frame"
-                                        )
-                                        continue
-                                    decoded_frames.append(arr)
+                                decoded_frames.append(arr)
                         except Exception as e:
                             packet_err = str(e)
                             logger.warning(
