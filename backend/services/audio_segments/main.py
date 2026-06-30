@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime  # noqa: TC003
-import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated
 
@@ -29,8 +28,6 @@ from .service import AudioSegmentService
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
-
-logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager

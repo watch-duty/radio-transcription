@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -25,8 +24,6 @@ from backend.pipeline.common.tracing_utils import get_current_traceparent
 
 if TYPE_CHECKING:
     from backend.services.audio_segments.models import AnnotationType
-
-logger = logging.getLogger(__name__)
 
 
 class AudioSegmentsClient:

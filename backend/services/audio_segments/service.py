@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from backend.pipeline.storage.audio_segment_store import SortOrder
@@ -18,8 +17,6 @@ if TYPE_CHECKING:
         AudioSegment,
         AudioSegmentCreate,
     )
-
-logger = logging.getLogger(__name__)
 
 
 class AudioSegmentService:
