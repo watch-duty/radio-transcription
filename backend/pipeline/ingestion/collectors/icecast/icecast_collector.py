@@ -469,6 +469,7 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                 if current_segment.exists() and (
                     next_segment.exists() or process_done
                 ):
+                    # SLO: receipt_time stamp — Icecast segment finalized, bytes available
                     # Read the raw modification time of the original segment file
                     # before fixing its header, to eliminate polling loop jitter.
                     mtime_raw = await asyncio.to_thread(
