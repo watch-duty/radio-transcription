@@ -2,6 +2,12 @@ import { useMemo } from 'react';
 
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
+/**
+ * Tolerance threshold to distinguish between minor timestamp rounding errors
+ * and actual missing audio (outages) in continuous feeds.
+ */
+const MIN_GAP_FOR_OUTAGE_MS = 10;
+
 export interface RenderableAudioSegment extends AudioSegment {
   /**
    * Indicates whether this segment represents a consolidated bundle of consecutive
@@ -22,7 +28,8 @@ export interface RenderableAudioSegment extends AudioSegment {
 }
 
 export function consolidateAudioSegments(
-  segments: AudioSegment[]
+  segments: AudioSegment[],
+  isContinuousAudioSource: boolean = true
 ): RenderableAudioSegment[] {
   if (segments.length === 0) return [];
 
@@ -48,57 +55,33 @@ export function consolidateAudioSegments(
     const prevSegment = i > 0 ? chronologicalSegments[i - 1] : null;
 
     // Detect if there is a gap between the previous segment and this segment
-    if (prevSegment) {
+    if (prevSegment && isContinuousAudioSource) {
       const prevEnd = new Date(prevSegment.endTimestamp).getTime();
       const currStart = new Date(segment.startTimestamp).getTime();
       const gapMs = currStart - prevEnd;
 
-      // 1.5-second tolerance for rounding and minor overlaps
-      if (gapMs > 1500) {
+      // Tolerance for rounding errors and minor overlaps
+      if (gapMs > MIN_GAP_FOR_OUTAGE_MS) {
         flushSilenceBundle();
 
-        const isOutage =
-          segment.missingPriorContext || prevSegment.missingPostContext;
-
-        if (isOutage) {
-          // Inject virtual outage segment
-          consolidated.push({
-            id: `outage-${prevSegment.id}-${segment.id}`,
-            feedId: segment.feedId,
-            classification: AudioClassification.UNSPECIFIED,
-            startTimestamp: prevSegment.endTimestamp,
-            endTimestamp: segment.startTimestamp,
-            missingPriorContext: false,
-            missingPostContext: false,
-            sourceAudioUris: [],
-            canonicalAudioUri: '',
-            playbackAudioUri: '',
-            startAudioOffset: '0',
-            endAudioOffset: '0',
-            createdAt: segment.createdAt,
-            annotations: [],
-            isOutageBundle: true,
-          } as RenderableAudioSegment);
-        } else {
-          // Inject virtual silence segment (fallback self-healing)
-          consolidated.push({
-            id: `v-silence-${prevSegment.id}-${segment.id}`,
-            feedId: segment.feedId,
-            classification: AudioClassification.OTHER,
-            startTimestamp: prevSegment.endTimestamp,
-            endTimestamp: segment.startTimestamp,
-            missingPriorContext: false,
-            missingPostContext: false,
-            sourceAudioUris: [],
-            canonicalAudioUri: '',
-            playbackAudioUri: '',
-            startAudioOffset: '0',
-            endAudioOffset: '0',
-            createdAt: segment.createdAt,
-            annotations: [],
-            isSilenceBundle: true,
-          } as RenderableAudioSegment);
-        }
+        // Inject virtual outage segment
+        consolidated.push({
+          id: `outage-${prevSegment.id}-${segment.id}`,
+          feedId: segment.feedId,
+          classification: AudioClassification.UNSPECIFIED,
+          startTimestamp: prevSegment.endTimestamp,
+          endTimestamp: segment.startTimestamp,
+          missingPriorContext: false,
+          missingPostContext: false,
+          sourceAudioUris: [],
+          canonicalAudioUri: '',
+          playbackAudioUri: '',
+          startAudioOffset: '0',
+          endAudioOffset: '0',
+          createdAt: segment.createdAt,
+          annotations: [],
+          isOutageBundle: true,
+        } as RenderableAudioSegment);
       }
     }
 
@@ -148,12 +131,14 @@ function extendOrCreateSilenceBundle(
  * and sort them descending (newest at the top).
  *
  * @param segments List of raw audio segments.
+ * @param isContinuousAudioSource Whether the source feed is continuous.
  * @returns List of renderable audio segments with consolidated silence bundles.
  */
 export function useConsolidatedAudioSegments(
-  segments: AudioSegment[]
+  segments: AudioSegment[],
+  isContinuousAudioSource: boolean = true
 ): RenderableAudioSegment[] {
   return useMemo(() => {
-    return consolidateAudioSegments(segments);
-  }, [segments]);
+    return consolidateAudioSegments(segments, isContinuousAudioSource);
+  }, [segments, isContinuousAudioSource]);
 }
