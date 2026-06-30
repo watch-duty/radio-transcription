@@ -28,8 +28,8 @@ def load_settings(
     env: Mapping[str, str] | None = None,
 ) -> FeedChangeWebhookSettings:
     source = os.environ if env is None else env
-    webhook_url = _required_env_value(source, WEBHOOK_URL_ENV)
-    api_key = _required_env_value(source, WEBHOOK_API_KEY_ENV)
+    webhook_url = _require_env("FEED_CHANGE_WEBHOOK_URL", env=source)
+    api_key = _require_env("FEED_CHANGE_WEBHOOK_API_KEY", env=source)
 
     parsed = urlparse(webhook_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -42,8 +42,9 @@ def load_settings(
     )
 
 
-def _required_env_value(env: Mapping[str, str], name: str) -> str:
-    value = env.get(name)
+def _require_env(name: str, *, env: Mapping[str, str] | None = None) -> str:
+    source = os.environ if env is None else env
+    value = source.get(name)
     if value is None or not value.strip():
         msg = f"{name} is required"
         raise SettingsError(msg)

@@ -32,11 +32,15 @@ class _FakeWebhookClient:
     def __init__(self, error: Exception | None = None) -> None:
         self.error = error
         self.payloads: list[Mapping[str, Any]] = []
+        self.closed = False
 
     def send(self, payload: Mapping[str, Any]) -> None:
         self.payloads.append(payload)
         if self.error is not None:
             raise self.error
+
+    def close(self) -> None:
+        self.closed = True
 
 
 def _settings() -> FeedChangeWebhookSettings:
@@ -101,6 +105,7 @@ def test_valid_message_and_webhook_success_returns_204() -> None:
 
     assert response.status_code == 204
     assert webhook_client.payloads == [payload]
+    assert webhook_client.closed is True
 
 
 def test_webhook_transient_failure_returns_non_2xx() -> None:

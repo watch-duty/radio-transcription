@@ -44,7 +44,12 @@ def feed_audit_event_payload_sql(
 
 
 def feed_audit_event_scalar_sql(alias: str = "write_audit") -> str:
-    """Return nullable notification payload from a one-row audit CTE."""
+    """Return nullable notification payload from a one-row audit CTE.
+
+    Do not use this helper for batch mutation queries. It intentionally relies
+    on a scalar subquery and PostgreSQL will fail the statement if the CTE can
+    return more than one audit row.
+    """
     return f"(SELECT {alias}.feed_audit_event FROM {alias}) AS feed_audit_event"
 
 

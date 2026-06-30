@@ -58,11 +58,17 @@ def create_app(
             settings if settings is not None else load_settings()
         )
         app.state.settings = resolved_settings
-        app.state.webhook_client = webhook_client or WebhookClient(
+        client = webhook_client or WebhookClient(
             webhook_url=resolved_settings.webhook_url,
             api_key=resolved_settings.webhook_api_key,
         )
-        yield
+        app.state.webhook_client = client
+        try:
+            yield
+        finally:
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
 
     relay_app = FastAPI(title="Feed Change Webhook Relay", lifespan=lifespan)
 

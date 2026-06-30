@@ -186,6 +186,10 @@ class WebhookClient:
         msg = "unreachable webhook retry state"
         raise AssertionError(msg)
 
+    def close(self) -> None:
+        """Release pooled HTTP connections owned by this client."""
+        self._http.clear()
+
     def _retry_sleep_seconds(self) -> float:
         return self._jitter(
             _RETRY_JITTER_MIN_SECONDS,
