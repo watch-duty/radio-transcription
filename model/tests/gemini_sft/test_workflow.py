@@ -907,59 +907,6 @@ class TestTuneRun(unittest.TestCase):
         self.assertEqual(kwargs["adapter_size"], "FOUR")
         self.assertEqual(kwargs["lr_multiplier"], 0.5)
 
-    def test_existing_prepared_config_drives_continuous_tune_submission(
-        self,
-    ) -> None:
-        with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
-            cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
-            prepared_config = {
-                **run_cfg.to_record_dict(),
-                "status": "preflight_passed",
-                "base_model": "gemini-3.1-flash-lite",
-                "continuous_tuned_model_name": (
-                    "projects/p/locations/us/models/123@1"
-                ),
-                "continuous_checkpoint_id": "7",
-                "epoch_count": 4,
-                "adapter_size": "SIXTEEN",
-                "learning_rate_multiplier": 0.5,
-                "gemini_train_uri": "gs://prepared/train.jsonl",
-                "gemini_validation_uri": "gs://prepared/validation.jsonl",
-                "canonical_train_rows": 10,
-                "total_train_duration_seconds": 30.0,
-            }
-            storage.put(run_cfg.paths.config_uri, json.dumps(prepared_config))
-            args = argparse.Namespace(config=str(cfg_path), confirm=True)
-
-            with (
-                unittest.mock.patch.object(
-                    tune_module, "RESULTS_DIR", tmp / "results"
-                ),
-                unittest.mock.patch.object(
-                    tune_module, "submit_tuning_job", return_value="jobs/1"
-                ) as submit,
-                unittest.mock.patch.object(
-                    tune_module, "poll_tuning_job", return_value="endpoints/1"
-                ),
-            ):
-                rc = tune_module.tune_run(
-                    args=args,
-                    run_cfg=run_cfg,
-                    storage_client=storage,
-                    results_dir=tmp / "results",
-                )
-
-        self.assertEqual(rc, 0)
-        kwargs = submit.call_args.kwargs
-        self.assertEqual(
-            kwargs["base_model"], "projects/p/locations/us/models/123@1"
-        )
-        self.assertEqual(kwargs["pre_tuned_model_checkpoint_id"], "7")
-        self.assertEqual(kwargs["epoch_count"], 4)
-
     def test_tune_validates_prepared_config_model_not_local_toml(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = Path(tmp_s)

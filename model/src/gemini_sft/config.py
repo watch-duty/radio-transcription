@@ -121,8 +121,6 @@ class RunConfig:
     epoch_count: int
     adapter_size: str
     learning_rate_multiplier: float
-    continuous_tuned_model_name: str | None
-    continuous_checkpoint_id: str | None
     prior_context_count: int
     prior_context_mode: str
     system_prompt: str
@@ -154,12 +152,6 @@ class RunConfig:
             "gemini_train_uri": self.paths.gemini_train_uri,
             "gemini_validation_uri": self.paths.gemini_validation_uri,
         }
-        if self.continuous_tuned_model_name is not None:
-            record["continuous_tuned_model_name"] = (
-                self.continuous_tuned_model_name
-            )
-        if self.continuous_checkpoint_id is not None:
-            record["continuous_checkpoint_id"] = self.continuous_checkpoint_id
         if self.train_manifest_uri is not None:
             record["train_manifest_uri"] = self.train_manifest_uri
         if self.validation_manifest_uri is not None:
@@ -180,7 +172,7 @@ def load_eval_run_config(path: str | Path) -> RunConfig:
     return _load_run_config(path, require_training_manifests=False)
 
 
-def _load_run_config(  # noqa: PLR0915
+def _load_run_config(
     path: str | Path,
     *,
     require_training_manifests: bool,
@@ -235,26 +227,6 @@ def _load_run_config(  # noqa: PLR0915
     learning_rate_multiplier = _required_lr_multiplier(
         sft, "sft.learning_rate_multiplier"
     )
-    continuous = data.get("continuous_tuning", {})
-    if continuous is None:
-        continuous = {}
-    if not isinstance(continuous, dict):
-        msg = "continuous_tuning must be a TOML table"
-        raise RunConfigError(msg)
-    continuous_tuned_model_name = _optional_model_resource_name(
-        continuous,
-        "continuous_tuning.tuned_model_name",
-    )
-    continuous_checkpoint_id = _optional_stripped_str(
-        continuous,
-        "continuous_tuning.checkpoint_id",
-    )
-    if continuous_checkpoint_id and not continuous_tuned_model_name:
-        msg = (
-            "continuous_tuning.checkpoint_id requires "
-            "continuous_tuning.tuned_model_name"
-        )
-        raise RunConfigError(msg)
     context = data.get("context", {})
     if context is None:
         context = {}
@@ -308,8 +280,6 @@ def _load_run_config(  # noqa: PLR0915
         epoch_count=epoch_count,
         adapter_size=adapter_size,
         learning_rate_multiplier=learning_rate_multiplier,
-        continuous_tuned_model_name=continuous_tuned_model_name,
-        continuous_checkpoint_id=continuous_checkpoint_id,
         prior_context_count=prior_context_count,
         prior_context_mode=prior_context_mode,
         system_prompt=system_prompt,
@@ -646,22 +616,6 @@ def _optional_stripped_str(data: dict[str, Any], key: str) -> str | None:
         raise RunConfigError(msg)
     text = value.strip()
     return text or None
-
-
-def _optional_model_resource_name(
-    data: dict[str, Any],
-    key: str,
-) -> str | None:
-    value = _optional_stripped_str(data, key)
-    if value is None:
-        return None
-    if not value.startswith("projects/"):
-        msg = (
-            f"{key} must be a Vertex model resource name starting with "
-            "'projects/'"
-        )
-        raise RunConfigError(msg)
-    return value
 
 
 def _optional_gcs_uri(data: dict[str, Any], key: str) -> str | None:

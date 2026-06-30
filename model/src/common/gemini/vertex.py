@@ -263,7 +263,6 @@ def submit_tuning_job(
     epoch_count: int = 5,
     adapter_size: str = "ONE",
     lr_multiplier: float = 1.0,
-    pre_tuned_model_checkpoint_id: str | None = None,
 ) -> str:
     """Submit a Vertex AI Gemini SFT tuning job and return job.name immediately.
 
@@ -276,14 +275,11 @@ def submit_tuning_job(
         display_name: Display name for the tuned model resource (encode round-id here).
         project: GCP project ID (required — no silent default).
         location: GCP region (use 'us-central1' for evaluation feature availability).
-        base_model: Foundation model name, or tuned model resource name for
-            continuous tuning. Defaults to 'gemini-3.1-flash-lite'.
+        base_model: Foundation model name. Defaults to 'gemini-3.1-flash-lite'.
         val_uri: Optional GCS URI for validation JSONL. Wires eval_total_loss.
         epoch_count: Number of training epochs (1-100). SDK default is 5.
         adapter_size: Adapter size key — one of ONE, TWO, FOUR, EIGHT, SIXTEEN.
         lr_multiplier: Learning-rate multiplier (0.001-10.0). Defaults to 1.0.
-        pre_tuned_model_checkpoint_id: Optional source checkpoint id when
-            ``base_model`` is a tuned model resource name.
 
     Returns:
         job.name — the stable Vertex AI resource name for the tuning job.
@@ -308,10 +304,6 @@ def submit_tuning_job(
     if val_uri:
         cfg_kwargs["validation_dataset"] = types.TuningValidationDataset(
             gcs_uri=val_uri
-        )
-    if pre_tuned_model_checkpoint_id:
-        cfg_kwargs["pre_tuned_model_checkpoint_id"] = (
-            pre_tuned_model_checkpoint_id
         )
 
     job = client.tunings.tune(

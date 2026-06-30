@@ -101,8 +101,6 @@ model = "{model}"
         record = cfg.to_record_dict()
         self.assertEqual(record["prior_context_count"], 0)
         self.assertEqual(record["prior_context_mode"], "text_turns")
-        self.assertNotIn("continuous_tuned_model_name", record)
-        self.assertNotIn("continuous_checkpoint_id", record)
         self.assertEqual(record["inference_dataset_slug"], "echo/eval")
         self.assertEqual(record["gemini_train_uri"], cfg.paths.gemini_train_uri)
         self.assertEqual(
@@ -119,42 +117,6 @@ model = "{model}"
             "combined_val_uri",
         }
         self.assertFalse(removed_fields & set(record))
-
-    def test_continuous_tuning_config_serializes_source_checkpoint(
-        self,
-    ) -> None:
-        body = self._valid_toml(
-            context="""
-[continuous_tuning]
-tuned_model_name = "projects/p/locations/us/models/123@1"
-checkpoint_id = "7"
-""",
-        )
-
-        cfg = load_run_config(self._write_config(body))
-
-        self.assertEqual(
-            cfg.continuous_tuned_model_name,
-            "projects/p/locations/us/models/123@1",
-        )
-        self.assertEqual(cfg.continuous_checkpoint_id, "7")
-        record = cfg.to_record_dict()
-        self.assertEqual(
-            record["continuous_tuned_model_name"],
-            "projects/p/locations/us/models/123@1",
-        )
-        self.assertEqual(record["continuous_checkpoint_id"], "7")
-
-    def test_continuous_tuning_checkpoint_requires_source_model(self) -> None:
-        body = self._valid_toml(
-            context="""
-[continuous_tuning]
-checkpoint_id = "7"
-""",
-        )
-
-        with self.assertRaisesRegex(RunConfigError, "tuned_model_name"):
-            load_run_config(self._write_config(body))
 
     def test_missing_validation_manifest_uri_raises(self) -> None:
         body = self._valid_toml(validation_manifest_uri='""')
