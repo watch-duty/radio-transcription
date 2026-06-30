@@ -107,7 +107,7 @@ export function useAudioSegments({
         /*endTime=*/ order === 'desc' ? originalTimestampMs : undefined,
         order,
         alertFilter === 'alerts' ? true : undefined,
-        searchQuery
+        searchQuery || undefined
       );
 
       if (order === 'asc' && response.segments) {
@@ -203,7 +203,7 @@ export function useAudioSegments({
             /*endTime=*/ undefined,
             /*order=*/ 'asc',
             alertFilter === 'alerts' ? true : undefined,
-            searchQuery
+            searchQuery || undefined
           );
 
           if (response.segments && response.segments.length > 0) {
@@ -228,7 +228,7 @@ export function useAudioSegments({
           /*endTime=*/ undefined,
           /*order=*/ 'desc',
           alertFilter === 'alerts' ? true : undefined,
-          searchQuery
+          searchQuery || undefined
         );
         return response.segments || [];
       } catch (error) {

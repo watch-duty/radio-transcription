@@ -561,6 +561,7 @@ describe('TranscriptView', () => {
         undefined,
         undefined,
         'desc',
+        undefined,
         undefined
       );
     });
@@ -612,6 +613,7 @@ describe('TranscriptView', () => {
         undefined,
         undefined,
         'asc',
+        undefined,
         undefined
       );
     });
@@ -701,7 +703,8 @@ describe('TranscriptView', () => {
         undefined,
         undefined,
         'asc',
-        true
+        true,
+        undefined
       );
     });
   });
@@ -1328,6 +1331,7 @@ describe('TranscriptView', () => {
         undefined,
         undefined,
         'desc',
+        undefined,
         undefined
       );
     });
@@ -1359,7 +1363,8 @@ describe('TranscriptView', () => {
         undefined,
         undefined,
         'desc',
-        true
+        true,
+        undefined
       );
     });
   });
@@ -1425,7 +1430,8 @@ describe('TranscriptView', () => {
         undefined,
         undefined,
         'desc',
-        true
+        true,
+        undefined
       );
     });
   });
@@ -1474,7 +1480,61 @@ describe('TranscriptView', () => {
         undefined,
         undefined,
         'desc',
+        undefined,
         undefined
+      );
+    });
+  });
+
+  it('applies the search query filter when entered in the search bar', async () => {
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments: [],
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(listAudioSegments).toHaveBeenCalledWith(
+        'feed123',
+        expect.any(String),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'desc',
+        undefined,
+        undefined
+      );
+    });
+
+    // Open the filter menu popover
+    const filterButton = screen.getByRole('button', { name: 'filter' });
+    fireEvent.click(filterButton);
+
+    // Enter a search query in the search input
+    const searchInput = screen.getByPlaceholderText(/Search transcripts.../i);
+    fireEvent.change(searchInput, { target: { value: 'dispatch' } });
+
+    // Click the "Apply" button to apply changes
+    const applyButton = screen.getByRole('button', { name: 'Apply' });
+    fireEvent.click(applyButton);
+
+    // React query should refetch transcripts using the text query filter
+    await waitFor(() => {
+      expect(listAudioSegments).toHaveBeenLastCalledWith(
+        'feed123',
+        expect.any(String),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'desc',
+        undefined,
+        'dispatch'
       );
     });
   });
