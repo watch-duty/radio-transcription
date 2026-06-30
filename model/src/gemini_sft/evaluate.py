@@ -32,6 +32,7 @@ from gemini_sft.artifacts import (
     write_and_upload_config,
 )
 from gemini_sft.config import (
+    EvalExecutionConfig,
     RunConfig,
     RunConfigError,
     load_eval_run_config,
@@ -126,7 +127,11 @@ def evaluate_run(  # noqa: PLR0915
         config, "prior_context_mode"
     )
     target = require_config_eval_model(config)
-    eval_execution = require_config_eval_execution(config)
+    durable_eval_execution = require_config_eval_execution(config)
+    eval_execution = _effective_eval_execution(
+        durable_eval_execution,
+        run_cfg.eval_execution,
+    )
     logger.info(
         "Validated eval model target %s from config.json.",
         target.label,
@@ -299,9 +304,11 @@ def _validate_local_eval_config_matches_durable(
     if local_target != durable_target:
         mismatches.append("eval_model")
 
-    local_execution = run_cfg.eval_execution.to_record_dict()
-    durable_execution = require_config_eval_execution(config).to_record_dict()
-    if local_execution != durable_execution:
+    local_execution = run_cfg.eval_execution
+    durable_execution = require_config_eval_execution(config)
+    if _metric_affecting_eval_execution(local_execution) != (
+        _metric_affecting_eval_execution(durable_execution)
+    ):
         mismatches.append("eval_execution")
 
     if not mismatches:
@@ -314,6 +321,41 @@ def _validate_local_eval_config_matches_durable(
         f"round_id for this eval target. Mismatched field(s): {fields}"
     )
     raise ValueError(msg)
+
+
+def _metric_affecting_eval_execution(
+    execution: EvalExecutionConfig,
+) -> dict[str, int | str]:
+    """Return eval execution fields that can change reported metrics."""
+    record: dict[str, int | str] = {}
+    if execution.backend is not None:
+        record["backend"] = execution.backend
+    if execution.limit is not None:
+        record["limit"] = execution.limit
+    return record
+
+
+def _effective_eval_execution(
+    durable: EvalExecutionConfig,
+    local: EvalExecutionConfig,
+) -> EvalExecutionConfig:
+    """Use durable eval identity with local operational runtime controls."""
+    if (
+        local.concurrency != durable.concurrency
+        or local.max_retries != durable.max_retries
+    ):
+        logger.info(
+            "Using local eval execution overrides: concurrency=%s, "
+            "max_retries=%s.",
+            local.concurrency,
+            local.max_retries,
+        )
+    return EvalExecutionConfig(
+        backend=durable.backend,
+        limit=durable.limit,
+        concurrency=local.concurrency,
+        max_retries=local.max_retries,
+    )
 
 
 def batch_infer(

@@ -2182,6 +2182,78 @@ class TestEvaluateRun(unittest.TestCase):
         download_manifest.assert_not_called()
         batch.assert_not_called()
 
+    def test_eval_allows_local_operational_execution_overrides(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage)
+            cfg_path = tmp / "online_eval.toml"
+            cfg_path.write_text(
+                _config_text(
+                    eval_label="checkpoint_6",
+                    eval_model=(
+                        "projects/p/locations/us-central1/endpoints/123"
+                    ),
+                )
+                + """
+[eval.execution]
+concurrency = 4
+max_retries = 1
+""",
+                encoding="utf-8",
+            )
+            run_cfg = load_run_config(cfg_path)
+            durable_config = run_cfg.to_record_dict()
+            durable_config["eval_execution"]["concurrency"] = 16
+            durable_config["eval_execution"]["max_retries"] = 3
+            storage.put(run_cfg.paths.config_uri, json.dumps(durable_config))
+            online_preds = _OnlinePredictionMap(
+                {"gs://audio/eval.flac": "eval transcript"},
+                online_predictions_uri=(
+                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/"
+                    "online_predictions.jsonl"
+                ),
+                metadata_uri=(
+                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/"
+                    "online_predictions.meta.json"
+                ),
+            )
+            args = argparse.Namespace(config=str(cfg_path))
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module.storage, "Client", return_value=storage
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "download_jsonl_manifest",
+                    return_value=[
+                        _row("gs://audio/eval.flac", "eval transcript")
+                    ],
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "run_online_target_inference",
+                    unittest.mock.AsyncMock(return_value=online_preds),
+                ) as run_online,
+                unittest.mock.patch.object(
+                    evaluate_module, "batch_infer"
+                ) as batch,
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "results"
+                ),
+                _patched_eval_scoring(),
+            ):
+                rc = evaluate_module.evaluate(args)
+
+        self.assertEqual(rc, 0)
+        run_online.assert_awaited_once()
+        self.assertEqual(run_online.call_args.kwargs["concurrency"], 4)
+        self.assertEqual(run_online.call_args.kwargs["max_retries"], 1)
+        batch.assert_not_called()
+
     def test_eval_rejects_invalid_durable_eval_model_before_submit(
         self,
     ) -> None:
