@@ -234,8 +234,9 @@ export function getNextContinuousSegment(
     isWithinSegment(t, endedSegmentId)
   );
 
-  if (currentIndex > 0) {
-    const nextAudioSegment = audioSegments[currentIndex - 1];
+  let nextIndex = currentIndex - 1;
+  while (nextIndex >= 0) {
+    const nextAudioSegment = audioSegments[nextIndex];
     if (nextAudioSegment.playbackAudioUri) {
       // If the next audio segment is a silence bundle, play its first segment
       if (
@@ -248,12 +249,15 @@ export function getNextContinuousSegment(
         if (firstSegment && firstSegment.playbackAudioUri) {
           return { id: firstSegment.id, uri: firstSegment.playbackAudioUri };
         }
+      } else {
+        return {
+          id: nextAudioSegment.id,
+          uri: nextAudioSegment.playbackAudioUri,
+        };
       }
-      return {
-        id: nextAudioSegment.id,
-        uri: nextAudioSegment.playbackAudioUri,
-      };
     }
+    // Skip outage bundles or segments without audio and check the next one
+    nextIndex--;
   }
 
   return null;
