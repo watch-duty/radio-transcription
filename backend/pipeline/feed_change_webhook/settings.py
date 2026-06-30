@@ -11,7 +11,6 @@ if TYPE_CHECKING:
     from collections.abc import Mapping
 
 WEBHOOK_URL_ENV = "FEED_CHANGE_WEBHOOK_URL"
-WEBHOOK_API_KEY_ENV = "FEED_CHANGE_WEBHOOK_API_KEY"
 
 
 class SettingsError(ValueError):
