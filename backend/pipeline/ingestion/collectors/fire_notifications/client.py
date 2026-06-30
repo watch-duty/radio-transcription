@@ -103,7 +103,7 @@ class FireNotificationsRestClient(FireNotificationsClient):
         if not tags:
             return None
         for tag in tags:
-            if tag.get("key") == "timezone":
+            if tag.get("key") == "system/timezone":
                 return tag.get("value")
         return None
 

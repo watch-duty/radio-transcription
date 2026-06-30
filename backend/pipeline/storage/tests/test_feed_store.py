@@ -1523,7 +1523,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
                 "failure_count": 0,
                 "status_reason": None,
                 "source_feed_id": "123",
-                "tags": '[{"key": "timezone", "value": "America/Los_Angeles"}]',
+                "tags": '[{"key": "system/timezone", "value": "America/Los_Angeles"}]',
             },
             {
                 "id": _FEED_ID_B,
@@ -1546,7 +1546,7 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result), 2)
         self.assertEqual(
             result[0]["tags"],
-            [{"key": "timezone", "value": "America/Los_Angeles"}],
+            [{"key": "system/timezone", "value": "America/Los_Angeles"}],
         )
         self.assertEqual(
             result[1]["tags"], [{"key": "county", "value": "Ventura"}]
