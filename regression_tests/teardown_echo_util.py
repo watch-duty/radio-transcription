@@ -1,4 +1,4 @@
-"""Independently executable teardown script for the Echo pipeline integration test."""
+"""Teardown script for the Echo pipeline integration test."""
 
 import sys
 
@@ -12,7 +12,7 @@ from regression_tests.setup_echo_util import (
 
 
 def _delete_echo_audio(bucket: storage.Bucket, channel_name: str) -> None:
-    """Delete all audio blobs under the channel prefix recursively using the GCS client."""
+    """Delete all audio blobs under the channel prefix."""
     sys.stdout.write(
         f"Cleaning up blobs in gs://{bucket.name}/{channel_name}/...\n"
     )
@@ -38,9 +38,10 @@ def test_teardown_backend_pipeline(
     fe_proxy_api_url: str,
     gcp_echo_bucket: str,
 ) -> None:
-    """Stateless resource teardown looking up and cleaning all resources by name/prefix."""
+    """Clean Echo regression resources by name and prefix."""
     sys.stdout.write(
-        f"Starting teardown for Echo feed '{PipelineConstants.ECHO_CHANNEL_NAME}'...\n"
+        "Starting teardown for Echo feed "
+        f"'{PipelineConstants.ECHO_CHANNEL_NAME}'...\n"
     )
 
     # Initialize GCS storage client and bucket

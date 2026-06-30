@@ -25,7 +25,10 @@ class InvalidPubSubMessage(ValueError):
 
 
 def extract_feed_change_payload(envelope: Mapping[str, Any]) -> dict[str, Any]:
-    """Extract and validate a Feed Change Notification from a Pub/Sub envelope."""
+    """Extract and validate a Feed Change Notification.
+
+    The input is the Pub/Sub push envelope emitted from Cloud Logging.
+    """
     message = _require_mapping(envelope.get("message"), "message")
     data = message.get("data")
     if not isinstance(data, str) or not data:

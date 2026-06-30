@@ -334,8 +334,10 @@ run = "uv run pytest integration_tests/e2e/"
 [tasks."test:regression"]
 description = "Run E2E regression tests on the live GCP environment (Requires GCP credentials)"
 run = """
-uv run pytest regression_tests/ -s -n 0
-mise test:regression:teardown
+status=0
+uv run pytest regression_tests/ -s -n 0 || status=$?
+mise test:regression:teardown || status=$?
+exit "$status"
 """
 
 [tasks."test:regression:teardown"]

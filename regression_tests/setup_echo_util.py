@@ -56,7 +56,7 @@ def _delete_feed(fe_proxy_api_url: str, id_token: str, feed_id: str) -> None:
 def _delete_existing_feed_by_channel_name(
     fe_proxy_api_url: str, id_token: str, channel_name: str
 ) -> None:
-    """Find and delete any existing feed matching the given channel_name. Noop if feed does not exist."""
+    """Find and delete existing feeds matching the given channel name."""
     headers = {"Authorization": f"Bearer {id_token}"}
     try:
         sys.stdout.write(
@@ -80,7 +80,9 @@ def _delete_existing_feed_by_channel_name(
             feeds = data if isinstance(data, list) else data.get("feeds", [])
             for feed in feeds:
                 if feed.get("sourceFeedId") == channel_name:
-                    matching_feed_ids.append(feed.get("id"))
+                    feed_id = feed.get("id")
+                    if feed_id:
+                        matching_feed_ids.append(str(feed_id))
 
             next_token = (
                 None
@@ -92,8 +94,10 @@ def _delete_existing_feed_by_channel_name(
 
         for feed_id in matching_feed_ids:
             sys.stdout.write(
-                f"WARNING: Feed '{channel_name}' already exists with ID: {feed_id}.\n"
-                "There may be another ongoing test or the previous test did not properly teardown.\n"
+                f"WARNING: Feed '{channel_name}' already exists "
+                f"with ID: {feed_id}.\n"
+                "There may be another ongoing test or the previous test "
+                "did not properly teardown.\n"
                 "Deleting feed to ensure a clean state.\n"
             )
             _delete_feed(fe_proxy_api_url, id_token, feed_id)
@@ -126,12 +130,11 @@ def _delete_rule(fe_proxy_api_url: str, id_token: str, rule_id: str) -> None:
 def _delete_existing_rule_by_name(
     fe_proxy_api_url: str, id_token: str, rule_name: str
 ) -> None:
-    """Find and delete any existing rule matching the given rule_name. Noop if rule does not exist"""
+    """Find and delete existing rules matching the given rule name."""
     headers = {"Authorization": f"Bearer {id_token}"}
     try:
-        # Note that this is a very inefficient way of looking for rule existence.
-        # However, the test environment shouldn't have that many rules, so a naive approach should suffice.
-        # If these requests become too slow, then this approach should be revisited.
+        # This is intentionally simple: the rules API is not paginated today,
+        # and regression environments should not accumulate many rules.
         res = requests.get(
             f"{fe_proxy_api_url}/api/v1/rules", headers=headers, timeout=15
         )
@@ -140,9 +143,13 @@ def _delete_existing_rule_by_name(
             for rule in rule_list:
                 if rule.get("ruleName") == rule_name:
                     rule_id = rule.get("ruleId")
+                    if not rule_id:
+                        continue
                     sys.stdout.write(
-                        f"WARNING: Rule '{rule_name}' already exists with ID: {rule_id}.\n"
-                        "There may be another ongoing test or the previous test did not properly teardown.\n"
+                        f"WARNING: Rule '{rule_name}' already exists "
+                        f"with ID: {rule_id}.\n"
+                        "There may be another ongoing test or previous "
+                        "teardown did not finish.\n"
                         "Deleting rule to ensure a clean state.\n"
                     )
                     _delete_rule(fe_proxy_api_url, id_token, rule_id)
@@ -237,7 +244,8 @@ def echo_setup(
     else:
         sys.stdout.write(
             f"WARNING: GCS bucket {gcp_echo_bucket} exists.\n"
-            "There may be another ongoing test or the previous test did not properly teardown.\n"
+            "There may be another ongoing test or the previous test "
+            "did not properly teardown.\n"
             f"Proceeding test with existing GCS bucket {gcp_echo_bucket}...\n"
         )
 

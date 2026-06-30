@@ -53,10 +53,11 @@ class WebhookDeliveryError(RuntimeError):
         self.response_body = response_body
         self.retryable = retryable
         self.attempts = attempts
-        super().__init__(
-            "Feed change webhook delivery failed "
-            f"(status_code={status_code}, retryable={retryable}, attempts={attempts})"
+        detail = (
+            f"status_code={status_code}, retryable={retryable}, "
+            f"attempts={attempts}"
         )
+        super().__init__(f"Feed change webhook delivery failed ({detail})")
 
 
 class WebhookClient:

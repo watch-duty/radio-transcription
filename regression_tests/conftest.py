@@ -9,7 +9,7 @@ os.environ.pop("STORAGE_EMULATOR_HOST", None)
 
 @pytest.fixture(scope="session")
 def google_client_id() -> str:
-    """Return the Google OAuth Client ID. Errors if not set in the environment."""
+    """Return the Google OAuth Client ID."""
     client_id = os.environ.get("REGRESSION_TEST_CLIENT_ID")
     if not client_id:
         pytest.fail(
@@ -26,8 +26,9 @@ def id_token(google_client_id: str) -> str:
         return google_id_token.fetch_id_token(auth_req, google_client_id)
     except Exception as e:
         pytest.fail(
-            "Failed to generate Google ID token using Application Default Credentials. "
-            "Please ensure you are authenticated (via gcloud auth application-default login) "
+            "Failed to generate Google ID token using Application Default "
+            "Credentials. Please ensure you are authenticated "
+            "(via gcloud auth application-default login) "
             f"or impersonating the service account. Error: {e}"
         )
 
@@ -65,7 +66,7 @@ def gcp_region() -> str:
 
 @pytest.fixture(scope="session")
 def gcp_echo_bucket() -> str:
-    """Return the GCS bucket name for Echo audio dispatches. Errors if not set."""
+    """Return the GCS bucket name for Echo audio dispatches."""
     bucket = os.environ.get("GCP_ECHO_BUCKET")
     if not bucket:
         pytest.fail("GCP_ECHO_BUCKET environment variable is not set.")
