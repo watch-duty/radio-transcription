@@ -27,6 +27,19 @@ import { updateFeed } from '../../service/updateFeed';
 import { renderWithQueryClient } from '../../test/testUtils';
 import FeedConfigurationView from './FeedConfigurationView';
 
+// Need to mock out the list because otherwise the list is too long and these tests will
+// time out.
+vi.hoisted(() => {
+  if (typeof Intl !== 'undefined') {
+    Intl.supportedValuesOf = (key: string) => {
+      if (key === 'timeZone') {
+        return ['America/Los_Angeles', 'America/New_York', 'UTC'];
+      }
+      return [];
+    };
+  }
+});
+
 // Mock API services
 vi.mock('../../service/listFeeds', () => ({
   listFeeds: vi.fn(),
