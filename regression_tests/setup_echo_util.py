@@ -62,24 +62,41 @@ def _delete_existing_feed_by_channel_name(
         sys.stdout.write(
             f"Checking for existing feed for channel: {channel_name}\n"
         )
-        # Note that this is a very inefficient way of looking for feed existence.
-        # However, the test environment shouldn't have that many ongoing feeds, so a naive approach should suffice.
-        # If these requests become too slow, then this approach should be revisited.
-        res = requests.get(
-            f"{fe_proxy_api_url}/api/v1/feeds", headers=headers, timeout=15
-        )
-        if res.status_code == 200:
+        matching_feed_ids = []
+        next_token = None
+        while True:
+            params = {"limit": 100}
+            if next_token:
+                params["nextToken"] = next_token
+
+            res = requests.get(
+                f"{fe_proxy_api_url}/api/v1/feeds",
+                headers=headers,
+                params=params,
+                timeout=15,
+            )
+            res.raise_for_status()
             data = res.json()
-            feeds = data.get("feeds", [])
+            feeds = data if isinstance(data, list) else data.get("feeds", [])
             for feed in feeds:
                 if feed.get("sourceFeedId") == channel_name:
-                    feed_id = feed.get("id")
-                    sys.stdout.write(
-                        f"WARNING: Feed '{channel_name}' already exists with ID: {feed_id}.\n"
-                        "There may be another ongoing test or the previous test did not properly teardown.\n"
-                        "Deleting feed to ensure a clean state.\n"
-                    )
-                    _delete_feed(fe_proxy_api_url, id_token, feed_id)
+                    matching_feed_ids.append(feed.get("id"))
+
+            next_token = (
+                None
+                if isinstance(data, list)
+                else data.get("nextToken") or data.get("next_token")
+            )
+            if not next_token:
+                break
+
+        for feed_id in matching_feed_ids:
+            sys.stdout.write(
+                f"WARNING: Feed '{channel_name}' already exists with ID: {feed_id}.\n"
+                "There may be another ongoing test or the previous test did not properly teardown.\n"
+                "Deleting feed to ensure a clean state.\n"
+            )
+            _delete_feed(fe_proxy_api_url, id_token, feed_id)
     except Exception as e:
         sys.stdout.write(
             f"WARNING: Failed to check/delete existing feed: {e}\n"

@@ -28,45 +28,42 @@ def _poll_notification_log(
     project: str,
     start_time: float,
 ) -> None:
-    """Recursively poll Cloud Logging to verify if a notification was sent or not."""
-    if time.time() - start_time >= NOTIFICATION_POLL_TIMEOUT_SEC:
-        msg = (
-            f"Timed out after {NOTIFICATION_POLL_TIMEOUT_SEC} seconds "
-            f"waiting for notification for segment {segment_id}"
+    """Poll Cloud Logging to verify if a notification was sent or not."""
+    while time.time() - start_time < NOTIFICATION_POLL_TIMEOUT_SEC:
+        query = (
+            'resource.type="cloud_run_revision" '
+            'AND resource.labels.service_name="notification-pipeline-dev" '
+            'AND textPayload:"Sending payload:" '
+            f'AND textPayload:"{segment_id}"'
         )
-        raise AssertionError(msg)
+        cmd = [
+            "gcloud",
+            "logging",
+            "read",
+            query,
+            f"--project={project}",
+            "--format=json",
+            "--limit=1",
+        ]
 
-    query = (
-        'resource.type="cloud_run_revision" '
-        'AND resource.labels.service_name="notification-pipeline-dev" '
-        'AND textPayload:"Sending payload:" '
-        f'AND textPayload:"{segment_id}"'
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, check=False
+        )
+        if result.returncode == 0:
+            try:
+                logs = json.loads(result.stdout.strip())
+                if logs:
+                    return
+            except json.JSONDecodeError:
+                pass
+
+        time.sleep(5)
+
+    msg = (
+        f"Timed out after {NOTIFICATION_POLL_TIMEOUT_SEC} seconds "
+        f"waiting for notification for segment {segment_id}"
     )
-    cmd = [
-        "gcloud",
-        "logging",
-        "read",
-        query,
-        f"--project={project}",
-        "--format=json",
-        "--limit=1",
-    ]
-
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if result.returncode == 0:
-        try:
-            logs = json.loads(result.stdout.strip())
-            if logs:
-                return None
-        except json.JSONDecodeError:
-            pass
-
-    time.sleep(5)
-    return _poll_notification_log(
-        segment_id=segment_id,
-        project=project,
-        start_time=start_time,
-    )
+    raise AssertionError(msg)
 
 
 def _upload_audio_file(
@@ -102,37 +99,31 @@ def _poll_audio_segment(
     filename: str,
     start_time: float,
 ) -> dict:
-    """Recursively poll the audio segments API until the segment is found and processed. Times out after 5min."""
-    if time.time() - start_time >= AUDIO_SEGMENT_POLL_TIMEOUT_SEC:
-        msg = (
-            f"Timed out after {AUDIO_SEGMENT_POLL_TIMEOUT_SEC} seconds "
-            f"waiting for segment '{filename}' to be processed."
+    """Poll the audio segments API until the segment is found and processed."""
+    while time.time() - start_time < AUDIO_SEGMENT_POLL_TIMEOUT_SEC:
+        res = requests.get(
+            f"{fe_proxy_api_url}/api/v1/audioSegments/{feed_id}",
+            headers=headers,
+            timeout=15,
         )
-        raise AssertionError(msg)
+        if res.status_code == 200:
+            data = res.json()
+            segments = data.get("segments", [])
+            for s in segments:
+                if s["externalAudioSegmentId"] == f"{bucket_name}/{filename}":
+                    ann_types = [
+                        ann["type"] for ann in s.get("annotations", [])
+                    ]
+                    if "TRANSCRIPT" in ann_types and "EVALUATION" in ann_types:
+                        return s
 
-    res = requests.get(
-        f"{fe_proxy_api_url}/api/v1/audioSegments/{feed_id}",
-        headers=headers,
-        timeout=15,
-    )
-    if res.status_code == 200:
-        data = res.json()
-        segments = data.get("segments", [])
-        for s in segments:
-            if s["externalAudioSegmentId"] == f"{bucket_name}/{filename}":
-                ann_types = [ann["type"] for ann in s.get("annotations", [])]
-                if "TRANSCRIPT" in ann_types and "EVALUATION" in ann_types:
-                    return s
+        time.sleep(5)
 
-    time.sleep(5)
-    return _poll_audio_segment(
-        fe_proxy_api_url=fe_proxy_api_url,
-        headers=headers,
-        feed_id=feed_id,
-        bucket_name=bucket_name,
-        filename=filename,
-        start_time=start_time,
+    msg = (
+        f"Timed out after {AUDIO_SEGMENT_POLL_TIMEOUT_SEC} seconds "
+        f"waiting for segment '{filename}' to be processed."
     )
+    raise AssertionError(msg)
 
 
 def test_echo_pipeline_e2e_fire(
