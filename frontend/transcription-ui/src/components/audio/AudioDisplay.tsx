@@ -1,17 +1,17 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-
-import type WaveSurfer from 'wavesurfer.js';
+import React, { useEffect, useMemo, useState } from 'react';
 
 import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { type Theme, useTheme } from '@mui/material/styles';
-import WavesurferPlayer from '@wavesurfer/react';
 
 import type { PlaybackController } from '../../audio/WebAudioPlayer';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
-import { findEvaluationAnnotationData } from '../../utils/annotationUtils';
-import { getAudioUrl } from '../../utils/audioUtils';
+import {
+  findEvaluationAnnotationData,
+  findWaveformAnnotationData,
+  segmentHasSpeech,
+} from '../../utils/annotationUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
 
@@ -26,7 +26,76 @@ interface AudioDisplayProps {
   seekTrigger?: number;
 }
 
-const PLAYING_CURSOR_WIDTH_PX = 1;
+const PLAYING_CURSOR_WIDTH_PX = 2;
+
+const WAVEFORM_MIN_AMPLITUDE = 0.0083; // silent buckets show a ~0.5px hairline at the 60px track height
+
+// preserveAspectRatio="none" stretches the viewBox (one unit per peak) to fill
+// the clip box at any width.
+const Waveform = React.memo(function Waveform({
+  peaks,
+  color,
+}: {
+  peaks: number[][];
+  color: string;
+}) {
+  const channel = peaks[0] ?? [];
+  const bars = channel
+    .map((value, i) => {
+      const amp = Math.max(
+        WAVEFORM_MIN_AMPLITUDE,
+        Math.min(1, Math.abs(value))
+      );
+      const top = (1 - amp) / 2;
+      return `M${i} ${top}h1v${amp}h-1Z`;
+    })
+    .join('');
+
+  return (
+    <Box
+      component="svg"
+      data-testid="waveform"
+      viewBox={`0 0 ${channel.length || 1} 1`}
+      preserveAspectRatio="none"
+      sx={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+    >
+      <path d={bars} fill={color} />
+    </Box>
+  );
+});
+
+// Shown when a clip has no WAVEFORM annotation: a solid block when speech was
+// detected (audio is present, the waveform is just unavailable) vs a thin line
+// otherwise, so the two never read as the same flat "silence".
+const WaveformPlaceholder = ({ isSpeech }: { isSpeech: boolean }) =>
+  isSpeech ? (
+    <Box
+      data-testid="waveform-missing-block"
+      sx={{
+        position: 'absolute',
+        top: '20%',
+        bottom: '20%',
+        left: 0,
+        right: 0,
+        bgcolor: 'text.secondary',
+        opacity: 0.25,
+      }}
+    />
+  ) : (
+    <Box
+      data-testid="waveform-silence-line"
+      sx={{
+        position: 'absolute',
+        top: '50%',
+        left: 0,
+        right: 0,
+        height: '2px',
+        transform: 'translateY(-50%)',
+        bgcolor: 'text.secondary',
+        opacity: 0.35,
+      }}
+    />
+  );
 
 const formatTime = (timestamp: number) => {
   const date = new Date(timestamp);
@@ -40,12 +109,16 @@ const formatTime = (timestamp: number) => {
 interface TimelineClipProps {
   clip: {
     id: string;
-    url: string;
     left: number;
     width: number;
     isAudioPlaying: boolean;
     isHighlighted: boolean;
     hasAlert: boolean;
+    // From the segment's WAVEFORM annotation; absent on older segments
+    // (pre-rollout) or if waveform computation was skipped.
+    peaks?: number[][];
+    duration?: number;
+    isSpeech?: boolean;
     isOutageBundle?: boolean;
   };
   onClipClick: (segmentId: string) => void;
@@ -62,32 +135,12 @@ const TimelineClip = React.memo(
     theme,
     currentTimeSeconds,
   }: TimelineClipProps) => {
-    const wsRef = useRef<WaveSurfer | null>(null);
+    const renderWaveform = !!clip.peaks?.[0]?.length;
 
-    // Sync options dynamically (like cursor color/width) without destroying wavesurfer
-    useEffect(() => {
-      if (wsRef.current) {
-        wsRef.current.setOptions({
-          cursorColor: clip.isAudioPlaying
-            ? theme.palette.error.main
-            : 'transparent',
-          cursorWidth: clip.isAudioPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
-        });
-      }
-    }, [clip.isAudioPlaying, theme.palette.error.main]);
-
-    // Sync playback progress (seek)
-    useEffect(() => {
-      if (
-        clip.isAudioPlaying &&
-        wsRef.current &&
-        currentTimeSeconds !== undefined
-      ) {
-        wsRef.current.setTime(currentTimeSeconds);
-      } else if (!clip.isAudioPlaying && wsRef.current) {
-        wsRef.current.setTime(0);
-      }
-    }, [clip.isAudioPlaying, currentTimeSeconds]);
+    const cursorLeftPct =
+      clip.isAudioPlaying && currentTimeSeconds !== undefined && clip.duration
+        ? Math.min(100, Math.max(0, (currentTimeSeconds / clip.duration) * 100))
+        : null;
 
     if (clip.isOutageBundle) {
       return (
@@ -145,12 +198,6 @@ const TimelineClip = React.memo(
                   ? 'rgba(255, 255, 255, 0.03)'
                   : 'rgba(0, 0, 0, 0.03)',
           },
-          /* Wavesurfer cursor subpixel anti-aliasing / shimmering optimizations */
-          '& div::part(cursor)': {
-            willChange: 'left',
-            transform: 'translateZ(0)',
-            backfaceVisibility: 'hidden',
-          },
         }}
       >
         {clip.hasAlert && (
@@ -169,32 +216,26 @@ const TimelineClip = React.memo(
             }}
           />
         )}
-        <WavesurferPlayer
-          url={clip.url}
-          waveColor={theme.palette.text.secondary}
-          progressColor={theme.palette.text.primary}
-          cursorColor="transparent"
-          cursorWidth={0}
-          barWidth={0.5}
-          barGap={0.5}
-          height={60}
-          interact={false}
-          onReady={(ws) => {
-            wsRef.current = ws;
-            ws.setOptions({
-              cursorColor: clip.isAudioPlaying
-                ? theme.palette.error.main
-                : 'transparent',
-              cursorWidth: clip.isAudioPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
-            });
-            if (clip.isAudioPlaying && currentTimeSeconds !== undefined) {
-              ws.setTime(currentTimeSeconds);
-            }
-          }}
-          onDestroy={() => {
-            wsRef.current = null;
-          }}
-        />
+        {renderWaveform && clip.peaks ? (
+          <Waveform peaks={clip.peaks} color={theme.palette.text.secondary} />
+        ) : (
+          <WaveformPlaceholder isSpeech={!!clip.isSpeech} />
+        )}
+        {cursorLeftPct !== null && (
+          <Box
+            data-testid="playing-cursor"
+            // Inline style: the position updates every animation frame.
+            style={{ left: `${cursorLeftPct}%` }}
+            sx={{
+              position: 'absolute',
+              top: 0,
+              bottom: 0,
+              width: `${PLAYING_CURSOR_WIDTH_PX}px`,
+              bgcolor: 'error.main',
+              pointerEvents: 'none',
+            }}
+          />
+        )}
       </Box>
     );
   },
@@ -203,12 +244,14 @@ const TimelineClip = React.memo(
     // unless the props actually change.
     return (
       prevProps.clip.id === nextProps.clip.id &&
-      prevProps.clip.url === nextProps.clip.url &&
       prevProps.clip.left === nextProps.clip.left &&
       prevProps.clip.width === nextProps.clip.width &&
       prevProps.clip.isAudioPlaying === nextProps.clip.isAudioPlaying &&
       prevProps.clip.isHighlighted === nextProps.clip.isHighlighted &&
       prevProps.clip.hasAlert === nextProps.clip.hasAlert &&
+      prevProps.clip.peaks === nextProps.clip.peaks &&
+      prevProps.clip.duration === nextProps.clip.duration &&
+      prevProps.clip.isSpeech === nextProps.clip.isSpeech &&
       prevProps.clip.isOutageBundle === nextProps.clip.isOutageBundle &&
       prevProps.isDarkTheme === nextProps.isDarkTheme &&
       prevProps.theme === nextProps.theme &&
@@ -420,20 +463,22 @@ export function AudioDisplay({
         const left = ((visibleStart - startTime) / windowDuration) * 100;
         const width = ((visibleEnd - visibleStart) / windowDuration) * 100;
 
-        const url = t.playbackAudioUri ? getAudioUrl(t.playbackAudioUri) : '';
+        const waveform = findWaveformAnnotationData(t.annotations);
 
         const evaluationAnnotation = findEvaluationAnnotationData(
           t.annotations
         );
         return {
           id: t.id,
-          url,
           left,
           width,
           isAudioPlaying: t.id === currentlyPlayingSegmentId,
           isHighlighted: t.id === highlightedSegmentId,
           hasAlert:
             !!evaluationAnnotation && evaluationAnnotation.decisions.length > 0,
+          peaks: waveform?.peaks,
+          duration: waveform?.durationSeconds,
+          isSpeech: segmentHasSpeech(t),
           isOutageBundle: !!t.isOutageBundle,
         };
       });
