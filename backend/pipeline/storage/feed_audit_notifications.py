@@ -7,11 +7,12 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from backend.pipeline.common.feed_audit_notification_contract import (
-    is_valid_feed_audit_notification_payload,
-)
-
 logger = logging.getLogger(__name__)
+
+_EMIT_FAILURE_LOG_FIELDS = {
+    "event": "feed_audit_notification_emit_failed",
+    "failure_class": "producer_emit_error",
+}
 
 
 def emit_feed_audit_notification(
@@ -32,7 +33,10 @@ def emit_feed_audit_notification(
         )
     except Exception:
         try:
-            logger.exception("Failed to emit feed audit notification")
+            logger.exception(
+                "Feed audit notification emission failed",
+                extra={"json_fields": _EMIT_FAILURE_LOG_FIELDS},
+            )
         except Exception:  # noqa: S110
             pass
 
@@ -46,8 +50,4 @@ def _normalize_feed_audit_event(
     if not isinstance(feed_audit_event, Mapping):
         return None
 
-    payload = dict(feed_audit_event)
-    if not is_valid_feed_audit_notification_payload(payload):
-        return None
-
-    return payload
+    return dict(feed_audit_event)

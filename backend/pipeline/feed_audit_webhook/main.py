@@ -74,12 +74,18 @@ def create_app(
         """Receive a Pub/Sub push message for a Feed Audit Notification."""
         try:
             payload = extract_feed_audit_payload(envelope)
-        except InvalidPubSubMessage:
+        except InvalidPubSubMessage as exc:
             logger.warning(
                 "Invalid Feed Audit Notification Pub/Sub message",
-                extra={"json_fields": _INVALID_PUBSUB_MESSAGE_LOG_FIELDS},
+                extra={
+                    "json_fields": {
+                        **_INVALID_PUBSUB_MESSAGE_LOG_FIELDS,
+                        "reason": exc.reason,
+                        "path": exc.path,
+                    }
+                },
             )
-            return Response(status_code=status.HTTP_400_BAD_REQUEST)
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
 
         sender: WebhookSender | None = getattr(
             request.app.state,

@@ -19,7 +19,11 @@ if TYPE_CHECKING:
 
     import pytest
 
-_SENSITIVE_LOG_MARKERS = ("before_values", "after_values", "test-api-key")
+_SENSITIVE_LOG_MARKERS = (
+    '"before_values":',
+    '"after_values":',
+    "test-api-key",
+)
 
 
 class _FakeWDClient:
@@ -139,7 +143,7 @@ def test_wd_auth_failure_returns_non_2xx() -> None:
     assert len(wd_client.payloads) == 1
 
 
-def test_malformed_pubsub_message_returns_non_2xx_without_calling_wd(
+def test_malformed_pubsub_message_returns_204_without_calling_wd(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     wd_client = _FakeWDClient()
@@ -149,12 +153,41 @@ def test_malformed_pubsub_message_returns_non_2xx_without_calling_wd(
         with TestClient(app) as client:
             response = client.post("/pubsub/feed-audit-notifications", json={})
 
-    assert response.status_code == 400
+    assert response.status_code == 204
     assert wd_client.payloads == []
     fields = _json_fields(caplog)
     assert any(
         field.get("relay_event") == "feed_audit_webhook_invalid_pubsub_message"
         for field in fields
+    )
+    assert any(field.get("reason") for field in fields)
+    assert any(field.get("path") == "message" for field in fields)
+    _assert_no_sensitive_log_values(caplog, fields)
+
+
+def test_invalid_payload_returns_204_without_calling_wd(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    wd_client = _FakeWDClient()
+    app = create_app(settings=_settings(), wd_client=wd_client)
+
+    with caplog.at_level(logging.WARNING, logger=main_module.__name__):
+        with TestClient(app) as client:
+            response = client.post(
+                "/pubsub/feed-audit-notifications",
+                json=_envelope(_payload(after_values=[])),
+            )
+
+    assert response.status_code == 204
+    assert wd_client.payloads == []
+    fields = _json_fields(caplog)
+    assert any(
+        field.get("reason")
+        == "Feed Audit Notification payload validation failed"
+        for field in fields
+    )
+    assert any(
+        field.get("path") == "jsonPayload.after_values" for field in fields
     )
     _assert_no_sensitive_log_values(caplog, fields)
 

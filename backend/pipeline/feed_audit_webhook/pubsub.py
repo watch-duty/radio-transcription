@@ -8,16 +8,20 @@ import json
 from collections.abc import Mapping
 from typing import Any, cast
 
+from pydantic import ValidationError
+
 from backend.pipeline.common.feed_audit_notification_contract import (
-    FEED_AUDIT_NOTIFICATION_EVENT_TYPE,
-    FEED_AUDIT_NOTIFICATION_SCHEMA_VERSION,
-    is_valid_feed_audit_notification_payload,
-    missing_feed_audit_notification_fields,
+    FeedAuditNotificationPayload,
 )
 
 
 class InvalidPubSubMessage(ValueError):
     """Raised when a Pub/Sub push request cannot be relayed."""
+
+    def __init__(self, reason: str, *, path: str = "envelope") -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.path = path
 
 
 def extract_feed_audit_payload(envelope: Mapping[str, Any]) -> dict[str, Any]:
@@ -26,53 +30,57 @@ def extract_feed_audit_payload(envelope: Mapping[str, Any]) -> dict[str, Any]:
     data = message.get("data")
     if not isinstance(data, str) or not data:
         msg = "Pub/Sub message.data is required"
-        raise InvalidPubSubMessage(msg)
+        raise InvalidPubSubMessage(msg, path="message.data")
 
     try:
         decoded = base64.b64decode(data, validate=True)
     except binascii.Error as exc:
         msg = "Pub/Sub message.data is not valid base64"
-        raise InvalidPubSubMessage(msg) from exc
+        raise InvalidPubSubMessage(msg, path="message.data") from exc
 
     try:
         log_entry = json.loads(decoded.decode("utf-8"))
     except UnicodeDecodeError as exc:
         msg = "Pub/Sub message.data is not UTF-8"
-        raise InvalidPubSubMessage(msg) from exc
+        raise InvalidPubSubMessage(msg, path="message.data") from exc
     except json.JSONDecodeError as exc:
         msg = "Pub/Sub message.data is not JSON"
-        raise InvalidPubSubMessage(msg) from exc
+        raise InvalidPubSubMessage(msg, path="message.data") from exc
 
     log_entry_mapping = _require_mapping(log_entry, "Cloud Logging LogEntry")
     json_payload = _require_mapping(
         log_entry_mapping.get("jsonPayload"), "jsonPayload"
     )
-    payload = dict(json_payload)
-    _validate_feed_audit_payload(payload)
-    return payload
+    return _validate_feed_audit_payload(json_payload).model_dump(mode="json")
 
 
-def _validate_feed_audit_payload(payload: Mapping[str, Any]) -> None:
-    missing_fields = missing_feed_audit_notification_fields(payload)
-    if missing_fields:
-        msg = "Feed Audit Notification is missing required fields"
-        raise InvalidPubSubMessage(msg)
-
-    if payload.get("event_type") != FEED_AUDIT_NOTIFICATION_EVENT_TYPE:
-        msg = "Feed Audit Notification has unsupported event_type"
-        raise InvalidPubSubMessage(msg)
-
-    if payload.get("schema_version") != FEED_AUDIT_NOTIFICATION_SCHEMA_VERSION:
-        msg = "Feed Audit Notification has unsupported schema_version"
-        raise InvalidPubSubMessage(msg)
-
-    if not is_valid_feed_audit_notification_payload(payload):
-        msg = "Feed Audit Notification has invalid snapshot fields"
-        raise InvalidPubSubMessage(msg)
+def _validate_feed_audit_payload(
+    payload: Mapping[str, Any],
+) -> FeedAuditNotificationPayload:
+    try:
+        return FeedAuditNotificationPayload.model_validate(dict(payload))
+    except ValidationError as exc:
+        msg = "Feed Audit Notification payload validation failed"
+        raise InvalidPubSubMessage(
+            msg,
+            path=_validation_error_path(exc),
+        ) from exc
 
 
 def _require_mapping(value: object, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         msg = f"{label} must be an object"
-        raise InvalidPubSubMessage(msg)
+        raise InvalidPubSubMessage(msg, path=label)
     return cast("Mapping[str, Any]", value)
+
+
+def _validation_error_path(exc: ValidationError) -> str:
+    errors = exc.errors()
+    if not errors:
+        return "jsonPayload"
+
+    location = errors[0].get("loc", ())
+    if not location:
+        return "jsonPayload"
+
+    return "jsonPayload." + ".".join(str(value) for value in location)

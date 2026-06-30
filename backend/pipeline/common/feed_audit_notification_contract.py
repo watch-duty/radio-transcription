@@ -1,44 +1,45 @@
-"""Shared Feed Audit Notification contract constants."""
+"""Shared Feed Audit Notification contract."""
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, field_validator
 
 FEED_AUDIT_NOTIFICATION_EVENT_TYPE = (
     "radio_transcription.feed_audit_notification"
 )
 FEED_AUDIT_NOTIFICATION_SCHEMA_VERSION = 1
-FEED_AUDIT_NOTIFICATION_REQUIRED_FIELDS = frozenset(
-    {
-        "event_type",
-        "schema_version",
-        "event_id",
-        "action",
-        "occurred_at",
-        "actor_id",
-        "feed_id",
-        "feed_revision",
-        "before_values",
-        "after_values",
-    }
-)
 
 
-def missing_feed_audit_notification_fields(
-    payload: Mapping[str, Any],
-) -> set[str]:
-    return set(FEED_AUDIT_NOTIFICATION_REQUIRED_FIELDS - payload.keys())
+class FeedAuditNotificationPayload(BaseModel):
+    """Shallow v1 payload contract for Feed Audit Notification delivery."""
 
+    model_config = ConfigDict(extra="allow", strict=True)
 
-def is_valid_feed_audit_notification_payload(
-    payload: Mapping[str, Any],
-) -> bool:
-    return (
-        not missing_feed_audit_notification_fields(payload)
-        and payload.get("event_type") == FEED_AUDIT_NOTIFICATION_EVENT_TYPE
-        and payload.get("schema_version")
-        == FEED_AUDIT_NOTIFICATION_SCHEMA_VERSION
-        and isinstance(payload.get("before_values"), Mapping)
-        and isinstance(payload.get("after_values"), Mapping)
-    )
+    event_type: str
+    schema_version: int
+    event_id: str
+    action: str
+    occurred_at: str
+    actor_id: str
+    feed_id: str
+    feed_revision: int
+    before_values: dict[str, Any]
+    after_values: dict[str, Any]
+
+    @field_validator("event_type")
+    @classmethod
+    def _validate_event_type(cls, value: str) -> str:
+        if value != FEED_AUDIT_NOTIFICATION_EVENT_TYPE:
+            msg = "unsupported Feed Audit Notification event_type"
+            raise ValueError(msg)
+        return value
+
+    @field_validator("schema_version")
+    @classmethod
+    def _validate_schema_version(cls, value: int) -> int:
+        if value != FEED_AUDIT_NOTIFICATION_SCHEMA_VERSION:
+            msg = "unsupported Feed Audit Notification schema_version"
+            raise ValueError(msg)
+        return value

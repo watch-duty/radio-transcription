@@ -5,6 +5,9 @@ from __future__ import annotations
 import pathlib
 import unittest
 
+from backend.pipeline.common.feed_audit_notification_contract import (
+    FeedAuditNotificationPayload,
+)
 from backend.pipeline.storage import (
     feed_audit_sql,
     feed_queries,
@@ -101,16 +104,8 @@ class TestFeedAuditEventSqlContract(unittest.TestCase):
         sql = feed_audit_sql.feed_audit_event_payload_sql()
 
         expected_keys = [
-            "'event_type'",
-            "'schema_version'",
-            "'event_id'",
-            "'action'",
-            "'occurred_at'",
-            "'actor_id'",
-            "'feed_id'",
-            "'feed_revision'",
-            "'before_values'",
-            "'after_values'",
+            f"{field_name!r}"
+            for field_name in FeedAuditNotificationPayload.model_fields
         ]
         rendered_keys = [
             line.strip().split(",", maxsplit=1)[0]

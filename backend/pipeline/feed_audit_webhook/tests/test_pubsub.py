@@ -86,8 +86,11 @@ def test_extract_feed_audit_payload_returns_json_payload_copy() -> None:
 def test_extract_feed_audit_payload_rejects_malformed_envelopes(
     envelope: dict[str, Any],
 ) -> None:
-    with pytest.raises(InvalidPubSubMessage):
+    with pytest.raises(InvalidPubSubMessage) as exc_info:
         extract_feed_audit_payload(envelope)
+
+    assert exc_info.value.reason
+    assert exc_info.value.path
 
 
 @pytest.mark.parametrize(
@@ -107,8 +110,23 @@ def test_extract_feed_audit_payload_rejects_malformed_envelopes(
 def test_extract_feed_audit_payload_rejects_unsupported_payloads(
     payload: dict[str, object],
 ) -> None:
-    with pytest.raises(InvalidPubSubMessage):
+    with pytest.raises(InvalidPubSubMessage) as exc_info:
         extract_feed_audit_payload(_pubsub_envelope({"jsonPayload": payload}))
+
+    assert (
+        exc_info.value.reason
+        == "Feed Audit Notification payload validation failed"
+    )
+    assert exc_info.value.path.startswith("jsonPayload")
+
+
+def test_extract_feed_audit_payload_reports_validation_path() -> None:
+    payload = _feed_audit_payload(after_values=[])
+
+    with pytest.raises(InvalidPubSubMessage) as exc_info:
+        extract_feed_audit_payload(_pubsub_envelope({"jsonPayload": payload}))
+
+    assert exc_info.value.path == "jsonPayload.after_values"
 
 
 def test_extract_feed_audit_payload_preserves_extra_fields() -> None:
@@ -122,13 +140,13 @@ def test_extract_feed_audit_payload_preserves_extra_fields() -> None:
     assert extracted["extra_context"] == {"source": "test"}
 
 
-def test_endpoint_returns_bad_request_for_malformed_pubsub_message() -> None:
+def test_endpoint_ack_drops_malformed_pubsub_message() -> None:
     app = create_app(settings=_test_settings(), wd_client=_FakeWDClient())
 
     with TestClient(app) as client:
         response = client.post("/pubsub/feed-audit-notifications", json={})
 
-    assert response.status_code == 400
+    assert response.status_code == 204
 
 
 def test_endpoint_passes_valid_payload_to_downstream_handler() -> None:

@@ -140,6 +140,17 @@ event. The feed audit event schema and storage writers define the v1 contract
 in this PR; delivery, timeline APIs, and broader operational lifecycle work
 remain separate follow-up concerns.
 
+### Feed Audit Notification
+
+A Feed Audit Notification is the best-effort delivery projection of a Feed Audit Event for Watch Duty backend workflows. It is emitted for each newly
+inserted Feed Audit Event so downstream Watch Duty systems can react to feed
+lifecycle and ingestion changes. Feed Audit Notifications are not the audit
+system of record and do not provide durable or at-least-once delivery
+guarantees. The producer emits the notification log without validating the full
+schema; the relay owns validation and decides whether routed messages are
+forwarded. Failure to emit, route, or deliver a Feed Audit Notification must
+not affect ingestion or feed lifecycle work.
+
 ### Actor ID
 
 The required namespaced causal actor string on each Feed Audit Event. An

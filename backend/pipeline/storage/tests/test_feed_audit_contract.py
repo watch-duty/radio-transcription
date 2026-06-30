@@ -68,6 +68,12 @@ def test_repository_glossary_defines_audit_terms() -> None:
     ):
         assert token in feed_event_section
 
+    notification_section = _markdown_section(
+        text,
+        "### Feed Audit Notification",
+    )
+    assert "delivery projection of a Feed Audit Event" in notification_section
+
     actor_section = _markdown_section(text, "### Actor ID")
     for token in (
         "`user:google:<email>`",
