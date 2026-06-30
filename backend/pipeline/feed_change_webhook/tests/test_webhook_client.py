@@ -8,10 +8,10 @@ from typing import Any, cast
 import pytest
 from urllib3.exceptions import ReadTimeoutError
 
-from backend.pipeline.feed_change_webhook import wd_client
-from backend.pipeline.feed_change_webhook.wd_client import (
-    WatchDutyWebhookClient,
-    WatchDutyWebhookError,
+from backend.pipeline.feed_change_webhook import webhook_client
+from backend.pipeline.feed_change_webhook.webhook_client import (
+    WebhookClient,
+    WebhookDeliveryError,
 )
 
 
@@ -50,11 +50,11 @@ def _client(
     responses: list[object],
     *,
     api_key: str = "secret-api-key",
-) -> tuple[WatchDutyWebhookClient, _FakeHTTP, list[float]]:
+) -> tuple[WebhookClient, _FakeHTTP, list[float]]:
     http = _FakeHTTP(responses)
     sleeps: list[float] = []
-    client = WatchDutyWebhookClient(
-        webhook_url="https://backend.watchduty.test/api/v1/echo/radio_transcription/internal/audit/webhook/",
+    client = WebhookClient(
+        webhook_url="https://webhook.example.test/feed-change",
         api_key=api_key,
         http=http,
         sleep_func=sleeps.append,
@@ -75,7 +75,7 @@ def test_send_succeeds_on_2xx_with_expected_headers_and_body() -> None:
     args, kwargs = http.requests[0]
     assert args[:2] == (
         "POST",
-        "https://backend.watchduty.test/api/v1/echo/radio_transcription/internal/audit/webhook/",
+        "https://webhook.example.test/feed-change",
     )
     assert kwargs["headers"] == {
         "Content-Type": "application/json",
@@ -107,7 +107,7 @@ def test_send_retries_timeout_once() -> None:
         [
             ReadTimeoutError(
                 cast("Any", None),
-                "https://backend.watchduty.test",
+                "https://webhook.example.test",
                 "timeout",
             ),
             _Response(status=204),
@@ -127,7 +127,7 @@ def test_send_does_not_retry_non_transient_4xx(status_code: int) -> None:
         [_Response(status=status_code, data=b"permanent")]
     )
 
-    with pytest.raises(WatchDutyWebhookError) as exc_info:
+    with pytest.raises(WebhookDeliveryError) as exc_info:
         client.send(_payload())
 
     assert exc_info.value.status_code == status_code
@@ -145,7 +145,7 @@ def test_send_raises_after_two_transient_attempts() -> None:
         ]
     )
 
-    with pytest.raises(WatchDutyWebhookError) as exc_info:
+    with pytest.raises(WebhookDeliveryError) as exc_info:
         client.send(_payload())
 
     assert exc_info.value.status_code == 500
@@ -165,18 +165,19 @@ def test_failure_logs_response_body_without_api_key(
         api_key=api_key,
     )
 
-    with caplog.at_level(logging.ERROR, logger=wd_client.__name__):
-        with pytest.raises(WatchDutyWebhookError):
+    with caplog.at_level(logging.ERROR, logger=webhook_client.__name__):
+        with pytest.raises(WebhookDeliveryError):
             client.send(_payload())
 
     assert api_key not in caplog.text
     fields = [
         getattr(record, "json_fields", {})
         for record in caplog.records
-        if record.name == wd_client.__name__
+        if record.name == webhook_client.__name__
     ]
     assert any(
-        field.get("wd_response_body") == "not authorized" for field in fields
+        field.get("webhook_response_body") == "not authorized"
+        for field in fields
     )
     assert all("before_values" not in field for field in fields)
     assert all("after_values" not in field for field in fields)

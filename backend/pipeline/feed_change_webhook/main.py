@@ -18,9 +18,9 @@ from backend.pipeline.feed_change_webhook.settings import (
     FeedChangeWebhookSettings,
     load_settings,
 )
-from backend.pipeline.feed_change_webhook.wd_client import (
-    WatchDutyWebhookClient,
-    WatchDutyWebhookError,
+from backend.pipeline.feed_change_webhook.webhook_client import (
+    WebhookClient,
+    WebhookDeliveryError,
 )
 
 if TYPE_CHECKING:
@@ -50,7 +50,7 @@ class WebhookSender(Protocol):
 def create_app(
     *,
     settings: FeedChangeWebhookSettings | None = None,
-    wd_client: WebhookSender | None = None,
+    webhook_client: WebhookSender | None = None,
 ) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None]:
@@ -58,9 +58,9 @@ def create_app(
             settings if settings is not None else load_settings()
         )
         app.state.settings = resolved_settings
-        app.state.wd_client = wd_client or WatchDutyWebhookClient(
-            webhook_url=resolved_settings.wd_feed_change_webhook_url,
-            api_key=resolved_settings.wd_backend_api_key,
+        app.state.webhook_client = webhook_client or WebhookClient(
+            webhook_url=resolved_settings.webhook_url,
+            api_key=resolved_settings.webhook_api_key,
         )
         yield
 
@@ -89,22 +89,23 @@ def create_app(
 
         sender: WebhookSender | None = getattr(
             request.app.state,
-            "wd_client",
+            "webhook_client",
             None,
         )
         if sender is None:
             logger.warning(
-                "Feed change webhook relay WD client is not initialized",
+                "Feed change webhook relay client is not initialized",
                 extra={"json_fields": _CLIENT_NOT_INITIALIZED_LOG_FIELDS},
             )
             return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         try:
             await asyncio.to_thread(sender.send, payload)
-        except WatchDutyWebhookError:
-            # NACK every WD delivery failure, including non-retryable WD 4xx
-            # responses, so Pub/Sub retains the message for retry/DLQ handling
-            # instead of acknowledging and dropping a misconfigured route.
+        except WebhookDeliveryError:
+            # NACK every destination delivery failure, including non-retryable
+            # 4xx responses, so Pub/Sub retains the message for retry/DLQ
+            # handling instead of acknowledging and dropping a misconfigured
+            # route.
             return Response(status_code=status.HTTP_502_BAD_GATEWAY)
         except Exception:
             logger.exception(

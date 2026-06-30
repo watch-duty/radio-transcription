@@ -55,8 +55,8 @@ def _invalid_json_envelope() -> dict[str, object]:
 
 def _test_settings() -> FeedChangeWebhookSettings:
     return FeedChangeWebhookSettings(
-        wd_backend_base_url="https://backend.watchduty.test",
-        wd_backend_api_key="test-key",
+        webhook_url="https://webhook.example.test/feed-change",
+        webhook_api_key="test-key",
     )
 
 
@@ -141,7 +141,9 @@ def test_extract_feed_change_payload_preserves_extra_fields() -> None:
 
 
 def test_endpoint_ack_drops_malformed_pubsub_message() -> None:
-    app = create_app(settings=_test_settings(), wd_client=_FakeWDClient())
+    app = create_app(
+        settings=_test_settings(), webhook_client=_FakeWebhookClient()
+    )
 
     with TestClient(app) as client:
         response = client.post("/pubsub/feed-change-notifications", json={})
@@ -151,8 +153,8 @@ def test_endpoint_ack_drops_malformed_pubsub_message() -> None:
 
 def test_endpoint_passes_valid_payload_to_downstream_handler() -> None:
     payload = _feed_change_payload()
-    wd_client = _FakeWDClient()
-    app = create_app(settings=_test_settings(), wd_client=wd_client)
+    webhook_client = _FakeWebhookClient()
+    app = create_app(settings=_test_settings(), webhook_client=webhook_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -161,10 +163,10 @@ def test_endpoint_passes_valid_payload_to_downstream_handler() -> None:
         )
 
     assert response.status_code == 204
-    assert wd_client.payloads == [payload]
+    assert webhook_client.payloads == [payload]
 
 
-class _FakeWDClient:
+class _FakeWebhookClient:
     def __init__(self) -> None:
         self.payloads: list[Mapping[str, Any]] = []
 

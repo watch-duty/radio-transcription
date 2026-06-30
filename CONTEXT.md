@@ -142,8 +142,9 @@ remain separate follow-up concerns.
 
 ### Feed Change Notification
 
-A Feed Change Notification is the best-effort delivery projection of a Feed Audit Event for Watch Duty backend workflows. It is emitted for each newly
-inserted Feed Audit Event so downstream Watch Duty systems can react to feed
+A Feed Change Notification is the best-effort delivery projection of a Feed
+Audit Event for downstream webhook workflows. It is emitted for each newly
+inserted Feed Audit Event so downstream systems can react to feed
 lifecycle and ingestion changes. Feed Change Notifications are not the audit
 system of record and do not provide durable or at-least-once delivery
 guarantees. The producer emits the notification log without validating the full

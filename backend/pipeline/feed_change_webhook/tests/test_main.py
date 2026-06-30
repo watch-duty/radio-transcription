@@ -12,7 +12,9 @@ from backend.pipeline.feed_change_webhook.main import create_app
 from backend.pipeline.feed_change_webhook.settings import (
     FeedChangeWebhookSettings,
 )
-from backend.pipeline.feed_change_webhook.wd_client import WatchDutyWebhookError
+from backend.pipeline.feed_change_webhook.webhook_client import (
+    WebhookDeliveryError,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -26,7 +28,7 @@ _SENSITIVE_LOG_MARKERS = (
 )
 
 
-class _FakeWDClient:
+class _FakeWebhookClient:
     def __init__(self, error: Exception | None = None) -> None:
         self.error = error
         self.payloads: list[Mapping[str, Any]] = []
@@ -39,8 +41,8 @@ class _FakeWDClient:
 
 def _settings() -> FeedChangeWebhookSettings:
     return FeedChangeWebhookSettings(
-        wd_backend_base_url="https://backend.watchduty.test",
-        wd_backend_api_key="test-api-key",
+        webhook_url="https://webhook.example.test/feed-change",
+        webhook_api_key="test-api-key",
     )
 
 
@@ -86,10 +88,10 @@ def _assert_no_sensitive_log_values(
         assert marker not in caplog.text
 
 
-def test_valid_message_and_wd_success_returns_204() -> None:
+def test_valid_message_and_webhook_success_returns_204() -> None:
     payload = _payload()
-    wd_client = _FakeWDClient()
-    app = create_app(settings=_settings(), wd_client=wd_client)
+    webhook_client = _FakeWebhookClient()
+    app = create_app(settings=_settings(), webhook_client=webhook_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -98,19 +100,19 @@ def test_valid_message_and_wd_success_returns_204() -> None:
         )
 
     assert response.status_code == 204
-    assert wd_client.payloads == [payload]
+    assert webhook_client.payloads == [payload]
 
 
-def test_wd_transient_failure_returns_non_2xx() -> None:
-    wd_client = _FakeWDClient(
-        WatchDutyWebhookError(
+def test_webhook_transient_failure_returns_non_2xx() -> None:
+    webhook_client = _FakeWebhookClient(
+        WebhookDeliveryError(
             status_code=500,
             response_body="server error",
             retryable=True,
             attempts=2,
         )
     )
-    app = create_app(settings=_settings(), wd_client=wd_client)
+    app = create_app(settings=_settings(), webhook_client=webhook_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -119,19 +121,19 @@ def test_wd_transient_failure_returns_non_2xx() -> None:
         )
 
     assert response.status_code == 502
-    assert len(wd_client.payloads) == 1
+    assert len(webhook_client.payloads) == 1
 
 
-def test_wd_auth_failure_returns_non_2xx() -> None:
-    wd_client = _FakeWDClient(
-        WatchDutyWebhookError(
+def test_webhook_auth_failure_returns_non_2xx() -> None:
+    webhook_client = _FakeWebhookClient(
+        WebhookDeliveryError(
             status_code=401,
             response_body="unauthorized",
             retryable=False,
             attempts=1,
         )
     )
-    app = create_app(settings=_settings(), wd_client=wd_client)
+    app = create_app(settings=_settings(), webhook_client=webhook_client)
 
     with TestClient(app) as client:
         response = client.post(
@@ -140,21 +142,21 @@ def test_wd_auth_failure_returns_non_2xx() -> None:
         )
 
     assert response.status_code == 502
-    assert len(wd_client.payloads) == 1
+    assert len(webhook_client.payloads) == 1
 
 
-def test_malformed_pubsub_message_returns_204_without_calling_wd(
+def test_malformed_pubsub_message_returns_204_without_calling_webhook(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    wd_client = _FakeWDClient()
-    app = create_app(settings=_settings(), wd_client=wd_client)
+    webhook_client = _FakeWebhookClient()
+    app = create_app(settings=_settings(), webhook_client=webhook_client)
 
     with caplog.at_level(logging.WARNING, logger=main_module.__name__):
         with TestClient(app) as client:
             response = client.post("/pubsub/feed-change-notifications", json={})
 
     assert response.status_code == 204
-    assert wd_client.payloads == []
+    assert webhook_client.payloads == []
     fields = _json_fields(caplog)
     assert any(
         field.get("relay_event") == "feed_change_webhook_invalid_pubsub_message"
@@ -165,11 +167,11 @@ def test_malformed_pubsub_message_returns_204_without_calling_wd(
     _assert_no_sensitive_log_values(caplog, fields)
 
 
-def test_invalid_payload_returns_204_without_calling_wd(
+def test_invalid_payload_returns_204_without_calling_webhook(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    wd_client = _FakeWDClient()
-    app = create_app(settings=_settings(), wd_client=wd_client)
+    webhook_client = _FakeWebhookClient()
+    app = create_app(settings=_settings(), webhook_client=webhook_client)
 
     with caplog.at_level(logging.WARNING, logger=main_module.__name__):
         with TestClient(app) as client:
@@ -179,7 +181,7 @@ def test_invalid_payload_returns_204_without_calling_wd(
             )
 
     assert response.status_code == 204
-    assert wd_client.payloads == []
+    assert webhook_client.payloads == []
     fields = _json_fields(caplog)
     assert any(
         field.get("reason")
@@ -192,14 +194,14 @@ def test_invalid_payload_returns_204_without_calling_wd(
     _assert_no_sensitive_log_values(caplog, fields)
 
 
-def test_missing_wd_client_returns_non_2xx_with_structured_config_log(
+def test_missing_webhook_client_returns_non_2xx_with_structured_config_log(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    wd_client = _FakeWDClient()
-    app = create_app(settings=_settings(), wd_client=wd_client)
+    webhook_client = _FakeWebhookClient()
+    app = create_app(settings=_settings(), webhook_client=webhook_client)
 
     with TestClient(app) as client:
-        app.state.wd_client = None
+        app.state.webhook_client = None
         with caplog.at_level(logging.WARNING, logger=main_module.__name__):
             response = client.post(
                 "/pubsub/feed-change-notifications",
@@ -207,7 +209,7 @@ def test_missing_wd_client_returns_non_2xx_with_structured_config_log(
             )
 
     assert response.status_code == 503
-    assert wd_client.payloads == []
+    assert webhook_client.payloads == []
     fields = _json_fields(caplog)
     assert any(
         field.get("relay_event") == "feed_change_webhook_client_not_initialized"
@@ -216,11 +218,11 @@ def test_missing_wd_client_returns_non_2xx_with_structured_config_log(
     _assert_no_sensitive_log_values(caplog, fields)
 
 
-def test_unexpected_wd_client_error_returns_non_2xx_with_structured_log(
+def test_unexpected_webhook_client_error_returns_non_2xx_with_structured_log(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    wd_client = _FakeWDClient(RuntimeError("transport unavailable"))
-    app = create_app(settings=_settings(), wd_client=wd_client)
+    webhook_client = _FakeWebhookClient(RuntimeError("transport unavailable"))
+    app = create_app(settings=_settings(), webhook_client=webhook_client)
 
     with caplog.at_level(logging.ERROR, logger=main_module.__name__):
         with TestClient(app) as client:
@@ -230,7 +232,7 @@ def test_unexpected_wd_client_error_returns_non_2xx_with_structured_log(
             )
 
     assert response.status_code == 502
-    assert len(wd_client.payloads) == 1
+    assert len(webhook_client.payloads) == 1
     fields = _json_fields(caplog)
     assert any(
         field.get("relay_event")

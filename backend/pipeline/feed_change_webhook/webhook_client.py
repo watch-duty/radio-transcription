@@ -1,4 +1,4 @@
-"""Watch Duty backend webhook client for Feed Change Notifications."""
+"""Destination webhook client for Feed Change Notifications."""
 
 from __future__ import annotations
 
@@ -32,14 +32,14 @@ _TRANSIENT_EXCEPTIONS = (
 
 
 @dataclass(frozen=True)
-class WatchDutyWebhookResult:
+class WebhookResult:
     status_code: int
     response_body: str
     attempts: int
 
 
-class WatchDutyWebhookError(RuntimeError):
-    """Raised when a Feed Change Notification cannot be delivered to WD."""
+class WebhookDeliveryError(RuntimeError):
+    """Raised when a Feed Change Notification cannot be delivered."""
 
     def __init__(
         self,
@@ -54,12 +54,12 @@ class WatchDutyWebhookError(RuntimeError):
         self.retryable = retryable
         self.attempts = attempts
         super().__init__(
-            "Watch Duty feed change webhook delivery failed "
+            "Feed change webhook delivery failed "
             f"(status_code={status_code}, retryable={retryable}, attempts={attempts})"
         )
 
 
-class WatchDutyWebhookClient:
+class WebhookClient:
     def __init__(
         self,
         *,
@@ -78,7 +78,7 @@ class WatchDutyWebhookClient:
     def send(
         self,
         payload: Mapping[str, Any],
-    ) -> WatchDutyWebhookResult:
+    ) -> WebhookResult:
         request_body = json.dumps(
             payload,
             separators=(",", ":"),
@@ -111,7 +111,7 @@ class WatchDutyWebhookClient:
                 if attempt < _MAX_ATTEMPTS:
                     self._sleep(self._retry_sleep_seconds())
                     continue
-                raise WatchDutyWebhookError(
+                raise WebhookDeliveryError(
                     status_code=None,
                     response_body=response_body,
                     retryable=True,
@@ -127,7 +127,7 @@ class WatchDutyWebhookClient:
                     attempts=attempt,
                     log_level=logging.ERROR,
                 )
-                raise WatchDutyWebhookError(
+                raise WebhookDeliveryError(
                     status_code=None,
                     response_body=response_body,
                     retryable=False,
@@ -138,7 +138,7 @@ class WatchDutyWebhookClient:
             response_body = _decode_response_body(response.data)
             if 200 <= status_code < 300:
                 logger.info(
-                    "Feed Change Notification delivered to Watch Duty",
+                    "Feed Change Notification delivered to webhook",
                     extra={
                         "json_fields": _log_fields(
                             payload,
@@ -147,7 +147,7 @@ class WatchDutyWebhookClient:
                         )
                     },
                 )
-                return WatchDutyWebhookResult(
+                return WebhookResult(
                     status_code=status_code,
                     response_body=response_body,
                     attempts=attempt,
@@ -166,7 +166,7 @@ class WatchDutyWebhookClient:
                 self._sleep(self._retry_sleep_seconds())
                 continue
 
-            raise WatchDutyWebhookError(
+            raise WebhookDeliveryError(
                 status_code=status_code,
                 response_body=response_body,
                 retryable=retryable,
@@ -194,7 +194,7 @@ class WatchDutyWebhookClient:
     ) -> None:
         logger.log(
             log_level,
-            "Feed Change Notification delivery to Watch Duty failed",
+            "Feed Change Notification delivery to webhook failed",
             extra={
                 "json_fields": _log_fields(
                     payload,
@@ -230,11 +230,11 @@ def _log_fields(
         "event_id": payload.get("event_id"),
         "feed_id": payload.get("feed_id"),
         "feed_revision": payload.get("feed_revision"),
-        "wd_status_code": status_code,
+        "webhook_status_code": status_code,
         "attempts": attempts,
     }
     if retryable is not None:
         fields["retryable"] = retryable
     if response_body is not None:
-        fields["wd_response_body"] = response_body
+        fields["webhook_response_body"] = response_body
     return fields
