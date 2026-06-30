@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 _MAX_ATTEMPTS = 2
 _REQUEST_TIMEOUT_SECONDS = 15.0
+_CONNECTION_POOL_MAXSIZE = 5
+_MAX_LOGGED_RESPONSE_BODY_CHARS = 1024
 _RETRY_JITTER_MIN_SECONDS = 0.25
 _RETRY_JITTER_MAX_SECONDS = 0.5
 _RETRYABLE_STATUS_CODES = {408, 429}
@@ -72,7 +74,14 @@ class WebhookClient:
     ) -> None:
         self._webhook_url = webhook_url
         self._api_key = api_key
-        self._http = http if http is not None else PoolManager(retries=False)
+        self._http = (
+            http
+            if http is not None
+            else PoolManager(
+                retries=False,
+                maxsize=_CONNECTION_POOL_MAXSIZE,
+            )
+        )
         self._sleep = sleep_func
         self._jitter = jitter_func
 
@@ -214,8 +223,10 @@ def _is_retryable_status(status_code: int) -> bool:
 
 def _decode_response_body(data: object) -> str:
     if isinstance(data, bytes):
-        return data.decode("utf-8", errors="replace")
-    return str(data)
+        body = data.decode("utf-8", errors="replace")
+    else:
+        body = str(data)
+    return body[:_MAX_LOGGED_RESPONSE_BODY_CHARS]
 
 
 def _log_fields(

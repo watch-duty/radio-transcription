@@ -181,3 +181,26 @@ def test_failure_logs_response_body_without_api_key(
     )
     assert all("before_values" not in field for field in fields)
     assert all("after_values" not in field for field in fields)
+
+
+def test_failure_logs_truncated_response_body(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client, _http, _sleeps = _client(
+        [
+            _Response(status=502, data=b"x" * 2048),
+            _Response(status=502, data=b"y" * 2048),
+        ],
+    )
+
+    with caplog.at_level(logging.WARNING, logger=webhook_client.__name__):
+        with pytest.raises(WebhookDeliveryError):
+            client.send(_payload())
+
+    bodies = [
+        getattr(record, "json_fields", {}).get("webhook_response_body")
+        for record in caplog.records
+        if record.name == webhook_client.__name__
+    ]
+    assert bodies
+    assert all(isinstance(body, str) and len(body) == 1024 for body in bodies)
