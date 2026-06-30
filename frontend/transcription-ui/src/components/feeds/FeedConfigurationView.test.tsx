@@ -935,22 +935,15 @@ describe('FeedConfigurationView', () => {
     // Click to open the dropdown
     fireEvent.mouseDown(timezoneSelect);
 
-    // Select 'America/Los_Angeles'
-    const option = await screen.findByRole('option', {
-      name: 'America/Los_Angeles',
-    });
-    fireEvent.click(option);
+    const options = screen.getAllByRole('option');
+    fireEvent.click(options[0]);
 
-    // Click Add
+    // Check that the tag is added with a dropdown for editing
     fireEvent.click(addTagBtn);
-
-    // Check that the tag is added
     expect(screen.getAllByLabelText('Key')[1]).toHaveValue('timezone');
-
-    // The added row also has a Timezone Select
     const addedTimezoneSelect = screen.getAllByRole('combobox', {
       name: /Timezone/i,
     })[0];
-    expect(addedTimezoneSelect).toHaveTextContent('America/Los_Angeles');
+    expect(addedTimezoneSelect).toHaveTextContent('UTC');
   });
 });

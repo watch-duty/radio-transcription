@@ -5,6 +5,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import TagIcon from '@mui/icons-material/Tag';
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
@@ -48,8 +49,19 @@ const ALL_SOURCE_TYPES = Object.values(SourceType).map((value) => {
 });
 
 const ALL_TIMEZONES = Array.from(
-  new Set(['UTC', ...Intl.supportedValuesOf('timeZone')])
-);
+  // Some older browsers might not support UTC in this list.
+  new Set([...Intl.supportedValuesOf('timeZone'), 'UTC'])
+).sort((a, b) => {
+  if (a === 'UTC') return -1;
+  if (b === 'UTC') return 1;
+
+  const aIsAmerica = a.startsWith('America/');
+  const bIsAmerica = b.startsWith('America/');
+  if (aIsAmerica && !bIsAmerica) return -1;
+  if (!aIsAmerica && bIsAmerica) return 1;
+
+  return a.localeCompare(b);
+});
 
 export const DialogType = {
   Delete: 'delete',
@@ -553,6 +565,10 @@ export function FeedConfigurationEdit({
                 Tags (e.g. county, agency, state) allow for better
                 searchability, grouping, and routing of notifications.
               </Typography>
+              <Alert severity="info" sx={{ mb: 2 }}>
+                Timezone tags can be used to correct the timestamps, but this is
+                only supported in Fire Notification feeds.
+              </Alert>
 
               <Stack
                 direction="row"
@@ -567,10 +583,10 @@ export function FeedConfigurationEdit({
                   onChange={(e) => handleKeyChange(e.target.value)}
                   error={!!validationErrors.tags}
                   disabled={isSubmitting}
-                  sx={{ flexGrow: 1 }}
+                  sx={{ flex: 1 }}
                 />
                 {newTagKey.trim() === 'timezone' ? (
-                  <FormControl size="small" sx={{ flexGrow: 1 }}>
+                  <FormControl size="small" sx={{ flex: 1 }}>
                     <InputLabel id="timezone-tag-label">Timezone</InputLabel>
                     <Select
                       labelId="timezone-tag-label"
@@ -580,6 +596,7 @@ export function FeedConfigurationEdit({
                       onChange={(e) => handleValueChange(e.target.value)}
                       error={!!validationErrors.tags}
                       disabled={isSubmitting}
+                      fullWidth
                     >
                       {ALL_TIMEZONES.map((tz) => (
                         <MenuItem key={tz} value={tz}>
@@ -597,7 +614,7 @@ export function FeedConfigurationEdit({
                     onChange={(e) => handleValueChange(e.target.value)}
                     error={!!validationErrors.tags}
                     disabled={isSubmitting}
-                    sx={{ flexGrow: 1 }}
+                    sx={{ flex: 1 }}
                   />
                 )}
                 <Button
@@ -662,10 +679,10 @@ export function FeedConfigurationEdit({
                           handleUpdateTag(index, 'key', newKey);
                         }}
                         disabled={isSubmitting}
-                        sx={{ flexGrow: 1 }}
+                        sx={{ flex: 1 }}
                       />
                       {tag.key.trim() === 'timezone' ? (
-                        <FormControl size="small" sx={{ flexGrow: 1 }}>
+                        <FormControl size="small" sx={{ flex: 1 }}>
                           <InputLabel id={`timezone-tag-label-${index}`}>
                             Timezone
                           </InputLabel>
@@ -678,6 +695,7 @@ export function FeedConfigurationEdit({
                               handleUpdateTag(index, 'value', e.target.value)
                             }
                             disabled={isSubmitting}
+                            fullWidth
                           >
                             {ALL_TIMEZONES.map((tz) => (
                               <MenuItem key={tz} value={tz}>
@@ -695,7 +713,7 @@ export function FeedConfigurationEdit({
                             handleUpdateTag(index, 'value', e.target.value)
                           }
                           disabled={isSubmitting}
-                          sx={{ flexGrow: 1 }}
+                          sx={{ flex: 1 }}
                         />
                       )}
                       <IconButton
