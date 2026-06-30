@@ -136,10 +136,13 @@ gemini-sft eval --config /path/to/run.toml
 ```
 
 The local TOML must match the durable GCS `config.json` for eval-affecting
-fields, including `[eval.model]`, `[eval.execution]`, prompts, prior-context
-settings, base model, and eval manifest. Changing only the local TOML after
-`prepare` does not retarget a run; `eval` fails loudly on a mismatch. Use the
-matching prepared config, or create a separate prepared `round_id` for a
+fields, including `[eval.model]`, `[eval.execution].backend`,
+`[eval.execution].limit`, prompts, prior-context settings, base model, and eval
+manifest. Local `[eval.execution].concurrency` and
+`[eval.execution].max_retries` are runtime controls and may be changed to resume
+an online eval under different quota conditions. Changing only the local TOML
+after `prepare` does not retarget a run; `eval` fails loudly on a mismatch. Use
+the matching prepared config, or create a separate prepared `round_id` for a
 different target or eval set.
 
 Batch targets write `evals/LABEL/input.jsonl`, `evals/LABEL/output/`, and
@@ -170,8 +173,8 @@ insertions, deletions, substitutions, total reference words, missing prediction
 count, and artifact URIs.
 
 Missing provider predictions are scored as empty hypotheses and stay in the
-WER/CER denominator. Exact empty model responses are reported separately from
-missing prediction count.
+WER/CER denominator. Missing rows are reported in `missing_prediction_count` and
+do not count as exact empty model responses.
 
 ## 6. Masked And Unmasked Eval Runs
 

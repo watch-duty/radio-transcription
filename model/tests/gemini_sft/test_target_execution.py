@@ -28,6 +28,7 @@ from gemini_sft.target_execution import (  # noqa: E402
     resolve_target_backend,
     run_online_target_inference,
     upload_local_file,
+    upload_text,
 )
 
 
@@ -476,7 +477,11 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
         self.assertGreaterEqual(
             sum(1 for fn, _, _ in to_thread_calls if fn is upload_local_file),
-            2,
+            1,
+        )
+        self.assertGreaterEqual(
+            sum(1 for fn, _, _ in to_thread_calls if fn is upload_text),
+            1,
         )
 
     @unittest.mock.patch("gemini_sft.target_execution.types")
@@ -494,14 +499,16 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             upload_started = asyncio.Event()
             release_upload = asyncio.Event()
             prediction_upload_calls = 0
+            first_snapshot_line_count: int | None = None
 
             async def fake_upload(*args, **kwargs):
-                nonlocal prediction_upload_calls
+                nonlocal first_snapshot_line_count, prediction_upload_calls
                 gcs_uri = str(args[2])
                 if not gcs_uri.endswith("online_predictions.jsonl"):
                     return
                 prediction_upload_calls += 1
                 if prediction_upload_calls == 1:
+                    first_snapshot_line_count = len(str(args[1]).splitlines())
                     upload_started.set()
                     await release_upload.wait()
 
@@ -517,7 +524,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                     "gemini_sft.target_execution.ONLINE_SYNC_EVERY", 1
                 ),
                 unittest.mock.patch(
-                    "gemini_sft.target_execution._upload_local_file_async",
+                    "gemini_sft.target_execution._upload_text_async",
                     fake_upload,
                 ),
             ):
@@ -556,6 +563,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                 finally:
                     release_upload.set()
                     await task
+            self.assertEqual(first_snapshot_line_count, 1)
 
         mock_client = unittest.mock.MagicMock()
         mock_client.aio.models.generate_content = generate_content

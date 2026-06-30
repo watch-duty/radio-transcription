@@ -12,6 +12,7 @@ from common.gcs_utils import (
     blob_exists,
     download_gcs_uri,
     upload_local_file,
+    upload_text,
 )
 from common.gemini import request_identity as request_identity_lib
 from common.gemini.vertex import (
@@ -104,6 +105,20 @@ async def _upload_local_file_async(
         storage_client,
         local_path,
         gcs_uri,
+    )
+
+
+async def _upload_text_async(
+    storage_client: Any,
+    text: str,
+    gcs_uri: str,
+) -> None:
+    await asyncio.to_thread(
+        upload_text,
+        storage_client,
+        text,
+        gcs_uri,
+        content_type="application/jsonl",
     )
 
 
@@ -297,7 +312,7 @@ async def run_online_target_inference(
             "target_label": target_label,
             "model": target_model,
         }
-        should_upload = False
+        upload_snapshot: str | None = None
         async with lock:
             completed[audio_uri] = out_row
             _append_prediction(local_predictions_path, out_row)
@@ -307,7 +322,9 @@ async def run_online_target_inference(
                 progress["errors"] += 1
             if progress["since_sync"] >= ONLINE_SYNC_EVERY:
                 progress["since_sync"] = 0
-                should_upload = True
+                upload_snapshot = local_predictions_path.read_text(
+                    encoding="utf-8"
+                )
             if progress["done"] == len(audio_uri_list) or (
                 progress["done"] % ONLINE_LOG_EVERY == 0
             ):
@@ -318,10 +335,10 @@ async def run_online_target_inference(
                     len(audio_uri_list),
                     progress["errors"],
                 )
-        if should_upload:
-            await _upload_local_file_async(
+        if upload_snapshot is not None:
+            await _upload_text_async(
                 storage_client,
-                local_predictions_path,
+                upload_snapshot,
                 predictions_uri,
             )
 
@@ -331,9 +348,9 @@ async def run_online_target_inference(
             for index, audio_uri in enumerate(audio_uri_list)
         )
     )
-    await _upload_local_file_async(
+    await _upload_text_async(
         storage_client,
-        local_predictions_path,
+        local_predictions_path.read_text(encoding="utf-8"),
         predictions_uri,
     )
     return _prediction_map(

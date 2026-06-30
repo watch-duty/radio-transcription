@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from common.scoring import (
     compute_cer,
     compute_wer,
-    empty_response_rate,
-    hallucination_rate,
     keyword_metrics,
 )
 
@@ -114,8 +115,14 @@ def build_target_metrics(
         wer=float(wer_result["wer"]),
         cer=float(cer_result["cer"]),
         keyword_accuracy=_overall_keyword_accuracy(keyword_rows),
-        empty_or_unintelligible_rate=hallucination_rate(hyps),
-        empty_response_rate=empty_response_rate(hyps),
+        empty_or_unintelligible_rate=_empty_or_unintelligible_rate(
+            hyps,
+            missing_prediction_count=missing_prediction_count,
+        ),
+        empty_response_rate=_empty_response_rate(
+            hyps,
+            missing_prediction_count=missing_prediction_count,
+        ),
         insertions=int(wer_result["insertions"]),
         deletions=int(wer_result["deletions"]),
         substitutions=int(wer_result["substitutions"]),
@@ -219,3 +226,44 @@ def _overall_keyword_accuracy(rows: list[dict[str, Any]]) -> float | None:
         return None
     total_correct = sum(row["correctly_identified"] for row in rows)
     return total_correct / total_occurrences * 100
+
+
+def _empty_or_unintelligible_rate(
+    hypotheses: list[str],
+    *,
+    missing_prediction_count: int,
+) -> float:
+    """Return unusable explicit-output rate without counting missing rows."""
+    return _rate_excluding_missing_empty_fallbacks(
+        hypotheses,
+        missing_prediction_count=missing_prediction_count,
+        predicate=lambda text: (
+            not text.strip() or text.strip() == "[UNINTELLIGIBLE]"
+        ),
+    )
+
+
+def _empty_response_rate(
+    hypotheses: list[str],
+    *,
+    missing_prediction_count: int,
+) -> float:
+    """Return explicit empty-output rate without counting missing rows."""
+    return _rate_excluding_missing_empty_fallbacks(
+        hypotheses,
+        missing_prediction_count=missing_prediction_count,
+        predicate=lambda text: not text.strip(),
+    )
+
+
+def _rate_excluding_missing_empty_fallbacks(
+    hypotheses: list[str],
+    *,
+    missing_prediction_count: int,
+    predicate: Callable[[str], bool],
+) -> float:
+    if not hypotheses:
+        return 0.0
+    flagged = sum(1 for text in hypotheses if predicate(text))
+    explicit_flagged = max(0, flagged - missing_prediction_count)
+    return round(100 * explicit_flagged / len(hypotheses), 2)

@@ -122,6 +122,8 @@ def run_batch_audio_inference(
                 tmp_dir=Path(tmp),
                 pred_blobs=pred_blobs,
             )
+            if preds is None:
+                return None
             output_loc = batch_output_gcs
             logger.info(
                 "[%s] Reusing existing batch prediction output under %s.",
