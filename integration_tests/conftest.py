@@ -1,9 +1,9 @@
-"""
-Integration tests configurations and fixtures.
+"""Integration tests configurations and fixtures.
 
-⚠️ IMPORTANT: All tests in this directory MUST be written to support parallel execution
-(via `pytest -n auto`). Do not use hardcoded or shared IDs, feeds, or channels that could
-cause collisions between concurrent test runs. Always use `uuid.uuid4()` for unique names.
+⚠️ IMPORTANT: All tests in this directory MUST be written to support
+parallel execution (via `pytest -n auto`). Do not use hardcoded or shared
+IDs, feeds, or channels that could cause collisions between concurrent
+test runs. Always use `uuid.uuid4()` for unique names.
 """
 
 from __future__ import annotations

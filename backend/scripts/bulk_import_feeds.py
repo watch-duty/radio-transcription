@@ -24,7 +24,8 @@ def parse_tags(columns: list[str]) -> dict[str, str]:
             continue
         if "=" not in col_clean:
             print(
-                f"Warning: skipping malformed tag (expected key=value): {col_clean!r}",
+                "Warning: skipping malformed tag (expected key=value): "
+                f"{col_clean!r}",
                 file=sys.stderr,
             )
             continue
@@ -51,7 +52,8 @@ def load_csv(path: str) -> list[Entry]:
 
             if len(row) < 2:
                 print(
-                    f"Error: line {line_num}: expected at least 2 columns, got {len(row)}",
+                    f"Error: line {line_num}: expected at least 2 "
+                    f"columns, got {len(row)}",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -194,7 +196,8 @@ def main() -> None:
     print(f"Loaded {len(rows)} feed(s) from {args.csv_file}")
     for row in rows:
         print(
-            f"  {row['url']!r}  name={row['display_name']!r}  tags={row['tags']}"
+            f"  {row['url']!r}  name={row['display_name']!r}"
+            f"  tags={row['tags']}"
         )
         save_feed(row, args.server.rstrip("/"), args.token)
 
