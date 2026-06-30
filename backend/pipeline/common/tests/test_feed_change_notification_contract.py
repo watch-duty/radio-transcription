@@ -3,10 +3,10 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from backend.pipeline.common.feed_audit_notification_contract import (
-    FEED_AUDIT_NOTIFICATION_EVENT_TYPE,
-    FEED_AUDIT_NOTIFICATION_SCHEMA_VERSION,
-    FeedAuditNotificationPayload,
+from backend.pipeline.common.feed_change_notification_contract import (
+    FEED_CHANGE_NOTIFICATION_EVENT_TYPE,
+    FEED_CHANGE_NOTIFICATION_SCHEMA_VERSION,
+    FeedChangeNotificationPayload,
 )
 
 _EXPECTED_FIELDS = {
@@ -25,8 +25,8 @@ _EXPECTED_FIELDS = {
 
 def _payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
-        "event_type": FEED_AUDIT_NOTIFICATION_EVENT_TYPE,
-        "schema_version": FEED_AUDIT_NOTIFICATION_SCHEMA_VERSION,
+        "event_type": FEED_CHANGE_NOTIFICATION_EVENT_TYPE,
+        "schema_version": FEED_CHANGE_NOTIFICATION_SCHEMA_VERSION,
         "event_id": "audit-event-1",
         "action": "feed.failure_reported",
         "occurred_at": "2026-06-26T22:00:00Z",
@@ -45,13 +45,13 @@ def _payload(**overrides: object) -> dict[str, object]:
 def test_payload_contract_fields_are_the_notification_top_level_fields() -> (
     None
 ):
-    assert set(FeedAuditNotificationPayload.model_fields) == _EXPECTED_FIELDS
+    assert set(FeedChangeNotificationPayload.model_fields) == _EXPECTED_FIELDS
 
 
 def test_valid_payload_round_trips_as_json_compatible_dict() -> None:
     payload = _payload()
 
-    model = FeedAuditNotificationPayload.model_validate(payload)
+    model = FeedChangeNotificationPayload.model_validate(payload)
 
     assert model.model_dump(mode="json") == payload
 
@@ -59,7 +59,7 @@ def test_valid_payload_round_trips_as_json_compatible_dict() -> None:
 def test_extra_top_level_fields_are_preserved() -> None:
     payload = _payload(extra_context={"source": "test"})
 
-    model = FeedAuditNotificationPayload.model_validate(payload)
+    model = FeedChangeNotificationPayload.model_validate(payload)
 
     assert model.model_dump(mode="json")["extra_context"] == {"source": "test"}
 
@@ -77,7 +77,7 @@ def test_invalid_contract_values_raise_validation_error(
     overrides: dict[str, object],
 ) -> None:
     with pytest.raises(ValidationError):
-        FeedAuditNotificationPayload.model_validate(_payload(**overrides))
+        FeedChangeNotificationPayload.model_validate(_payload(**overrides))
 
 
 def test_missing_required_field_raises_validation_error() -> None:
@@ -85,4 +85,4 @@ def test_missing_required_field_raises_validation_error() -> None:
     del payload["feed_id"]
 
     with pytest.raises(ValidationError):
-        FeedAuditNotificationPayload.model_validate(payload)
+        FeedChangeNotificationPayload.model_validate(payload)

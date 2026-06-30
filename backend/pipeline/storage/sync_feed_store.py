@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, LiteralString, TypedDict, cast
 
 from backend.pipeline.storage import (
-    feed_audit_notifications,
+    feed_change_notifications,
     feed_lifecycle,
     feed_store,
     sync_feed_queries,
@@ -117,7 +117,7 @@ class SyncFeedStore:
                 (feed_id, _require_actor_id(actor_id)),
             ).fetchone()
         if row is not None:
-            feed_audit_notifications.emit_feed_audit_notification(
+            feed_change_notifications.emit_feed_change_notification(
                 row.get("feed_audit_event")
             )
 
@@ -158,7 +158,7 @@ class SyncFeedStore:
                 params,
             ).fetchone()
         if row is not None:
-            feed_audit_notifications.emit_feed_audit_notification(
+            feed_change_notifications.emit_feed_change_notification(
                 row.get("feed_audit_event")
             )
 
@@ -190,6 +190,6 @@ class SyncFeedStore:
                 params,
             ).fetchone()
         if row is not None:
-            feed_audit_notifications.emit_feed_audit_notification(
+            feed_change_notifications.emit_feed_change_notification(
                 row.get("feed_audit_event")
             )

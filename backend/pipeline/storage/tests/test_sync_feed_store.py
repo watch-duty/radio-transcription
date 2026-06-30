@@ -23,7 +23,7 @@ def _feed_audit_event(
     action: str = "feed.recovered",
 ) -> dict[str, object]:
     return {
-        "event_type": "radio_transcription.feed_audit_notification",
+        "event_type": "radio_transcription.feed_change_notification",
         "schema_version": 1,
         "event_id": uuid.UUID("cccccccc-dddd-eeee-ffff-000000000000"),
         "action": action,
@@ -126,7 +126,7 @@ class TestRecordHeartbeat:
         }
 
         with patch(
-            "backend.pipeline.storage.sync_feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             store.record_heartbeat(feed_id, actor_id=_ECHO_ACTOR_ID)
@@ -139,7 +139,7 @@ class TestRecordHeartbeat:
             "'deactivated'::feed_status)"
         ) in sql
         assert params == (feed_id, _ECHO_ACTOR_ID)
-        notifications.emit_feed_audit_notification.assert_called_once_with(
+        notifications.emit_feed_change_notification.assert_called_once_with(
             payload
         )
 
@@ -148,13 +148,13 @@ class TestRecordHeartbeat:
         store = _make_store(conn)
 
         with patch(
-            "backend.pipeline.storage.sync_feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             store.record_heartbeat(uuid.uuid4(), actor_id=_ECHO_ACTOR_ID)
 
         conn.execute.return_value.fetchone.assert_called_once_with()
-        notifications.emit_feed_audit_notification.assert_not_called()
+        notifications.emit_feed_change_notification.assert_not_called()
 
     def test_rejects_missing_actor_id(self) -> None:
         conn = _make_mock_conn()
@@ -182,7 +182,7 @@ class TestRecordFailure:
         }
 
         with patch(
-            "backend.pipeline.storage.sync_feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             store.record_failure(
@@ -209,7 +209,7 @@ class TestRecordFailure:
             "echo_pubsub_publish_failed",
             _ECHO_ACTOR_ID,
         )
-        notifications.emit_feed_audit_notification.assert_called_once_with(
+        notifications.emit_feed_change_notification.assert_called_once_with(
             payload
         )
 
@@ -296,7 +296,7 @@ class TestRecordFailure:
         }
 
         with patch(
-            "backend.pipeline.storage.sync_feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             store.record_failure(
@@ -307,7 +307,7 @@ class TestRecordFailure:
             )
 
         conn.execute.return_value.fetchone.assert_called_once_with()
-        notifications.emit_feed_audit_notification.assert_called_once_with(None)
+        notifications.emit_feed_change_notification.assert_called_once_with(None)
 
     def test_duplicate_failure_summary_log_is_not_in_store(self) -> None:
         text = sync_feed_store_path().read_text()
@@ -335,7 +335,7 @@ class TestRecordNonBudgetedFailure:
         }
 
         with patch(
-            "backend.pipeline.storage.sync_feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             store.record_non_budgeted_failure(
@@ -364,7 +364,7 @@ class TestRecordNonBudgetedFailure:
             None,
             _ECHO_ACTOR_ID,
         )
-        notifications.emit_feed_audit_notification.assert_called_once_with(
+        notifications.emit_feed_change_notification.assert_called_once_with(
             payload
         )
 
@@ -373,7 +373,7 @@ class TestRecordNonBudgetedFailure:
         store = _make_store(conn)
 
         with patch(
-            "backend.pipeline.storage.sync_feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             store.record_non_budgeted_failure(
@@ -383,7 +383,7 @@ class TestRecordNonBudgetedFailure:
             )
 
         conn.execute.return_value.fetchone.assert_called_once_with()
-        notifications.emit_feed_audit_notification.assert_not_called()
+        notifications.emit_feed_change_notification.assert_not_called()
 
     def test_duplicate_non_budgeted_summary_log_is_not_in_store(self) -> None:
         text = sync_feed_store_path().read_text()

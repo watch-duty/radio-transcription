@@ -6,7 +6,7 @@ requires-python = "==3.13.*"
 members = [
     "audio-segments-service",
     "evaluation-function",
-    "feed-audit-webhook",
+    "feed-change-webhook",
     "feeds-service",
     "normalization-pipeline",
     "notification-function",
@@ -806,9 +806,9 @@ wheels = [
 ]
 
 [[package]]
-name = "feed-audit-webhook"
+name = "feed-change-webhook"
 version = "0.1.0"
-source = { editable = "backend/pipeline/feed_audit_webhook" }
+source = { editable = "backend/pipeline/feed_change_webhook" }
 dependencies = [
     { name = "fastapi" },
     { name = "radio-transcription-common" },
@@ -2859,7 +2859,7 @@ dependencies = [
     { name = "audio-segments-service" },
     { name = "curl-cffi" },
     { name = "evaluation-function" },
-    { name = "feed-audit-webhook" },
+    { name = "feed-change-webhook" },
     { name = "feeds-service" },
     { name = "google-cloud-secret-manager" },
     { name = "normalization-pipeline" },
@@ -2907,7 +2907,7 @@ requires-dist = [
     { name = "audio-segments-service", editable = "backend/services/audio_segments" },
     { name = "curl-cffi", specifier = ">=0.9.1" },
     { name = "evaluation-function", editable = "backend/pipeline/evaluation" },
-    { name = "feed-audit-webhook", editable = "backend/pipeline/feed_audit_webhook" },
+    { name = "feed-change-webhook", editable = "backend/pipeline/feed_change_webhook" },
     { name = "feeds-service", editable = "backend/services/feeds" },
     { name = "google-cloud-secret-manager", specifier = ">=2.26.0" },
     { name = "normalization-pipeline", editable = "backend/pipeline/normalization" },

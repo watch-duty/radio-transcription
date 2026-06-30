@@ -8,8 +8,8 @@ from typing import Any, cast
 import pytest
 from urllib3.exceptions import ReadTimeoutError
 
-from backend.pipeline.feed_audit_webhook import wd_client
-from backend.pipeline.feed_audit_webhook.wd_client import (
+from backend.pipeline.feed_change_webhook import wd_client
+from backend.pipeline.feed_change_webhook.wd_client import (
     WatchDutyWebhookClient,
     WatchDutyWebhookError,
 )

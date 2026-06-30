@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from backend.pipeline.common.feed_audit_notification_contract import (
-    FEED_AUDIT_NOTIFICATION_EVENT_TYPE,
-    FEED_AUDIT_NOTIFICATION_SCHEMA_VERSION,
+from backend.pipeline.common.feed_change_notification_contract import (
+    FEED_CHANGE_NOTIFICATION_EVENT_TYPE,
+    FEED_CHANGE_NOTIFICATION_SCHEMA_VERSION,
 )
 
 # ruff: noqa: S608
@@ -28,10 +28,10 @@ AUDITED_FEED_STATE_FIELDS = (
 def feed_audit_event_payload_sql(
     alias: str = "feed_audit_events",
 ) -> str:
-    """Return the schema version 1 Feed Audit Notification JSONB payload."""
+    """Return the schema version 1 Feed Change Notification JSONB payload."""
     return f"""jsonb_build_object(
-        'event_type', {FEED_AUDIT_NOTIFICATION_EVENT_TYPE!r},
-        'schema_version', {FEED_AUDIT_NOTIFICATION_SCHEMA_VERSION},
+        'event_type', {FEED_CHANGE_NOTIFICATION_EVENT_TYPE!r},
+        'schema_version', {FEED_CHANGE_NOTIFICATION_SCHEMA_VERSION},
         'event_id', {alias}.id,
         'action', {alias}.action,
         'occurred_at', {alias}.occurred_at,

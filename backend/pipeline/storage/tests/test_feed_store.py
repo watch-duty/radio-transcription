@@ -106,7 +106,7 @@ def _audit_snapshot_row(**overrides: object) -> dict[str, object]:
 
 def _feed_audit_event(action: str = "feed.recovered") -> dict[str, object]:
     return {
-        "event_type": "radio_transcription.feed_audit_notification",
+        "event_type": "radio_transcription.feed_change_notification",
         "schema_version": 1,
         "event_id": uuid.UUID("cccccccc-dddd-eeee-ffff-000000000000"),
         "action": action,
@@ -851,7 +851,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.update_feed_progress(
@@ -864,7 +864,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(result)
-        notifications.emit_feed_audit_notification.assert_called_once_with(
+        notifications.emit_feed_change_notification.assert_called_once_with(
             payload
         )
 
@@ -874,7 +874,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.update_feed_progress(
@@ -887,7 +887,7 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertFalse(result)
-        notifications.emit_feed_audit_notification.assert_not_called()
+        notifications.emit_feed_change_notification.assert_not_called()
 
     async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed in the correct order."""
@@ -989,7 +989,7 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.record_source_observation(
@@ -1010,7 +1010,7 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
                 "recorded": True,
             },
         )
-        notifications.emit_feed_audit_notification.assert_called_once_with(
+        notifications.emit_feed_change_notification.assert_called_once_with(
             payload
         )
         args = pool.fetchrow.call_args[0]
@@ -1031,7 +1031,7 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.record_source_observation(
@@ -1052,7 +1052,7 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
                 "recorded": False,
             },
         )
-        notifications.emit_feed_audit_notification.assert_not_called()
+        notifications.emit_feed_change_notification.assert_not_called()
 
     async def test_record_source_observation_rejects_missing_actor_id(
         self,
@@ -1198,7 +1198,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.report_feed_failure(
@@ -1209,7 +1209,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result, "failing")
-        notifications.emit_feed_audit_notification.assert_called_once_with(
+        notifications.emit_feed_change_notification.assert_called_once_with(
             payload
         )
 
@@ -1220,7 +1220,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.report_feed_failure(
@@ -1232,7 +1232,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
         pool.acquired_connection.execute.assert_not_awaited()
-        notifications.emit_feed_audit_notification.assert_not_called()
+        notifications.emit_feed_change_notification.assert_not_called()
 
     def test_duplicate_failure_summary_logs_are_not_in_store(self) -> None:
         """Audit notifications replace duplicate storage failure summaries."""
@@ -1403,7 +1403,7 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.release_non_budgeted_failure(
@@ -1418,7 +1418,7 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(result, "failing")
-        notifications.emit_feed_audit_notification.assert_called_once_with(
+        notifications.emit_feed_change_notification.assert_called_once_with(
             payload
         )
 
@@ -1432,7 +1432,7 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.release_non_budgeted_failure(
@@ -1446,7 +1446,7 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
         pool.acquired_connection.execute.assert_not_awaited()
-        notifications.emit_feed_audit_notification.assert_not_called()
+        notifications.emit_feed_change_notification.assert_not_called()
 
     async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed in the correct order."""
@@ -2054,7 +2054,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.create_feed(
@@ -2068,7 +2068,7 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result["name"], "New Feed")
         self.assertEqual(result["source_type"], SourceType.BCFY_FEEDS)
         pool.transaction_context.__aenter__.assert_not_awaited()
-        notifications.emit_feed_audit_notification.assert_called_once_with(
+        notifications.emit_feed_change_notification.assert_called_once_with(
             payload
         )
 
@@ -2261,7 +2261,7 @@ class TestUpdateFeedAuditing(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.update_feed(
@@ -2273,7 +2273,7 @@ class TestUpdateFeedAuditing(unittest.IsolatedAsyncioTestCase):
 
         assert result is not None
         self.assertEqual(result["name"], "Updated Feed")
-        notifications.emit_feed_audit_notification.assert_called_once_with(
+        notifications.emit_feed_change_notification.assert_called_once_with(
             payload
         )
         conn.fetchrow.assert_awaited_once()
@@ -2308,7 +2308,7 @@ class TestUpdateFeedAuditing(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.update_feed(
@@ -2320,7 +2320,7 @@ class TestUpdateFeedAuditing(unittest.IsolatedAsyncioTestCase):
 
         assert result is not None
         self.assertEqual(result["name"], "Same Feed")
-        notifications.emit_feed_audit_notification.assert_called_once_with(None)
+        notifications.emit_feed_change_notification.assert_called_once_with(None)
         conn.fetchrow.assert_awaited_once()
         conn.fetchval.assert_not_awaited()
         conn.execute.assert_not_awaited()
@@ -2601,7 +2601,7 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.deactivate_feed(
@@ -2610,7 +2610,7 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(result)
-        notifications.emit_feed_audit_notification.assert_called_once_with(
+        notifications.emit_feed_change_notification.assert_called_once_with(
             payload
         )
         self.assertEqual(
@@ -2646,7 +2646,7 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.deactivate_feed(
@@ -2655,7 +2655,7 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertFalse(result)
-        notifications.emit_feed_audit_notification.assert_not_called()
+        notifications.emit_feed_change_notification.assert_not_called()
         conn = pool.acquired_connection
         conn.fetchrow.assert_awaited_once_with(
             feed_queries.DEACTIVATE_FEED_SQL,
@@ -2694,7 +2694,7 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.delete_feed(
@@ -2703,7 +2703,7 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertTrue(result)
-        notifications.emit_feed_audit_notification.assert_called_once_with(
+        notifications.emit_feed_change_notification.assert_called_once_with(
             payload
         )
         conn.fetchrow.assert_awaited_once_with(
@@ -2764,7 +2764,7 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             with self.assertRaisesRegex(
@@ -2774,7 +2774,7 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
                     _FEED_ID,
                     actor_id=_FEEDS_SERVICE_ACTOR_ID,
                 )
-        notifications.emit_feed_audit_notification.assert_not_called()
+        notifications.emit_feed_change_notification.assert_not_called()
         conn.fetchval.assert_not_awaited()
 
     async def test_missing_feed_delete_does_not_emit_notification(
@@ -2785,7 +2785,7 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.delete_feed(
@@ -2794,7 +2794,7 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertFalse(result)
-        notifications.emit_feed_audit_notification.assert_not_called()
+        notifications.emit_feed_change_notification.assert_not_called()
 
     async def test_missing_feed_returns_false_without_audit_or_delete(
         self,
@@ -2850,7 +2850,7 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             result = await store.reset_feed(
@@ -2860,7 +2860,7 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
 
         assert result is not None
         self.assertEqual(result["status"], FeedStatus.UNCLAIMED)
-        notifications.emit_feed_audit_notification.assert_called_once_with(
+        notifications.emit_feed_change_notification.assert_called_once_with(
             payload
         )
         self.assertEqual(
@@ -2899,7 +2899,7 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
         store = FeedStore(pool)
 
         with mock.patch(
-            "backend.pipeline.storage.feed_store.feed_audit_notifications",
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
             create=True,
         ) as notifications:
             with self.assertRaisesRegex(
@@ -2909,7 +2909,7 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
                     _FEED_ID,
                     actor_id=_FEEDS_SERVICE_ACTOR_ID,
                 )
-        notifications.emit_feed_audit_notification.assert_not_called()
+        notifications.emit_feed_change_notification.assert_not_called()
         conn.fetchval.assert_not_awaited()
 
     async def test_missing_feed_returns_none_without_audit(self) -> None:

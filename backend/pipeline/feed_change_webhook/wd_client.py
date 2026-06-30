@@ -1,4 +1,4 @@
-"""Watch Duty backend webhook client for Feed Audit Notifications."""
+"""Watch Duty backend webhook client for Feed Change Notifications."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ class WatchDutyWebhookResult:
 
 
 class WatchDutyWebhookError(RuntimeError):
-    """Raised when a Feed Audit Notification cannot be delivered to WD."""
+    """Raised when a Feed Change Notification cannot be delivered to WD."""
 
     def __init__(
         self,
@@ -54,7 +54,7 @@ class WatchDutyWebhookError(RuntimeError):
         self.retryable = retryable
         self.attempts = attempts
         super().__init__(
-            "Watch Duty audit webhook delivery failed "
+            "Watch Duty feed change webhook delivery failed "
             f"(status_code={status_code}, retryable={retryable}, attempts={attempts})"
         )
 
@@ -138,7 +138,7 @@ class WatchDutyWebhookClient:
             response_body = _decode_response_body(response.data)
             if 200 <= status_code < 300:
                 logger.info(
-                    "Feed Audit Notification delivered to Watch Duty",
+                    "Feed Change Notification delivered to Watch Duty",
                     extra={
                         "json_fields": _log_fields(
                             payload,
@@ -194,7 +194,7 @@ class WatchDutyWebhookClient:
     ) -> None:
         logger.log(
             log_level,
-            "Feed Audit Notification delivery to Watch Duty failed",
+            "Feed Change Notification delivery to Watch Duty failed",
             extra={
                 "json_fields": _log_fields(
                     payload,
@@ -226,7 +226,7 @@ def _log_fields(
     response_body: str | None = None,
 ) -> dict[str, Any]:
     fields: dict[str, Any] = {
-        "relay_event": "feed_audit_webhook_delivery",
+        "relay_event": "feed_change_webhook_delivery",
         "event_id": payload.get("event_id"),
         "feed_id": payload.get("feed_id"),
         "feed_revision": payload.get("feed_revision"),

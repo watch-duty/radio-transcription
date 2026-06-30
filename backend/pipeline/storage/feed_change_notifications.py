@@ -1,4 +1,4 @@
-"""Shared Feed Audit Notification logging helper."""
+"""Shared Feed Change Notification logging helper."""
 
 from __future__ import annotations
 
@@ -10,15 +10,15 @@ from typing import Any, cast
 logger = logging.getLogger(__name__)
 
 _EMIT_FAILURE_LOG_FIELDS = {
-    "event": "feed_audit_notification_emit_failed",
+    "event": "feed_change_notification_emit_failed",
     "failure_class": "producer_emit_error",
 }
 
 
-def emit_feed_audit_notification(
+def emit_feed_change_notification(
     feed_audit_event: object | None,
 ) -> None:
-    """Emit a Feed Audit Notification structured log. Never raises."""
+    """Emit a Feed Change Notification structured log. Never raises."""
     if feed_audit_event is None:
         return
 
@@ -28,13 +28,13 @@ def emit_feed_audit_notification(
             return
 
         logger.info(
-            "Feed audit notification emitted",
+            "Feed change notification emitted",
             extra={"json_fields": payload},
         )
     except Exception:
         try:
             logger.exception(
-                "Feed audit notification emission failed",
+                "Feed change notification emission failed",
                 extra={"json_fields": _EMIT_FAILURE_LOG_FIELDS},
             )
         except Exception:  # noqa: S110

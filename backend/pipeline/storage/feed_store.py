@@ -16,7 +16,7 @@ from backend.pipeline.common.exceptions import (
     FeedStateConflictError,
 )
 from backend.pipeline.storage import (
-    feed_audit_notifications,
+    feed_change_notifications,
     feed_lifecycle,
     feed_queries,
 )
@@ -378,7 +378,7 @@ class FeedStore:
         )
         if row is None:
             return False
-        feed_audit_notifications.emit_feed_audit_notification(
+        feed_change_notifications.emit_feed_change_notification(
             row.get("feed_audit_event")
         )
         return True
@@ -421,7 +421,7 @@ class FeedStore:
             current_fencing_token=row["current_fencing_token"],
             recorded=row["recorded"],
         )
-        feed_audit_notifications.emit_feed_audit_notification(
+        feed_change_notifications.emit_feed_change_notification(
             row.get("feed_audit_event")
         )
         return result
@@ -539,7 +539,7 @@ class FeedStore:
             return None
 
         status: str = row["status"]
-        feed_audit_notifications.emit_feed_audit_notification(
+        feed_change_notifications.emit_feed_change_notification(
             row.get("feed_audit_event")
         )
         return status
@@ -578,7 +578,7 @@ class FeedStore:
         if row is None:
             return None
         status: str = row["status"]
-        feed_audit_notifications.emit_feed_audit_notification(
+        feed_change_notifications.emit_feed_change_notification(
             row.get("feed_audit_event")
         )
         return status
@@ -856,7 +856,7 @@ class FeedStore:
             raise ValueError(msg) from e
 
         feed = self._row_to_feed(row)
-        feed_audit_notifications.emit_feed_audit_notification(
+        feed_change_notifications.emit_feed_change_notification(
             row.get("feed_audit_event")
         )
         return feed
@@ -908,7 +908,7 @@ class FeedStore:
             },
         )
         feed = self._row_to_feed(row)
-        feed_audit_notifications.emit_feed_audit_notification(
+        feed_change_notifications.emit_feed_change_notification(
             row.get("feed_audit_event")
         )
         return feed
@@ -1011,7 +1011,7 @@ class FeedStore:
             )
         if row is None:
             return False
-        feed_audit_notifications.emit_feed_audit_notification(
+        feed_change_notifications.emit_feed_change_notification(
             row.get("feed_audit_event")
         )
         return True
@@ -1045,7 +1045,7 @@ class FeedStore:
                 row["current_status"],
             )
         deleted = bool(row["deleted"])
-        feed_audit_notifications.emit_feed_audit_notification(
+        feed_change_notifications.emit_feed_change_notification(
             row.get("feed_audit_event")
         )
         return deleted
@@ -1089,7 +1089,7 @@ class FeedStore:
         if row["id"] is None:
             return None
         feed = self._row_to_feed(row)
-        feed_audit_notifications.emit_feed_audit_notification(
+        feed_change_notifications.emit_feed_change_notification(
             row.get("feed_audit_event")
         )
         return feed

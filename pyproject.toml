@@ -21,7 +21,7 @@ dependencies = [
     "transcription-function",
     "evaluation-function",
     "notification-function",
-    "feed-audit-webhook",
+    "feed-change-webhook",
     # Dependencies for non-packaged directories (ingestion, storage, etc.)
     "uvloop>=0.21.0",
     "curl-cffi>=0.9.1",
@@ -250,7 +250,7 @@ members = [
     "backend/pipeline/transcription",
     "backend/pipeline/evaluation",
     "backend/pipeline/notification",
-    "backend/pipeline/feed_audit_webhook",
+    "backend/pipeline/feed_change_webhook",
     "backend/services/audio_segments",
     "backend/services/feeds",
     "backend/services/rules",
@@ -266,7 +266,7 @@ segmentation-pipeline = { workspace = true }
 transcription-function = { workspace = true }
 evaluation-function = { workspace = true }
 notification-function = { workspace = true }
-feed-audit-webhook = { workspace = true }
+feed-change-webhook = { workspace = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

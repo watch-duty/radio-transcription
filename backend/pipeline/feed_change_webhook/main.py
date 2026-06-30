@@ -1,4 +1,4 @@
-"""FastAPI entrypoint for the Feed Audit Notification webhook relay."""
+"""FastAPI entrypoint for the Feed Change Notification webhook relay."""
 
 from __future__ import annotations
 
@@ -10,15 +10,15 @@ from typing import TYPE_CHECKING, Any, Protocol
 from fastapi import FastAPI, Request, Response, status
 
 from backend.pipeline.common.log_helper import setup_logging
-from backend.pipeline.feed_audit_webhook.pubsub import (
+from backend.pipeline.feed_change_webhook.pubsub import (
     InvalidPubSubMessage,
-    extract_feed_audit_payload,
+    extract_feed_change_payload,
 )
-from backend.pipeline.feed_audit_webhook.settings import (
-    FeedAuditWebhookSettings,
+from backend.pipeline.feed_change_webhook.settings import (
+    FeedChangeWebhookSettings,
     load_settings,
 )
-from backend.pipeline.feed_audit_webhook.wd_client import (
+from backend.pipeline.feed_change_webhook.wd_client import (
     WatchDutyWebhookClient,
     WatchDutyWebhookError,
 )
@@ -30,15 +30,15 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 _INVALID_PUBSUB_MESSAGE_LOG_FIELDS = {
-    "relay_event": "feed_audit_webhook_invalid_pubsub_message",
+    "relay_event": "feed_change_webhook_invalid_pubsub_message",
     "failure_class": "malformed_pubsub_message",
 }
 _CLIENT_NOT_INITIALIZED_LOG_FIELDS = {
-    "relay_event": "feed_audit_webhook_client_not_initialized",
+    "relay_event": "feed_change_webhook_client_not_initialized",
     "failure_class": "configuration_error",
 }
 _UNHANDLED_DELIVERY_ERROR_LOG_FIELDS = {
-    "relay_event": "feed_audit_webhook_unhandled_delivery_error",
+    "relay_event": "feed_change_webhook_unhandled_delivery_error",
     "failure_class": "unexpected_delivery_error",
 }
 
@@ -49,7 +49,7 @@ class WebhookSender(Protocol):
 
 def create_app(
     *,
-    settings: FeedAuditWebhookSettings | None = None,
+    settings: FeedChangeWebhookSettings | None = None,
     wd_client: WebhookSender | None = None,
 ) -> FastAPI:
     @asynccontextmanager
@@ -59,24 +59,24 @@ def create_app(
         )
         app.state.settings = resolved_settings
         app.state.wd_client = wd_client or WatchDutyWebhookClient(
-            webhook_url=resolved_settings.wd_audit_webhook_url,
+            webhook_url=resolved_settings.wd_feed_change_webhook_url,
             api_key=resolved_settings.wd_backend_api_key,
         )
         yield
 
-    relay_app = FastAPI(title="Feed Audit Webhook Relay", lifespan=lifespan)
+    relay_app = FastAPI(title="Feed Change Webhook Relay", lifespan=lifespan)
 
-    @relay_app.post("/pubsub/feed-audit-notifications")
-    async def receive_feed_audit_notification(
+    @relay_app.post("/pubsub/feed-change-notifications")
+    async def receive_feed_change_notification(
         envelope: dict[str, Any],
         request: Request,
     ) -> Response:
-        """Receive a Pub/Sub push message for a Feed Audit Notification."""
+        """Receive a Pub/Sub push message for a Feed Change Notification."""
         try:
-            payload = extract_feed_audit_payload(envelope)
+            payload = extract_feed_change_payload(envelope)
         except InvalidPubSubMessage as exc:
             logger.warning(
-                "Invalid Feed Audit Notification Pub/Sub message",
+                "Invalid Feed Change Notification Pub/Sub message",
                 extra={
                     "json_fields": {
                         **_INVALID_PUBSUB_MESSAGE_LOG_FIELDS,
@@ -94,7 +94,7 @@ def create_app(
         )
         if sender is None:
             logger.warning(
-                "Feed audit webhook relay WD client is not initialized",
+                "Feed change webhook relay WD client is not initialized",
                 extra={"json_fields": _CLIENT_NOT_INITIALIZED_LOG_FIELDS},
             )
             return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
@@ -108,7 +108,7 @@ def create_app(
             return Response(status_code=status.HTTP_502_BAD_GATEWAY)
         except Exception:
             logger.exception(
-                "Unexpected Feed Audit Notification relay failure",
+                "Unexpected Feed Change Notification relay failure",
                 extra={"json_fields": _UNHANDLED_DELIVERY_ERROR_LOG_FIELDS},
             )
             return Response(status_code=status.HTTP_502_BAD_GATEWAY)

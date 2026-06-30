@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from backend.pipeline.feed_audit_webhook import settings
+from backend.pipeline.feed_change_webhook import settings
 
 
 def test_load_settings_builds_webhook_url() -> None:
@@ -16,7 +16,7 @@ def test_load_settings_builds_webhook_url() -> None:
     assert loaded.wd_backend_base_url == "https://backend.watchduty.org"
     assert loaded.wd_backend_api_key == "secret-value"
     assert (
-        loaded.wd_audit_webhook_url == "https://backend.watchduty.org"
+        loaded.wd_feed_change_webhook_url == "https://backend.watchduty.org"
         "/api/v1/echo/radio_transcription/internal/audit/webhook/"
     )
 

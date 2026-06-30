@@ -70,7 +70,7 @@ def test_repository_glossary_defines_audit_terms() -> None:
 
     notification_section = _markdown_section(
         text,
-        "### Feed Audit Notification",
+        "### Feed Change Notification",
     )
     assert "delivery projection of a Feed Audit Event" in notification_section
 

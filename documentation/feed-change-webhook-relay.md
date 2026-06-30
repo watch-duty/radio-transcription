@@ -1,7 +1,7 @@
-# Feed Audit Webhook Relay
+# Feed Change Webhook Relay
 
-The Feed Audit Webhook relay is a stateless Cloud Run HTTP service that receives
-Feed Audit Notification log entries from Pub/Sub push delivery and forwards the
+The Feed Change Webhook relay is a stateless Cloud Run HTTP service that receives
+Feed Change Notification log entries from Pub/Sub push delivery and forwards the
 flat audit payload to Watch Duty.
 
 ## Endpoint
@@ -9,7 +9,7 @@ flat audit payload to Watch Duty.
 Pub/Sub calls:
 
 ```text
-POST /pubsub/feed-audit-notifications
+POST /pubsub/feed-change-notifications
 ```
 
 The request body must be the standard Pub/Sub push envelope whose
@@ -34,7 +34,7 @@ Required environment variables:
 The relay returns HTTP `204` to Pub/Sub after Watch Duty returns a `2xx`
 response.
 
-Invalid Pub/Sub envelopes, Cloud Logging entries, or Feed Audit Notification
+Invalid Pub/Sub envelopes, Cloud Logging entries, or Feed Change Notification
 payloads are treated as unrecoverable poison input. The relay logs concise
 diagnostics and returns HTTP `204` without calling Watch Duty so Pub/Sub does
 not retry malformed messages.

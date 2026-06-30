@@ -7,12 +7,12 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi.testclient import TestClient
 
-from backend.pipeline.feed_audit_webhook import main as main_module
-from backend.pipeline.feed_audit_webhook.main import create_app
-from backend.pipeline.feed_audit_webhook.settings import (
-    FeedAuditWebhookSettings,
+from backend.pipeline.feed_change_webhook import main as main_module
+from backend.pipeline.feed_change_webhook.main import create_app
+from backend.pipeline.feed_change_webhook.settings import (
+    FeedChangeWebhookSettings,
 )
-from backend.pipeline.feed_audit_webhook.wd_client import WatchDutyWebhookError
+from backend.pipeline.feed_change_webhook.wd_client import WatchDutyWebhookError
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -37,8 +37,8 @@ class _FakeWDClient:
             raise self.error
 
 
-def _settings() -> FeedAuditWebhookSettings:
-    return FeedAuditWebhookSettings(
+def _settings() -> FeedChangeWebhookSettings:
+    return FeedChangeWebhookSettings(
         wd_backend_base_url="https://backend.watchduty.test",
         wd_backend_api_key="test-api-key",
     )
@@ -46,7 +46,7 @@ def _settings() -> FeedAuditWebhookSettings:
 
 def _payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
-        "event_type": "radio_transcription.feed_audit_notification",
+        "event_type": "radio_transcription.feed_change_notification",
         "schema_version": 1,
         "event_id": "audit-event-1",
         "action": "feed.failure_reported",
@@ -93,7 +93,7 @@ def test_valid_message_and_wd_success_returns_204() -> None:
 
     with TestClient(app) as client:
         response = client.post(
-            "/pubsub/feed-audit-notifications",
+            "/pubsub/feed-change-notifications",
             json=_envelope(payload),
         )
 
@@ -114,7 +114,7 @@ def test_wd_transient_failure_returns_non_2xx() -> None:
 
     with TestClient(app) as client:
         response = client.post(
-            "/pubsub/feed-audit-notifications",
+            "/pubsub/feed-change-notifications",
             json=_envelope(_payload()),
         )
 
@@ -135,7 +135,7 @@ def test_wd_auth_failure_returns_non_2xx() -> None:
 
     with TestClient(app) as client:
         response = client.post(
-            "/pubsub/feed-audit-notifications",
+            "/pubsub/feed-change-notifications",
             json=_envelope(_payload()),
         )
 
@@ -151,13 +151,13 @@ def test_malformed_pubsub_message_returns_204_without_calling_wd(
 
     with caplog.at_level(logging.WARNING, logger=main_module.__name__):
         with TestClient(app) as client:
-            response = client.post("/pubsub/feed-audit-notifications", json={})
+            response = client.post("/pubsub/feed-change-notifications", json={})
 
     assert response.status_code == 204
     assert wd_client.payloads == []
     fields = _json_fields(caplog)
     assert any(
-        field.get("relay_event") == "feed_audit_webhook_invalid_pubsub_message"
+        field.get("relay_event") == "feed_change_webhook_invalid_pubsub_message"
         for field in fields
     )
     assert any(field.get("reason") for field in fields)
@@ -174,7 +174,7 @@ def test_invalid_payload_returns_204_without_calling_wd(
     with caplog.at_level(logging.WARNING, logger=main_module.__name__):
         with TestClient(app) as client:
             response = client.post(
-                "/pubsub/feed-audit-notifications",
+                "/pubsub/feed-change-notifications",
                 json=_envelope(_payload(after_values=[])),
             )
 
@@ -183,7 +183,7 @@ def test_invalid_payload_returns_204_without_calling_wd(
     fields = _json_fields(caplog)
     assert any(
         field.get("reason")
-        == "Feed Audit Notification payload validation failed"
+        == "Feed Change Notification payload validation failed"
         for field in fields
     )
     assert any(
@@ -202,7 +202,7 @@ def test_missing_wd_client_returns_non_2xx_with_structured_config_log(
         app.state.wd_client = None
         with caplog.at_level(logging.WARNING, logger=main_module.__name__):
             response = client.post(
-                "/pubsub/feed-audit-notifications",
+                "/pubsub/feed-change-notifications",
                 json=_envelope(_payload()),
             )
 
@@ -210,7 +210,7 @@ def test_missing_wd_client_returns_non_2xx_with_structured_config_log(
     assert wd_client.payloads == []
     fields = _json_fields(caplog)
     assert any(
-        field.get("relay_event") == "feed_audit_webhook_client_not_initialized"
+        field.get("relay_event") == "feed_change_webhook_client_not_initialized"
         for field in fields
     )
     _assert_no_sensitive_log_values(caplog, fields)
@@ -225,7 +225,7 @@ def test_unexpected_wd_client_error_returns_non_2xx_with_structured_log(
     with caplog.at_level(logging.ERROR, logger=main_module.__name__):
         with TestClient(app) as client:
             response = client.post(
-                "/pubsub/feed-audit-notifications",
+                "/pubsub/feed-change-notifications",
                 json=_envelope(_payload()),
             )
 
@@ -234,7 +234,7 @@ def test_unexpected_wd_client_error_returns_non_2xx_with_structured_log(
     fields = _json_fields(caplog)
     assert any(
         field.get("relay_event")
-        == "feed_audit_webhook_unhandled_delivery_error"
+        == "feed_change_webhook_unhandled_delivery_error"
         for field in fields
     )
     _assert_no_sensitive_log_values(caplog, fields)

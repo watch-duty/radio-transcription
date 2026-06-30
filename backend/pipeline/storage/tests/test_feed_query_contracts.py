@@ -5,8 +5,8 @@ from __future__ import annotations
 import pathlib
 import unittest
 
-from backend.pipeline.common.feed_audit_notification_contract import (
-    FeedAuditNotificationPayload,
+from backend.pipeline.common.feed_change_notification_contract import (
+    FeedChangeNotificationPayload,
 )
 from backend.pipeline.storage import (
     feed_audit_sql,
@@ -105,7 +105,7 @@ class TestFeedAuditEventSqlContract(unittest.TestCase):
 
         expected_keys = [
             f"{field_name!r}"
-            for field_name in FeedAuditNotificationPayload.model_fields
+            for field_name in FeedChangeNotificationPayload.model_fields
         ]
         rendered_keys = [
             line.strip().split(",", maxsplit=1)[0]
@@ -116,7 +116,7 @@ class TestFeedAuditEventSqlContract(unittest.TestCase):
         self.assertIn("jsonb_build_object(", sql)
         self.assertEqual(expected_keys, rendered_keys)
         self.assertIn(
-            "'event_type', 'radio_transcription.feed_audit_notification'",
+            "'event_type', 'radio_transcription.feed_change_notification'",
             sql,
         )
         self.assertIn("'schema_version', 1", sql)

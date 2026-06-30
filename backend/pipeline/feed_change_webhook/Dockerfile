@@ -14,9 +14,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /uvx /bin/
 COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/services/*/pyproject.toml ./
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv export --package feed-audit-webhook --no-dev --locked --no-emit-project -o requirements.txt && \
+    uv export --package feed-change-webhook --no-dev --locked --no-emit-project -o requirements.txt && \
     uv pip install --system -r requirements.txt
 
 COPY backend/ ./backend/
 
-CMD ["uvicorn", "backend.pipeline.feed_audit_webhook.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
+CMD ["uvicorn", "backend.pipeline.feed_change_webhook.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

@@ -7,22 +7,22 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.pipeline.feed_audit_webhook.main import create_app
-from backend.pipeline.feed_audit_webhook.pubsub import (
+from backend.pipeline.feed_change_webhook.main import create_app
+from backend.pipeline.feed_change_webhook.pubsub import (
     InvalidPubSubMessage,
-    extract_feed_audit_payload,
+    extract_feed_change_payload,
 )
-from backend.pipeline.feed_audit_webhook.settings import (
-    FeedAuditWebhookSettings,
+from backend.pipeline.feed_change_webhook.settings import (
+    FeedChangeWebhookSettings,
 )
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
 
-def _feed_audit_payload(**overrides: object) -> dict[str, object]:
+def _feed_change_payload(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
-        "event_type": "radio_transcription.feed_audit_notification",
+        "event_type": "radio_transcription.feed_change_notification",
         "schema_version": 1,
         "event_id": "audit-event-1",
         "action": "feed.failure_reported",
@@ -53,16 +53,16 @@ def _invalid_json_envelope() -> dict[str, object]:
     return {"message": {"data": base64.b64encode(b"{").decode()}}
 
 
-def _test_settings() -> FeedAuditWebhookSettings:
-    return FeedAuditWebhookSettings(
+def _test_settings() -> FeedChangeWebhookSettings:
+    return FeedChangeWebhookSettings(
         wd_backend_base_url="https://backend.watchduty.test",
         wd_backend_api_key="test-key",
     )
 
 
-def test_extract_feed_audit_payload_returns_json_payload_copy() -> None:
-    payload = _feed_audit_payload()
-    extracted = extract_feed_audit_payload(
+def test_extract_feed_change_payload_returns_json_payload_copy() -> None:
+    payload = _feed_change_payload()
+    extracted = extract_feed_change_payload(
         _pubsub_envelope({"jsonPayload": payload})
     )
 
@@ -80,14 +80,14 @@ def test_extract_feed_audit_payload_returns_json_payload_copy() -> None:
         _pubsub_envelope([]),
         _pubsub_envelope({}),
         _pubsub_envelope({"jsonPayload": []}),
-        _feed_audit_payload(),
+        _feed_change_payload(),
     ],
 )
-def test_extract_feed_audit_payload_rejects_malformed_envelopes(
+def test_extract_feed_change_payload_rejects_malformed_envelopes(
     envelope: dict[str, Any],
 ) -> None:
     with pytest.raises(InvalidPubSubMessage) as exc_info:
-        extract_feed_audit_payload(envelope)
+        extract_feed_change_payload(envelope)
 
     assert exc_info.value.reason
     assert exc_info.value.path
@@ -98,41 +98,41 @@ def test_extract_feed_audit_payload_rejects_malformed_envelopes(
     [
         {
             key: value
-            for key, value in _feed_audit_payload().items()
+            for key, value in _feed_change_payload().items()
             if key != "feed_id"
         },
-        _feed_audit_payload(event_type="other.event"),
-        _feed_audit_payload(schema_version=2),
-        _feed_audit_payload(before_values=[]),
-        _feed_audit_payload(after_values=[]),
+        _feed_change_payload(event_type="other.event"),
+        _feed_change_payload(schema_version=2),
+        _feed_change_payload(before_values=[]),
+        _feed_change_payload(after_values=[]),
     ],
 )
-def test_extract_feed_audit_payload_rejects_unsupported_payloads(
+def test_extract_feed_change_payload_rejects_unsupported_payloads(
     payload: dict[str, object],
 ) -> None:
     with pytest.raises(InvalidPubSubMessage) as exc_info:
-        extract_feed_audit_payload(_pubsub_envelope({"jsonPayload": payload}))
+        extract_feed_change_payload(_pubsub_envelope({"jsonPayload": payload}))
 
     assert (
         exc_info.value.reason
-        == "Feed Audit Notification payload validation failed"
+        == "Feed Change Notification payload validation failed"
     )
     assert exc_info.value.path.startswith("jsonPayload")
 
 
-def test_extract_feed_audit_payload_reports_validation_path() -> None:
-    payload = _feed_audit_payload(after_values=[])
+def test_extract_feed_change_payload_reports_validation_path() -> None:
+    payload = _feed_change_payload(after_values=[])
 
     with pytest.raises(InvalidPubSubMessage) as exc_info:
-        extract_feed_audit_payload(_pubsub_envelope({"jsonPayload": payload}))
+        extract_feed_change_payload(_pubsub_envelope({"jsonPayload": payload}))
 
     assert exc_info.value.path == "jsonPayload.after_values"
 
 
-def test_extract_feed_audit_payload_preserves_extra_fields() -> None:
-    payload = _feed_audit_payload(extra_context={"source": "test"})
+def test_extract_feed_change_payload_preserves_extra_fields() -> None:
+    payload = _feed_change_payload(extra_context={"source": "test"})
 
-    extracted = extract_feed_audit_payload(
+    extracted = extract_feed_change_payload(
         _pubsub_envelope({"jsonPayload": payload})
     )
 
@@ -144,19 +144,19 @@ def test_endpoint_ack_drops_malformed_pubsub_message() -> None:
     app = create_app(settings=_test_settings(), wd_client=_FakeWDClient())
 
     with TestClient(app) as client:
-        response = client.post("/pubsub/feed-audit-notifications", json={})
+        response = client.post("/pubsub/feed-change-notifications", json={})
 
     assert response.status_code == 204
 
 
 def test_endpoint_passes_valid_payload_to_downstream_handler() -> None:
-    payload = _feed_audit_payload()
+    payload = _feed_change_payload()
     wd_client = _FakeWDClient()
     app = create_app(settings=_test_settings(), wd_client=wd_client)
 
     with TestClient(app) as client:
         response = client.post(
-            "/pubsub/feed-audit-notifications",
+            "/pubsub/feed-change-notifications",
             json=_pubsub_envelope({"jsonPayload": payload}),
         )
 

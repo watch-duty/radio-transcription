@@ -1,4 +1,4 @@
-"""Pub/Sub push parsing for Feed Audit Notification log entries."""
+"""Pub/Sub push parsing for Feed Change Notification log entries."""
 
 from __future__ import annotations
 
@@ -10,8 +10,8 @@ from typing import Any, cast
 
 from pydantic import ValidationError
 
-from backend.pipeline.common.feed_audit_notification_contract import (
-    FeedAuditNotificationPayload,
+from backend.pipeline.common.feed_change_notification_contract import (
+    FeedChangeNotificationPayload,
 )
 
 
@@ -24,8 +24,8 @@ class InvalidPubSubMessage(ValueError):
         self.path = path
 
 
-def extract_feed_audit_payload(envelope: Mapping[str, Any]) -> dict[str, Any]:
-    """Extract and validate a Feed Audit Notification from a Pub/Sub envelope."""
+def extract_feed_change_payload(envelope: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract and validate a Feed Change Notification from a Pub/Sub envelope."""
     message = _require_mapping(envelope.get("message"), "message")
     data = message.get("data")
     if not isinstance(data, str) or not data:
@@ -51,16 +51,16 @@ def extract_feed_audit_payload(envelope: Mapping[str, Any]) -> dict[str, Any]:
     json_payload = _require_mapping(
         log_entry_mapping.get("jsonPayload"), "jsonPayload"
     )
-    return _validate_feed_audit_payload(json_payload).model_dump(mode="json")
+    return _validate_feed_change_payload(json_payload).model_dump(mode="json")
 
 
-def _validate_feed_audit_payload(
+def _validate_feed_change_payload(
     payload: Mapping[str, Any],
-) -> FeedAuditNotificationPayload:
+) -> FeedChangeNotificationPayload:
     try:
-        return FeedAuditNotificationPayload.model_validate(dict(payload))
+        return FeedChangeNotificationPayload.model_validate(dict(payload))
     except ValidationError as exc:
-        msg = "Feed Audit Notification payload validation failed"
+        msg = "Feed Change Notification payload validation failed"
         raise InvalidPubSubMessage(
             msg,
             path=_validation_error_path(exc),
