@@ -41,7 +41,7 @@ WHERE ($1::uuid[] IS NULL OR s.feed_id = ANY($1))
   AND ($8::text IS NULL OR EXISTS (
       SELECT 1 FROM annotations
       WHERE audio_segment_id = s.id
-        AND type = 'TRANSCRIPT'
+        AND type = 'TRANSCRIPT'::annotation_type
         AND data->>'text' ILIKE '%' || $8 || '%'
   ))
 ORDER BY s.end_timestamp {direction}, s.id {direction}
