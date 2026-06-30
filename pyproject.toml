@@ -293,4 +293,5 @@ exclude = [
     "**/conftest.py",
 ]
 paths = ["backend", "vulture_whitelist.py"]
+min_confidence = 80
 
