@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import sys
 import unittest
 import unittest.mock
-import asyncio
 from pathlib import Path
 
 _SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")
@@ -52,8 +53,6 @@ def _identity(
 
 
 def _metadata(identity: dict) -> str:
-    import json
-
     return (
         json.dumps(
             {
@@ -64,6 +63,12 @@ def _metadata(identity: dict) -> str:
         )
         + "\n"
     )
+
+
+def _line_count(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return len(path.read_text(encoding="utf-8").splitlines())
 
 
 class TestTargetBackendResolver(unittest.TestCase):
@@ -189,13 +194,10 @@ class TestOnlinePredictionResume(unittest.TestCase):
         identity = _identity()
         self.storage.put(
             self.predictions_uri,
-            "\n".join(
-                [
-                    '{"audio_filepath":"gs://audio/1.flac","pred_text":"one","error":null}',
-                    '{"audio_filepath":"gs://audio/2.flac","pred_text":"","error":"empty response"}',
-                ]
-            )
-            + "\n",
+            (
+                '{"audio_filepath":"gs://audio/1.flac","pred_text":"one","error":null}\n'
+                '{"audio_filepath":"gs://audio/2.flac","pred_text":"","error":"empty response"}\n'
+            ),
         )
         self.storage.put(self.metadata_uri, _metadata(identity))
 
@@ -267,13 +269,10 @@ class TestOnlinePredictionResume(unittest.TestCase):
         identity = _identity()
         self.storage.put(
             self.predictions_uri,
-            "\n".join(
-                [
-                    '{"audio_filepath":"gs://audio/1.flac","pred_text":"one","error":null}',
-                    '{"audio_filepath":"gs://audio/2.flac","pred_text":',
-                ]
-            )
-            + "\n",
+            (
+                '{"audio_filepath":"gs://audio/1.flac","pred_text":"one","error":null}\n'
+                '{"audio_filepath":"gs://audio/2.flac","pred_text":\n'
+            ),
         )
         self.storage.put(self.metadata_uri, _metadata(identity))
 
@@ -480,6 +479,91 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             2,
         )
 
+    @unittest.mock.patch("gemini_sft.target_execution.types")
+    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    def test_periodic_upload_does_not_hold_append_lock(
+        self, mock_genai, mock_types
+    ) -> None:
+        class Response:
+            text = "recognized"
+
+        async def generate_content(**kwargs):
+            return Response()
+
+        async def run_scenario() -> None:
+            upload_started = asyncio.Event()
+            release_upload = asyncio.Event()
+            prediction_upload_calls = 0
+
+            async def fake_upload(*args, **kwargs):
+                nonlocal prediction_upload_calls
+                gcs_uri = str(args[2])
+                if not gcs_uri.endswith("online_predictions.jsonl"):
+                    return
+                prediction_upload_calls += 1
+                if prediction_upload_calls == 1:
+                    upload_started.set()
+                    await release_upload.wait()
+
+            async def wait_for_two_rows(path: Path) -> None:
+                while True:
+                    line_count = await asyncio.to_thread(_line_count, path)
+                    if line_count >= 2:
+                        return
+                    await asyncio.sleep(0)
+
+            with (
+                unittest.mock.patch(
+                    "gemini_sft.target_execution.ONLINE_SYNC_EVERY", 1
+                ),
+                unittest.mock.patch(
+                    "gemini_sft.target_execution._upload_local_file_async",
+                    fake_upload,
+                ),
+            ):
+                task = asyncio.create_task(
+                    run_online_target_inference(
+                        storage_client=self.storage,
+                        run_gcs_prefix="gs://bucket/run",
+                        project="project",
+                        default_location="us-central1",
+                        target_label="checkpoint_6",
+                        target_model=(
+                            "projects/p/locations/us-central1/endpoints/123"
+                        ),
+                        audio_uris=["gs://audio/1.flac", "gs://audio/2.flac"],
+                        histories=[[], []],
+                        system_prompt="system",
+                        user_prompt="user",
+                        prior_context_count=8,
+                        prior_context_mode="text_turns",
+                        eval_manifest_uri="gs://data/eval.jsonl",
+                        local_dir=self.local_dir,
+                        concurrency=2,
+                        max_retries=1,
+                    )
+                )
+                try:
+                    await asyncio.wait_for(upload_started.wait(), timeout=1.0)
+                    predictions_path = (
+                        self.local_dir
+                        / "checkpoint_6"
+                        / "online_predictions.jsonl"
+                    )
+                    await asyncio.wait_for(
+                        wait_for_two_rows(predictions_path), timeout=1.0
+                    )
+                finally:
+                    release_upload.set()
+                    await task
+
+        mock_client = unittest.mock.MagicMock()
+        mock_client.aio.models.generate_content = generate_content
+        mock_genai.Client.return_value = mock_client
+        mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
+
+        asyncio.run(run_scenario())
+
     @unittest.mock.patch("gemini_sft.target_execution.genai")
     def test_safe_resume_skips_existing_rows(self, mock_genai) -> None:
         identity = _identity()
@@ -491,13 +575,10 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         )
         self.storage.put(
             predictions_uri,
-            "\n".join(
-                [
-                    '{"audio_filepath":"gs://audio/1.flac","pred_text":"one","error":null}',
-                    '{"audio_filepath":"gs://audio/2.flac","pred_text":"two","error":null}',
-                ]
-            )
-            + "\n",
+            (
+                '{"audio_filepath":"gs://audio/1.flac","pred_text":"one","error":null}\n'
+                '{"audio_filepath":"gs://audio/2.flac","pred_text":"two","error":null}\n'
+            ),
         )
         self.storage.put(metadata_uri, _metadata(identity))
 
@@ -563,7 +644,8 @@ class TestGenerateWithRetries(unittest.TestCase):
         class Response:
             @property
             def text(self) -> str:
-                raise ValueError("response contains no candidates")
+                msg = "response contains no candidates"
+                raise ValueError(msg)
 
         class Models:
             async def generate_content(self, **kwargs):

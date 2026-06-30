@@ -13,8 +13,8 @@ from common.gcs_utils import (
     gcs_uri_exists,
     upload_local_file,
 )
-from common.gemini.context import build_context_histories
 from common.gemini.batch import BatchPredictionMap, run_batch_audio_inference
+from common.gemini.context import build_context_histories
 from common.gemini.prompts import GEMINI_TRANSCRIBE_KEYWORDS
 from common.gemini.vertex import submit_batch_inference
 from common.inference_manifest import (
@@ -60,6 +60,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 RESULTS_DIR = DEFAULT_RESULTS_DIR
+_LOCAL_DURABLE_EVAL_FIELDS = (
+    "inference_dataset_slug",
+    "eval_manifest_uri",
+    "gcp_project",
+    "gcs_bucket",
+    "location",
+    "base_model",
+    "prior_context_count",
+    "prior_context_mode",
+    "system_prompt",
+    "user_prompt",
+)
 
 
 def evaluate(args: argparse.Namespace) -> int:
@@ -73,6 +85,7 @@ def evaluate(args: argparse.Namespace) -> int:
             )
             return 1
         config = download_json_text(storage_client, run_cfg.paths.config_uri)
+        _validate_local_eval_config_matches_durable(run_cfg, config)
         return evaluate_run(args, run_cfg, storage_client, config)
     except (
         ImportError,
@@ -86,7 +99,7 @@ def evaluate(args: argparse.Namespace) -> int:
         return _log_cli_error(exc)
 
 
-def evaluate_run(
+def evaluate_run(  # noqa: PLR0915
     args: argparse.Namespace,
     run_cfg: RunConfig,
     storage_client: storage.Client,
@@ -264,6 +277,43 @@ def evaluate_run(
 
 
 PredictionMap = BatchPredictionMap
+
+
+def _validate_local_eval_config_matches_durable(
+    run_cfg: RunConfig,
+    config: dict[str, Any],
+) -> None:
+    """Fail loudly when a local eval TOML disagrees with durable GCS state."""
+    local_record = run_cfg.to_record_dict()
+    mismatches = [
+        key
+        for key in _LOCAL_DURABLE_EVAL_FIELDS
+        if local_record.get(key) != config.get(key)
+    ]
+
+    if run_cfg.eval_model is None:
+        msg = "local eval config missing required [eval.model]"
+        raise ValueError(msg)
+    local_target = run_cfg.eval_model.to_record_dict()
+    durable_target = require_config_eval_model(config).to_record_dict()
+    if local_target != durable_target:
+        mismatches.append("eval_model")
+
+    local_execution = run_cfg.eval_execution.to_record_dict()
+    durable_execution = require_config_eval_execution(config).to_record_dict()
+    if local_execution != durable_execution:
+        mismatches.append("eval_execution")
+
+    if not mismatches:
+        return
+    fields = ", ".join(mismatches)
+    msg = (
+        "local eval config does not match durable GCS config.json for "
+        f"round {run_cfg.round_id}; GCS config.json is the eval source of "
+        "truth. Use the matching prepared config or create a separate prepared "
+        f"round_id for this eval target. Mismatched field(s): {fields}"
+    )
+    raise ValueError(msg)
 
 
 def batch_infer(

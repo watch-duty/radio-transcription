@@ -135,6 +135,13 @@ Run eval for the single `[eval.model]` target in the config:
 gemini-sft eval --config /path/to/run.toml
 ```
 
+The local TOML must match the durable GCS `config.json` for eval-affecting
+fields, including `[eval.model]`, `[eval.execution]`, prompts, prior-context
+settings, base model, and eval manifest. Changing only the local TOML after
+`prepare` does not retarget a run; `eval` fails loudly on a mismatch. Use the
+matching prepared config, or create a separate prepared `round_id` for a
+different target or eval set.
+
 Batch targets write `evals/LABEL/input.jsonl`, `evals/LABEL/output/`, and
 `evals/LABEL/batch_predictions.meta.json`. Online endpoint targets write
 `evals/LABEL/online_predictions.jsonl` and

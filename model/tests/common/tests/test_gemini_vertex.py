@@ -7,8 +7,8 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from common.gemini.context import ContextTurn
 import common.gemini.vertex as vmod
+from common.gemini.context import ContextTurn
 from common.gemini.vertex import (
     _ADAPTER_ENUM,
     GEMINI_GENERATION_CONFIG,
@@ -562,19 +562,17 @@ class TestBuildRequest(unittest.TestCase):
         )
         self.assertEqual(
             contents[0]["parts"][0]["text"],
-            "\n".join(
-                [
-                    "The following prior same-source transcripts are for "
-                    "situational awareness only.",
-                    "Do not re-transcribe them. Do not continue them.",
-                    "Transcribe exclusively the current audio clip.",
-                    "",
-                    "Prior transcripts, oldest to newest:",
-                    "1. first transcript",
-                    "2. second transcript",
-                    "",
-                    "IMPORTANT: current prompt",
-                ]
+            (
+                "The following prior same-source transcripts are for "
+                "situational awareness only.\n"
+                "Do not re-transcribe them. Do not continue them.\n"
+                "Transcribe exclusively the current audio clip.\n"
+                "\n"
+                "Prior transcripts, oldest to newest:\n"
+                "1. first transcript\n"
+                "2. second transcript\n"
+                "\n"
+                "IMPORTANT: current prompt"
             ),
         )
 
@@ -861,9 +859,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         )
 
     @unittest.mock.patch("common.gemini.vertex.genai")
-    def test_batch_uses_us_location_for_31_flash_lite(
-        self, mock_genai
-    ) -> None:
+    def test_batch_uses_us_location_for_31_flash_lite(self, mock_genai) -> None:
         """Gemini 3.1 Flash-Lite batch jobs are served from Vertex location us."""
         mock_dest = unittest.mock.MagicMock()
         mock_dest.gcs_uri = "gs://bucket/output/"

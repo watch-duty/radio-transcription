@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
-from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import TYPE_CHECKING, Any, Final
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 @dataclass(frozen=True)
@@ -23,15 +25,13 @@ HISTORY_MODES: Final = frozenset(
 PRIOR_CONTEXT_MODES: Final = frozenset(
     {"text_turns", "transcript", "guarded_transcript_block"}
 )
-GUARDED_TRANSCRIPT_CONTEXT_HEADER = "\n".join(
-    [
-        "The following prior same-source transcripts are for situational "
-        "awareness only.",
-        "Do not re-transcribe them. Do not continue them.",
-        "Transcribe exclusively the current audio clip.",
-        "",
-        "Prior transcripts, oldest to newest:",
-    ]
+GUARDED_TRANSCRIPT_CONTEXT_HEADER = (
+    "The following prior same-source transcripts are for situational "
+    "awareness only.\n"
+    "Do not re-transcribe them. Do not continue them.\n"
+    "Transcribe exclusively the current audio clip.\n"
+    "\n"
+    "Prior transcripts, oldest to newest:"
 )
 GUARDED_TRANSCRIPT_NO_HISTORY_TEXT = (
     "There are no prior transcripts for this original recording."
@@ -70,11 +70,8 @@ def build_guarded_transcript_context_prompt(
         if history
         else GUARDED_TRANSCRIPT_NO_HISTORY_TEXT
     )
-    return "\n\n".join(
-        [
-            "\n".join([GUARDED_TRANSCRIPT_CONTEXT_HEADER, prior_context]),
-            user_prompt,
-        ]
+    return (
+        f"{GUARDED_TRANSCRIPT_CONTEXT_HEADER}\n{prior_context}\n\n{user_prompt}"
     )
 
 
@@ -210,7 +207,7 @@ def build_context_histories(
 
     grouped_indices: dict[str, list[int]] = defaultdict(list)
     for index, row in enumerate(rows):
-        grouped_indices[_episode_key(row)].append(index)
+        grouped_indices[_episode_key(row, index)].append(index)
 
     for indices in grouped_indices.values():
         history: list[ContextTurn] = []
@@ -224,7 +221,7 @@ def build_context_histories(
     return histories
 
 
-def _episode_key(row: dict[str, Any]) -> str:
+def _episode_key(row: dict[str, Any], fallback_index: int) -> str:
     value = row.get("original_audio_uri")
     if isinstance(value, str) and value.strip():
         return value.strip()
@@ -241,7 +238,7 @@ def _episode_key(row: dict[str, Any]) -> str:
         value = row.get(key)
         if isinstance(value, str) and value.strip():
             return value.strip()
-    return ""
+    return f"__missing_episode_key__:{fallback_index}"
 
 
 def _row_sort_key(

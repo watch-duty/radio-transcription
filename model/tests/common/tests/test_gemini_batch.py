@@ -6,13 +6,16 @@ import unittest
 from pathlib import Path
 
 from common.gemini import request_identity
-from common.gemini.context import ContextTurn
 from common.gemini.batch import (
     batch_prediction_metadata_uri,
     build_batch_jsonl,
     run_batch_audio_inference,
 )
-from common.gemini.vertex import GEMINI_GENERATION_CONFIG, GEMINI_SAFETY_SETTINGS
+from common.gemini.context import ContextTurn
+from common.gemini.vertex import (
+    GEMINI_GENERATION_CONFIG,
+    GEMINI_SAFETY_SETTINGS,
+)
 from fake_gcs import FakeStorageClient
 
 
@@ -64,7 +67,9 @@ def _put_batch_metadata(
         audio_uris=audio_uris or ["gs://audio/a.flac"],
         system_prompt=system_prompt,
         user_prompt=user_prompt,
-        prior_context_count=int(_batch_identity_kwargs()["prior_context_count"]),
+        prior_context_count=int(
+            _batch_identity_kwargs()["prior_context_count"]
+        ),
         prior_context_mode=str(_batch_identity_kwargs()["prior_context_mode"]),
         generation_config=GEMINI_GENERATION_CONFIG,
         safety_settings=GEMINI_SAFETY_SETTINGS,
@@ -223,7 +228,8 @@ class TestGeminiBatchInference(unittest.TestCase):
                 f"{output_uri}prediction-model-1/predictions.jsonl",
                 _vertex_output("gs://audio/a.flac", "partial") + "\n",
             )
-            raise RuntimeError("batch failed")
+            msg = "batch failed"
+            raise RuntimeError(msg)
 
         preds = run_batch_audio_inference(
             storage_client=storage,

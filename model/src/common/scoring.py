@@ -25,8 +25,6 @@ from functools import cache
 from typing import Any
 
 logger = logging.getLogger(__name__)
-_EMPTY_REFERENCE_TOKEN = "emptyreference"
-
 # Heavy deps behind the [scoring] extra — deferred so `import common.scoring`
 # never triggers NeMo when [scoring] is not installed.
 try:
@@ -182,13 +180,30 @@ def compute_wer(
     if normalizer is not None:
         references = [normalizer(r) for r in references]
         hypotheses = [normalizer(h) for h in hypotheses]
-    references, hypotheses = _protect_empty_references(
+    valid_refs, valid_hyps, empty_ref_insertions = _split_empty_references(
         references, hypotheses
     )
-    output = jiwer.process_words(references, hypotheses)
+    if not valid_refs:
+        return {
+            "wer": 100.0 if empty_ref_insertions else 0.0,
+            "insertions": empty_ref_insertions,
+            "deletions": 0,
+            "substitutions": 0,
+            "hits": 0,
+        }
+    output = jiwer.process_words(valid_refs, valid_hyps)
+    total_reference_words = (
+        output.hits + output.substitutions + output.deletions
+    )
+    total_errors = (
+        output.insertions
+        + output.deletions
+        + output.substitutions
+        + empty_ref_insertions
+    )
     return {
-        "wer": round(100 * output.wer, 2),
-        "insertions": output.insertions,
+        "wer": round(100 * total_errors / total_reference_words, 2),
+        "insertions": output.insertions + empty_ref_insertions,
         "deletions": output.deletions,
         "substitutions": output.substitutions,
         "hits": output.hits,
@@ -217,29 +232,64 @@ def compute_cer(
     if normalizer is not None:
         references = [normalizer(r) for r in references]
         hypotheses = [normalizer(h) for h in hypotheses]
-    references, hypotheses = _protect_empty_references(
-        references, hypotheses
+    valid_refs, valid_hyps, empty_ref_insertions = (
+        _split_empty_references_for_cer(
+            references,
+            hypotheses,
+        )
     )
-    value = jiwer.cer(references, hypotheses)
-    return {"cer": round(100 * value, 2)}
+    if not valid_refs:
+        return {"cer": 100.0 if empty_ref_insertions else 0.0}
+    output = jiwer.process_characters(valid_refs, valid_hyps)
+    total_reference_chars = (
+        output.hits + output.substitutions + output.deletions
+    )
+    total_errors = (
+        output.insertions
+        + output.deletions
+        + output.substitutions
+        + empty_ref_insertions
+    )
+    return {"cer": round(100 * total_errors / total_reference_chars, 2)}
 
 
-def _protect_empty_references(
+def _split_empty_references(
     references: list[str], hypotheses: list[str]
-) -> tuple[list[str], list[str]]:
-    """Replace empty references with a sentinel so jiwer can score the row."""
-    protected_refs: list[str] = []
-    protected_hyps: list[str] = []
+) -> tuple[list[str], list[str], int]:
+    """Split empty-reference rows out so they count as insertions only.
+
+    ``jiwer.process_words`` raises on empty references. Instead of injecting a
+    fake reference token, keep non-empty references in the corpus alignment and
+    count every predicted word against an empty reference as an insertion. This
+    preserves the true WER denominator: empty-reference rows add zero reference
+    words.
+    """
+    valid_refs: list[str] = []
+    valid_hyps: list[str] = []
+    empty_ref_insertions = 0
     for ref, hyp in zip(references, hypotheses, strict=True):
         if ref.strip():
-            protected_refs.append(ref)
-            protected_hyps.append(hyp)
+            valid_refs.append(ref)
+            valid_hyps.append(hyp)
         else:
-            protected_refs.append(_EMPTY_REFERENCE_TOKEN)
-            protected_hyps.append(
-                _EMPTY_REFERENCE_TOKEN if not hyp.strip() else hyp
-            )
-    return protected_refs, protected_hyps
+            empty_ref_insertions += len(hyp.split())
+    return valid_refs, valid_hyps, empty_ref_insertions
+
+
+def _split_empty_references_for_cer(
+    references: list[str], hypotheses: list[str]
+) -> tuple[list[str], list[str], int]:
+    """Split empty-reference rows for CER, counting hypothesis chars."""
+    valid_refs: list[str] = []
+    valid_hyps: list[str] = []
+    empty_ref_insertions = 0
+    for ref, hyp in zip(references, hypotheses, strict=True):
+        if ref.strip():
+            valid_refs.append(ref)
+            valid_hyps.append(hyp)
+        else:
+            empty_ref_insertions += len(hyp.strip())
+    return valid_refs, valid_hyps, empty_ref_insertions
 
 
 def hallucination_rate(hypotheses: list[str]) -> float:

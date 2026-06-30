@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from common.gemini import context as context_module
 from common.gemini.context import ContextTurn, build_context_histories
 
 
@@ -111,6 +112,12 @@ class TestGeminiContextHistories(unittest.TestCase):
         histories = build_context_histories(rows, max_turns=2)
 
         self.assertEqual(histories, [[], []])
+
+    def test_missing_episode_key_falls_back_to_unique_row_key(self) -> None:
+        self.assertNotEqual(
+            context_module._episode_key({"text": "first"}, 0),
+            context_module._episode_key({"text": "second"}, 1),
+        )
 
 
 if __name__ == "__main__":

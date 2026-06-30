@@ -71,7 +71,7 @@ def build_audio_tuning_example(
     }
 
 
-def validate_audio_tuning_example(example: dict[str, Any]) -> bool:
+def validate_audio_tuning_example(example: dict[str, Any]) -> bool:  # noqa: PLR0911
     """Return True if the example matches the Vertex AI audio-SFT JSONL schema.
 
     Validates the shape locally before submitting a paid tuning job. Rejects

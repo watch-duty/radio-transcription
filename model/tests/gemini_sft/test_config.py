@@ -389,9 +389,7 @@ model = "gemini-3.1-flash-lite"
 """
                 )
 
-                with self.assertRaisesRegex(
-                    RunConfigError, r"eval\.execution"
-                ):
+                with self.assertRaisesRegex(RunConfigError, r"eval\.execution"):
                     load_run_config(self._write_config(body))
 
     def test_eval_config_rejects_non_string_optional_manifest_uri(self) -> None:
@@ -405,9 +403,7 @@ model = "gemini-3.1-flash-lite"
 
     def test_eval_config_requires_eval_manifest_uri(self) -> None:
         body = self._without_manifest_lines(
-            self._valid_toml(
-                eval_section=self._eval_model_section()
-            ),
+            self._valid_toml(eval_section=self._eval_model_section()),
             "eval_manifest_uri",
         )
 
@@ -595,9 +591,7 @@ model = "gemini-3.1-flash-lite"
                     (TypeError, ValueError),
                     "config.json field eval_execution",
                 ):
-                    require_config_eval_execution(
-                        {"eval_execution": execution}
-                    )
+                    require_config_eval_execution({"eval_execution": execution})
 
     def test_round_id_must_be_safe_single_path_component(self) -> None:
         for round_id in (

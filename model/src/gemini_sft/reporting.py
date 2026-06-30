@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from dataclasses import field
+from dataclasses import dataclass, field
 from typing import Any
 
 from common.scoring import (
@@ -158,15 +157,13 @@ def render_console_report(report: EvalReport) -> str:
 
 
 def _target_to_dict(target: TargetMetrics) -> dict[str, Any]:
-    row = {
+    return {
         "target_label": target.target_label,
         "model": target.model,
         "wer": target.wer,
         "cer": target.cer,
         "keyword_accuracy": target.keyword_accuracy,
-        "empty_or_unintelligible_rate": (
-            target.empty_or_unintelligible_rate
-        ),
+        "empty_or_unintelligible_rate": (target.empty_or_unintelligible_rate),
         "empty_response_rate": target.empty_response_rate,
         "insertions": target.insertions,
         "deletions": target.deletions,
@@ -177,7 +174,6 @@ def _target_to_dict(target: TargetMetrics) -> dict[str, Any]:
         "keyword_metrics": target.keyword_metrics,
         "metadata": target.metadata,
     }
-    return row
 
 
 def _artifacts_to_dict(artifacts: ReportArtifacts) -> dict[str, str]:

@@ -155,6 +155,28 @@ class TestComputeWerPolicies(unittest.TestCase):
         result = compute_wer(["Um"], ["copy"], normalizer=build_normalizer())
         self.assertGreater(result["wer"], 0)
 
+    def test_empty_reference_hallucination_counts_as_insertions(self) -> None:
+        result = compute_wer(
+            ["engine copy", ""],
+            ["engine copy", "extra words"],
+            normalizer=None,
+        )
+
+        self.assertEqual(result["wer"], 100.0)
+        self.assertEqual(result["insertions"], 2)
+        self.assertEqual(result["deletions"], 0)
+        self.assertEqual(result["substitutions"], 0)
+        self.assertEqual(result["hits"], 2)
+
+    def test_all_empty_references_with_hypothesis_reports_insertions(
+        self,
+    ) -> None:
+        result = compute_wer([""], ["extra words"], normalizer=None)
+
+        self.assertEqual(result["wer"], 100.0)
+        self.assertEqual(result["insertions"], 2)
+        self.assertEqual(result["hits"], 0)
+
 
 @_scoring_required
 class TestComputeCer(unittest.TestCase):
@@ -171,6 +193,13 @@ class TestComputeCer(unittest.TestCase):
     ) -> None:
         result = compute_cer(["Uh,"], [""], normalizer=build_normalizer())
         self.assertEqual(result["cer"], 0)
+
+    def test_empty_reference_hallucination_counts_as_char_insertions(
+        self,
+    ) -> None:
+        result = compute_cer(["abc", ""], ["abc", "xy"], normalizer=None)
+
+        self.assertEqual(result["cer"], 66.67)
 
 
 class TestHallucinationRate(unittest.TestCase):

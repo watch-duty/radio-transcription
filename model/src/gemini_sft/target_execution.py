@@ -5,17 +5,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from common.gcs_utils import (
     blob_exists,
     download_gcs_uri,
     upload_local_file,
 )
-from common.gemini.context import ContextTurn
 from common.gemini import request_identity as request_identity_lib
 from common.gemini.vertex import (
     GEMINI_GENERATION_CONFIG,
@@ -25,13 +22,21 @@ from common.gemini.vertex import (
     resource_location,
     types,
 )
-from gemini_sft.config import EvalExecutionConfig, EvalModelTarget
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
+
+    from common.gemini.context import ContextTurn
+
+    from gemini_sft.config import EvalExecutionConfig, EvalModelTarget
 
 LOGGER = logging.getLogger(__name__)
 
 ONLINE_RETRY_SLEEP_SECONDS = 2.0
 ONLINE_SYNC_EVERY = 100
 ONLINE_LOG_EVERY = 100
+
 
 @dataclass(frozen=True)
 class OnlineResumeState:
@@ -292,6 +297,7 @@ async def run_online_target_inference(
             "target_label": target_label,
             "model": target_model,
         }
+        should_upload = False
         async with lock:
             completed[audio_uri] = out_row
             _append_prediction(local_predictions_path, out_row)
@@ -300,12 +306,8 @@ async def run_online_target_inference(
             if error:
                 progress["errors"] += 1
             if progress["since_sync"] >= ONLINE_SYNC_EVERY:
-                await _upload_local_file_async(
-                    storage_client,
-                    local_predictions_path,
-                    predictions_uri,
-                )
                 progress["since_sync"] = 0
+                should_upload = True
             if progress["done"] == len(audio_uri_list) or (
                 progress["done"] % ONLINE_LOG_EVERY == 0
             ):
@@ -316,6 +318,12 @@ async def run_online_target_inference(
                     len(audio_uri_list),
                     progress["errors"],
                 )
+        if should_upload:
+            await _upload_local_file_async(
+                storage_client,
+                local_predictions_path,
+                predictions_uri,
+            )
 
     await asyncio.gather(
         *(

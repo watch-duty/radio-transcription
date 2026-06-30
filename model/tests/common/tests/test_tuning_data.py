@@ -160,19 +160,17 @@ class TestBuildExample(unittest.TestCase):
         )
         self.assertEqual(
             example["contents"][0]["parts"][0]["text"],
-            "\n".join(
-                [
-                    "The following prior same-source transcripts are for "
-                    "situational awareness only.",
-                    "Do not re-transcribe them. Do not continue them.",
-                    "Transcribe exclusively the current audio clip.",
-                    "",
-                    "Prior transcripts, oldest to newest:",
-                    "1. first transcript",
-                    "2. second transcript",
-                    "",
-                    "IMPORTANT: current prompt",
-                ]
+            (
+                "The following prior same-source transcripts are for "
+                "situational awareness only.\n"
+                "Do not re-transcribe them. Do not continue them.\n"
+                "Transcribe exclusively the current audio clip.\n"
+                "\n"
+                "Prior transcripts, oldest to newest:\n"
+                "1. first transcript\n"
+                "2. second transcript\n"
+                "\n"
+                "IMPORTANT: current prompt"
             ),
         )
 
@@ -190,19 +188,16 @@ class TestBuildExample(unittest.TestCase):
 
         self.assertEqual(
             example["contents"][0]["parts"][0]["text"],
-            "\n".join(
-                [
-                    "The following prior same-source transcripts are for "
-                    "situational awareness only.",
-                    "Do not re-transcribe them. Do not continue them.",
-                    "Transcribe exclusively the current audio clip.",
-                    "",
-                    "Prior transcripts, oldest to newest:",
-                    "There are no prior transcripts for this original "
-                    "recording.",
-                    "",
-                    "IMPORTANT: current prompt",
-                ]
+            (
+                "The following prior same-source transcripts are for "
+                "situational awareness only.\n"
+                "Do not re-transcribe them. Do not continue them.\n"
+                "Transcribe exclusively the current audio clip.\n"
+                "\n"
+                "Prior transcripts, oldest to newest:\n"
+                "There are no prior transcripts for this original recording.\n"
+                "\n"
+                "IMPORTANT: current prompt"
             ),
         )
 

@@ -3,12 +3,14 @@ from __future__ import annotations
 import unittest
 
 from common.scoring import compute_wer
-from gemini_sft.reporting import EvalReport
-from gemini_sft.reporting import ReportArtifacts
-from gemini_sft.reporting import build_target_metrics
-from gemini_sft.reporting import render_console_report
-from gemini_sft.reporting import render_markdown_report
-from gemini_sft.reporting import report_to_dict
+from gemini_sft.reporting import (
+    EvalReport,
+    ReportArtifacts,
+    build_target_metrics,
+    render_console_report,
+    render_markdown_report,
+    report_to_dict,
+)
 
 try:
     import jiwer  # noqa: F401

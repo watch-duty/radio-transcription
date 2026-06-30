@@ -169,9 +169,9 @@ model = "gemini-3.1-flash-lite"
         self.assertIn("max_retries = 3", text)
 
     def test_sft_operator_metric_docs_track_report_columns(self) -> None:
-        text = (
-            _SCRIPTS_DIR / "sft" / "docs" / "metrics.md"
-        ).read_text(encoding="utf-8")
+        text = (_SCRIPTS_DIR / "sft" / "docs" / "metrics.md").read_text(
+            encoding="utf-8"
+        )
 
         documented_columns = []
         in_column_table = False
@@ -200,15 +200,13 @@ model = "gemini-3.1-flash-lite"
     def test_sft_operator_hygiene_docs_and_gitignore_cover_local_artifacts(
         self,
     ) -> None:
-        hygiene_text = (
-            _SCRIPTS_DIR / "sft" / "docs" / "hygiene.md"
-        ).read_text(encoding="utf-8")
-        runbook_text = (
-            _SCRIPTS_DIR / "sft" / "docs" / "runbook.md"
-        ).read_text(encoding="utf-8")
-        gitignore_text = (_REPO_ROOT / ".gitignore").read_text(
+        hygiene_text = (_SCRIPTS_DIR / "sft" / "docs" / "hygiene.md").read_text(
             encoding="utf-8"
         )
+        runbook_text = (_SCRIPTS_DIR / "sft" / "docs" / "runbook.md").read_text(
+            encoding="utf-8"
+        )
+        gitignore_text = (_REPO_ROOT / ".gitignore").read_text(encoding="utf-8")
 
         expected_hygiene_terms = (
             ".local.toml",
@@ -294,7 +292,9 @@ model = "gemini-3.1-flash-lite"
                     check=False,
                     text=True,
                 )
-                self.assertEqual(0, ignored_check.returncode, ignored_check.stderr)
+                self.assertEqual(
+                    0, ignored_check.returncode, ignored_check.stderr
+                )
 
         for path in allowed_paths:
             with self.subTest(trackable_path=path):
@@ -311,4 +311,6 @@ model = "gemini-3.1-flash-lite"
                     check=False,
                     text=True,
                 )
-                self.assertEqual(1, trackable_check.returncode, trackable_check.stderr)
+                self.assertEqual(
+                    1, trackable_check.returncode, trackable_check.stderr
+                )

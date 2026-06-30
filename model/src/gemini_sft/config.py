@@ -180,7 +180,7 @@ def load_eval_run_config(path: str | Path) -> RunConfig:
     return _load_run_config(path, require_training_manifests=False)
 
 
-def _load_run_config(
+def _load_run_config(  # noqa: PLR0915
     path: str | Path,
     *,
     require_training_manifests: bool,
@@ -365,7 +365,9 @@ def require_config_eval_model(config: dict[str, Any]) -> EvalModelTarget:
     )
 
 
-def require_config_eval_execution(config: dict[str, Any]) -> EvalExecutionConfig:
+def require_config_eval_execution(
+    config: dict[str, Any],
+) -> EvalExecutionConfig:
     """Return validated eval execution controls from durable config.json."""
     raw_execution = config.get("eval_execution")
     if raw_execution is None:
@@ -376,9 +378,7 @@ def require_config_eval_execution(config: dict[str, Any]) -> EvalExecutionConfig
     return _config_eval_execution_config(raw_execution)
 
 
-def optional_config_prior_context_mode(
-    config: dict[str, Any], key: str
-) -> str:
+def optional_config_prior_context_mode(config: dict[str, Any], key: str) -> str:
     """Return a validated durable prior-context mode."""
     value = config.get(key, "text_turns")
     if not isinstance(value, str):

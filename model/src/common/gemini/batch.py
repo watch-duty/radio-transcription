@@ -14,10 +14,9 @@ from common.gcs_utils import (
     download_blob_to_file,
     download_gcs_uri,
     parse_gcs_uri,
-    upload_local_file,
     upload_file_to_blob,
+    upload_local_file,
 )
-from common.gemini.context import ContextTurn
 from common.gemini import request_identity
 from common.gemini.vertex import (
     GEMINI_GENERATION_CONFIG,
@@ -29,6 +28,8 @@ from common.gemini.vertex import (
 
 if TYPE_CHECKING:
     from google.cloud import storage
+
+    from common.gemini.context import ContextTurn
 
 logger = logging.getLogger(__name__)
 
@@ -282,6 +283,7 @@ def _validate_reusable_batch_output(
         request_identity_payload,
         "batch prediction request identity mismatch",
     )
+
 
 def _unique_audio_uris(audio_uris: Sequence[str]) -> set[str] | None:
     seen: set[str] = set()

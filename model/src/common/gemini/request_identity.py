@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Sequence
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
 
 
 def build_request_identity(
@@ -75,11 +77,11 @@ def load_metadata_identity(
     metadata = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(metadata, dict):
         msg = f"{error_message}: invalid metadata"
-        raise ValueError(msg)
+        raise TypeError(msg)
     identity = metadata.get("request_identity")
     if not isinstance(identity, dict):
         msg = f"{error_message}: missing identity"
-        raise ValueError(msg)
+        raise TypeError(msg)
     expected_hash = metadata.get("request_identity_hash")
     if expected_hash and expected_hash != request_identity_hash(identity):
         msg = f"{error_message}: hash mismatch"

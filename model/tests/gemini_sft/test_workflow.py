@@ -56,7 +56,10 @@ def _row(
 
 
 def _config_text(
-    round_id: str = "round-a", prior_context_count: int | None = None
+    round_id: str = "round-a",
+    prior_context_count: int | None = None,
+    eval_label: str = "base",
+    eval_model: str = "gemini-3.1-flash-lite",
 ) -> str:
     context = ""
     if prior_context_count is not None:
@@ -84,8 +87,8 @@ learning_rate_multiplier = 1.0
 {context}
 
 [eval.model]
-label = "base"
-model = "gemini-3.1-flash-lite"
+label = "{eval_label}"
+model = "{eval_model}"
 """
 
 
@@ -117,7 +120,9 @@ def _fake_cer(
 @contextlib.contextmanager
 def _patched_eval_scoring() -> Any:
     with (
-        unittest.mock.patch.object(evaluate_module, "build_normalizer", lambda: None),
+        unittest.mock.patch.object(
+            evaluate_module, "build_normalizer", return_value=None
+        ),
         unittest.mock.patch.multiple(
             reporting_module,
             compute_wer=_fake_wer,
@@ -193,10 +198,17 @@ def _write_config_file(
     tmp: Path,
     round_id: str = "round-a",
     prior_context_count: int | None = None,
+    eval_label: str = "base",
+    eval_model: str = "gemini-3.1-flash-lite",
 ) -> Path:
     path = tmp / "run.toml"
     path.write_text(
-        _config_text(round_id, prior_context_count),
+        _config_text(
+            round_id,
+            prior_context_count,
+            eval_label=eval_label,
+            eval_model=eval_model,
+        ),
         encoding="utf-8",
     )
     return path
@@ -1685,13 +1697,13 @@ class TestEvaluateRun(unittest.TestCase):
             tmp = Path(tmp_s)
             storage = FakeStorageClient()
             _seed_source_manifests(storage)
-            cfg_path = _write_config_file(tmp)
+            cfg_path = _write_config_file(
+                tmp,
+                eval_label="checkpoint_6",
+                eval_model="projects/p/locations/us-central1/endpoints/123",
+            )
             run_cfg = load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
-            config["eval_model"] = {
-                "label": "checkpoint_6",
-                "model": "projects/p/locations/us-central1/endpoints/123",
-            }
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
             online_preds = _OnlinePredictionMap(
                 {"gs://audio/eval.flac": "eval transcript"},
@@ -1731,9 +1743,7 @@ class TestEvaluateRun(unittest.TestCase):
                 _patched_eval_scoring(),
             ):
                 rc = evaluate_module.evaluate(
-                    args=argparse.Namespace(
-                        config=str(cfg_path)
-                    )
+                    args=argparse.Namespace(config=str(cfg_path))
                 )
 
         self.assertEqual(rc, 0)
@@ -1799,11 +1809,7 @@ class TestEvaluateRun(unittest.TestCase):
                         },
                         "response": {
                             "candidates": [
-                                {
-                                    "content": {
-                                        "parts": [{"text": "current"}]
-                                    }
-                                }
+                                {"content": {"parts": [{"text": "current"}]}}
                             ]
                         },
                     }
@@ -2120,6 +2126,62 @@ class TestEvaluateRun(unittest.TestCase):
         download_manifest.assert_not_called()
         submit.assert_not_called()
 
+    def test_eval_rejects_local_eval_model_mismatch_before_manifest_download(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage)
+            base_cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(base_cfg_path)
+            storage.put(
+                run_cfg.paths.config_uri,
+                json.dumps(run_cfg.to_record_dict()),
+            )
+            checkpoint_cfg_path = tmp / "checkpoint_eval.toml"
+            checkpoint_cfg_path.write_text(
+                _config_text(
+                    eval_label="checkpoint_6",
+                    eval_model=(
+                        "projects/p/locations/us-central1/endpoints/123"
+                    ),
+                ),
+                encoding="utf-8",
+            )
+            batch_preds = _batch_prediction_map(
+                {"gs://audio/eval.flac": "eval transcript"},
+                output_uri=f"{run_cfg.paths.gcs_prefix}/evals/base/output/",
+            )
+            args = argparse.Namespace(config=str(checkpoint_cfg_path))
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module.storage, "Client", return_value=storage
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "download_jsonl_manifest",
+                    return_value=[
+                        _row("gs://audio/eval.flac", "eval transcript")
+                    ],
+                ) as download_manifest,
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "batch_infer",
+                    return_value=batch_preds,
+                ) as batch,
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "results"
+                ),
+                _patched_eval_scoring(),
+            ):
+                rc = evaluate_module.evaluate(args)
+
+        self.assertEqual(rc, 1)
+        download_manifest.assert_not_called()
+        batch.assert_not_called()
+
     def test_eval_rejects_invalid_durable_eval_model_before_submit(
         self,
     ) -> None:
@@ -2161,13 +2223,13 @@ class TestEvaluateRun(unittest.TestCase):
             tmp = Path(tmp_s)
             storage = FakeStorageClient()
             _seed_source_manifests(storage)
-            cfg_path = _write_config_file(tmp)
+            cfg_path = _write_config_file(
+                tmp,
+                eval_label="checkpoint_6",
+                eval_model="projects/p/locations/us/endpoints/123",
+            )
             run_cfg = load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
-            config["eval_model"] = {
-                "label": "checkpoint_6",
-                "model": "projects/p/locations/us/endpoints/123",
-            }
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
             online_preds = _OnlinePredictionMap(
                 {"gs://audio/eval.flac": "eval transcript"},
