@@ -318,7 +318,7 @@ def _is_transient_exception(e: Exception) -> bool:
     """Determines if an exception is transient and should be retried."""
     match e:
         case exceptions.RetryError():
-            cause = getattr(e, "cause", None) or e.__cause__
+            cause = e.cause or e.__cause__
             return (
                 _is_transient_exception(cause)
                 if isinstance(cause, Exception)
