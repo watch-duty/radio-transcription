@@ -51,8 +51,8 @@ def _safe_blob_exists(storage_client: storage.Client, uri: str) -> bool:
     ``blob_exists`` calls ``parse_gcs_uri``, which raises on a non-``gs://`` URI. Without
     this guard a single malformed fileUri would crash ``run_preflight`` before the report
     is written. The hard gate should always write a preflight report.
-    A malformed URI is reported downstream as "not reachable" (and also fails
-    validate_audio_tuning_example), so the operator still gets a clear, actionable failure.
+    A malformed URI is reported downstream as "not reachable", so the operator
+    still gets a clear, actionable failure when reachability is checked.
     """
     try:
         return blob_exists(
@@ -168,7 +168,7 @@ def _check_examples(
         ex_id = f"{split}[{i}]"
         if not validate_audio_tuning_example(ex):
             report.failures.append(
-                f"{ex_id}: failed validate_audio_tuning_example (empty target or malformed schema)"
+                f"{ex_id}: failed validate_audio_tuning_example (missing wrapper fields or empty target)"
             )
             if ex_id not in report.offending_ids:
                 report.offending_ids.append(ex_id)
@@ -207,7 +207,7 @@ def run_preflight(
     Checks:
     1. Non-empty train split (at least 1 example)
     2. If val provided: non-empty val split; disjoint train/val fileUris
-    3. Per-example: validate_audio_tuning_example (empty target), estimated token cap, fileUri reachability
+    3. Per-example: local target-text contract, estimated token cap, fileUri reachability
     4. Duplicate fileUri detection in train set
     """
     report = PreflightReport()

@@ -70,12 +70,14 @@ def build_audio_tuning_example(
     }
 
 
-def validate_audio_tuning_example(example: dict[str, Any]) -> bool:  # noqa: PLR0911
-    """Return True if the example matches the Vertex AI audio-SFT JSONL schema.
+def validate_audio_tuning_example(example: dict[str, Any]) -> bool:
+    """Return True if the example matches the local audio-SFT data contract.
 
-    Validates the shape locally before submitting a paid tuning job. Any
-    example that does not match the current ``systemInstruction`` plus
-    alternating ``contents`` schema is rejected.
+    This intentionally avoids provider-specific checks such as audio count,
+    file URI scheme, MIME type, or other API constraints that may change over
+    time. Vertex remains the source of truth for those constraints. Local
+    preflight only rejects examples missing the wrapper fields or the
+    non-empty target text needed by our training data contract.
 
     Args:
         example: A dict produced by ``build_audio_tuning_example`` or parsed
@@ -87,66 +89,14 @@ def validate_audio_tuning_example(example: dict[str, Any]) -> bool:  # noqa: PLR
     if "systemInstruction" not in example:
         return False
     contents = example.get("contents")
-    if not isinstance(contents, list) or len(contents) < 2 or len(contents) % 2:
+    if not isinstance(contents, list) or not contents:
         return False
-    audio_part_count = 0
-    for index in range(0, len(contents), 2):
-        user_turn = contents[index]
-        model_turn = contents[index + 1]
-        if not isinstance(user_turn, dict) or not isinstance(model_turn, dict):
-            return False
-        if user_turn.get("role") != "user" or model_turn.get("role") != "model":
-            return False
-        user_text = _extract_user_text(user_turn)
-        file_data_parts = _extract_user_file_data_parts(user_turn)
-        if not user_text.strip() and not file_data_parts:
-            return False
-        for file_data in file_data_parts:
-            if not _is_valid_audio_file_data(file_data):
-                return False
-        audio_part_count += len(file_data_parts)
-        if index == len(contents) - 2 and not file_data_parts:
-            return False
-        if not _extract_model_text(model_turn).strip():
-            return False
-    return audio_part_count == 1
-
-
-def _extract_user_file_data_parts(
-    user_turn: dict[str, Any],
-) -> list[dict[str, Any]]:
-    user_parts = user_turn.get("parts", [])
-    file_parts = [
-        p for p in user_parts if isinstance(p, dict) and "fileData" in p
-    ]
-    file_data_parts: list[dict[str, Any]] = []
-    for part in file_parts:
-        file_data = part["fileData"]
-        if isinstance(file_data, dict):
-            file_data_parts.append(file_data)
-    return file_data_parts
-
-
-def _extract_user_text(user_turn: dict[str, Any]) -> str:
-    user_parts = user_turn.get("parts", [])
-    if not isinstance(user_parts, list):
-        return ""
-    return "\n".join(
-        part["text"]
-        for part in user_parts
-        if isinstance(part, dict) and isinstance(part.get("text"), str)
+    target_turns = (
+        turn
+        for turn in contents
+        if isinstance(turn, dict) and turn.get("role") == "model"
     )
-
-
-def _is_valid_audio_file_data(file_data: dict[str, Any] | None) -> bool:
-    if file_data is None:
-        return False
-    file_uri = file_data.get("fileUri", "")
-    return (
-        isinstance(file_uri, str)
-        and file_uri.startswith("gs://")
-        and file_data.get("mimeType") == "audio/flac"
-    )
+    return any(_extract_model_text(turn).strip() for turn in target_turns)
 
 
 def _extract_model_text(model_turn: dict[str, Any]) -> str:

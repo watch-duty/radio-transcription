@@ -262,25 +262,24 @@ class TestValidateExample(unittest.TestCase):
             validate_audio_tuning_example({"prompt": "x", "response": "y"})
         )
 
-    def test_rejects_non_gs_uri(self) -> None:
+    def test_allows_provider_to_validate_file_uri_scheme(self) -> None:
         ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
         _first_file_part(ex["contents"][0])["fileData"]["fileUri"] = (
             "s3://bucket/file.flac"
         )
-        self.assertFalse(validate_audio_tuning_example(ex))
+        self.assertTrue(validate_audio_tuning_example(ex))
 
-    def test_rejects_null_file_uri(self) -> None:
+    def test_allows_provider_to_validate_null_file_uri(self) -> None:
         ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
         _first_file_part(ex["contents"][0])["fileData"]["fileUri"] = None
-        # Must return False, not raise AttributeError on None.startswith(...)
-        self.assertFalse(validate_audio_tuning_example(ex))
+        self.assertTrue(validate_audio_tuning_example(ex))
 
-    def test_rejects_wrong_mime_type(self) -> None:
+    def test_allows_provider_to_validate_mime_type(self) -> None:
         ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
         _first_file_part(ex["contents"][0])["fileData"]["mimeType"] = (
             "audio/wav"
         )
-        self.assertFalse(validate_audio_tuning_example(ex))
+        self.assertTrue(validate_audio_tuning_example(ex))
 
     def test_rejects_empty_model_text(self) -> None:
         ex = build_audio_tuning_example("gs://b/s.flac", "   ", "sys", "user")
@@ -291,6 +290,12 @@ class TestValidateExample(unittest.TestCase):
         # Remove the model turn so only one turn remains
         ex["contents"] = ex["contents"][:1]
         self.assertFalse(validate_audio_tuning_example(ex))
+
+    def test_allows_provider_to_validate_turn_order_and_roles(self) -> None:
+        ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
+        ex["contents"].insert(0, {"role": "unexpected", "parts": []})
+
+        self.assertTrue(validate_audio_tuning_example(ex))
 
     def test_accepts_well_formed_text_turn_history_turns(self) -> None:
         ex = build_audio_tuning_example(
@@ -304,7 +309,7 @@ class TestValidateExample(unittest.TestCase):
 
         self.assertTrue(validate_audio_tuning_example(ex))
 
-    def test_rejects_audio_history_turns_with_multiple_audio_parts(
+    def test_allows_provider_to_validate_audio_part_count(
         self,
     ) -> None:
         ex = build_audio_tuning_example(
@@ -316,7 +321,7 @@ class TestValidateExample(unittest.TestCase):
             history_mode="audio",
         )
 
-        self.assertFalse(validate_audio_tuning_example(ex))
+        self.assertTrue(validate_audio_tuning_example(ex))
 
 
 class TestImportIsolation(unittest.TestCase):
