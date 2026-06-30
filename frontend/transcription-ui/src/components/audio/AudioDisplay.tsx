@@ -4,6 +4,7 @@ import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { type Theme, useTheme } from '@mui/material/styles';
+import { AudioClassification } from '@transcription/common';
 
 import type { PlaybackController } from '../../audio/WebAudioPlayer';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
@@ -63,6 +64,39 @@ const Waveform = React.memo(function Waveform({
   );
 });
 
+// Shown when a clip has no WAVEFORM annotation: a solid block when speech was
+// detected (audio is present, the waveform is just unavailable) vs a thin line
+// otherwise, so the two never read as the same flat "silence".
+const WaveformPlaceholder = ({ isSpeech }: { isSpeech: boolean }) =>
+  isSpeech ? (
+    <Box
+      data-testid="waveform-missing-block"
+      sx={{
+        position: 'absolute',
+        top: '20%',
+        bottom: '20%',
+        left: 0,
+        right: 0,
+        bgcolor: 'text.secondary',
+        opacity: 0.25,
+      }}
+    />
+  ) : (
+    <Box
+      data-testid="waveform-silence-line"
+      sx={{
+        position: 'absolute',
+        top: '50%',
+        left: 0,
+        right: 0,
+        height: '2px',
+        transform: 'translateY(-50%)',
+        bgcolor: 'text.secondary',
+        opacity: 0.35,
+      }}
+    />
+  );
+
 const formatTime = (timestamp: number) => {
   const date = new Date(timestamp);
   return date.toLocaleTimeString([], {
@@ -84,6 +118,7 @@ interface TimelineClipProps {
     // (pre-rollout) or if waveform computation was skipped.
     peaks?: number[][];
     duration?: number;
+    isSpeech?: boolean;
     isOutageBundle?: boolean;
   };
   onClipClick: (segmentId: string) => void;
@@ -184,18 +219,7 @@ const TimelineClip = React.memo(
         {renderWaveform && clip.peaks ? (
           <Waveform peaks={clip.peaks} color={theme.palette.text.secondary} />
         ) : (
-          <Box
-            sx={{
-              position: 'absolute',
-              top: '50%',
-              left: 0,
-              right: 0,
-              height: '2px',
-              transform: 'translateY(-50%)',
-              bgcolor: 'text.secondary',
-              opacity: 0.35,
-            }}
-          />
+          <WaveformPlaceholder isSpeech={!!clip.isSpeech} />
         )}
         {cursorLeftPct !== null && (
           <Box
@@ -227,6 +251,7 @@ const TimelineClip = React.memo(
       prevProps.clip.hasAlert === nextProps.clip.hasAlert &&
       prevProps.clip.peaks === nextProps.clip.peaks &&
       prevProps.clip.duration === nextProps.clip.duration &&
+      prevProps.clip.isSpeech === nextProps.clip.isSpeech &&
       prevProps.clip.isOutageBundle === nextProps.clip.isOutageBundle &&
       prevProps.isDarkTheme === nextProps.isDarkTheme &&
       prevProps.theme === nextProps.theme &&
@@ -453,6 +478,7 @@ export function AudioDisplay({
             !!evaluationAnnotation && evaluationAnnotation.decisions.length > 0,
           peaks: waveform?.peaks,
           duration: waveform?.durationSeconds,
+          isSpeech: t.classification === AudioClassification.SPEECH,
           isOutageBundle: !!t.isOutageBundle,
         };
       });

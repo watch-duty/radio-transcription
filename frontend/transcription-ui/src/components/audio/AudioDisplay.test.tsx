@@ -333,7 +333,7 @@ describe('AudioDisplay', () => {
     expect(screen.getByTestId('waveform')).toBeTruthy();
   });
 
-  it('renders a placeholder when the segment has no WAVEFORM annotation', () => {
+  it('renders a non-silence block when a speech segment has no WAVEFORM annotation', () => {
     const segment = makeMockAudioSegment(
       '1',
       'feed1',
@@ -357,6 +357,37 @@ describe('AudioDisplay', () => {
     );
 
     expect(screen.queryByTestId('waveform')).toBeNull();
+    expect(screen.getByTestId('waveform-missing-block')).toBeTruthy();
+    expect(screen.queryByTestId('waveform-silence-line')).toBeNull();
+  });
+
+  it('renders a thin line when a non-speech segment has no WAVEFORM annotation', () => {
+    const segment = makeMockAudioSegment(
+      '1',
+      'feed1',
+      new Date('2026-04-20T09:00:00Z').toISOString(),
+      new Date('2026-04-20T09:00:05Z').toISOString(),
+      'Test 1',
+      'gs://bucket/audio1.m4a'
+    );
+    segment.classification = AudioClassification.OTHER;
+    segment.annotations = segment.annotations.filter(
+      (a) => a.type !== AnnotationType.WAVEFORM
+    );
+
+    render(
+      <AudioDisplay
+        audioSegments={[segment]}
+        currentlyPlayingSegmentId={null}
+        onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        highlightedSegmentId={null}
+      />
+    );
+
+    expect(screen.queryByTestId('waveform')).toBeNull();
+    expect(screen.getByTestId('waveform-silence-line')).toBeTruthy();
+    expect(screen.queryByTestId('waveform-missing-block')).toBeNull();
   });
 
   it('should shift window when highlighted segment is outside window', async () => {
