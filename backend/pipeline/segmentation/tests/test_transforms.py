@@ -1523,10 +1523,14 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
         to prime a new, post-flush transmission.
         """
         mock_processor_inst = mock_audio_processor.return_value
+        # Note: We set the speech segment to end exactly at the chunk boundary (5000ms).
+        # Under the conditional state propagation logic, a chunk must end in active speech
+        # (within 50ms) to cache the prior audio tail. Setting it to 5000ms forces the tail
+        # to be cached, allowing us to verify that a subsequent stale flush successfully clears it.
         chunk_data = AudioChunkData(
             start_ms=100000,
             audio=np.zeros(16000 * 5, dtype=np.int16),
-            speech_segments=[TimeRange(1000, 4000)],
+            speech_segments=[TimeRange(1000, 5000)],
             gcs_uri="gs://bucket/chunk1.flac",
             duration_ms=5000,
             sample_rate=16000,
@@ -1619,6 +1623,84 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
 
         # Assert that the state context has been completely cleared!
         self.assertIsNone(mock_state_context.read())
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_prior_audio_tail_not_cached_if_chunk_ends_in_silence(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that under the Conditional State Continuity logic, the prior_audio_tail
+        is NOT cached if the chunk ends in silence, preventing noise propagation.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+        # Chunk has speech from 1.0s to 4.0s, but ends in silence (duration is 5.0s)
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(16000 * 5, dtype=np.int16),
+            speech_segments=[TimeRange(1000, 4000)],
+            gcs_uri="gs://bucket/chunk1.flac",
+            duration_ms=5000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config(
+            significant_gap_ms=800, stale_timeout_ms=75000
+        )
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.setup()
+
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        mock_state_context = MockValueState(
+            ActiveStitchingState(
+                session_id="session-1",
+                feed_metadata=FeedMetadata(feed_name="test-feed"),
+            )
+        )
+        mock_last_start_ms = MockValueState(None)
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk1.flac",
+            session_id="session-1",
+            duration_ms=5000,
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+        )
+
+        # Process chunk 1
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_context_state=mock_state_context,  # type: ignore
+                last_start_ms_state=mock_last_start_ms,  # type: ignore
+                gap_timer_event=MagicMock(),
+                gap_timer_event_v2=MagicMock(),
+                gap_timer_proc=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # State context must be ActiveStitchingState, but prior_audio_tail must be None!
+        saved_context = mock_state_context.read()
+        self.assertIsInstance(saved_context, ActiveStitchingState)
+        self.assertIsNone(saved_context.prior_audio_tail)
 
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"

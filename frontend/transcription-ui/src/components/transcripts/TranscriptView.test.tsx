@@ -1628,5 +1628,186 @@ describe('TranscriptView', () => {
       expect(result[0].id).toBe('speech-newer-short');
       expect(result[1].id).toBe('speech-older-long');
     });
+
+    it('does not consolidate UNSPECIFIED segments if they have a transcript', () => {
+      const speech1: AudioSegment = {
+        id: 'speech-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        createdAt: '2026-04-10T12:00:00Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const unspecifiedWithTranscript: AudioSegment = {
+        id: 'unspecified-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.UNSPECIFIED,
+        startTimestamp: '2026-04-10T12:00:05Z',
+        endTimestamp: '2026-04-10T12:00:10Z',
+        createdAt: '2026-04-10T12:00:05Z',
+        annotations: [
+          {
+            type: AnnotationType.TRANSCRIPT,
+            data: {
+              text: 'Hello world',
+              errors: [],
+            },
+            createdAt: '2026-04-10T12:00:05Z',
+          },
+        ],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const result = consolidateAudioSegments([
+        speech1,
+        unspecifiedWithTranscript,
+      ]);
+      expect(result).toHaveLength(2);
+      // Neither should be a silence bundle
+      expect(result[0].isSilenceBundle).toBeUndefined();
+      expect(result[1].isSilenceBundle).toBeUndefined();
+    });
+
+    it('injects outage segment for continuous feed when there is a gap > 10ms and missing context flags are true', () => {
+      const segment1: AudioSegment = {
+        id: 'seg-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:00.000Z',
+        endTimestamp: '2026-04-10T12:00:05.000Z',
+        createdAt: '2026-04-10T12:00:00.000Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: true,
+        sourceAudioUris: [],
+      };
+
+      const segment2: AudioSegment = {
+        id: 'seg-2',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:05.020Z', // 20ms gap
+        endTimestamp: '2026-04-10T12:00:10.000Z',
+        createdAt: '2026-04-10T12:00:05.000Z',
+        annotations: [],
+        missingPriorContext: true,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const result = consolidateAudioSegments([segment1, segment2], true);
+      expect(result).toHaveLength(3);
+      expect(result[0].id).toBe('seg-2');
+      expect(result[1].isOutageBundle).toBe(true);
+      expect(result[1].startTimestamp).toBe(segment1.endTimestamp);
+      expect(result[1].endTimestamp).toBe(segment2.startTimestamp);
+      expect(result[2].id).toBe('seg-1');
+    });
+
+    it('does NOT inject outage segment if missing context flags are false, even if gap > 10ms', () => {
+      const segment1: AudioSegment = {
+        id: 'seg-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:00.000Z',
+        endTimestamp: '2026-04-10T12:00:05.000Z',
+        createdAt: '2026-04-10T12:00:00.000Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const segment2: AudioSegment = {
+        id: 'seg-2',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:05.020Z', // 20ms gap
+        endTimestamp: '2026-04-10T12:00:10.000Z',
+        createdAt: '2026-04-10T12:00:05.000Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const result = consolidateAudioSegments([segment1, segment2], true);
+      expect(result).toHaveLength(2);
+      expect(result[0].id).toBe('seg-2');
+      expect(result[1].id).toBe('seg-1');
+    });
+
+    it('does NOT inject outage segment for non-continuous feed, even if there is a gap and missing context flags are true', () => {
+      const segment1: AudioSegment = {
+        id: 'seg-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:00.000Z',
+        endTimestamp: '2026-04-10T12:00:05.000Z',
+        createdAt: '2026-04-10T12:00:00.000Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: true,
+        sourceAudioUris: [],
+      };
+
+      const segment2: AudioSegment = {
+        id: 'seg-2',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:05.020Z', // 20ms gap
+        endTimestamp: '2026-04-10T12:00:10.000Z',
+        createdAt: '2026-04-10T12:00:05.000Z',
+        annotations: [],
+        missingPriorContext: true,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const result = consolidateAudioSegments([segment1, segment2], false);
+      expect(result).toHaveLength(2);
+      expect(result[0].id).toBe('seg-2');
+      expect(result[1].id).toBe('seg-1');
+    });
+
+    it('does NOT inject outage segment if the gap is <= 10ms, even if missing context flags are true', () => {
+      const segment1: AudioSegment = {
+        id: 'seg-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:00.000Z',
+        endTimestamp: '2026-04-10T12:00:05.000Z',
+        createdAt: '2026-04-10T12:00:00.000Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: true,
+        sourceAudioUris: [],
+      };
+
+      const segment2: AudioSegment = {
+        id: 'seg-2',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:05.005Z', // 5ms gap
+        endTimestamp: '2026-04-10T12:00:10.000Z',
+        createdAt: '2026-04-10T12:00:05.000Z',
+        annotations: [],
+        missingPriorContext: true,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const result = consolidateAudioSegments([segment1, segment2], true);
+      expect(result).toHaveLength(2);
+      expect(result[0].id).toBe('seg-2');
+      expect(result[1].id).toBe('seg-1');
+    });
   });
 });
