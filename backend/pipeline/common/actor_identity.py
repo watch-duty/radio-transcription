@@ -15,23 +15,6 @@ MAX_ACTOR_ID_LENGTH = 512
 CONFIGURED_SERVICE_ACTOR_ENV = "FEED_AUDIT_ACTOR_ID"
 
 
-def actor_id_from_google_email(email: str) -> str:
-    normalized_email = email.strip().lower()
-    if not normalized_email:
-        msg = "Google user email is required"
-        raise ValueError(msg)
-    if _contains_whitespace(normalized_email):
-        msg = "Google user email must not contain whitespace"
-        raise ValueError(msg)
-
-    actor_id = f"{GOOGLE_USER_ACTOR_PREFIX}{normalized_email}"
-    if len(actor_id) > MAX_ACTOR_ID_LENGTH:
-        msg = "Google user actor ID is too long"
-        raise ValueError(msg)
-
-    return actor_id
-
-
 def is_well_formed_google_user_actor_id(actor_id: str) -> bool:
     if len(actor_id) > MAX_ACTOR_ID_LENGTH:
         return False
