@@ -18,7 +18,6 @@ The public row columns are the values in `REPORT_COLUMNS`.
 | `cer` | Character error rate percentage after the same shared normalization pass. |
 | `keyword_accuracy` | Occurrence-weighted percentage of configured dispatch keywords found in the paired hypothesis when they appear in the reference. |
 | `empty_or_unintelligible_rate` | Percentage over all eval rows whose explicit provider prediction is empty after stripping whitespace or exactly `[UNINTELLIGIBLE]`; missing provider rows remain in the denominator but not the numerator. |
-| `empty_response_rate` | Percentage over all eval rows whose explicit provider prediction has stripped model output exactly empty; missing provider rows remain in the denominator but not the numerator. |
 | `insertions` | Word insertion count from the WER alignment. |
 | `deletions` | Word deletion count from the WER alignment. |
 | `substitutions` | Word substitution count from the WER alignment. |
@@ -34,15 +33,12 @@ Reports expose the evaluated row count as report metadata named
 `empty_or_unintelligible_rate` is the metric for explicit provider predictions
 that are empty after stripping whitespace or exactly `[UNINTELLIGIBLE]`.
 
-`empty_response_rate` is the metric for exact empty model output after stripping
-whitespace. It does not include the `[UNINTELLIGIBLE]` token.
-
 Missing provider rows are scored as empty hypotheses for WER/CER so they remain
 in the WER/CER denominator. For empty-output metrics, they remain in the eval-row
 denominator but are not counted as empty model responses.
 
-Use these columns separately when deciding whether a target failed to answer at
-all or produced the explicit unusable-audio token.
+Use this column when deciding whether a target failed to answer or produced the
+explicit unusable-audio token.
 
 ## Missing Predictions
 

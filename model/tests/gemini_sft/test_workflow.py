@@ -1598,7 +1598,6 @@ class TestEvaluateRun(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         self.assertEqual(base_target["missing_prediction_count"], 1)
-        self.assertEqual(base_target["empty_response_rate"], 0.0)
         self.assertEqual(base_target["empty_or_unintelligible_rate"], 50.0)
         self.assertIn("total_reference_words", base_target)
         self.assertIsInstance(base_target["insertions"], int)

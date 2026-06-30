@@ -55,7 +55,6 @@ class TestReportingContract(unittest.TestCase):
         row = report_to_dict(report)["target"]
         for key in (
             "empty_or_unintelligible_rate",
-            "empty_response_rate",
             "insertions",
             "deletions",
             "substitutions",
@@ -64,9 +63,7 @@ class TestReportingContract(unittest.TestCase):
         ):
             self.assertIn(key, row)
         self.assertNotIn("empty_rate", row)
-        self.assertNotIn("hallucination_rate", row)
         self.assertEqual(row["missing_prediction_count"], 1)
-        self.assertEqual(row["empty_response_rate"], 0.0)
         self.assertEqual(row["empty_or_unintelligible_rate"], 0.0)
         self.assertEqual(
             row["artifacts"]["normalized_manifest_uri"],
@@ -99,7 +96,9 @@ class TestReportingContract(unittest.TestCase):
 
         self.assertEqual(target.total_reference_words, expected_total)
 
-    def test_empty_metrics_count_explicit_empty_predictions_only(self) -> None:
+    def test_empty_or_unintelligible_metric_counts_explicit_predictions_only(
+        self,
+    ) -> None:
         target = build_target_metrics(
             label="base",
             model="gemini-3.1-flash-lite",
@@ -110,7 +109,6 @@ class TestReportingContract(unittest.TestCase):
             missing_prediction_count=1,
         )
 
-        self.assertEqual(target.empty_response_rate, 33.33)
         self.assertEqual(target.empty_or_unintelligible_rate, 66.67)
 
     def test_markdown_and_console_share_target_header(self) -> None:
@@ -127,8 +125,7 @@ class TestReportingContract(unittest.TestCase):
             ),
         )
         expected_header = (
-            "empty_or_unintelligible_rate | empty_response_rate | "
-            "insertions | deletions | substitutions | "
+            "empty_or_unintelligible_rate | insertions | deletions | substitutions | "
             "total_reference_words | missing_prediction_count"
         )
 

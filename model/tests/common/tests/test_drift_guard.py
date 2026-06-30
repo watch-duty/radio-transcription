@@ -201,7 +201,6 @@ model = "gemini-3.1-flash-lite"
             set(documented_columns)
             & {
                 "empty_rate",
-                "hallucination_rate",
                 "hits",
                 "correct_words",
             }

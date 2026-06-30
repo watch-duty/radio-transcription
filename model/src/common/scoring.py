@@ -11,8 +11,8 @@ a version bump can silently change normalization output and therefore WER.
 The WER-bearing functions (``build_normalizer``, ``compute_wer``,
 ``compute_cer``, ``duration_bucket_wer``, ``bootstrap_paired``) require the
 ``[scoring]`` extra (``jiwer`` + ``nemo_text_processing``). The pure-Python
-helpers (``hallucination_rate``, ``empty_response_rate``,
-``count_keyword_occurrences``, ``keyword_metrics``) work without it.
+helpers (``empty_or_unintelligible_rate``, ``count_keyword_occurrences``,
+``keyword_metrics``) work without it.
 Importing this module WITHOUT the extra is always safe — the heavy deps
 are loaded lazily so
 ``import common.scoring`` never triggers NeMo.
@@ -292,11 +292,18 @@ def _split_empty_references_for_cer(
     return valid_refs, valid_hyps, empty_ref_insertions
 
 
-def hallucination_rate(hypotheses: list[str]) -> float:
+def empty_or_unintelligible_rate(
+    hypotheses: list[str],
+    *,
+    missing_prediction_count: int = 0,
+) -> float:
     """Percentage of hypotheses that are empty or the [UNINTELLIGIBLE] token.
 
     Args:
         hypotheses: List of model-predicted transcript strings.
+        missing_prediction_count: Number of missing provider rows represented
+            as empty-string fallbacks. These stay in the denominator but are
+            not counted as explicit empty model responses.
 
     Returns:
         Float between 0.0 and 100.0 (percentage of flagged hypotheses).
@@ -308,22 +315,8 @@ def hallucination_rate(hypotheses: list[str]) -> float:
         for h in hypotheses
         if not h.strip() or h.strip() == "[UNINTELLIGIBLE]"
     )
-    return round(100 * flagged / len(hypotheses), 2)
-
-
-def empty_response_rate(hypotheses: list[str]) -> float:
-    """Percentage of hypotheses whose stripped text is exactly empty.
-
-    Args:
-        hypotheses: List of model-predicted transcript strings.
-
-    Returns:
-        Float between 0.0 and 100.0 (percentage of empty hypotheses).
-    """
-    if not hypotheses:
-        return 0.0
-    empty = sum(1 for h in hypotheses if not h.strip())
-    return round(100 * empty / len(hypotheses), 2)
+    explicit_flagged = max(0, flagged - missing_prediction_count)
+    return round(100 * explicit_flagged / len(hypotheses), 2)
 
 
 def duration_bucket_wer(
