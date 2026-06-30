@@ -14,7 +14,11 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { useQuery } from '@tanstack/react-query';
-import { AudioClassification, type AudioSegment } from '@transcription/common';
+import {
+  AudioClassification,
+  type AudioSegment,
+  SourceType,
+} from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { useAudioPlayback } from '../../hooks/useAudioPlayback';
@@ -263,7 +267,10 @@ export function TranscriptView({
     onNewSegments: handleNewAudioSegments,
   });
 
-  const audioSegments = useConsolidatedAudioSegments(rawAudioSegments);
+  const audioSegments = useConsolidatedAudioSegments(
+    rawAudioSegments,
+    searchedFeed?.sourceType === SourceType.BCFY_FEEDS
+  );
 
   // Keep the refs in sync with the audio segments so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {
@@ -717,7 +724,7 @@ export function TranscriptView({
           setAlertFilter={setAlertFilter}
           onClickViewLatest={() => handleFilterByDateTime(null)}
         />
-        {audioSegments.length > 0 ? (
+        {audioSegments.length > 0 && isFeedsSuccess ? (
           <TranscriptDisplay
             ref={virtuosoRef}
             audioSegments={audioSegments}
