@@ -14,7 +14,11 @@ import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { useQuery } from '@tanstack/react-query';
-import { AudioClassification, type AudioSegment } from '@transcription/common';
+import {
+  AudioClassification,
+  type AudioSegment,
+  SourceType,
+} from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { useAudioPlayback } from '../../hooks/useAudioPlayback';
@@ -31,7 +35,10 @@ import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
-import { isWithinSegment } from '../../utils/playbackUtils';
+import {
+  getNextContinuousSegment,
+  isWithinSegment,
+} from '../../utils/playbackUtils';
 import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
 import FeedSearchView from '../feeds/FeedSearchView';
@@ -260,7 +267,10 @@ export function TranscriptView({
     onNewSegments: handleNewAudioSegments,
   });
 
-  const audioSegments = useConsolidatedAudioSegments(rawAudioSegments);
+  const audioSegments = useConsolidatedAudioSegments(
+    rawAudioSegments,
+    searchedFeed?.sourceType === SourceType.BCFY_FEEDS
+  );
 
   // Keep the refs in sync with the audio segments so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {
@@ -465,34 +475,14 @@ export function TranscriptView({
         currentAudioRef.current === null;
 
       if (shouldPlayNext) {
-        const idx = audioSegments.findIndex((s) =>
-          isWithinSegment(s, targetId)
+        const next = getNextContinuousSegment(
+          audioSegments,
+          rawAudioSegments,
+          targetId
         );
-        if (idx !== -1 && idx > 0) {
-          const nextAudioSegment = audioSegments[idx - 1];
-          if (nextAudioSegment.playbackAudioUri) {
-            // If the next segment is a silence bundle, we must explicitly start playing
-            // its first raw segment ID (rather than the bundle's consolidated ID).
-            // This ensures that when the first track finishes, the continuous playback
-            // engine's onEnd listener can correctly identify the parent bundle, map the
-            // finished raw ID, and seamlessly transition to the next raw silence segment.
-            if (
-              nextAudioSegment.isSilenceBundle &&
-              nextAudioSegment.bundledSegmentIds &&
-              nextAudioSegment.bundledSegmentIds.length > 0
-            ) {
-              const firstId = nextAudioSegment.bundledSegmentIds[0];
-              const firstSegment = rawAudioSegments.find(
-                (s) => s.id === firstId
-              );
-              if (firstSegment && firstSegment.playbackAudioUri) {
-                togglePlay(firstSegment.id, firstSegment.playbackAudioUri);
-                return;
-              }
-            }
-            togglePlay(nextAudioSegment.id, nextAudioSegment.playbackAudioUri);
-            return;
-          }
+        if (next) {
+          togglePlay(next.id, next.uri);
+          return;
         }
       }
 
@@ -706,7 +696,7 @@ export function TranscriptView({
       </Box>
 
       <AudioDisplay
-        audioSegments={rawAudioSegments}
+        audioSegments={audioSegments}
         currentlyPlayingSegmentId={currentlyPlayingSegmentId}
         highlightedSegmentId={highlightedSegmentId}
         onClipClick={handleClipClick}
@@ -734,7 +724,7 @@ export function TranscriptView({
           setAlertFilter={setAlertFilter}
           onClickViewLatest={() => handleFilterByDateTime(null)}
         />
-        {audioSegments.length > 0 ? (
+        {audioSegments.length > 0 && isFeedsSuccess ? (
           <TranscriptDisplay
             ref={virtuosoRef}
             audioSegments={audioSegments}
