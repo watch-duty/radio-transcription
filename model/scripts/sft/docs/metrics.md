@@ -17,8 +17,8 @@ The public row columns are the values in `REPORT_COLUMNS`.
 | `wer` | Word error rate percentage after the shared dispatch normalizer is applied to references and hypotheses. |
 | `cer` | Character error rate percentage after the same shared normalization pass. |
 | `keyword_accuracy` | Occurrence-weighted percentage of configured dispatch keywords found in the paired hypothesis when they appear in the reference. |
-| `empty_or_unintelligible_rate` | Percentage of eval rows with an explicit provider prediction that is empty after stripping whitespace or exactly `[UNINTELLIGIBLE]`; missing provider rows do not count. |
-| `empty_response_rate` | Percentage of eval rows with an explicit provider prediction whose stripped model output is exactly empty; missing provider rows do not count. |
+| `empty_or_unintelligible_rate` | Percentage over all eval rows whose explicit provider prediction is empty after stripping whitespace or exactly `[UNINTELLIGIBLE]`; missing provider rows remain in the denominator but not the numerator. |
+| `empty_response_rate` | Percentage over all eval rows whose explicit provider prediction has stripped model output exactly empty; missing provider rows remain in the denominator but not the numerator. |
 | `insertions` | Word insertion count from the WER alignment. |
 | `deletions` | Word deletion count from the WER alignment. |
 | `substitutions` | Word substitution count from the WER alignment. |
@@ -38,8 +38,8 @@ that are empty after stripping whitespace or exactly `[UNINTELLIGIBLE]`.
 whitespace. It does not include the `[UNINTELLIGIBLE]` token.
 
 Missing provider rows are scored as empty hypotheses for WER/CER so they remain
-in the denominator, but they are not counted as empty model responses in either
-empty-output metric.
+in the WER/CER denominator. For empty-output metrics, they remain in the eval-row
+denominator but are not counted as empty model responses.
 
 Use these columns separately when deciding whether a target failed to answer at
 all or produced the explicit unusable-audio token.

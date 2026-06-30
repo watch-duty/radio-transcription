@@ -162,6 +162,12 @@ checkpoint_id = "7"
         with self.assertRaisesRegex(RunConfigError, "validation_manifest_uri"):
             load_run_config(self._write_config(body))
 
+    def test_sft_epoch_count_rejects_bool(self) -> None:
+        body = self._valid_toml(epoch_count="true")
+
+        with self.assertRaisesRegex(RunConfigError, "epoch_count"):
+            load_run_config(self._write_config(body))
+
     def test_eval_config_requires_explicit_eval_model(
         self,
     ) -> None:

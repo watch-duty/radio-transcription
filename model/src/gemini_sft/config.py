@@ -699,7 +699,7 @@ def _required_bucket(data: dict[str, Any], key: str) -> str:
 
 def _required_positive_int(data: dict[str, Any], key: str) -> int:
     value = _lookup(data, key)
-    if not isinstance(value, int) or value <= 0:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         msg = f"{key} must be a positive integer"
         raise RunConfigError(msg)
     return value
