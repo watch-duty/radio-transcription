@@ -226,7 +226,7 @@ def run_preflight(
         return report
 
     train_target_uris = _check_duplicate_train_uris(train_examples, report)
-    val_examples, val_target_uris = _load_and_check_val_split(
+    val_examples, _ = _load_and_check_val_split(
         val_jsonl_path, train_target_uris, report
     )
 
@@ -241,8 +241,6 @@ def run_preflight(
                 for u in [
                     *_extract_all_file_uris(train_examples),
                     *_extract_all_file_uris(val_examples),
-                    *train_target_uris,
-                    *val_target_uris,
                 ]
                 if u
             }

@@ -15,6 +15,14 @@ from common.gcs_utils import (
     upload_text,
 )
 from common.gemini import request_identity as request_identity_lib
+from common.gemini.eval_artifacts import (
+    online_prediction_metadata_uri,
+    online_prediction_uri,
+)
+from common.gemini.request_identity import (
+    build_gemini_eval_request_identity,
+    request_identity_hash,
+)
 from common.gemini.vertex import (
     GEMINI_GENERATION_CONFIG,
     GEMINI_SAFETY_SETTINGS,
@@ -82,19 +90,6 @@ def resolve_target_backend(
     return "batch"
 
 
-def online_prediction_uri(run_gcs_prefix: str, label: str) -> str:
-    return (
-        f"{run_gcs_prefix.rstrip('/')}/evals/{label}/online_predictions.jsonl"
-    )
-
-
-def online_prediction_metadata_uri(run_gcs_prefix: str, label: str) -> str:
-    return (
-        f"{run_gcs_prefix.rstrip('/')}/evals/{label}/"
-        "online_predictions.meta.json"
-    )
-
-
 async def _upload_local_file_async(
     storage_client: Any,
     local_path: Path,
@@ -120,38 +115,6 @@ async def _upload_text_async(
         gcs_uri,
         content_type="application/jsonl",
     )
-
-
-def build_online_request_identity(
-    *,
-    target_label: str,
-    model: str,
-    eval_manifest_uri: str,
-    audio_uris: Sequence[str],
-    system_prompt: str,
-    user_prompt: str,
-    prior_context_count: int,
-    prior_context_mode: str,
-    generation_config: dict[str, Any],
-    safety_settings: Sequence[dict[str, Any]],
-) -> dict[str, Any]:
-    """Return the durable identity for online prediction reuse."""
-    return request_identity_lib.build_request_identity(
-        target_label=target_label,
-        model=model,
-        eval_manifest_uri=eval_manifest_uri,
-        audio_uris=audio_uris,
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        prior_context_count=prior_context_count,
-        prior_context_mode=prior_context_mode,
-        generation_config=generation_config,
-        safety_settings=safety_settings,
-    )
-
-
-def request_identity_hash(identity: dict[str, Any]) -> str:
-    return request_identity_lib.request_identity_hash(identity)
 
 
 def load_existing_online_predictions(
@@ -228,7 +191,7 @@ async def run_online_target_inference(
     local_metadata_path = (
         local_dir / target_label / "online_predictions.meta.json"
     )
-    identity = build_online_request_identity(
+    identity = build_gemini_eval_request_identity(
         target_label=target_label,
         model=target_model,
         eval_manifest_uri=eval_manifest_uri,
@@ -237,8 +200,6 @@ async def run_online_target_inference(
         user_prompt=user_prompt,
         prior_context_count=prior_context_count,
         prior_context_mode=prior_context_mode,
-        generation_config=GEMINI_GENERATION_CONFIG,
-        safety_settings=GEMINI_SAFETY_SETTINGS,
     )
     resume = load_existing_online_predictions(
         storage_client=storage_client,

@@ -49,10 +49,10 @@ class TestReportingContract(unittest.TestCase):
         report = EvalReport(
             round_id="round-a",
             generated_at="2026-06-28T00:00:00Z",
-            targets=[target],
+            target=target,
         )
 
-        row = report_to_dict(report)["targets"][0]
+        row = report_to_dict(report)["target"]
         for key in (
             "empty_or_unintelligible_rate",
             "empty_response_rate",
@@ -117,16 +117,14 @@ class TestReportingContract(unittest.TestCase):
         report = EvalReport(
             round_id="round-a",
             generated_at="2026-06-28T00:00:00Z",
-            targets=[
-                build_target_metrics(
-                    label="base",
-                    model="gemini-3.1-flash-lite",
-                    refs=["engine copy"],
-                    hyps=["engine copy"],
-                    normalizer=None,
-                    keywords=["engine"],
-                )
-            ],
+            target=build_target_metrics(
+                label="base",
+                model="gemini-3.1-flash-lite",
+                refs=["engine copy"],
+                hyps=["engine copy"],
+                normalizer=None,
+                keywords=["engine"],
+            ),
         )
         expected_header = (
             "empty_or_unintelligible_rate | empty_response_rate | "

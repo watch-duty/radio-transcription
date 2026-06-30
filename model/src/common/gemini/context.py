@@ -91,13 +91,8 @@ def build_transcription_contents(
     user_prompt: str,
     history: Sequence[ContextTurn] | None = None,
     history_mode: str = "audio",
-    file_data_casing: str,
 ) -> list[dict[str, Any]]:
-    """Return Gemini contents for prior context plus the current audio turn.
-
-    ``file_data_casing`` is the only schema difference between the Vertex batch
-    request shape (snake_case) and Gemini SFT JSONL shape (camelCase).
-    """
+    """Return Gemini contents for prior context plus the current audio turn."""
     history_mode = validate_history_mode(history_mode)
     contents: list[dict[str, Any]] = []
     history_turns = list(history or ())
@@ -107,12 +102,7 @@ def build_transcription_contents(
                 [
                     {
                         "role": "user",
-                        "parts": [
-                            audio_file_data_part(
-                                turn.audio_uri,
-                                casing=file_data_casing,
-                            )
-                        ],
+                        "parts": [audio_file_data_part(turn.audio_uri)],
                     },
                     {"role": "model", "parts": [{"text": turn.text}]},
                 ]
@@ -147,7 +137,7 @@ def build_transcription_contents(
             "role": "user",
             "parts": [
                 {"text": current_user_prompt},
-                audio_file_data_part(audio_uri, casing=file_data_casing),
+                audio_file_data_part(audio_uri),
             ],
         }
     )
@@ -166,24 +156,14 @@ def validate_history_mode(history_mode: str) -> str:
     return mode
 
 
-def audio_file_data_part(audio_uri: str, *, casing: str) -> dict[str, Any]:
-    """Return a Gemini audio file-data part in snake_case or camelCase."""
-    if casing == "snake":
-        return {
-            "file_data": {
-                "file_uri": audio_uri,
-                "mime_type": "audio/flac",
-            }
+def audio_file_data_part(audio_uri: str) -> dict[str, Any]:
+    """Return a Gemini audio file-data part in canonical camelCase JSON."""
+    return {
+        "fileData": {
+            "mimeType": "audio/flac",
+            "fileUri": audio_uri,
         }
-    if casing == "camel":
-        return {
-            "fileData": {
-                "mimeType": "audio/flac",
-                "fileUri": audio_uri,
-            }
-        }
-    msg = "file_data_casing must be 'snake' or 'camel'"
-    raise ValueError(msg)
+    }
 
 
 def build_context_histories(

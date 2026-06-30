@@ -11,12 +11,8 @@ import unittest.mock
 from pathlib import Path
 from typing import Any
 
-from common.gemini import request_identity
-from common.gemini.batch import batch_prediction_metadata_uri
-from common.gemini.vertex import (
-    GEMINI_GENERATION_CONFIG,
-    GEMINI_SAFETY_SETTINGS,
-)
+from common.gemini.batch import BatchPredictionMap
+from common.gemini.eval_artifacts import batch_prediction_metadata_uri
 from fake_gcs import FakeStorageClient
 from gemini_sft import cli
 from gemini_sft import evaluate as evaluate_module
@@ -24,6 +20,13 @@ from gemini_sft import reporting as reporting_module
 from gemini_sft import tune as tune_module
 from gemini_sft.config import load_run_config
 from gemini_sft.prepare import prepare_run
+from sft_eval_fixtures import (
+    batch_input_uri,
+    batch_output_uri,
+    online_prediction_artifacts,
+    put_batch_metadata,
+    summary_artifacts,
+)
 
 
 def _manifest(rows: list[dict[str, Any]]) -> str:
@@ -136,45 +139,13 @@ def _patched_eval_scoring() -> Any:
 def _batch_prediction_map(
     predictions: dict[str, str],
     *,
-    output_uri: str = "gs://test-bucket/sft/runs/round-a/evals/base/output/",
+    output_uri: str = batch_output_uri(
+        "gs://test-bucket/sft/runs/round-a",
+    ),
 ) -> Any:
-    preds = evaluate_module.PredictionMap(predictions)
+    preds = BatchPredictionMap(predictions)
     preds.output_uri = output_uri
     return preds
-
-
-def _put_batch_metadata(
-    storage: FakeStorageClient,
-    *,
-    run_gcs_prefix: str,
-    label: str = "base",
-    model: str = "gemini-3.1-flash-lite",
-    eval_manifest_uri: str,
-    audio_uris: list[str],
-    system_prompt: str,
-    user_prompt: str,
-    prior_context_count: int = 0,
-    prior_context_mode: str = "text_turns",
-) -> str:
-    identity = request_identity.build_request_identity(
-        target_label=label,
-        model=model,
-        eval_manifest_uri=eval_manifest_uri,
-        audio_uris=audio_uris,
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        prior_context_count=prior_context_count,
-        prior_context_mode=prior_context_mode,
-        generation_config=GEMINI_GENERATION_CONFIG,
-        safety_settings=GEMINI_SAFETY_SETTINGS,
-    )
-    metadata_uri = batch_prediction_metadata_uri(run_gcs_prefix, label)
-    storage.put(
-        metadata_uri,
-        json.dumps(request_identity.metadata_payload(identity), sort_keys=True)
-        + "\n",
-    )
-    return metadata_uri
 
 
 class _OnlinePredictionMap(dict[str, str]):
@@ -192,6 +163,22 @@ class _OnlinePredictionMap(dict[str, str]):
         self.metadata_uri = metadata_uri
         self.error_count = error_count
         self.request_identity_hash = request_identity_hash
+
+
+def _online_prediction_map(
+    predictions: dict[str, str],
+    *,
+    run_gcs_prefix: str,
+    label: str = "base",
+    error_count: int = 0,
+    request_identity_hash: str | None = "identity-hash",
+) -> _OnlinePredictionMap:
+    return _OnlinePredictionMap(
+        predictions,
+        **online_prediction_artifacts(run_gcs_prefix, label),
+        error_count=error_count,
+        request_identity_hash=request_identity_hash,
+    )
 
 
 def _write_config_file(
@@ -1187,7 +1174,7 @@ class TestEvaluateRun(unittest.TestCase):
             )
             config = run_cfg.to_record_dict()
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
             pred_blob = f"{output_uri}predictions.jsonl"
             storage.put(
                 pred_blob,
@@ -1219,7 +1206,7 @@ class TestEvaluateRun(unittest.TestCase):
                 )
                 + "\n",
             )
-            _put_batch_metadata(
+            put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=config["canonical_eval_uri"],
@@ -1250,8 +1237,9 @@ class TestEvaluateRun(unittest.TestCase):
                     encoding="utf-8"
                 )
             )
-            self.assertIn("targets", metrics)
-            base_target = metrics["targets"][0]
+            self.assertIn("target", metrics)
+            self.assertNotIn("targets", metrics)
+            base_target = metrics["target"]
             self.assertEqual(base_target["target_label"], "base")
             artifacts = base_target["artifacts"]
             self.assertEqual(artifacts["raw_output_uri"], output_uri)
@@ -1260,22 +1248,17 @@ class TestEvaluateRun(unittest.TestCase):
                 "gs://test-bucket/inference_manifests/echo/eval/"
                 "gemini_3_1_flash_lite/round-a/base.jsonl",
             )
+            summary = summary_artifacts(run_cfg.paths.gcs_prefix)
             self.assertEqual(
                 artifacts["summary_json_uri"],
-                f"{run_cfg.paths.gcs_prefix}/evals/wer_summary.json",
+                summary["summary_json_uri"],
             )
             self.assertEqual(
                 artifacts["summary_markdown_uri"],
-                f"{run_cfg.paths.gcs_prefix}/evals/wer_summary.md",
+                summary["summary_markdown_uri"],
             )
-            self.assertTrue(
-                storage.has(
-                    f"{run_cfg.paths.gcs_prefix}/evals/wer_summary.json"
-                )
-            )
-            self.assertTrue(
-                storage.has(f"{run_cfg.paths.gcs_prefix}/evals/wer_summary.md")
-            )
+            self.assertTrue(storage.has(summary["summary_json_uri"]))
+            self.assertTrue(storage.has(summary["summary_markdown_uri"]))
             self.assertEqual(base_target["wer"], 0.0)
             manifest_rows = [
                 json.loads(line)
@@ -1323,7 +1306,7 @@ class TestEvaluateRun(unittest.TestCase):
             config = run_cfg.to_record_dict()
             storage.put(run_cfg.paths.canonical_eval_uri, _manifest(eval_rows))
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 "\n".join(
@@ -1384,7 +1367,7 @@ class TestEvaluateRun(unittest.TestCase):
                 )
                 + "\n",
             )
-            _put_batch_metadata(
+            put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=config["canonical_eval_uri"],
@@ -1416,7 +1399,7 @@ class TestEvaluateRun(unittest.TestCase):
             batch_rows = [
                 json.loads(line)
                 for line in storage.get(
-                    f"{run_cfg.paths.gcs_prefix}/evals/base/input.jsonl"
+                    batch_input_uri(run_cfg.paths.gcs_prefix)
                 ).splitlines()
                 if line.strip()
             ]
@@ -1433,7 +1416,7 @@ class TestEvaluateRun(unittest.TestCase):
             contents[0]["parts"][0]["text"], current_user_parts[0]["text"]
         )
         self.assertEqual(
-            current_user_parts[1]["file_data"]["file_uri"],
+            current_user_parts[1]["fileData"]["fileUri"],
             "gs://audio/eval-2.flac",
         )
 
@@ -1455,7 +1438,7 @@ class TestEvaluateRun(unittest.TestCase):
                 **run_cfg.to_record_dict(),
                 "canonical_eval_uri": "gs://prepared/eval.jsonl",
             }
-            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 json.dumps(
@@ -1482,7 +1465,7 @@ class TestEvaluateRun(unittest.TestCase):
                 )
                 + "\n",
             )
-            _put_batch_metadata(
+            put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=config["canonical_eval_uri"],
@@ -1514,7 +1497,7 @@ class TestEvaluateRun(unittest.TestCase):
             )
 
         self.assertEqual(rc, 0)
-        self.assertEqual(metrics["targets"][0]["wer"], 0.0)
+        self.assertEqual(metrics["target"]["wer"], 0.0)
 
     def test_eval_normalized_manifest_omits_missing_prediction_field(
         self,
@@ -1544,7 +1527,7 @@ class TestEvaluateRun(unittest.TestCase):
             )
             config = run_cfg.to_record_dict()
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 json.dumps(
@@ -1575,7 +1558,7 @@ class TestEvaluateRun(unittest.TestCase):
                 )
                 + "\n",
             )
-            _put_batch_metadata(
+            put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=config["canonical_eval_uri"],
@@ -1608,12 +1591,10 @@ class TestEvaluateRun(unittest.TestCase):
             manifest_rows = [
                 json.loads(line)
                 for line in storage.get(
-                    metrics["targets"][0]["artifacts"][
-                        "normalized_manifest_uri"
-                    ]
+                    metrics["target"]["artifacts"]["normalized_manifest_uri"]
                 ).splitlines()
             ]
-            base_target = metrics["targets"][0]
+            base_target = metrics["target"]
 
         self.assertEqual(rc, 0)
         self.assertEqual(base_target["missing_prediction_count"], 1)
@@ -1652,16 +1633,10 @@ class TestEvaluateRun(unittest.TestCase):
             run_cfg = load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            online_preds = _OnlinePredictionMap(
+            online_preds = _online_prediction_map(
                 {"gs://audio/eval.flac": "eval transcript"},
-                online_predictions_uri=(
-                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/"
-                    "online_predictions.jsonl"
-                ),
-                metadata_uri=(
-                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/"
-                    "online_predictions.meta.json"
-                ),
+                run_gcs_prefix=run_cfg.paths.gcs_prefix,
+                label="checkpoint_6",
             )
 
             with (
@@ -1734,7 +1709,7 @@ class TestEvaluateRun(unittest.TestCase):
             ]
             storage.put(run_cfg.paths.canonical_eval_uri, _manifest(eval_rows))
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 json.dumps(
@@ -1763,7 +1738,7 @@ class TestEvaluateRun(unittest.TestCase):
                 )
                 + "\n",
             )
-            _put_batch_metadata(
+            put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=config["canonical_eval_uri"],
@@ -1799,7 +1774,7 @@ class TestEvaluateRun(unittest.TestCase):
             batch_rows = [
                 json.loads(line)
                 for line in storage.get(
-                    f"{run_cfg.paths.gcs_prefix}/evals/base/input.jsonl"
+                    batch_input_uri(run_cfg.paths.gcs_prefix)
                 ).splitlines()
                 if line.strip()
             ]
@@ -1816,8 +1791,8 @@ class TestEvaluateRun(unittest.TestCase):
             "prior",
         )
         self.assertEqual(
-            batch_rows[0]["request"]["contents"][-1]["parts"][-1]["file_data"][
-                "file_uri"
+            batch_rows[0]["request"]["contents"][-1]["parts"][-1]["fileData"][
+                "fileUri"
             ],
             "gs://audio/eval-current.flac",
         )
@@ -1842,7 +1817,7 @@ class TestEvaluateRun(unittest.TestCase):
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
             batch_preds = _batch_prediction_map(
                 {"gs://audio/eval.flac": "eval transcript"},
-                output_uri=f"{run_cfg.paths.gcs_prefix}/evals/base/output/",
+                output_uri=batch_output_uri(run_cfg.paths.gcs_prefix),
             )
             with (
                 unittest.mock.patch.object(
@@ -1873,12 +1848,9 @@ class TestEvaluateRun(unittest.TestCase):
                     encoding="utf-8"
                 )
             )
-            targets = {
-                target["target_label"]: target for target in metrics["targets"]
-            }
-
         self.assertEqual(rc, 0)
-        self.assertEqual(len(metrics["targets"]), 1, "exactly one target")
+        self.assertIn("target", metrics)
+        self.assertNotIn("targets", metrics)
         self.assertEqual(metrics["metadata"]["n_eval_examples"], 1)
         batch.assert_called_once()
         self.assertEqual(batch.call_args.kwargs["label"], "base")
@@ -1886,31 +1858,29 @@ class TestEvaluateRun(unittest.TestCase):
             batch.call_args.kwargs["model_id"], "gemini-3.1-flash-lite"
         )
         run_online.assert_not_awaited()
-        self.assertEqual(set(targets), {"base"})
+        target = metrics["target"]
+        self.assertEqual(target["target_label"], "base")
         self.assertEqual(
-            targets["base"]["artifacts"]["raw_output_uri"],
+            target["artifacts"]["raw_output_uri"],
             batch_preds.output_uri,
         )
-        self.assertEqual(targets["base"]["total_reference_words"], 2)
+        self.assertEqual(target["total_reference_words"], 2)
         self.assertIn(
             "normalized_manifest_uri",
-            targets["base"]["artifacts"],
+            target["artifacts"],
+        )
+        summary = summary_artifacts(run_cfg.paths.gcs_prefix)
+        self.assertEqual(
+            target["artifacts"]["summary_json_uri"],
+            summary["summary_json_uri"],
         )
         self.assertEqual(
-            targets["base"]["artifacts"]["summary_json_uri"],
-            f"{run_cfg.paths.gcs_prefix}/evals/wer_summary.json",
+            target["artifacts"]["summary_markdown_uri"],
+            summary["summary_markdown_uri"],
         )
-        self.assertEqual(
-            targets["base"]["artifacts"]["summary_markdown_uri"],
-            f"{run_cfg.paths.gcs_prefix}/evals/wer_summary.md",
-        )
-        self.assertTrue(
-            storage.has(f"{run_cfg.paths.gcs_prefix}/evals/wer_summary.json")
-        )
-        self.assertTrue(
-            storage.has(f"{run_cfg.paths.gcs_prefix}/evals/wer_summary.md")
-        )
-        self.assertEqual(targets["base"]["metadata"]["backend"], "batch")
+        self.assertTrue(storage.has(summary["summary_json_uri"]))
+        self.assertTrue(storage.has(summary["summary_markdown_uri"]))
+        self.assertEqual(target["metadata"]["backend"], "batch")
 
     def test_eval_execution_forced_backend_overrides_target_shape(self) -> None:
         online_backend_toml = 'backend = "online"'
@@ -1929,16 +1899,9 @@ class TestEvaluateRun(unittest.TestCase):
                 run_cfg.paths.canonical_eval_uri,
                 _manifest([_row("gs://audio/eval.flac", "eval transcript")]),
             )
-            online_preds = _OnlinePredictionMap(
+            online_preds = _online_prediction_map(
                 {"gs://audio/eval.flac": "eval transcript"},
-                online_predictions_uri=(
-                    f"{run_cfg.paths.gcs_prefix}/evals/base/"
-                    "online_predictions.jsonl"
-                ),
-                metadata_uri=(
-                    f"{run_cfg.paths.gcs_prefix}/evals/base/"
-                    "online_predictions.meta.json"
-                ),
+                run_gcs_prefix=run_cfg.paths.gcs_prefix,
             )
 
             with (
@@ -1985,7 +1948,7 @@ class TestEvaluateRun(unittest.TestCase):
             batch_preds = _batch_prediction_map(
                 {"gs://audio/eval.flac": "eval transcript"},
                 output_uri=(
-                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/output/"
+                    batch_output_uri(run_cfg.paths.gcs_prefix, "checkpoint_6")
                 ),
             )
 
@@ -2098,7 +2061,7 @@ class TestEvaluateRun(unittest.TestCase):
             )
             batch_preds = _batch_prediction_map(
                 {"gs://audio/eval.flac": "eval transcript"},
-                output_uri=f"{run_cfg.paths.gcs_prefix}/evals/base/output/",
+                output_uri=batch_output_uri(run_cfg.paths.gcs_prefix),
             )
             args = argparse.Namespace(config=str(checkpoint_cfg_path))
 
@@ -2156,16 +2119,10 @@ max_retries = 1
             durable_config["eval_execution"]["concurrency"] = 16
             durable_config["eval_execution"]["max_retries"] = 3
             storage.put(run_cfg.paths.config_uri, json.dumps(durable_config))
-            online_preds = _OnlinePredictionMap(
+            online_preds = _online_prediction_map(
                 {"gs://audio/eval.flac": "eval transcript"},
-                online_predictions_uri=(
-                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/"
-                    "online_predictions.jsonl"
-                ),
-                metadata_uri=(
-                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/"
-                    "online_predictions.meta.json"
-                ),
+                run_gcs_prefix=run_cfg.paths.gcs_prefix,
+                label="checkpoint_6",
             )
             args = argparse.Namespace(config=str(cfg_path))
 
@@ -2250,16 +2207,10 @@ max_retries = 1
             run_cfg = load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            online_preds = _OnlinePredictionMap(
+            online_preds = _online_prediction_map(
                 {"gs://audio/eval.flac": "eval transcript"},
-                online_predictions_uri=(
-                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/"
-                    "online_predictions.jsonl"
-                ),
-                metadata_uri=(
-                    f"{run_cfg.paths.gcs_prefix}/evals/checkpoint_6/"
-                    "online_predictions.meta.json"
-                ),
+                run_gcs_prefix=run_cfg.paths.gcs_prefix,
+                label="checkpoint_6",
             )
             args = argparse.Namespace(config=str(cfg_path))
 
@@ -2299,7 +2250,7 @@ max_retries = 1
             tmp = Path(tmp_s)
             storage = FakeStorageClient()
             run_cfg = load_run_config(_write_config_file(tmp))
-            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
             eval_rows = [
                 types.SimpleNamespace(audio_filepath="gs://audio/eval.flac")
             ]
@@ -2336,7 +2287,7 @@ max_retries = 1
             tmp = Path(tmp_s)
             storage = FakeStorageClient()
             run_cfg = load_run_config(_write_config_file(tmp))
-            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 json.dumps(
@@ -2403,7 +2354,7 @@ max_retries = 1
             tmp = Path(tmp_s)
             storage = FakeStorageClient()
             run_cfg = load_run_config(_write_config_file(tmp))
-            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 json.dumps(
@@ -2434,7 +2385,7 @@ max_retries = 1
                 )
                 + "\n",
             )
-            _put_batch_metadata(
+            put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=run_cfg.paths.canonical_eval_uri,
@@ -2476,7 +2427,7 @@ max_retries = 1
             tmp = Path(tmp_s)
             storage = FakeStorageClient()
             run_cfg = load_run_config(_write_config_file(tmp))
-            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 json.dumps(
@@ -2507,7 +2458,7 @@ max_retries = 1
                 )
                 + "\n",
             )
-            _put_batch_metadata(
+            put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=run_cfg.paths.canonical_eval_uri,
@@ -2581,7 +2532,7 @@ max_retries = 1
             tmp = Path(tmp_s)
             storage = FakeStorageClient()
             run_cfg = load_run_config(_write_config_file(tmp))
-            output_uri = f"{run_cfg.paths.gcs_prefix}/evals/base/output/"
+            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 json.dumps(
@@ -2608,7 +2559,7 @@ max_retries = 1
                 )
                 + "\n",
             )
-            _put_batch_metadata(
+            put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=run_cfg.paths.canonical_eval_uri,

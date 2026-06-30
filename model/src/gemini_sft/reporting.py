@@ -70,7 +70,7 @@ class EvalReport:
 
     round_id: str
     generated_at: str
-    targets: list[TargetMetrics]
+    target: TargetMetrics
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -141,7 +141,7 @@ def report_to_dict(report: EvalReport) -> dict[str, Any]:
         "generated_at": report.generated_at,
         "columns": list(REPORT_COLUMNS),
         "metadata": report.metadata,
-        "targets": [_target_to_dict(target) for target in report.targets],
+        "target": _target_to_dict(report.target),
     }
 
 
@@ -152,7 +152,7 @@ def render_markdown_report(report: EvalReport) -> str:
         "",
         f"Generated: {report.generated_at}",
         "",
-        _render_target_table(report.targets),
+        _render_target_table(report.target),
         "",
     ]
     return "\n".join(lines)
@@ -160,7 +160,7 @@ def render_markdown_report(report: EvalReport) -> str:
 
 def render_console_report(report: EvalReport) -> str:
     """Render the shared report for console output."""
-    return _render_target_table(report.targets)
+    return _render_target_table(report.target)
 
 
 def _target_to_dict(target: TargetMetrics) -> dict[str, Any]:
@@ -194,11 +194,10 @@ def _artifacts_to_dict(artifacts: ReportArtifacts) -> dict[str, str]:
     return {key: value for key, value in pairs.items() if value}
 
 
-def _render_target_table(targets: list[TargetMetrics]) -> str:
+def _render_target_table(target: TargetMetrics) -> str:
     header = "| " + " | ".join(REPORT_COLUMNS) + " |"
     separator = "|" + "|".join("---" for _ in REPORT_COLUMNS) + "|"
-    rows = [header, separator]
-    rows.extend(_render_target_row(target) for target in targets)
+    rows = [header, separator, _render_target_row(target)]
     return "\n".join(rows)
 
 

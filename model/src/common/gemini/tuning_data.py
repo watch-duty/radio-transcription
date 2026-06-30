@@ -59,7 +59,6 @@ def build_audio_tuning_example(
         user_prompt=user_prompt,
         history=history,
         history_mode=history_mode,
-        file_data_casing="camel",
     )
     contents.append({"role": "model", "parts": [{"text": gt_text}]})
     return {
@@ -74,8 +73,9 @@ def build_audio_tuning_example(
 def validate_audio_tuning_example(example: dict[str, Any]) -> bool:  # noqa: PLR0911
     """Return True if the example matches the Vertex AI audio-SFT JSONL schema.
 
-    Validates the shape locally before submitting a paid tuning job. Rejects
-    legacy ``{input_text, output_text}`` and flat ``{prompt, response}`` shapes.
+    Validates the shape locally before submitting a paid tuning job. Any
+    example that does not match the current ``systemInstruction`` plus
+    alternating ``contents`` schema is rejected.
 
     Args:
         example: A dict produced by ``build_audio_tuning_example`` or parsed
@@ -110,11 +110,6 @@ def validate_audio_tuning_example(example: dict[str, Any]) -> bool:  # noqa: PLR
         if not _extract_model_text(model_turn).strip():
             return False
     return audio_part_count == 1
-
-
-def _extract_user_file_data(user_turn: dict[str, Any]) -> dict[str, Any] | None:
-    file_data_parts = _extract_user_file_data_parts(user_turn)
-    return file_data_parts[0] if file_data_parts else None
 
 
 def _extract_user_file_data_parts(

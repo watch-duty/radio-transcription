@@ -29,10 +29,10 @@ Durable run-level files include:
 `config.json` is the durable state machine for resume and eval. Local copies are
 mirrors only.
 
-## Eval Target Artifacts
+## Eval Model Artifacts
 
-Each `[eval.model].label` gets its own eval target directory under the run
-prefix. Batch and online targets write different provider-output artifacts:
+Each `[eval.model].label` gets its own eval directory under the run prefix.
+Batch and online eval backends write different provider-output artifacts:
 
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/input.jsonl`
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/output/`

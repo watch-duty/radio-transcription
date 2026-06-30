@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+# ruff: noqa: E402
 import asyncio
 import json
 import sys
@@ -11,20 +12,24 @@ _SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-from common.gemini.context import ContextTurn  # noqa: E402
-from common.gemini.vertex import (  # noqa: E402
-    GEMINI_GENERATION_CONFIG,
+from common.gemini.context import ContextTurn
+from common.gemini.eval_artifacts import (
+    eval_target_artifact_paths,
+)
+from common.gemini.request_identity import (
+    build_gemini_eval_request_identity,
+    request_identity_hash,
+)
+from common.gemini.vertex import (
     GEMINI_SAFETY_SETTINGS,
 )
-from fake_gcs import FakeStorageClient  # noqa: E402
-from gemini_sft.config import EvalExecutionConfig, EvalModelTarget  # noqa: E402
-from gemini_sft.target_execution import (  # noqa: E402
+from fake_gcs import FakeStorageClient
+from gemini_sft.config import EvalExecutionConfig, EvalModelTarget
+from gemini_sft.target_execution import (
     _generate_with_retries,
-    build_online_request_identity,
     load_existing_online_predictions,
     online_prediction_metadata_uri,
     online_prediction_uri,
-    request_identity_hash,
     resolve_target_backend,
     run_online_target_inference,
     upload_local_file,
@@ -39,7 +44,7 @@ def _identity(
     system_prompt: str = "system",
     user_prompt: str = "user",
 ) -> dict:
-    return build_online_request_identity(
+    return build_gemini_eval_request_identity(
         target_label="checkpoint_6",
         model=model,
         eval_manifest_uri="gs://data/eval.jsonl",
@@ -48,8 +53,6 @@ def _identity(
         user_prompt=user_prompt,
         prior_context_count=8,
         prior_context_mode="text_turns",
-        generation_config=GEMINI_GENERATION_CONFIG,
-        safety_settings=GEMINI_SAFETY_SETTINGS,
     )
 
 
@@ -121,14 +124,15 @@ class TestTargetBackendResolver(unittest.TestCase):
 class TestOnlineRequestIdentity(unittest.TestCase):
     def test_prediction_uris_are_under_eval_label(self) -> None:
         prefix = "gs://bucket/runs/run-1/"
+        paths = eval_target_artifact_paths(prefix, "checkpoint_6")
 
         self.assertEqual(
             online_prediction_uri(prefix, "checkpoint_6"),
-            "gs://bucket/runs/run-1/evals/checkpoint_6/online_predictions.jsonl",
+            paths.online_predictions_uri,
         )
         self.assertEqual(
             online_prediction_metadata_uri(prefix, "checkpoint_6"),
-            "gs://bucket/runs/run-1/evals/checkpoint_6/online_predictions.meta.json",
+            paths.online_metadata_uri,
         )
 
     def test_hash_is_stable_for_key_order(self) -> None:
@@ -372,8 +376,8 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
         async def generate_content(**kwargs):
             calls.append(kwargs)
-            if kwargs["contents"][-1]["parts"][-1]["file_data"][
-                "file_uri"
+            if kwargs["contents"][-1]["parts"][-1]["fileData"][
+                "fileUri"
             ].endswith("1.flac"):
                 return Response("recognized")
             return Response("")

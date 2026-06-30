@@ -120,10 +120,20 @@ model = "gemini-3.1-flash-lite"
         )
 
     def test_packaged_eval_uses_shared_context_builder(self) -> None:
-        imports = _python_imports(_SRC_DIR / "gemini_sft" / "evaluate.py")
+        evaluate_imports = _python_imports(
+            _SRC_DIR / "gemini_sft" / "evaluate.py"
+        )
+        artifact_imports = _python_imports(
+            _SRC_DIR / "gemini_sft" / "artifacts.py"
+        )
 
         self.assertIn(
-            ("common.gemini.context", "build_context_histories"), imports
+            ("gemini_sft.artifacts", "eval_rows_with_histories_from_entries"),
+            evaluate_imports,
+        )
+        self.assertIn(
+            ("common.gemini.context", "build_context_histories"),
+            artifact_imports,
         )
 
     def test_target_execution_uses_shared_vertex_request_helpers(self) -> None:

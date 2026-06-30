@@ -8,6 +8,8 @@ from typing import Any
 from google.cloud import storage
 from google.cloud.storage.retry import DEFAULT_RETRY
 
+from common.manifest import parse_manifest_text
+
 logger = logging.getLogger(__name__)
 
 
@@ -186,12 +188,8 @@ def download_jsonl_manifest(
     bucket_name, blob_path = parse_gcs_uri(gcs_manifest_uri)
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
-    content = blob.download_as_text(retry=DEFAULT_RETRY).strip()
-
-    manifest_entries = []
-    for line in content.split("\n"):
-        if line.strip():
-            manifest_entries.append(json.loads(line))
+    content = blob.download_as_text(retry=DEFAULT_RETRY)
+    manifest_entries = parse_manifest_text(content, source=gcs_manifest_uri)
     logger.info(
         f"Downloaded {len(manifest_entries)} entries from {gcs_manifest_uri}"
     )

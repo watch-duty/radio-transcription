@@ -71,28 +71,26 @@ def build_request(
     caller mutating the result never touches the module-level default. Pure dict
     construction — does not require the ``[vertex]`` extra.
 
-    Field keys are snake_case (``file_data``/``file_uri``/``mime_type``/
-    ``system_instruction``/``generation_config``) on purpose: the google-genai batch
-    endpoint (``client.batches.create``) accepts the proto field names. Vertex may echo
-    the request back in camelCase in batch OUTPUT, so output parsers must read both
-    casings.
+    Field keys are canonical camelCase JSON (``fileData``/``fileUri``/
+    ``mimeType``/``systemInstruction``/``generationConfig``/
+    ``safetySettings``). SFT JSONL, batch input JSONL, and batch output parsing
+    all use the same shape.
     """
     contents = build_transcription_contents(
         audio_uri=audio_uri,
         user_prompt=user_prompt,
         history=history,
         history_mode=history_mode,
-        file_data_casing="snake",
     )
     return {
         "request": {
             "contents": contents,
-            "system_instruction": {
+            "systemInstruction": {
                 "role": "system",
                 "parts": [{"text": system_prompt}],
             },
-            "generation_config": generation_config.copy(),
-            "safety_settings": list(safety_settings),
+            "generationConfig": generation_config.copy(),
+            "safetySettings": list(safety_settings),
         }
     }
 
@@ -100,10 +98,10 @@ def build_request(
 def parse_batch_output(text: str) -> dict[str, str]:
     """Parse Vertex Gemini batch output JSONL into ``{audio_uri: prediction}``.
 
-    Vertex echoes the original request in batch output. Current outputs use
-    camelCase for echoed request fields even when callers submit snake_case, so
-    this parser accepts both shapes. Error/status rows, malformed JSONL rows,
-    and output rows without an identifiable audio URI are skipped.
+    Vertex echoes the original request in batch output. This parser accepts the
+    canonical camelCase request shape emitted by ``build_request``. Error/status
+    rows, malformed JSONL rows, and output rows without an identifiable audio
+    URI are skipped.
     """
     result: dict[str, str] = {}
     for line in text.splitlines():
@@ -139,10 +137,10 @@ def _extract_request_audio_uri(request: dict[str, Any]) -> str | None:
         for part in parts:
             if not isinstance(part, dict):
                 continue
-            file_data = part.get("file_data") or part.get("fileData")
+            file_data = part.get("fileData")
             if not isinstance(file_data, dict):
                 continue
-            candidate = file_data.get("file_uri") or file_data.get("fileUri")
+            candidate = file_data.get("fileUri")
             if isinstance(candidate, str) and candidate:
                 audio_uri = candidate
     return audio_uri

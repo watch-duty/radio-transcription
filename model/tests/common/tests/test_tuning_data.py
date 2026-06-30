@@ -250,7 +250,7 @@ class TestValidateExample(unittest.TestCase):
         ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
         self.assertTrue(validate_audio_tuning_example(ex))
 
-    def test_rejects_legacy_input_output_shape(self) -> None:
+    def test_rejects_missing_current_schema_fields(self) -> None:
         self.assertFalse(
             validate_audio_tuning_example(
                 {"input_text": "x", "output_text": "y"}

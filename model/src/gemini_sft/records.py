@@ -82,15 +82,6 @@ def write_config(
     return config_with_meta
 
 
-def wer_summary_gcs_uris(run_gcs_prefix: str) -> tuple[str, str]:
-    """Return stable run-level WER summary GCS artifact URIs."""
-    prefix = run_gcs_prefix.rstrip("/")
-    return (
-        f"{prefix}/evals/wer_summary.json",
-        f"{prefix}/evals/wer_summary.md",
-    )
-
-
 def write_wer_summary(
     results_dir: Path, round_id: str, report: EvalReport
 ) -> tuple[Path, Path]:

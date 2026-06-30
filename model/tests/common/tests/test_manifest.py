@@ -19,8 +19,10 @@ from common.manifest import (
     is_scoreable_manifest_entry,
     load_manifest,
     merge_predictions_to_manifest,
+    parse_manifest_text,
     require_canonical_manifest,
     rows_from_manifest,
+    strict_canonical_rows_from_manifest,
     validate_canonical_manifest,
 )
 
@@ -523,15 +525,15 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             {
                 "audio_filepath": "gs://b/a.flac",
                 "offset": 1.0,
-                "text": "legacy prediction",
+                "text": "model prediction",
             }
         ]
 
-        result = merge_predictions_to_manifest(gt, preds, "legacy")
+        result = merge_predictions_to_manifest(gt, preds, "model")
 
         self.assertEqual(
-            result[0]["pred_text_legacy"],
-            "legacy prediction",
+            result[0]["pred_text_model"],
+            "model prediction",
         )
 
     def test_binds_closest_of_multiple_in_tolerance_candidates(self) -> None:
@@ -739,6 +741,57 @@ class TestLoadManifestEmptyReturns(unittest.TestCase):
         self.assertEqual(result, [])
 
 
+class TestParseManifestText(unittest.TestCase):
+    """The shared parser defines lenient manifest I/O behavior."""
+
+    def test_jsonl_parser_skips_bad_lines_and_normalizes_text(self) -> None:
+        rows = parse_manifest_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "audio_filepath": "gs://b/a.flac",
+                            "text": None,
+                        }
+                    ),
+                    "{bad json}",
+                    json.dumps(["not", "an", "object"]),
+                    json.dumps(
+                        {
+                            "audio_filepath": "gs://b/b.flac",
+                            "text": "line\nbreak",
+                        }
+                    ),
+                ]
+            ),
+            source="inline.jsonl",
+        )
+
+        self.assertEqual(
+            rows,
+            [
+                {"audio_filepath": "gs://b/a.flac", "text": ""},
+                {"audio_filepath": "gs://b/b.flac", "text": "line break"},
+            ],
+        )
+
+    def test_json_array_parser_uses_same_text_normalization(self) -> None:
+        rows = parse_manifest_text(
+            json.dumps(
+                [
+                    {"audio_filepath": "gs://b/a.flac", "text": 123},
+                    {"audio_filepath": "gs://b/b.flac", "text": "x\ry"},
+                ]
+            ),
+            source="inline.json",
+        )
+
+        self.assertEqual(
+            [row["text"] for row in rows],
+            ["123", "x y"],
+        )
+
+
 class TestLoadManifestMalformedRows(unittest.TestCase):
     """load_manifest tolerates rows whose `text` field is not a string."""
 
@@ -824,7 +877,7 @@ class TestScoreableManifestEntry(unittest.TestCase):
 
 
 class TestRowsFromManifestRequiredFields(unittest.TestCase):
-    """rows_from_manifest fails loudly for required compatibility fields."""
+    """rows_from_manifest fails loudly for required row-conversion fields."""
 
     def test_missing_audio_filepath_raises_with_row_context(self) -> None:
         with self.assertRaisesRegex(ValueError, "row 0.*audio_filepath"):
@@ -878,6 +931,35 @@ class TestRowsFromManifestRequiredFields(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0].audio_filepath, "local/audio.mp3")
         self.assertEqual(rows[0].duration, -2.0)
+
+
+class TestStrictCanonicalRowsFromManifest(unittest.TestCase):
+    """Strict canonical conversion should be one shared API."""
+
+    def test_validates_before_converting_to_canonical_rows(self) -> None:
+        source_rows = [_canonical_row(split="eval")]
+
+        entries, rows = strict_canonical_rows_from_manifest(
+            source_rows,
+            expected_split="eval",
+            source="eval.jsonl",
+        )
+
+        self.assertIs(entries, source_rows)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            rows[0].audio_filepath, "gs://bucket/audio/example.flac"
+        )
+
+    def test_rejects_lenient_noncanonical_rows(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "missing_required.*example_id",
+        ):
+            strict_canonical_rows_from_manifest(
+                [{"audio_filepath": "local/audio.mp3", "text": "hello"}],
+                source="noncanonical.jsonl",
+            )
 
 
 class TestLoadManifestLenientBoundaries(unittest.TestCase):

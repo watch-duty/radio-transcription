@@ -1,4 +1,4 @@
-"""Evaluate base and tuned Gemini models for a config-driven SFT run."""
+"""Evaluate one Gemini model for a config-driven SFT run."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from common.gcs_utils import (
     upload_local_file,
 )
 from common.gemini.batch import BatchPredictionMap, run_batch_audio_inference
-from common.gemini.context import build_context_histories
+from common.gemini.eval_artifacts import wer_summary_gcs_uris
 from common.gemini.prompts import GEMINI_TRANSCRIBE_KEYWORDS
 from common.gemini.vertex import submit_batch_inference
 from common.inference_manifest import (
@@ -28,7 +28,7 @@ from google.cloud import storage
 
 from gemini_sft.artifacts import (
     DEFAULT_RESULTS_DIR,
-    canonical_rows_from_entries,
+    eval_rows_with_histories_from_entries,
     write_and_upload_config,
 )
 from gemini_sft.config import (
@@ -42,7 +42,6 @@ from gemini_sft.config import (
     require_config_str,
 )
 from gemini_sft.records import (
-    wer_summary_gcs_uris,
     write_wer_summary,
 )
 from gemini_sft.reporting import (
@@ -52,6 +51,7 @@ from gemini_sft.reporting import (
     render_console_report,
 )
 from gemini_sft.target_execution import (
+    OnlinePredictionMap,
     resolve_target_backend,
     run_online_target_inference,
 )
@@ -106,7 +106,7 @@ def evaluate_run(  # noqa: PLR0915
     storage_client: storage.Client,
     config: dict[str, Any],
 ) -> int:
-    """Run configured eval targets and score one config-driven run."""
+    """Run the configured eval model and score one config-driven run."""
     del args
     system_prompt = require_config_str(config, "system_prompt")
     user_prompt = require_config_str(config, "user_prompt")
@@ -138,19 +138,15 @@ def evaluate_run(  # noqa: PLR0915
     )
 
     eval_entries = download_jsonl_manifest(storage_client, eval_manifest_uri)
-    source_rows, eval_rows = canonical_rows_from_entries(
+    eval_data = eval_rows_with_histories_from_entries(
         eval_entries,
-        split="eval",
         source=eval_manifest_uri,
+        prior_context_count=prior_context_count,
+        limit=eval_execution.limit,
     )
-    histories = build_context_histories(
-        source_rows,
-        max_turns=prior_context_count,
-    )
-    if eval_execution.limit is not None:
-        source_rows = source_rows[: eval_execution.limit]
-        eval_rows = eval_rows[: eval_execution.limit]
-        histories = histories[: eval_execution.limit]
+    source_rows = eval_data.source_rows
+    eval_rows = eval_data.eval_rows
+    histories = eval_data.histories
     model_family_slug = model_family_slug_from_model_id(base_model)
     audio_uris = [row.audio_filepath for row in eval_rows]
     refs = [row.text for row in eval_rows]
@@ -253,7 +249,7 @@ def evaluate_run(  # noqa: PLR0915
     report = EvalReport(
         round_id=run_cfg.round_id,
         generated_at=datetime.now(UTC).isoformat(),
-        targets=[target_metrics],
+        target=target_metrics,
         metadata={
             "eval_manifest_uri": eval_manifest_uri,
             "n_eval_examples": len(eval_rows),
@@ -281,7 +277,7 @@ def evaluate_run(  # noqa: PLR0915
     return 0
 
 
-PredictionMap = BatchPredictionMap
+PredictionMap = BatchPredictionMap | OnlinePredictionMap
 
 
 def _validate_local_eval_config_matches_durable(

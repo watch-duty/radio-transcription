@@ -5,80 +5,20 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from common.gemini import request_identity
 from common.gemini.batch import (
-    batch_prediction_metadata_uri,
     build_batch_jsonl,
     run_batch_audio_inference,
 )
 from common.gemini.context import ContextTurn
-from common.gemini.vertex import (
-    GEMINI_GENERATION_CONFIG,
-    GEMINI_SAFETY_SETTINGS,
-)
+from common.gemini.eval_artifacts import batch_prediction_metadata_uri
 from fake_gcs import FakeStorageClient
-
-
-def _vertex_output(audio_uri: str, text: str) -> str:
-    return json.dumps(
-        {
-            "request": {
-                "contents": [
-                    {
-                        "parts": [
-                            {
-                                "fileData": {
-                                    "fileUri": audio_uri,
-                                }
-                            }
-                        ]
-                    }
-                ]
-            },
-            "response": {
-                "candidates": [{"content": {"parts": [{"text": text}]}}]
-            },
-        }
-    )
-
-
-def _batch_identity_kwargs() -> dict[str, object]:
-    return {
-        "prior_context_count": 0,
-        "prior_context_mode": "text_turns",
-        "eval_manifest_uri": "gs://data/eval.jsonl",
-    }
-
-
-def _put_batch_metadata(
-    storage: FakeStorageClient,
-    *,
-    run_gcs_prefix: str = "gs://bucket/sft/runs/run-a",
-    label: str = "base",
-    model: str = "gemini-3.1-flash-lite",
-    audio_uris: list[str] | None = None,
-    system_prompt: str = "sys",
-    user_prompt: str = "user",
-) -> None:
-    identity = request_identity.build_request_identity(
-        target_label=label,
-        model=model,
-        eval_manifest_uri=str(_batch_identity_kwargs()["eval_manifest_uri"]),
-        audio_uris=audio_uris or ["gs://audio/a.flac"],
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        prior_context_count=int(
-            _batch_identity_kwargs()["prior_context_count"]
-        ),
-        prior_context_mode=str(_batch_identity_kwargs()["prior_context_mode"]),
-        generation_config=GEMINI_GENERATION_CONFIG,
-        safety_settings=GEMINI_SAFETY_SETTINGS,
-    )
-    storage.put(
-        batch_prediction_metadata_uri(run_gcs_prefix, label),
-        json.dumps(request_identity.metadata_payload(identity), sort_keys=True)
-        + "\n",
-    )
+from sft_eval_fixtures import (
+    batch_identity_kwargs,
+    batch_input_uri,
+    batch_output_uri,
+    put_batch_metadata,
+    vertex_batch_output,
+)
 
 
 class TestGeminiBatchInference(unittest.TestCase):
@@ -96,10 +36,10 @@ class TestGeminiBatchInference(unittest.TestCase):
             )
 
         self.assertEqual(
-            input_uri, "gs://bucket/sft/runs/run-a/evals/base/input.jsonl"
+            input_uri, batch_input_uri("gs://bucket/sft/runs/run-a")
         )
         self.assertEqual(
-            output_uri, "gs://bucket/sft/runs/run-a/evals/base/output/"
+            output_uri, batch_output_uri("gs://bucket/sft/runs/run-a")
         )
         rows = [
             json.loads(line)
@@ -109,10 +49,10 @@ class TestGeminiBatchInference(unittest.TestCase):
         current_audio_part = next(
             part
             for part in rows[0]["request"]["contents"][0]["parts"]
-            if "file_data" in part
+            if "fileData" in part
         )
         self.assertEqual(
-            current_audio_part["file_data"]["file_uri"], "gs://audio/a.flac"
+            current_audio_part["fileData"]["fileUri"], "gs://audio/a.flac"
         )
 
     def test_build_batch_jsonl_uploads_context_requests(self) -> None:
@@ -142,7 +82,7 @@ class TestGeminiBatchInference(unittest.TestCase):
             ["user", "model", "user"],
         )
         self.assertEqual(
-            contents[0]["parts"][0]["file_data"]["file_uri"],
+            contents[0]["parts"][0]["fileData"]["fileUri"],
             "gs://audio/prior.flac",
         )
         self.assertEqual(
@@ -150,7 +90,7 @@ class TestGeminiBatchInference(unittest.TestCase):
             "prior transcript",
         )
         self.assertEqual(
-            contents[2]["parts"][1]["file_data"]["file_uri"],
+            contents[2]["parts"][1]["fileData"]["fileUri"],
             "gs://audio/current.flac",
         )
 
@@ -158,12 +98,15 @@ class TestGeminiBatchInference(unittest.TestCase):
         self,
     ) -> None:
         storage = FakeStorageClient()
-        output_uri = "gs://bucket/sft/runs/run-a/evals/base/output/"
+        output_uri = batch_output_uri("gs://bucket/sft/runs/run-a")
         storage.put(
             f"{output_uri}predictions.jsonl",
-            _vertex_output("gs://audio/a.flac", "copy") + "\n",
+            vertex_batch_output("gs://audio/a.flac", "copy") + "\n",
         )
-        _put_batch_metadata(storage)
+        put_batch_metadata(
+            storage,
+            run_gcs_prefix="gs://bucket/sft/runs/run-a",
+        )
 
         preds = run_batch_audio_inference(
             storage_client=storage,
@@ -175,7 +118,7 @@ class TestGeminiBatchInference(unittest.TestCase):
             audio_uris=["gs://audio/a.flac"],
             system_prompt="sys",
             user_prompt="user",
-            **_batch_identity_kwargs(),
+            **batch_identity_kwargs(),
             submit_fn=lambda **_: output_uri,
         )
 
@@ -188,12 +131,15 @@ class TestGeminiBatchInference(unittest.TestCase):
         self,
     ) -> None:
         storage = FakeStorageClient()
-        output_uri = "gs://bucket/sft/runs/run-a/evals/base/output/"
+        output_uri = batch_output_uri("gs://bucket/sft/runs/run-a")
         storage.put(
             f"{output_uri}prediction-model-1/predictions.jsonl",
-            _vertex_output("gs://audio/a.flac", "copy") + "\n",
+            vertex_batch_output("gs://audio/a.flac", "copy") + "\n",
         )
-        _put_batch_metadata(storage)
+        put_batch_metadata(
+            storage,
+            run_gcs_prefix="gs://bucket/sft/runs/run-a",
+        )
         calls: list[dict[str, object]] = []
 
         preds = run_batch_audio_inference(
@@ -206,7 +152,7 @@ class TestGeminiBatchInference(unittest.TestCase):
             audio_uris=["gs://audio/a.flac"],
             system_prompt="sys",
             user_prompt="user",
-            **_batch_identity_kwargs(),
+            **batch_identity_kwargs(),
             submit_fn=lambda **kwargs: calls.append(kwargs) or output_uri,
         )
 
@@ -221,12 +167,12 @@ class TestGeminiBatchInference(unittest.TestCase):
     ) -> None:
         storage = FakeStorageClient()
         run_gcs_prefix = "gs://bucket/sft/runs/run-a"
-        output_uri = f"{run_gcs_prefix}/evals/base/output/"
+        output_uri = batch_output_uri(run_gcs_prefix)
 
         def fail_after_partial_output(**_: object) -> str:
             storage.put(
                 f"{output_uri}prediction-model-1/predictions.jsonl",
-                _vertex_output("gs://audio/a.flac", "partial") + "\n",
+                vertex_batch_output("gs://audio/a.flac", "partial") + "\n",
             )
             msg = "batch failed"
             raise RuntimeError(msg)
@@ -241,7 +187,7 @@ class TestGeminiBatchInference(unittest.TestCase):
             audio_uris=["gs://audio/a.flac"],
             system_prompt="sys",
             user_prompt="user",
-            **_batch_identity_kwargs(),
+            **batch_identity_kwargs(),
             submit_fn=fail_after_partial_output,
         )
 
@@ -265,7 +211,7 @@ class TestGeminiBatchInference(unittest.TestCase):
             audio_uris=["gs://audio/a.flac", "gs://audio/a.flac"],
             system_prompt="sys",
             user_prompt="user",
-            **_batch_identity_kwargs(),
+            **batch_identity_kwargs(),
             submit_fn=lambda **kwargs: calls.append(kwargs) or "",
         )
 
@@ -276,12 +222,15 @@ class TestGeminiBatchInference(unittest.TestCase):
         self,
     ) -> None:
         storage = FakeStorageClient()
-        output_uri = "gs://bucket/sft/runs/run-a/evals/base/output/"
+        output_uri = batch_output_uri("gs://bucket/sft/runs/run-a")
         storage.put(
             f"{output_uri}predictions.jsonl",
-            _vertex_output("gs://audio/other.flac", "other") + "\n",
+            vertex_batch_output("gs://audio/other.flac", "other") + "\n",
         )
-        _put_batch_metadata(storage)
+        put_batch_metadata(
+            storage,
+            run_gcs_prefix="gs://bucket/sft/runs/run-a",
+        )
 
         preds = run_batch_audio_inference(
             storage_client=storage,
@@ -293,7 +242,7 @@ class TestGeminiBatchInference(unittest.TestCase):
             audio_uris=["gs://audio/a.flac"],
             system_prompt="sys",
             user_prompt="user",
-            **_batch_identity_kwargs(),
+            **batch_identity_kwargs(),
             submit_fn=lambda **_: output_uri,
         )
 

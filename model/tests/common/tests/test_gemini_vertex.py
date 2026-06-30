@@ -370,16 +370,14 @@ class TestBuildRequest(unittest.TestCase):
         )
         req = result["request"]
         self.assertIn("contents", req)
-        self.assertIn("system_instruction", req)
-        self.assertIn("generation_config", req)
-        self.assertIn("safety_settings", req)
+        self.assertIn("systemInstruction", req)
+        self.assertIn("generationConfig", req)
+        self.assertIn("safetySettings", req)
         part = next(
-            part for part in req["contents"][0]["parts"] if "file_data" in part
+            part for part in req["contents"][0]["parts"] if "fileData" in part
         )
-        self.assertEqual(
-            part["file_data"]["file_uri"], "gs://bucket/audio.flac"
-        )
-        self.assertEqual(part["file_data"]["mime_type"], "audio/flac")
+        self.assertEqual(part["fileData"]["fileUri"], "gs://bucket/audio.flac")
+        self.assertEqual(part["fileData"]["mimeType"], "audio/flac")
 
     def test_default_generation_config(self) -> None:
         """Default generation_config has temperature 0.0 and max_output_tokens 512."""
@@ -388,7 +386,7 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt="U",
         )
-        gen_cfg = result["request"]["generation_config"]
+        gen_cfg = result["request"]["generationConfig"]
         self.assertEqual(gen_cfg["temperature"], 0.0)
         self.assertEqual(gen_cfg["max_output_tokens"], 512)
 
@@ -399,7 +397,7 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt="U",
         )
-        result["request"]["generation_config"]["extra_key"] = (
+        result["request"]["generationConfig"]["extra_key"] = (
             "should_not_propagate"
         )
         self.assertNotIn("extra_key", self.default_gen_config)
@@ -411,7 +409,7 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt="U",
         )
-        safety = result["request"]["safety_settings"]
+        safety = result["request"]["safetySettings"]
         self.assertEqual(len(safety), 4)
         for entry in safety:
             self.assertEqual(entry["threshold"], "BLOCK_NONE")
@@ -423,7 +421,7 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt="U",
         )
-        result["request"]["safety_settings"].pop()
+        result["request"]["safetySettings"].pop()
         self.assertEqual(len(self.default_safety), 4)
 
     def test_system_prompt_preserved_exactly(self) -> None:
@@ -433,7 +431,7 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="  Leading space.  ",
             user_prompt="U",
         )
-        parts = result["request"]["system_instruction"]["parts"]
+        parts = result["request"]["systemInstruction"]["parts"]
         self.assertEqual(parts[0]["text"], "  Leading space.  ")
 
     def test_custom_generation_config_override(self) -> None:
@@ -446,7 +444,7 @@ class TestBuildRequest(unittest.TestCase):
             generation_config=custom_cfg,
         )
         self.assertEqual(
-            result["request"]["generation_config"]["temperature"], 0.5
+            result["request"]["generationConfig"]["temperature"], 0.5
         )
 
     def test_history_is_encoded_before_current_request(self) -> None:
@@ -466,18 +464,18 @@ class TestBuildRequest(unittest.TestCase):
             ["user", "model", "user", "model", "user"],
         )
         self.assertEqual(
-            contents[0]["parts"][0]["file_data"]["file_uri"],
+            contents[0]["parts"][0]["fileData"]["fileUri"],
             "gs://bucket/prev-1.flac",
         )
         self.assertEqual(contents[1]["parts"][0]["text"], "first")
         self.assertEqual(
-            contents[2]["parts"][0]["file_data"]["file_uri"],
+            contents[2]["parts"][0]["fileData"]["fileUri"],
             "gs://bucket/prev-2.flac",
         )
         self.assertEqual(contents[3]["parts"][0]["text"], "second")
         self.assertEqual(contents[4]["parts"][0]["text"], "U")
         self.assertEqual(
-            contents[4]["parts"][1]["file_data"]["file_uri"],
+            contents[4]["parts"][1]["fileData"]["fileUri"],
             "gs://bucket/current.flac",
         )
 
@@ -496,11 +494,11 @@ class TestBuildRequest(unittest.TestCase):
         contents = result["request"]["contents"]
         self.assertEqual([turn["role"] for turn in contents], ["user"])
         file_parts = [
-            part for part in contents[0]["parts"] if "file_data" in part
+            part for part in contents[0]["parts"] if "fileData" in part
         ]
         self.assertEqual(len(file_parts), 1)
         self.assertEqual(
-            file_parts[0]["file_data"]["file_uri"],
+            file_parts[0]["fileData"]["fileUri"],
             "gs://bucket/current.flac",
         )
         self.assertIn(
@@ -525,11 +523,11 @@ class TestBuildRequest(unittest.TestCase):
         contents = result["request"]["contents"]
         self.assertEqual([turn["role"] for turn in contents], ["user"])
         file_parts = [
-            part for part in contents[0]["parts"] if "file_data" in part
+            part for part in contents[0]["parts"] if "fileData" in part
         ]
         self.assertEqual(len(file_parts), 1)
         self.assertEqual(
-            file_parts[0]["file_data"]["file_uri"],
+            file_parts[0]["fileData"]["fileUri"],
             "gs://bucket/current.flac",
         )
         self.assertEqual(
@@ -572,11 +570,11 @@ class TestBuildRequest(unittest.TestCase):
             part
             for turn in contents
             for part in turn["parts"]
-            if "file_data" in part
+            if "fileData" in part
         ]
         self.assertEqual(len(audio_parts), 1)
         self.assertEqual(
-            audio_parts[0]["file_data"]["file_uri"],
+            audio_parts[0]["fileData"]["fileUri"],
             "gs://bucket/current.flac",
         )
         self.assertEqual(contents[0]["parts"][0]["text"], user_prompt)
@@ -612,7 +610,7 @@ class TestParseBatchOutput(unittest.TestCase):
             {"gs://bucket/a.flac": "engine 41"},
         )
 
-    def test_parses_snake_case_request_echo(self) -> None:
+    def test_ignores_noncanonical_snake_case_request_echo(self) -> None:
         output = {
             "request": {
                 "contents": [
@@ -634,7 +632,7 @@ class TestParseBatchOutput(unittest.TestCase):
 
         self.assertEqual(
             parse_batch_output(json.dumps(output)),
-            {"gs://bucket/a.flac": "engine 41"},
+            {},
         )
 
     def test_parses_last_file_uri_when_request_contains_history(self) -> None:

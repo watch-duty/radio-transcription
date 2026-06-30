@@ -196,8 +196,8 @@ def prepare_artifacts(
     gemini_train_path = model_inputs_dir / "train.jsonl"
     gemini_validation_path = model_inputs_dir / "validation.jsonl"
     # Only train/validation need Gemini SFT JSONL. Eval remains canonical here;
-    # batch-eval requests are built later so base and tuned models use the same
-    # prompt/config recorded in config.json.
+    # eval requests are built later from the prompt/config recorded in
+    # config.json.
     write_gemini_jsonl(
         train_entries,
         gemini_train_path,

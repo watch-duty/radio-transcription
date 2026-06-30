@@ -74,9 +74,10 @@ label = "checkpoint_6"
 model = "projects/PROJECT/locations/us-central1/endpoints/CHECKPOINT_ENDPOINT_ID"
 ```
 
-All three targets use the same table shape. The operator chooses the label used
-for report rows and artifact directories; the `model` value is the publisher
-model ID or Vertex endpoint resource that should be evaluated.
+All three examples use the same `[eval.model]` table shape. The operator
+chooses the label used for the report row and artifact directory; the `model`
+value is the publisher model ID or Vertex endpoint resource that should be
+evaluated.
 
 ## Masked Eval Variant
 

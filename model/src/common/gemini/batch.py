@@ -18,9 +18,11 @@ from common.gcs_utils import (
     upload_local_file,
 )
 from common.gemini import request_identity
+from common.gemini.eval_artifacts import (
+    batch_prediction_metadata_uri,
+    eval_target_artifact_paths,
+)
 from common.gemini.vertex import (
-    GEMINI_GENERATION_CONFIG,
-    GEMINI_SAFETY_SETTINGS,
     build_request,
     parse_batch_output,
     submit_batch_inference,
@@ -40,14 +42,6 @@ class BatchPredictionMap(dict[str, str]):
     """Prediction map with the GCS batch output URI attached for provenance."""
 
     output_uri: str
-
-
-def batch_prediction_metadata_uri(run_gcs_prefix: str, label: str) -> str:
-    """Return the request metadata sidecar URI for a batch eval target."""
-    return (
-        f"{run_gcs_prefix.rstrip('/')}/evals/{label}/"
-        "batch_predictions.meta.json"
-    )
 
 
 def run_batch_audio_inference(
@@ -78,7 +72,7 @@ def run_batch_audio_inference(
         )
         return None
     audio_uri_list = list(audio_uris)
-    identity = request_identity.build_request_identity(
+    identity = request_identity.build_gemini_eval_request_identity(
         target_label=label,
         model=model_id,
         eval_manifest_uri=eval_manifest_uri,
@@ -87,8 +81,6 @@ def run_batch_audio_inference(
         user_prompt=user_prompt,
         prior_context_count=prior_context_count,
         prior_context_mode=prior_context_mode,
-        generation_config=GEMINI_GENERATION_CONFIG,
-        safety_settings=GEMINI_SAFETY_SETTINGS,
     )
     with tempfile.TemporaryDirectory() as tmp:
         batch_input_gcs, batch_output_gcs = build_batch_jsonl(
@@ -210,8 +202,9 @@ def build_batch_jsonl(
                 )
                 + "\n"
             )
-    batch_input_gcs = f"{run_gcs_prefix}/evals/{label}/input.jsonl"
-    batch_output_gcs = f"{run_gcs_prefix}/evals/{label}/output/"
+    paths = eval_target_artifact_paths(run_gcs_prefix, label)
+    batch_input_gcs = paths.input_uri
+    batch_output_gcs = paths.output_uri
     in_bucket, in_blob = parse_gcs_uri(batch_input_gcs)
     upload_file_to_blob(
         storage_client, in_bucket, in_blob, str(batch_input_path)

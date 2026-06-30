@@ -143,10 +143,10 @@ manifest. Local `[eval.execution].concurrency` and
 an online eval under different quota conditions. Changing only the local TOML
 after `prepare` does not retarget a run; `eval` fails loudly on a mismatch. Use
 the matching prepared config, or create a separate prepared `round_id` for a
-different target or eval set.
+different model or eval set.
 
-Batch targets write `evals/LABEL/input.jsonl`, `evals/LABEL/output/`, and
-`evals/LABEL/batch_predictions.meta.json`. Online endpoint targets write
+Batch eval runs write `evals/LABEL/input.jsonl`, `evals/LABEL/output/`, and
+`evals/LABEL/batch_predictions.meta.json`. Online endpoint eval runs write
 `evals/LABEL/online_predictions.jsonl` and
 `evals/LABEL/online_predictions.meta.json`.
 

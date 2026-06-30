@@ -40,6 +40,37 @@ def build_request_identity(
     }
 
 
+def build_gemini_eval_request_identity(
+    *,
+    target_label: str,
+    model: str,
+    eval_manifest_uri: str,
+    audio_uris: Sequence[str],
+    system_prompt: str,
+    user_prompt: str,
+    prior_context_count: int,
+    prior_context_mode: str,
+) -> dict[str, Any]:
+    """Return the canonical Gemini eval inference identity."""
+    from common.gemini.vertex import (  # noqa: PLC0415
+        GEMINI_GENERATION_CONFIG,
+        GEMINI_SAFETY_SETTINGS,
+    )
+
+    return build_request_identity(
+        target_label=target_label,
+        model=model,
+        eval_manifest_uri=eval_manifest_uri,
+        audio_uris=audio_uris,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        prior_context_count=prior_context_count,
+        prior_context_mode=prior_context_mode,
+        generation_config=GEMINI_GENERATION_CONFIG,
+        safety_settings=GEMINI_SAFETY_SETTINGS,
+    )
+
+
 def request_identity_hash(identity: dict[str, Any]) -> str:
     """Return a stable SHA-256 hash for a request identity."""
     payload = json.dumps(

@@ -9,6 +9,8 @@ Exports:
   validate_canonical_manifest   — strict Canonical Manifest validation
   require_canonical_manifest    — fail-loud strict validation wrapper
   rows_from_manifest            — convert raw manifest dicts to typed CanonicalRow instances
+  strict_canonical_rows_from_manifest — validate and convert via one strict boundary
+  parse_manifest_text           — parse JSON array/JSONL text into normalized row dicts
   load_manifest                 — load a JSON array or JSONL manifest from local disk
   merge_predictions_to_manifest — URI-first prediction merge onto GT rows
 """
@@ -104,7 +106,7 @@ def validate_canonical_manifest(
 
     This is the single strict semantic validation path. Exploratory parsing
     through load_manifest() remains lenient, and rows_from_manifest() remains a
-    compatibility conversion boundary rather than a full strict validator.
+    row conversion boundary rather than a full strict validator.
     """
     issues: list[CanonicalManifestIssue] = []
     if not rows:
@@ -494,6 +496,24 @@ def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
     return rows
 
 
+def strict_canonical_rows_from_manifest(
+    manifest: list[dict[str, Any]],
+    *,
+    expected_split: str | None = None,
+    source: str = "manifest",
+) -> tuple[list[dict[str, Any]], list[CanonicalRow]]:
+    """Validate and convert manifest entries through the strict canonical API."""
+    require_canonical_manifest(manifest, expected_split=expected_split)
+    rows = rows_from_manifest(manifest)
+    if len(rows) != len(manifest):
+        msg = (
+            f"{source}: converted {len(rows)} canonical rows from "
+            f"{len(manifest)} manifest entries"
+        )
+        raise ValueError(msg)
+    return manifest, rows
+
+
 def _required_manifest_string(
     row: dict[str, Any],
     field: str,
@@ -509,6 +529,65 @@ def _required_manifest_string(
     return stripped
 
 
+def parse_manifest_text(
+    content: str,
+    *,
+    source: str = "manifest",
+) -> list[dict[str, Any]]:
+    """Parse JSON array or JSONL manifest text into normalized row dicts.
+
+    Parsing is intentionally lenient: malformed JSONL rows and non-object rows
+    are skipped, while malformed JSON arrays return an empty list. Strict
+    semantic validation belongs in ``require_canonical_manifest``.
+    """
+    data: list[dict[str, Any]] = []
+    content = content.strip()
+    if not content:
+        return data
+
+    if content.startswith("["):
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError as e:
+            logger.exception(f"Failed to parse JSON array from {source}: {e}")
+            return []
+        if not isinstance(parsed, list) or not all(
+            isinstance(row, dict) for row in parsed
+        ):
+            logger.error(
+                f"Expected a JSON array of objects in {source!r}, got unexpected shape"
+            )
+            return []
+        data = parsed
+    else:
+        for i, obj_str in enumerate(content.splitlines(), start=1):
+            if not obj_str.strip():
+                continue
+            try:
+                obj = json.loads(obj_str)
+            except json.JSONDecodeError:
+                logger.warning(
+                    f"Skipping malformed JSON at line {i} in {source}"
+                )
+                continue
+            if not isinstance(obj, dict):
+                logger.warning(
+                    f"Skipping non-object JSON at line {i} in {source}"
+                )
+                continue
+            data.append(obj)
+
+    for row in data:
+        if "text" in row:
+            # Coerce malformed text values once at the parser boundary. Null
+            # text becomes absent transcript text rather than the literal word
+            # "None".
+            raw = row["text"]
+            text = "" if raw is None else str(raw)
+            row["text"] = text.replace("\n", " ").replace("\r", " ")
+    return data
+
+
 def load_manifest(path: str) -> list[dict[str, Any]]:
     """Loads a manifest file (JSON array or JSONL) from the local filesystem.
 
@@ -519,7 +598,6 @@ def load_manifest(path: str) -> list[dict[str, Any]]:
         List of row dicts; an empty list if the path is missing, unreadable,
         or unparseable.
     """
-    data: list[dict[str, Any]] = []
     try:
         if not Path(path).exists():
             logger.error(f"Manifest path not found: {path}")
@@ -533,41 +611,7 @@ def load_manifest(path: str) -> list[dict[str, Any]]:
         # crashing the caller.
         logger.exception(f"Could not read manifest {path}: {e}")
         return []
-    if content.startswith("["):
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError as e:
-            logger.exception(f"Failed to parse JSON array: {e}")
-            return []
-        if not isinstance(data, list) or not all(
-            isinstance(row, dict) for row in data
-        ):
-            logger.error(
-                f"Expected a JSON array of objects in {path!r}, got unexpected shape"
-            )
-            return []
-    else:
-        for i, obj_str in enumerate(content.splitlines(), start=1):
-            if not obj_str.strip():
-                continue
-            try:
-                obj = json.loads(obj_str)
-            except json.JSONDecodeError:
-                logger.warning(f"Skipping malformed JSON at line {i}")
-                continue
-            if not isinstance(obj, dict):
-                logger.warning(f"Skipping non-object JSON at line {i}")
-                continue
-            data.append(obj)
-    for row in data:
-        if "text" in row:
-            # Coerce a non-string text field (None / int / bool in a malformed
-            # manifest) to a string so a downstream .strip()/.lower() never
-            # raises; a null text becomes "" rather than the literal "None".
-            raw = row["text"]
-            text = "" if raw is None else str(raw)
-            row["text"] = text.replace("\n", " ").replace("\r", " ")
-    return data
+    return parse_manifest_text(content, source=path)
 
 
 def merge_predictions_to_manifest(
