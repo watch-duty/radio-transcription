@@ -197,6 +197,38 @@ class VoiceActivityDetector:
         except Exception as e:
             logger.warning("Failed to warm up Numba compiler: %s", e)
 
+        self._initialize_dsp_filters()
+
+    def _initialize_dsp_filters(self) -> None:
+        """Initializes the shared Pedalboard DSP filter instances."""
+        self.bp_board = Pedalboard(
+            [
+                HighpassFilter(cutoff_frequency_hz=self.highpass_hz),
+                # Wider bandwidth cutoff (4000 Hz) for maximal speech onset VAD sensitivity.
+                # This is wider than the export path's 3000 Hz cutoff, which is optimized for clean transcription.
+                LowpassFilter(cutoff_frequency_hz=self.lowpass_hz),
+            ]
+        )
+        self.comp_board = Pedalboard(
+            [
+                Compressor(
+                    threshold_db=self.comp_threshold_db,
+                    ratio=self.comp_ratio,
+                    attack_ms=self.comp_attack_ms,
+                    release_ms=self.comp_release_ms,
+                )
+            ]
+        )
+        self.eq_board = Pedalboard(
+            [
+                PeakFilter(
+                    cutoff_frequency_hz=self.boost_freq_hz,
+                    gain_db=self.boost_gain_db,
+                    q=self.peak_filter_q,
+                )
+            ]
+        )
+
     def setup(self) -> None:
         """No-op. sessions are eagerly initialized in constructor."""
 
@@ -259,15 +291,7 @@ class VoiceActivityDetector:
         self, audio_array: np.ndarray, prior_len_sec: float = 0.0
     ) -> np.ndarray:
         """Applies the VAD bandpass, denoiser, and eq presence boost pipeline."""
-        bp_board = Pedalboard(
-            [
-                HighpassFilter(cutoff_frequency_hz=self.highpass_hz),
-                # Wider bandwidth cutoff (4000 Hz) for maximal speech onset VAD sensitivity.
-                # This is wider than the export path's 3000 Hz cutoff, which is optimized for clean transcription.
-                LowpassFilter(cutoff_frequency_hz=self.lowpass_hz),
-            ]
-        )
-        bp_audio = bp_board(audio_array, TARGET_SAMPLE_RATE)
+        bp_audio = self.bp_board(audio_array, TARGET_SAMPLE_RATE)
 
         # Dynamically apply Compressor only if the raw signal is quiet (peak < self.comp_peak_threshold)
         # Compute the peak amplitude strictly from the actual current chunk (slicing off the pre-roll preamble)
@@ -281,17 +305,7 @@ class VoiceActivityDetector:
         peak = np.max(np.abs(current_chunk)) if len(current_chunk) > 0 else 0.0
 
         if peak < self.comp_peak_threshold:
-            comp_board = Pedalboard(
-                [
-                    Compressor(
-                        threshold_db=self.comp_threshold_db,
-                        ratio=self.comp_ratio,
-                        attack_ms=self.comp_attack_ms,
-                        release_ms=self.comp_release_ms,
-                    )
-                ]
-            )
-            comp_audio = comp_board(bp_audio, TARGET_SAMPLE_RATE)
+            comp_audio = self.comp_board(bp_audio, TARGET_SAMPLE_RATE)
         else:
             comp_audio = bp_audio
 
@@ -302,16 +316,7 @@ class VoiceActivityDetector:
             + np.float32(self.blend_ratio) * ulunas_denoised
         )
 
-        eq_board = Pedalboard(
-            [
-                PeakFilter(
-                    cutoff_frequency_hz=self.boost_freq_hz,
-                    gain_db=self.boost_gain_db,
-                    q=self.peak_filter_q,
-                )
-            ]
-        )
-        return eq_board(mixed_audio, TARGET_SAMPLE_RATE)
+        return self.eq_board(mixed_audio, TARGET_SAMPLE_RATE)
 
     def _trim_and_shift_segments(
         self,
