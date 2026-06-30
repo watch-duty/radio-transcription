@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -33,8 +32,6 @@ from backend.pipeline.storage.pagination_utils import SortOrder
 
 from .models import Feed, FeedCreate, FeedUpdate, ListFeedsResponse, Tag
 from .service import FeedService
-
-logger = logging.getLogger(__name__)
 
 _INTERNAL_ACTOR_ID_HEADER = "X-WD-Actor-Id"
 

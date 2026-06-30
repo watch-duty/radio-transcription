@@ -12,9 +12,6 @@ from backend.pipeline.common.env import is_gcp_env
 
 logger = logging.getLogger(__name__)
 
-# Security scheme for FastAPI
-security = HTTPBearer()
-
 
 async def verify_oidc_token(
     auth: Annotated[
