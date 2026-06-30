@@ -63,6 +63,7 @@ STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
 _STREAM_PROBE_TIMEOUT_SEC = 10
 _MAX_ALLOWED_LAG_SECONDS = 60.0
+_MAX_DRIFT_THRESHOLD_SECONDS = 2.0
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
 
 
@@ -106,6 +107,39 @@ def _build_auth_header() -> str:
 
 def _now_utc() -> datetime.datetime:
     return datetime.datetime.now(tz=datetime.UTC)
+
+
+def _parse_flac_duration_from_bytes(audio_bytes: bytes) -> float | None:
+    """Parse duration in seconds from STREAMINFO block of FLAC bytes."""
+    try:
+        if len(audio_bytes) < 42:
+            return None
+        if audio_bytes[0:4] != b"fLaC":
+            return None
+        block_type = audio_bytes[4] & 0x7F
+        if block_type != 0:
+            return None
+        sample_rate = (
+            (audio_bytes[18] << 12)
+            | (audio_bytes[19] << 4)
+            | ((audio_bytes[20] & 0xF0) >> 4)
+        )
+        total_samples = (
+            ((audio_bytes[21] & 0x0F) << 32)
+            | (audio_bytes[22] << 24)
+            | (audio_bytes[23] << 16)
+            | (audio_bytes[24] << 8)
+            | audio_bytes[25]
+        )
+        if sample_rate == 0:
+            return None
+        return total_samples / sample_rate
+    except Exception:
+        logger.warning(
+            "Failed to parse FLAC duration from bytes",
+            exc_info=True,
+        )
+        return None
 
 
 def _classify_stream_http_status(
@@ -410,8 +444,9 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
         last_activity_time = time.monotonic()
         wait_task = asyncio.create_task(process.wait())
 
-        # Anchor the stream timeline to the exact moment ffmpeg starts
-        stream_anchor_time = _now_utc()
+        stream_anchor_time: datetime.datetime | None = None
+        expected_timeline_time: datetime.datetime | None = None
+        cumulative_audio_duration = 0.0
 
         try:
             while True:
@@ -434,8 +469,17 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                 if current_segment.exists() and (
                     next_segment.exists() or process_done
                 ):
-                    # SLO: receipt_time stamp — Icecast segment finalized, bytes available
-                    receipt_time = _now_utc()
+                    # Read the raw modification time of the original segment file
+                    # before fixing its header, to eliminate polling loop jitter.
+                    mtime_raw = await asyncio.to_thread(
+                        _path_mtime, current_segment
+                    )
+                    if mtime_raw is not None:
+                        receipt_time = datetime.datetime.fromtimestamp(
+                            mtime_raw, tz=datetime.UTC
+                        )
+                    else:
+                        receipt_time = _now_utc()
 
                     # Fix the FLAC header in-place so downstream decoders don't crash
                     await _fix_flac_header(current_segment)
@@ -444,22 +488,73 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         current_segment.read_bytes
                     )
                     if segment_bytes:
-                        # Calculate the start and end times of this specific chunk's window
-                        chunk_start_time = (
-                            stream_anchor_time
-                            + datetime.timedelta(
-                                seconds=next_index * _CHUNK_DURATION
+                        # Parse actual duration of this segment
+                        parsed_duration = _parse_flac_duration_from_bytes(
+                            segment_bytes
+                        )
+                        duration = (
+                            parsed_duration
+                            if parsed_duration is not None
+                            else float(_CHUNK_DURATION)
+                        )
+
+                        if (
+                            stream_anchor_time is None
+                            or expected_timeline_time is None
+                        ):
+                            # First chunk initialization
+                            stream_anchor_time = (
+                                receipt_time
+                                - datetime.timedelta(seconds=duration)
                             )
-                        )
-                        chunk_end_time = chunk_start_time + datetime.timedelta(
-                            seconds=_CHUNK_DURATION
-                        )
+                            chunk_start_time = stream_anchor_time
+                            chunk_end_time = receipt_time
+                            expected_timeline_time = receipt_time
+                            cumulative_audio_duration = duration
+                        else:
+                            expected_end_time = (
+                                expected_timeline_time
+                                + datetime.timedelta(seconds=duration)
+                            )
+                            drift = (
+                                receipt_time - expected_end_time
+                            ).total_seconds()
+
+                            if abs(drift) > _MAX_DRIFT_THRESHOLD_SECONDS:
+                                logger.info(
+                                    "Feed %s (%s): Timeline drifted by %.3fs; "
+                                    "resynchronizing timeline to receipt time.",
+                                    feed_id,
+                                    feed_name,
+                                    drift,
+                                )
+                                stream_anchor_time = (
+                                    receipt_time
+                                    - datetime.timedelta(seconds=duration)
+                                )
+                                chunk_start_time = stream_anchor_time
+                                chunk_end_time = receipt_time
+                                cumulative_audio_duration = duration
+                            else:
+                                chunk_start_time = expected_timeline_time
+                                chunk_end_time = expected_end_time
+                                cumulative_audio_duration += duration
+
+                            expected_timeline_time = chunk_end_time
+
                         if process_done:
                             chunk_end_time = min(chunk_end_time, _now_utc())
 
-                        # Guard against cumulative network or system lag by measuring the drift
-                        # between wall-clock receipt time and expected stream time.
-                        lag = (receipt_time - chunk_end_time).total_seconds()
+                        # Guard against cumulative network/system lag
+                        expected_realtime_end_time = (
+                            stream_anchor_time
+                            + datetime.timedelta(
+                                seconds=cumulative_audio_duration
+                            )
+                        )
+                        lag = (
+                            receipt_time - expected_realtime_end_time
+                        ).total_seconds()
                         if lag > _MAX_ALLOWED_LAG_SECONDS:
                             logger.warning(
                                 "Feed %s (%s): Stream lag has exceeded threshold "

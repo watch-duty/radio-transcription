@@ -46,6 +46,28 @@ def _make_feed(name: str, source_feed_id: str | None) -> LeasedFeed:
     )
 
 
+def _mock_path_mtime(
+    t0_epoch: float,
+    step: float = 15.0,
+    overrides: dict[int, float] | None = None,
+):
+    def _impl(path: Path) -> float | None:
+        name = path.name
+        if "chunk_" in name:
+            try:
+                parts = name.split("_")
+                idx_str = parts[1].split(".")[0]
+                idx = int(idx_str)
+                if overrides and idx in overrides:
+                    return overrides[idx]
+                return t0_epoch + idx * step
+            except (ValueError, IndexError):
+                pass
+        return None
+
+    return _impl
+
+
 def _make_stderr_reader(
     lines: list[bytes] | None = None,
 ) -> asyncio.StreamReader:
@@ -288,6 +310,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
                 "_fix_flac_header",
                 new_callable=AsyncMock,
             ),
+            patch.object(icecast_collector, "_path_mtime", return_value=None),
             patch.dict(os.environ, MOCK_ENV_VARS),
         ]
         for p in self.patchers:
@@ -987,14 +1010,14 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(b"FLAC_SEGMENT" in chunk or b"FLAC" in chunk)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc",
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._path_mtime",
     )
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_timestamps_advance_by_chunk_duration(
-        self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
+        self, mock_create_ffmpeg: AsyncMock, mock_path_mtime: MagicMock
     ) -> None:
         """Test timestamp math: chunks advance by CHUNK_DURATION_SECONDS when
         _now_utc() is far future so min() picks chunk_end_time (unclamped path).
@@ -1002,14 +1025,10 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         fixed_anchor = datetime.datetime(
             2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
         )
-        # First call sets stream_anchor_time. Subsequent calls return a time
-        # after every chunk's natural end so min() picks chunk_end_time even if
-        # wait_task.done() flips before an intermediate segment.
         t0 = fixed_anchor
-        after_all_chunks_done = t0 + datetime.timedelta(
-            seconds=CHUNK_DURATION_SECONDS * 4 + 1
+        mock_path_mtime.side_effect = _mock_path_mtime(
+            t0.timestamp(), step=15.0
         )
-        mock_now_utc.side_effect = [t0] + [after_all_chunks_done] * 10
 
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=3333,
@@ -1053,6 +1072,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             )
 
     @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._path_mtime",
+    )
+    @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc",
     )
     @patch(
@@ -1060,26 +1082,24 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         new_callable=AsyncMock,
     )
     async def test_last_chunk_end_time_clamped_to_current_time(
-        self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
+        self,
+        mock_create_ffmpeg: AsyncMock,
+        mock_now_utc: MagicMock,
+        mock_path_mtime: MagicMock,
     ) -> None:
         """Test timestamp math: last chunk end_time is clamped to _now_utc()
         when _now_utc() < chunk_end_time so min() picks _now_utc() (clamped path).
-
-        A single segment drives _now_utc() exactly three times:
-        1. stream_anchor_time (before the inner loop),
-        2. receipt_time stamp (RCPT-02, immediately before read_bytes), and
-        3. the min() clamp when the process is done and the only chunk is finalized.
         """
         fixed_anchor = datetime.datetime(
             2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
         )
+        t0 = fixed_anchor
+        mock_path_mtime.side_effect = _mock_path_mtime(t0.timestamp() + 15)
+
         # clamp_time is before anchor + CHUNK_DURATION_SECONDS (the natural end),
         # so min() picks clamp_time instead of chunk_end_time.
-        clamp_time = fixed_anchor + datetime.timedelta(
-            seconds=CHUNK_DURATION_SECONDS - 5
-        )
-        # 2nd value feeds the receipt_time stamp (RCPT-02); 3rd feeds min() clamp.
-        mock_now_utc.side_effect = [fixed_anchor, clamp_time, clamp_time]
+        clamp_time = t0 + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS - 5)
+        mock_now_utc.return_value = clamp_time
 
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=4444,
@@ -1100,7 +1120,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         results = await _collect_chunks_with_timestamps(gen)
 
         self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].chunk_start_time, fixed_anchor)
+        self.assertEqual(results[0].chunk_start_time, t0)
         self.assertEqual(results[0].chunk_end_time, clamp_time)
 
     @patch(
@@ -1136,20 +1156,20 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[1].session_id, results[2].session_id)
 
     @patch(
-        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._path_mtime",
     )
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_stream_lag_logged(
-        self, mock_create_ffmpeg: MagicMock, mock_now_utc: MagicMock
+        self, mock_create_ffmpeg: MagicMock, mock_path_mtime: MagicMock
     ) -> None:
         """Test: stream lag exceeding threshold logs a warning but does not raise an error."""
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=8888,
             segments=[b"FLAC_DATA_0", b"FLAC_DATA_1"],
-            wait_delay=0.5,
+            wait_delay=0.0,
             wait_result=0,
         )
 
@@ -1157,22 +1177,23 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         shutdown_event = asyncio.Event()
 
         t0 = datetime.datetime(2026, 6, 20, 10, 0, 0, tzinfo=datetime.UTC)
-        mock_now_utc.side_effect = [
-            t0,  # stream_anchor_time
-            t0
-            + datetime.timedelta(seconds=85),  # receipt_time for first segment
-        ]
-
-        gen = icecast_collector.capture_icecast_stream(
-            feed,
-            shutdown_event,
-            url_base="https://mock.example.com/",
-            resources=_default_resources(),
+        mock_path_mtime.side_effect = _mock_path_mtime(
+            t0.timestamp(), overrides={1: t0.timestamp() + 16.5}
         )
 
-        chunk = await gen.__anext__()
+        with patch(
+            "backend.pipeline.ingestion.collectors.icecast.icecast_collector._MAX_ALLOWED_LAG_SECONDS",
+            1.0,
+        ):
+            gen = icecast_collector.capture_icecast_stream(
+                feed,
+                shutdown_event,
+                url_base="https://mock.example.com/",
+                resources=_default_resources(),
+            )
+            results = await _collect_chunks_with_timestamps(gen)
 
-        self.assertEqual(chunk.audio_bytes, b"FLAC_DATA_0")
+        self.assertEqual(len(results), 2)
         self.mock_logger.warning.assert_called_once()
         log_args = self.mock_logger.warning.call_args.args
         self.assertIn("Stream lag has exceeded threshold", log_args[0])
@@ -1182,6 +1203,11 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
     """RCPT-02: Icecast stamps receipt_time at segment finalization."""
 
     @patch.dict(os.environ, MOCK_ENV_VARS)
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast"
+        ".icecast_collector._path_mtime",
+        return_value=None,
+    )
     @patch(
         "backend.pipeline.ingestion.collectors.icecast"
         ".icecast_collector._now_utc"
@@ -1195,6 +1221,7 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
         self,
         mock_create: AsyncMock,
         mock_now: MagicMock,
+        mock_path_mtime: MagicMock,
     ) -> None:
         fixed_time = datetime.datetime(
             2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC
@@ -1261,6 +1288,212 @@ class TestFixFlacHeader(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(info.frames, len(samples))
         self.assertEqual(sample_rate, 16000)
         self.assertAlmostEqual(len(samples) / sample_rate, 15.0, delta=0.5)
+
+
+class TestIcecastTimestampAlignment(unittest.IsolatedAsyncioTestCase):
+    """Tests for the robust, drift-resistant timestamp alignment logic."""
+
+    def setUp(self) -> None:
+        self.mock_logger = MagicMock()
+        self.patchers = [
+            patch.object(icecast_collector, "logger", self.mock_logger),
+            patch.object(
+                icecast_collector,
+                "_fix_flac_header",
+                new_callable=AsyncMock,
+            ),
+            patch.dict(os.environ, MOCK_ENV_VARS),
+        ]
+        for p in self.patchers:
+            p.start()
+
+    def tearDown(self) -> None:
+        for p in self.patchers:
+            p.stop()
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._path_mtime",
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_startup_delay_alignment(
+        self, mock_create_ffmpeg: AsyncMock, mock_path_mtime: MagicMock
+    ) -> None:
+        """Startup delay must be corrected, anchoring chunk 0 start to mtime - duration."""
+        t0 = datetime.datetime(2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC)
+        mock_path_mtime.side_effect = _mock_path_mtime(t0.timestamp())
+
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=123,
+            segments=[b"SEG_0"],
+            wait_delay=0.0,
+            wait_result=0,
+        )
+
+        feed = _make_feed("test", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+        results = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(
+            results[0].chunk_start_time,
+            t0 - datetime.timedelta(seconds=15),
+        )
+        self.assertEqual(results[0].chunk_end_time, t0)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._path_mtime",
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_jitter_keeps_timeline_contiguous(
+        self, mock_create_ffmpeg: AsyncMock, mock_path_mtime: MagicMock
+    ) -> None:
+        """Drifts within threshold (<= 2.0s) must keep the timeline contiguous."""
+        t0 = datetime.datetime(2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC)
+        # segment 1 arrives at t0 + 15 + 1.0 (drift = 1.0s)
+        # segment 2 arrives at t0 + 30 + 0.5 (drift = -0.5s)
+        mock_path_mtime.side_effect = _mock_path_mtime(
+            t0.timestamp(),
+            overrides={
+                1: t0.timestamp() + 16.0,
+                2: t0.timestamp() + 30.5,
+            },
+        )
+
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=123,
+            segments=[b"SEG_0", b"SEG_1", b"SEG_2"],
+            wait_delay=0.0,
+            wait_result=0,
+        )
+
+        feed = _make_feed("test", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+        results = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(results), 3)
+
+        # Timestamps should be contiguous
+        self.assertEqual(
+            results[0].chunk_start_time,
+            t0 - datetime.timedelta(seconds=15),
+        )
+        self.assertEqual(results[0].chunk_end_time, t0)
+
+        self.assertEqual(results[1].chunk_start_time, t0)
+        self.assertEqual(
+            results[1].chunk_end_time,
+            t0 + datetime.timedelta(seconds=15),
+        )
+
+        self.assertEqual(
+            results[2].chunk_start_time,
+            t0 + datetime.timedelta(seconds=15),
+        )
+        self.assertEqual(
+            results[2].chunk_end_time,
+            t0 + datetime.timedelta(seconds=30),
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._path_mtime",
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_large_drift_triggers_resynchronization(
+        self, mock_create_ffmpeg: AsyncMock, mock_path_mtime: MagicMock
+    ) -> None:
+        """Drifts exceeding threshold (> 2.0s) must resynchronize the timeline."""
+        t0 = datetime.datetime(2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC)
+        # segment 1 arrives at t0 + 15 + 3.5 (drift = 3.5s, triggers resync)
+        # segment 2 arrives at t0 + 15 + 3.5 + 15.0 = t0 + 33.5 (drift = 0, contiguous)
+        mock_path_mtime.side_effect = _mock_path_mtime(
+            t0.timestamp(),
+            overrides={
+                1: t0.timestamp() + 18.5,
+                2: t0.timestamp() + 33.5,
+            },
+        )
+
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=123,
+            segments=[b"SEG_0", b"SEG_1", b"SEG_2"],
+            wait_delay=0.0,
+            wait_result=0,
+        )
+
+        feed = _make_feed("test", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+        results = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(results), 3)
+
+        # Chunk 0
+        self.assertEqual(
+            results[0].chunk_start_time,
+            t0 - datetime.timedelta(seconds=15),
+        )
+        self.assertEqual(results[0].chunk_end_time, t0)
+
+        # Chunk 1 (resynced)
+        # mtime = t0 + 18.5
+        # chunk start should be receipt_time - 15 = t0 + 3.5
+        # chunk end should be receipt_time = t0 + 18.5
+        self.assertEqual(
+            results[1].chunk_start_time,
+            t0 + datetime.timedelta(seconds=3.5),
+        )
+        self.assertEqual(
+            results[1].chunk_end_time,
+            t0 + datetime.timedelta(seconds=18.5),
+        )
+
+        # Chunk 2 (contiguous from chunk 1 end)
+        self.assertEqual(
+            results[2].chunk_start_time,
+            t0 + datetime.timedelta(seconds=18.5),
+        )
+        self.assertEqual(
+            results[2].chunk_end_time,
+            t0 + datetime.timedelta(seconds=33.5),
+        )
+
+        # Info logger should be called for drift info
+        self.mock_logger.info.assert_any_call(
+            "Feed %s (%s): Timeline drifted by %.3fs; "
+            "resynchronizing timeline to receipt time.",
+            TEST_FEED_ID,
+            "test",
+            3.5,
+        )
 
 
 if __name__ == "__main__":
