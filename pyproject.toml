@@ -47,6 +47,7 @@ build = ["grpcio-tools>=1.65.5"]
 dev = [
   "ruff>=0.14.14",
   "ty>=0.0.42",
+  "vulture>=2.14.0",
   "grpcio-tools",
   "testcontainers[postgres]",
   "docker",
@@ -70,6 +71,8 @@ extend-exclude = [
   "backend/pipeline/schema_types",
   "**/*_pb2.py",
   "**/*_pb2.pyi",
+  "vulture_whitelist.py",
+  "vulture_manual_whitelist.py",
 ]
 line-length = 80
 
@@ -235,7 +238,7 @@ convention = "google"
 
 
 [tool.ty.src]
-exclude = ["model/", "backend/services/local-whisper-api/", "scratch/"]
+exclude = ["model/", "backend/services/local-whisper-api/", "scratch/", "vulture_whitelist.py", "vulture_manual_whitelist.py"]
 
 [tool.pyright]
 pythonVersion = "3.13"
@@ -280,4 +283,16 @@ omit = [
     "**/tests/**",
     "**/conftest.py",
 ]
+
+[tool.vulture]
+exclude = [
+    ".venv",
+    "backend/pipeline/schema_types",
+    "backend/services/local-whisper-api",
+    "**/tests/**",
+    "**/test_*.py",
+    "**/conftest.py",
+]
+paths = ["backend", "vulture_whitelist.py", "vulture_manual_whitelist.py"]
+min_confidence = 60
 

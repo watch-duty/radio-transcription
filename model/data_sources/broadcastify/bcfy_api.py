@@ -1,7 +1,6 @@
 import base64
 import hmac
 import json
-import logging
 import os
 import time
 from hashlib import sha256
@@ -22,8 +21,6 @@ ARCHIVES_FILES_URL = (
 BROADCASTIFY_APP_ID = os.getenv("BROADCASTIFY_APP_ID", "6797c432dc150")
 BROADCASTIFY_API_KEY_ID = os.getenv("BROADCASTIFY_API_KEY_ID", None)
 BROADCASTIFY_API_TOKEN = os.getenv("BROADCASTIFY_API_TOKEN", None)
-
-logger = logging.getLogger(__name__)
 
 
 class MissingTokenError(ValueError):

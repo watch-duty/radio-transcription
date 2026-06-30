@@ -11,6 +11,7 @@ from cloudevents.http.event import CloudEvent
 from google.api_core.exceptions import (
     GoogleAPICallError,
     PermissionDenied,
+    RetryError,
     ServiceUnavailable,
 )
 from google.genai import errors as genai_errors
@@ -573,6 +574,182 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         ]
         self.assertEqual(call_data["text"], "")
         self.assertIn("Permanent Failure", call_data["errors"][0])
+
+    async def test_process_event_retry_error_transient_cause_propagates(
+        self,
+    ) -> None:
+        """Verifies that a RetryError with transient cause propagates to trigger retry."""
+        mock_transcriber = MagicMock(spec=Transcriber)
+        cause = ServiceUnavailable("Service Unavailable")
+        mock_transcriber.transcribe.side_effect = RetryError(
+            "Timeout", cause=cause
+        )
+
+        mock_publisher = MagicMock()
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
+
+        claim = NormalizedAudio(
+            segment_id="tx-1111",
+            feed_id="feed-2222",
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            start_timestamp={"seconds": 1000, "nanos": 0},
+            end_timestamp={"seconds": 1005, "nanos": 0},
+        )
+
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {},
+            }
+        }
+
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
+        # RetryError with ServiceUnavailable cause must propagate
+        with self.assertRaises(RetryError):
+            await processor.process_event(cloud_event)
+
+        mock_publisher.publish.assert_not_called()
+        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
+        call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
+            "data"
+        ]
+        self.assertIn("Transient Failure", call_data["errors"][0])
+
+    async def test_process_event_retry_error_permanent_cause_silent_drop(
+        self,
+    ) -> None:
+        """Verifies that a RetryError with permanent cause is caught and acknowledged without retry."""
+        mock_transcriber = MagicMock(spec=Transcriber)
+        cause = PermissionDenied("GCP Permission Denied")
+        mock_transcriber.transcribe.side_effect = RetryError(
+            "Timeout", cause=cause
+        )
+
+        mock_publisher = MagicMock()
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
+
+        claim = NormalizedAudio(
+            segment_id="tx-1111",
+            feed_id="feed-2222",
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            start_timestamp={"seconds": 1000, "nanos": 0},
+            end_timestamp={"seconds": 1005, "nanos": 0},
+        )
+
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {},
+            }
+        }
+
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
+        # RetryError with PermissionDenied cause must be caught and swallowed cleanly
+        await processor.process_event(cloud_event)
+
+        mock_publisher.publish.assert_not_called()
+        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
+        call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
+            "data"
+        ]
+        self.assertEqual(call_data["text"], "")
+        self.assertIn("Permanent Failure", call_data["errors"][0])
+
+    async def test_process_event_retry_error_no_cause_propagates(
+        self,
+    ) -> None:
+        """Verifies that a RetryError with no cause (fallback) propagates to trigger retry."""
+        mock_transcriber = MagicMock(spec=Transcriber)
+        mock_transcriber.transcribe.side_effect = RetryError(
+            "Timeout", cause=None
+        )
+
+        mock_publisher = MagicMock()
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
+
+        claim = NormalizedAudio(
+            segment_id="tx-1111",
+            feed_id="feed-2222",
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            start_timestamp={"seconds": 1000, "nanos": 0},
+            end_timestamp={"seconds": 1005, "nanos": 0},
+        )
+
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {},
+            }
+        }
+
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
+        # RetryError with no cause must propagate
+        with self.assertRaises(RetryError):
+            await processor.process_event(cloud_event)
+
+        mock_publisher.publish.assert_not_called()
+        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once()
+        call_data = mock_audio_segments_client.add_audio_segment_annotation.call_args.kwargs[
+            "data"
+        ]
+        self.assertIn("Transient Failure", call_data["errors"][0])
 
     async def test_process_event_requests_timeout_transient_error_propagates(
         self,

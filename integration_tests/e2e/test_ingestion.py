@@ -1,4 +1,3 @@
-import logging
 import os
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
@@ -16,8 +15,6 @@ from integration_tests.test_utils import (
     verify_audio_segments_via_api,
     verify_multiple_audio_segments_via_api,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def test_ingestion_integration(test_bcfy_feed: tuple[str, str]) -> None:
