@@ -317,12 +317,6 @@ known-first-party = ["backend", "local_dev"]
 "backend/pipeline/transcription/transcribers/local_api.py" = ["E501"]
 "backend/pipeline/transcription/transcribers/mock.py" = ["E501"]
 "backend/pipeline/transcription/transcribers/prompts.py" = ["E501"]
-"backend/scripts/bulk_import_feeds.py" = ["E501"]
-"backend/services/audio_segments/service.py" = ["E501"]
-"backend/services/feeds/service.py" = ["E501"]
-"backend/services/local-whisper-api/main.py" = ["E501"]
-"backend/services/rules/main.py" = ["E501"]
-"integration_tests/conftest.py" = ["E501"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
