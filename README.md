@@ -6,6 +6,7 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) to get started.
 
 ### Repository Documentation
 - [Local Mock Audio Server](./documentation/local-dev-mock-audio.md) — How to mock incoming audio streams for local testing.
+- [Feed Audit Webhook Relay](./documentation/feed-audit-webhook-relay.md) — How Feed Audit Notifications are forwarded to Watch Duty through Pub/Sub.
 
 
 ## Directory structure

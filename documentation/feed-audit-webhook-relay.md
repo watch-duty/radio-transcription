@@ -31,11 +31,17 @@ Required environment variables:
 
 ## ACK/NACK Contract
 
-The relay returns HTTP `204` to Pub/Sub only after Watch Duty returns a `2xx`
-response. Malformed Pub/Sub messages, unsupported event contracts, missing
-runtime config, Watch Duty auth/config failures, and exhausted transient
-failures return non-2xx so Pub/Sub can retry according to the subscription
-policy.
+The relay returns HTTP `204` to Pub/Sub after Watch Duty returns a `2xx`
+response.
+
+Invalid Pub/Sub envelopes, Cloud Logging entries, or Feed Audit Notification
+payloads are treated as unrecoverable poison input. The relay logs concise
+diagnostics and returns HTTP `204` without calling Watch Duty so Pub/Sub does
+not retry malformed messages.
+
+Missing runtime configuration, Watch Duty auth/config failures, transient Watch
+Duty failures, and unexpected delivery exceptions return non-2xx so Pub/Sub can
+retry according to the subscription policy.
 
 ## Storage Boundary
 
