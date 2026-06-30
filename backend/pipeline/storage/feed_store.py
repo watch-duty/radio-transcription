@@ -230,11 +230,9 @@ class FeedStore:
     def __init__(
         self,
         pool: asyncpg.Pool,
-        source_types: list[str] | None = None,
         claim_types: Sequence[SourceType] | None = None,
     ) -> None:
         self._pool = pool
-        self._source_types = source_types
         if claim_types is None:
             claim_types = [t for t in SourceType if t != SourceType.ECHO]
         self._claim_types: tuple[SourceType, ...] = tuple(claim_types)

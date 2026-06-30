@@ -57,6 +57,16 @@ depends = ["lint:ruff:check", "lint:ruff:format", "lint:ruff:sorted"]
 description = "Run ty Python type-checker"
 run = "uv run ty check"
 
+[tasks."lint:dead-code"]
+description = "Check for dead code using vulture"
+run = "uv run vulture"
+
+# Run this task manually to regenerate the whitelist (vulture_whitelist.py)
+# when new dynamic functions/attributes are incorrectly flagged as unused/dead code.
+[tasks."lint:dead-code:update"]
+description = "Regenerate the vulture whitelist for unused/dead code"
+run = "uv run vulture backend vulture_manual_whitelist.py --make-whitelist > vulture_whitelist.py || { err=$?; [ $err -eq 3 ] || exit $err; }"
+
 [tasks."lint:terraform"]
 description = "Validate Terraform code and check formatting for pre-submits"
 run = """
@@ -93,7 +103,7 @@ run = "uv run python scripts/validate_schemas.py"
 
 [tasks."lint:python"]
 description = "Run all Python code quality and type checks"
-depends = ["lint:ruff", "lint:ty", "lint:notebooks"]
+depends = ["lint:ruff", "lint:ty", "lint:notebooks", "lint:dead-code"]
 
 [tasks.format]
 depends = ["format:ruff", "format:terraform", "format:frontend"]

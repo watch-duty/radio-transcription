@@ -10,51 +10,6 @@ import math
 import numpy as np
 from numba import njit
 
-from backend.pipeline.segmentation.constants import (
-    DEFAULT_SED_FFT_SIZE,
-    DEFAULT_SED_HOP_SIZE,
-)
-
-
-def compute_rms_energy(
-    samples: np.ndarray,
-    hop_length: int = DEFAULT_SED_HOP_SIZE,
-    frame_length: int = DEFAULT_SED_FFT_SIZE,
-) -> np.ndarray:
-    """Computes the root-mean-square (RMS) energy for each frame of an audio signal.
-
-    Computes the standard RMS math across a sliding window.
-
-    Args:
-        samples: A 1D float32 numpy array.
-        hop_length: Number of samples between frames.
-        frame_length: The length of the analysis window.
-
-    Returns:
-        A 1D numpy array of RMS energy values, aligned with the sliding frames.
-    """
-    if len(samples) == 0:
-        return np.array([], dtype=np.float32)
-
-    # Pad mode 'reflect' to center frames tightly
-    pad_len = frame_length // 2
-    y_padded = np.pad(samples, pad_len, mode="reflect")
-
-    # Convert to sliding window view
-    num_frames = 1 + (len(y_padded) - frame_length) // hop_length
-    if num_frames <= 0:
-        return np.array([], dtype=np.float32)
-
-    shape = (num_frames, frame_length)
-    strides = (y_padded.strides[0] * hop_length, y_padded.strides[0])
-    frames = np.lib.stride_tricks.as_strided(
-        y_padded, shape=shape, strides=strides
-    )
-
-    # Compute RMS natively
-    mean_sq = np.mean(frames**2, axis=-1)
-    return np.sqrt(mean_sq)
-
 
 def get_periodic_hann(window_length: int) -> np.ndarray:
     """Generates a periodic Hann window of length `window_length`."""

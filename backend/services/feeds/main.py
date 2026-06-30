@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -20,7 +19,6 @@ from backend.pipeline.common.exceptions import (
     FeedStateConflictError,
 )
 from backend.pipeline.common.fastapi_tracing import setup_fastapi_tracing
-from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
@@ -34,9 +32,6 @@ from backend.pipeline.storage.pagination_utils import SortOrder
 
 from .models import Feed, FeedCreate, FeedUpdate, ListFeedsResponse, Tag
 from .service import FeedService
-
-setup_logging()
-logger = logging.getLogger(__name__)
 
 _INTERNAL_ACTOR_ID_HEADER = "X-WD-Actor-Id"
 
