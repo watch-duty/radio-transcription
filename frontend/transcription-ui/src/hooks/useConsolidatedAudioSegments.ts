@@ -64,26 +64,31 @@ export function consolidateAudioSegments(
 
       // Tolerance for rounding errors and minor overlaps
       if (gapMs > MIN_GAP_FOR_OUTAGE_MS) {
-        flushSilenceBundle();
+        const isOutage =
+          segment.missingPriorContext || prevSegment.missingPostContext;
 
-        // Inject virtual outage segment
-        consolidated.push({
-          id: `outage-${prevSegment.id}-${segment.id}`,
-          feedId: segment.feedId,
-          classification: AudioClassification.UNSPECIFIED,
-          startTimestamp: prevSegment.endTimestamp,
-          endTimestamp: segment.startTimestamp,
-          missingPriorContext: false,
-          missingPostContext: false,
-          sourceAudioUris: [],
-          canonicalAudioUri: '',
-          playbackAudioUri: '',
-          startAudioOffset: '0',
-          endAudioOffset: '0',
-          createdAt: segment.createdAt,
-          annotations: [],
-          isOutageBundle: true,
-        } as RenderableAudioSegment);
+        if (isOutage) {
+          flushSilenceBundle();
+
+          // Inject virtual outage segment
+          consolidated.push({
+            id: `outage-${prevSegment.id}-${segment.id}`,
+            feedId: segment.feedId,
+            classification: AudioClassification.UNSPECIFIED,
+            startTimestamp: prevSegment.endTimestamp,
+            endTimestamp: segment.startTimestamp,
+            missingPriorContext: false,
+            missingPostContext: false,
+            sourceAudioUris: [],
+            canonicalAudioUri: '',
+            playbackAudioUri: '',
+            startAudioOffset: '0',
+            endAudioOffset: '0',
+            createdAt: segment.createdAt,
+            annotations: [],
+            isOutageBundle: true,
+          } as RenderableAudioSegment);
+        }
       }
     }
 

@@ -724,7 +724,7 @@ export function TranscriptView({
           setAlertFilter={setAlertFilter}
           onClickViewLatest={() => handleFilterByDateTime(null)}
         />
-        {audioSegments.length > 0 ? (
+        {audioSegments.length > 0 && isFeedsSuccess ? (
           <TranscriptDisplay
             ref={virtuosoRef}
             audioSegments={audioSegments}
