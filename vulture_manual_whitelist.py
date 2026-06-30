@@ -10,3 +10,19 @@
 from backend.pipeline.common.storage.mock_cache_provider import MockCacheProvider
 MockCacheProvider
 _.get_value
+
+# FeedChangeNotificationPayload fields and validators are consumed by Pydantic
+# model validation and schema reflection, which Vulture cannot trace through
+# direct Python references.
+event_type
+schema_version
+event_id
+occurred_at
+feed_revision
+before_values
+after_values
+_._validate_event_type
+_._validate_schema_version
+
+# FastAPI discovers this route handler through decorator registration.
+receive_feed_change_notification
