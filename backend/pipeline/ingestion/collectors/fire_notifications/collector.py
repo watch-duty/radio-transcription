@@ -7,6 +7,7 @@ import logging
 import random
 import uuid
 from typing import TYPE_CHECKING
+from zoneinfo import ZoneInfo
 
 from backend.pipeline.common.audio import probe_audio_metadata
 from backend.pipeline.ingestion import status_reason_detail
@@ -204,9 +205,34 @@ async def _process_file_list(
         )
 
 
+def _get_timezone_override(tags: list[dict[str, str]] | None) -> str | None:
+    """Extract the timezone override value from the tags list, if present."""
+    if not tags:
+        return None
+    for tag in tags:
+        if tag.get("key") == "system/timezone":
+            return tag.get("value")
+    return None
+
+
+def _get_channel_timezone(timezone_override: str | None) -> ZoneInfo:
+    """Resolve the timezone from the timezone string, defaulting to UTC."""
+    if timezone_override:
+        try:
+            return ZoneInfo(timezone_override)
+        except Exception:
+            logger.warning(
+                "Failed to load ZoneInfo for timezone tag value: %s. "
+                "Falling back to UTC.",
+                timezone_override,
+            )
+    return ZoneInfo("UTC")
+
+
 def _init_client(
     url_base: str,
     resources: CaptureResources,
+    timezone: ZoneInfo,
 ) -> FireNotificationsClient:
     try:
         s3_base_url = _require_env("FIRE_NOTIFICATIONS_S3_BASE")
@@ -230,6 +256,7 @@ def _init_client(
         s3_base_url=s3_base_url,
         user=user,
         password=password,
+        timezone=timezone,
     )
 
 
@@ -253,8 +280,12 @@ async def fire_notifications_collector(  # noqa: PLR0912
         )
         raise missing_source_feed_id_failure()
 
+    # Extract timezone from tags
+    timezone_override = _get_timezone_override(feed.get("tags"))
+    tz = _get_channel_timezone(timezone_override)
+
     # Construct the Fire Notifications API REST client helper
-    client = _init_client(url_base, resources)
+    client = _init_client(url_base, resources, timezone=tz)
 
     # Track UUIDs we've already ingested to prevent duplicates.
     # We use a deque with maxlen to prevent unbounded memory growth.
@@ -278,7 +309,6 @@ async def fire_notifications_collector(  # noqa: PLR0912
                 source_feed_id,
                 str(feed["id"]),
                 shutdown_event,
-                tags=feed.get("tags"),
             )
         except FeedFailure as exc:
             if exc.status_reason in {

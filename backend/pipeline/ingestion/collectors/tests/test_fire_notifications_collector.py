@@ -9,6 +9,7 @@ import unittest
 import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
+from zoneinfo import ZoneInfo
 
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemBatchOutcome,
@@ -67,6 +68,7 @@ class TestClientDownloadAudio(unittest.IsolatedAsyncioTestCase):
             s3_base_url="http://mock-s3-bucket",
             user="test-user",
             password="test-password",
+            timezone=ZoneInfo("UTC"),
         )
 
     async def test_success(self) -> None:
@@ -1462,7 +1464,6 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             "CHAN",
             "feed-id",
             self.shutdown,
-            tags=None,
         )
 
     @patch.dict(
@@ -1678,7 +1679,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(events[1], SourceObservation)
 
 
-class TestClientTimezoneOverride(unittest.IsolatedAsyncioTestCase):
+class TestTimezoneResolution(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.session = MagicMock()
         self.client = FireNotificationsRestClient(
@@ -1687,15 +1688,23 @@ class TestClientTimezoneOverride(unittest.IsolatedAsyncioTestCase):
             s3_base_url="http://mock-s3-bucket",
             user="test-user",
             password="test-password",
+            timezone=ZoneInfo("UTC"),
         )
 
     def test_timezone_override_from_tags(self) -> None:
         # America/New_York (EDT) is UTC-4 in June.
         # 17:45:43 local -> 21:45:43 UTC
-        dt = self.client._parse_filename_timestamp(
+        client = FireNotificationsRestClient(
+            session=self.session,
+            url_base="http://mock-api",
+            s3_base_url="http://mock-s3-bucket",
+            user="test-user",
+            password="test-password",
+            timezone=ZoneInfo("America/New_York"),
+        )
+        dt = client._parse_filename_timestamp(
             "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3",
             "SAN-JOSE-DISP",
-            "America/New_York",
         )
         self.assertEqual(
             dt,
@@ -1703,28 +1712,28 @@ class TestClientTimezoneOverride(unittest.IsolatedAsyncioTestCase):
         )
 
     def test_timezone_override_fallback_to_utc_if_no_tags(self) -> None:
-        # Default is UTC
+        # Default is UTC (self.client has timezone = None)
         dt = self.client._parse_filename_timestamp(
-            "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3", "SAN-JOSE-DISP", None
+            "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3", "SAN-JOSE-DISP"
         )
         self.assertEqual(
             dt,
             datetime.datetime(2026, 6, 15, 17, 45, 43, tzinfo=datetime.UTC),
         )
 
-    def test_timezone_override_fallback_to_utc_if_invalid_timezone(
+    def test_collector_get_channel_timezone_valid(self) -> None:
+        tz = collector._get_channel_timezone("America/New_York")
+        self.assertEqual(tz, ZoneInfo("America/New_York"))
+
+    def test_collector_get_channel_timezone_invalid_fallback_to_utc(
         self,
     ) -> None:
-        # Should fallback to UTC
-        dt = self.client._parse_filename_timestamp(
-            "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3",
-            "SAN-JOSE-DISP",
-            "Invalid/Timezone_Name",
-        )
-        self.assertEqual(
-            dt,
-            datetime.datetime(2026, 6, 15, 17, 45, 43, tzinfo=datetime.UTC),
-        )
+        tz = collector._get_channel_timezone("Invalid/Timezone_Name")
+        self.assertEqual(tz, ZoneInfo("UTC"))
+
+    def test_collector_get_channel_timezone_none_fallback_to_utc(self) -> None:
+        tz = collector._get_channel_timezone(None)
+        self.assertEqual(tz, ZoneInfo("UTC"))
 
 
 if __name__ == "__main__":
