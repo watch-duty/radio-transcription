@@ -372,7 +372,9 @@ describe('AudioDisplay', () => {
     );
     segment.classification = AudioClassification.OTHER;
     segment.annotations = segment.annotations.filter(
-      (a) => a.type !== AnnotationType.WAVEFORM
+      (a) =>
+        a.type !== AnnotationType.WAVEFORM &&
+        a.type !== AnnotationType.TRANSCRIPT
     );
 
     render(
@@ -388,6 +390,34 @@ describe('AudioDisplay', () => {
     expect(screen.queryByTestId('waveform')).toBeNull();
     expect(screen.getByTestId('waveform-silence-line')).toBeTruthy();
     expect(screen.queryByTestId('waveform-missing-block')).toBeNull();
+  });
+
+  it('treats a transcribed UNSPECIFIED segment without a WAVEFORM annotation as speech', () => {
+    const segment = makeMockAudioSegment(
+      '1',
+      'feed1',
+      new Date('2026-04-20T09:00:00Z').toISOString(),
+      new Date('2026-04-20T09:00:05Z').toISOString(),
+      'Test 1',
+      'gs://bucket/audio1.m4a'
+    );
+    segment.classification = AudioClassification.UNSPECIFIED;
+    segment.annotations = segment.annotations.filter(
+      (a) => a.type !== AnnotationType.WAVEFORM
+    );
+
+    render(
+      <AudioDisplay
+        audioSegments={[segment]}
+        currentlyPlayingSegmentId={null}
+        onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        highlightedSegmentId={null}
+      />
+    );
+
+    expect(screen.getByTestId('waveform-missing-block')).toBeTruthy();
+    expect(screen.queryByTestId('waveform-silence-line')).toBeNull();
   });
 
   it('should shift window when highlighted segment is outside window', async () => {

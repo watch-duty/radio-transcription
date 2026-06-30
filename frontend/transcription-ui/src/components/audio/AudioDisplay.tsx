@@ -4,13 +4,13 @@ import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { type Theme, useTheme } from '@mui/material/styles';
-import { AudioClassification } from '@transcription/common';
 
 import type { PlaybackController } from '../../audio/WebAudioPlayer';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import {
   findEvaluationAnnotationData,
   findWaveformAnnotationData,
+  segmentHasSpeech,
 } from '../../utils/annotationUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
@@ -478,7 +478,7 @@ export function AudioDisplay({
             !!evaluationAnnotation && evaluationAnnotation.decisions.length > 0,
           peaks: waveform?.peaks,
           duration: waveform?.durationSeconds,
-          isSpeech: t.classification === AudioClassification.SPEECH,
+          isSpeech: segmentHasSpeech(t),
           isOutageBundle: !!t.isOutageBundle,
         };
       });
