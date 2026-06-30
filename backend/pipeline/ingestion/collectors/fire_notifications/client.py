@@ -62,6 +62,7 @@ class FireNotificationsClient(abc.ABC):
         source_feed_id: str,
         feed_id: str,
         shutdown_event: asyncio.Event,
+        tags: list[dict[str, str]] | None = None,
     ) -> list[FireNotificationsFile]:
         """Fetch and resolve new files from the external source."""
 
@@ -95,12 +96,34 @@ class FireNotificationsRestClient(FireNotificationsClient):
         encoded = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
         return {"Authorization": f"Basic {encoded}"}
 
-    def _get_channel_timezone(self, channel_key: str) -> ZoneInfo:
-        """Stub for resolving a channel's timezone."""
+    def _get_timezone_override(
+        self, tags: list[dict[str, str]] | None
+    ) -> str | None:
+        """Extract the timezone override value from the tags list, if present."""
+        if not tags:
+            return None
+        for tag in tags:
+            if tag.get("key") == "timezone":
+                return tag.get("value")
+        return None
+
+    def _get_channel_timezone(
+        self, channel_key: str, timezone_override: str | None
+    ) -> ZoneInfo:
+        """Resolve the timezone from the timezone string, defaulting to UTC."""
+        if timezone_override:
+            try:
+                return ZoneInfo(timezone_override)
+            except Exception:
+                logger.warning(
+                    "Failed to load ZoneInfo for timezone tag value: %s. "
+                    "Falling back to UTC.",
+                    timezone_override,
+                )
         return ZoneInfo("UTC")
 
     def _parse_filename_timestamp(
-        self, filename: str, channel_key: str
+        self, filename: str, channel_key: str, timezone_override: str | None
     ) -> datetime.datetime:
         """Extract and localize timestamp from Fire Notifications filename."""
         base = filename.removesuffix(".mp3")
@@ -115,7 +138,7 @@ class FireNotificationsRestClient(FireNotificationsClient):
         dt_naive = datetime.datetime.strptime(
             f"{date_str} {time_str}", "%Y-%m-%d %H-%M-%S"
         )
-        tz = self._get_channel_timezone(channel_key)
+        tz = self._get_channel_timezone(channel_key, timezone_override)
         dt_aware = dt_naive.replace(tzinfo=tz)
         return dt_aware.astimezone(datetime.UTC)
 
@@ -124,8 +147,10 @@ class FireNotificationsRestClient(FireNotificationsClient):
         source_feed_id: str,
         feed_id: str,
         shutdown_event: asyncio.Event,
+        tags: list[dict[str, str]] | None = None,
     ) -> list[FireNotificationsFile]:
         """Fetch, filter, and parse the file list from HTTP polling endpoint."""
+        timezone_override = self._get_timezone_override(tags)
         poll_url = f"{self.url_base}/{source_feed_id}"
 
         def validate_payload(payload: object) -> dict[str, Any]:
@@ -190,7 +215,7 @@ class FireNotificationsRestClient(FireNotificationsClient):
 
             try:
                 start_time = self._parse_filename_timestamp(
-                    name, source_feed_id
+                    name, source_feed_id, timezone_override
                 )
             except ValueError:
                 logger.warning(

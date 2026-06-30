@@ -278,6 +278,7 @@ async def fire_notifications_collector(  # noqa: PLR0912
                 source_feed_id,
                 str(feed["id"]),
                 shutdown_event,
+                tags=feed.get("tags"),
             )
         except FeedFailure as exc:
             if exc.status_reason in {

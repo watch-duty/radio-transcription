@@ -1462,6 +1462,7 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
             "CHAN",
             "feed-id",
             self.shutdown,
+            tags=None,
         )
 
     @patch.dict(
@@ -1675,6 +1676,55 @@ class TestFireNotificationsCollector(unittest.IsolatedAsyncioTestCase):
                 "uuid1|SAN-JOSE-DISP 2026-06-15 17-37-43.mp3",
             )
             self.assertIsInstance(events[1], SourceObservation)
+
+
+class TestClientTimezoneOverride(unittest.IsolatedAsyncioTestCase):
+    def setUp(self) -> None:
+        self.session = MagicMock()
+        self.client = FireNotificationsRestClient(
+            session=self.session,
+            url_base="http://mock-api",
+            s3_base_url="http://mock-s3-bucket",
+            user="test-user",
+            password="test-password",
+        )
+
+    def test_timezone_override_from_tags(self) -> None:
+        # America/New_York (EDT) is UTC-4 in June.
+        # 17:45:43 local -> 21:45:43 UTC
+        dt = self.client._parse_filename_timestamp(
+            "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3",
+            "SAN-JOSE-DISP",
+            "America/New_York",
+        )
+        self.assertEqual(
+            dt,
+            datetime.datetime(2026, 6, 15, 21, 45, 43, tzinfo=datetime.UTC),
+        )
+
+    def test_timezone_override_fallback_to_utc_if_no_tags(self) -> None:
+        # Default is UTC
+        dt = self.client._parse_filename_timestamp(
+            "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3", "SAN-JOSE-DISP", None
+        )
+        self.assertEqual(
+            dt,
+            datetime.datetime(2026, 6, 15, 17, 45, 43, tzinfo=datetime.UTC),
+        )
+
+    def test_timezone_override_fallback_to_utc_if_invalid_timezone(
+        self,
+    ) -> None:
+        # Should fallback to UTC
+        dt = self.client._parse_filename_timestamp(
+            "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3",
+            "SAN-JOSE-DISP",
+            "Invalid/Timezone_Name",
+        )
+        self.assertEqual(
+            dt,
+            datetime.datetime(2026, 6, 15, 17, 45, 43, tzinfo=datetime.UTC),
+        )
 
 
 if __name__ == "__main__":
