@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, cast
 
 logger = logging.getLogger(__name__)
 
@@ -50,4 +50,5 @@ def _normalize_feed_audit_event(
     if not isinstance(feed_audit_event, Mapping):
         return None
 
-    return dict(feed_audit_event)
+    payload = cast("Mapping[str, Any]", feed_audit_event)
+    return dict(payload)

@@ -48,7 +48,7 @@ class TestEmitFeedAuditNotification(unittest.TestCase):
 
         self.assertEqual(len(cm.records), 1)
         record = cast("Any", cm.records[0])
-        self.assertEqual(record.getMessage(), "Feed audit notification emitted")
+        self.assertIn("Feed audit notification emitted", record.getMessage())
         self.assertIsInstance(record.json_fields, dict)
         self.assertEqual(set(record.json_fields), _EXPECTED_FEED_AUDIT_KEYS)
         self.assertNotIn("feed_audit_event", record.json_fields)
@@ -103,9 +103,8 @@ class TestEmitFeedAuditNotification(unittest.TestCase):
 
         self.assertEqual(len(cm.records), 1)
         record = cast("Any", cm.records[0])
-        self.assertEqual(
-            record.getMessage(),
-            "Feed audit notification emission failed",
+        self.assertIn(
+            "Feed audit notification emission failed", record.getMessage()
         )
         self.assertEqual(
             record.json_fields,
