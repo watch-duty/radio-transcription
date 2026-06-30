@@ -43,6 +43,30 @@
       "label": "Out Of Order Timeout (MS)",
       "helpText": "Milliseconds to wait for missing chunks before accepting a logical gap for audio feeds. Default: 60000ms.",
       "isOptional": true
+    },
+    {
+      "name": "stale_timeout_ms",
+      "label": "Stale Timeout (MS)",
+      "helpText": "Milliseconds before an incomplete transmission is flushed.",
+      "isOptional": true
+    },
+    {
+      "name": "id_label",
+      "label": "ID Label",
+      "helpText": "Pub/Sub attribute to use for strictly exactly-once deduplication. Default: gcs_uri.",
+      "isOptional": true
+    },
+    {
+      "name": "vad_config",
+      "label": "VAD Config",
+      "helpText": "JSON string of VAD-specific configuration.",
+      "isOptional": true
+    },
+    {
+      "name": "significant_gap_ms",
+      "label": "Significant Gap (MS)",
+      "helpText": "Silence gap required to flush a transmission.",
+      "isOptional": true
     }
   ]
 }

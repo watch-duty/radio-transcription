@@ -10,6 +10,11 @@ export interface RenderableAudioSegment extends AudioSegment {
    */
   isSilenceBundle?: boolean;
   /**
+   * Indicates whether this segment represents a virtual outage bundle
+   * when physical audio ingestion was interrupted.
+   */
+  isOutageBundle?: boolean;
+  /**
    * The list of individual raw segment IDs that have been consolidated
    * into this silence bundle.
    */
@@ -19,6 +24,8 @@ export interface RenderableAudioSegment extends AudioSegment {
 export function consolidateAudioSegments(
   segments: AudioSegment[]
 ): RenderableAudioSegment[] {
+  if (segments.length === 0) return [];
+
   // Sort chronologically (ascending) to group consecutive segments in time order
   const chronologicalSegments = [...segments].sort(
     (a, b) =>
@@ -29,14 +36,76 @@ export function consolidateAudioSegments(
   const consolidated: RenderableAudioSegment[] = [];
   let activeSilenceBundle: RenderableAudioSegment | null = null;
 
-  for (const segment of chronologicalSegments) {
+  const flushSilenceBundle = () => {
+    if (activeSilenceBundle) {
+      consolidated.push(activeSilenceBundle);
+      activeSilenceBundle = null;
+    }
+  };
+
+  for (let i = 0; i < chronologicalSegments.length; i++) {
+    const segment = chronologicalSegments[i];
+    const prevSegment = i > 0 ? chronologicalSegments[i - 1] : null;
+
+    // Detect if there is a gap between the previous segment and this segment
+    if (prevSegment) {
+      const prevEnd = new Date(prevSegment.endTimestamp).getTime();
+      const currStart = new Date(segment.startTimestamp).getTime();
+      const gapMs = currStart - prevEnd;
+
+      // 1.5-second tolerance for rounding and minor overlaps
+      if (gapMs > 1500) {
+        flushSilenceBundle();
+
+        const isOutage =
+          segment.missingPriorContext || prevSegment.missingPostContext;
+
+        if (isOutage) {
+          // Inject virtual outage segment
+          consolidated.push({
+            id: `outage-${prevSegment.id}-${segment.id}`,
+            feedId: segment.feedId,
+            classification: AudioClassification.UNSPECIFIED,
+            startTimestamp: prevSegment.endTimestamp,
+            endTimestamp: segment.startTimestamp,
+            missingPriorContext: false,
+            missingPostContext: false,
+            sourceAudioUris: [],
+            canonicalAudioUri: '',
+            playbackAudioUri: '',
+            startAudioOffset: '0',
+            endAudioOffset: '0',
+            createdAt: segment.createdAt,
+            annotations: [],
+            isOutageBundle: true,
+          } as RenderableAudioSegment);
+        } else {
+          // Inject virtual silence segment (fallback self-healing)
+          consolidated.push({
+            id: `v-silence-${prevSegment.id}-${segment.id}`,
+            feedId: segment.feedId,
+            classification: AudioClassification.OTHER,
+            startTimestamp: prevSegment.endTimestamp,
+            endTimestamp: segment.startTimestamp,
+            missingPriorContext: false,
+            missingPostContext: false,
+            sourceAudioUris: [],
+            canonicalAudioUri: '',
+            playbackAudioUri: '',
+            startAudioOffset: '0',
+            endAudioOffset: '0',
+            createdAt: segment.createdAt,
+            annotations: [],
+            isSilenceBundle: true,
+          } as RenderableAudioSegment);
+        }
+      }
+    }
+
     const isSpeech = segment.classification === AudioClassification.SPEECH;
 
     if (isSpeech) {
-      if (activeSilenceBundle) {
-        consolidated.push(activeSilenceBundle);
-        activeSilenceBundle = null;
-      }
+      flushSilenceBundle();
       consolidated.push({ ...segment });
     } else {
       activeSilenceBundle = extendOrCreateSilenceBundle(
@@ -46,9 +115,7 @@ export function consolidateAudioSegments(
     }
   }
 
-  if (activeSilenceBundle) {
-    consolidated.push(activeSilenceBundle);
-  }
+  flushSilenceBundle();
 
   // Return sorted descending (newest at the top)
   return consolidated.sort(

@@ -274,6 +274,20 @@ def _segment_path(directory: Path, index: int) -> Path:
     return directory / f"chunk_{index:06d}.{AUDIO_FORMAT}"
 
 
+def _path_size(path: Path) -> int | None:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return None
+
+
+def _path_mtime(path: Path) -> float | None:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
 async def _fix_flac_header(file_path: Path) -> None:
     """Re-encodes a FLAC segment in-place to write a valid STREAMINFO header.
 
@@ -511,16 +525,34 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                     )
                     return
 
-                if time.monotonic() - last_activity_time > READ_TIMEOUT_SEC:
+                last_activity_age_sec = time.monotonic() - last_activity_time
+                if last_activity_age_sec > READ_TIMEOUT_SEC:
                     stderr_snippet = (
                         "\n".join(stderr_tail) if stderr_tail else None
                     )
                     stderr_log_text = stderr_snippet or "(no stderr captured)"
                     logger.error(
-                        "Feed %s (%s) no finalized segment within %ss; stderr tail:\n%s",
+                        "Feed %s (%s) no finalized segment within %ss; "
+                        "next_index=%s current_segment_exists=%s "
+                        "next_segment_exists=%s current_segment_size=%s "
+                        "next_segment_size=%s current_segment_mtime=%s "
+                        "next_segment_mtime=%s last_activity_age_sec=%.3f "
+                        "read_timeout_sec=%s ffmpeg_pid=%s "
+                        "ffmpeg_returncode=%s; stderr tail:\n%s",
                         feed_id,
                         feed_name,
                         READ_TIMEOUT_SEC,
+                        next_index,
+                        current_segment.exists(),
+                        next_segment.exists(),
+                        _path_size(current_segment),
+                        _path_size(next_segment),
+                        _path_mtime(current_segment),
+                        _path_mtime(next_segment),
+                        last_activity_age_sec,
+                        READ_TIMEOUT_SEC,
+                        process.pid,
+                        process.returncode,
                         stderr_log_text,
                     )
                     classification_text = (
