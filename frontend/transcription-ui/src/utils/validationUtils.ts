@@ -3,7 +3,7 @@ import type { RuleConditions, RuleCreate } from '@transcription/common';
 
 /**
  * Validates whether a given string is a valid timezone.
- * NOTE: The 'timezone' tag is currently only recognized by the fire notifications collector.
+ * NOTE: The 'system/timezone' tag is currently only recognized by the fire notifications collector.
  */
 export function isValidTimezone(tz: string): boolean {
   try {

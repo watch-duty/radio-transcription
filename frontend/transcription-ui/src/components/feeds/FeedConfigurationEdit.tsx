@@ -210,7 +210,7 @@ export function FeedConfigurationEdit({
 
     // Reset the tag value if the tag is intended to be a timezone since the possible
     // values are enums.
-    if (trimmedVal === 'timezone') {
+    if (trimmedVal === 'system/timezone') {
       if (!isValidTimezone(newTagValue)) {
         setNewTagValue('');
       }
@@ -296,7 +296,7 @@ export function FeedConfigurationEdit({
     copy[index] = { ...copy[index], [field]: newValue };
 
     // Value needs to reset since only enums are allowed for timezone tags.
-    if (field === 'key' && newValue === 'timezone') {
+    if (field === 'key' && newValue === 'system/timezone') {
       copy[index].value = '';
     }
 
@@ -342,9 +342,9 @@ export function FeedConfigurationEdit({
     }
 
     // Validate timezone tag values
-    // NOTE: The 'timezone' tag is currently only recognized by the Fire Notifications collector.
+    // NOTE: The 'system/timezone' tag is currently only recognized by the Fire Notifications collector.
     for (const tag of combinedTags) {
-      if (tag.key.trim() === 'timezone') {
+      if (tag.key.trim() === 'system/timezone') {
         const tzValue = tag.value.trim();
         if (!isValidTimezone(tzValue)) {
           const validTzs = Intl.supportedValuesOf('timeZone');
@@ -566,8 +566,8 @@ export function FeedConfigurationEdit({
                 searchability, grouping, and routing of notifications.
               </Typography>
               <Alert severity="info" sx={{ mb: 2 }}>
-                Timezone tags can be used to correct the timestamps, but this is
-                only supported in Fire Notification feeds.
+                The system/timezone tag can be used to correct the timestamps.
+                This is only supported in Fire Notification feeds.
               </Alert>
 
               <Stack
@@ -585,7 +585,7 @@ export function FeedConfigurationEdit({
                   disabled={isSubmitting}
                   sx={{ flex: 1 }}
                 />
-                {newTagKey.trim() === 'timezone' ? (
+                {newTagKey.trim() === 'system/timezone' ? (
                   <FormControl size="small" sx={{ flex: 1 }}>
                     <InputLabel id="timezone-tag-label">Timezone</InputLabel>
                     <Select
@@ -681,7 +681,7 @@ export function FeedConfigurationEdit({
                         disabled={isSubmitting}
                         sx={{ flex: 1 }}
                       />
-                      {tag.key.trim() === 'timezone' ? (
+                      {tag.key.trim() === 'system/timezone' ? (
                         <FormControl size="small" sx={{ flex: 1 }}>
                           <InputLabel id={`timezone-tag-label-${index}`}>
                             Timezone

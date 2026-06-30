@@ -938,8 +938,8 @@ describe('FeedConfigurationView', () => {
     const tagKeyInput = screen.getByLabelText('Key');
     const addTagBtn = screen.getByRole('button', { name: 'Add Tag' });
 
-    // Change key to 'timezone'
-    fireEvent.change(tagKeyInput, { target: { value: 'timezone' } });
+    // Change key to 'system/timezone'
+    fireEvent.change(tagKeyInput, { target: { value: 'system/timezone' } });
 
     // The 'Value' input should be a select since the tag is a timezone.
     const timezoneSelect = screen.getByRole('combobox', { name: /Timezone/i });
@@ -953,7 +953,7 @@ describe('FeedConfigurationView', () => {
 
     // Check that the tag is added with a dropdown for editing
     fireEvent.click(addTagBtn);
-    expect(screen.getAllByLabelText('Key')[1]).toHaveValue('timezone');
+    expect(screen.getAllByLabelText('Key')[1]).toHaveValue('system/timezone');
     const addedTimezoneSelect = screen.getAllByRole('combobox', {
       name: /Timezone/i,
     })[0];
