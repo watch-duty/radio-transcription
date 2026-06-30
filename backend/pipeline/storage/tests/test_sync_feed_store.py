@@ -307,7 +307,9 @@ class TestRecordFailure:
             )
 
         conn.execute.return_value.fetchone.assert_called_once_with()
-        notifications.emit_feed_change_notification.assert_called_once_with(None)
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            None
+        )
 
     def test_duplicate_failure_summary_log_is_not_in_store(self) -> None:
         text = sync_feed_store_path().read_text()

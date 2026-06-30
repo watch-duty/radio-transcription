@@ -2320,7 +2320,9 @@ class TestUpdateFeedAuditing(unittest.IsolatedAsyncioTestCase):
 
         assert result is not None
         self.assertEqual(result["name"], "Same Feed")
-        notifications.emit_feed_change_notification.assert_called_once_with(None)
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            None
+        )
         conn.fetchrow.assert_awaited_once()
         conn.fetchval.assert_not_awaited()
         conn.execute.assert_not_awaited()

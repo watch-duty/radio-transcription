@@ -90,7 +90,9 @@ class TestEmitFeedChangeNotification(unittest.TestCase):
                     feed_change_notifications.logger,
                     "info",
                 ) as mock_info:
-                    feed_change_notifications.emit_feed_change_notification(value)
+                    feed_change_notifications.emit_feed_change_notification(
+                        value
+                    )
 
                 mock_info.assert_not_called()
 
