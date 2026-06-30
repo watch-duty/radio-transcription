@@ -10,16 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from urllib3 import PoolManager, Timeout
-from urllib3.exceptions import (
-    ConnectTimeoutError,
-    HTTPError,
-    MaxRetryError,
-    NewConnectionError,
-    ReadTimeoutError,
-)
-from urllib3.exceptions import (
-    TimeoutError as Urllib3TimeoutError,
-)
+from urllib3 import exceptions as urllib3_exceptions
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Mapping
@@ -32,11 +23,11 @@ _RETRY_JITTER_MIN_SECONDS = 0.25
 _RETRY_JITTER_MAX_SECONDS = 0.5
 _RETRYABLE_STATUS_CODES = {408, 429}
 _TRANSIENT_EXCEPTIONS = (
-    ConnectTimeoutError,
-    MaxRetryError,
-    NewConnectionError,
-    ReadTimeoutError,
-    Urllib3TimeoutError,
+    urllib3_exceptions.ConnectTimeoutError,
+    urllib3_exceptions.MaxRetryError,
+    urllib3_exceptions.NewConnectionError,
+    urllib3_exceptions.ReadTimeoutError,
+    urllib3_exceptions.TimeoutError,
 )
 
 
@@ -126,7 +117,7 @@ class WatchDutyWebhookClient:
                     retryable=True,
                     attempts=attempt,
                 ) from exc
-            except HTTPError as exc:
+            except urllib3_exceptions.HTTPError as exc:
                 response_body = str(exc)
                 self._log_delivery_failure(
                     payload,
