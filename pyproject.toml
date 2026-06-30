@@ -116,7 +116,6 @@ ignore = [
   "DTZ005",  # `datetime.datetime.now()` called without a `tz` argument
   "DTZ006",  # `datetime.datetime.fromtimestamp()` called without a `tz` argument
   "DTZ007",  # Naive datetime constructed using `datetime.datetime.strptime()` without %z
-  "E501",    # Line too long
   "ERA001",  # Found commented-out code
   "FIX002",  # Line contains TODO
   "G001",    # Logging statement uses `str.format`
@@ -177,6 +176,7 @@ max-complexity = 10
 known-first-party = ["backend", "local_dev"]
 
 [tool.ruff.lint.per-file-ignores]
+"model/**/*.py" = ["E501"]
 "model/colabs/**/*.ipynb" = [
   "ALL",   # Ignore all linting rules for notebooks
 ]
@@ -186,6 +186,7 @@ known-first-party = ["backend", "local_dev"]
 "local_dev/**/*.py" = [
   "ANN001",
   "ANN201",
+  "E501",
   "PTH110",
   "PTH111",
   "S110",
@@ -203,6 +204,7 @@ known-first-party = ["backend", "local_dev"]
   "C405",   # Unnecessary list literal (rewrite as a set literal)
   "DTZ002", # `datetime.datetime.today()` used
   "DTZ006", # `datetime.datetime.fromtimestamp()` called without a `tz` argument
+  "E501",   # Line too long
   "N802",   # Function name should be lowercase
   "N806",   # Variable in function should be lowercase
   "N815",   # Variable in class scope should not be mixedCase
@@ -233,8 +235,97 @@ known-first-party = ["backend", "local_dev"]
   "T201",   # `print()` found
 ]
 ".github/scripts/**.py" = [
+  "E501",   # Line too long
   "INP001", # Implicit namespaces (no __init__.py needed for standalone scripts)
 ]
+"scripts/**/*.py" = ["E501"]
+"backend/pipeline/common/audio.py" = ["E501"]
+"backend/pipeline/common/clients/audio_segments_client.py" = ["E501"]
+"backend/pipeline/common/clients/monitoring_client.py" = ["E501"]
+"backend/pipeline/common/clients/session_helper.py" = ["E501"]
+"backend/pipeline/common/container_helper.py" = ["E501"]
+"backend/pipeline/common/evaluation/annotations.py" = ["E501"]
+"backend/pipeline/common/exceptions.py" = ["E501"]
+"backend/pipeline/common/gcp_helper.py" = ["E501"]
+"backend/pipeline/common/log_helper.py" = ["E501"]
+"backend/pipeline/common/rules/models.py" = ["E501"]
+"backend/pipeline/common/storage/cache_provider.py" = ["E501"]
+"backend/pipeline/common/storage/gcs_uploader.py" = ["E501"]
+"backend/pipeline/common/storage/redis_service.py" = ["E501"]
+"backend/pipeline/common/tracing_utils.py" = ["E501"]
+"backend/pipeline/common/utils.py" = ["E501"]
+"backend/pipeline/evaluation/main.py" = ["E501"]
+"backend/pipeline/evaluation/processor.py" = ["E501"]
+"backend/pipeline/evaluation/rules_evaluation/evaluator.py" = ["E501"]
+"backend/pipeline/evaluation/service.py" = ["E501"]
+"backend/pipeline/ingestion/broadcastify_credential_rotation/main.py" = ["E501"]
+"backend/pipeline/ingestion/collector_runtime.py" = ["E501"]
+"backend/pipeline/ingestion/collectors/aiohttp_requests.py" = ["E501"]
+"backend/pipeline/ingestion/collectors/bcfy_calls/bcfy_calls_collector.py" = ["E501"]
+"backend/pipeline/ingestion/collectors/echo/main.py" = ["E501"]
+"backend/pipeline/ingestion/collectors/fire_notifications/client.py" = ["E501"]
+"backend/pipeline/ingestion/collectors/fire_notifications/collector.py" = ["E501"]
+"backend/pipeline/ingestion/collectors/icecast/icecast_collector.py" = ["E501"]
+"backend/pipeline/ingestion/collectors/icecast/local_icecast_collector.py" = ["E501"]
+"backend/pipeline/ingestion/failure_classifiers/http_status.py" = ["E501"]
+"backend/pipeline/ingestion/failure_classifiers/pubsub.py" = ["E501"]
+"backend/pipeline/ingestion/health_server.py" = ["E501"]
+"backend/pipeline/ingestion/memory_watchdog.py" = ["E501"]
+"backend/pipeline/ingestion/models.py" = ["E501"]
+"backend/pipeline/ingestion/oldest_feed_publisher/main.py" = ["E501"]
+"backend/pipeline/ingestion/quarantine_telemetry.py" = ["E501"]
+"backend/pipeline/ingestion/retry.py" = ["E501"]
+"backend/pipeline/ingestion/router.py" = ["E501"]
+"backend/pipeline/ingestion/settings.py" = ["E501"]
+"backend/pipeline/ingestion/slo_contract.py" = ["E501"]
+"backend/pipeline/ingestion/source_runtime_specs.py" = ["E501"]
+"backend/pipeline/normalization/audio_processor.py" = ["E501"]
+"backend/pipeline/normalization/common/utils.py" = ["E501"]
+"backend/pipeline/normalization/main.py" = ["E501"]
+"backend/pipeline/normalization/processor.py" = ["E501"]
+"backend/pipeline/notification/notification_deduplication.py" = ["E501"]
+"backend/pipeline/notification/send_notification.py" = ["E501"]
+"backend/pipeline/segmentation/audio/dsp.py" = ["E501"]
+"backend/pipeline/segmentation/audio/processor.py" = ["E501"]
+"backend/pipeline/segmentation/audio/vad.py" = ["E501"]
+"backend/pipeline/segmentation/coders.py" = ["E501"]
+"backend/pipeline/segmentation/constants.py" = ["E501"]
+"backend/pipeline/segmentation/datatypes.py" = ["E501"]
+"backend/pipeline/segmentation/main.py" = ["E501"]
+"backend/pipeline/segmentation/options.py" = ["E501"]
+"backend/pipeline/segmentation/orchestration.py" = ["E501"]
+"backend/pipeline/segmentation/state/sequence_buffer.py" = ["E501"]
+"backend/pipeline/segmentation/state/stitcher_state.py" = ["E501"]
+"backend/pipeline/segmentation/storage.py" = ["E501"]
+"backend/pipeline/segmentation/transforms/stateful.py" = ["E501"]
+"backend/pipeline/segmentation/transforms/stateless.py" = ["E501"]
+"backend/pipeline/segmentation/transforms/stitcher_engine.py" = ["E501"]
+"backend/pipeline/segmentation/utils.py" = ["E501"]
+"backend/pipeline/storage/audio_segment_queries.py" = ["E501"]
+"backend/pipeline/storage/connection.py" = ["E501"]
+"backend/pipeline/storage/feed_audit_sql.py" = ["E501"]
+"backend/pipeline/storage/feed_queries.py" = ["E501"]
+"backend/pipeline/storage/feed_store.py" = ["E501"]
+"backend/pipeline/storage/pagination_utils.py" = ["E501"]
+"backend/pipeline/storage/rules_queries.py" = ["E501"]
+"backend/pipeline/storage/rules_store.py" = ["E501"]
+"backend/pipeline/storage/settings.py" = ["E501"]
+"backend/pipeline/storage/sync_feed_queries.py" = ["E501"]
+"backend/pipeline/transcription/main.py" = ["E501"]
+"backend/pipeline/transcription/processor.py" = ["E501"]
+"backend/pipeline/transcription/transcribers/base.py" = ["E501"]
+"backend/pipeline/transcription/transcribers/chirp.py" = ["E501"]
+"backend/pipeline/transcription/transcribers/factory.py" = ["E501"]
+"backend/pipeline/transcription/transcribers/gemini.py" = ["E501"]
+"backend/pipeline/transcription/transcribers/local_api.py" = ["E501"]
+"backend/pipeline/transcription/transcribers/mock.py" = ["E501"]
+"backend/pipeline/transcription/transcribers/prompts.py" = ["E501"]
+"backend/scripts/bulk_import_feeds.py" = ["E501"]
+"backend/services/audio_segments/service.py" = ["E501"]
+"backend/services/feeds/service.py" = ["E501"]
+"backend/services/local-whisper-api/main.py" = ["E501"]
+"backend/services/rules/main.py" = ["E501"]
+"integration_tests/conftest.py" = ["E501"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
