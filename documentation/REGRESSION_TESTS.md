@@ -2,7 +2,7 @@
 
 This directory contains the end-to-end (E2E) regression test suite for the backend radio transcription pipeline against a live environment.
 
-The suite in `/regression_tests` verifies that when an audio file is ingested, it flows correctly through the transcription service, is evaluated against matching keyword rules, and triggers the expected notification dispatch in Cloud Logging.
+The suite in `/regression_tests` verifies that when an audio file is ingested, it flows correctly through the transcription service, is evaluated against matching keyword rules, and triggers the expected notification dispatch in Cloud Logging. It also creates a disposable audited feed and verifies that the Feed Change Notification route emits a producer log and reaches the webhook relay.
 
 ---
 
@@ -18,8 +18,9 @@ graph TD
     D --> E[Test: Upload Test Audio to GCS]
     E --> F[Test: Poll Audio Segments API for Transcript & Decisions]
     F --> G[Test: Poll Cloud Logging for Notification Dispatch]
-    G --> H[Teardown: Deactivate & Delete Feed, Rule, & GCS Blobs]
-    H --> I[End Test Run]
+    G --> H[Test: Create Disposable Feed & Poll Feed Change Notification Logs]
+    H --> I[Teardown: Deactivate & Delete Feed, Rule, & GCS Blobs]
+    I --> J[End Test Run]
 ```
 
 ## Running the tests
@@ -33,6 +34,7 @@ export API_GATEWAY_URL="https://<api-gateway-endpoint>"
 export GCP_PROJECT="<gcp-project-id>"
 export GCP_REGION="us-central1"
 export GCP_ECHO_BUCKET="<gcs-echo-recordings-bucket>"
+export REGRESSION_TEST_ENVIRONMENT="dev" # Optional; defaults to dev
 ```
 
 ### Execution Command
