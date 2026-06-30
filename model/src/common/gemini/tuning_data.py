@@ -8,10 +8,7 @@ No GCP project or bucket constants are defined in this module. All GCP identifie
 caller-supplied parameters.
 """
 
-import logging
 from typing import Any
-
-logger = logging.getLogger(__name__)
 
 
 def build_audio_tuning_example(

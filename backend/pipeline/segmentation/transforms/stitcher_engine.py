@@ -17,7 +17,6 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 from typing import Any
 
-import numpy as np
 from apache_beam.metrics import Metrics
 from google.cloud import storage
 
@@ -54,26 +53,6 @@ def _get_task_logger(
             "session_id": session_id or "none",
         },
     )
-
-
-def _get_audio_buffer(
-    action: datatypes.FlushAction,
-    local_buffer: list[np.ndarray] | None,
-    transmission_buffer: Any,
-) -> list[np.ndarray]:
-    """Resolves the raw audio buffer to use for flushing, prioritizing local in-memory state."""
-    if not action.clear_state:
-        # Isolated/Late chunk: process buffer individually
-        return list(action.isolated_audio_buffer)
-    if action.isolated_audio_buffer:
-        return list(action.isolated_audio_buffer)
-    if local_buffer is not None:
-        return local_buffer
-    # Fallback to reading directly from state and converting to np.ndarray
-    return [
-        np.frombuffer(b, dtype=np.int16)
-        for b in (transmission_buffer.read() or [])
-    ]
 
 
 class StitcherEngine:
