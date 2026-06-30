@@ -1704,7 +1704,6 @@ class TestTimezoneResolution(unittest.IsolatedAsyncioTestCase):
         )
         dt = client._parse_filename_timestamp(
             "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3",
-            "SAN-JOSE-DISP",
         )
         self.assertEqual(
             dt,
@@ -1714,7 +1713,7 @@ class TestTimezoneResolution(unittest.IsolatedAsyncioTestCase):
     def test_timezone_override_fallback_to_utc_if_no_tags(self) -> None:
         # Default is UTC (self.client has timezone = None)
         dt = self.client._parse_filename_timestamp(
-            "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3", "SAN-JOSE-DISP"
+            "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3"
         )
         self.assertEqual(
             dt,

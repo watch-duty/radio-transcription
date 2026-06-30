@@ -97,9 +97,7 @@ class FireNotificationsRestClient(FireNotificationsClient):
         encoded = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
         return {"Authorization": f"Basic {encoded}"}
 
-    def _parse_filename_timestamp(
-        self, filename: str, channel_key: str
-    ) -> datetime.datetime:
+    def _parse_filename_timestamp(self, filename: str) -> datetime.datetime:
         """Extract and localize timestamp from Fire Notifications filename."""
         base = filename.removesuffix(".mp3")
         parts = base.split(" ")
@@ -187,9 +185,7 @@ class FireNotificationsRestClient(FireNotificationsClient):
                 continue
 
             try:
-                start_time = self._parse_filename_timestamp(
-                    name, source_feed_id
-                )
+                start_time = self._parse_filename_timestamp(name)
             except ValueError:
                 logger.warning(
                     "Failed to parse timestamp from filename: %s", name
