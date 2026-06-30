@@ -1628,5 +1628,51 @@ describe('TranscriptView', () => {
       expect(result[0].id).toBe('speech-newer-short');
       expect(result[1].id).toBe('speech-older-long');
     });
+
+    it('does not consolidate UNSPECIFIED segments if they have a transcript', () => {
+      const speech1: AudioSegment = {
+        id: 'speech-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        createdAt: '2026-04-10T12:00:00Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const unspecifiedWithTranscript: AudioSegment = {
+        id: 'unspecified-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.UNSPECIFIED,
+        startTimestamp: '2026-04-10T12:00:05Z',
+        endTimestamp: '2026-04-10T12:00:10Z',
+        createdAt: '2026-04-10T12:00:05Z',
+        annotations: [
+          {
+            type: AnnotationType.TRANSCRIPT,
+            data: {
+              text: 'Hello world',
+              errors: [],
+            },
+            createdAt: '2026-04-10T12:00:05Z',
+          },
+        ],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const result = consolidateAudioSegments([
+        speech1,
+        unspecifiedWithTranscript,
+      ]);
+      expect(result).toHaveLength(2);
+      // Neither should be a silence bundle
+      expect(result[0].isSilenceBundle).toBeUndefined();
+      expect(result[1].isSilenceBundle).toBeUndefined();
+    });
   });
 });

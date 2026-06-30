@@ -2,6 +2,8 @@ import { useMemo } from 'react';
 
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
+import { findTranscriptAnnotationData } from '../utils/annotationUtils';
+
 /**
  * Tolerance threshold to distinguish between minor timestamp rounding errors
  * and actual missing audio (outages) in continuous feeds.
@@ -85,7 +87,9 @@ export function consolidateAudioSegments(
       }
     }
 
-    const isSpeech = segment.classification === AudioClassification.SPEECH;
+    const hasTranscript = !!findTranscriptAnnotationData(segment.annotations);
+    const isSpeech =
+      segment.classification === AudioClassification.SPEECH || hasTranscript;
 
     if (isSpeech) {
       flushSilenceBundle();
