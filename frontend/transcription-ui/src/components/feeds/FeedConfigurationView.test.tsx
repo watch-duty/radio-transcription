@@ -918,4 +918,39 @@ describe('FeedConfigurationView', () => {
       screen.queryByRole('menuitem', { name: /Reset feed/i })
     ).not.toBeInTheDocument();
   });
+
+  it('handles timezone tag selection using dropdown', async () => {
+    renderView();
+
+    const tagKeyInput = screen.getByLabelText('Key');
+    const addTagBtn = screen.getByRole('button', { name: 'Add Tag' });
+
+    // Change key to 'timezone'
+    fireEvent.change(tagKeyInput, { target: { value: 'timezone' } });
+
+    // The 'Value' input should be a select since the tag is a timezone.
+    const timezoneSelect = screen.getByRole('combobox', { name: /Timezone/i });
+    expect(timezoneSelect).toBeInTheDocument();
+
+    // Click to open the dropdown
+    fireEvent.mouseDown(timezoneSelect);
+
+    // Select 'America/Los_Angeles'
+    const option = await screen.findByRole('option', {
+      name: 'America/Los_Angeles',
+    });
+    fireEvent.click(option);
+
+    // Click Add
+    fireEvent.click(addTagBtn);
+
+    // Check that the tag is added
+    expect(screen.getAllByLabelText('Key')[1]).toHaveValue('timezone');
+
+    // The added row also has a Timezone Select
+    const addedTimezoneSelect = screen.getAllByRole('combobox', {
+      name: /Timezone/i,
+    })[0];
+    expect(addedTimezoneSelect).toHaveTextContent('America/Los_Angeles');
+  });
 });

@@ -34,7 +34,10 @@ import type {
 import { SourceType } from '@transcription/common';
 
 import { toSourceTypeString } from '../../utils/textUtils';
-import { validateFeedSourceId } from '../../utils/validationUtils';
+import {
+  isValidTimezone,
+  validateFeedSourceId,
+} from '../../utils/validationUtils';
 import {
   ConfirmationDialog,
   type ConfirmationDialogProps,
@@ -43,6 +46,10 @@ import {
 const ALL_SOURCE_TYPES = Object.values(SourceType).map((value) => {
   return { value, label: toSourceTypeString(value) };
 });
+
+const ALL_TIMEZONES = Array.from(
+  new Set(['UTC', ...Intl.supportedValuesOf('timeZone')])
+);
 
 export const DialogType = {
   Delete: 'delete',
@@ -186,7 +193,17 @@ export function FeedConfigurationEdit({
   };
 
   const handleKeyChange = (val: string) => {
+    const trimmedVal = val.trim();
     setNewTagKey(val);
+
+    // Reset the tag value if the tag is intended to be a timezone since the possible
+    // values are enums.
+    if (trimmedVal === 'timezone') {
+      if (!isValidTimezone(newTagValue)) {
+        setNewTagValue('');
+      }
+    }
+
     setValidationErrors((prev) => {
       if (!prev.tags) return prev;
       const copy = { ...prev };
@@ -304,6 +321,19 @@ export function FeedConfigurationEdit({
       }
     } else if (trimmedNewKey || trimmedNewValue) {
       errors.tags = 'Both key and value must be populated to add a tag.';
+    }
+
+    // Validate timezone tag values
+    // NOTE: The 'timezone' tag is currently only recognized by the Fire Notifications collector.
+    for (const tag of combinedTags) {
+      if (tag.key.trim() === 'timezone') {
+        const tzValue = tag.value.trim();
+        if (!isValidTimezone(tzValue)) {
+          const validTzs = Intl.supportedValuesOf('timeZone');
+          errors.tags = `Invalid timezone. Valid timezones: ${validTzs.join(', ')}`;
+          break;
+        }
+      }
     }
 
     // Verify tags data integrity across the combined set
@@ -533,16 +563,37 @@ export function FeedConfigurationEdit({
                   disabled={isSubmitting}
                   sx={{ flexGrow: 1 }}
                 />
-                <TextField
-                  size="small"
-                  label="Value"
-                  placeholder="Ventura"
-                  value={newTagValue}
-                  onChange={(e) => handleValueChange(e.target.value)}
-                  error={!!validationErrors.tags}
-                  disabled={isSubmitting}
-                  sx={{ flexGrow: 1 }}
-                />
+                {newTagKey.trim() === 'timezone' ? (
+                  <FormControl size="small" sx={{ flexGrow: 1 }}>
+                    <InputLabel id="timezone-tag-label">Timezone</InputLabel>
+                    <Select
+                      labelId="timezone-tag-label"
+                      id="timezone-tag-dropdown"
+                      value={newTagValue}
+                      label="Timezone"
+                      onChange={(e) => handleValueChange(e.target.value)}
+                      error={!!validationErrors.tags}
+                      disabled={isSubmitting}
+                    >
+                      {ALL_TIMEZONES.map((tz) => (
+                        <MenuItem key={tz} value={tz}>
+                          {tz}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                ) : (
+                  <TextField
+                    size="small"
+                    label="Value"
+                    placeholder="Ventura"
+                    value={newTagValue}
+                    onChange={(e) => handleValueChange(e.target.value)}
+                    error={!!validationErrors.tags}
+                    disabled={isSubmitting}
+                    sx={{ flexGrow: 1 }}
+                  />
+                )}
                 <Button
                   variant="outlined"
                   onClick={handleAddTag}
@@ -600,22 +651,53 @@ export function FeedConfigurationEdit({
                         size="small"
                         label="Key"
                         value={tag.key}
-                        onChange={(e) =>
-                          handleUpdateTag(index, 'key', e.target.value)
-                        }
+                        onChange={(e) => {
+                          const newKey = e.target.value;
+                          handleUpdateTag(index, 'key', newKey);
+                          if (
+                            newKey.trim() === 'timezone' &&
+                            !isValidTimezone(tag.value)
+                          ) {
+                            handleUpdateTag(index, 'value', '');
+                          }
+                        }}
                         disabled={isSubmitting}
                         sx={{ flexGrow: 1 }}
                       />
-                      <TextField
-                        size="small"
-                        label="Value"
-                        value={tag.value}
-                        onChange={(e) =>
-                          handleUpdateTag(index, 'value', e.target.value)
-                        }
-                        disabled={isSubmitting}
-                        sx={{ flexGrow: 1 }}
-                      />
+                      {tag.key.trim() === 'timezone' ? (
+                        <FormControl size="small" sx={{ flexGrow: 1 }}>
+                          <InputLabel id={`timezone-tag-label-${index}`}>
+                            Timezone
+                          </InputLabel>
+                          <Select
+                            labelId={`timezone-tag-label-${index}`}
+                            id={`timezone-tag-dropdown-${index}`}
+                            value={tag.value}
+                            label="Timezone"
+                            onChange={(e) =>
+                              handleUpdateTag(index, 'value', e.target.value)
+                            }
+                            disabled={isSubmitting}
+                          >
+                            {ALL_TIMEZONES.map((tz) => (
+                              <MenuItem key={tz} value={tz}>
+                                {tz}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      ) : (
+                        <TextField
+                          size="small"
+                          label="Value"
+                          value={tag.value}
+                          onChange={(e) =>
+                            handleUpdateTag(index, 'value', e.target.value)
+                          }
+                          disabled={isSubmitting}
+                          sx={{ flexGrow: 1 }}
+                        />
+                      )}
                       <IconButton
                         size="small"
                         onClick={() => handleRemoveTag(tag.key)}
