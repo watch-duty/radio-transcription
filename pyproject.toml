@@ -72,6 +72,7 @@ extend-exclude = [
   "**/*_pb2.py",
   "**/*_pb2.pyi",
   "vulture_whitelist.py",
+  "vulture_manual_whitelist.py",
 ]
 line-length = 80
 
@@ -237,7 +238,7 @@ convention = "google"
 
 
 [tool.ty.src]
-exclude = ["model/", "backend/services/local-whisper-api/", "scratch/", "vulture_whitelist.py"]
+exclude = ["model/", "backend/services/local-whisper-api/", "scratch/", "vulture_whitelist.py", "vulture_manual_whitelist.py"]
 
 [tool.pyright]
 pythonVersion = "3.13"
@@ -292,6 +293,6 @@ exclude = [
     "**/test_*.py",
     "**/conftest.py",
 ]
-paths = ["backend", "vulture_whitelist.py"]
-min_confidence = 80
+paths = ["backend", "vulture_whitelist.py", "vulture_manual_whitelist.py"]
+min_confidence = 60
 

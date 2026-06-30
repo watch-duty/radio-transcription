@@ -65,7 +65,7 @@ run = "uv run vulture"
 # when new dynamic functions/attributes are incorrectly flagged as unused/dead code.
 [tasks."lint:dead-code:update"]
 description = "Regenerate the vulture whitelist for unused/dead code"
-run = "uv run vulture backend --make-whitelist > vulture_whitelist.py || { err=$?; [ $err -eq 3 ] || exit $err; }"
+run = "uv run vulture backend vulture_manual_whitelist.py --make-whitelist > vulture_whitelist.py || { err=$?; [ $err -eq 3 ] || exit $err; }"
 
 [tasks."lint:terraform"]
 description = "Validate Terraform code and check formatting for pre-submits"
