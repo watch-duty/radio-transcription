@@ -282,6 +282,12 @@ export function FeedConfigurationEdit({
   ) => {
     const copy = [...feedTags];
     copy[index] = { ...copy[index], [field]: newValue };
+
+    // Value needs to reset since only enums are allowed for timezone tags.
+    if (field === 'key' && newValue === 'timezone') {
+      copy[index].value = '';
+    }
+
     setFeedTags(copy);
     setValidationErrors((prev) => {
       const copy = { ...prev };
@@ -462,7 +468,7 @@ export function FeedConfigurationEdit({
 
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, sm: 6 }}>
-                <FormControl fullWidth disabled={!!isEditing || isSubmitting}>
+                <FormControl disabled={!!isEditing || isSubmitting}>
                   <InputLabel id="source-type-select-label">
                     Source Type
                   </InputLabel>
@@ -654,12 +660,6 @@ export function FeedConfigurationEdit({
                         onChange={(e) => {
                           const newKey = e.target.value;
                           handleUpdateTag(index, 'key', newKey);
-                          if (
-                            newKey.trim() === 'timezone' &&
-                            !isValidTimezone(tag.value)
-                          ) {
-                            handleUpdateTag(index, 'value', '');
-                          }
                         }}
                         disabled={isSubmitting}
                         sx={{ flexGrow: 1 }}
