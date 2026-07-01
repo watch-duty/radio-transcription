@@ -107,6 +107,28 @@ class ChunkMetadataCoder(beam.coders.Coder):
         return hash(type(self))
 
 
+class BufferedChunkCoder(beam.coders.Coder):
+    """Binary Coder for BufferedChunk."""
+
+    def encode(self, value: datatypes.BufferedChunk) -> bytes:
+        return bytes(value)
+
+    def decode(self, encoded: bytes) -> datatypes.BufferedChunk:
+        return datatypes.BufferedChunk().parse(encoded)
+
+    def is_deterministic(self) -> bool:
+        return True
+
+    def to_type_hint(self) -> Any:
+        return datatypes.BufferedChunk
+
+    def __eq__(self, other: object) -> bool:
+        return type(self) is type(other)
+
+    def __hash__(self) -> int:
+        return hash(type(self))
+
+
 def register_custom_coders() -> None:
     """Registers custom Coders in Beam's global coder registry."""
     beam.coders.registry.register_coder(
@@ -123,4 +145,7 @@ def register_custom_coders() -> None:
     )
     beam.coders.registry.register_coder(
         datatypes.TransmissionContext, TransmissionContextCoder
+    )
+    beam.coders.registry.register_coder(
+        datatypes.BufferedChunk, BufferedChunkCoder
     )
