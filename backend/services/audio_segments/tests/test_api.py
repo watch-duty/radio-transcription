@@ -82,6 +82,32 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             end_time=None,
             order=SortOrder.DESC,
             is_alert=None,
+            text_query=None,
+        )
+
+    def test_list_audio_segments_with_query(self) -> None:
+        """Test listing audio segments with a search query."""
+        self.mock_service.list_audio_segments.return_value = (
+            ListAudioSegmentsResponse(segments=[])
+        )
+
+        response = self.client.get(
+            "/v1/audio_segments",
+            params={
+                "feed_ids": [_FEED_ID],
+                "text_query": "search term",
+            },
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.mock_service.list_audio_segments.assert_called_once_with(
+            feed_ids=[_FEED_ID],
+            limit=100,
+            next_token=None,
+            start_time=None,
+            end_time=None,
+            order=SortOrder.DESC,
+            is_alert=None,
+            text_query="search term",
         )
 
     def test_list_audio_segments_with_filters(self) -> None:
@@ -114,6 +140,7 @@ class TestAudioSegmentsAPI(unittest.TestCase):
             end_time=datetime.datetime(2026, 1, 1, 1, tzinfo=datetime.UTC),
             order=SortOrder.ASC,
             is_alert=True,
+            text_query=None,
         )
 
     def test_create_audio_segment_success(self) -> None:

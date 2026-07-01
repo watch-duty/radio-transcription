@@ -166,6 +166,7 @@ class AudioSegmentStore:
         order: SortOrder = SortOrder.DESC,
         *,
         is_alert: bool | None = None,
+        text_query: str | None = None,
     ) -> PaginatedAudioSegments:
         """List all audio segments bundled with their annotations."""
         feed_uuids = None
@@ -182,14 +183,14 @@ class AudioSegmentStore:
             cursor_ts, cursor_uid = decode_cursor(next_token)
 
         is_asc = order == SortOrder.ASC
-        query = (
+        sql_query = (
             audio_segment_queries.LIST_AUDIO_SEGMENTS_ASC_SQL
             if is_asc
             else audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL
         )
 
         rows = await self._pool.fetch(
-            query,
+            sql_query,
             feed_uuids,
             cursor_ts,
             cursor_uid,
@@ -197,6 +198,7 @@ class AudioSegmentStore:
             end_time,
             is_alert,
             limit + 1,
+            text_query,
         )
 
         rows, new_next_token = get_paginated_results(
