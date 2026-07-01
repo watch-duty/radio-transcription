@@ -32,8 +32,11 @@ DEFAULT_CHIRP_LANGUAGE_CODES = ["en-US"]
 
 # API limits and retry defaults
 MAX_SYNCHRONOUS_TRANSCRIPTION_DURATION_MS = 60000
-DEFAULT_MAX_RETRIES = 5
-DEFAULT_RETRY_MAX_SECONDS = 10
+DEFAULT_RETRY_INITIAL_DELAY = 1.0
+DEFAULT_RETRY_MAX_DELAY = 30.0
+DEFAULT_RETRY_MULTIPLIER = 2.0
+DEFAULT_RETRY_DEADLINE = 120.0
+
 
 logger = get_task_logger(
     __name__, {"system": "transcription", "component": "chirp"}
@@ -79,6 +82,12 @@ class ChirpConfig(ConfigBase):
     phrase_hints: list[str] = pydantic.Field(
         default_factory=load_default_phrase_hints
     )
+
+    # Retry configurations for robust rate-limit/transient failure handling
+    retry_initial_delay: float = DEFAULT_RETRY_INITIAL_DELAY
+    retry_max_delay: float = DEFAULT_RETRY_MAX_DELAY
+    retry_multiplier: float = DEFAULT_RETRY_MULTIPLIER
+    retry_deadline: float = DEFAULT_RETRY_DEADLINE
 
 
 class GoogleChirpV3Transcriber(Transcriber):
@@ -182,10 +191,10 @@ class GoogleChirpV3Transcriber(Transcriber):
         )
 
         retry_policy = AsyncRetry(
-            initial=1.0,
-            maximum=float(DEFAULT_RETRY_MAX_SECONDS),
-            multiplier=2.0,
-            deadline=float(DEFAULT_RETRY_MAX_SECONDS * DEFAULT_MAX_RETRIES),
+            initial=self.config.retry_initial_delay,
+            maximum=self.config.retry_max_delay,
+            multiplier=self.config.retry_multiplier,
+            timeout=self.config.retry_deadline,
         )
 
         response = await client.recognize(request=request, retry=retry_policy)
