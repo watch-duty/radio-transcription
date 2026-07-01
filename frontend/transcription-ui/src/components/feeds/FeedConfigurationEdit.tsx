@@ -48,6 +48,8 @@ const ALL_SOURCE_TYPES = Object.values(SourceType).map((value) => {
   return { value, label: toSourceTypeString(value) };
 });
 
+const SYSTEM_TIMEZONE = 'system/timezone';
+
 const ALL_TIMEZONES = Array.from(
   // Some older browsers might not support UTC in this list.
   new Set([...Intl.supportedValuesOf('timeZone'), 'UTC'])
@@ -210,7 +212,7 @@ export function FeedConfigurationEdit({
 
     // Reset the tag value if the tag is intended to be a timezone since the possible
     // values are enums.
-    if (trimmedVal === 'system/timezone') {
+    if (trimmedVal === SYSTEM_TIMEZONE) {
       if (!isValidTimezone(newTagValue)) {
         setNewTagValue('');
       }
@@ -296,7 +298,7 @@ export function FeedConfigurationEdit({
     copy[index] = { ...copy[index], [field]: newValue };
 
     // Value needs to reset since only enums are allowed for timezone tags.
-    if (field === 'key' && newValue === 'system/timezone') {
+    if (field === 'key' && newValue === SYSTEM_TIMEZONE) {
       copy[index].value = '';
     }
 
@@ -342,9 +344,9 @@ export function FeedConfigurationEdit({
     }
 
     // Validate timezone tag values
-    // NOTE: The 'system/timezone' tag is currently only recognized by the Fire Notifications collector.
+    // NOTE: The SYSTEM_TIMEZONE tag is currently only recognized by the Fire Notifications collector.
     for (const tag of combinedTags) {
-      if (tag.key.trim() === 'system/timezone') {
+      if (tag.key.trim() === SYSTEM_TIMEZONE) {
         const tzValue = tag.value.trim();
         if (!isValidTimezone(tzValue)) {
           const validTzs = Intl.supportedValuesOf('timeZone');
@@ -585,7 +587,7 @@ export function FeedConfigurationEdit({
                   disabled={isSubmitting}
                   sx={{ flex: 1 }}
                 />
-                {newTagKey.trim() === 'system/timezone' ? (
+                {newTagKey.trim() === SYSTEM_TIMEZONE ? (
                   <FormControl size="small" sx={{ flex: 1 }}>
                     <InputLabel id="timezone-tag-label">Timezone</InputLabel>
                     <Select
@@ -681,7 +683,7 @@ export function FeedConfigurationEdit({
                         disabled={isSubmitting}
                         sx={{ flex: 1 }}
                       />
-                      {tag.key.trim() === 'system/timezone' ? (
+                      {tag.key.trim() === SYSTEM_TIMEZONE ? (
                         <FormControl size="small" sx={{ flex: 1 }}>
                           <InputLabel id={`timezone-tag-label-${index}`}>
                             Timezone
