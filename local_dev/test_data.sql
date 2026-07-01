@@ -10,8 +10,8 @@ INSERT INTO feeds (id, name, source_type, status) VALUES
     ('11111111-2222-3333-4444-555555555555', 'mock-fn-feed', 'fire_notifications', 'unclaimed')
 ON CONFLICT (name) DO NOTHING;
 
-INSERT INTO feed_properties (feed_id, source_feed_id) VALUES
-    ('11111111-2222-3333-4444-555555555555', 'RECORDINGS/SAN-JOSE-DISP')
+INSERT INTO feed_properties (feed_id, source_feed_id, tags) VALUES
+    ('11111111-2222-3333-4444-555555555555', 'RECORDINGS/SAN-JOSE-DISP', '[{"key": "system/timezone", "value": "America/Los_Angeles"}]'::jsonb)
 ON CONFLICT (feed_id) DO NOTHING;
 
 INSERT INTO feeds (id, name, source_type, status) VALUES
