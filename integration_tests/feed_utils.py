@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import os
 import uuid
 from collections.abc import Generator
@@ -10,6 +11,27 @@ import requests
 
 FEEDS_API_HOST = os.environ.get("FEEDS_API_HOST", "localhost:8089")
 _TEST_ACTOR_HEADERS = {"X-WD-Actor-Id": "user:google:e2e-admin@example.com"}
+
+
+_CONN_KWARGS = {
+    "host": os.environ.get("ALLOYDB_HOST", "postgres"),
+    "port": int(os.environ.get("ALLOYDB_PORT", "5432")),
+    "user": os.environ.get("ALLOYDB_USER", "postgres"),
+    "password": os.environ.get("ALLOYDB_PASSWORD", "postgres"),
+    "database": os.environ.get("ALLOYDB_DB", "postgres"),
+}
+
+
+async def _update_feed_bookmark(
+    feed_id: str, bookmark_time: datetime.datetime | None
+) -> None:
+    conn = await asyncpg.connect(**_CONN_KWARGS)
+    await conn.execute(
+        "UPDATE feeds SET last_bookmark_time = $1 WHERE id = $2::uuid",
+        bookmark_time,
+        feed_id,
+    )
+    await conn.close()
 
 
 def _create_and_cleanup_feed(
@@ -33,17 +55,9 @@ def _create_and_cleanup_feed(
     try:
         yield feed_id, payload["name"]
     finally:
-        # Clean up transcripts via DB
-        _conn_kwargs = {
-            "host": os.environ.get("ALLOYDB_HOST", "postgres"),
-            "port": int(os.environ.get("ALLOYDB_PORT", "5432")),
-            "user": os.environ.get("ALLOYDB_USER", "postgres"),
-            "password": os.environ.get("ALLOYDB_PASSWORD", "postgres"),
-            "database": os.environ.get("ALLOYDB_DB", "postgres"),
-        }
 
         async def _cleanup_db() -> None:
-            conn = await asyncpg.connect(**_conn_kwargs)
+            conn = await asyncpg.connect(**_CONN_KWARGS)
             await conn.execute(
                 "DELETE FROM audio_segments WHERE feed_id = $1::uuid", feed_id
             )
@@ -136,6 +150,11 @@ def create_test_fire_notifications_feed() -> Generator[tuple[str, str]]:
     }
     gen = _create_and_cleanup_feed(payload)
     feed_id, _ = next(gen)
+
+    # Reset last_bookmark_time to NULL so older files are processed
+    # with the new timestamp
+    asyncio.run(_update_feed_bookmark(feed_id, None))
+
     try:
         yield feed_id, payload["source_feed_id"]
     finally:
