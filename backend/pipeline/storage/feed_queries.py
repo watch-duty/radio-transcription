@@ -501,6 +501,7 @@ after_row AS (
     )
 }
 SELECT after_row.status,
+       after_row.failure_count,
        {_AUDIT_EVENT_SELECT_SQL}
 FROM after_row
 """

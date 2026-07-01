@@ -316,6 +316,7 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
         )
         self.assertIn("WHERE f.id = $1", sql)
         self.assertIn("AND f.worker_id = $2", sql)
+        self.assertIn("after_row.failure_count", sql)
         self.assertIn("AND f.fencing_token = $4", sql)
 
 
