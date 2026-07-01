@@ -27,6 +27,7 @@ import {
   useAudioSegments,
 } from '../../hooks/useAudioSegments';
 import { useAudioSettings } from '../../hooks/useAudioSettings';
+import { useAudioTimelineWindow } from '../../hooks/useAudioTimelineWindow';
 import {
   type RenderableAudioSegment,
   useConsolidatedAudioSegments,
@@ -283,6 +284,14 @@ export function TranscriptView({
     rawAudioSegments,
     searchedFeed?.sourceType === SourceType.BCFY_FEEDS
   );
+
+  // Single source of truth for the audio timeline's visible window.
+  const { windowEndTime, windowDurationMs } = useAudioTimelineWindow({
+    audioSegments,
+    currentlyPlayingSegmentId,
+    highlightedSegmentId,
+    resetKey: `${searchedFeedId}|${searchedTimestamp?.getTime() ?? ''}|${alertFilter}`,
+  });
 
   // Keep the refs in sync with the audio segments so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {
@@ -717,6 +726,8 @@ export function TranscriptView({
         currentlyPlayingSegmentId={currentlyPlayingSegmentId}
         highlightedSegmentId={highlightedSegmentId}
         onClipClick={handleClipClick}
+        windowEndTime={windowEndTime}
+        windowDurationMs={windowDurationMs}
         isAudioPlaying={isAudioPlaying}
         playbackState={playbackState}
         currentAudioRef={currentAudioRef}
