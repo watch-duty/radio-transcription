@@ -204,7 +204,8 @@ class ParseAndKeyFn(beam.DoFn):
                     chunk_proto.gcs_uri,
                     chunk_proto.duration_ms,
                 )
-                outputs.append((feed_id, metadata))
+                combined_key = f"{feed_id}#{metadata.session_id}"
+                outputs.append((combined_key, metadata))
         except Exception as e:
             msg = f"Failed to parse or validate payload: {e}"
             logger.exception(msg)

@@ -19,7 +19,10 @@ logger = logging.getLogger(__name__)
 
 
 class FeedService:
-    """Service for managing feeds, handling interaction with the data from the FeedStore."""
+    """Service for managing feeds.
+
+    Handles interaction with the data from the FeedStore.
+    """
 
     def __init__(self, store: FeedStore) -> None:
         self._store = store
@@ -146,10 +149,10 @@ class FeedService:
         return success
 
     async def reset_feed(self, feed_id: str, *, actor_id: str) -> Feed | None:
-        """Reset a failed, quarantined, or deactivated feed to an unclaimed state.
+        """Reset a failed, quarantined, or deactivated feed.
 
-        This clears the claim state, resets the failure count, clears
-        `worker_id`, and updates `last_heartbeat`.
+        Resets to an unclaimed state. This clears the claim state, resets the
+        failure count, clears `worker_id`, and updates `last_heartbeat`.
         """
         try:
             uid = uuid.UUID(feed_id)
