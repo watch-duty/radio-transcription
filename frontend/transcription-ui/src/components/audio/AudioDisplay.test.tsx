@@ -83,6 +83,7 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
+        playbackState="listening"
         highlightedSegmentId={null}
       />
     );
@@ -107,6 +108,7 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
+        playbackState="listening"
         highlightedSegmentId={null}
       />
     );
@@ -137,6 +139,7 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
+        playbackState="listening"
         highlightedSegmentId={null}
       />
     );
@@ -170,6 +173,7 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
+        playbackState="listening"
         highlightedSegmentId={null}
       />
     );
@@ -184,6 +188,7 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId="2"
         onClipClick={vi.fn()}
         isAudioPlaying={false}
+        playbackState="listening"
         highlightedSegmentId={null}
       />
     );
@@ -225,6 +230,7 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
+        playbackState="listening"
         highlightedSegmentId={null}
       />
     );
@@ -239,6 +245,7 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
+        playbackState="listening"
         highlightedSegmentId={null}
       />
     );
@@ -270,6 +277,7 @@ describe('AudioDisplay', () => {
         userDuration="5"
         onClipClick={vi.fn()}
         isAudioPlaying={false}
+        playbackState="listening"
         highlightedSegmentId={null}
       />
     );
@@ -291,6 +299,7 @@ describe('AudioDisplay', () => {
         userDuration="30"
         onClipClick={vi.fn()}
         isAudioPlaying={false}
+        playbackState="listening"
         highlightedSegmentId={null}
       />
     );
@@ -326,6 +335,7 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
+        playbackState="listening"
         highlightedSegmentId={null}
       />
     );
@@ -352,6 +362,7 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
+        playbackState="listening"
         highlightedSegmentId={null}
       />
     );
@@ -383,6 +394,7 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
+        playbackState="listening"
         highlightedSegmentId={null}
       />
     );
@@ -412,6 +424,7 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
+        playbackState="listening"
         highlightedSegmentId={null}
       />
     );
@@ -446,6 +459,7 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
+        playbackState="listening"
         highlightedSegmentId={null}
       />
     );
@@ -460,6 +474,7 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
+        playbackState="listening"
         highlightedSegmentId="2"
       />
     );
@@ -472,7 +487,7 @@ describe('AudioDisplay', () => {
     });
   });
 
-  it('polls progress and positions the playback cursor overlay', async () => {
+  it('polls progress and shows the playhead while playing', async () => {
     const mockAudioSegments: AudioSegment[] = [
       makeMockAudioSegment(
         '1',
@@ -498,6 +513,7 @@ describe('AudioDisplay', () => {
         currentlyPlayingSegmentId="1"
         onClipClick={vi.fn()}
         isAudioPlaying={true}
+        playbackState="playing"
         highlightedSegmentId={null}
         currentAudioRef={currentAudioRef}
       />
@@ -507,9 +523,12 @@ describe('AudioDisplay', () => {
       expect(mockPlayer.getCurrentTime).toHaveBeenCalled();
     });
 
-    // 2.5s of a 5s clip -> cursor at 50%.
+    // The label being a clock time (not "Listening") confirms the polled
+    // position was wired through computePlayhead into the playhead.
     await waitFor(() => {
-      expect(screen.getByTestId('playing-cursor').style.left).toBe('50%');
+      expect(screen.getByTestId('timeline-playhead').textContent).toMatch(
+        /^\d{2}:\d{2}:\d{2}$/
+      );
     });
   });
 });

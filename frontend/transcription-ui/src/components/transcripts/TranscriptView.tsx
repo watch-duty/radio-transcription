@@ -36,6 +36,7 @@ import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import {
+  type PlaybackState,
   getNextContinuousSegment,
   isWithinSegment,
 } from '../../utils/playbackUtils';
@@ -145,6 +146,14 @@ export function TranscriptView({
       }
     },
   });
+
+  // Drives the timeline playhead's color and label. Idle and un-paused reads as
+  // "listening" at the live edge.
+  const playbackState: PlaybackState = isAudioPlaying
+    ? 'playing'
+    : playbackIntent === 'paused'
+      ? 'paused'
+      : 'listening';
 
   // Side effects for segments that arrive from a live poll: notify, bump the
   // unread badge when backgrounded, and optionally autoplay the latest.
@@ -708,6 +717,7 @@ export function TranscriptView({
         highlightedSegmentId={highlightedSegmentId}
         onClipClick={handleClipClick}
         isAudioPlaying={isAudioPlaying}
+        playbackState={playbackState}
         currentAudioRef={currentAudioRef}
         seekTrigger={seekTrigger}
       />
