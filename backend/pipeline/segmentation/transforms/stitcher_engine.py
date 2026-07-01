@@ -17,7 +17,6 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 from typing import Any
 
-import numpy as np
 from apache_beam.metrics import Metrics
 from google.cloud import storage
 
@@ -54,26 +53,6 @@ def _get_task_logger(
             "session_id": session_id or "none",
         },
     )
-
-
-def _get_audio_buffer(
-    action: datatypes.FlushAction,
-    local_buffer: list[np.ndarray] | None,
-    transmission_buffer: Any,
-) -> list[np.ndarray]:
-    """Resolves the raw audio buffer to use for flushing, prioritizing local in-memory state."""
-    if not action.clear_state:
-        # Isolated/Late chunk: process buffer individually
-        return list(action.isolated_audio_buffer)
-    if action.isolated_audio_buffer:
-        return list(action.isolated_audio_buffer)
-    if local_buffer is not None:
-        return local_buffer
-    # Fallback to reading directly from state and converting to np.ndarray
-    return [
-        np.frombuffer(b, dtype=np.int16)
-        for b in (transmission_buffer.read() or [])
-    ]
 
 
 class StitcherEngine:
@@ -210,6 +189,7 @@ class StitcherEngine:
         transmission_context: Any,
         last_start_ms_state: Any,
         timer_manager: Any,
+        out_of_order_buffer_state: Any = None,
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | tuple[str, dict[str, Any]]
     ]:
@@ -220,6 +200,7 @@ class StitcherEngine:
             transmission_context: Runtime Beam state mapping for contexts.
             last_start_ms_state: Runtime Beam state mapping for last start time.
             timer_manager: Contextual timer scheduler interface.
+            out_of_order_buffer_state: Runtime Beam state mapping for out-of-order buffer.
 
         Yields:
             Emitted elements (FlushRequest or TaggedOutput DLQ).
@@ -304,6 +285,9 @@ class StitcherEngine:
 
         # Clear state context cleanly
         transmission_context.clear()
+        last_start_ms_state.clear()
+        if out_of_order_buffer_state:
+            out_of_order_buffer_state.clear()
         timer_manager.clear()
 
     def _apply_flush_action(

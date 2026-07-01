@@ -8,7 +8,6 @@ No GCP project or bucket constants are defined in this module. All GCP identifie
 caller-supplied parameters.
 """
 
-import logging
 from collections.abc import Sequence
 from typing import Any
 
@@ -16,8 +15,6 @@ from common.gemini.context import (
     ContextTurn,
     build_transcription_contents,
 )
-
-logger = logging.getLogger(__name__)
 
 
 def build_audio_tuning_example(
