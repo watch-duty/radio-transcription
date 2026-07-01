@@ -98,6 +98,7 @@ describe('useAudioSegments hook', () => {
       expectedStartTime,
       undefined,
       'asc',
+      undefined,
       undefined
     );
   });
