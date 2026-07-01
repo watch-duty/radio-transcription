@@ -12,8 +12,11 @@ import {
   findWaveformAnnotationData,
   segmentHasSpeech,
 } from '../../utils/annotationUtils';
+import { type PlaybackState } from '../../utils/playbackUtils';
 import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
+import TimelinePlayhead from './TimelinePlayhead';
+import { computePlayhead } from './computePlayhead';
 
 interface AudioDisplayProps {
   audioSegments: RenderableAudioSegment[];
@@ -22,11 +25,10 @@ interface AudioDisplayProps {
   onClipClick: (segmentId: string) => void;
   userDuration?: string | null;
   isAudioPlaying: boolean;
+  playbackState: PlaybackState;
   currentAudioRef?: React.RefObject<PlaybackController | null>;
   seekTrigger?: number;
 }
-
-const PLAYING_CURSOR_WIDTH_PX = 2;
 
 const WAVEFORM_MIN_AMPLITUDE = 0.0083; // silent buckets show a ~0.5px hairline at the 60px track height
 
@@ -124,23 +126,11 @@ interface TimelineClipProps {
   onClipClick: (segmentId: string) => void;
   isDarkTheme: boolean;
   theme: Theme;
-  currentTimeSeconds?: number;
 }
 
 const TimelineClip = React.memo(
-  ({
-    clip,
-    onClipClick,
-    isDarkTheme,
-    theme,
-    currentTimeSeconds,
-  }: TimelineClipProps) => {
+  ({ clip, onClipClick, isDarkTheme, theme }: TimelineClipProps) => {
     const renderWaveform = !!clip.peaks?.[0]?.length;
-
-    const cursorLeftPct =
-      clip.isAudioPlaying && currentTimeSeconds !== undefined && clip.duration
-        ? Math.min(100, Math.max(0, (currentTimeSeconds / clip.duration) * 100))
-        : null;
 
     if (clip.isOutageBundle) {
       return (
@@ -221,21 +211,6 @@ const TimelineClip = React.memo(
         ) : (
           <WaveformPlaceholder isSpeech={!!clip.isSpeech} />
         )}
-        {cursorLeftPct !== null && (
-          <Box
-            data-testid="playing-cursor"
-            // Inline style: the position updates every animation frame.
-            style={{ left: `${cursorLeftPct}%` }}
-            sx={{
-              position: 'absolute',
-              top: 0,
-              bottom: 0,
-              width: `${PLAYING_CURSOR_WIDTH_PX}px`,
-              bgcolor: 'error.main',
-              pointerEvents: 'none',
-            }}
-          />
-        )}
       </Box>
     );
   },
@@ -254,8 +229,7 @@ const TimelineClip = React.memo(
       prevProps.clip.isSpeech === nextProps.clip.isSpeech &&
       prevProps.clip.isOutageBundle === nextProps.clip.isOutageBundle &&
       prevProps.isDarkTheme === nextProps.isDarkTheme &&
-      prevProps.theme === nextProps.theme &&
-      prevProps.currentTimeSeconds === nextProps.currentTimeSeconds
+      prevProps.theme === nextProps.theme
     );
   }
 );
@@ -288,6 +262,7 @@ export function AudioDisplay({
   onClipClick,
   userDuration,
   isAudioPlaying,
+  playbackState,
   currentAudioRef,
   seekTrigger,
 }: AudioDisplayProps) {
@@ -492,6 +467,15 @@ export function AudioDisplay({
     windowDurationMs,
   ]);
 
+  const playhead = computePlayhead({
+    audioSegments,
+    currentlyPlayingSegmentId,
+    state: playbackState,
+    localCurrentTimeSeconds,
+    startTime,
+    windowDurationMs: windowDuration,
+  });
+
   return (
     <Box
       sx={{ display: 'flex', alignItems: 'flex-start', width: '100%', mb: 1 }}
@@ -513,13 +497,15 @@ export function AudioDisplay({
               onClipClick={onClipClick}
               isDarkTheme={isDarkTheme}
               theme={theme}
-              currentTimeSeconds={
-                clip.isAudioPlaying && currentAudioRef
-                  ? localCurrentTimeSeconds
-                  : undefined
-              }
             />
           ))}
+          {playhead.show && (
+            <TimelinePlayhead
+              state={playhead.state}
+              left={playhead.left}
+              label={playhead.label}
+            />
+          )}
           {audioSegments.length === 0 && (
             <Box
               sx={{
