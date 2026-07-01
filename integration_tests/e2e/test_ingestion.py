@@ -9,6 +9,7 @@ from backend.pipeline.ingestion.collectors.echo import main as echo_main
 from integration_tests.feed_utils import (
     create_test_bcfy_feed,  # noqa: F401
     create_test_echo_feed,  # noqa: F401
+    create_test_fire_notifications_feed,  # noqa: F401
     create_test_polling_feed,  # noqa: F401
 )
 from integration_tests.test_utils import (
@@ -92,4 +93,28 @@ def test_ingestion_echo(test_echo_feed: tuple[str, str]) -> None:
             s.get("external_audio_segment_id")
             == f"{source_bucket_name}/{gcs_path}"
         ),
+    )
+
+
+def test_ingestion_fire_notifications_timestamp_override(
+    test_fire_notifications_feed: tuple[str, str],
+) -> None:
+    """Tests that audio ingestion service picks up a feed from Fire Notifications and results in a transcript with correct timezone."""
+    feed_id, _ = test_fire_notifications_feed
+
+    # The mock file is "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3".
+    # Timezone is America/Los_Angeles (PDT in June is UTC-7).
+    # Local time: 2026-06-15 17:45:43
+    # Expected UTC time: 2026-06-16 00:45:43 UTC.
+    expected_start_utc = "2026-06-16T00:45:43"
+
+    def match_segment(segment: dict) -> bool:
+        start_time_str = segment.get("start_timestamp")
+        if not start_time_str:
+            return False
+        return start_time_str.startswith(expected_start_utc)
+
+    verify_audio_segments_via_api(
+        feed_id,
+        match_segment,
     )

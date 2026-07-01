@@ -2,6 +2,7 @@ import asyncio
 import os
 import uuid
 from collections.abc import Generator
+from typing import Any
 
 import asyncpg
 import pytest
@@ -12,7 +13,7 @@ _TEST_ACTOR_HEADERS = {"X-WD-Actor-Id": "user:google:e2e-admin@example.com"}
 
 
 def _create_and_cleanup_feed(
-    payload: dict[str, str],
+    payload: dict[str, Any],
 ) -> Generator[tuple[str, str]]:
     """Helper to create a feed via API and clean up after test."""
     url = f"http://{FEEDS_API_HOST}/v1/feeds"
@@ -107,6 +108,31 @@ def create_test_echo_feed() -> Generator[tuple[str, str]]:
         "name": feed_name,
         "source_type": "echo",
         "source_feed_id": f"src-{uuid.uuid4()}",
+    }
+    gen = _create_and_cleanup_feed(payload)
+    feed_id, _ = next(gen)
+    try:
+        yield feed_id, payload["source_feed_id"]
+    finally:
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+
+
+@pytest.fixture(name="test_fire_notifications_feed")
+def create_test_fire_notifications_feed() -> Generator[tuple[str, str]]:
+    """Fixture to create a temporary fire notifications feed for testing.
+
+    Yields:
+        tuple[str, str]: A tuple containing (feed_id, source_feed_id).
+    """
+    feed_name = f"integration-test-fn-feed-{uuid.uuid4()}"
+    payload = {
+        "name": feed_name,
+        "source_type": "fire_notifications",
+        "source_feed_id": "RECORDINGS/SAN-JOSE-DISP",
+        "tags": [{"key": "system/timezone", "value": "America/Los_Angeles"}],
     }
     gen = _create_and_cleanup_feed(payload)
     feed_id, _ = next(gen)
