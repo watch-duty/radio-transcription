@@ -300,6 +300,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             None,
             None,
             101,
+            None,
         )
 
     async def test_list_audio_segments_with_feed_id(self) -> None:
@@ -315,12 +316,29 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             None,
             None,
             101,
+            None,
         )
 
     async def test_list_audio_segments_invalid_feed_id(self) -> None:
         with self.assertRaises(ValueError) as cm:
             await self.store.list_audio_segments(["invalid-uuid"])
         self.assertIn("Invalid feed_id UUID in list", str(cm.exception))
+
+    async def test_list_audio_segments_with_query(self) -> None:
+        result = await self.store.list_audio_segments(text_query="search term")
+
+        self.assertEqual(len(result.segments), 1)
+        self.pool.fetch.assert_called_once_with(
+            audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            101,
+            "search term",
+        )
 
 
 if __name__ == "__main__":
