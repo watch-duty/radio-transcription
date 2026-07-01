@@ -75,15 +75,9 @@ export function TranscriptView({
   const searchedTimestamp = targetTimestamp;
 
   const [newMessageCount, setNewMessageCount] = useState(0);
-  const [playLatestAudio, setPlayLatestAudio] = useState(true);
   const [playbackIntent, setPlaybackIntent] = useState<'playing' | 'paused'>(
     'playing'
   );
-
-  const playLatestAudioRef = useRef(playLatestAudio);
-  useEffect(() => {
-    playLatestAudioRef.current = playLatestAudio;
-  }, [playLatestAudio]);
 
   const [redactTranscripts, setRedactTranscripts] = useState(false);
   const [alertFilter, setAlertFilter] = useState<AlertFilter>('all');
@@ -125,11 +119,6 @@ export function TranscriptView({
     volumeDb,
     pan,
     speed,
-    onPlaybackEnded: () => {
-      if (!playLatestAudioRef.current) {
-        setPlaybackIntent('paused');
-      }
-    },
   });
 
   // Drives the timeline playhead's color and label. Idle and un-paused reads as
@@ -160,20 +149,21 @@ export function TranscriptView({
         }
       }
 
-      if (playbackIntent === 'playing' && !isAudioPlaying && playLatestAudio) {
-        const audioToPlay = newAudioSegments[newAudioSegments.length - 1];
+      // Autoplay is always-on while playing at the live edge, but only for
+      // incoming SPEECH — stay idle in "listening" through silence rather than
+      // auto-playing dead-air clips (which stream continuously on scanner feeds).
+      if (
+        playbackIntent === 'playing' &&
+        !isAudioPlaying &&
+        speechSegments.length > 0
+      ) {
+        const audioToPlay = speechSegments[speechSegments.length - 1];
         if (audioToPlay.playbackAudioUri) {
           togglePlay(audioToPlay.id, audioToPlay.playbackAudioUri);
         }
       }
     },
-    [
-      triggerSnackbar,
-      isAudioPlaying,
-      playLatestAudio,
-      playbackIntent,
-      togglePlay,
-    ]
+    [triggerSnackbar, isAudioPlaying, playbackIntent, togglePlay]
   );
 
   const {
@@ -723,20 +713,19 @@ export function TranscriptView({
           onFastForward={skipToNextSpeech}
           onFastRewind={skipToPreviousSpeech}
           onSkipTime={skipTime}
-          playLatestAudio={playLatestAudio}
-          togglePlayLatestAudio={setPlayLatestAudio}
           disableControls={rawAudioSegments.length === 0}
-          disableCheckbox={!searchedFeed}
-        />
-        <AudioSettingsButton
-          volumeDb={volumeDb}
-          setVolumeDb={setVolumeDb}
-          pan={pan}
-          setPan={setPan}
-          speed={speed}
-          setSpeed={setSpeed}
-          onReset={reset}
-          disableControls={rawAudioSegments.length === 0}
+          settingsButton={
+            <AudioSettingsButton
+              volumeDb={volumeDb}
+              setVolumeDb={setVolumeDb}
+              pan={pan}
+              setPan={setPan}
+              speed={speed}
+              setSpeed={setSpeed}
+              onReset={reset}
+              disableControls={rawAudioSegments.length === 0}
+            />
+          }
         />
       </Box>
 
