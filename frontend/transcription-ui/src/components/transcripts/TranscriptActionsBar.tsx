@@ -1,14 +1,10 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 
-import ClearIcon from '@mui/icons-material/Clear';
+import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import SearchIcon from '@mui/icons-material/Search';
-import FilterIcon from '@mui/icons-material/Tune';
-import { FormControl, InputLabel } from '@mui/material';
-import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
-import Chip from '@mui/material/Chip';
-import Divider from '@mui/material/Divider';
+import FormControl from '@mui/material/FormControl';
 import FormControlLabel from '@mui/material/FormControlLabel';
 import IconButton from '@mui/material/IconButton';
 import InputAdornment from '@mui/material/InputAdornment';
@@ -18,17 +14,16 @@ import Select from '@mui/material/Select';
 import Switch from '@mui/material/Switch';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
-import { useTheme } from '@mui/material/styles';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { DesktopDateTimePicker } from '@mui/x-date-pickers/DesktopDateTimePicker';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 
 import type { AlertFilter } from '../../hooks/useAudioSegments';
-import { DateTimePicker } from '../common/DateTimePicker';
 
 export interface TranscriptActionsBarProps {
-  hasNewerAudioSegments: boolean;
-  searchedTimestamp: Date | null;
-  // True when the window is at the newest loaded audio. Keeps "Jump to live"
-  // actionable after scrubbing back, even with no newer segments left to load.
-  isLatestTimeWindow?: boolean;
+  // True when the view is already fully live, so "Jump to live" has nothing to
+  // do; the owner derives it from the window/playback/date-filter signals.
+  disableJumpToLive: boolean;
   redactTranscripts: boolean;
   setRedactTranscripts: (redact: boolean) => void;
   dateTime: Date | null;
@@ -40,12 +35,17 @@ export interface TranscriptActionsBarProps {
   setSearchQuery?: (query: string) => void;
 }
 
-const APPLIED_FILTER_BG_COLOR = '#bbdefb';
-const DEFAULT_FILTER_BG_COLOR = '#f9bf90';
+// The calendar icon is the picker's trigger, so it needs no text-input field.
+const HiddenPickerField = () => null;
+
+// Shared height, radius, and font so the live control, calendar button, filter
+// dropdown, and redact toggle read as one toolbar.
+const CONTROL_HEIGHT = 32;
+const CONTROL_RADIUS = 1;
+const CONTROL_FONT_SIZE = '0.8125rem';
 
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
-  hasNewerAudioSegments,
-  isLatestTimeWindow = true,
+  disableJumpToLive,
   redactTranscripts,
   setRedactTranscripts,
   dateTime,
@@ -56,84 +56,39 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   searchQuery = '',
   setSearchQuery = () => {},
 }) => {
-  const theme = useTheme();
-  const isDarkTheme = theme.palette.mode === 'dark';
+  const [pickerOpen, setPickerOpen] = useState(false);
+  // The picker's draft selection, so "Clear" can hide when nothing is picked.
+  const [pickerValue, setPickerValue] = useState<Date | null>(dateTime);
+  const calendarButtonRef = useRef<HTMLButtonElement>(null);
 
-  const [filterAnchorEl, setFilterAnchorEl] = useState<HTMLElement | null>(
+  // Search lives in a popover; the draft only commits to searchQuery on Apply.
+  const [searchAnchorEl, setSearchAnchorEl] = useState<HTMLElement | null>(
     null
   );
-  const [localDateTime, setLocalDateTime] = useState<Date | null>(dateTime);
-  const [localAlertFilter, setLocalAlertFilter] =
-    useState<AlertFilter>(alertFilter);
-  const [localSearchQuery, setLocalSearchQuery] = useState<string>(searchQuery);
-
-  const [prevDateTime, setPrevDateTime] = useState<Date | null>(dateTime);
-  const [prevAlertFilter, setPrevAlertFilter] =
-    useState<AlertFilter>(alertFilter);
-  const [prevSearchQuery, setPrevSearchQuery] = useState<string>(searchQuery);
-
-  if (dateTime !== prevDateTime) {
-    setPrevDateTime(dateTime);
-    setLocalDateTime(dateTime);
-  }
-  if (alertFilter !== prevAlertFilter) {
-    setPrevAlertFilter(alertFilter);
-    setLocalAlertFilter(alertFilter);
-  }
+  const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
+  const [prevSearchQuery, setPrevSearchQuery] = useState(searchQuery);
   if (searchQuery !== prevSearchQuery) {
     setPrevSearchQuery(searchQuery);
     setLocalSearchQuery(searchQuery);
   }
 
-  const handleFilterOpen = (event: React.MouseEvent<HTMLElement>) => {
-    setFilterAnchorEl(event.currentTarget);
-    setLocalDateTime(dateTime);
-    setLocalAlertFilter(alertFilter);
+  const handleSearchOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setSearchAnchorEl(event.currentTarget);
     setLocalSearchQuery(searchQuery);
   };
-
-  const handleFilterClose = () => {
-    setFilterAnchorEl(null);
-    setLocalDateTime(dateTime);
-    setLocalAlertFilter(alertFilter);
+  const handleSearchClose = () => {
+    setSearchAnchorEl(null);
     setLocalSearchQuery(searchQuery);
   };
-
-  const handleFilterApply = () => {
-    setDateTime(localDateTime);
-    setAlertFilter(localAlertFilter);
+  const handleSearchApply = () => {
     setSearchQuery(localSearchQuery);
-    setFilterAnchorEl(null);
+    setSearchAnchorEl(null);
   };
-
-  const handleFilterClear = () => {
-    setLocalDateTime(null);
-    setLocalAlertFilter('all');
+  const handleSearchClear = () => {
     setLocalSearchQuery('');
-  };
-
-  const handleDeleteDateTime = () => {
-    setDateTime(null);
-  };
-
-  const handleDeleteAlertFilter = () => {
-    setAlertFilter('all');
-  };
-
-  const handleDeleteSearchQuery = () => {
     setSearchQuery('');
+    setSearchAnchorEl(null);
   };
-
-  let badgeContent = 0;
-  if (dateTime) {
-    badgeContent++;
-  }
-  if (alertFilter === 'alerts') {
-    badgeContent++;
-  }
-  if (searchQuery) {
-    badgeContent++;
-  }
 
   return (
     <Box
@@ -147,60 +102,111 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         zIndex: 2,
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
         <Button
           variant="contained"
-          sx={{ textTransform: 'none', gap: 1 }}
+          size="small"
+          disableElevation
+          disabled={disableJumpToLive}
+          sx={{
+            textTransform: 'none',
+            fontSize: CONTROL_FONT_SIZE,
+            height: CONTROL_HEIGHT,
+            borderRadius: CONTROL_RADIUS,
+          }}
           onClick={onClickViewLatest}
-          disabled={!hasNewerAudioSegments && isLatestTimeWindow && !dateTime}
         >
           Jump to live
         </Button>
 
-        <Tooltip title="Filter transcripts">
-          <Badge
-            color="primary"
-            badgeContent={badgeContent}
-            invisible={badgeContent === 0}
+        <Tooltip title="Filter by date and time">
+          <IconButton
+            ref={calendarButtonRef}
+            aria-label="filter by date"
+            size="small"
+            onClick={() => {
+              setPickerValue(dateTime);
+              setPickerOpen(true);
+            }}
+            color={dateTime ? 'primary' : 'default'}
+            sx={{ width: CONTROL_HEIGHT, height: CONTROL_HEIGHT }}
           >
-            <Button
-              color="primary"
-              variant="outlined"
-              sx={{
-                minWidth: 0,
-                p: 0.75,
-                textTransform: 'none',
-                display: 'flex',
-                gap: 1,
-              }}
-              aria-label="filter"
-              onClick={handleFilterOpen}
-            >
-              <FilterIcon />
-              Filters
-            </Button>
-          </Badge>
+            <CalendarMonthIcon />
+          </IconButton>
+        </Tooltip>
+        <LocalizationProvider dateAdapter={AdapterDateFns}>
+          <DesktopDateTimePicker
+            open={pickerOpen}
+            value={pickerValue}
+            ampm={false}
+            onChange={(value) => setPickerValue(value)}
+            onClose={() => setPickerOpen(false)}
+            // Accept applies the pick (Clear removes the filter → live).
+            onAccept={(value) => setDateTime(value)}
+            localeText={{ okButtonLabel: 'Apply' }}
+            slots={{ field: HiddenPickerField }}
+            slotProps={{
+              // Open below the icon but shift up to stay fully on screen (the
+              // icon sits low), rather than forcing a fixed side.
+              popper: {
+                // Non-null: the calendar button is always mounted (it's the trigger).
+                anchorEl: () => calendarButtonRef.current!,
+                placement: 'bottom-start',
+                modifiers: [
+                  {
+                    name: 'preventOverflow',
+                    options: { altAxis: true, padding: 8 },
+                  },
+                ],
+              },
+              // Only offer Clear when there's a selection to clear.
+              actionBar: {
+                actions: pickerValue
+                  ? ['clear', 'cancel', 'accept']
+                  : ['cancel', 'accept'],
+              },
+            }}
+          />
+        </LocalizationProvider>
+      </Box>
+
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        <Tooltip title="Search transcripts">
+          <IconButton
+            aria-label="search"
+            size="small"
+            onClick={handleSearchOpen}
+            color={searchQuery ? 'primary' : 'default'}
+            sx={{ width: CONTROL_HEIGHT, height: CONTROL_HEIGHT }}
+          >
+            <SearchIcon />
+          </IconButton>
         </Tooltip>
         <Popover
-          open={Boolean(filterAnchorEl)}
-          anchorEl={filterAnchorEl}
-          onClose={handleFilterClose}
-          anchorOrigin={{
-            vertical: 'bottom',
-            horizontal: 'left',
-          }}
-          transformOrigin={{
-            vertical: 'top',
-            horizontal: 'left',
-          }}
-          sx={{ zIndex: 1300 }}
+          open={Boolean(searchAnchorEl)}
+          anchorEl={searchAnchorEl}
+          onClose={handleSearchClose}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+          transformOrigin={{ vertical: 'top', horizontal: 'left' }}
         >
-          <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <Box
+            sx={{
+              p: 2,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 1.5,
+              width: 280,
+            }}
+          >
             <TextField
+              autoFocus
               size="small"
-              placeholder="Search transcripts..."
+              placeholder="Search transcripts…"
               value={localSearchQuery}
               onChange={(e) => setLocalSearchQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSearchApply();
+              }}
               slotProps={{
                 input: {
                   startAdornment: (
@@ -208,154 +214,52 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                       <SearchIcon fontSize="small" />
                     </InputAdornment>
                   ),
-                  endAdornment: localSearchQuery ? (
-                    <InputAdornment position="end">
-                      <IconButton
-                        data-testid="clear-search-button"
-                        size="small"
-                        onClick={() => setLocalSearchQuery('')}
-                        edge="end"
-                      >
-                        <ClearIcon fontSize="small" />
-                      </IconButton>
-                    </InputAdornment>
-                  ) : null,
                 },
               }}
-              sx={{ width: 220 }}
             />
-            <DateTimePicker
-              label="Date/time"
-              dateTime={localDateTime}
-              setDateTime={setLocalDateTime}
-            />
-            <FormControl>
-              <InputLabel id="filter-alerts-label">Show</InputLabel>
-              <Select
-                labelId="filter-alerts-label"
-                size="small"
-                value={localAlertFilter}
-                onChange={(e) => {
-                  const newFilter = e.target.value as AlertFilter;
-                  setLocalAlertFilter(newFilter);
-                }}
-                label="Show"
-              >
-                <MenuItem value="all">All transcripts</MenuItem>
-                <MenuItem value="alerts">Alerts only</MenuItem>
-              </Select>
-            </FormControl>
-
-            <Divider />
-
-            <Box
-              sx={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-              }}
-            >
+            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
               <Button
                 size="small"
-                variant="outlined"
-                onClick={handleFilterClear}
+                onClick={handleSearchClear}
                 sx={{ textTransform: 'none' }}
               >
                 Clear
               </Button>
-              <Box sx={{ display: 'flex', gap: 1 }}>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  onClick={handleFilterClose}
-                  sx={{ textTransform: 'none' }}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  size="small"
-                  variant="contained"
-                  color="primary"
-                  onClick={handleFilterApply}
-                  sx={{ textTransform: 'none' }}
-                >
-                  Apply
-                </Button>
-              </Box>
+              <Button
+                size="small"
+                variant="contained"
+                onClick={handleSearchApply}
+                sx={{ textTransform: 'none' }}
+              >
+                Apply
+              </Button>
             </Box>
           </Box>
         </Popover>
-
-        <Chip
-          sx={
-            isDarkTheme
-              ? {
-                  backgroundColor: dateTime
-                    ? theme.palette.primary.main
-                    : '#f9bf90',
-                  color: 'black',
-                  '& .MuiChip-deleteIcon': {
-                    color: 'black',
-                  },
-                }
-              : {
-                  backgroundColor: dateTime
-                    ? APPLIED_FILTER_BG_COLOR
-                    : DEFAULT_FILTER_BG_COLOR,
-                  color: 'black',
-                }
-          }
-          label={
-            dateTime ? (
-              <Box>
-                <b>Date/time:</b>{' '}
-                {`${dateTime.toLocaleDateString()} ${dateTime.toLocaleTimeString()}`}
-              </Box>
-            ) : (
-              <Box>
-                <b>Date/time:</b> Viewing live
-              </Box>
-            )
-          }
-          variant="filled"
-          size="small"
-          onDelete={dateTime ? handleDeleteDateTime : undefined}
-        />
-        {alertFilter === 'alerts' && (
-          <Chip
+        <FormControl size="small" sx={{ minWidth: 120 }}>
+          <Select
+            value={alertFilter}
+            onChange={(e) => setAlertFilter(e.target.value as AlertFilter)}
+            inputProps={{ 'aria-label': 'Transcript filter' }}
             sx={{
-              backgroundColor: APPLIED_FILTER_BG_COLOR,
-              color: 'black',
+              height: CONTROL_HEIGHT,
+              borderRadius: CONTROL_RADIUS,
+              fontSize: CONTROL_FONT_SIZE,
+              '& .MuiSelect-select': {
+                py: 0,
+                display: 'flex',
+                alignItems: 'center',
+              },
             }}
-            label={
-              <Box>
-                <b>Show:</b> Alerts only
-              </Box>
-            }
-            variant="filled"
-            size="small"
-            onDelete={handleDeleteAlertFilter}
-          />
-        )}
-        {searchQuery && (
-          <Chip
-            sx={{
-              backgroundColor: APPLIED_FILTER_BG_COLOR,
-              color: 'black',
-            }}
-            label={
-              <Box>
-                <b>Search:</b> {searchQuery}
-              </Box>
-            }
-            variant="filled"
-            size="small"
-            onDelete={handleDeleteSearchQuery}
-          />
-        )}
-      </Box>
-
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          >
+            <MenuItem value="all" sx={{ fontSize: CONTROL_FONT_SIZE }}>
+              All transcripts
+            </MenuItem>
+            <MenuItem value="alerts" sx={{ fontSize: CONTROL_FONT_SIZE }}>
+              Alerts only
+            </MenuItem>
+          </Select>
+        </FormControl>
         <FormControlLabel
           control={
             <Switch
@@ -365,7 +269,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
             />
           }
           label="Redact transcripts"
-          slotProps={{ typography: { variant: 'body2' } }}
+          slotProps={{ typography: { sx: { fontSize: CONTROL_FONT_SIZE } } }}
           sx={{ ml: 0, mr: 0 }}
         />
       </Box>
