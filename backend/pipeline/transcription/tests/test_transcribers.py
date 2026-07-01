@@ -119,6 +119,48 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
             self.assertIn("retry", kwargs)
             self.assertIsInstance(kwargs["retry"], AsyncRetry)
 
+    async def test_google_chirp_transcriber_custom_retry_policy(self) -> None:
+        """Verifies that custom retry settings in ChirpConfig are propagated to AsyncRetry."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
+        ) as mock_speech_client_cls:
+            mock_client_instance = MagicMock()
+            mock_speech_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_result = MagicMock()
+            mock_result.alternatives = [MagicMock(transcript="Success")]
+            mock_response.results = [mock_result]
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
+
+            config = ChirpConfig(
+                phrase_hints=[],
+                custom_prompt=None,
+                retry_initial_delay=1.5,
+                retry_max_delay=45.0,
+                retry_multiplier=1.8,
+                retry_deadline=150.0,
+            )
+            transcriber = GoogleChirpV3Transcriber("test-project", config)
+            transcriber.setup()
+
+            dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
+            await transcriber.transcribe(
+                audio_data=dummy_audio, duration_ms=2500
+            )
+
+            mock_client_instance.recognize.assert_called_once()
+            _, kwargs = mock_client_instance.recognize.call_args
+            self.assertIn("retry", kwargs)
+            retry_policy = kwargs["retry"]
+            self.assertIsInstance(retry_policy, AsyncRetry)
+            self.assertEqual(retry_policy._initial, 1.5)
+            self.assertEqual(retry_policy._maximum, 45.0)
+            self.assertEqual(retry_policy._multiplier, 1.8)
+            self.assertEqual(retry_policy._timeout, 150.0)
+
     async def test_google_chirp_transcriber_no_phrase_hints_omits_adaptation(
         self,
     ) -> None:
@@ -670,6 +712,28 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(http_options)
             self.assertIsNotNone(http_options.retry_options)
             self.assertEqual(http_options.retry_options.attempts, 5)
+
+    def test_gemini_transcriber_setup_custom_retry(self) -> None:
+        """Verifies that the Gemini transcriber initializes the GenAI client with custom retry options."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-test", "retry_attempts": 8, "retry_initial_delay": 2.5, "retry_max_delay": 90.0, "retry_multiplier": 3.0}',
+            )
+            transcriber.setup()
+
+            mock_client_cls.assert_called_once()
+            _, kwargs = mock_client_cls.call_args
+            http_options = kwargs.get("http_options")
+            self.assertIsNotNone(http_options)
+            self.assertIsNotNone(http_options.retry_options)
+            self.assertEqual(http_options.retry_options.attempts, 8)
+            self.assertEqual(http_options.retry_options.initial_delay, 2.5)
+            self.assertEqual(http_options.retry_options.max_delay, 90.0)
+            self.assertEqual(http_options.retry_options.exp_base, 3.0)
 
 
 if __name__ == "__main__":
