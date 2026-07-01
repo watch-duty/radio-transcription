@@ -79,22 +79,38 @@ class TestEmitFeedChangeNotification(unittest.TestCase):
 
         mock_info.assert_not_called()
 
-    def test_noops_for_non_mapping_payloads(self) -> None:
+    def test_logs_warning_for_non_mapping_payloads(self) -> None:
         values: list[object] = [
             ["not", "a", "mapping"],
         ]
 
         for value in values:
             with self.subTest(value=value):
-                with mock.patch.object(
-                    feed_change_notifications.logger,
-                    "info",
-                ) as mock_info:
+                with (
+                    mock.patch.object(
+                        feed_change_notifications.logger,
+                        "info",
+                    ) as mock_info,
+                    self.assertLogs(
+                        "backend.pipeline.storage.feed_change_notifications",
+                        level=logging.WARNING,
+                    ) as cm,
+                ):
                     feed_change_notifications.emit_feed_change_notification(
                         value
                     )
 
                 mock_info.assert_not_called()
+                self.assertEqual(len(cm.records), 1)
+                record = cast("Any", cm.records[0])
+                self.assertEqual(
+                    record.json_fields,
+                    {
+                        "event": "feed_change_notification_dropped",
+                        "reason": "non_mapping_payload",
+                        "payload_type": type(value).__name__,
+                    },
+                )
 
     def test_logs_operational_error_for_invalid_json_string(self) -> None:
         with self.assertLogs(

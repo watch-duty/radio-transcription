@@ -37,10 +37,11 @@ def _run_gcloud_logging_read(query: str, project: str) -> list[dict[str, Any]]:
     ]
     result = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if result.returncode != 0:
-        sys.stdout.write(
-            f"WARNING: gcloud logging read failed: {result.stderr.strip()}\n"
+        msg = (
+            "gcloud logging read failed; cannot verify Feed Change "
+            f"Notifications route: {result.stderr.strip()}"
         )
-        return []
+        raise AssertionError(msg)
 
     try:
         logs = json.loads(result.stdout.strip() or "[]")

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict
 
 FEED_CHANGE_NOTIFICATION_EVENT_TYPE = (
     "radio_transcription.feed_change_notification"
@@ -17,8 +17,8 @@ class FeedChangeNotificationPayload(BaseModel):
 
     model_config = ConfigDict(extra="allow", strict=True)
 
-    event_type: str
-    schema_version: int
+    event_type: Literal["radio_transcription.feed_change_notification"]
+    schema_version: Literal[1]
     event_id: str
     action: str
     occurred_at: str
@@ -27,19 +27,3 @@ class FeedChangeNotificationPayload(BaseModel):
     feed_revision: int
     before_values: dict[str, Any]
     after_values: dict[str, Any]
-
-    @field_validator("event_type")
-    @classmethod
-    def _validate_event_type(cls, value: str) -> str:
-        if value != FEED_CHANGE_NOTIFICATION_EVENT_TYPE:
-            msg = "unsupported Feed Change Notification event_type"
-            raise ValueError(msg)
-        return value
-
-    @field_validator("schema_version")
-    @classmethod
-    def _validate_schema_version(cls, value: int) -> int:
-        if value != FEED_CHANGE_NOTIFICATION_SCHEMA_VERSION:
-            msg = "unsupported Feed Change Notification schema_version"
-            raise ValueError(msg)
-        return value

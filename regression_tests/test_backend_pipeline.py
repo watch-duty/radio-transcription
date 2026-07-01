@@ -52,13 +52,20 @@ def _poll_notification_log(
         result = subprocess.run(
             cmd, capture_output=True, text=True, check=False
         )
-        if result.returncode == 0:
-            try:
-                logs = json.loads(result.stdout.strip())
-                if logs:
-                    return
-            except json.JSONDecodeError:
-                pass
+        if result.returncode != 0:
+            msg = (
+                "gcloud logging read failed; cannot verify notification "
+                f"log: {result.stderr.strip()}"
+            )
+            raise AssertionError(msg)
+
+        try:
+            logs = json.loads(result.stdout.strip())
+            if logs:
+                return
+        except json.JSONDecodeError as exc:
+            msg = f"gcloud logging read returned invalid JSON: {exc}"
+            raise AssertionError(msg) from exc
 
         time.sleep(5)
 

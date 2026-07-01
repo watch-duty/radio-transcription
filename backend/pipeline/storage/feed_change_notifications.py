@@ -13,12 +13,16 @@ _EMIT_FAILURE_LOG_FIELDS = {
     "event": "feed_change_notification_emit_failed",
     "failure_class": "producer_emit_error",
 }
+_DROP_LOG_FIELDS = {
+    "event": "feed_change_notification_dropped",
+    "reason": "non_mapping_payload",
+}
 
 
 def emit_feed_change_notification(
     feed_audit_event: object | None,
 ) -> None:
-    """Emit a Feed Change Notification structured log. Never raises."""
+    """Emit a best-effort Feed Change Notification log. Never raises."""
     if feed_audit_event is None:
         return
 
@@ -48,6 +52,15 @@ def _normalize_feed_audit_event(
         feed_audit_event = json.loads(feed_audit_event)
 
     if not isinstance(feed_audit_event, Mapping):
+        logger.warning(
+            "Feed change notification payload dropped",
+            extra={
+                "json_fields": {
+                    **_DROP_LOG_FIELDS,
+                    "payload_type": type(feed_audit_event).__name__,
+                }
+            },
+        )
         return None
 
     payload = cast("Mapping[str, Any]", feed_audit_event)
