@@ -1539,10 +1539,10 @@ describe('TranscriptView', () => {
     });
   });
 
-  it('advances playback to the next silence segment inside a silence bundle when the current one finishes', async () => {
+  it('advances playback to the next non-speech segment inside a non-speech bundle when the current one finishes', async () => {
     const playSpy = audioEngineMock.playSpy;
 
-    const mockSilence1 = {
+    const mockNonSpeech1 = {
       id: 'silence-1',
       feedId: 'feed123',
       classification: AudioClassification.OTHER,
@@ -1556,7 +1556,7 @@ describe('TranscriptView', () => {
       createdAt: '2026-04-10T12:00:00Z',
     };
 
-    const mockSilence2 = {
+    const mockNonSpeech2 = {
       id: 'silence-2',
       feedId: 'feed123',
       classification: AudioClassification.OTHER,
@@ -1571,7 +1571,7 @@ describe('TranscriptView', () => {
     };
 
     vi.mocked(listAudioSegments).mockResolvedValue({
-      segments: [mockSilence1, mockSilence2],
+      segments: [mockNonSpeech1, mockNonSpeech2],
       nextToken: undefined,
     });
 
@@ -1598,7 +1598,7 @@ describe('TranscriptView', () => {
   });
 
   describe('consolidateAudioSegments', () => {
-    it('correctly consolidates consecutive silence segments and sorts the newest to the top', () => {
+    it('correctly consolidates consecutive non-speech segments and sorts the newest to the top', () => {
       const speech1: AudioSegment = {
         id: 'speech-1',
         feedId: 'feed-123',
@@ -1612,7 +1612,7 @@ describe('TranscriptView', () => {
         sourceAudioUris: [],
       };
 
-      const silence1: AudioSegment = {
+      const nonSpeech1: AudioSegment = {
         id: 'silence-1',
         feedId: 'feed-123',
         classification: AudioClassification.OTHER,
@@ -1625,7 +1625,7 @@ describe('TranscriptView', () => {
         sourceAudioUris: [],
       };
 
-      const silence2: AudioSegment = {
+      const nonSpeech2: AudioSegment = {
         id: 'silence-2',
         feedId: 'feed-123',
         classification: AudioClassification.OTHER,
@@ -1638,11 +1638,15 @@ describe('TranscriptView', () => {
         sourceAudioUris: [],
       };
 
-      const result = consolidateAudioSegments([speech1, silence1, silence2]);
+      const result = consolidateAudioSegments([
+        speech1,
+        nonSpeech1,
+        nonSpeech2,
+      ]);
       expect(result).toHaveLength(2);
 
-      // Silence bundle should be at the top (newest startTimestamp)
-      expect(result[0].isSilenceBundle).toBe(true);
+      // Non-speech bundle should be at the top (newest startTimestamp)
+      expect(result[0].isNonSpeechBundle).toBe(true);
       expect(result[0].startTimestamp).toBe('2026-04-10T12:00:05Z');
       expect(result[0].endTimestamp).toBe('2026-04-10T12:00:15Z');
       expect(result[0].bundledSegmentIds).toEqual(['silence-1', 'silence-2']);
@@ -1730,9 +1734,9 @@ describe('TranscriptView', () => {
         unspecifiedWithTranscript,
       ]);
       expect(result).toHaveLength(2);
-      // Neither should be a silence bundle
-      expect(result[0].isSilenceBundle).toBeUndefined();
-      expect(result[1].isSilenceBundle).toBeUndefined();
+      // Neither should be a non-speech bundle
+      expect(result[0].isNonSpeechBundle).toBeUndefined();
+      expect(result[1].isNonSpeechBundle).toBeUndefined();
     });
 
     it('injects outage segment for continuous feed when there is a gap > 10ms and missing context flags are true', () => {

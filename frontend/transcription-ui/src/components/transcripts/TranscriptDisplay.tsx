@@ -203,7 +203,7 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
               showHeader={false}
               isHighlighted={
                 audioSegment.id === highlightedSegmentId ||
-                (audioSegment.isSilenceBundle &&
+                (audioSegment.isNonSpeechBundle &&
                   audioSegment.bundledSegmentIds?.includes(
                     highlightedSegmentId ?? ''
                   ))

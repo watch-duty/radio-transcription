@@ -342,8 +342,8 @@ export function AudioDisplay({
   const isNewFirstAudioSegment =
     firstAudioSegmentId !== prevFirstAudioSegmentId;
 
-  // Check if the current top audio segment has been extended (e.g. an ongoing silence bundle).
-  // When a silence bundle is extended, its ID remains the same but its end timestamp advances.
+  // Check if the current top audio segment has been extended (e.g. an ongoing non-speech bundle).
+  // When a non-speech bundle is extended, its ID remains the same but its end timestamp advances.
   const isFirstAudioSegmentExtended =
     firstAudioSegmentEndTimestamp !== prevFirstAudioSegmentEndTimestamp;
 

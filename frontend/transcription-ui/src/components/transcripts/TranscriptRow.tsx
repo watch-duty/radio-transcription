@@ -63,7 +63,7 @@ export function TranscriptRow({
 
   const currentDate = new Date(audioSegment.startTimestamp);
 
-  const isSilence = !!audioSegment.isSilenceBundle;
+  const isNonSpeech = !!audioSegment.isNonSpeechBundle;
   const isOutage = !!audioSegment.isOutageBundle;
 
   function renderTranscriptionText(
@@ -73,7 +73,7 @@ export function TranscriptRow({
       return '[Audio unavailable]';
     }
 
-    if (isSilence) {
+    if (isNonSpeech) {
       return '[No speech detected]';
     }
 
@@ -95,8 +95,8 @@ export function TranscriptRow({
   const hasErrors = transcriptAnnotation
     ? transcriptAnnotation.errors.length > 0
     : false;
-  const isWaiting = !isSilence && !isOutage && !transcriptAnnotation;
-  const isPlaceholder = isSilence || isWaiting || hasErrors || isOutage;
+  const isWaiting = !isNonSpeech && !isOutage && !transcriptAnnotation;
+  const isPlaceholder = isNonSpeech || isWaiting || hasErrors || isOutage;
 
   const evaluationAnnotation = findEvaluationAnnotationData(
     audioSegment.annotations
@@ -105,18 +105,18 @@ export function TranscriptRow({
   const isCurrentlyPlaying =
     isAudioPlaying &&
     (currentlyPlayingSegmentId === audioSegment.id ||
-      (audioSegment.isSilenceBundle &&
+      (audioSegment.isNonSpeechBundle &&
         currentlyPlayingSegmentId &&
         audioSegment.bundledSegmentIds?.includes(currentlyPlayingSegmentId)));
 
-  const isOngoingSilence = isSilence && isTopAudioSegmentRow;
+  const isOngoingNonSpeech = isNonSpeech && isTopAudioSegmentRow;
 
   const getBorderColor = () => {
     if (isOutage) {
-      // Muted, darker grey than silence to indicate interruption
+      // Muted, darker grey than non-speech to indicate interruption
       return theme.palette.grey[400];
     }
-    if (isSilence) {
+    if (isNonSpeech) {
       return theme.palette.grey[200];
     }
     if (isCurrentlyPlaying) {
@@ -175,8 +175,8 @@ export function TranscriptRow({
           scrollMarginTop: theme.spacing(5),
           cursor: 'pointer',
           borderLeft: `5px solid ${getBorderColor()}`,
-          pt: isSilence || isOutage ? '0px !important' : undefined,
-          pb: isSilence || isOutage ? '0px !important' : undefined,
+          pt: isNonSpeech || isOutage ? '0px !important' : undefined,
+          pb: isNonSpeech || isOutage ? '0px !important' : undefined,
           '&:hover': {
             bgcolor: isHighlighted ? 'action.selected' : 'action.hover',
           },
@@ -193,7 +193,7 @@ export function TranscriptRow({
         >
           <AlertTooltip
             evaluationDecisions={
-              isSilence ? [] : (evaluationAnnotation?.decisions ?? [])
+              isNonSpeech ? [] : (evaluationAnnotation?.decisions ?? [])
             }
             ruleIdToNameMap={ruleIdToNameMap}
             rulesLoading={rulesLoading}
@@ -208,7 +208,7 @@ export function TranscriptRow({
             flexShrink: 0,
           }}
         >
-          {!isSilence && (
+          {!isNonSpeech && (
             <Typography variant="caption" color="text.secondary">
               {currentDate.toLocaleTimeString([], {
                 hour: '2-digit',
@@ -219,13 +219,13 @@ export function TranscriptRow({
               })}
             </Typography>
           )}
-          {!isOngoingSilence && (
+          {!isOngoingNonSpeech && (
             <Typography
               variant="caption"
               color="text.secondary"
               sx={{
                 opacity: 0.8,
-                fontStyle: isSilence || isOutage ? 'italic' : 'normal',
+                fontStyle: isNonSpeech || isOutage ? 'italic' : 'normal',
               }}
             >
               {formatDuration(
@@ -283,7 +283,7 @@ export function TranscriptRow({
               filter: redactTranscripts ? 'blur(6px)' : 'none',
               opacity: redactTranscripts ? 0.6 : 1,
               fontStyle:
-                isSilence || isWaiting || hasErrors || isOutage
+                isNonSpeech || isWaiting || hasErrors || isOutage
                   ? 'italic'
                   : 'normal',
             }}
@@ -297,7 +297,7 @@ export function TranscriptRow({
               />
             )}
           </Typography>
-          {!isSilence &&
+          {!isNonSpeech &&
             !isOutage &&
             (audioSegment.missingPriorContext ||
               audioSegment.missingPostContext) && (
@@ -321,7 +321,7 @@ export function TranscriptRow({
             )}
         </Box>
         <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
-          {!isSilence && !isOutage && (
+          {!isNonSpeech && !isOutage && (
             <Tooltip title="Copy transcript">
               <span>
                 <IconButton
