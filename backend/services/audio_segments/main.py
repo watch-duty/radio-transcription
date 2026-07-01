@@ -68,7 +68,10 @@ async def list_audio_segments(
     text_query: Annotated[
         str | None,
         Query(
-            description="Search query to filter audio segments by transcript text (case-insensitive substring match)"
+            description=(
+                "Search query to filter audio segments by transcript text "
+                "(case-insensitive substring match)"
+            )
         ),
     ] = None,
 ) -> ListAudioSegmentsResponse:
