@@ -29,10 +29,13 @@ def _poll_notification_log(
     start_time: float,
 ) -> None:
     """Poll Cloud Logging to verify if a notification was sent or not."""
+    environment = os.environ.get("REGRESSION_TEST_ENVIRONMENT", "dev")
+    service_name = f"notification-pipeline-{environment}"
+
     while time.time() - start_time < NOTIFICATION_POLL_TIMEOUT_SEC:
         query = (
             'resource.type="cloud_run_revision" '
-            'AND resource.labels.service_name="notification-pipeline-dev" '
+            f'AND resource.labels.service_name="{service_name}" '
             'AND textPayload:"Sending payload:" '
             f'AND textPayload:"{segment_id}"'
         )
