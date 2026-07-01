@@ -25,11 +25,12 @@ class _FakeHTTP:
         self.requests: list[tuple[tuple[object, ...], dict[str, Any]]] = []
         self.closed = False
 
-    async def post(self, *args: object, **kwargs: Any) -> object:
+    async def post(self, *args: object, **kwargs: Any) -> httpx.Response:
         self.requests.append((args, kwargs))
         response = self._responses.pop(0)
         if isinstance(response, BaseException):
             raise response
+        assert isinstance(response, httpx.Response)
         return response
 
     async def aclose(self) -> None:

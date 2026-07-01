@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 import httpx
 import tenacity
@@ -20,6 +20,18 @@ _REQUEST_TIMEOUT_SECONDS = 15.0
 _CONNECTION_LIMIT = 80
 _MAX_LOGGED_RESPONSE_BODY_CHARS = 1024
 _RETRYABLE_STATUS_CODES = {408, 429}
+
+
+class AsyncHTTPClient(Protocol):
+    async def post(
+        self,
+        url: str,
+        *,
+        content: bytes,
+        headers: Mapping[str, str],
+    ) -> httpx.Response: ...
+
+    async def aclose(self) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -57,7 +69,7 @@ class WebhookClient:
         *,
         webhook_url: str,
         api_key: str,
-        http: httpx.AsyncClient | None = None,
+        http: AsyncHTTPClient | None = None,
         wait_strategy: Any | None = None,
     ) -> None:
         self._webhook_url = webhook_url
