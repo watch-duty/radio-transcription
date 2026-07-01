@@ -349,8 +349,7 @@ export function FeedConfigurationEdit({
       if (tag.key.trim() === SYSTEM_TIMEZONE) {
         const tzValue = tag.value.trim();
         if (!isValidTimezone(tzValue)) {
-          const validTzs = Intl.supportedValuesOf('timeZone');
-          errors.tags = `Invalid timezone. Valid timezones: ${validTzs.join(', ')}`;
+          errors.tags = `Invalid timezone. Please select a valid timezone from the list.`;
           break;
         }
       }
