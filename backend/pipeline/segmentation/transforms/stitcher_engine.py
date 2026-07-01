@@ -17,7 +17,6 @@ from collections.abc import Callable, Iterator
 from dataclasses import replace
 from typing import Any
 
-import numpy as np
 from apache_beam.metrics import Metrics
 from google.cloud import storage
 
@@ -54,26 +53,6 @@ def _get_task_logger(
             "session_id": session_id or "none",
         },
     )
-
-
-def _get_audio_buffer(
-    action: datatypes.FlushAction,
-    local_buffer: list[np.ndarray] | None,
-    transmission_buffer: Any,
-) -> list[np.ndarray]:
-    """Resolves the raw audio buffer to use for flushing, prioritizing local in-memory state."""
-    if not action.clear_state:
-        # Isolated/Late chunk: process buffer individually
-        return list(action.isolated_audio_buffer)
-    if action.isolated_audio_buffer:
-        return list(action.isolated_audio_buffer)
-    if local_buffer is not None:
-        return local_buffer
-    # Fallback to reading directly from state and converting to np.ndarray
-    return [
-        np.frombuffer(b, dtype=np.int16)
-        for b in (transmission_buffer.read() or [])
-    ]
 
 
 class StitcherEngine:
@@ -210,6 +189,7 @@ class StitcherEngine:
         transmission_context: Any,
         last_start_ms_state: Any,
         timer_manager: Any,
+        out_of_order_buffer_state: Any = None,
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | tuple[str, dict[str, Any]]
     ]:
@@ -220,6 +200,7 @@ class StitcherEngine:
             transmission_context: Runtime Beam state mapping for contexts.
             last_start_ms_state: Runtime Beam state mapping for last start time.
             timer_manager: Contextual timer scheduler interface.
+            out_of_order_buffer_state: Runtime Beam state mapping for out-of-order buffer.
 
         Yields:
             Emitted elements (FlushRequest or TaggedOutput DLQ).
@@ -304,6 +285,9 @@ class StitcherEngine:
 
         # Clear state context cleanly
         transmission_context.clear()
+        last_start_ms_state.clear()
+        if out_of_order_buffer_state:
+            out_of_order_buffer_state.clear()
         timer_manager.clear()
 
     def _apply_flush_action(
@@ -664,9 +648,33 @@ class StitcherEngine:
                             trans_constants.VAD_DEFAULT_PRIMING_SEC
                             * chunk_data.sample_rate
                         )
+                        # Conditional state propagation:
+                        # To prevent the VAD's internal denoiser (UL-UNAS) from adapting to loud static
+                        # or dispatch noise and "deafening" the VAD to subsequent quiet speech in the next
+                        # chunk, we only propagate the trailing audio tail (state) if the current chunk
+                        # ended in active speech (within a 50ms tolerance).
+                        #
+                        # If the chunk ended in silence or static, we discard the state (prior_tail = None).
+                        # This forces the next chunk to perform a clean cold-start, resetting the denoiser
+                        # noise floor. While a cold-start can cause minor onset clipping (100-300ms) if the
+                        # next speech starts immediately after the boundary, this is a much safer trade-off
+                        # than risking a complete deafening of a long, quiet transmission.
+                        chunk_dur_ms = (
+                            len(chunk_data.audio)
+                            * 1000
+                            // chunk_data.sample_rate
+                        )
+                        ended_in_speech = False
+                        if chunk_data.speech_segments:
+                            last_seg = chunk_data.speech_segments[-1]
+                            if (
+                                last_seg.end_ms >= chunk_dur_ms - 50
+                            ):  # 50ms tolerance
+                                ended_in_speech = True
+
                         prior_tail = (
                             chunk_data.audio[-priming_samples:].tobytes()
-                            if len(chunk_data.audio) > 0
+                            if (len(chunk_data.audio) > 0 and ended_in_speech)
                             else None
                         )
                         new_context = replace(

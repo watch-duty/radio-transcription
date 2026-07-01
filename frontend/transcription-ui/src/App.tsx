@@ -22,6 +22,7 @@ import { RequireAdmin } from './components/common/RequireAdmin';
 import FeedConfigurationView from './components/feeds/FeedConfigurationView';
 import FeedSearchView from './components/feeds/FeedSearchView';
 import RuleConfigurationView from './components/rules/RuleConfigurationView';
+import DemoOutageView from './components/transcripts/DemoOutageView';
 import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
 
@@ -164,7 +165,7 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      {!token ? (
+      {!token && window.location.pathname !== '/demo-outage' ? (
         <Login />
       ) : (
         <AppContainer>
@@ -256,6 +257,7 @@ function App() {
                 </RequireAdmin>
               }
             />
+            <Route path="/demo-outage" element={<DemoOutageView />} />
             <Route path="/login" element={<Login />} />
           </Routes>
         </AppContainer>

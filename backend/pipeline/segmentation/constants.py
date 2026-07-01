@@ -48,7 +48,6 @@ MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 10
 WINDMILL_TIMER_MIN_ADVANCE_SECS: Final = 0.001
 GCS_DOWNLOAD_TIMEOUT_SEC: Final = 30
 DEFAULT_STALE_TIMEOUT_MS: Final = 75000
-DEFAULT_SEGMENTED_STALE_TIMEOUT_MS: Final = 5000
 DEFAULT_MAX_TRANSMISSION_DURATION_MS: Final = 59000
 DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS: Final = 60000
 DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS: Final = 10000
@@ -63,8 +62,6 @@ SHARED_DOWNLOAD_POOL_SIZE: Final = 20
 DEFAULT_VAD_POST_ROLL_MS: Final = 500
 
 # Audio Filter Parameters
-HIGHPASS_FILTER_FREQ: Final = 300
-LOWPASS_FILTER_FREQ: Final = 3000
 
 # Voice Activity Detection Defaults
 VAD_DEFAULT_HIGHPASS_HZ: Final = 300.0
@@ -80,8 +77,27 @@ VAD_DEFAULT_MIN_SPEECH_DURATION_MS: Final = 200
 # Extended to 750ms to prevent whisper/dispatcher dropouts from prematurely splitting dispatches
 VAD_DEFAULT_MIN_SILENCE_DURATION_MS: Final = 750
 VAD_DEFAULT_PAD_SEC: Final = 0.3
+
+# VAD Priming Terminology Glossary:
+# 1. prior_audio_tail (VAD_DEFAULT_PRIMING_SEC = 6.0s):
+#    The duration of the trailing audio we extract from the end of a chunk and store in the
+#    persistent state (Dataflow/Windmill) to pass to the next chunk. We store a larger buffer (6.0s)
+#    in the state so that we can adjust the active warmup window (below) in the future via config
+#    changes without needing a breaking state schema migration.
 VAD_DEFAULT_PRIMING_SEC: Final = 6.0
+
+# 2. warmup_sec (VAD_DEFAULT_WARMUP_SEC = 3.0s):
+#    The active window of the prior_audio_tail that the VAD actually runs on to warm up its denoiser
+#    and RNN states. We use 3.0s (increased from 1.5s) because empirical testing showed the UL-UNAS
+#    denoiser RNN requires up to 3.0s to fully stabilize its internal GRU states and adapt its noise floor.
+VAD_DEFAULT_WARMUP_SEC: Final = 3.0
+
+# 3. fallback_priming (VAD_DEFAULT_FALLBACK_PRIMING_SEC = 1.0s):
+#    The duration of synthetic comfort noise generated to prime the denoiser at the very start of a
+#    stream (when no prior_audio_tail exists). Silero VAD is bypassed on this fallback noise to prevent
+#    biasing it toward silence.
 VAD_DEFAULT_FALLBACK_PRIMING_SEC: Final = 1.0
+VAD_DEFAULT_DITHER_RMS: Final = 1e-6
 VAD_DEFAULT_COMP_THRESHOLD_DB: Final = -30.0
 VAD_DEFAULT_COMP_RATIO: Final = 6.0
 VAD_DEFAULT_COMP_ATTACK_MS: Final = 2.0
@@ -110,11 +126,6 @@ PRIMARY_AUDIO_STREAM_INDEX: Final = 0
 MONO_CHANNEL_COUNT: Final = 1
 
 # DSP Mathematical Heuristic Defaults
-DEFAULT_SED_FFT_SIZE: Final = 2048
-DEFAULT_SED_HOP_SIZE: Final = 512
-VAD_RMS_SILENCE_THRESHOLD: Final = 0.005
-
-
 # Voice Activity Detection Formant Spectral Gating Defaults
 VAD_SPECTRAL_MIN_TOTAL_ENERGY: Final = 1e-10
 VAD_VOCAL_ENERGY_MIN_FREQ_HZ: Final = 200.0

@@ -53,9 +53,18 @@ interface EvaluationAnnotationBackend extends BaseAnnotationBackend {
   };
 }
 
+interface WaveformAnnotationBackend extends BaseAnnotationBackend {
+  type: AnnotationType.WAVEFORM;
+  data: {
+    peaks: number[][];
+    duration_seconds: number;
+  };
+}
+
 type AnnotationBackend =
   | TranscriptAnnotationBackend
-  | EvaluationAnnotationBackend;
+  | EvaluationAnnotationBackend
+  | WaveformAnnotationBackend;
 
 interface AudioSegmentBackend {
   id: string;
@@ -105,6 +114,17 @@ function convertAnnotationBackend(response: AnnotationBackend): Annotation {
             ]
           )
         ),
+      },
+    };
+  }
+
+  if (response.type === AnnotationType.WAVEFORM) {
+    return {
+      type: response.type,
+      createdAt: response.created_at,
+      data: {
+        peaks: response.data.peaks,
+        durationSeconds: response.data.duration_seconds,
       },
     };
   }
