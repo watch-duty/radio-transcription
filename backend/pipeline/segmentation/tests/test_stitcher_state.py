@@ -3,6 +3,9 @@ from typing import Final
 
 import numpy as np
 
+from backend.pipeline.segmentation.constants import (
+    UPSTREAM_GAP_DRIFT_TOLERANCE_MS,
+)
 from backend.pipeline.segmentation.datatypes import (
     AppendBufferAction,
     AudioChunkData,
@@ -522,14 +525,15 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         )
 
     def test_upstream_gap_within_tolerance_absorbed(self) -> None:
-        """Verifies that an upstream gap within the 500ms tolerance does not trigger a flush."""
+        """Verifies that an upstream gap within the tolerance does not trigger a flush."""
         # Start an active transmission with chunk 1 ending at 3000ms
         chunk1 = mock_audio_chunk(0, 3000, [(1.0, 2.0)], "gs://fake/1.flac")
         self._process(chunk1)
 
-        # Process a second chunk that starts 400ms late (at 3400ms instead of 3000ms)
-        # This is within the 500ms tolerance, so no gap flush should be triggered.
-        chunk2 = mock_audio_chunk(3400, 3000, [], "gs://fake/2.flac")
+        # Process a second chunk that starts within the tolerance late
+        # (at 3000 + tolerance - 10 ms)
+        late_start = 3000 + UPSTREAM_GAP_DRIFT_TOLERANCE_MS - 10
+        chunk2 = mock_audio_chunk(late_start, 3000, [], "gs://fake/2.flac")
         actions = self._process(chunk2)
 
         # No forced flush actions should occur
@@ -542,14 +546,15 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         self.assertEqual(len(flush_actions), 0)
 
     def test_upstream_gap_exceeding_tolerance_flushes(self) -> None:
-        """Verifies that an upstream gap exceeding the 500ms tolerance triggers a flush."""
+        """Verifies that an upstream gap exceeding the tolerance triggers a flush."""
         # Start an active transmission with chunk 1 ending at 3000ms
         chunk1 = mock_audio_chunk(0, 3000, [(1.0, 2.0)], "gs://fake/1.flac")
         self._process(chunk1)
 
-        # Process a second chunk that starts 600ms late (at 3600ms instead of 3000ms)
-        # This exceeds the 500ms tolerance, so a gap flush should be triggered.
-        chunk2 = mock_audio_chunk(3600, 3000, [], "gs://fake/2.flac")
+        # Process a second chunk that starts past the tolerance late
+        # (at 3000 + tolerance + 10 ms)
+        late_start = 3000 + UPSTREAM_GAP_DRIFT_TOLERANCE_MS + 10
+        chunk2 = mock_audio_chunk(late_start, 3000, [], "gs://fake/2.flac")
         actions = self._process(chunk2)
 
         # A forced flush action should occur
