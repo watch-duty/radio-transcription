@@ -103,7 +103,7 @@ def test_ingestion_fire_notifications_timestamp_override(
     feed_id, _ = test_fire_notifications_feed
 
     # The mock file is "SAN-JOSE-DISP 2026-06-15 17-45-43.mp3".
-    # Timezone is America/Los_Angeles (PDT in June is UTC-7).
+    # Timezone is set to America/Los_Angeles (PDT in June is UTC-7).
     # Local time: 2026-06-15 17:45:43
     # Expected UTC time: 2026-06-16 00:45:43 UTC.
     expected_start_utc = "2026-06-16T00:45:43"
