@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 import pytest
-from urllib3.exceptions import ReadTimeoutError
+from urllib3.exceptions import ProtocolError, ReadTimeoutError
 
 from backend.pipeline.feed_change_webhook import webhook_client
 from backend.pipeline.feed_change_webhook.webhook_client import (
@@ -116,6 +116,21 @@ def test_send_retries_timeout_once() -> None:
                 "https://webhook.example.test",
                 "timeout",
             ),
+            _Response(status=204),
+        ]
+    )
+
+    result = client.send(_payload())
+
+    assert result.status_code == 204
+    assert len(http.requests) == 2
+    assert sleeps == [0.25]
+
+
+def test_send_retries_protocol_error_once() -> None:
+    client, http, sleeps = _client(
+        [
+            ProtocolError("connection reset by peer"),
             _Response(status=204),
         ]
     )

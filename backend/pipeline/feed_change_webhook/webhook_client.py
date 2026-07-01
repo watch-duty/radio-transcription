@@ -36,6 +36,7 @@ _TRANSIENT_EXCEPTIONS = (
     urllib3_exceptions.ConnectTimeoutError,
     urllib3_exceptions.MaxRetryError,
     urllib3_exceptions.NewConnectionError,
+    urllib3_exceptions.ProtocolError,
     urllib3_exceptions.ReadTimeoutError,
     urllib3_exceptions.TimeoutError,
 )
