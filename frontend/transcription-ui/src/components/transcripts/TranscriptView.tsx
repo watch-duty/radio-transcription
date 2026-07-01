@@ -26,6 +26,7 @@ import {
   useConsolidatedAudioSegments,
 } from '../../hooks/useConsolidatedAudioSegments';
 import { useScrollAnchor } from '../../hooks/useScrollAnchor';
+import { useTimelineHistogram } from '../../hooks/useTimelineHistogram';
 import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
@@ -35,6 +36,7 @@ import {
   getNextContinuousSegment,
   isWithinSegment,
 } from '../../utils/playbackUtils';
+import { TIMELINE_RANGE_DURATION_MS } from '../../utils/timeUtils';
 import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
 import FeedSearchView from '../feeds/FeedSearchView';
@@ -94,6 +96,9 @@ export function TranscriptView({
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const hasScrolledToTarget = useRef(false);
+  // Whether the once-per-feed auto-play of the latest segment has run. Reset on
+  // feed change so a new feed auto-plays, but not on a stop within the feed.
+  const hasAutoStartedRef = useRef(false);
   // Tracks whether the user has scrolled away from the top at least once, so we
   // only auto-load newer segments when they deliberately scroll back up to the
   // top (not on the initial render, which starts at the top).
@@ -257,6 +262,9 @@ export function TranscriptView({
     pollingEnabled: isViewAtTopOfAudioSegments,
     onNewSegments: handleNewAudioSegments,
     searchQuery: searchQuery,
+    // Eagerly preload the 24h overview window so the mini-map and in-window
+    // navigation need no separate fetch.
+    preloadWindowMs: TIMELINE_RANGE_DURATION_MS,
   });
 
   const audioSegments = useConsolidatedAudioSegments(
@@ -270,11 +278,27 @@ export function TranscriptView({
   const audioWindowResetKey = `${searchedFeedId}|${searchedTimestamp?.getTime() ?? ''}|${alertFilter}|${searchQuery}`;
 
   // Single source of truth for the audio timeline's visible window.
-  const { windowEndTime, windowDurationMs } = useAudioTimelineWindow({
+  const {
+    windowEndTime,
+    windowDurationMs,
+    isLatestTimeWindow,
+    jumpToLive,
+    centerWindowOn,
+  } = useAudioTimelineWindow({
     audioSegments,
     currentlyPlayingSegmentId,
     highlightedSegmentId,
     resetKey: audioWindowResetKey,
+  });
+
+  // 24h overview density for the mini-map, derived from the preloaded segments.
+  const {
+    marks: histogramMarks,
+    rangeStartMs,
+    rangeEndMs,
+  } = useTimelineHistogram({
+    segments: rawAudioSegments,
+    anchorTimestamp: searchedTimestamp,
   });
 
   // Keep the refs in sync with the audio segments so that audio lifecycle callbacks can access the latest list.
@@ -295,36 +319,48 @@ export function TranscriptView({
     [currentlyPlayingSegmentId, isAudioPlaying, togglePlay]
   );
 
-  // Automatically play the highlighted/selected segment, or the most recent segment, if play mode is active.
+  // Resolve a target id to a playable segment — the raw segment by id, else the
+  // consolidated entry containing it (a raw id inside a silence bundle) — and play it.
+  const playSegmentById = useCallback(
+    (targetId: string) => {
+      const raw = rawAudioSegments.find((s) => s.id === targetId);
+      if (raw?.playbackAudioUri) {
+        togglePlay(raw.id, raw.playbackAudioUri);
+        return;
+      }
+      const consolidated = audioSegments.find((t) =>
+        isWithinSegment(t, targetId)
+      );
+      if (consolidated?.playbackAudioUri) {
+        togglePlay(consolidated.id, consolidated.playbackAudioUri);
+      }
+    },
+    [rawAudioSegments, audioSegments, togglePlay]
+  );
+
+  // Auto-play the latest segment once per feed load, and thereafter play the
+  // highlighted segment when the user selects one. Crucially it does NOT re-start
+  // just because nothing is playing after the initial load, so stopping playback
+  // (jump-to-live, mini-map navigation) lands in the idle "listening" state at
+  // the live edge rather than re-grabbing the backlog.
   useEffect(() => {
     if (playbackIntent !== 'playing' || audioSegments.length === 0) return;
 
     const hasSelectionChange =
-      highlightedSegmentId &&
+      highlightedSegmentId != null &&
       highlightedSegmentId !== currentlyPlayingSegmentId;
-    const shouldStartPlaying = !currentlyPlayingSegmentId || hasSelectionChange;
+    const shouldAutoStart =
+      !currentlyPlayingSegmentId && !hasAutoStartedRef.current;
+    if (!hasSelectionChange && !shouldAutoStart) return;
+    if (shouldAutoStart) hasAutoStartedRef.current = true;
 
-    if (shouldStartPlaying) {
-      const targetId = highlightedSegmentId || audioSegments[0].id;
-      const segment = rawAudioSegments.find((s) => s.id === targetId);
-      if (segment && segment.playbackAudioUri) {
-        togglePlay(segment.id, segment.playbackAudioUri);
-      } else {
-        const audioSegment = audioSegments.find((t) =>
-          isWithinSegment(t, targetId)
-        );
-        if (audioSegment && audioSegment.playbackAudioUri) {
-          togglePlay(audioSegment.id, audioSegment.playbackAudioUri);
-        }
-      }
-    }
+    playSegmentById(highlightedSegmentId || audioSegments[0].id);
   }, [
     playbackIntent,
     audioSegments,
-    rawAudioSegments,
     currentlyPlayingSegmentId,
     highlightedSegmentId,
-    togglePlay,
+    playSegmentById,
   ]);
 
   const [seekTrigger, setSeekTrigger] = useState(0);
@@ -455,16 +491,49 @@ export function TranscriptView({
     setHighlightedSegmentId(segmentId);
   };
 
+  const scrollListToNearestTime = useCallback(
+    (centerMs: number) => {
+      if (audioSegments.length === 0) return;
+      let nearest = 0;
+      let nearestDist = Infinity;
+      audioSegments.forEach((segment, i) => {
+        const mid =
+          (new Date(segment.startTimestamp).getTime() +
+            new Date(segment.endTimestamp).getTime()) /
+          2;
+        const dist = Math.abs(mid - centerMs);
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearest = i;
+        }
+      });
+      virtuosoRef.current?.scrollToIndex({
+        index: nearest,
+        align: 'center',
+        // Jump rather than animate — mini-map navigation can span a long
+        // distance, where a smooth scroll would be slow and disorienting.
+        behavior: 'auto',
+      });
+    },
+    [audioSegments]
+  );
+
+  // Mini-map navigation: move the window and scroll the list to that time.
+  // Stops the current clip and drops the selection so it neither plays off-window
+  // nor re-triggers the autoplay-on-selection effect (which would recenter away
+  // from the navigated spot). Play intent is unchanged.
+  const handleCenterWindow = (centerMs: number) => {
+    stopPlayback();
+    setHighlightedSegmentId(null);
+    centerWindowOn(centerMs);
+    scrollListToNearestTime(centerMs);
+  };
+
   const handleTogglePlayPause = () => {
     if (playbackIntent === 'playing') {
       setPlaybackIntent('paused');
       if (isAudioPlaying && currentlyPlayingSegmentId) {
-        const segment = rawAudioSegments.find(
-          (s) => s.id === currentlyPlayingSegmentId
-        );
-        if (segment && segment.playbackAudioUri) {
-          togglePlay(segment.id, segment.playbackAudioUri);
-        }
+        playSegmentById(currentlyPlayingSegmentId);
       }
     } else {
       setPlaybackIntent('playing');
@@ -491,18 +560,8 @@ export function TranscriptView({
         }
       }
 
-      // Default fallback: play targetId directly
-      const segment = rawAudioSegments.find((s) => s.id === targetId);
-      if (segment && segment.playbackAudioUri) {
-        togglePlay(segment.id, segment.playbackAudioUri);
-      } else {
-        const audioSegment = audioSegments.find((t) =>
-          isWithinSegment(t, targetId)
-        );
-        if (audioSegment && audioSegment.playbackAudioUri) {
-          togglePlay(audioSegment.id, audioSegment.playbackAudioUri);
-        }
-      }
+      // Default fallback: play targetId directly.
+      playSegmentById(targetId);
     }
   };
 
@@ -541,6 +600,11 @@ export function TranscriptView({
     hasScrolledAwayFromTop.current = false;
   }, [searchedFeedId, searchedTimestamp, alertFilter, searchQuery]);
 
+  // A new feed re-arms the once-per-feed auto-play (see the autoplay effect).
+  useEffect(() => {
+    hasAutoStartedRef.current = false;
+  }, [searchedFeedId]);
+
   const handleFilterByDateTime = (date: Date | null) => {
     setSearchParams((prev) => {
       if (date) {
@@ -565,6 +629,18 @@ export function TranscriptView({
       hasScrolledToTarget.current = false;
     }
     hasScrolledAwayFromTop.current = false;
+  };
+
+  // Jump to live: return the window to the live edge and clear any date filter,
+  // landing in the "listening" state — stop the current clip, drop the selection,
+  // and set play intent, so we idle at the live edge (green) and play new audio as
+  // it arrives rather than resuming the clip that was playing.
+  const handleJumpToLive = () => {
+    stopPlayback();
+    setHighlightedSegmentId(null);
+    setPlaybackIntent('playing');
+    jumpToLive();
+    handleFilterByDateTime(null);
   };
 
   const handleFeedSelect = (feedId: string) => {
@@ -672,6 +748,10 @@ export function TranscriptView({
         onClipClick={handleClipClick}
         windowEndTime={windowEndTime}
         windowDurationMs={windowDurationMs}
+        histogramMarks={histogramMarks}
+        rangeStartMs={rangeStartMs}
+        maxEnd={rangeEndMs}
+        onCenterWindow={handleCenterWindow}
         isAudioPlaying={isAudioPlaying}
         playbackState={playbackState}
         currentAudioRef={currentAudioRef}
@@ -689,13 +769,14 @@ export function TranscriptView({
         <TranscriptActionsBar
           searchedTimestamp={searchedTimestamp}
           hasNewerAudioSegments={hasNewerAudioSegments}
+          isLatestTimeWindow={isLatestTimeWindow}
           redactTranscripts={redactTranscripts}
           setRedactTranscripts={setRedactTranscripts}
           dateTime={searchedTimestamp}
           setDateTime={handleFilterByDateTime}
           alertFilter={alertFilter}
           setAlertFilter={setAlertFilter}
-          onClickViewLatest={() => handleFilterByDateTime(null)}
+          onClickViewLatest={handleJumpToLive}
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
         />

@@ -8,6 +8,7 @@ import { type AudioSegment } from '@transcription/common';
 
 import type { PlaybackController } from '../../audio/WebAudioPlayer';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
+import { type HistogramMark } from '../../hooks/useTimelineHistogram';
 import {
   findEvaluationAnnotationData,
   findWaveformAnnotationData,
@@ -15,6 +16,7 @@ import {
 } from '../../utils/annotationUtils';
 import { type PlaybackState } from '../../utils/playbackUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
+import TimelineMiniMap from './TimelineMiniMap';
 import TimelinePlayhead from './TimelinePlayhead';
 import { computePlayhead } from './computePlayhead';
 
@@ -28,6 +30,11 @@ interface AudioDisplayProps {
   // Visible window, owned by useAudioTimelineWindow; null follows the live edge.
   windowEndTime: number | null;
   windowDurationMs: number;
+  // 24h overview density + range, for the mini-map below the window strip.
+  histogramMarks: HistogramMark[];
+  rangeStartMs: number | null;
+  maxEnd: number | null;
+  onCenterWindow: (centerMs: number) => void;
   isAudioPlaying: boolean;
   playbackState: PlaybackState;
   currentAudioRef?: React.RefObject<PlaybackController | null>;
@@ -246,6 +253,10 @@ export function AudioDisplay({
   onClipClick,
   windowEndTime,
   windowDurationMs,
+  histogramMarks,
+  rangeStartMs,
+  maxEnd,
+  onCenterWindow,
   isAudioPlaying,
   playbackState,
   currentAudioRef,
@@ -437,6 +448,15 @@ export function AudioDisplay({
               </Typography>
             ))}
         </Box>
+        <TimelineMiniMap
+          histogramMarks={histogramMarks}
+          rangeStartMs={rangeStartMs}
+          maxEnd={maxEnd}
+          windowEndTime={windowEndTime}
+          windowDurationMs={windowDurationMs}
+          isDarkTheme={isDarkTheme}
+          onCenterWindow={onCenterWindow}
+        />
       </Box>
     </Box>
   );

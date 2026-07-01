@@ -158,7 +158,9 @@ describe('useAudioTimelineWindow', () => {
     );
   });
 
-  it('recenters on the playing segment when nothing is highlighted', () => {
+  it('does not recenter on a playing-id change without a highlight change', () => {
+    // Recenter is highlight-driven; in the app playback sets the highlight too,
+    // so a bare playing-id change (no highlight) must not move the window.
     const { result, rerender } = setup({ audioSegments: [NEWEST, OLDER] });
     expect(result.current.isLatestTimeWindow).toBe(true);
 
@@ -167,9 +169,44 @@ describe('useAudioTimelineWindow', () => {
       currentlyPlayingSegmentId: 'b',
     });
 
-    expect(result.current.windowEndTime).toBeLessThan(
-      new Date(NEWEST.endTimestamp).getTime()
+    expect(result.current.isLatestTimeWindow).toBe(true);
+  });
+
+  it('centerWindowOn moves the window center to a time, clamped to the live edge', () => {
+    const { result } = setup({ audioSegments: [NEWEST, OLDER] });
+    const liveEnd = new Date(NEWEST.endTimestamp).getTime();
+    const target = new Date(OLDER.startTimestamp).getTime();
+
+    act(() => {
+      result.current.centerWindowOn(target);
+    });
+    // Window end sits half a window past the requested center.
+    expect(result.current.windowEndTime).toBe(
+      target + result.current.windowDurationMs / 2
     );
+    expect(result.current.isLatestTimeWindow).toBe(false);
+
+    // Centering near the live edge clamps the window end to it (no future gap).
+    act(() => {
+      result.current.centerWindowOn(liveEnd);
+    });
+    expect(result.current.windowEndTime).toBe(liveEnd);
+  });
+
+  it('does not undo a centered window on a head poll (no yank)', () => {
+    const { result, rerender } = setup({ audioSegments: [NEWEST, OLDER] });
+    const target = new Date(OLDER.startTimestamp).getTime();
+    act(() => {
+      result.current.centerWindowOn(target);
+    });
+    const centered = result.current.windowEndTime;
+    expect(result.current.isLatestTimeWindow).toBe(false);
+
+    // A live poll prepends a newer head; the centered window must stay put.
+    const newer = seg('c', '2026-04-20T09:10:00Z', '2026-04-20T09:10:05Z');
+    rerender({ audioSegments: [newer, NEWEST, OLDER] });
+
+    expect(result.current.windowEndTime).toBe(centered);
     expect(result.current.isLatestTimeWindow).toBe(false);
   });
 

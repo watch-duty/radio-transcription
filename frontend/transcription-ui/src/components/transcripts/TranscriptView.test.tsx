@@ -31,6 +31,7 @@ import {
 } from '@transcription/common';
 
 import { consolidateAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
+import { VIRTUOSO_START_INDEX } from '../../hooks/useScrollAnchor';
 import { getFeed } from '../../service/getFeed';
 import { listAudioSegments } from '../../service/listAudioSegments';
 import { listFeeds } from '../../service/listFeeds';
@@ -202,6 +203,8 @@ vi.mock('../../audio/WebAudioPlayer', async (importOriginal) => ({
     setVolumeDb() {}
     setPan() {}
     setSpeed() {}
+    // Real stop() detaches listeners before the async pause event, so onPause
+    // never fires — useAudioPlayback.stop() clears playback state directly.
     stop() {}
     dispose() {}
     load(
@@ -580,12 +583,13 @@ describe('TranscriptView', () => {
     // Infinite scroll: scrolling to the bottom triggers loading older
     scrollToBottom();
 
+    // Limit is anything() — the active preload sets a page size these params
+    // don't assert.
     await waitFor(() => {
-      expect(listAudioSegments).toHaveBeenCalledTimes(2);
-      expect(listAudioSegments).toHaveBeenLastCalledWith(
+      expect(listAudioSegments).toHaveBeenCalledWith(
         'feed123',
         'fake-token',
-        undefined,
+        expect.anything(),
         'next-token-123',
         undefined,
         undefined,
@@ -610,15 +614,20 @@ describe('TranscriptView', () => {
       ),
     ];
 
-    vi.mocked(listAudioSegments)
-      .mockResolvedValueOnce({
-        segments: initialAudioSegments,
-        nextToken: 'next-token-newer',
-      })
-      .mockResolvedValueOnce({
-        segments: [],
-        nextToken: undefined,
-      });
+    // Arg-driven so the window preload's extra fetches (it pages both ways
+    // around a date) don't break the scenario: the initial asc page exposes a
+    // newer-page token; everything else resolves empty.
+    vi.mocked(listAudioSegments).mockImplementation(
+      async (_feedId, _token, _limit, nextToken, _start, _end, order) => {
+        if (order === 'asc' && !nextToken) {
+          return {
+            segments: initialAudioSegments,
+            nextToken: 'next-token-newer',
+          };
+        }
+        return { segments: [], nextToken: undefined };
+      }
+    );
 
     renderTranscriptView(
       <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
@@ -632,12 +641,14 @@ describe('TranscriptView', () => {
     // Infinite scroll: scrolling away from the top and back triggers loading newer
     scrollAwayAndBackToTop();
 
+    // Loading newer uses ascending order from the newer-page token (whether
+    // triggered by the preload or the scroll-to-top). Limit is anything() — the
+    // active preload sets a page size, which these params don't assert.
     await waitFor(() => {
-      expect(listAudioSegments).toHaveBeenCalledTimes(2);
-      expect(listAudioSegments).toHaveBeenLastCalledWith(
+      expect(listAudioSegments).toHaveBeenCalledWith(
         'feed123',
         'fake-token',
-        undefined,
+        expect.anything(),
         'next-token-newer',
         undefined,
         undefined,
@@ -648,7 +659,7 @@ describe('TranscriptView', () => {
     });
   });
 
-  it('lowers firstItemIndex by the prepended count when newer segments load (scroll anchoring)', async () => {
+  it('holds scroll position (lowers firstItemIndex) when newer segments prepend in date mode', async () => {
     const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
     const initialAudioSegments = [
       makeMockAudioSegment(
@@ -682,15 +693,22 @@ describe('TranscriptView', () => {
       ),
     ];
 
-    vi.mocked(listAudioSegments)
-      .mockResolvedValueOnce({
-        segments: initialAudioSegments,
-        nextToken: 'next-token-newer',
-      })
-      .mockResolvedValueOnce({
-        segments: newerAudioSegments,
-        nextToken: undefined,
-      });
+    // Arg-driven: the initial asc page exposes a newer-page token; paging asc
+    // from it yields the two newer segments; everything else resolves empty.
+    vi.mocked(listAudioSegments).mockImplementation(
+      async (_feedId, _token, _limit, nextToken, _start, _end, order) => {
+        if (order === 'asc' && !nextToken) {
+          return {
+            segments: initialAudioSegments,
+            nextToken: 'next-token-newer',
+          };
+        }
+        if (order === 'asc' && nextToken === 'next-token-newer') {
+          return { segments: newerAudioSegments, nextToken: undefined };
+        }
+        return { segments: [], nextToken: undefined };
+      }
+    );
 
     renderTranscriptView(
       <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
@@ -700,17 +718,21 @@ describe('TranscriptView', () => {
     await waitFor(() => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
-    const before = virtuosoCallbacks.firstItemIndex ?? 0;
 
-    // Date-mode viewing-back, so anchoring is active: scrolling back to top loads
-    // the two newer segments, which prepend above the prior head.
+    // Date mode → anchoring is active. The two newer segments prepend above the
+    // prior head — here via the window preload (which pages newer around the
+    // date); scrolling back to top would do the same. Either way, anchoring must
+    // lower firstItemIndex by the prepended count so the prior view holds.
     scrollAwayAndBackToTop();
 
-    // Anchoring lowers firstItemIndex by 2 so the prior view stays put (the new
-    // items sit above the viewport rather than scrolling it).
-    await waitFor(() => {
-      expect(virtuosoCallbacks.firstItemIndex).toBe(before - 2);
-    });
+    // Longer timeout: the preload serializes older-then-newer fetches before the
+    // newer page lands.
+    await waitFor(
+      () => {
+        expect(virtuosoCallbacks.firstItemIndex).toBe(VIRTUOSO_START_INDEX - 2);
+      },
+      { timeout: 4000 }
+    );
   });
 
   it('passes correct params to listAudioSegments when loading newer transcripts with alerts filter active', async () => {
@@ -739,19 +761,32 @@ describe('TranscriptView', () => {
       ),
     ];
 
-    vi.mocked(listAudioSegments)
-      .mockResolvedValueOnce({
-        segments: initialAudioSegments,
-        nextToken: undefined,
-      })
-      .mockResolvedValueOnce({
-        segments: alertTranscripts,
-        nextToken: 'next-token-alert-newer',
-      })
-      .mockResolvedValueOnce({
-        segments: [],
-        nextToken: undefined,
-      });
+    // Arg-driven: alerts-only fetches (isAlert=true) return the alert transcript
+    // with a newer-page token; the unfiltered initial load returns Transcript 1;
+    // preload/other fetches resolve empty.
+    vi.mocked(listAudioSegments).mockImplementation(
+      async (
+        _feedId,
+        _token,
+        _limit,
+        nextToken,
+        _start,
+        _end,
+        order,
+        isAlert
+      ) => {
+        if (isAlert && order === 'asc' && !nextToken) {
+          return {
+            segments: alertTranscripts,
+            nextToken: 'next-token-alert-newer',
+          };
+        }
+        if (!isAlert && order === 'asc' && !nextToken) {
+          return { segments: initialAudioSegments, nextToken: undefined };
+        }
+        return { segments: [], nextToken: undefined };
+      }
+    );
 
     renderTranscriptView(
       <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
@@ -788,11 +823,10 @@ describe('TranscriptView', () => {
     scrollAwayAndBackToTop();
 
     await waitFor(() => {
-      expect(listAudioSegments).toHaveBeenCalledTimes(3);
-      expect(listAudioSegments).toHaveBeenLastCalledWith(
+      expect(listAudioSegments).toHaveBeenCalledWith(
         'feed123',
         'fake-token',
-        undefined,
+        expect.anything(),
         'next-token-alert-newer',
         undefined,
         undefined,
@@ -1425,7 +1459,7 @@ describe('TranscriptView', () => {
       expect(listAudioSegments).toHaveBeenCalledWith(
         'feed123',
         expect.any(String),
-        undefined,
+        expect.anything(),
         undefined,
         undefined,
         undefined,
@@ -1454,10 +1488,10 @@ describe('TranscriptView', () => {
 
     // React query should refetch transcripts using the isAlert filter
     await waitFor(() => {
-      expect(listAudioSegments).toHaveBeenLastCalledWith(
+      expect(listAudioSegments).toHaveBeenCalledWith(
         'feed123',
         expect.any(String),
-        undefined,
+        expect.anything(),
         undefined,
         undefined,
         undefined,
@@ -1520,11 +1554,10 @@ describe('TranscriptView', () => {
 
     // React query should refetch transcripts using the isAlert filter and undefined for timestamps
     await waitFor(() => {
-      expect(listAudioSegments).toHaveBeenCalledTimes(2);
-      expect(listAudioSegments).toHaveBeenLastCalledWith(
+      expect(listAudioSegments).toHaveBeenCalledWith(
         'feed123',
         expect.any(String),
-        undefined,
+        expect.anything(),
         undefined,
         undefined,
         undefined,
@@ -1549,10 +1582,35 @@ describe('TranscriptView', () => {
       ),
     ];
 
-    vi.mocked(listAudioSegments).mockResolvedValue({
-      segments: initialAudioSegments,
-      nextToken: 'next-token-newer',
-    });
+    const liveSegments = [
+      makeMockAudioSegment(
+        'live-1',
+        'feed123',
+        '2026-04-10T18:00:00Z',
+        '2026-04-10T18:00:05Z',
+        'Live transcript',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+
+    // Arg-driven: the initial date load (asc) exposes a newer-page token so
+    // "Jump to live" is enabled; the live query (desc, after jump) returns the
+    // live head; other fetches resolve empty so the preload doesn't page to cap.
+    vi.mocked(listAudioSegments).mockImplementation(
+      async (_feedId, _token, _limit, nextToken, _start, _end, order) => {
+        if (order === 'asc' && !nextToken) {
+          return {
+            segments: initialAudioSegments,
+            nextToken: 'next-token-newer',
+          };
+        }
+        if (order === 'desc') {
+          return { segments: liveSegments, nextToken: undefined };
+        }
+        return { segments: [], nextToken: undefined };
+      }
+    );
 
     renderTranscriptView(
       <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
@@ -1570,11 +1628,12 @@ describe('TranscriptView', () => {
 
     fireEvent.click(jumpToLiveButton);
 
+    // Clearing the timestamp filter re-queries live (descending, no timestamp).
     await waitFor(() => {
-      expect(listAudioSegments).toHaveBeenLastCalledWith(
+      expect(listAudioSegments).toHaveBeenCalledWith(
         'feed123',
         'fake-token',
-        undefined,
+        expect.anything(),
         undefined,
         undefined,
         undefined,
@@ -1583,6 +1642,174 @@ describe('TranscriptView', () => {
         undefined
       );
     });
+
+    // Starting from playing (the segment auto-plays on load), Jump to live lands
+    // in the idle "listening" state at the live edge — the playhead lozenge reads
+    // "Listening" rather than resuming the prior clip.
+    await waitFor(() => {
+      expect(screen.getByText('Listening')).toBeTruthy();
+    });
+  });
+
+  it('lands in listening when clicking Jump to live while paused', async () => {
+    const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+
+    const liveSegments = [
+      makeMockAudioSegment(
+        'live-1',
+        'feed123',
+        '2026-04-10T18:00:00Z',
+        '2026-04-10T18:00:05Z',
+        'Live transcript',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+
+    vi.mocked(listAudioSegments).mockImplementation(
+      async (_feedId, _token, _limit, nextToken, _start, _end, order) => {
+        if (order === 'asc' && !nextToken) {
+          return {
+            segments: initialAudioSegments,
+            nextToken: 'next-token-newer',
+          };
+        }
+        if (order === 'desc') {
+          return { segments: liveSegments, nextToken: undefined };
+        }
+        return { segments: [], nextToken: undefined };
+      }
+    );
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: [`/?feedId=feed123&timestamp=${testTimestamp}`] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    // Pause the auto-started clip so we begin from the paused state (the global
+    // control flipping back to "play" confirms the intent is paused).
+    fireEvent.click(screen.getAllByLabelText('pause')[0]);
+    await waitFor(() => {
+      expect(screen.getAllByLabelText('play')[0]).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: /Jump to live/i }));
+
+    // Even from paused, Jump to live restores the live-follow "listening" state.
+    await waitFor(() => {
+      expect(screen.getByText('Listening')).toBeTruthy();
+    });
+  });
+
+  it('moves the window without re-grabbing playback when the mini-map is clicked (from playing)', async () => {
+    const playSpy = audioEngineMock.playSpy;
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments: initialAudioSegments,
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => expect(screen.getByText('Transcript 1')).toBeTruthy());
+    // Auto-play started; at the live edge Jump to live is disabled.
+    await waitFor(() => expect(playSpy).toHaveBeenCalledTimes(1));
+    expect(
+      screen.getByRole('button', { name: /Jump to live/i })
+    ).toBeDisabled();
+
+    // jsdom reports a zero-size rect, so stub a 100px-wide strip and click at 25%.
+    const strip = screen.getByLabelText('timeline overview');
+    vi.spyOn(strip, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      width: 100,
+    } as DOMRect);
+    fireEvent.click(strip, { clientX: 25 });
+
+    // The window moved off the live edge (Jump to live re-enables) and playback
+    // was stopped — the autoplay effect must not re-grab the backlog.
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Jump to live/i })
+      ).not.toBeDisabled()
+    );
+    expect(playSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves the window without playing when the mini-map is clicked while paused', async () => {
+    const playSpy = audioEngineMock.playSpy;
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments: initialAudioSegments,
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => expect(screen.getByText('Transcript 1')).toBeTruthy());
+    await waitFor(() => expect(playSpy).toHaveBeenCalledTimes(1));
+
+    // Pause first, then navigate.
+    fireEvent.click(screen.getAllByLabelText('pause')[0]);
+    await waitFor(() =>
+      expect(screen.getAllByLabelText('play')[0]).toBeTruthy()
+    );
+
+    const strip = screen.getByLabelText('timeline overview');
+    vi.spyOn(strip, 'getBoundingClientRect').mockReturnValue({
+      left: 0,
+      width: 100,
+    } as DOMRect);
+    fireEvent.click(strip, { clientX: 25 });
+
+    // Window moves; a paused navigation never starts playback.
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Jump to live/i })
+      ).not.toBeDisabled()
+    );
+    expect(playSpy).toHaveBeenCalledTimes(1);
   });
 
   it('applies the search query filter when entered in the search bar', async () => {
@@ -1600,7 +1827,7 @@ describe('TranscriptView', () => {
       expect(listAudioSegments).toHaveBeenCalledWith(
         'feed123',
         expect.any(String),
-        undefined,
+        500,
         undefined,
         undefined,
         undefined,
@@ -1627,7 +1854,7 @@ describe('TranscriptView', () => {
       expect(listAudioSegments).toHaveBeenLastCalledWith(
         'feed123',
         expect.any(String),
-        undefined,
+        500,
         undefined,
         undefined,
         undefined,

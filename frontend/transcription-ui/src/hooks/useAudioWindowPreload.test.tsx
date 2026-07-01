@@ -116,21 +116,42 @@ describe('useAudioWindowPreload', () => {
     expect(fetchOlder).not.toHaveBeenCalled();
   });
 
-  it('caps the older preload and warns once when the window stays uncovered', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('does not re-fetch older from an unchanged boundary (no re-fire churn)', () => {
     const fetchOlder = vi.fn();
-    // Window never covered: oldest stays only 1h back across every render.
-    const uncovered = () => [seg(Date.now()), seg(Date.now() - 60 * 60 * 1000)];
+    // A fixed oldest boundary: re-renders (new array identity, same timestamps,
+    // e.g. an older page came back empty) must not re-fetch the same boundary.
+    const now = Date.now();
+    const stuck = () => [seg(now), seg(now - 60 * 60 * 1000)];
 
     const { rerender } = renderHook(
       (props: Options) => useAudioWindowPreload(props),
-      { initialProps: baseOptions({ fetchOlder, segments: uncovered() }) }
+      { initialProps: baseOptions({ fetchOlder, segments: stuck() }) }
     );
+    for (let i = 0; i < 5; i++) {
+      rerender(baseOptions({ fetchOlder, segments: stuck() }));
+    }
 
-    // Fresh segments array each render so the effect re-runs and the page
-    // counter advances; stop once past the cap.
+    expect(fetchOlder).toHaveBeenCalledTimes(1);
+  });
+
+  it('caps the older preload and warns once when a dense feed keeps advancing', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchOlder = vi.fn();
+    // Each page advances the oldest boundary (a dense feed), but only 30 min at
+    // a time, so 24h stays uncovered past the 30-page cap.
+    const now = Date.now();
+    let oldest = now - 60 * 60 * 1000;
+    const advancing = () => {
+      oldest -= 30 * 60 * 1000;
+      return [seg(now), seg(oldest)];
+    };
+
+    const { rerender } = renderHook(
+      (props: Options) => useAudioWindowPreload(props),
+      { initialProps: baseOptions({ fetchOlder, segments: advancing() }) }
+    );
     for (let i = 0; i < 35; i++) {
-      rerender(baseOptions({ fetchOlder, segments: uncovered() }));
+      rerender(baseOptions({ fetchOlder, segments: advancing() }));
     }
 
     expect(fetchOlder.mock.calls.length).toBe(30);
@@ -142,8 +163,15 @@ describe('useAudioWindowPreload', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const fetchOlder = vi.fn();
     const fetchNewer = vi.fn();
-    // Centered window uncovered on both sides: oldest inside T-12h, newest at T.
-    const uncovered = () => [seg(T), seg(T - 60 * 60 * 1000)];
+    // Both edges advance outward each render (a dense feed on both sides), in
+    // small steps so neither covers its 12h half-window before the 30-page cap.
+    let oldest = T - 60 * 60 * 1000;
+    let newest = T;
+    const advancing = () => {
+      oldest -= 10 * 60 * 1000;
+      newest += 10 * 60 * 1000;
+      return [seg(newest), seg(oldest)];
+    };
 
     const { rerender } = renderHook(
       (props: Options) => useAudioWindowPreload(props),
@@ -152,7 +180,7 @@ describe('useAudioWindowPreload', () => {
           anchorTimestamp: ANCHOR,
           fetchOlder,
           fetchNewer,
-          segments: uncovered(),
+          segments: advancing(),
         }),
       }
     );
@@ -163,7 +191,7 @@ describe('useAudioWindowPreload', () => {
           anchorTimestamp: ANCHOR,
           fetchOlder,
           fetchNewer,
-          segments: uncovered(),
+          segments: advancing(),
         })
       );
     }
@@ -177,14 +205,20 @@ describe('useAudioWindowPreload', () => {
   it('resets the page counters on a resetKey change so a new query preloads again', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const fetchOlder = vi.fn();
-    const uncovered = () => [seg(Date.now()), seg(Date.now() - 60 * 60 * 1000)];
+    // Advancing oldest so the older side keeps paging to the cap within one query.
+    const now = Date.now();
+    let oldest = now - 60 * 60 * 1000;
+    const advancing = () => {
+      oldest -= 30 * 60 * 1000;
+      return [seg(now), seg(oldest)];
+    };
 
     const { rerender } = renderHook(
       (props: Options) => useAudioWindowPreload(props),
       {
         initialProps: baseOptions({
           fetchOlder,
-          segments: uncovered(),
+          segments: advancing(),
           resetKey: 'feed-1||all',
         }),
       }
@@ -193,7 +227,7 @@ describe('useAudioWindowPreload', () => {
       rerender(
         baseOptions({
           fetchOlder,
-          segments: uncovered(),
+          segments: advancing(),
           resetKey: 'feed-1||all',
         })
       );
@@ -204,7 +238,7 @@ describe('useAudioWindowPreload', () => {
     rerender(
       baseOptions({
         fetchOlder,
-        segments: uncovered(),
+        segments: advancing(),
         resetKey: 'feed-2||all',
       })
     );
