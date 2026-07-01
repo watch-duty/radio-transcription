@@ -475,7 +475,7 @@ class TestBuildAcquireFeedsBatchSql(unittest.TestCase):
             "       leased.last_processed_filename, leased.last_bookmark_time,\n"
             "       leased.fencing_token, leased.failure_count,\n"
             "       leased.status_reason,\n"
-            "       fpi.source_feed_id\n"
+            "       fpi.source_feed_id, fpi.tags\n"
             "FROM leased\n"
             "JOIN feed_properties fpi ON fpi.feed_id = leased.id\n"
         )

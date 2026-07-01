@@ -1510,6 +1510,48 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result[0]["id"], _FEED_ID)
         self.assertEqual(result[1]["id"], _FEED_ID_B)
 
+    async def test_parses_and_returns_tags(self) -> None:
+        """Feed tags are parsed and returned in the LeasedFeed dicts."""
+        rows = [
+            {
+                "id": _FEED_ID,
+                "name": "Feed A",
+                "source_type": "bcfy_feeds",
+                "last_processed_filename": None,
+                "last_bookmark_time": None,
+                "fencing_token": 1,
+                "failure_count": 0,
+                "status_reason": None,
+                "source_feed_id": "123",
+                "tags": '[{"key": "system/timezone", "value": "America/Los_Angeles"}]',
+            },
+            {
+                "id": _FEED_ID_B,
+                "name": "Feed B",
+                "source_type": "bcfy_feeds",
+                "last_processed_filename": None,
+                "last_bookmark_time": None,
+                "fencing_token": 1,
+                "failure_count": 0,
+                "status_reason": None,
+                "source_feed_id": None,
+                "tags": [{"key": "county", "value": "Ventura"}],
+            },
+        ]
+        pool = make_mock_pool(fetch_result=rows)
+        store = FeedStore(pool)
+
+        result = await store.acquire_feeds_batch(_WORKER_ID, _DEFAULT_LIMITS)
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(
+            result[0]["tags"],
+            [{"key": "system/timezone", "value": "America/Los_Angeles"}],
+        )
+        self.assertEqual(
+            result[1]["tags"], [{"key": "county", "value": "Ventura"}]
+        )
+
     async def test_returns_empty_list_when_none_available(self) -> None:
         """Empty list returned when no feeds can be leased."""
         pool = make_mock_pool(fetch_result=[])
