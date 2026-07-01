@@ -82,7 +82,13 @@ def test_send_succeeds_on_2xx_with_expected_headers_and_body() -> None:
         "X-Api-Key": "secret-api-key",
     }
     assert json.loads(kwargs["body"]) == _payload()
-    assert kwargs["retries"] is False
+    retry_policy = kwargs["retries"]
+    assert retry_policy.total is None
+    assert retry_policy.connect is False
+    assert retry_policy.read is False
+    assert retry_policy.status is False
+    assert retry_policy.other is False
+    assert retry_policy.redirect == 3
 
 
 @pytest.mark.parametrize("status_code", [408, 429, 500, 502, 503])

@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from urllib3 import PoolManager, Timeout
+from urllib3 import PoolManager, Retry, Timeout
 from urllib3 import exceptions as urllib3_exceptions
 
 if TYPE_CHECKING:
@@ -24,6 +24,14 @@ _MAX_LOGGED_RESPONSE_BODY_CHARS = 1024
 _RETRY_JITTER_MIN_SECONDS = 0.25
 _RETRY_JITTER_MAX_SECONDS = 0.5
 _RETRYABLE_STATUS_CODES = {408, 429}
+_URLLIB3_RETRY_POLICY = Retry(
+    total=None,
+    connect=False,
+    read=False,
+    status=False,
+    other=False,
+    redirect=3,
+)
 _TRANSIENT_EXCEPTIONS = (
     urllib3_exceptions.ConnectTimeoutError,
     urllib3_exceptions.MaxRetryError,
@@ -106,7 +114,7 @@ class WebhookClient:
                     body=request_body,
                     headers=headers,
                     timeout=Timeout(total=_REQUEST_TIMEOUT_SECONDS),
-                    retries=False,
+                    retries=_URLLIB3_RETRY_POLICY,
                 )
             except _TRANSIENT_EXCEPTIONS as exc:
                 response_body = str(exc)
