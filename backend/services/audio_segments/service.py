@@ -20,7 +20,10 @@ if TYPE_CHECKING:
 
 
 class AudioSegmentService:
-    """Service for managing audio segments, handling interactions with AudioSegmentStore."""
+    """Service for managing audio segments.
+
+    Handles interactions with AudioSegmentStore.
+    """
 
     def __init__(self, store: AudioSegmentStore) -> None:
         self._store = store

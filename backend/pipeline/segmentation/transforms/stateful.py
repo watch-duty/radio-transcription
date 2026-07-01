@@ -90,7 +90,6 @@ per-chunk processing or external I/O latency increases significantly in the
 future, this value should be reduced accordingly.
 """
 
-import heapq
 import logging as std_logging
 import time
 from collections.abc import Iterable, Iterator
@@ -99,6 +98,8 @@ from typing import Any, override
 
 import apache_beam as beam
 from apache_beam.transforms.userstate import (
+    BagRuntimeState,
+    BagStateSpec,
     ReadModifyWriteRuntimeState,
     ReadModifyWriteStateSpec,
     RuntimeTimer,
@@ -156,6 +157,8 @@ def _get_task_logger(
 def _write_transmission_context(
     state_cell: Any,
     context: datatypes.TransmissionContext,
+    last_start_ms_state: Any = None,
+    out_of_order_buffer_state: Any = None,
 ) -> None:
     """Writes the context to transmission state or clears it completely if it is an empty IdleFeedState.
 
@@ -165,12 +168,34 @@ def _write_transmission_context(
     """
     if (
         isinstance(context, datatypes.IdleFeedState)
-        and not context.out_of_order_buffer
         and not context.order_timer_active
     ):
         state_cell.clear()
+        if last_start_ms_state:
+            last_start_ms_state.clear()
+        if out_of_order_buffer_state:
+            out_of_order_buffer_state.clear()
     else:
         state_cell.write(context)
+
+
+def _migrate_legacy_buffer[
+    T: (datatypes.IdleFeedState, datatypes.ActiveStitchingState)
+](
+    curr_context: T,
+    out_of_order_buffer_state: Any,
+) -> tuple[T, bool]:
+    """Migrates legacy out_of_order_buffer from TransmissionContext to BagState if present."""
+    if curr_context.out_of_order_buffer:
+        for chunk in curr_context.out_of_order_buffer:
+            out_of_order_buffer_state.add(chunk)
+        return (
+            replace(
+                curr_context, out_of_order_buffer=[], order_timer_active=True
+            ),
+            True,
+        )
+    return curr_context, False
 
 
 class StaleTimerManager:
@@ -338,19 +363,24 @@ def _manage_out_of_order_timers(
     return order_timer_active
 
 
-def process_ordering(
+def process_ordering(  # noqa: PLR0912, PLR0915
     element: tuple[str, datatypes.ChunkMetadata],
     timestamp: Timestamp,
     curr_context: datatypes.TransmissionContext,
-    gap_timer_event: RuntimeTimer,
-    gap_timer_proc: RuntimeTimer,
+    out_of_order_buffer_state: Any,
+    gap_timer_event: Any,
+    gap_timer_proc: Any,
     order_config: datatypes.OrderRestorerConfig,
     *,
     is_backfill: bool,
     max_emit: int = MAX_CHUNKS_PER_WINDMILL_BUNDLE,
 ) -> tuple[list[datatypes.BufferedChunk], datatypes.ActiveStitchingState, bool]:
     """Handles session change detection and chronological ordering via SequenceBuffer."""
-    feed_id, metadata = element
+    key_str, metadata = element
+    if "#" in key_str:
+        feed_id, _ = key_str.split("#", 1)
+    else:
+        feed_id = key_str
     task_logger = _get_task_logger(
         feed_id, metadata.session_id, "sequence-buffer"
     )
@@ -364,29 +394,98 @@ def process_ordering(
     )
 
     seq_buf = sequence_buffer.SequenceBuffer(order_config)
-    buffer_elements = curr_context.out_of_order_buffer
+
     current_ts_ms = (
         metadata.timestamp_ms
         if metadata.timestamp_ms is not None
         else int(float(timestamp) * common_constants.MS_PER_SECOND)
     )
 
-    (
-        new_expected_next_ts,
-        new_buffer_elements,
-        elements_to_emit,
-        was_late,
-        was_buffered,
-    ) = seq_buf.process_chunk(
-        current_ts_ms=current_ts_ms,
-        gcs_uri=metadata.gcs_uri,
-        expected_next_ts=curr_context.expected_next_chunk_start_ms,
-        buffer_elements=buffer_elements,
-        chunk_duration_ms=metadata.duration_ms,
-        traceparent=metadata.traceparent,
-        baggage=metadata.baggage,
-        max_emit=max_emit,
-    )
+    expected_next_ts = curr_context.expected_next_chunk_start_ms
+    if expected_next_ts is None:
+        expected_next_ts = current_ts_ms
+
+    epsilon_ms = trans_constants.DEFAULT_FLOAT_TOLERANCE_MS
+    difference = current_ts_ms - expected_next_ts
+
+    to_emit = []
+    was_late = False
+    was_buffered = False
+
+    if abs(difference) <= epsilon_ms:
+        # HAPPY PATH: The chunk matches our mathematical expectation exactly.
+        to_emit.append(
+            datatypes.BufferedChunk(
+                timestamp_ms=current_ts_ms,
+                gcs_uri=metadata.gcs_uri,
+                traceparent=metadata.traceparent,
+                baggage=metadata.baggage,
+            )
+        )
+        duration = (
+            metadata.duration_ms
+            if metadata.duration_ms is not None
+            else order_config.chunk_duration_ms
+        )
+        expected_next_ts = current_ts_ms + duration
+
+        # Drain from bag
+        buffer_elements = []
+        if curr_context.order_timer_active:
+            buffer_elements = list(out_of_order_buffer_state.read())
+
+        if buffer_elements:
+            expected_next_ts, remaining_elements, drained = (
+                seq_buf.drain_ready_elements(
+                    expected_next_ts=expected_next_ts,
+                    buffer_elements=buffer_elements,
+                    epsilon_ms=epsilon_ms,
+                    max_emit=max_emit - 1,  # -1 for the current chunk
+                )
+            )
+            to_emit.extend(drained)
+
+            # Update BagState
+            out_of_order_buffer_state.clear()
+            for c in remaining_elements:
+                out_of_order_buffer_state.add(c)
+            has_buffer_elements = len(remaining_elements) > 0
+            clamped = len(drained) >= (max_emit - 1)
+        else:
+            has_buffer_elements = False
+            clamped = False
+
+    elif difference < -epsilon_ms:
+        # LATE PATH
+        was_late = True
+        logger.info(
+            f"Yielding late chunk at {current_ts_ms} (expected {expected_next_ts}) for isolated transcription."
+        )
+        to_emit.append(
+            datatypes.BufferedChunk(
+                timestamp_ms=current_ts_ms,
+                gcs_uri=metadata.gcs_uri,
+                traceparent=metadata.traceparent,
+                baggage=metadata.baggage,
+            )
+        )
+        has_buffer_elements = (
+            curr_context.order_timer_active
+        )  # Keep whatever it was
+        clamped = False
+    else:
+        # FUTURE PATH
+        was_buffered = True
+        out_of_order_buffer_state.add(
+            datatypes.BufferedChunk(
+                timestamp_ms=current_ts_ms,
+                gcs_uri=metadata.gcs_uri,
+                traceparent=metadata.traceparent,
+                baggage=metadata.baggage,
+            )
+        )
+        has_buffer_elements = True
+        clamped = False
 
     if was_late:
         task_logger.debug(f"[Order] Late chunk: {metadata.gcs_uri}")
@@ -394,33 +493,32 @@ def process_ordering(
         task_logger.debug(
             f"[Order] Buffered chunk from future: {metadata.gcs_uri}"
         )
-    if elements_to_emit:
-        task_logger.debug(f"[Order] Releasing {len(elements_to_emit)} chunks")
+    if to_emit:
+        task_logger.debug(f"[Order] Releasing {len(to_emit)} chunks")
 
-    # Update jitter buffer state
+    # Update context
     old_expected_ts = curr_context.expected_next_chunk_start_ms
-    curr_context = replace(
-        curr_context,
-        expected_next_chunk_start_ms=new_expected_next_ts,
-        out_of_order_buffer=new_buffer_elements,
-    )
 
-    clamped = len(elements_to_emit) >= max_emit
     new_timer_active = _manage_out_of_order_timers(
         gap_timer_event=gap_timer_event,
         gap_timer_proc=gap_timer_proc,
         order_config=order_config,
         timestamp=timestamp,
         clamped=clamped,
-        has_buffer_elements=bool(new_buffer_elements),
+        has_buffer_elements=has_buffer_elements,
         order_timer_active=curr_context.order_timer_active,
         is_backfill=is_backfill,
         old_expected_ts=old_expected_ts,
-        new_expected_next_ts=new_expected_next_ts,
+        new_expected_next_ts=expected_next_ts,
     )
-    curr_context = replace(curr_context, order_timer_active=new_timer_active)
 
-    return elements_to_emit, curr_context, session_changed
+    curr_context = replace(
+        curr_context,
+        expected_next_chunk_start_ms=expected_next_ts,
+        order_timer_active=new_timer_active,
+    )
+
+    return to_emit, curr_context, session_changed
 
 
 def _evaluate_is_backfill(current_ts_ms: int, threshold_ms: int) -> bool:
@@ -517,6 +615,11 @@ class OrderedStitchAudioFn(beam.DoFn):
         "last_start_ms", beam.coders.VarIntCoder()
     )
     LAST_START_MS_STATE = beam.DoFn.StateParam(LAST_START_SPEC)
+
+    OUT_OF_ORDER_BUFFER_SPEC = BagStateSpec(
+        "out_of_order_buffer_bag", trans_coders.BufferedChunkCoder()
+    )
+    OUT_OF_ORDER_BUFFER_STATE = beam.DoFn.StateParam(OUT_OF_ORDER_BUFFER_SPEC)
 
     # --- Timers ---
 
@@ -634,6 +737,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
+        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
         gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore  # LEGACY — remove with GAP_TIMER_EVENT_SPEC
         gap_timer_event_v2: RuntimeTimer = GAP_TIMER_EVENT_V2,  # type: ignore
         gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
@@ -644,75 +748,72 @@ class OrderedStitchAudioFn(beam.DoFn):
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
     ]:
         """Intercepts chunk arrival, resolves chronological ordering, and delegates to StitcherEngine."""
-        feed_id, metadata = element
+        key_str, metadata = element
+        if "#" in key_str:
+            feed_id, _ = key_str.split("#", 1)
+        else:
+            feed_id = key_str
+
         trace_attrs = {}
         if metadata.traceparent:
             trace_attrs["traceparent"] = metadata.traceparent
         if metadata.baggage:
             trace_attrs["baggage"] = metadata.baggage
 
-        # Windmill lease guard: if we've already processed MAX_CHUNKS_PER_WINDMILL_BUNDLE
-        # in this bundle, defer this chunk to the next bundle by pushing it directly
-        # to the out-of-order buffer and setting the self-chaining deferral timer.
-        #
-        # NOTE ON TRACEBACK MISDIRECTION (FUTURE DEBUGGING):
-        # Under backlog, Dataflow bundles many elements for the same key. Because they
-        # are processed sequentially on a single thread, the collective time of running
-        # VAD on all elements can exceed Windmill's 300s lease limit. Because VAD ONNX
-        # inference is CPU-heavy (occupying 95%+ of CPU time), any worker thread dump
-        # captured during a timeout will show a traceback inside `vad.py` / `onnxruntime`.
-        # This is a classic RED HERRING: the VAD itself is not deadlocked or slow. It is
-        # simply being executed too many times sequentially. Capping the execution to 5
-        # chunks per bundle here guarantees we stay well under the 300s limit and prevents
-        # this timeout entirely.
+        # Load context and handle migration
+        curr_context = (
+            transmission_context_state.read() or datatypes.IdleFeedState()
+        )
+        initial_expected_ts = (
+            curr_context.expected_next_chunk_start_ms
+            if isinstance(curr_context, datatypes.ActiveStitchingState)
+            else None
+        )
+
+        curr_context, state_changed = _migrate_legacy_buffer(
+            curr_context, out_of_order_buffer_state
+        )
+
+        # Windmill lease guard
         if (
             self.processed_in_bundle
             >= trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
         ):
-            curr_context = (
-                transmission_context_state.read() or datatypes.IdleFeedState()
-            )
             if isinstance(curr_context, datatypes.IdleFeedState):
                 curr_context = datatypes.ActiveStitchingState(
                     session_id=metadata.session_id,
                     feed_metadata=metadata.feed_metadata,
-                    out_of_order_buffer=curr_context.out_of_order_buffer,
+                    out_of_order_buffer=[],
                     order_timer_active=curr_context.order_timer_active,
                     traceparent=metadata.traceparent,
                     baggage=metadata.baggage,
                 )
+                state_changed = True
 
-            buffer_elements = list(curr_context.out_of_order_buffer)
-            heap = [sequence_buffer.ComparableChunk(c) for c in buffer_elements]
-            heapq.heapify(heap)
             current_ts_ms = (
                 metadata.timestamp_ms
                 if metadata.timestamp_ms is not None
                 else int(float(timestamp) * common_constants.MS_PER_SECOND)
             )
-            heapq.heappush(
-                heap,
-                sequence_buffer.ComparableChunk(
-                    datatypes.BufferedChunk(
-                        current_ts_ms,
-                        metadata.gcs_uri,
-                        metadata.traceparent,
-                        metadata.baggage,
-                    )
-                ),
+            out_of_order_buffer_state.add(
+                datatypes.BufferedChunk(
+                    timestamp_ms=current_ts_ms,
+                    gcs_uri=metadata.gcs_uri,
+                    traceparent=metadata.traceparent,
+                    baggage=metadata.baggage,
+                )
             )
-            new_buffer = [item.chunk for item in heap]
+            if not curr_context.order_timer_active:
+                curr_context = replace(curr_context, order_timer_active=True)
+                state_changed = True
 
-            curr_context = replace(
-                curr_context,
-                out_of_order_buffer=new_buffer,
-            )
-            _write_transmission_context(
-                transmission_context_state, curr_context
-            )
-            # Loop control: Always advance by the minimum 1ms safety epsilon
-            # to satisfy the Runner V2 gate without triggering artificial
-            # watermark delays or Pub/Sub source gridlocks.
+            if state_changed:
+                _write_transmission_context(
+                    transmission_context_state,
+                    curr_context,
+                    last_start_ms_state,
+                    out_of_order_buffer_state,
+                )
             deferred_drain_timer.set(
                 timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
             )
@@ -729,20 +830,12 @@ class OrderedStitchAudioFn(beam.DoFn):
                 current_ts_ms,
                 self.stitch_config.backfill_lateness_threshold_ms,
             )
-            curr_context = (
-                transmission_context_state.read() or datatypes.IdleFeedState()
-            )
-            previous_expected_ts = (
-                curr_context.expected_next_chunk_start_ms
-                if isinstance(curr_context, datatypes.ActiveStitchingState)
-                else None
-            )
 
-            # Handle chronological sequence buffering
             elements_to_emit, curr_context, session_changed = process_ordering(
                 element,
                 timestamp,
                 curr_context,
+                out_of_order_buffer_state,
                 gap_timer_event_v2,
                 gap_timer_proc,
                 self.order_config,
@@ -750,9 +843,12 @@ class OrderedStitchAudioFn(beam.DoFn):
                 max_emit=trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
                 - self.processed_in_bundle,
             )
-
             task_logger = _get_task_logger(
-                feed_id, curr_context.session_id, "transcription-stitcher"
+                feed_id,
+                curr_context.session_id
+                if isinstance(curr_context, datatypes.ActiveStitchingState)
+                else metadata.session_id,
+                "transcription-stitcher",
             )
             task_logger.debug(f"[Process] Processing chunk {metadata.gcs_uri}")
 
@@ -763,9 +859,12 @@ class OrderedStitchAudioFn(beam.DoFn):
                     curr_context, prior_audio_tail=None, sample_rate=None
                 )
 
-            # Commit initial sequence context updates
+            # Commit sequence context updates
             _write_transmission_context(
-                transmission_context_state, curr_context
+                transmission_context_state,
+                curr_context,
+                last_start_ms_state,
+                out_of_order_buffer_state,
             )
 
             # Delegate chunk elements to the execution engine
@@ -779,8 +878,8 @@ class OrderedStitchAudioFn(beam.DoFn):
                     self.stitch_config.backfill_lateness_threshold_ms,
                 )
 
+                previous_expected_ts = initial_expected_ts
                 for i, chunk in enumerate(elements_to_emit):
-                    # Fetch current state context
                     curr_context = (
                         transmission_context_state.read()
                         or datatypes.IdleFeedState()
@@ -789,7 +888,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                         curr_context = datatypes.ActiveStitchingState(
                             session_id=metadata.session_id,
                             feed_metadata=metadata.feed_metadata,
-                            out_of_order_buffer=curr_context.out_of_order_buffer,
+                            out_of_order_buffer=[],
                             order_timer_active=curr_context.order_timer_active,
                             traceparent=metadata.traceparent,
                             baggage=metadata.baggage,
@@ -820,6 +919,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
+        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
@@ -832,9 +932,10 @@ class OrderedStitchAudioFn(beam.DoFn):
         """Handles the gap timeout triggered by the legacy event-time watermark timer."""
         gap_timer_event.clear()
         yield from self._handle_gap_timeout_common(
-            feed_id=feed_id,
+            key_str=feed_id,
             transmission_context_state=transmission_context_state,
             last_start_ms_state=last_start_ms_state,
+            out_of_order_buffer_state=out_of_order_buffer_state,
             stale_timer_event=stale_timer_event,
             stale_timer_proc=stale_timer_proc,
             timestamp=timestamp,
@@ -849,6 +950,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
+        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
@@ -859,9 +961,10 @@ class OrderedStitchAudioFn(beam.DoFn):
     ]:
         """Handles the gap timeout triggered by the event-time watermark."""
         yield from self._handle_gap_timeout_common(
-            feed_id=feed_id,
+            key_str=feed_id,
             transmission_context_state=transmission_context_state,
             last_start_ms_state=last_start_ms_state,
+            out_of_order_buffer_state=out_of_order_buffer_state,
             stale_timer_event=stale_timer_event,
             stale_timer_proc=stale_timer_proc,
             timestamp=timestamp,
@@ -876,6 +979,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
+        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
@@ -888,9 +992,10 @@ class OrderedStitchAudioFn(beam.DoFn):
         """Handles the gap timeout triggered by the processing-time clock."""
         gap_timer_event.clear()
         yield from self._handle_gap_timeout_common(
-            feed_id=feed_id,
+            key_str=feed_id,
             transmission_context_state=transmission_context_state,
             last_start_ms_state=last_start_ms_state,
+            out_of_order_buffer_state=out_of_order_buffer_state,
             stale_timer_event=stale_timer_event,
             stale_timer_proc=stale_timer_proc,
             timestamp=timestamp,
@@ -899,11 +1004,12 @@ class OrderedStitchAudioFn(beam.DoFn):
             timer_type="processing",
         )
 
-    def _handle_gap_timeout_common(
+    def _handle_gap_timeout_common(  # noqa: PLR0912, PLR0915
         self,
-        feed_id: str,
+        key_str: str,
         transmission_context_state: ReadModifyWriteRuntimeState,
         last_start_ms_state: ReadModifyWriteRuntimeState,
+        out_of_order_buffer_state: BagRuntimeState,
         stale_timer_event: RuntimeTimer,
         stale_timer_proc: RuntimeTimer,
         timestamp: Timestamp,
@@ -915,11 +1021,23 @@ class OrderedStitchAudioFn(beam.DoFn):
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
     ]:
         """Handles the gap timeout by advancing the expected sequence (common logic)."""
+        if "#" in key_str:
+            feed_id, _ = key_str.split("#", 1)
+        else:
+            feed_id = key_str
         curr_context = (
             transmission_context_state.read() or datatypes.IdleFeedState()
         )
         if isinstance(curr_context, datatypes.IdleFeedState):
             return
+        curr_context, state_changed = _migrate_legacy_buffer(
+            curr_context, out_of_order_buffer_state
+        )
+        if not isinstance(curr_context, datatypes.ActiveStitchingState):
+            msg = "Expected ActiveStitchingState after migration"
+            raise TypeError(msg)
+        if state_changed:
+            transmission_context_state.write(curr_context)
         trace_attrs: dict[str, str] = {}
         if curr_context.traceparent:
             trace_attrs["traceparent"] = curr_context.traceparent
@@ -937,11 +1055,8 @@ class OrderedStitchAudioFn(beam.DoFn):
             gap_timer_event.clear()
             gap_timer_proc.clear()
             curr_context = replace(curr_context, order_timer_active=False)
-            _write_transmission_context(
-                transmission_context_state, curr_context
-            )
 
-            buffer_elements = curr_context.out_of_order_buffer
+            buffer_elements = list(out_of_order_buffer_state.read())
             if buffer_elements:
                 sorted_elements = sorted(
                     buffer_elements, key=lambda x: x.timestamp_ms
@@ -957,9 +1072,6 @@ class OrderedStitchAudioFn(beam.DoFn):
                     expected_next_chunk_start_ms=new_expected,
                     missing_prior_context=True,
                 )
-                _write_transmission_context(
-                    transmission_context_state, curr_context
-                )
 
                 seq_buf = sequence_buffer.SequenceBuffer(self.order_config)
 
@@ -971,6 +1083,10 @@ class OrderedStitchAudioFn(beam.DoFn):
                         max_emit=MAX_CHUNKS_PER_WINDMILL_BUNDLE,
                     )
                 )
+
+                out_of_order_buffer_state.clear()
+                for c in new_buffer_elements:
+                    out_of_order_buffer_state.add(c)
 
                 first_chunk_ts = sorted_elements[0].timestamp_ms
                 is_backfill = _evaluate_is_backfill(
@@ -995,14 +1111,20 @@ class OrderedStitchAudioFn(beam.DoFn):
                     curr_context = replace(
                         curr_context, order_timer_active=timer_active
                     )
+                else:
+                    curr_context = replace(
+                        curr_context, order_timer_active=False
+                    )
 
                 curr_context = replace(
                     curr_context,
                     expected_next_chunk_start_ms=new_expected_next_ts,
-                    out_of_order_buffer=new_buffer_elements,
                 )
                 _write_transmission_context(
-                    transmission_context_state, curr_context
+                    transmission_context_state,
+                    curr_context,
+                    last_start_ms_state,
+                    out_of_order_buffer_state,
                 )
 
                 # Handle ready elements
@@ -1022,7 +1144,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                             curr_context = datatypes.ActiveStitchingState(
                                 session_id=active_session_id,
                                 feed_metadata=active_feed_metadata,
-                                out_of_order_buffer=curr_context.out_of_order_buffer,
+                                out_of_order_buffer=[],
                                 order_timer_active=curr_context.order_timer_active,
                                 traceparent=active_traceparent,
                                 baggage=active_baggage,
@@ -1041,6 +1163,13 @@ class OrderedStitchAudioFn(beam.DoFn):
                         )
                         results.extend(outputs)
                         previous_expected_ts = next_expected_ts
+            else:
+                _write_transmission_context(
+                    transmission_context_state,
+                    curr_context,
+                    last_start_ms_state,
+                    out_of_order_buffer_state,
+                )
 
         yield from self._yield_tagged_outputs(results)
 
@@ -1050,6 +1179,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
+        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
@@ -1058,11 +1188,21 @@ class OrderedStitchAudioFn(beam.DoFn):
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
     ]:
         """Drains deferred chunks from the sequence buffer in a fresh bundle."""
+        if "#" in feed_id:
+            feed_id, _ = feed_id.split("#", 1)
         curr_context = (
             transmission_context_state.read() or datatypes.IdleFeedState()
         )
         if isinstance(curr_context, datatypes.IdleFeedState):
             return
+        curr_context, state_changed = _migrate_legacy_buffer(
+            curr_context, out_of_order_buffer_state
+        )
+        if not isinstance(curr_context, datatypes.ActiveStitchingState):
+            msg = "Expected ActiveStitchingState after migration"
+            raise TypeError(msg)
+        if state_changed:
+            transmission_context_state.write(curr_context)
         trace_attrs: dict[str, str] = {}
         if curr_context.traceparent:
             trace_attrs["traceparent"] = curr_context.traceparent
@@ -1079,7 +1219,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         ):
             # We do NOT set missing_prior_context=True, keeping the continuous tail!
             seq_buf = sequence_buffer.SequenceBuffer(self.order_config)
-            buffer_elements = curr_context.out_of_order_buffer
+            buffer_elements = list(out_of_order_buffer_state.read())
 
             # Cap the drain based on our remaining bundle capacity.
             # In a fresh timer-activated bundle, processed_in_bundle starts at 0, so
@@ -1093,6 +1233,10 @@ class OrderedStitchAudioFn(beam.DoFn):
                     - self.processed_in_bundle,
                 )
             )
+
+            out_of_order_buffer_state.clear()
+            for c in new_buffer_elements:
+                out_of_order_buffer_state.add(c)
 
             clamped = len(elements_to_emit) >= (
                 trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
@@ -1116,10 +1260,13 @@ class OrderedStitchAudioFn(beam.DoFn):
             curr_context = replace(
                 curr_context,
                 expected_next_chunk_start_ms=new_expected_next_ts,
-                out_of_order_buffer=new_buffer_elements,
+                order_timer_active=len(new_buffer_elements) > 0,
             )
             _write_transmission_context(
-                transmission_context_state, curr_context
+                transmission_context_state,
+                curr_context,
+                last_start_ms_state,
+                out_of_order_buffer_state,
             )
 
             if elements_to_emit:
@@ -1141,7 +1288,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                         curr_context = datatypes.ActiveStitchingState(
                             session_id=active_session_id,
                             feed_metadata=active_feed_metadata,
-                            out_of_order_buffer=curr_context.out_of_order_buffer,
+                            out_of_order_buffer=[],
                             order_timer_active=curr_context.order_timer_active,
                             traceparent=active_traceparent,
                             baggage=active_baggage,
@@ -1170,21 +1317,27 @@ class OrderedStitchAudioFn(beam.DoFn):
         key: str = beam.DoFn.KeyParam,  # type: ignore
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
+        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
     ]:
         """Watermark crossed stale duration, delegate flush to StitcherEngine."""
+        if "#" in key:
+            feed_id, _ = key.split("#", 1)
+        else:
+            feed_id = key
         timer_manager = StaleTimerManager(
             stale_timer_event, stale_timer_proc, self.stitch_config
         )
         yield from self._yield_tagged_outputs(
             self.engine.handle_stale_transmission(
-                key,
+                feed_id,
                 transmission_context,
                 last_start_ms_state,
                 timer_manager,
+                out_of_order_buffer_state,
             )
         )
 
@@ -1194,21 +1347,27 @@ class OrderedStitchAudioFn(beam.DoFn):
         key: str = beam.DoFn.KeyParam,  # type: ignore
         transmission_context: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
+        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
     ]:
         """Wall-clock crossed stale duration, delegate flush to StitcherEngine."""
+        if "#" in key:
+            feed_id, _ = key.split("#", 1)
+        else:
+            feed_id = key
         timer_manager = StaleTimerManager(
             stale_timer_event, stale_timer_proc, self.stitch_config
         )
         yield from self._yield_tagged_outputs(
             self.engine.handle_stale_transmission(
-                key,
+                feed_id,
                 transmission_context,
                 last_start_ms_state,
                 timer_manager,
+                out_of_order_buffer_state,
             )
         )
 
