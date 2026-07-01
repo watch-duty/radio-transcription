@@ -150,6 +150,41 @@ class TestEvaluationService(unittest.TestCase):
         self.assertEqual(span.end, 15)
         self.assertEqual(span.matched_text, "fire")
 
+    @patch("backend.pipeline.evaluation.service.baggage")
+    @patch("backend.pipeline.evaluation.service.pipeline_metrics_logger")
+    def test_record_e2e_latency(
+        self, mock_logger: MagicMock, mock_baggage: MagicMock
+    ) -> None:
+        """Tests that e2e latency and feed_type are correctly extracted and logged."""
+        self.mock_evaluator.evaluate.return_value = {
+            "is_flagged": False,
+            "triggered_rules": [],
+        }
+
+        # Mock baggage values
+        def get_baggage_mock(key: str) -> str | None:
+            if key == "ingest_time_ms":
+                return "1000"
+            if key == "feed_type":
+                return "openmhz"
+            return None
+
+        mock_baggage.get_baggage.side_effect = get_baggage_mock
+
+        # Call evaluate
+        result_proto = self.service.evaluate(self.transcribed_audio)
+
+        self.assertIsNotNone(result_proto)
+        # Check that pipeline_metrics_logger.info was called with feed_type and latency
+        mock_logger.info.assert_called_once()
+        log_msg, kwargs = mock_logger.info.call_args
+        self.assertIn("feed_type: openmhz", log_msg[0])
+        json_fields = kwargs["extra"]["json_fields"]
+        self.assertEqual(json_fields["event_type"], "e2e_latency")
+        self.assertEqual(json_fields["feed_id"], "1234")
+        self.assertEqual(json_fields["feed_type"], "openmhz")
+        self.assertIsInstance(json_fields["latency_ms"], int)
+
 
 if __name__ == "__main__":
     unittest.main()
