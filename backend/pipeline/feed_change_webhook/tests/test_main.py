@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -34,12 +35,12 @@ class _FakeWebhookClient:
         self.payloads: list[Mapping[str, Any]] = []
         self.closed = False
 
-    def send(self, payload: Mapping[str, Any]) -> None:
+    async def send(self, payload: Mapping[str, Any]) -> None:
         self.payloads.append(payload)
         if self.error is not None:
             raise self.error
 
-    def close(self) -> None:
+    async def close(self) -> None:
         self.closed = True
 
 
@@ -245,3 +246,9 @@ def test_unexpected_webhook_client_error_returns_non_2xx_with_structured_log(
         for field in fields
     )
     _assert_no_sensitive_log_values(caplog, fields)
+
+
+def test_relay_route_does_not_use_thread_pool_delivery() -> None:
+    source = inspect.getsource(main_module.create_app)
+
+    assert "asyncio.to_thread" not in source

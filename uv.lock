@@ -811,16 +811,18 @@ version = "0.1.0"
 source = { editable = "backend/pipeline/feed_change_webhook" }
 dependencies = [
     { name = "fastapi" },
+    { name = "httpx" },
     { name = "radio-transcription-common" },
-    { name = "urllib3" },
+    { name = "tenacity" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "fastapi", specifier = ">=0.110.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "radio-transcription-common", editable = "backend/pipeline/common" },
-    { name = "urllib3", specifier = ">=2.7.0" },
+    { name = "tenacity", specifier = ">=9.1.4" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
 ]
 

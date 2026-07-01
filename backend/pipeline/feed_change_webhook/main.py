@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
+import inspect
 import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Protocol
@@ -44,7 +44,7 @@ _UNHANDLED_DELIVERY_ERROR_LOG_FIELDS = {
 
 
 class WebhookSender(Protocol):
-    def send(self, payload: Mapping[str, Any]) -> object: ...
+    async def send(self, payload: Mapping[str, Any]) -> object: ...
 
 
 def create_app(
@@ -68,7 +68,9 @@ def create_app(
         finally:
             close = getattr(client, "close", None)
             if callable(close):
-                close()
+                close_result = close()
+                if inspect.isawaitable(close_result):
+                    await close_result
 
     relay_app = FastAPI(title="Feed Change Webhook Relay", lifespan=lifespan)
 
@@ -106,7 +108,7 @@ def create_app(
             return Response(status_code=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         try:
-            await asyncio.to_thread(sender.send, payload)
+            await sender.send(payload)
         except WebhookDeliveryError:
             # NACK every destination delivery failure, including non-retryable
             # 4xx responses, so Pub/Sub retains the message for retry/DLQ

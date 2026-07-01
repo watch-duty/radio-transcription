@@ -170,5 +170,5 @@ class _FakeWebhookClient:
     def __init__(self) -> None:
         self.payloads: list[Mapping[str, Any]] = []
 
-    def send(self, payload: Mapping[str, Any]) -> None:
+    async def send(self, payload: Mapping[str, Any]) -> None:
         self.payloads.append(payload)
