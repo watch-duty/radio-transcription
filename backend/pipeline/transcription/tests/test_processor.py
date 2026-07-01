@@ -6,6 +6,7 @@ from concurrent.futures import Future
 from unittest.mock import MagicMock, patch
 
 import grpc
+import httpx
 import requests
 from cloudevents.http.event import CloudEvent
 from google.api_core.exceptions import (
@@ -1017,6 +1018,17 @@ class IsTransientExceptionTest(unittest.TestCase):
 
         e = genai_errors.APIError(400, {})
         self.assertFalse(_is_transient_exception(e))
+
+    def test_httpx_errors_transient(self) -> None:
+        mock_request = httpx.Request("GET", "https://example.com")
+        e = httpx.ReadTimeout("Timeout", request=mock_request)
+        self.assertTrue(_is_transient_exception(e))
+
+        e = httpx.ConnectError("Connection refused", request=mock_request)
+        self.assertTrue(_is_transient_exception(e))
+
+        e = httpx.RequestError("Request failed", request=mock_request)
+        self.assertTrue(_is_transient_exception(e))
 
 
 class TranscriptionProcessorTracingTest(unittest.IsolatedAsyncioTestCase):

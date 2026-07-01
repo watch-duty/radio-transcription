@@ -707,9 +707,10 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(kwargs.get("project"), "test-project")
             self.assertEqual(kwargs.get("location"), "us-test")
 
-            # Verify retry options are explicitly set to 5 attempts
+            # Verify retry options are explicitly set to 5 attempts and timeout is default
             http_options = kwargs.get("http_options")
             self.assertIsNotNone(http_options)
+            self.assertEqual(http_options.timeout, 60000)
             self.assertIsNotNone(http_options.retry_options)
             self.assertEqual(http_options.retry_options.attempts, 5)
 
@@ -721,7 +722,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             transcriber = get_transcriber(
                 TranscriberType.GEMINI,
                 "test-project",
-                '{"location": "us-test", "retry_attempts": 8, "retry_initial_delay": 2.5, "retry_max_delay": 90.0, "retry_multiplier": 3.0}',
+                '{"location": "us-test", "retry_attempts": 8, "retry_initial_delay": 2.5, "retry_max_delay": 90.0, "retry_multiplier": 3.0, "timeout_ms": 120000}',
             )
             transcriber.setup()
 
@@ -729,6 +730,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             _, kwargs = mock_client_cls.call_args
             http_options = kwargs.get("http_options")
             self.assertIsNotNone(http_options)
+            self.assertEqual(http_options.timeout, 120000)
             self.assertIsNotNone(http_options.retry_options)
             self.assertEqual(http_options.retry_options.attempts, 8)
             self.assertEqual(http_options.retry_options.initial_delay, 2.5)
