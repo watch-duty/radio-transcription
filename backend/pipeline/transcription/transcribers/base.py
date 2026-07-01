@@ -25,7 +25,8 @@ class Transcriber(abc.ABC):
         uri: str | None = None,
         duration_ms: int,
     ) -> str | None:
-        """Transcribes the audio payload either via raw bytes or a GCS URI reference and returns the text transcript.
+        """Transcribes the audio payload either via raw bytes or a GCS URI
+        reference and returns the text transcript.
 
         Args:
             audio_data: The raw audio payload bytes.

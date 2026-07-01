@@ -97,7 +97,9 @@ def cleanup_old_versions(
                 tz=UTC,
             )
         logger.debug(
-            f"Version {version.name} created at {version_create_time.isoformat()}, cutoff is {cutoff.isoformat()}"
+            f"Version {version.name} created at "
+            f"{version_create_time.isoformat()}, cutoff is "
+            f"{cutoff.isoformat()}"
         )
         if version_create_time < cutoff:
             logger.info(f"Destroying old secret version: {version.name}")
