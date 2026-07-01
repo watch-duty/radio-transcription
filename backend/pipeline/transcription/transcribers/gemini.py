@@ -23,7 +23,7 @@ DEFAULT_GEMINI_RETRY_ATTEMPTS = 5
 DEFAULT_GEMINI_RETRY_INITIAL_DELAY = 1.0
 DEFAULT_GEMINI_RETRY_MAX_DELAY = 60.0
 DEFAULT_GEMINI_RETRY_MULTIPLIER = 2.0
-DEFAULT_GEMINI_TIMEOUT_MS = 30000
+DEFAULT_GEMINI_CLIENT_TIMEOUT_MS = 30000
 
 
 # Emergency dispatch traffic frequently contains graphic descriptions of
@@ -73,7 +73,7 @@ class GeminiConfig(utils.ConfigBase):
     retry_initial_delay: float = DEFAULT_GEMINI_RETRY_INITIAL_DELAY
     retry_max_delay: float = DEFAULT_GEMINI_RETRY_MAX_DELAY
     retry_multiplier: float = DEFAULT_GEMINI_RETRY_MULTIPLIER
-    timeout_ms: int = DEFAULT_GEMINI_TIMEOUT_MS
+    client_timeout_ms: int = DEFAULT_GEMINI_CLIENT_TIMEOUT_MS
 
 
 class GeminiTranscriber(base.Transcriber):
@@ -98,7 +98,7 @@ class GeminiTranscriber(base.Transcriber):
             project=self.project_id,
             location=self.location,
             http_options=types.HttpOptions(
-                timeout=self.config.timeout_ms,
+                timeout=self.config.client_timeout_ms,
                 retry_options=types.HttpRetryOptions(
                     attempts=self.config.retry_attempts,
                     initial_delay=self.config.retry_initial_delay,

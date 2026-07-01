@@ -722,7 +722,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             transcriber = get_transcriber(
                 TranscriberType.GEMINI,
                 "test-project",
-                '{"location": "us-test", "retry_attempts": 8, "retry_initial_delay": 2.5, "retry_max_delay": 90.0, "retry_multiplier": 3.0, "timeout_ms": 120000}',
+                '{"location": "us-test", "retry_attempts": 8, "retry_initial_delay": 2.5, "retry_max_delay": 90.0, "retry_multiplier": 3.0, "client_timeout_ms": 120000}',
             )
             transcriber.setup()
 
