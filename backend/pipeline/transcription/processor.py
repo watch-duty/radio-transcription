@@ -10,6 +10,7 @@ import logging
 from typing import Any
 
 import grpc
+import httpx
 import requests
 from cloudevents.http.event import CloudEvent
 from google.api_core import exceptions
@@ -336,6 +337,8 @@ def _is_transient_exception(e: Exception) -> bool:
             | TimeoutError()
             | requests.exceptions.Timeout()
             | requests.exceptions.ConnectionError()
+            | httpx.RequestError()
+            | httpx.TimeoutException()
         ):
             return True
 

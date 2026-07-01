@@ -1263,7 +1263,10 @@ class CollectorRuntime:
                     )
                 )
                 with tracing_utils.with_baggage_and_span(
-                    {"ingest_time_ms": ingest_time_ms},
+                    {
+                        "ingest_time_ms": ingest_time_ms,
+                        "feed_type": str(feed["source_type"]),
+                    },
                     "process_captured_chunk",
                     __name__,
                 ):
