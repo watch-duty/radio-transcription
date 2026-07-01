@@ -142,16 +142,14 @@ export default function AppContainer({
               <ListItemText primary={'Feeds'} />
             </ListItemButton>
           </ListItem>
-          {isAdmin && (
-            <ListItem disablePadding>
-              <ListItemButton onClick={() => handleItemClick('/rules')}>
-                <ListItemIcon>
-                  <RuleIcon />
-                </ListItemIcon>
-                <ListItemText primary={'Rule Configuration'} />
-              </ListItemButton>
-            </ListItem>
-          )}
+          <ListItem disablePadding>
+            <ListItemButton onClick={() => handleItemClick('/rules')}>
+              <ListItemIcon>
+                <RuleIcon />
+              </ListItemIcon>
+              <ListItemText primary={'Rules'} />
+            </ListItemButton>
+          </ListItem>
           {isAdmin && (
             <ListItem disablePadding>
               <ListItemButton onClick={() => handleItemClick('/feeds')}>

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime  # noqa: TC003
-import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated
 
@@ -29,8 +28,6 @@ from .service import AudioSegmentService
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
-
-logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -71,7 +68,10 @@ async def list_audio_segments(
     text_query: Annotated[
         str | None,
         Query(
-            description="Search query to filter audio segments by transcript text (case-insensitive substring match)"
+            description=(
+                "Search query to filter audio segments by transcript text "
+                "(case-insensitive substring match)"
+            )
         ),
     ] = None,
 ) -> ListAudioSegmentsResponse:
