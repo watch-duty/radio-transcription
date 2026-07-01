@@ -268,7 +268,7 @@ export function TranscriptRow({
           }}
         >
           <Typography
-            variant={isSilence ? 'caption' : 'body1'}
+            variant={isPlaceholder ? 'caption' : 'body1'}
             color={
               hasErrors
                 ? 'error'
