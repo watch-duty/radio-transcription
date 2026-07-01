@@ -133,6 +133,7 @@ export function DemoOutageView() {
           highlightedSegmentId={highlightedId}
           onClipClick={(id) => setHighlightedId(id)}
           isAudioPlaying={false}
+          playbackState="listening"
         />
       </Paper>
 

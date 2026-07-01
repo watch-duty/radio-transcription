@@ -5,7 +5,7 @@ import enum
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 import asyncpg
 import asyncpg.exceptions
@@ -144,6 +144,7 @@ class LeasedFeed(TypedDict):
     failure_count: int
     status_reason: FeedStatusReason | None
     source_feed_id: str | None
+    tags: NotRequired[list[dict[str, str]] | None]
 
 
 class SourceObservationResult(TypedDict):
@@ -318,6 +319,13 @@ class FeedStore:
             msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
             raise ValueError(msg) from e
         status_reason_raw = row["status_reason"]
+        tags_raw = row.get("tags")
+        tags = None
+        if tags_raw is not None:
+            tags = (
+                json.loads(tags_raw) if isinstance(tags_raw, str) else tags_raw
+            )
+
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
@@ -332,6 +340,7 @@ class FeedStore:
                 else None
             ),
             source_feed_id=row["source_feed_id"],
+            tags=tags,
         )
 
     async def update_feed_progress(

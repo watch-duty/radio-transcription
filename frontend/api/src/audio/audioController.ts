@@ -168,6 +168,7 @@ export class ListAudioSegmentsQueryParams {
   endTime?: string;
   order?: 'asc' | 'desc';
   isAlert?: boolean;
+  textQuery?: string;
 }
 
 @Route('api/v1/audioSegments')
@@ -195,6 +196,9 @@ export class AudioController extends Controller {
       // Can be true/false, just not undefined.
       if (query.isAlert !== undefined) {
         queryParams.append('is_alert', query.isAlert.toString());
+      }
+      if (query.textQuery) {
+        queryParams.append('text_query', query.textQuery);
       }
 
       const client = await getServiceClient(AUDIO_SEGMENTS_API_URL);

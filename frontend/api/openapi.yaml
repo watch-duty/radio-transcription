@@ -535,6 +535,8 @@ components:
             - desc
         isAlert:
           type: boolean
+        textQuery:
+          type: string
       type: object
       additionalProperties: false
   securitySchemes:
@@ -1661,6 +1663,11 @@ paths:
           required: false
           schema:
             type: boolean
+        - in: query
+          name: textQuery
+          required: false
+          schema:
+            type: string
       x-google-backend: radio-transcription-api
 servers:
   - url: https://${radio_transcription_api_service_name}/
