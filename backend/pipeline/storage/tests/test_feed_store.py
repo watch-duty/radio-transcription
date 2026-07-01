@@ -1237,7 +1237,7 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
     async def test_duplicate_failure_summary_logs_are_not_emitted(
         self,
     ) -> None:
-        """Audit notifications replace duplicate storage failure summaries."""
+        """Audit notifications replace duplicate non-quarantine summaries."""
         pool = make_mock_pool(transaction=True)
         pool.acquired_connection.fetchrow.side_effect = [
             _failure_update_row(
@@ -1256,7 +1256,10 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
                 "backend.pipeline.storage.feed_store.feed_change_notifications",
                 create=True,
             ),
-            self.assertNoLogs("backend.pipeline.storage.feed_store", "INFO"),
+            self.assertLogs(
+                "backend.pipeline.storage.feed_store",
+                "INFO",
+            ) as logs,
         ):
             await store.report_feed_failure(
                 _FEED_ID,
@@ -1270,6 +1273,12 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
                 1,
                 **_runtime_prior_kwargs(),
             )
+
+        self.assertNotIn("Feed failure recorded", "\n".join(logs.output))
+        self.assertIn(
+            "Feed failure threshold reached",
+            "\n".join(logs.output),
+        )
 
     async def test_returns_quarantined_status(self) -> None:
         """Quarantined status string is returned at threshold."""

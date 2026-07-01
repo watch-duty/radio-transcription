@@ -537,6 +537,15 @@ class FeedStore:
             return None
 
         status: str = row["status"]
+        if status == "quarantined":
+            logger.critical(
+                "Feed failure threshold reached — status set to quarantined",
+                extra={
+                    "feed_id": str(feed_id),
+                    "failure_count": row["failure_count"],
+                    "reason": reason,
+                },
+            )
         feed_change_notifications.emit_feed_change_notification(
             row.get("feed_audit_event")
         )
