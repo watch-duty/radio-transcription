@@ -10,7 +10,8 @@ export async function listAudioSegments(
   startTime?: number | string,
   endTime?: number | string,
   order?: 'asc' | 'desc',
-  isAlert?: boolean
+  isAlert?: boolean,
+  textQuery?: string
 ): Promise<{ segments: AudioSegment[]; nextToken: string | undefined }> {
   let url = `${import.meta.env.VITE_API_BASE_URL}/api/v1/audioSegments/${feedId}`;
   const params = new URLSearchParams();
@@ -31,6 +32,7 @@ export async function listAudioSegments(
   if (order) params.append('order', order);
   // Can be true/false, just not undefined.
   if (isAlert !== undefined) params.append('isAlert', isAlert.toString());
+  if (textQuery) params.append('textQuery', textQuery);
   if (params.toString()) {
     url += `?${params.toString()}`;
   }

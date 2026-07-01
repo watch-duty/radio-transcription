@@ -253,6 +253,8 @@ export function TranscriptView({
     };
   }, []);
 
+  const [searchQuery, setSearchQuery] = useState('');
+
   const {
     rawAudioSegments,
     loadOlderAudioSegments: fetchOlderAudioSegments,
@@ -274,6 +276,7 @@ export function TranscriptView({
     isFeedsSuccess,
     pollingEnabled: isViewAtTopOfAudioSegments,
     onNewSegments: handleNewAudioSegments,
+    searchQuery: searchQuery,
   });
 
   const audioSegments = useConsolidatedAudioSegments(
@@ -559,20 +562,23 @@ export function TranscriptView({
     }
   }, [isFetchingNewerAudioSegments, audioSegments]);
 
-  // A different feed / timestamp / alert filter replaces the list wholesale
+  // A different feed / timestamp / alert filter / search query replaces the list wholesale
   // rather than prepending, so reset the anchoring baseline.
   const [prevFeedId, setPrevFeedId] = useState(searchedFeedId);
   const [prevTimestamp, setPrevTimestamp] = useState(searchedTimestamp);
   const [prevAlertFilter, setPrevAlertFilter] = useState(alertFilter);
+  const [prevSearchQuery, setPrevSearchQuery] = useState(searchQuery);
 
   if (
     searchedFeedId !== prevFeedId ||
     searchedTimestamp?.getTime() !== prevTimestamp?.getTime() ||
-    alertFilter !== prevAlertFilter
+    alertFilter !== prevAlertFilter ||
+    searchQuery !== prevSearchQuery
   ) {
     setPrevFeedId(searchedFeedId);
     setPrevTimestamp(searchedTimestamp);
     setPrevAlertFilter(alertFilter);
+    setPrevSearchQuery(searchQuery);
     setFirstItemIndex(VIRTUOSO_START_INDEX);
   }
 
@@ -580,7 +586,7 @@ export function TranscriptView({
   useEffect(() => {
     newerLoadAnchorId.current = null;
     hasScrolledAwayFromTop.current = false;
-  }, [searchedFeedId, searchedTimestamp, alertFilter]);
+  }, [searchedFeedId, searchedTimestamp, alertFilter, searchQuery]);
 
   const handleFilterByDateTime = (date: Date | null) => {
     setSearchParams((prev) => {
@@ -616,6 +622,7 @@ export function TranscriptView({
     setHighlightedSegmentId(null);
     setIsViewAtTopOfAudioSegments(true);
     setPlaybackIntent('playing');
+    setSearchQuery('');
     // Update URL params
     setSearchParams((prev) => {
       prev.set('feedId', feedId);
@@ -733,6 +740,8 @@ export function TranscriptView({
           alertFilter={alertFilter}
           setAlertFilter={setAlertFilter}
           onClickViewLatest={() => handleFilterByDateTime(null)}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
         />
         {audioSegments.length > 0 && isFeedsSuccess ? (
           <TranscriptDisplay
