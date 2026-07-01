@@ -15,9 +15,15 @@ DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 # Defensively handle both proto (UPPERCASE) and pythonic (PascalCase) SDK enum casings
 _VALID_FINISH_REASONS = {"STOP", "MAX_TOKENS", "Stop", "MaxTokens"}
 
-# Model configuration defaults
 _DEFAULT_TEMPERATURE = 0.0
 _DEFAULT_MAX_OUTPUT_TOKENS = 512
+
+# API retry defaults
+DEFAULT_GEMINI_RETRY_ATTEMPTS = 5
+DEFAULT_GEMINI_RETRY_INITIAL_DELAY = 1.0
+DEFAULT_GEMINI_RETRY_MAX_DELAY = 60.0
+DEFAULT_GEMINI_RETRY_MULTIPLIER = 2.0
+
 
 # Emergency dispatch traffic frequently contains graphic descriptions of
 # violence, accidents, or criminal activity. To prevent dropping valid
@@ -62,6 +68,12 @@ class GeminiConfig(utils.ConfigBase):
     )
     prompt: str | None = prompts.GEMINI_PROMPT
 
+    # Retry configurations for robust rate-limit/transient failure handling
+    retry_attempts: int = DEFAULT_GEMINI_RETRY_ATTEMPTS
+    retry_initial_delay: float = DEFAULT_GEMINI_RETRY_INITIAL_DELAY
+    retry_max_delay: float = DEFAULT_GEMINI_RETRY_MAX_DELAY
+    retry_multiplier: float = DEFAULT_GEMINI_RETRY_MULTIPLIER
+
 
 class GeminiTranscriber(base.Transcriber):
     """Transcriber implementation using Google GenAI SDK with Gemini 3.1."""
@@ -86,7 +98,10 @@ class GeminiTranscriber(base.Transcriber):
             location=self.location,
             http_options=types.HttpOptions(
                 retry_options=types.HttpRetryOptions(
-                    attempts=5,  # Retry 5 times with exponential backoff
+                    attempts=self.config.retry_attempts,
+                    initial_delay=self.config.retry_initial_delay,
+                    max_delay=self.config.retry_max_delay,
+                    exp_base=self.config.retry_multiplier,
                 )
             ),
         )
