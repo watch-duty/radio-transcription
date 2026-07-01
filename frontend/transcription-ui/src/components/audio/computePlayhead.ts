@@ -7,7 +7,7 @@ interface Playhead {
   show: boolean;
   state: PlaybackState;
   // Horizontal position within the timeline, as a percentage (0–100).
-  left: number;
+  leftOffsetPct: number;
   label: string;
 }
 
@@ -51,10 +51,13 @@ export function computePlayhead({
   const time =
     state === 'listening' ? liveEdge : (playbackPosition ?? liveEdge);
 
-  const left =
+  const leftOffsetPct =
     time !== null ? ((time - startTime) / windowDurationMs) * 100 : null;
   const show =
-    audioSegments.length > 0 && left !== null && left >= 0 && left <= 100;
+    audioSegments.length > 0 &&
+    leftOffsetPct !== null &&
+    leftOffsetPct >= 0 &&
+    leftOffsetPct <= 100;
 
   const label =
     state === 'listening'
@@ -63,5 +66,5 @@ export function computePlayhead({
         ? formatClockTime(time, true)
         : '';
 
-  return { show, state, left: left ?? 0, label };
+  return { show, state, leftOffsetPct: leftOffsetPct ?? 0, label };
 }

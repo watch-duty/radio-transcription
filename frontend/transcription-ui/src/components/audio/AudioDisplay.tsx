@@ -502,7 +502,7 @@ export function AudioDisplay({
           {playhead.show && (
             <TimelinePlayhead
               state={playhead.state}
-              left={playhead.left}
+              leftOffsetPct={playhead.leftOffsetPct}
               label={playhead.label}
             />
           )}

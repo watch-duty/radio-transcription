@@ -36,7 +36,7 @@ describe('computePlayhead', () => {
   it('rests at the live edge while listening', () => {
     const p = computePlayhead({ ...base, state: 'listening' });
     expect(p.show).toBe(true);
-    expect(p.left).toBe(80);
+    expect(p.leftOffsetPct).toBe(80);
     expect(p.label).toBe('Listening');
   });
 
@@ -47,7 +47,7 @@ describe('computePlayhead', () => {
       currentlyPlayingSegmentId: 'p',
       localCurrentTimeSeconds: 0.1, // 400ms start + 100ms = 500 → 50%
     });
-    expect(p.left).toBe(50);
+    expect(p.leftOffsetPct).toBe(50);
     expect(p.label).toMatch(/^\d{2}:\d{2}:\d{2}$/);
   });
 
@@ -63,7 +63,7 @@ describe('computePlayhead', () => {
       currentlyPlayingSegmentId: 'r2', // a raw member, not the bundle's own id
       localCurrentTimeSeconds: 0.1, // positioned within the bundle, not at live edge
     });
-    expect(p.left).toBe(50);
+    expect(p.leftOffsetPct).toBe(50);
   });
 
   it('freezes at the playback position when paused mid-clip', () => {
@@ -73,7 +73,7 @@ describe('computePlayhead', () => {
       currentlyPlayingSegmentId: 'p',
       localCurrentTimeSeconds: 0.1,
     });
-    expect(p.left).toBe(50);
+    expect(p.leftOffsetPct).toBe(50);
     expect(p.label).toMatch(/^\d{2}:\d{2}:\d{2}$/);
   });
 
@@ -84,7 +84,7 @@ describe('computePlayhead', () => {
       currentlyPlayingSegmentId: 'p', // ends at 600 → 60%
       localCurrentTimeSeconds: 10, // 400ms + 10s overshoots well past the end
     });
-    expect(p.left).toBe(60);
+    expect(p.leftOffsetPct).toBe(60);
   });
 
   it('falls back to the live edge when paused straight from listening', () => {
@@ -93,7 +93,7 @@ describe('computePlayhead', () => {
       state: 'paused',
       currentlyPlayingSegmentId: null,
     });
-    expect(p.left).toBe(80);
+    expect(p.leftOffsetPct).toBe(80);
   });
 
   it('hides when there are no segments', () => {

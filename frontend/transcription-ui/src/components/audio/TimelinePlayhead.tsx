@@ -7,11 +7,15 @@ import { type PlaybackState } from '../../utils/playbackUtils';
 interface TimelinePlayheadProps {
   state: PlaybackState;
   // Horizontal position within the timeline, as a percentage (0–100).
-  left: number;
+  leftOffsetPct: number;
   label: string;
 }
 
-function TimelinePlayhead({ state, left, label }: TimelinePlayheadProps) {
+function TimelinePlayhead({
+  state,
+  leftOffsetPct,
+  label,
+}: TimelinePlayheadProps) {
   const theme = useTheme();
   const color = {
     playing: theme.palette.error.main,
@@ -21,9 +25,9 @@ function TimelinePlayhead({ state, left, label }: TimelinePlayheadProps) {
 
   // Keep the lozenge from spilling past the timeline edges.
   const lozengeTransform =
-    left < 8
+    leftOffsetPct < 8
       ? 'translateX(0)'
-      : left > 92
+      : leftOffsetPct > 92
         ? 'translateX(-100%)'
         : 'translateX(-50%)';
 
@@ -32,7 +36,7 @@ function TimelinePlayhead({ state, left, label }: TimelinePlayheadProps) {
       data-testid="timeline-playhead"
       sx={{
         position: 'absolute',
-        left: `${left}%`,
+        left: `${leftOffsetPct}%`,
         top: 0,
         bottom: 0,
         width: '2px',
