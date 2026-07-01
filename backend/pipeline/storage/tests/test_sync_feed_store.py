@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import pathlib
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import cast
@@ -34,10 +34,6 @@ def _feed_audit_event(
         "before_values": {"status": "active"},
         "after_values": {"status": "unclaimed"},
     }
-
-
-def sync_feed_store_path() -> pathlib.Path:
-    return pathlib.Path("backend/pipeline/storage/sync_feed_store.py")
 
 
 def _make_store(
@@ -311,10 +307,37 @@ class TestRecordFailure:
             None
         )
 
-    def test_duplicate_failure_summary_log_is_not_in_store(self) -> None:
-        text = sync_feed_store_path().read_text()
+    def test_duplicate_failure_summary_log_is_not_emitted(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+        feed_id = uuid.uuid4()
+        conn.execute.return_value.fetchone.return_value = {
+            "feed_audit_event": _feed_audit_event(
+                feed_id, "feed.failure_reported"
+            ),
+        }
 
-        assert "Feed failure recorded" not in text
+        with (
+            patch(
+                "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
+                create=True,
+            ),
+            caplog.at_level(
+                logging.INFO,
+                logger="backend.pipeline.storage.sync_feed_store",
+            ),
+        ):
+            store.record_failure(
+                feed_id,
+                actor_id=_ECHO_ACTOR_ID,
+                reason="echo_recording_download_failed",
+                status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            )
+
+        assert "Feed failure recorded" not in caplog.messages
 
     def test_rejects_missing_actor_id(self) -> None:
         conn = _make_mock_conn()
@@ -387,10 +410,36 @@ class TestRecordNonBudgetedFailure:
         conn.execute.return_value.fetchone.assert_called_once_with()
         notifications.emit_feed_change_notification.assert_not_called()
 
-    def test_duplicate_non_budgeted_summary_log_is_not_in_store(self) -> None:
-        text = sync_feed_store_path().read_text()
+    def test_duplicate_non_budgeted_summary_log_is_not_emitted(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+        feed_id = uuid.uuid4()
+        conn.execute.return_value.fetchone.return_value = {
+            "feed_audit_event": _feed_audit_event(
+                feed_id, "feed.failure_reported"
+            ),
+        }
 
-        assert "Non-budgeted feed failure recorded" not in text
+        with (
+            patch(
+                "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
+                create=True,
+            ),
+            caplog.at_level(
+                logging.INFO,
+                logger="backend.pipeline.storage.sync_feed_store",
+            ),
+        ):
+            store.record_non_budgeted_failure(
+                feed_id,
+                actor_id=_ECHO_ACTOR_ID,
+                status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            )
+
+        assert "Non-budgeted feed failure recorded" not in caplog.messages
 
     def test_rejects_missing_actor_id(self) -> None:
         conn = _make_mock_conn()

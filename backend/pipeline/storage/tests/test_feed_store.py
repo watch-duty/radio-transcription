@@ -1234,14 +1234,42 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         pool.acquired_connection.execute.assert_not_awaited()
         notifications.emit_feed_change_notification.assert_not_called()
 
-    def test_duplicate_failure_summary_logs_are_not_in_store(self) -> None:
+    async def test_duplicate_failure_summary_logs_are_not_emitted(
+        self,
+    ) -> None:
         """Audit notifications replace duplicate storage failure summaries."""
-        text = pathlib.Path(
-            "backend/pipeline/storage/feed_store.py"
-        ).read_text()
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = [
+            _failure_update_row(
+                feed_audit_event=_feed_audit_event("feed.failure_reported"),
+            ),
+            _failure_update_row(
+                status="quarantined",
+                failure_count=5,
+                feed_audit_event=_feed_audit_event("feed.quarantined"),
+            ),
+        ]
+        store = FeedStore(pool)
 
-        self.assertNotIn("Feed failure threshold reached", text)
-        self.assertNotIn("Feed failure recorded", text)
+        with (
+            mock.patch(
+                "backend.pipeline.storage.feed_store.feed_change_notifications",
+                create=True,
+            ),
+            self.assertNoLogs("backend.pipeline.storage.feed_store", "INFO"),
+        ):
+            await store.report_feed_failure(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                **_runtime_prior_kwargs(),
+            )
+            await store.report_feed_failure(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                **_runtime_prior_kwargs(),
+            )
 
     async def test_returns_quarantined_status(self) -> None:
         """Quarantined status string is returned at threshold."""
