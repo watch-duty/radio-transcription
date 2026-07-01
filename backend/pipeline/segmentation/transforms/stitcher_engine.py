@@ -450,6 +450,9 @@ class StitcherEngine:
                 "stitching_single_chunk",
                 "backend.pipeline.segmentation.transforms.stateful",
             ):
+                if clear_buffer:
+                    previous_expected_ts = None
+
                 if (
                     previous_expected_ts is not None
                     and chunk.timestamp_ms > previous_expected_ts

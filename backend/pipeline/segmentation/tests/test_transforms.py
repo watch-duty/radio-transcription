@@ -2469,6 +2469,100 @@ class DlqTaggingTest(unittest.TestCase):
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
     )
+    def test_mid_stream_session_transition_resets_timeline(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that an immediate mid-stream session transition resets the timeline
+        and does not trigger late chunk processing or false gaps against the old session.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+        chunk_data_1 = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(16000 * 3, dtype=np.int16),
+            speech_segments=[TimeRange(0, 3000)],
+            gcs_uri="gs://bucket/chunk1.flac",
+            duration_ms=3000,
+            sample_rate=16000,
+        )
+        chunk_data_2 = AudioChunkData(
+            start_ms=200000,
+            audio=np.zeros(16000 * 3, dtype=np.int16),
+            speech_segments=[TimeRange(0, 3000)],
+            gcs_uri="gs://bucket/chunk2.flac",
+            duration_ms=3000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.side_effect = [
+            chunk_data_1,
+            chunk_data_2,
+        ]
+
+        fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
+            self._make_fn_and_states(OrderedStitchAudioFn)
+        )
+        fn.setup()
+
+        # 1. Process first chunk (Session 1)
+        metadata_1 = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk1.flac",
+            session_id="session-1",
+            duration_ms=3000,
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+            traceparent="traceparent-1",
+        )
+        list(
+            fn.process(
+                element=("test-feed", metadata_1),
+                timestamp=Timestamp(100),
+                transmission_context_state=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
+                out_of_order_buffer_state=mock_state_buffer,  # type: ignore
+                gap_timer_event=MagicMock(),
+                gap_timer_event_v2=MagicMock(),
+                gap_timer_proc=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        saved_context_1 = mock_state_context.read()
+        self.assertEqual(saved_context_1.session_id, "session-1")
+
+        # 2. Process second chunk (Session 2) immediately (no stale flush)
+        # The timestamp is 200000ms (100 seconds after chunk 1).
+        metadata_2 = ChunkMetadata(
+            gcs_uri="gs://bucket/chunk2.flac",
+            session_id="session-2",
+            duration_ms=3000,
+            feed_metadata=FeedMetadata(feed_name="test-feed"),
+            traceparent="traceparent-2",
+        )
+        list(
+            fn.process(
+                element=("test-feed", metadata_2),
+                timestamp=Timestamp(200),
+                transmission_context_state=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
+                out_of_order_buffer_state=mock_state_buffer,  # type: ignore
+                gap_timer_event=MagicMock(),
+                gap_timer_event_v2=MagicMock(),
+                gap_timer_proc=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # Context must be reset and updated to Session 2 with missing_prior_context=True
+        saved_context_2 = mock_state_context.read()
+        self.assertIsNotNone(saved_context_2)
+        self.assertEqual(saved_context_2.session_id, "session-2")
+        self.assertEqual(saved_context_2.traceparent, "traceparent-2")
+        self.assertTrue(saved_context_2.missing_prior_context)
+        self.assertEqual(saved_context_2.expected_next_chunk_start_ms, 203000)
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
     def test_overlap_check_and_state_updates_conditioned_on_backfill_and_clear_state(
         self, mock_audio_processor: MagicMock
     ) -> None:
