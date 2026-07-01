@@ -2,6 +2,19 @@ import { SourceType } from '@transcription/common';
 import type { RuleConditions, RuleCreate } from '@transcription/common';
 
 /**
+ * Validates whether a given string is a valid timezone.
+ * NOTE: The 'system/timezone' tag is currently only recognized by the fire notifications collector.
+ */
+export function isValidTimezone(tz: string): boolean {
+  try {
+    Intl.DateTimeFormat(undefined, { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Validates a feed source ID based on its SourceType.
  * Returns an error message string if invalid, or null if valid.
  */

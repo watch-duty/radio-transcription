@@ -5,7 +5,7 @@ import os
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -145,7 +145,10 @@ class RequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-type", "application/json")
         self.end_headers()
 
-        source_feed_id = parsed_url.path[len(PATH_FIRE_NOTIFICATIONS_PREFIX) :]
+        # Unquote needed to process space in fire notifications test audio file
+        source_feed_id = unquote(
+            parsed_url.path[len(PATH_FIRE_NOTIFICATIONS_PREFIX) :]
+        )
         current_file = self._get_next_audio_file(
             parsed_url, DATA_SOURCE_FIRE_NOTIFICATIONS, source_feed_id
         )
@@ -161,8 +164,8 @@ class RequestHandler(BaseHTTPRequestHandler):
             files_payload.append(
                 {
                     "type": "file",
-                    "name": f"{current_file.stem}.mp3?id={int(time.time() * 1000) + call_index[parsed_url.path]}",
-                    "uuid": f"{relative_path_no_ext}?id={int(time.time() * 1000) + call_index[parsed_url.path]}",
+                    "name": f"{current_file.stem}.mp3",
+                    "uuid": f"{relative_path_no_ext}",
                     "size": current_file.stat().st_size
                     if current_file.exists()
                     else 10240,
@@ -198,7 +201,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             )
 
     def _handle_file_download(self, parsed_url) -> None:
-        path = parsed_url.path.lstrip("/")
+        path = unquote(parsed_url.path.lstrip("/"))
         path = path.removeprefix("mock-s3/")
 
         file_path = Path("/data") / path
