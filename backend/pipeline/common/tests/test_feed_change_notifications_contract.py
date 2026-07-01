@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from backend.pipeline.common.feed_change_notification_contract import (
+from backend.pipeline.common.feed_change_notifications_contract import (
     FEED_CHANGE_NOTIFICATION_EVENT_TYPE,
     FEED_CHANGE_NOTIFICATION_SCHEMA_VERSION,
     FeedChangeNotificationPayload,

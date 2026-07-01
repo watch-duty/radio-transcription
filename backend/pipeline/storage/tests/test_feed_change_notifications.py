@@ -7,7 +7,7 @@ import unittest
 from typing import Any, cast
 from unittest import mock
 
-from backend.pipeline.common.feed_change_notification_contract import (
+from backend.pipeline.common.feed_change_notifications_contract import (
     FeedChangeNotificationPayload,
 )
 from backend.pipeline.storage import feed_change_notifications

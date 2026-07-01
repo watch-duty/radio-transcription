@@ -5,7 +5,7 @@ from __future__ import annotations
 import pathlib
 import unittest
 
-from backend.pipeline.common.feed_change_notification_contract import (
+from backend.pipeline.common.feed_change_notifications_contract import (
     FeedChangeNotificationPayload,
 )
 from backend.pipeline.storage import (

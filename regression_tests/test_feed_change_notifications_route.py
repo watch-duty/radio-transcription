@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import requests
 
-from backend.pipeline.common.feed_change_notification_contract import (
+from backend.pipeline.common.feed_change_notifications_contract import (
     FEED_CHANGE_NOTIFICATION_EVENT_TYPE,
     FEED_CHANGE_NOTIFICATION_SCHEMA_VERSION,
     FeedChangeNotificationPayload,
@@ -132,13 +132,13 @@ def _create_proof_feed(
         f"{fe_proxy_api_url}/api/v1/feeds",
         headers=headers,
         json={
-            "name": f"ops-proof-feed-change-notification-{proof_id}",
+            "name": f"ops-proof-feed-change-notifications-{proof_id}",
             "sourceType": "echo",
             "sourceFeedId": f"ops-proof-feed-change-{proof_id}",
             "tags": [
                 {
                     "key": "ops-proof",
-                    "value": "feed-change-notification",
+                    "value": "feed-change-notifications",
                 }
             ],
         },
@@ -149,7 +149,7 @@ def _create_proof_feed(
     return str(feed["id"])
 
 
-def test_feed_change_notification_route(
+def test_feed_change_notifications_route(
     id_token: str,
     fe_proxy_api_url: str,
     gcp_project: str,
