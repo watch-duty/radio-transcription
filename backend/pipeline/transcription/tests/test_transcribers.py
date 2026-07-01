@@ -710,7 +710,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             # Verify retry options are explicitly set to 5 attempts and timeout is default
             http_options = kwargs.get("http_options")
             self.assertIsNotNone(http_options)
-            self.assertEqual(http_options.timeout, 60000)
+            self.assertEqual(http_options.timeout, 30000)
             self.assertIsNotNone(http_options.retry_options)
             self.assertEqual(http_options.retry_options.attempts, 5)
 
