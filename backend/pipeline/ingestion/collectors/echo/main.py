@@ -99,8 +99,15 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
         use_batch=False,
     )
 
+    ingest_time_ms = str(int(datetime.now(UTC).timestamp() * 1000))
+
     with tracer.start_as_current_span("echo_ingestion"):
-        with inject_baggage({"feed_type": "echo"}):
+        with inject_baggage(
+            {
+                "feed_type": "echo",
+                "ingest_time_ms": ingest_time_ms,
+            }
+        ):
             if gcs_client is None:
                 gcs_client = storage.Client()
                 logger.info(
