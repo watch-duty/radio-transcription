@@ -277,6 +277,7 @@ def _handle_session_transition(
             traceparent=metadata.traceparent
             or tracing_utils.get_current_traceparent(),
             baggage=metadata.baggage,
+            missing_prior_context=True,
         )
         return new_context, True
 
