@@ -65,6 +65,7 @@ _STREAM_PROBE_TIMEOUT_SEC = 10
 _MAX_ALLOWED_LAG_SECONDS = 60.0
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
 _FIX_HEADER_TIMEOUT_SEC = 10.0
+_CLEANUP_SUBPROCESS_TIMEOUT_SEC = 2.0
 
 _background_tasks: set[asyncio.Task[None]] = set()
 
@@ -297,7 +298,9 @@ async def _cleanup_subprocess(process: asyncio.subprocess.Process) -> None:
         return
     with contextlib.suppress(Exception):
         process.terminate()
-        await asyncio.wait_for(process.wait(), timeout=2.0)
+        await asyncio.wait_for(
+            process.wait(), timeout=_CLEANUP_SUBPROCESS_TIMEOUT_SEC
+        )
         return
     with contextlib.suppress(Exception):
         process.kill()
