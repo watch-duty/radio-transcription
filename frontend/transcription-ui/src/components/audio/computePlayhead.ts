@@ -44,9 +44,8 @@ export function computePlayhead({
     ? new Date(firstAudioSegment.endTimestamp).getTime()
     : null;
 
-  // Anchor on the playing raw clip, not the consolidated row: inside a bundle the
-  // raw child starts partway through, and localCurrentTimeSeconds resets to 0 per
-  // clip — anchoring on the bundle start would snap the marker back each child.
+  // localCurrentTimeSeconds is relative to the raw clip being played, so anchor
+  // on that clip — not the bundle it may be consolidated into.
   const anchorSegment =
     (currentlyPlayingSegmentId
       ? rawAudioSegments.find((s) => s.id === currentlyPlayingSegmentId)

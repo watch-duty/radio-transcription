@@ -21,8 +21,7 @@ import { computePlayhead } from './computePlayhead';
 
 interface AudioDisplayProps {
   audioSegments: RenderableAudioSegment[];
-  // Raw (unconsolidated) segments, needed to anchor the playhead on the clip
-  // actually playing inside a non-speech bundle rather than the bundle's start.
+  // Unconsolidated segments, so the playhead can anchor on the raw clip playing.
   rawAudioSegments: AudioSegment[];
   currentlyPlayingSegmentId: string | null;
   highlightedSegmentId: string | null;
