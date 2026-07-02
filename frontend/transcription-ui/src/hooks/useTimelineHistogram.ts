@@ -3,7 +3,7 @@ import { useMemo } from 'react';
 import { AudioClassification, type AudioSegment } from '@transcription/common';
 
 import { segmentHasAlert } from '../utils/annotationUtils';
-import { TIMELINE_RANGE_DURATION_MS } from '../utils/timeUtils';
+import { TIMELINE_RANGE_DURATION_MS, getLiveEdgeMs } from '../utils/timeUtils';
 
 export interface HistogramMark {
   startMs: number;
@@ -70,14 +70,8 @@ export function useTimelineHistogram({
     if (anchorMs != null) {
       rangeStartMs = anchorMs - TIMELINE_RANGE_DURATION_MS / 2;
     } else {
-      // Live: right edge = newest loaded segment's end. Scan rather than read
-      // segments[0] — the list is sorted by start time, not end.
-      let liveEdgeMs = -Infinity;
-      for (const s of segments) {
-        const end = new Date(s.endTimestamp).getTime();
-        if (end > liveEdgeMs) liveEdgeMs = end;
-      }
-      if (liveEdgeMs !== -Infinity) {
+      const liveEdgeMs = getLiveEdgeMs(segments);
+      if (liveEdgeMs != null) {
         rangeStartMs = liveEdgeMs - TIMELINE_RANGE_DURATION_MS;
       }
     }

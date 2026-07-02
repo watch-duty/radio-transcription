@@ -65,6 +65,16 @@ describe('useAudioWindowPreload', () => {
     expect(fetchNewer).not.toHaveBeenCalled();
   });
 
+  it('pages older relative to the live edge, not wall-clock now, on a stale feed', () => {
+    // Feed went quiet: newest clip is well behind Date.now(). Anchoring on the
+    // live edge (not now) leaves the 24h span uncovered, so it pages older.
+    const staleEdge = new Date('2026-06-20T12:00:00.000Z').getTime();
+    const { fetchOlder } = setup({
+      segments: [seg(staleEdge), seg(staleEdge - 60 * 60 * 1000)],
+    });
+    expect(fetchOlder).toHaveBeenCalledTimes(1);
+  });
+
   it('does not page when the live window is already covered', () => {
     const { fetchOlder } = setup({
       segments: [seg(Date.now()), seg(Date.now() - 2 * WINDOW_MS)],

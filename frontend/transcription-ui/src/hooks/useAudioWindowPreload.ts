@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 
 import { type AudioSegment } from '@transcription/common';
 
+import { getLiveEdgeMs } from '../utils/timeUtils';
+
 // Safety bound on the eager preload for pathological feeds (per direction).
 const MAX_PRELOAD_PAGES = 30;
 
@@ -27,7 +29,7 @@ interface UseAudioWindowPreloadOptions {
 // Eagerly pages the timeline overview window into the list, reusing the same
 // older/newer fetches as continuous scroll, so the mini-map and in-window
 // navigation need no separate fetch. Live mode pages older from the live edge
-// ([now - window, now]); date-filter mode centers the window on the picked time
+// ([liveEdge - window, liveEdge]); date-filter mode centers the window on the picked time
 // ([T - window/2, T + window/2]) and pages both ways.
 export function useAudioWindowPreload({
   enabled,
@@ -66,9 +68,15 @@ export function useAudioWindowPreload({
       );
     };
 
+    // Anchor on the same live edge the histogram uses (see useTimelineHistogram)
+    // so the preload covers what the mini-map renders even on a quiet feed.
     const anchorMs = anchorTimestamp?.getTime() ?? null;
+    const liveEdgeMs = getLiveEdgeMs(segments);
+    if (anchorMs == null && liveEdgeMs == null) return;
     const winStartMs =
-      anchorMs != null ? anchorMs - windowMs / 2 : Date.now() - windowMs;
+      anchorMs != null
+        ? anchorMs - windowMs / 2
+        : (liveEdgeMs as number) - windowMs;
     const winEndMs = anchorMs != null ? anchorMs + windowMs / 2 : null;
 
     const oldestMs = new Date(
