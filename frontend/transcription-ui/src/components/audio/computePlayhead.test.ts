@@ -26,6 +26,7 @@ const SEGMENTS = [seg('newest', 700, 800), seg('p', 400, 600)];
 
 const base = {
   audioSegments: SEGMENTS,
+  rawAudioSegments: [],
   startTime: START_TIME,
   windowDurationMs: WINDOW_MS,
   localCurrentTimeSeconds: 0,
@@ -51,19 +52,21 @@ describe('computePlayhead', () => {
     expect(p.label).toMatch(/^\d{2}:\d{2}:\d{2}$/);
   });
 
-  it('resolves a raw id playing inside a silence bundle to its consolidated entry', () => {
-    const bundle = seg('bundle', 400, 600, {
+  it('anchors on the raw clip playing inside a non-speech bundle, not the bundle start', () => {
+    const bundle = seg('r1', 400, 600, {
       isSilenceBundle: true,
       bundledSegmentIds: ['r1', 'r2'],
     });
     const p = computePlayhead({
       ...base,
       audioSegments: [seg('newest', 700, 800), bundle],
+      // r2 starts at 500, partway through the bundle (which starts at 400).
+      rawAudioSegments: [seg('r1', 400, 500), seg('r2', 500, 600)],
       state: 'playing',
       currentlyPlayingSegmentId: 'r2', // a raw member, not the bundle's own id
-      localCurrentTimeSeconds: 0.1, // positioned within the bundle, not at live edge
+      localCurrentTimeSeconds: 0.1, // r2 start 500 + 100ms = 600 → 60% (bundle start would give 50%)
     });
-    expect(p.leftOffsetPct).toBe(50);
+    expect(p.leftOffsetPct).toBe(60);
   });
 
   it('freezes at the playback position when paused mid-clip', () => {
