@@ -772,8 +772,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             warning_logs = [
                 log
                 for log in log_capture.output
-                if "WARNING:backend.pipeline.transcription.transcribers.gemini:Gemini response candidate had no content or parts"
-                in log
+                if "Gemini response candidate had no content or parts" in log
             ]
             self.assertEqual(len(warning_logs), 1)
 
