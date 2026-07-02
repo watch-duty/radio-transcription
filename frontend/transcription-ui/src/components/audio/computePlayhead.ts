@@ -1,3 +1,5 @@
+import { type AudioSegment } from '@transcription/common';
+
 import { type RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import { type PlaybackState, isWithinSegment } from '../../utils/playbackUtils';
 import { formatClockTime } from '../../utils/timeUtils';
@@ -13,6 +15,7 @@ interface Playhead {
 
 interface ComputePlayheadParams {
   audioSegments: RenderableAudioSegment[];
+  rawAudioSegments: AudioSegment[];
   currentlyPlayingSegmentId: string | null;
   state: PlaybackState;
   localCurrentTimeSeconds: number;
@@ -24,13 +27,14 @@ interface ComputePlayheadParams {
 // there (or at the live edge if paused straight from listening).
 export function computePlayhead({
   audioSegments,
+  rawAudioSegments,
   currentlyPlayingSegmentId,
   state,
   localCurrentTimeSeconds,
   startTime,
   windowDurationMs,
 }: ComputePlayheadParams): Playhead {
-  // Match via isWithinSegment so a raw id playing inside a silence bundle
+  // Match via isWithinSegment so a raw id playing inside a non-speech bundle
   // resolves to its consolidated entry rather than falling back to the live edge.
   const playingSegment = currentlyPlayingSegmentId
     ? audioSegments.find((s) => isWithinSegment(s, currentlyPlayingSegmentId))
@@ -40,13 +44,22 @@ export function computePlayhead({
     ? new Date(firstAudioSegment.endTimestamp).getTime()
     : null;
 
-  const playbackPosition = playingSegment
-    ? Math.min(
-        new Date(playingSegment.startTimestamp).getTime() +
-          localCurrentTimeSeconds * 1000,
-        new Date(playingSegment.endTimestamp).getTime()
-      )
-    : null;
+  // Anchor on the playing raw clip, not the consolidated row: inside a bundle the
+  // raw child starts partway through, and localCurrentTimeSeconds resets to 0 per
+  // clip — anchoring on the bundle start would snap the marker back each child.
+  const anchorSegment =
+    (currentlyPlayingSegmentId
+      ? rawAudioSegments.find((s) => s.id === currentlyPlayingSegmentId)
+      : undefined) ?? playingSegment;
+
+  const playbackPosition =
+    playingSegment && anchorSegment
+      ? Math.min(
+          new Date(anchorSegment.startTimestamp).getTime() +
+            localCurrentTimeSeconds * 1000,
+          new Date(anchorSegment.endTimestamp).getTime()
+        )
+      : null;
 
   const time =
     state === 'listening' ? liveEdge : (playbackPosition ?? liveEdge);

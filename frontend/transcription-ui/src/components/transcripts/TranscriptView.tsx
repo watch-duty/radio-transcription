@@ -713,6 +713,7 @@ export function TranscriptView({
 
       <AudioDisplay
         audioSegments={audioSegments}
+        rawAudioSegments={rawAudioSegments}
         currentlyPlayingSegmentId={currentlyPlayingSegmentId}
         highlightedSegmentId={highlightedSegmentId}
         onClipClick={handleClipClick}

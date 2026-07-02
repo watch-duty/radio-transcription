@@ -80,6 +80,7 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         audioSegments={[]}
+        rawAudioSegments={[]}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -105,6 +106,7 @@ describe('AudioDisplay', () => {
     const { container } = render(
       <AudioDisplay
         audioSegments={mockAudioSegments}
+        rawAudioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -136,6 +138,7 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         audioSegments={mockAudioSegments}
+        rawAudioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -170,6 +173,7 @@ describe('AudioDisplay', () => {
     const { rerender } = render(
       <AudioDisplay
         audioSegments={mockAudioSegments}
+        rawAudioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -185,6 +189,7 @@ describe('AudioDisplay', () => {
     rerender(
       <AudioDisplay
         audioSegments={mockAudioSegments}
+        rawAudioSegments={mockAudioSegments}
         currentlyPlayingSegmentId="2"
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -227,6 +232,7 @@ describe('AudioDisplay', () => {
     const { rerender } = render(
       <AudioDisplay
         audioSegments={mockAudioSegments1}
+        rawAudioSegments={mockAudioSegments1}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -242,6 +248,7 @@ describe('AudioDisplay', () => {
     rerender(
       <AudioDisplay
         audioSegments={mockAudioSegments2}
+        rawAudioSegments={mockAudioSegments2}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -273,6 +280,7 @@ describe('AudioDisplay', () => {
     const { rerender } = render(
       <AudioDisplay
         audioSegments={mockAudioSegments}
+        rawAudioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         userDuration="5"
         onClipClick={vi.fn()}
@@ -295,6 +303,7 @@ describe('AudioDisplay', () => {
     rerender(
       <AudioDisplay
         audioSegments={mockAudioSegments}
+        rawAudioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         userDuration="30"
         onClipClick={vi.fn()}
@@ -332,6 +341,7 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         audioSegments={mockAudioSegments}
+        rawAudioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -359,6 +369,7 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         audioSegments={[segment]}
+        rawAudioSegments={[segment]}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -391,6 +402,7 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         audioSegments={[segment]}
+        rawAudioSegments={[segment]}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -421,6 +433,7 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         audioSegments={[segment]}
+        rawAudioSegments={[segment]}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -456,6 +469,7 @@ describe('AudioDisplay', () => {
     const { rerender } = render(
       <AudioDisplay
         audioSegments={mockAudioSegments}
+        rawAudioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -471,6 +485,7 @@ describe('AudioDisplay', () => {
     rerender(
       <AudioDisplay
         audioSegments={mockAudioSegments}
+        rawAudioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
@@ -510,6 +525,7 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         audioSegments={mockAudioSegments}
+        rawAudioSegments={mockAudioSegments}
         currentlyPlayingSegmentId="1"
         onClipClick={vi.fn()}
         isAudioPlaying={true}
