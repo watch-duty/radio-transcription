@@ -7,6 +7,7 @@ import requests
 from google.api_core.retry_async import AsyncRetry
 from google.genai import types
 
+from backend.pipeline.common import constants
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers.chirp import (
     CHIRP_UNINTELLIGIBLE_MARKER,
@@ -687,7 +688,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 duration_ms=1000,
             )
 
-            self.assertEqual(transcript, "[UNINTELLIGIBLE]")
+            self.assertEqual(transcript, constants.UNINTELLIGIBLE_MARKER)
 
     async def test_gemini_transcriber_empty_response_stop(self) -> None:
         """Verifies that STOP finish reason with no content returns None and logs at INFO level."""
