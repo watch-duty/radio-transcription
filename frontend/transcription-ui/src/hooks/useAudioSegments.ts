@@ -203,7 +203,9 @@ export function useAudioSegments({
     isFetchingNewer: isFetchingNewerAudioSegments,
     fetchOlder: fetchNextPage,
     fetchNewer: fetchPreviousPage,
-    resetKey: `${searchedFeedId}|${searchedTimestamp?.getTime() ?? ''}|${alertFilter}`,
+    // Mirror the queryKey identity so the page counters reset whenever the query
+    // refetches a fresh first page; a stale key would under-preload the new one.
+    resetKey: `${token}|${searchedFeedId}|${searchedTimestamp?.getTime() ?? ''}|${alertFilter}|${searchQuery}|${preloadWindowMs ?? ''}`,
   });
 
   const pollNewerAudioSegments = useCallback(async (): Promise<
