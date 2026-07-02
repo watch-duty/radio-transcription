@@ -772,7 +772,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 )
 
             self.assertIsNone(transcript)
-            self.fail(f"LOGS: {log_capture.output}")
+            # Verify it logged at WARNING level
             warning_logs = [
                 log
                 for log in log_capture.output
