@@ -700,9 +700,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
 
             mock_response = MagicMock()
             mock_candidate = MagicMock()
-            mock_finish_reason = MagicMock()
-            mock_finish_reason.name = "STOP"
-            mock_candidate.finish_reason = mock_finish_reason
+            mock_candidate.finish_reason = types.FinishReason.STOP
             mock_candidate.content = None
             mock_response.candidates = [mock_candidate]
 
@@ -745,9 +743,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
 
             mock_response = MagicMock()
             mock_candidate = MagicMock()
-            mock_finish_reason = MagicMock()
-            mock_finish_reason.name = "MAX_TOKENS"
-            mock_candidate.finish_reason = mock_finish_reason
+            mock_candidate.finish_reason = types.FinishReason.MAX_TOKENS
             mock_candidate.content = None
             mock_response.candidates = [mock_candidate]
 
