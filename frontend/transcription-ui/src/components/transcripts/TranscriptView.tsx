@@ -20,6 +20,7 @@ import {
   SourceType,
 } from '@transcription/common';
 
+import { NO_SPEECH_PLAYBACK_SPEED } from '../../audio/audioSettings';
 import { useAuth } from '../../context/AuthContext';
 import { useAudioPlayback } from '../../hooks/useAudioPlayback';
 import {
@@ -119,8 +120,17 @@ export function TranscriptView({
   const newerLoadAnchorId = useRef<string | null>(null);
   const wasFetchingNewer = useRef(false);
 
-  const { volumeDb, setVolumeDb, pan, setPan, speed, setSpeed, reset } =
-    useAudioSettings(searchedFeedId);
+  const {
+    volumeDb,
+    setVolumeDb,
+    pan,
+    setPan,
+    speed,
+    setSpeed,
+    accelerateNonSpeech,
+    setAccelerateNonSpeech,
+    reset,
+  } = useAudioSettings(searchedFeedId);
 
   // Passed to useAudioPlayback so its `onEnd` callback reads the current list
   // rather than a stale closure when deciding whether to auto-advance.
@@ -140,6 +150,7 @@ export function TranscriptView({
     volumeDb,
     pan,
     speed,
+    accelerateNonSpeech,
     onPlaybackEnded: () => {
       if (!playLatestAudioRef.current) {
         setPlaybackIntent('paused');
@@ -279,15 +290,30 @@ export function TranscriptView({
     searchQuery: searchQuery,
   });
 
+  // Only continuous feeds consolidate non-speech into bundles, so acceleration
+  // (and its control) is meaningful only there.
+  const isContinuousFeed = searchedFeed?.sourceType === SourceType.BCFY_FEEDS;
+
   const audioSegments = useConsolidatedAudioSegments(
     rawAudioSegments,
-    searchedFeed?.sourceType === SourceType.BCFY_FEEDS
+    isContinuousFeed
   );
 
   // Keep the refs in sync with the audio segments so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {
     audioSegmentsRef.current = audioSegments;
   }, [audioSegments]);
+
+  // Live rate for the audio-controls badge.
+  const playingSegmentRow = currentlyPlayingSegmentId
+    ? audioSegments.find((s) => isWithinSegment(s, currentlyPlayingSegmentId))
+    : undefined;
+  const activeSpeed =
+    isAudioPlaying &&
+    accelerateNonSpeech &&
+    playingSegmentRow?.isNonSpeechBundle
+      ? NO_SPEECH_PLAYBACK_SPEED
+      : speed;
 
   const handleToggleAudio = useCallback(
     (segmentId: string, audioUri: string) => {
@@ -706,6 +732,10 @@ export function TranscriptView({
           setPan={setPan}
           speed={speed}
           setSpeed={setSpeed}
+          activeSpeed={activeSpeed}
+          accelerateNonSpeech={accelerateNonSpeech}
+          setAccelerateNonSpeech={setAccelerateNonSpeech}
+          showAccelerateNonSpeech={isContinuousFeed}
           onReset={reset}
           disableControls={rawAudioSegments.length === 0}
         />

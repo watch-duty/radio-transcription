@@ -5,7 +5,9 @@ import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import Checkbox from '@mui/material/Checkbox';
 import Divider from '@mui/material/Divider';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import IconButton from '@mui/material/IconButton';
 import Popover from '@mui/material/Popover';
 import Slider from '@mui/material/Slider';
@@ -48,6 +50,12 @@ export interface AudioSettingsButtonProps {
   setPan: (pan: number) => void;
   speed: number;
   setSpeed: (speed: number) => void;
+  // May exceed `speed` (the boost) while a non-speech clip is accelerating.
+  activeSpeed: number;
+  accelerateNonSpeech: boolean;
+  setAccelerateNonSpeech: (on: boolean) => void;
+  // Only continuous feeds bundle non-speech, so the toggle is hidden elsewhere.
+  showAccelerateNonSpeech: boolean;
   onReset: () => void;
   disableControls: boolean;
 }
@@ -59,6 +67,10 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
   setPan,
   speed,
   setSpeed,
+  activeSpeed,
+  accelerateNonSpeech,
+  setAccelerateNonSpeech,
+  showAccelerateNonSpeech,
   onReset,
   disableControls,
 }) => {
@@ -70,7 +82,8 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
   const isMuted = volumeLabel === 'Muted';
   const volumeActive = volumeDb !== DEFAULT_VOLUME_DB;
   const panLabel = pan !== DEFAULT_PAN ? PAN_LABELS[pan] : null;
-  const speedActive = speed !== DEFAULT_SPEED;
+  const speedActive = activeSpeed !== DEFAULT_SPEED;
+  const isAccelerating = activeSpeed !== speed;
   // The icon stays put except for mute; the scale below conveys cut vs. boost.
   const VolumeIcon = isMuted ? VolumeOffIcon : VolumeUpIcon;
   const volumeIconScale = volumeIconScaleFor(volumeDb);
@@ -78,7 +91,9 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
   const activeSummary = [
     volumeActive ? volumeLabel : null,
     panLabel ? `Pan ${panLabel}` : null,
-    speedActive ? `${speed}×` : null,
+    speedActive
+      ? `${activeSpeed}×${isAccelerating ? ' (accelerated)' : ''}`
+      : null,
   ].filter(Boolean);
   const audioTooltip = activeSummary.length
     ? activeSummary.join(', ')
@@ -98,7 +113,7 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
       <Tooltip title={audioTooltip}>
         <Badge
           color="primary"
-          badgeContent={speedActive ? `${speed}×` : undefined}
+          badgeContent={speedActive ? `${activeSpeed}×` : undefined}
           invisible={!speedActive}
           anchorOrigin={{ vertical: 'top', horizontal: 'right' }}
           sx={audioBadgeSx}
@@ -222,10 +237,15 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
                   exclusive
                   fullWidth
                   size="small"
-                  value={speed}
+                  // Off-scale while accelerating, so nothing is selected.
+                  value={activeSpeed}
                   disabled={speedDisabled}
                   onChange={(_, value) => {
-                    if (value !== null) setSpeed(value as number);
+                    if (value === null) return;
+                    setSpeed(value as number);
+                    // Picking a speed off the boost means the user wants that
+                    // exact rate, so stop accelerating.
+                    if (isAccelerating) setAccelerateNonSpeech(false);
                   }}
                   sx={{ '& .MuiToggleButton-root': { px: 0.5, fontSize: 12 } }}
                 >
@@ -242,6 +262,21 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
               </Box>
             </Tooltip>
           </Box>
+
+          {showAccelerateNonSpeech && (
+            <FormControlLabel
+              control={
+                <Checkbox
+                  size="small"
+                  checked={accelerateNonSpeech}
+                  onChange={(_, checked) => setAccelerateNonSpeech(checked)}
+                />
+              }
+              label="Fast Silence"
+              slotProps={{ typography: { variant: 'body2' } }}
+              sx={{ m: 0 }}
+            />
+          )}
 
           <Divider />
 

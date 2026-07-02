@@ -13,8 +13,12 @@ import {
   WebAudioPlayer,
   createAudioContext,
 } from '../audio/WebAudioPlayer';
+import { NO_SPEECH_PLAYBACK_SPEED } from '../audio/audioSettings';
 import { getAudioUrl } from '../utils/audioUtils';
-import { getNextContinuousSegment } from '../utils/playbackUtils';
+import {
+  getNextContinuousSegment,
+  isWithinSegment,
+} from '../utils/playbackUtils';
 import { type RenderableAudioSegment } from './useConsolidatedAudioSegments';
 
 interface UseAudioPlaybackParams {
@@ -28,6 +32,7 @@ interface UseAudioPlaybackParams {
   volumeDb: number;
   pan: number;
   speed: number;
+  accelerateNonSpeech: boolean;
   onPlaybackEnded?: (lastSegmentId: string) => void;
 }
 
@@ -49,6 +54,7 @@ export function useAudioPlayback({
   volumeDb,
   pan,
   speed,
+  accelerateNonSpeech,
   onPlaybackEnded,
 }: UseAudioPlaybackParams): UseAudioPlayback {
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -59,7 +65,22 @@ export function useAudioPlayback({
   const volumeDbRef = useRef(volumeDb);
   const panRef = useRef(pan);
   const speedRef = useRef(speed);
+  const accelerateNonSpeechRef = useRef(accelerateNonSpeech);
   const onPlaybackEndedRef = useRef(onPlaybackEnded);
+  const currentlyPlayingSegmentIdRef = useRef<string | null>(null);
+  const isAudioPlayingRef = useRef(false);
+
+  const effectiveSpeedFor = useCallback(
+    (segmentId: string | null): number => {
+      const consolidated = segmentId
+        ? audioSegmentsRef.current?.find((s) => isWithinSegment(s, segmentId))
+        : undefined;
+      return accelerateNonSpeechRef.current && consolidated?.isNonSpeechBundle
+        ? NO_SPEECH_PLAYBACK_SPEED
+        : speedRef.current;
+    },
+    [audioSegmentsRef]
+  );
 
   // Push control changes into the engine; the player is created lazily on first
   // play, so before then these only update the refs that `togglePlay` reads.
@@ -73,8 +94,11 @@ export function useAudioPlayback({
   }, [pan]);
   useEffect(() => {
     speedRef.current = speed;
-    playerRef.current?.setSpeed(speed);
-  }, [speed]);
+    accelerateNonSpeechRef.current = accelerateNonSpeech;
+    playerRef.current?.setSpeed(
+      effectiveSpeedFor(currentlyPlayingSegmentIdRef.current)
+    );
+  }, [speed, accelerateNonSpeech, effectiveSpeedFor]);
   useEffect(() => {
     onPlaybackEndedRef.current = onPlaybackEnded;
   }, [onPlaybackEnded]);
@@ -83,10 +107,6 @@ export function useAudioPlayback({
     string | null
   >(null);
   const [isAudioPlaying, setIsAudioPlaying] = useState(false);
-
-  // Mutable refs to keep state fresh and avoid stale closures in audio event listeners
-  const currentlyPlayingSegmentIdRef = useRef<string | null>(null);
-  const isAudioPlayingRef = useRef(false);
 
   useEffect(() => {
     currentlyPlayingSegmentIdRef.current = currentlyPlayingSegmentId;
@@ -113,7 +133,7 @@ export function useAudioPlayback({
       player.resume();
       player.setVolumeDb(volumeDbRef.current);
       player.setPan(panRef.current);
-      player.setSpeed(speedRef.current);
+      player.setSpeed(effectiveSpeedFor(segmentId));
 
       const newAudio = currentlyPlayingSegmentIdRef.current !== segmentId;
 
@@ -165,7 +185,7 @@ export function useAudioPlayback({
         currentAudio.current.pause();
       }
     },
-    [audioSegmentsRef, rawAudioSegmentsRef, onPlaySegment]
+    [audioSegmentsRef, rawAudioSegmentsRef, onPlaySegment, effectiveSpeedFor]
   );
 
   const stop = useCallback(() => {

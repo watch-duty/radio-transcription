@@ -18,6 +18,11 @@ export const PAN_OPTIONS = [-1, 0, 1] as const;
 export const DEFAULT_VOLUME_DB = 0;
 export const DEFAULT_PAN = 0;
 export const DEFAULT_SPEED = 1;
+export const DEFAULT_ACCELERATE_NON_SPEECH = true;
+
+// Applied automatically to non-speech clips to catch up to speech; deliberately
+// separate from the user-selectable SPEED_OPTIONS.
+export const NO_SPEECH_PLAYBACK_SPEED = 6;
 
 // Width of the volume snap zone: a value within this many dB of the default is
 // pulled to exactly the default so the slider settles there when dragged near

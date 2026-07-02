@@ -21,6 +21,10 @@ describe('AudioSettingsButton', () => {
     setPan: vi.fn(),
     speed: 1,
     setSpeed: vi.fn(),
+    activeSpeed: 1,
+    accelerateNonSpeech: true,
+    setAccelerateNonSpeech: vi.fn(),
+    showAccelerateNonSpeech: false,
     onReset: vi.fn(),
     disableControls: false,
   };
@@ -53,10 +57,77 @@ describe('AudioSettingsButton', () => {
   });
 
   it('shows pan and speed badges on the speaker button when off-default', () => {
-    renderButton({ pan: -1, speed: 1.5 });
+    renderButton({ pan: -1, speed: 1.5, activeSpeed: 1.5 });
 
     expect(screen.getByText('L')).toBeTruthy();
     expect(screen.getByText('1.5×')).toBeTruthy();
+  });
+
+  it('badges the live boosted rate while a non-speech clip accelerates', () => {
+    // speed (user) stays 1, but the clip is playing at the boosted rate.
+    renderButton({ speed: 1, activeSpeed: 6 });
+
+    expect(screen.getByText('6×')).toBeTruthy();
+  });
+
+  it('shows the Fast Silence toggle only for continuous feeds', () => {
+    const setAccelerateNonSpeech = vi.fn();
+    const { rerender } = renderButton({ showAccelerateNonSpeech: false });
+    fireEvent.click(screen.getByRole('button', { name: 'audio controls' }));
+    expect(screen.queryByText('Fast Silence')).toBeNull();
+
+    rerender(
+      <AudioSettingsButton
+        {...defaultProps}
+        showAccelerateNonSpeech
+        setAccelerateNonSpeech={setAccelerateNonSpeech}
+      />
+    );
+    const checkbox = screen.getByRole('checkbox', {
+      name: 'Fast Silence',
+    });
+    expect(checkbox).toBeTruthy();
+
+    fireEvent.click(checkbox);
+    expect(setAccelerateNonSpeech).toHaveBeenCalledWith(false);
+  });
+
+  it('selects no speed button while the boost is off the scale', () => {
+    renderButton({ speed: 1, activeSpeed: 6 });
+    fireEvent.click(screen.getByRole('button', { name: 'audio controls' }));
+
+    expect(
+      screen
+        .getByRole('button', { name: 'Speed 1x' })
+        .getAttribute('aria-pressed')
+    ).toBe('false');
+  });
+
+  it('picking a speed while accelerating stops acceleration and applies it', () => {
+    const setSpeed = vi.fn();
+    const setAccelerateNonSpeech = vi.fn();
+    renderButton({
+      speed: 1,
+      activeSpeed: 6,
+      setSpeed,
+      setAccelerateNonSpeech,
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'audio controls' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Speed 1x' }));
+
+    expect(setSpeed).toHaveBeenCalledWith(1);
+    expect(setAccelerateNonSpeech).toHaveBeenCalledWith(false);
+  });
+
+  it('leaves acceleration alone when changing speed on a speech clip', () => {
+    const setAccelerateNonSpeech = vi.fn();
+    renderButton({ speed: 1, activeSpeed: 1, setAccelerateNonSpeech });
+    fireEvent.click(screen.getByRole('button', { name: 'audio controls' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Speed 1.5x' }));
+
+    expect(setAccelerateNonSpeech).not.toHaveBeenCalled();
   });
 
   it('shows no badges when controls are at their defaults', () => {

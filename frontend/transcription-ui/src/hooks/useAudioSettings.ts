@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 
 import {
+  DEFAULT_ACCELERATE_NON_SPEECH,
   DEFAULT_PAN,
   DEFAULT_SPEED,
   DEFAULT_VOLUME_DB,
@@ -18,6 +19,7 @@ const STORAGE_KEYS = {
   volumeDb: 'radio.audio.volumeDb',
   pan: 'radio.audio.pan',
   speed: 'radio.audio.speed',
+  accelerateNonSpeech: 'radio.audio.accelerateNonSpeech',
 };
 
 export interface AudioSettings {
@@ -27,6 +29,8 @@ export interface AudioSettings {
   setPan: (pan: number) => void;
   speed: number;
   setSpeed: (speed: number) => void;
+  accelerateNonSpeech: boolean;
+  setAccelerateNonSpeech: (on: boolean) => void;
   // Clears this feed's overrides so it re-inherits the (global) defaults,
   // rather than pinning it to the current default values.
   reset: () => void;
@@ -76,12 +80,20 @@ function initSpeed(feedId: string): number {
   );
 }
 
+function initAccelerateNonSpeech(feedId: string): boolean {
+  const stored = readForFeed(STORAGE_KEYS.accelerateNonSpeech, feedId);
+  return stored === null ? DEFAULT_ACCELERATE_NON_SPEECH : stored !== 0;
+}
+
 export function useAudioSettings(feedId: string): AudioSettings {
   const [volumeDb, setVolumeDbState] = useState(() => initVolumeDb(feedId));
   const [pan, setPanState] = useState(() =>
     initFromOptions(STORAGE_KEYS.pan, feedId, PAN_OPTIONS, DEFAULT_PAN)
   );
   const [speed, setSpeedState] = useState(() => initSpeed(feedId));
+  const [accelerateNonSpeech, setAccelerateNonSpeechState] = useState(() =>
+    initAccelerateNonSpeech(feedId)
+  );
 
   // Reload each feed's stored settings when the id changes. The view stays
   // mounted across feed switches, so this uses React's "adjust state during
@@ -94,6 +106,7 @@ export function useAudioSettings(feedId: string): AudioSettings {
       initFromOptions(STORAGE_KEYS.pan, feedId, PAN_OPTIONS, DEFAULT_PAN)
     );
     setSpeedState(initSpeed(feedId));
+    setAccelerateNonSpeechState(initAccelerateNonSpeech(feedId));
   }
 
   // Persist only on user changes (not the reload above), so merely visiting a
@@ -126,6 +139,13 @@ export function useAudioSettings(feedId: string): AudioSettings {
     },
     [persist]
   );
+  const setAccelerateNonSpeech = useCallback(
+    (on: boolean) => {
+      setAccelerateNonSpeechState(on);
+      persist(STORAGE_KEYS.accelerateNonSpeech, on ? 1 : 0);
+    },
+    [persist]
+  );
 
   const reset = useCallback(() => {
     // Remove the overrides (never the bare global key) and reload, so the feed
@@ -134,13 +154,27 @@ export function useAudioSettings(feedId: string): AudioSettings {
       localStorage.removeItem(feedKey(STORAGE_KEYS.volumeDb, feedId));
       localStorage.removeItem(feedKey(STORAGE_KEYS.pan, feedId));
       localStorage.removeItem(feedKey(STORAGE_KEYS.speed, feedId));
+      localStorage.removeItem(
+        feedKey(STORAGE_KEYS.accelerateNonSpeech, feedId)
+      );
     }
     setVolumeDbState(initVolumeDb(feedId));
     setPanState(
       initFromOptions(STORAGE_KEYS.pan, feedId, PAN_OPTIONS, DEFAULT_PAN)
     );
     setSpeedState(initSpeed(feedId));
+    setAccelerateNonSpeechState(initAccelerateNonSpeech(feedId));
   }, [feedId]);
 
-  return { volumeDb, setVolumeDb, pan, setPan, speed, setSpeed, reset };
+  return {
+    volumeDb,
+    setVolumeDb,
+    pan,
+    setPan,
+    speed,
+    setSpeed,
+    accelerateNonSpeech,
+    setAccelerateNonSpeech,
+    reset,
+  };
 }

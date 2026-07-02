@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
 import { type AudioSegment } from '@transcription/common';
 
+import { NO_SPEECH_PLAYBACK_SPEED } from '../audio/audioSettings';
 import { useAudioPlayback } from './useAudioPlayback';
 import { type RenderableAudioSegment } from './useConsolidatedAudioSegments';
 
@@ -82,15 +83,34 @@ function makeSegment(id: string): AudioSegment {
   return { id, playbackAudioUri: `${id}.m4a` } as AudioSegment;
 }
 
+function makeNonSpeechBundle(id: string): RenderableAudioSegment {
+  return {
+    id,
+    playbackAudioUri: `${id}.m4a`,
+    isNonSpeechBundle: true,
+    bundledSegmentIds: [id],
+  } as unknown as RenderableAudioSegment;
+}
+
 function renderPlayback(
   segments: AudioSegment[] = [],
-  initialProps: { volumeDb?: number; pan?: number; speed?: number } = {}
+  initialProps: {
+    volumeDb?: number;
+    pan?: number;
+    speed?: number;
+    accelerateNonSpeech?: boolean;
+  } = {}
 ) {
   const onPlaySegment = vi.fn();
   const audioSegmentsRef = { current: segments as RenderableAudioSegment[] };
   const rawAudioSegmentsRef = { current: segments };
   const view = renderHook(
-    (props: { volumeDb: number; pan: number; speed: number }) =>
+    (props: {
+      volumeDb: number;
+      pan: number;
+      speed: number;
+      accelerateNonSpeech: boolean;
+    }) =>
       useAudioPlayback({
         audioSegmentsRef,
         rawAudioSegmentsRef,
@@ -98,12 +118,14 @@ function renderPlayback(
         volumeDb: props.volumeDb,
         pan: props.pan,
         speed: props.speed,
+        accelerateNonSpeech: props.accelerateNonSpeech,
       }),
     {
       initialProps: {
         volumeDb: initialProps.volumeDb ?? 0,
         pan: initialProps.pan ?? 0,
         speed: initialProps.speed ?? 1,
+        accelerateNonSpeech: initialProps.accelerateNonSpeech ?? false,
       },
     }
   );
@@ -166,11 +188,40 @@ describe('useAudioPlayback', () => {
     engineMock.setPanSpy.mockClear();
     engineMock.setSpeedSpy.mockClear();
 
-    act(() => rerender({ volumeDb: 6, pan: -1, speed: 2 }));
+    act(() =>
+      rerender({ volumeDb: 6, pan: -1, speed: 2, accelerateNonSpeech: false })
+    );
 
     expect(engineMock.setVolumeDbSpy).toHaveBeenCalledWith(6);
     expect(engineMock.setPanSpy).toHaveBeenCalledWith(-1);
     expect(engineMock.setSpeedSpy).toHaveBeenCalledWith(2);
+  });
+
+  it('boosts non-speech clips when acceleration is on', () => {
+    const { result } = renderPlayback([makeNonSpeechBundle('n')], {
+      speed: 1,
+      accelerateNonSpeech: true,
+    });
+
+    act(() => result.current.togglePlay('n', 'n.m4a'));
+
+    expect(engineMock.setSpeedSpy).toHaveBeenCalledWith(
+      NO_SPEECH_PLAYBACK_SPEED
+    );
+  });
+
+  it('plays non-speech clips at the user speed when acceleration is off', () => {
+    const { result } = renderPlayback([makeNonSpeechBundle('n')], {
+      speed: 1,
+      accelerateNonSpeech: false,
+    });
+
+    act(() => result.current.togglePlay('n', 'n.m4a'));
+
+    expect(engineMock.setSpeedSpy).toHaveBeenCalledWith(1);
+    expect(engineMock.setSpeedSpy).not.toHaveBeenCalledWith(
+      NO_SPEECH_PLAYBACK_SPEED
+    );
   });
 
   it('highlights and plays a new segment', () => {
