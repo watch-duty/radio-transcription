@@ -138,6 +138,42 @@ describe('useAudioWindowPreload', () => {
     expect(warn.mock.calls[0][0]).toContain('30-page cap');
   });
 
+  it('warns once per side when date mode caps both directions', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchOlder = vi.fn();
+    const fetchNewer = vi.fn();
+    // Centered window uncovered on both sides: oldest inside T-12h, newest at T.
+    const uncovered = () => [seg(T), seg(T - 60 * 60 * 1000)];
+
+    const { rerender } = renderHook(
+      (props: Options) => useAudioWindowPreload(props),
+      {
+        initialProps: baseOptions({
+          anchorTimestamp: ANCHOR,
+          fetchOlder,
+          fetchNewer,
+          segments: uncovered(),
+        }),
+      }
+    );
+    // Older caps first (paged before newer each render), then newer caps.
+    for (let i = 0; i < 65; i++) {
+      rerender(
+        baseOptions({
+          anchorTimestamp: ANCHOR,
+          fetchOlder,
+          fetchNewer,
+          segments: uncovered(),
+        })
+      );
+    }
+
+    const sides = warn.mock.calls.map((c) => c[0]);
+    expect(sides.some((m) => m.includes('paging older'))).toBe(true);
+    expect(sides.some((m) => m.includes('paging newer'))).toBe(true);
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
   it('resets the page counters on a resetKey change so a new query preloads again', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const fetchOlder = vi.fn();

@@ -46,9 +46,10 @@ export function useAudioWindowPreload({
 }: UseAudioWindowPreloadOptions): void {
   const olderPagesRef = useRef(0);
   const newerPagesRef = useRef(0);
-  // Warn at most once per query so a busy feed that can't be covered within the
-  // page cap doesn't spam the console on every render.
-  const cappedWarnedRef = useRef(false);
+  // One flag per direction so a capped feed warns once per side per query (not
+  // spamming every render) while still surfacing both sides when both cap.
+  const olderCappedWarnedRef = useRef(false);
+  const newerCappedWarnedRef = useRef(false);
   const prevResetKeyRef = useRef(resetKey);
 
   useEffect(() => {
@@ -58,14 +59,17 @@ export function useAudioWindowPreload({
       prevResetKeyRef.current = resetKey;
       olderPagesRef.current = 0;
       newerPagesRef.current = 0;
-      cappedWarnedRef.current = false;
+      olderCappedWarnedRef.current = false;
+      newerCappedWarnedRef.current = false;
     }
 
     if (!enabled || !windowMs || segments.length === 0) return;
 
     const warnCappedOnce = (side: 'older' | 'newer') => {
-      if (cappedWarnedRef.current) return;
-      cappedWarnedRef.current = true;
+      const warnedRef =
+        side === 'older' ? olderCappedWarnedRef : newerCappedWarnedRef;
+      if (warnedRef.current) return;
+      warnedRef.current = true;
       console.warn(
         `useAudioWindowPreload: hit the ${MAX_PRELOAD_PAGES}-page cap paging ${side} ` +
           `before covering the ${windowMs}ms window; timeline overview density may be incomplete for this feed.`
