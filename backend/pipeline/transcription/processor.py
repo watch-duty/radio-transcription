@@ -18,11 +18,8 @@ from google.cloud import pubsub_v1
 from google.genai import errors as genai_errors
 from opentelemetry.trace import StatusCode
 
+from backend.pipeline.common import constants
 from backend.pipeline.common.clients import audio_segments_client
-from backend.pipeline.common.constants import (
-    MS_PER_SECOND,
-    NANOS_PER_MS,
-)
 from backend.pipeline.common.log_helper import record_pipeline_stage
 from backend.pipeline.common.tracing_utils import (
     get_tracer,
@@ -39,7 +36,7 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.services.audio_segments import models as audio_segments_models
 
-CHIRP_UNINTELLIGIBLE_MARKER = "[UNINTELLIGIBLE]"
+CHIRP_UNINTELLIGIBLE_MARKER = constants.UNINTELLIGIBLE_MARKER
 
 logger = logging.getLogger(__name__)
 
@@ -191,12 +188,12 @@ class TranscriptionEventProcessor:
     def _get_duration_ms(self, claim: NormalizedAudio) -> int:
         """Determine audio duration in milliseconds from start and end timestamps."""
         start_ms = (
-            claim.start_timestamp.seconds * MS_PER_SECOND
-            + claim.start_timestamp.nanos // NANOS_PER_MS
+            claim.start_timestamp.seconds * constants.MS_PER_SECOND
+            + claim.start_timestamp.nanos // constants.NANOS_PER_MS
         )
         end_ms = (
-            claim.end_timestamp.seconds * MS_PER_SECOND
-            + claim.end_timestamp.nanos // NANOS_PER_MS
+            claim.end_timestamp.seconds * constants.MS_PER_SECOND
+            + claim.end_timestamp.nanos // constants.NANOS_PER_MS
         )
         return max(0, int(end_ms - start_ms))
 

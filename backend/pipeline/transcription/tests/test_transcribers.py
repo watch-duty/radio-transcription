@@ -7,6 +7,7 @@ import requests
 from google.api_core.retry_async import AsyncRetry
 from google.genai import types
 
+from backend.pipeline.common import constants
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers.chirp import (
     CHIRP_UNINTELLIGIBLE_MARKER,
@@ -687,7 +688,97 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 duration_ms=1000,
             )
 
-            self.assertEqual(transcript, "[UNINTELLIGIBLE]")
+            self.assertEqual(transcript, constants.UNINTELLIGIBLE_MARKER)
+
+    async def test_gemini_transcriber_empty_response_stop(self) -> None:
+        """Verifies that STOP finish reason with no content returns None and logs at INFO level."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = types.FinishReason.STOP
+            mock_candidate.content = None
+            mock_response.candidates = [mock_candidate]
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            with self.assertLogs(
+                "backend.pipeline.transcription.transcribers.gemini",
+                level="INFO",
+            ) as log_capture:
+                transcript = await transcriber.transcribe(
+                    audio_data=b"\x00" * 100,
+                    duration_ms=1000,
+                )
+
+            self.assertIsNone(transcript)
+            # Verify it logged at INFO level
+            info_logs = [
+                record
+                for record in log_capture.records
+                if record.levelname == "INFO"
+                and "Gemini returned empty content (finish reason: STOP)."
+                in record.getMessage()
+            ]
+            self.assertEqual(len(info_logs), 1)
+
+    async def test_gemini_transcriber_empty_response_other_reason(self) -> None:
+        """Verifies that other finish reasons (e.g. MAX_TOKENS) with no content return None and log at WARNING level."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = types.FinishReason.MAX_TOKENS
+            mock_candidate.content = None
+            mock_response.candidates = [mock_candidate]
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            with self.assertLogs(
+                "backend.pipeline.transcription.transcribers.gemini",
+                level="WARNING",
+            ) as log_capture:
+                transcript = await transcriber.transcribe(
+                    audio_data=b"\x00" * 100,
+                    duration_ms=1000,
+                )
+
+            self.assertIsNone(transcript)
+            # Verify it logged at WARNING level
+            warning_logs = [
+                record
+                for record in log_capture.records
+                if record.levelname == "WARNING"
+                and "Gemini response candidate had no content or parts"
+                in record.getMessage()
+            ]
+            self.assertEqual(len(warning_logs), 1)
 
     def test_gemini_transcriber_setup(self) -> None:
         """Verifies that the Gemini transcriber initializes the GenAI client with correct options."""

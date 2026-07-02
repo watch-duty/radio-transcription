@@ -4,6 +4,7 @@ import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { type Theme, useTheme } from '@mui/material/styles';
+import { type AudioSegment } from '@transcription/common';
 
 import type { PlaybackController } from '../../audio/WebAudioPlayer';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
@@ -20,6 +21,8 @@ import { computePlayhead } from './computePlayhead';
 
 interface AudioDisplayProps {
   audioSegments: RenderableAudioSegment[];
+  // Unconsolidated segments, so the playhead can anchor on the raw clip playing.
+  rawAudioSegments: AudioSegment[];
   currentlyPlayingSegmentId: string | null;
   highlightedSegmentId: string | null;
   onClipClick: (segmentId: string) => void;
@@ -257,6 +260,7 @@ function isViewportAlignedToHead(
 
 export function AudioDisplay({
   audioSegments,
+  rawAudioSegments,
   currentlyPlayingSegmentId,
   highlightedSegmentId,
   onClipClick,
@@ -469,6 +473,7 @@ export function AudioDisplay({
 
   const playhead = computePlayhead({
     audioSegments,
+    rawAudioSegments,
     currentlyPlayingSegmentId,
     state: playbackState,
     localCurrentTimeSeconds,

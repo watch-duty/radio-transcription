@@ -8,6 +8,7 @@ from apache_beam.metrics import Metrics
 from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 from backend.pipeline.segmentation.constants import (
     DEFAULT_VAD_POST_ROLL_MS,
+    UPSTREAM_GAP_DRIFT_TOLERANCE_MS,
 )
 from backend.pipeline.segmentation.datatypes import (
     AppendBufferAction,
@@ -55,9 +56,11 @@ class AudioStitchingStateMachine:
         actions: list[StateMachineAction] = []
 
         # 1. Detect if we skipped over a chunk (upstream gap)
+        # We allow a small tolerance to absorb minor ffmpeg frame-alignment drift
         is_upstream_gap = (
             ctx.expected_next_chunk_start_ms is not None
-            and chunk_data.start_ms > ctx.expected_next_chunk_start_ms
+            and chunk_data.start_ms
+            > ctx.expected_next_chunk_start_ms + UPSTREAM_GAP_DRIFT_TOLERANCE_MS
         )
 
         if is_upstream_gap:

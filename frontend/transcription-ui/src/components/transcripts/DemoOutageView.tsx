@@ -129,6 +129,7 @@ export function DemoOutageView() {
         </Typography>
         <AudioDisplay
           audioSegments={mockSegments}
+          rawAudioSegments={mockSegments}
           currentlyPlayingSegmentId={null}
           highlightedSegmentId={highlightedId}
           onClipClick={(id) => setHighlightedId(id)}
