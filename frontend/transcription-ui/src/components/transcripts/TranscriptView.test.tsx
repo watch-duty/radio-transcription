@@ -21,6 +21,7 @@ import {
   SourceType,
 } from '@transcription/common';
 
+import { NO_SPEECH_PLAYBACK_SPEED } from '../../audio/audioSettings';
 import { consolidateAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
 import { getFeed } from '../../service/getFeed';
 import { listAudioSegments } from '../../service/listAudioSegments';
@@ -170,6 +171,7 @@ const audioEngineMock = vi.hoisted(() => ({
   playSpy: vi.fn(),
   lastSrc: null as string | null,
   lastSeekTime: null as number | null,
+  lastSpeed: 1,
   currentTime: 0,
   lastCallbacks: null as {
     onPlay?: () => void;
@@ -186,7 +188,9 @@ vi.mock('../../audio/WebAudioPlayer', async (importOriginal) => ({
     resume() {}
     setVolumeDb() {}
     setPan() {}
-    setSpeed() {}
+    setSpeed(rate: number) {
+      audioEngineMock.lastSpeed = rate;
+    }
     stop() {}
     dispose() {}
     load(
@@ -230,6 +234,7 @@ describe('TranscriptView', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
+    audioEngineMock.lastSpeed = 1;
     mockHandleError.mockClear();
     // Default mock for listAudioSegments to prevent errors on mount
     vi.mocked(listAudioSegments).mockResolvedValue({
@@ -1587,6 +1592,9 @@ describe('TranscriptView', () => {
     // It should have started playing automatically because play is on by default
     expect(audioEngineMock.lastSrc).toContain('silence-1.m4a');
     expect(playSpy).toHaveBeenCalled();
+    // Acceleration is on by default, so non-speech clips play boosted — whether
+    // reached by the initial autoplay or by auto-advancing to the next clip.
+    expect(audioEngineMock.lastSpeed).toBe(NO_SPEECH_PLAYBACK_SPEED);
 
     act(() => {
       audioEngineMock.lastCallbacks?.onEnd?.();
@@ -1595,6 +1603,7 @@ describe('TranscriptView', () => {
     await waitFor(() => {
       expect(audioEngineMock.lastSrc).toContain('silence-2.m4a');
     });
+    expect(audioEngineMock.lastSpeed).toBe(NO_SPEECH_PLAYBACK_SPEED);
   });
 
   describe('consolidateAudioSegments', () => {
