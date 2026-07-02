@@ -3,7 +3,16 @@ import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router';
 import { VirtuosoMockContext } from 'react-virtuoso';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
 import {
   act,
@@ -37,6 +46,8 @@ import TranscriptView from './TranscriptView';
 const virtuosoCallbacks = vi.hoisted(() => ({
   atTopStateChange: undefined as ((atTop: boolean) => void) | undefined,
   endReached: undefined as ((index: number) => void) | undefined,
+  // Latest firstItemIndex prop, so tests can assert scroll anchoring on prepend.
+  firstItemIndex: undefined as number | undefined,
 }));
 
 vi.mock('react-virtuoso', async (importOriginal) => {
@@ -50,9 +61,13 @@ vi.mock('react-virtuoso', async (importOriginal) => {
     }: Record<string, unknown> & {
       atTopStateChange?: (atTop: boolean) => void;
       endReached?: (index: number) => void;
+      firstItemIndex?: number;
     }) => {
       virtuosoCallbacks.atTopStateChange = atTopStateChange;
       virtuosoCallbacks.endReached = endReached;
+      virtuosoCallbacks.firstItemIndex = props.firstItemIndex as
+        | number
+        | undefined;
       return <actual.GroupedVirtuoso {...props} />;
     },
   };
@@ -227,6 +242,20 @@ describe('TranscriptView', () => {
       []
     ),
   ];
+
+  // JSDOM implements no scroll methods; react-virtuoso calls scrollBy from an
+  // rAF on prepend, which otherwise throws an unhandled "not a function" error.
+  beforeAll(() => {
+    HTMLElement.prototype.scrollBy = () => {};
+    HTMLElement.prototype.scrollTo = () => {};
+    HTMLElement.prototype.scrollIntoView = () => {};
+  });
+
+  afterAll(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollBy');
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollTo');
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+  });
 
   beforeEach(() => {
     vi.resetAllMocks();
@@ -619,6 +648,71 @@ describe('TranscriptView', () => {
     });
   });
 
+  it('lowers firstItemIndex by the prepended count when newer segments load (scroll anchoring)', async () => {
+    const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+    const newerAudioSegments = [
+      makeMockAudioSegment(
+        'n1',
+        'feed123',
+        '2026-04-10T12:05:00Z',
+        '2026-04-10T12:05:05Z',
+        'Newer 1',
+        'gs:://foo.m4a',
+        []
+      ),
+      makeMockAudioSegment(
+        'n2',
+        'feed123',
+        '2026-04-10T12:06:00Z',
+        '2026-04-10T12:06:05Z',
+        'Newer 2',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+
+    vi.mocked(listAudioSegments)
+      .mockResolvedValueOnce({
+        segments: initialAudioSegments,
+        nextToken: 'next-token-newer',
+      })
+      .mockResolvedValueOnce({
+        segments: newerAudioSegments,
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: [`/?feedId=feed123&timestamp=${testTimestamp}`] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+    const before = virtuosoCallbacks.firstItemIndex ?? 0;
+
+    // Date-mode viewing-back, so anchoring is active: scrolling back to top loads
+    // the two newer segments, which prepend above the prior head.
+    scrollAwayAndBackToTop();
+
+    // Anchoring lowers firstItemIndex by 2 so the prior view stays put (the new
+    // items sit above the viewport rather than scrolling it).
+    await waitFor(() => {
+      expect(virtuosoCallbacks.firstItemIndex).toBe(before - 2);
+    });
+  });
+
   it('passes correct params to listAudioSegments when loading newer transcripts with alerts filter active', async () => {
     const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
     const initialAudioSegments = [
@@ -760,6 +854,7 @@ describe('TranscriptView', () => {
     await waitFor(() => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
+    const anchorBefore = virtuosoCallbacks.firstItemIndex;
 
     // Advance time by 15 seconds
     vi.advanceTimersByTime(15000);
@@ -768,6 +863,10 @@ describe('TranscriptView', () => {
       expect(listAudioSegments).toHaveBeenCalledTimes(2);
       expect(screen.getByText('Newer Transcript')).toBeTruthy();
     });
+
+    // Following the live edge (at top, unfiltered): a poll prepend must NOT
+    // anchor — the new item surfaces at the top rather than pinning the view.
+    expect(virtuosoCallbacks.firstItemIndex).toBe(anchorBefore);
 
     vi.useRealTimers();
   });
