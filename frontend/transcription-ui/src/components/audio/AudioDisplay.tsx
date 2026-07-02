@@ -387,7 +387,12 @@ export function AudioDisplay({
 
     const targetId = highlightedSegmentId || playingId;
     if (targetId) {
-      const targetAudioSegment = audioSegments.find((t) => t.id === targetId);
+      // Resolve via the raw clip so a child inside a non-speech bundle centers
+      // on its own short span; the window then tracks the playhead through a
+      // bundle longer than the window rather than losing it off the edge.
+      const targetAudioSegment =
+        rawAudioSegments.find((s) => s.id === targetId) ??
+        audioSegments.find((t) => t.id === targetId);
       if (targetAudioSegment) {
         const tStart = new Date(targetAudioSegment.startTimestamp).getTime();
         const tEnd = new Date(targetAudioSegment.endTimestamp).getTime();

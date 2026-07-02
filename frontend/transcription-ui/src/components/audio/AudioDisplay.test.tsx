@@ -206,6 +206,76 @@ describe('AudioDisplay', () => {
     });
   });
 
+  it('follows the playhead into a non-speech bundle child that is off-window', async () => {
+    // A long bundle (40 min) whose id is not the child ids playback advances to.
+    const bundle = {
+      ...makeMockAudioSegment(
+        'ns-bundle',
+        'feed1',
+        new Date('2026-04-20T09:00:00Z').toISOString(),
+        new Date('2026-04-20T09:40:00Z').toISOString(),
+        '',
+        'audio.m4a'
+      ),
+      isNonSpeechBundle: true,
+      bundledSegmentIds: ['c-early', 'c-late'],
+    };
+    const rawSegments: AudioSegment[] = [
+      makeMockAudioSegment(
+        'c-early',
+        'feed1',
+        new Date('2026-04-20T09:01:00Z').toISOString(),
+        new Date('2026-04-20T09:01:05Z').toISOString(),
+        '',
+        'a.m4a'
+      ),
+      makeMockAudioSegment(
+        'c-late',
+        'feed1',
+        new Date('2026-04-20T09:39:00Z').toISOString(),
+        new Date('2026-04-20T09:39:05Z').toISOString(),
+        '',
+        'b.m4a'
+      ),
+    ];
+
+    const { rerender } = render(
+      <AudioDisplay
+        audioSegments={[bundle]}
+        rawAudioSegments={rawSegments}
+        currentlyPlayingSegmentId={null}
+        onClipClick={vi.fn()}
+        isAudioPlaying={false}
+        playbackState="listening"
+        highlightedSegmentId={null}
+      />
+    );
+    const before = screen
+      .getAllByText(/\d{2}:\d{2}/)
+      .map((el) => el.textContent);
+
+    // Playing an early child sits far outside the live-edge window; the window
+    // should follow it (it can't if the child id isn't resolved to the bundle).
+    rerender(
+      <AudioDisplay
+        audioSegments={[bundle]}
+        rawAudioSegments={rawSegments}
+        currentlyPlayingSegmentId="c-early"
+        onClipClick={vi.fn()}
+        isAudioPlaying
+        playbackState="playing"
+        highlightedSegmentId={null}
+      />
+    );
+
+    await waitFor(() => {
+      const after = screen
+        .getAllByText(/\d{2}:\d{2}/)
+        .map((el) => el.textContent);
+      expect(after).not.toEqual(before);
+    });
+  });
+
   it('should reset window when transcripts[0] changes', async () => {
     const mockAudioSegments1: AudioSegment[] = [
       makeMockAudioSegment(
