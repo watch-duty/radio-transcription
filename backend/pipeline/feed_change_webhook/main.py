@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import json
 import logging
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -24,7 +26,7 @@ from backend.pipeline.feed_change_webhook.webhook_client import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Mapping
+    from collections.abc import AsyncGenerator
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -76,12 +78,11 @@ def create_app(
 
     @relay_app.post("/pubsub/feed-change-notifications")
     async def receive_feed_change_notification(
-        envelope: dict[str, Any],
         request: Request,
     ) -> Response:
         """Receive a Pub/Sub push message for a Feed Change Notification."""
         try:
-            payload = extract_feed_change_payload(envelope)
+            payload = await _extract_payload_from_request(request)
         except InvalidPubSubMessage as exc:
             logger.warning(
                 "Invalid Feed Change Notification Pub/Sub message",
@@ -125,6 +126,24 @@ def create_app(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     return relay_app
+
+
+async def _extract_payload_from_request(request: Request) -> dict[str, Any]:
+    try:
+        body = await request.body()
+        envelope = json.loads(body.decode("utf-8"))
+    except UnicodeDecodeError as exc:
+        msg = "Pub/Sub request body is not UTF-8"
+        raise InvalidPubSubMessage(msg, path="body") from exc
+    except json.JSONDecodeError as exc:
+        msg = "Pub/Sub request body is not JSON"
+        raise InvalidPubSubMessage(msg, path="body") from exc
+
+    if not isinstance(envelope, Mapping):
+        msg = "Pub/Sub request envelope must be an object"
+        raise InvalidPubSubMessage(msg, path="envelope") from None
+
+    return extract_feed_change_payload(envelope)
 
 
 app = create_app()

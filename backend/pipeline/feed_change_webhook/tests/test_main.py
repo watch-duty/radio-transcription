@@ -173,6 +173,55 @@ def test_malformed_pubsub_message_returns_204_without_calling_webhook(
     _assert_no_sensitive_log_values(caplog, fields)
 
 
+def test_unparseable_request_body_returns_204_without_calling_webhook(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    webhook_client = _FakeWebhookClient()
+    app = create_app(settings=_settings(), webhook_client=webhook_client)
+
+    with caplog.at_level(logging.WARNING, logger=main_module.__name__):
+        with TestClient(app) as client:
+            response = client.post(
+                "/pubsub/feed-change-notifications",
+                content="{",
+                headers={"Content-Type": "application/json"},
+            )
+
+    assert response.status_code == 204
+    assert webhook_client.payloads == []
+    fields = _json_fields(caplog)
+    assert any(
+        field.get("reason") == "Pub/Sub request body is not JSON"
+        for field in fields
+    )
+    assert any(field.get("path") == "body" for field in fields)
+    _assert_no_sensitive_log_values(caplog, fields)
+
+
+def test_non_object_request_body_returns_204_without_calling_webhook(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    webhook_client = _FakeWebhookClient()
+    app = create_app(settings=_settings(), webhook_client=webhook_client)
+
+    with caplog.at_level(logging.WARNING, logger=main_module.__name__):
+        with TestClient(app) as client:
+            response = client.post(
+                "/pubsub/feed-change-notifications",
+                json=[],
+            )
+
+    assert response.status_code == 204
+    assert webhook_client.payloads == []
+    fields = _json_fields(caplog)
+    assert any(
+        field.get("reason") == "Pub/Sub request envelope must be an object"
+        for field in fields
+    )
+    assert any(field.get("path") == "envelope" for field in fields)
+    _assert_no_sensitive_log_values(caplog, fields)
+
+
 def test_invalid_payload_returns_204_without_calling_webhook(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

@@ -15,7 +15,6 @@ _EMIT_FAILURE_LOG_FIELDS = {
 }
 _DROP_LOG_FIELDS = {
     "event": "feed_change_notification_dropped",
-    "reason": "non_mapping_payload",
 }
 
 
@@ -49,19 +48,34 @@ def _normalize_feed_audit_event(
     feed_audit_event: object,
 ) -> dict[str, Any] | None:
     if isinstance(feed_audit_event, str):
-        feed_audit_event = json.loads(feed_audit_event)
+        try:
+            feed_audit_event = json.loads(feed_audit_event)
+        except json.JSONDecodeError:
+            _log_dropped_payload(
+                reason="invalid_json_payload",
+                payload_type=type(feed_audit_event).__name__,
+            )
+            return None
 
     if not isinstance(feed_audit_event, Mapping):
-        logger.warning(
-            "Feed change notification payload dropped",
-            extra={
-                "json_fields": {
-                    **_DROP_LOG_FIELDS,
-                    "payload_type": type(feed_audit_event).__name__,
-                }
-            },
+        _log_dropped_payload(
+            reason="non_mapping_payload",
+            payload_type=type(feed_audit_event).__name__,
         )
         return None
 
     payload = cast("Mapping[str, Any]", feed_audit_event)
     return dict(payload)
+
+
+def _log_dropped_payload(*, reason: str, payload_type: str) -> None:
+    logger.warning(
+        "Feed change notification payload dropped",
+        extra={
+            "json_fields": {
+                **_DROP_LOG_FIELDS,
+                "reason": reason,
+                "payload_type": payload_type,
+            }
+        },
+    )

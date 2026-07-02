@@ -112,23 +112,24 @@ class TestEmitFeedChangeNotification(unittest.TestCase):
                     },
                 )
 
-    def test_logs_operational_error_for_invalid_json_string(self) -> None:
+    def test_logs_warning_for_invalid_json_string(self) -> None:
         with self.assertLogs(
             "backend.pipeline.storage.feed_change_notifications",
-            level=logging.ERROR,
+            level=logging.WARNING,
         ) as cm:
             feed_change_notifications.emit_feed_change_notification("{")
 
         self.assertEqual(len(cm.records), 1)
         record = cast("Any", cm.records[0])
         self.assertIn(
-            "Feed change notification emission failed", record.getMessage()
+            "Feed change notification payload dropped", record.getMessage()
         )
         self.assertEqual(
             record.json_fields,
             {
-                "event": "feed_change_notification_emit_failed",
-                "failure_class": "producer_emit_error",
+                "event": "feed_change_notification_dropped",
+                "reason": "invalid_json_payload",
+                "payload_type": "str",
             },
         )
         self.assertNotIn("before_values", json.dumps(record.json_fields))
