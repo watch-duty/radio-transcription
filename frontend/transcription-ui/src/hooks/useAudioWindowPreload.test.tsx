@@ -137,4 +137,41 @@ describe('useAudioWindowPreload', () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toContain('30-page cap');
   });
+
+  it('resets the page counters on a resetKey change so a new query preloads again', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchOlder = vi.fn();
+    const uncovered = () => [seg(Date.now()), seg(Date.now() - 60 * 60 * 1000)];
+
+    const { rerender } = renderHook(
+      (props: Options) => useAudioWindowPreload(props),
+      {
+        initialProps: baseOptions({
+          fetchOlder,
+          segments: uncovered(),
+          resetKey: 'feed-1||all',
+        }),
+      }
+    );
+    for (let i = 0; i < 35; i++) {
+      rerender(
+        baseOptions({
+          fetchOlder,
+          segments: uncovered(),
+          resetKey: 'feed-1||all',
+        })
+      );
+    }
+    expect(fetchOlder.mock.calls.length).toBe(30);
+
+    // Query changes: counters must reset, so the fresh query pages again.
+    rerender(
+      baseOptions({
+        fetchOlder,
+        segments: uncovered(),
+        resetKey: 'feed-2||all',
+      })
+    );
+    expect(fetchOlder.mock.calls.length).toBe(31);
+  });
 });

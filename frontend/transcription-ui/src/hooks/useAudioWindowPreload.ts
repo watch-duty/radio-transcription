@@ -49,14 +49,18 @@ export function useAudioWindowPreload({
   // Warn at most once per query so a busy feed that can't be covered within the
   // page cap doesn't spam the console on every render.
   const cappedWarnedRef = useRef(false);
+  const prevResetKeyRef = useRef(resetKey);
 
   useEffect(() => {
-    olderPagesRef.current = 0;
-    newerPagesRef.current = 0;
-    cappedWarnedRef.current = false;
-  }, [resetKey]);
+    // A query change (new resetKey) restarts pagination from page one, so zero
+    // the per-query counters before the paging logic below reads them.
+    if (prevResetKeyRef.current !== resetKey) {
+      prevResetKeyRef.current = resetKey;
+      olderPagesRef.current = 0;
+      newerPagesRef.current = 0;
+      cappedWarnedRef.current = false;
+    }
 
-  useEffect(() => {
     if (!enabled || !windowMs || segments.length === 0) return;
 
     const warnCappedOnce = (side: 'older' | 'newer') => {
@@ -107,6 +111,7 @@ export function useAudioWindowPreload({
       warnCappedOnce('newer');
     }
   }, [
+    resetKey,
     enabled,
     windowMs,
     anchorTimestamp,
