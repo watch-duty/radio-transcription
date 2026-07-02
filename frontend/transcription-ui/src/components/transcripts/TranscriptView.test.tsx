@@ -3,7 +3,16 @@ import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router';
 import { VirtuosoMockContext } from 'react-virtuoso';
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
 import {
   act,
@@ -233,6 +242,20 @@ describe('TranscriptView', () => {
       []
     ),
   ];
+
+  // JSDOM implements no scroll methods; react-virtuoso calls scrollBy from an
+  // rAF on prepend, which otherwise throws an unhandled "not a function" error.
+  beforeAll(() => {
+    HTMLElement.prototype.scrollBy = () => {};
+    HTMLElement.prototype.scrollTo = () => {};
+    HTMLElement.prototype.scrollIntoView = () => {};
+  });
+
+  afterAll(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollBy');
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollTo');
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+  });
 
   beforeEach(() => {
     vi.resetAllMocks();
