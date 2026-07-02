@@ -87,7 +87,7 @@ class WebhookClient:
                 timeout=httpx.Timeout(_REQUEST_TIMEOUT_SECONDS),
             )
         )
-        self._wait_strategy = wait_strategy or tenacity.wait_exponential(
+        self._wait_strategy = wait_strategy or tenacity.wait_random_exponential(
             multiplier=0.5,
             min=0.5,
             max=2.0,
