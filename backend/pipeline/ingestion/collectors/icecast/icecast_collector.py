@@ -330,7 +330,7 @@ async def _fix_flac_header(file_path: Path) -> None:
         )
         await asyncio.wait_for(process.wait(), timeout=_FIX_HEADER_TIMEOUT_SEC)
         if process.returncode == 0:
-            temp_path.replace(file_path)
+            await asyncio.to_thread(temp_path.replace, file_path)
         else:
             logger.error(
                 "ffmpeg header fix failed for %s with exit code %s",
@@ -352,7 +352,7 @@ async def _fix_flac_header(file_path: Path) -> None:
             task = asyncio.create_task(_cleanup_subprocess(process))
             _background_tasks.add(task)
             task.add_done_callback(_background_tasks.discard)
-        temp_path.unlink(missing_ok=True)
+        await asyncio.to_thread(temp_path.unlink, missing_ok=True)
 
 
 async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
