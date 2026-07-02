@@ -51,8 +51,7 @@ interface UseAudioTimelineWindowParams {
   currentlyPlayingSegmentId: string | null;
   highlightedSegmentId: string | null;
   // Changes when the list is replaced wholesale (feed / timestamp / filter).
-  // Resets the window to the live edge — distinct from a transient poll blank,
-  // which the empty-list guard below deliberately ignores.
+  // Resets the window to the live edge.
   resetKey: string;
 }
 
@@ -89,12 +88,16 @@ export function useAudioTimelineWindow({
   const firstEnd = firstSegment?.endTimestamp ?? null;
   const liveEnd = firstEnd ? new Date(firstEnd).getTime() : null;
 
+  // Keep the last non-empty head across transient blanks so a refill isn't
+  // mistaken for an initial load (which would snap a scrolled-back window live).
+  const nextFirstId = firstId !== null ? firstId : prev.firstId;
+  const nextFirstEnd = firstId !== null ? firstEnd : prev.firstEnd;
+
   const isLatestTimeWindow =
     windowEndTime == null ||
     liveEnd == null ||
     windowEndTime >= liveEnd - LIVE_EDGE_EPS_MS;
 
-  // Skip empty lists: a refetch blank must not read as a fresh initial load.
   const headChanged =
     firstId !== null &&
     (firstId !== prev.firstId || firstEnd !== prev.firstEnd);
@@ -108,8 +111,8 @@ export function useAudioTimelineWindow({
     if (windowEndTime !== null) setWindowEndTime(null);
     setPrev({
       resetKey,
-      firstId,
-      firstEnd,
+      firstId: nextFirstId,
+      firstEnd: nextFirstEnd,
       playingId: currentlyPlayingSegmentId,
       highlightedId: highlightedSegmentId,
     });
@@ -148,8 +151,8 @@ export function useAudioTimelineWindow({
     }
     setPrev({
       resetKey,
-      firstId,
-      firstEnd,
+      firstId: nextFirstId,
+      firstEnd: nextFirstEnd,
       playingId: currentlyPlayingSegmentId,
       highlightedId: highlightedSegmentId,
     });

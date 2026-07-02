@@ -115,6 +115,21 @@ describe('useAudioTimelineWindow', () => {
     expect(result.current.isLatestTimeWindow).toBe(false);
   });
 
+  it('keeps a scrolled-back window when a selection change coincides with a poll blank', () => {
+    const { result, rerender } = setup({ audioSegments: [NEWEST, OLDER] });
+    rerender({ audioSegments: [NEWEST, OLDER], highlightedSegmentId: 'b' });
+    const pastEnd = result.current.windowEndTime;
+    expect(result.current.isLatestTimeWindow).toBe(false);
+
+    // A transient refetch empties the list while the selection also changes.
+    rerender({ audioSegments: [], highlightedSegmentId: null });
+    // The same head returns on refill; it must not read as an initial load.
+    rerender({ audioSegments: [NEWEST, OLDER], highlightedSegmentId: null });
+
+    expect(result.current.windowEndTime).toBe(pastEnd);
+    expect(result.current.isLatestTimeWindow).toBe(false);
+  });
+
   it('jumpToLive returns to the latest window', () => {
     const { result, rerender } = setup({ audioSegments: [NEWEST, OLDER] });
     rerender({ audioSegments: [NEWEST, OLDER], highlightedSegmentId: 'b' });
