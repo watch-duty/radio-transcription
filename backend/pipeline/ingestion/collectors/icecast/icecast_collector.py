@@ -64,6 +64,9 @@ STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 _STREAM_PROBE_TIMEOUT_SEC = 10
 _MAX_ALLOWED_LAG_SECONDS = 60.0
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
+_FIX_HEADER_TIMEOUT_SEC = 10.0
+
+_background_tasks: set[asyncio.Task[None]] = set()
 
 
 # Stream endpoint semantics differ from item/API endpoints: a stream 404 means
@@ -288,6 +291,19 @@ def _path_mtime(path: Path) -> float | None:
         return None
 
 
+async def _cleanup_subprocess(process: asyncio.subprocess.Process) -> None:
+    """Ensure a subprocess is terminated or killed and its resources reaped."""
+    if process.returncode is not None:
+        return
+    with contextlib.suppress(Exception):
+        process.terminate()
+        await asyncio.wait_for(process.wait(), timeout=2.0)
+        return
+    with contextlib.suppress(Exception):
+        process.kill()
+        await process.wait()
+
+
 async def _fix_flac_header(file_path: Path) -> None:
     """Re-encodes a FLAC segment in-place to write a valid STREAMINFO header.
 
@@ -298,6 +314,7 @@ async def _fix_flac_header(file_path: Path) -> None:
     Re-encoding the segment in-place takes ~10ms but writes a perfect, standard FLAC header.
     """
     temp_path = file_path.with_name(f"{file_path.name}.fixed.flac")
+    process = None
     try:
         process = await asyncio.create_subprocess_exec(
             "ffmpeg",
@@ -311,7 +328,7 @@ async def _fix_flac_header(file_path: Path) -> None:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        await process.wait()
+        await asyncio.wait_for(process.wait(), timeout=_FIX_HEADER_TIMEOUT_SEC)
         if process.returncode == 0:
             temp_path.replace(file_path)
         else:
@@ -320,11 +337,21 @@ async def _fix_flac_header(file_path: Path) -> None:
                 file_path,
                 process.returncode,
             )
+    except TimeoutError:
+        logger.warning(
+            "ffmpeg header fix timed out for %s after %.1fs",
+            file_path,
+            _FIX_HEADER_TIMEOUT_SEC,
+        )
     except Exception as e:
         logger.exception(
             "Exception fixing FLAC header for %s: %s", file_path, e
         )
     finally:
+        if process is not None:
+            task = asyncio.create_task(_cleanup_subprocess(process))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
         temp_path.unlink(missing_ok=True)
 
 
@@ -427,13 +454,15 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                 next_segment = _segment_path(segment_dir, next_index + 1)
                 process_done = wait_task.done()
 
+                # Run file checks in threadpool to prevent event loop stalls on disk latency
+                current_exists = await asyncio.to_thread(current_segment.exists)
+                next_exists = await asyncio.to_thread(next_segment.exists)
+
                 # Read a segment only once we know ffmpeg finished writing it.
                 # A segment is considered finalized when either:
                 # - the next segment exists, or
                 # - ffmpeg has exited.
-                if current_segment.exists() and (
-                    next_segment.exists() or process_done
-                ):
+                if current_exists and (next_exists or process_done):
                     # SLO: receipt_time stamp — Icecast segment finalized, bytes available
                     receipt_time = _now_utc()
 
@@ -487,7 +516,7 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
 
                 # If ffmpeg is done and there is no pending finalized segment,
                 # we are finished.
-                if process_done and not current_segment.exists():
+                if process_done and not current_exists:
                     exit_code = wait_task.result()
                     if exit_code != 0:
                         stderr_snippet = (
@@ -581,7 +610,7 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                 wait_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await wait_task
-            await _cleanup_ffmpeg_process(process, str(feed_id), str(feed_name))
+            await _cleanup_ffmpeg_process(process, str(feed_id), feed_name)
 
 
 async def _create_ffmpeg_process(

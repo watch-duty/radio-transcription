@@ -1262,6 +1262,79 @@ class TestFixFlacHeader(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sample_rate, 16000)
         self.assertAlmostEqual(len(samples) / sample_rate, 15.0, delta=0.5)
 
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    async def test_fix_flac_header_timeout_triggers_cleanup(
+        self, mock_create_exec: AsyncMock
+    ) -> None:
+        mock_process = AsyncMock()
+        mock_process.returncode = None
+
+        terminated_event = asyncio.Event()
+
+        def mock_terminate():
+            terminated_event.set()
+
+        mock_process.terminate = mock_terminate
+
+        async def mock_wait():
+            await terminated_event.wait()
+            return 0
+
+        mock_process.wait = mock_wait
+        mock_create_exec.return_value = mock_process
+
+        with patch.object(icecast_collector, "_FIX_HEADER_TIMEOUT_SEC", 0.05):
+            with tempfile.TemporaryDirectory() as tmp:
+                segment = Path(tmp) / "chunk_000000.flac"
+                segment.write_bytes(b"dummy_data")
+
+                await icecast_collector._fix_flac_header(segment)
+
+                # Give background tasks (cleanup) a tick to run
+                await asyncio.sleep(0.02)
+
+                self.assertTrue(terminated_event.is_set())
+
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    async def test_fix_flac_header_cancellation_triggers_cleanup(
+        self, mock_create_exec: AsyncMock
+    ) -> None:
+        mock_process = AsyncMock()
+        mock_process.returncode = None
+
+        terminated_event = asyncio.Event()
+
+        def mock_terminate():
+            terminated_event.set()
+
+        mock_process.terminate = mock_terminate
+
+        async def mock_wait():
+            await terminated_event.wait()
+            return 0
+
+        mock_process.wait = mock_wait
+        mock_create_exec.return_value = mock_process
+
+        with tempfile.TemporaryDirectory() as tmp:
+            segment = Path(tmp) / "chunk_000000.flac"
+            segment.write_bytes(b"dummy_data")
+
+            # Start the task and cancel it immediately
+            task = asyncio.create_task(
+                icecast_collector._fix_flac_header(segment)
+            )
+            await asyncio.sleep(0.01)  # let it start and await wait_for
+            task.cancel()
+
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+            # Give background tasks (cleanup) a tick to run
+            await asyncio.sleep(0.02)
+
+            self.assertTrue(terminated_event.is_set())
+
 
 if __name__ == "__main__":
     unittest.main()
