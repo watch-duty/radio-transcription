@@ -63,6 +63,8 @@ dev = [
   "pyopenssl>=26.0.0",
   "deepdiff>=9.1.0",
   "types-protobuf>=7.34.1",
+  "google-cloud-storage>=2.14.0",
+  "requests>=2.31.0",
 ]
 
 [tool.ruff]
