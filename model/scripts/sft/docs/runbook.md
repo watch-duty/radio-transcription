@@ -168,13 +168,13 @@ gs://BUCKET/sft/runs/ROUND_ID/evals/wer_summary.md
 ```
 
 The report row includes the configured target label and model, WER, CER,
-keyword accuracy, empty-or-unintelligible rate, exact empty response rate,
-insertions, deletions, substitutions, total reference words, missing prediction
-count, and artifact URIs.
+keyword accuracy, empty-or-unintelligible rate, insertions, deletions,
+substitutions, total reference words, missing prediction count, and artifact
+URIs.
 
 Missing provider predictions are scored as empty hypotheses and stay in the
 WER/CER denominator. Missing rows are reported in `missing_prediction_count` and
-do not count as exact empty model responses.
+do not count toward `empty_or_unintelligible_rate`.
 
 ## 6. Masked And Unmasked Eval Runs
 
