@@ -15,7 +15,8 @@ import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
-import { type FeedFilters, FeedTable } from './FeedTable';
+import { type FeedFilters, FeedTable, FeedTagChip } from './FeedTable';
+import { groupTagsByKey } from './tagDisplay';
 
 interface FeedSearchViewProps {
   title: string;
@@ -138,16 +139,10 @@ function CondensedFeedSearchResults({
                 />
                 {option.tags && option.tags.length > 0 && (
                   <>
-                    {option.tags.map((tag, i) => (
-                      <Chip
-                        key={`feed-${option.id}-tag-${i}`}
-                        label={
-                          <Typography variant="body2">
-                            <b>{tag.key}</b>: {tag.value}
-                          </Typography>
-                        }
-                        size="small"
-                        variant="filled"
+                    {groupTagsByKey(option.tags).map((group) => (
+                      <FeedTagChip
+                        key={`feed-${option.id}-tag-${group.key}`}
+                        group={group}
                       />
                     ))}
                   </>
