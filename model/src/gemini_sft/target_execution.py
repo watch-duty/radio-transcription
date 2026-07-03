@@ -117,6 +117,29 @@ async def _upload_text_async(
     )
 
 
+async def _upload_periodic_prediction_snapshot(
+    *,
+    storage_client: Any,
+    snapshot: str,
+    predictions_uri: str,
+    target_label: str,
+) -> None:
+    try:
+        await _upload_text_async(
+            storage_client,
+            snapshot,
+            predictions_uri,
+        )
+    except Exception as exc:
+        LOGGER.warning(
+            "target=%s failed to upload periodic online prediction "
+            "snapshot to %s: %s",
+            target_label,
+            predictions_uri,
+            exc,
+        )
+
+
 def load_existing_online_predictions(
     *,
     storage_client: Any,
@@ -297,10 +320,11 @@ async def run_online_target_inference(
                     progress["errors"],
                 )
         if upload_snapshot is not None:
-            await _upload_text_async(
-                storage_client,
-                upload_snapshot,
-                predictions_uri,
+            await _upload_periodic_prediction_snapshot(
+                storage_client=storage_client,
+                snapshot=upload_snapshot,
+                predictions_uri=predictions_uri,
+                target_label=target_label,
             )
 
     await asyncio.gather(

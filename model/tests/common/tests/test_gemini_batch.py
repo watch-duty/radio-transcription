@@ -94,6 +94,27 @@ class TestGeminiBatchInference(unittest.TestCase):
             "gs://audio/current.flac",
         )
 
+    def test_build_batch_jsonl_rejects_duplicate_audio_uris(self) -> None:
+        storage = FakeStorageClient()
+        with tempfile.TemporaryDirectory() as tmp_s:
+            with self.assertRaisesRegex(ValueError, "duplicate audio_uri"):
+                build_batch_jsonl(
+                    storage_client=storage,
+                    run_gcs_prefix="gs://bucket/sft/runs/run-a",
+                    label="base",
+                    audio_uris=[
+                        "gs://audio/a.flac",
+                        "gs://audio/a.flac",
+                    ],
+                    system_prompt="sys",
+                    user_prompt="user",
+                    tmp_dir=Path(tmp_s),
+                )
+
+        self.assertFalse(
+            storage.has(batch_input_uri("gs://bucket/sft/runs/run-a"))
+        )
+
     def test_run_batch_audio_inference_returns_predictions_and_output_uri(
         self,
     ) -> None:

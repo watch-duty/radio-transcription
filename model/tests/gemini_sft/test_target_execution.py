@@ -576,6 +576,71 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
         asyncio.run(run_scenario())
 
+    @unittest.mock.patch("gemini_sft.target_execution.types")
+    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    def test_periodic_upload_failure_does_not_abort_generation(
+        self, mock_genai, mock_types
+    ) -> None:
+        class Response:
+            text = "recognized"
+
+        async def generate_content(**kwargs):
+            return Response()
+
+        prediction_uploads: list[str] = []
+
+        async def flaky_upload(storage_client, text: str, gcs_uri: str) -> None:
+            if not gcs_uri.endswith("online_predictions.jsonl"):
+                return
+            prediction_uploads.append(text)
+            if len(prediction_uploads) == 1:
+                msg = "temporary upload failure"
+                raise RuntimeError(msg)
+
+        mock_client = unittest.mock.MagicMock()
+        mock_client.aio.models.generate_content = generate_content
+        mock_genai.Client.return_value = mock_client
+        mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
+
+        with (
+            unittest.mock.patch(
+                "gemini_sft.target_execution.ONLINE_SYNC_EVERY", 1
+            ),
+            unittest.mock.patch(
+                "gemini_sft.target_execution._upload_text_async",
+                flaky_upload,
+            ),
+            self.assertLogs(
+                "gemini_sft.target_execution", level="WARNING"
+            ) as logs,
+        ):
+            result = asyncio.run(
+                run_online_target_inference(
+                    storage_client=self.storage,
+                    run_gcs_prefix="gs://bucket/run",
+                    project="project",
+                    default_location="us-central1",
+                    target_label="checkpoint_6",
+                    target_model=(
+                        "projects/p/locations/us-central1/endpoints/123"
+                    ),
+                    audio_uris=["gs://audio/1.flac"],
+                    histories=[[]],
+                    system_prompt="system",
+                    user_prompt="user",
+                    prior_context_count=8,
+                    prior_context_mode="text_turns",
+                    eval_manifest_uri="gs://data/eval.jsonl",
+                    local_dir=self.local_dir,
+                    concurrency=1,
+                    max_retries=1,
+                )
+            )
+
+        self.assertEqual(result["gs://audio/1.flac"], "recognized")
+        self.assertEqual(len(prediction_uploads), 2)
+        self.assertIn("temporary upload failure", "\n".join(logs.output))
+
     @unittest.mock.patch("gemini_sft.target_execution.genai")
     def test_safe_resume_skips_existing_rows(self, mock_genai) -> None:
         identity = _identity()

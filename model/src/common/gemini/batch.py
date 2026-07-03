@@ -186,6 +186,12 @@ def build_batch_jsonl(
     if histories is not None and len(histories) != len(audio_uris):
         msg = "histories must have one entry per audio URI"
         raise ValueError(msg)
+    if _unique_audio_uris(audio_uris) is None:
+        msg = (
+            "duplicate audio_uri in batch eval input; cannot map predictions "
+            "safely"
+        )
+        raise ValueError(msg)
     batch_input_path = tmp_dir / f"batch_input_{label}.jsonl"
     with batch_input_path.open("w", encoding="utf-8") as fh:
         for index, audio_uri in enumerate(audio_uris):
