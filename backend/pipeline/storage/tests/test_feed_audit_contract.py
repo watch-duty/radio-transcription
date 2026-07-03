@@ -48,6 +48,10 @@ def _markdown_section(text: str, heading: str) -> str:
     return match.group("body")
 
 
+def _normalized_markdown(text: str) -> str:
+    return " ".join(text.split())
+
+
 def test_repository_glossary_defines_audit_terms() -> None:
     text = _read("CONTEXT.md")
 
@@ -67,6 +71,14 @@ def test_repository_glossary_defines_audit_terms() -> None:
         "separate follow-up concerns",
     ):
         assert token in feed_event_section
+
+    notification_section = _markdown_section(
+        text,
+        "### Feed Change Notification",
+    )
+    assert "delivery projection of a Feed Audit Event" in _normalized_markdown(
+        notification_section
+    )
 
     actor_section = _markdown_section(text, "### Actor ID")
     for token in (

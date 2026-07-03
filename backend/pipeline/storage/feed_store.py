@@ -5,7 +5,7 @@ import enum
 import json
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 import asyncpg
 import asyncpg.exceptions
@@ -15,7 +15,11 @@ from backend.pipeline.common.exceptions import (
     FeedNameAlreadyExistsError,
     FeedStateConflictError,
 )
-from backend.pipeline.storage import feed_lifecycle, feed_queries
+from backend.pipeline.storage import (
+    feed_change_notifications,
+    feed_lifecycle,
+    feed_queries,
+)
 from backend.pipeline.storage.pagination_utils import (
     SortOrder,
     decode_cursor,
@@ -140,6 +144,7 @@ class LeasedFeed(TypedDict):
     failure_count: int
     status_reason: FeedStatusReason | None
     source_feed_id: str | None
+    tags: NotRequired[list[dict[str, str]] | None]
 
 
 class SourceObservationResult(TypedDict):
@@ -314,6 +319,13 @@ class FeedStore:
             msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
             raise ValueError(msg) from e
         status_reason_raw = row["status_reason"]
+        tags_raw = row.get("tags")
+        tags = None
+        if tags_raw is not None:
+            tags = (
+                json.loads(tags_raw) if isinstance(tags_raw, str) else tags_raw
+            )
+
         return LeasedFeed(
             id=row["id"],
             name=row["name"],
@@ -328,6 +340,7 @@ class FeedStore:
                 else None
             ),
             source_feed_id=row["source_feed_id"],
+            tags=tags,
         )
 
     async def update_feed_progress(
@@ -370,7 +383,12 @@ class FeedStore:
             last_bookmark_time,
             _require_actor_id(actor_id),
         )
-        return row is not None
+        if row is None:
+            return False
+        feed_change_notifications.emit_feed_change_notification(
+            row.get("feed_audit_event")
+        )
+        return True
 
     async def record_source_observation(
         self,
@@ -403,13 +421,17 @@ class FeedStore:
                 current_fencing_token=None,
                 recorded=False,
             )
-        return SourceObservationResult(
+        result = SourceObservationResult(
             id=row["id"],
             current_worker=row["current_worker"],
             current_status=row["current_status"],
             current_fencing_token=row["current_fencing_token"],
             recorded=row["recorded"],
         )
+        feed_change_notifications.emit_feed_change_notification(
+            row.get("feed_audit_event")
+        )
+        return result
 
     async def renew_heartbeats_batch_diagnostic(
         self,
@@ -533,16 +555,9 @@ class FeedStore:
                     "reason": reason,
                 },
             )
-        else:
-            logger.info(
-                "Feed failure recorded",
-                extra={
-                    "feed_id": str(feed_id),
-                    "failure_count": row["failure_count"],
-                    "retry_after": str(row["retry_after"]),
-                    "reason": reason,
-                },
-            )
+        feed_change_notifications.emit_feed_change_notification(
+            row.get("feed_audit_event")
+        )
         return status
 
     async def release_non_budgeted_failure(
@@ -578,7 +593,11 @@ class FeedStore:
             )
         if row is None:
             return None
-        return row["status"]
+        status: str = row["status"]
+        feed_change_notifications.emit_feed_change_notification(
+            row.get("feed_audit_event")
+        )
+        return status
 
     async def release_feed(
         self,
@@ -852,7 +871,11 @@ class FeedStore:
             msg = f"Invalid source type '{source_type_str}'"
             raise ValueError(msg) from e
 
-        return self._row_to_feed(row)
+        feed = self._row_to_feed(row)
+        feed_change_notifications.emit_feed_change_notification(
+            row.get("feed_audit_event")
+        )
+        return feed
 
     async def update_feed(
         self,
@@ -900,7 +923,11 @@ class FeedStore:
                 "feed_name": name,
             },
         )
-        return self._row_to_feed(row)
+        feed = self._row_to_feed(row)
+        feed_change_notifications.emit_feed_change_notification(
+            row.get("feed_audit_event")
+        )
+        return feed
 
     async def get_feed(self, feed_id: uuid.UUID) -> Feed | None:
         """Fetch a specific feed by ID.
@@ -998,7 +1025,12 @@ class FeedStore:
                 feed_id,
                 required_actor_id,
             )
-        return row is not None
+        if row is None:
+            return False
+        feed_change_notifications.emit_feed_change_notification(
+            row.get("feed_audit_event")
+        )
+        return True
 
     async def delete_feed(
         self,
@@ -1028,7 +1060,11 @@ class FeedStore:
                 "deleted",
                 row["current_status"],
             )
-        return bool(row["deleted"])
+        deleted = bool(row["deleted"])
+        feed_change_notifications.emit_feed_change_notification(
+            row.get("feed_audit_event")
+        )
+        return deleted
 
     async def reset_feed(
         self,
@@ -1068,4 +1104,8 @@ class FeedStore:
             )
         if row["id"] is None:
             return None
-        return self._row_to_feed(row)
+        feed = self._row_to_feed(row)
+        feed_change_notifications.emit_feed_change_notification(
+            row.get("feed_audit_event")
+        )
+        return feed

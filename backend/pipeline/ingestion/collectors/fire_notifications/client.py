@@ -6,7 +6,6 @@ import datetime
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
-from zoneinfo import ZoneInfo
 
 from backend.pipeline.ingestion.collectors import aiohttp_requests, control_flow
 from backend.pipeline.ingestion.failure_classifiers import http_status
@@ -15,6 +14,7 @@ from backend.pipeline.storage import feed_store
 
 if TYPE_CHECKING:
     import asyncio
+    from zoneinfo import ZoneInfo
 
     import aiohttp
 
@@ -84,24 +84,20 @@ class FireNotificationsRestClient(FireNotificationsClient):
         s3_base_url: str,
         user: str,
         password: str,
+        timezone: ZoneInfo,
     ) -> None:
         self.session = session
         self.url_base = url_base.rstrip("/")
         self.s3_base_url = s3_base_url.rstrip("/")
         self.auth_headers = self._build_auth_headers(user, password)
+        self.timezone = timezone
 
     def _build_auth_headers(self, user: str, password: str) -> dict[str, str]:
         auth_str = f"{user}:{password}"
         encoded = base64.b64encode(auth_str.encode("utf-8")).decode("utf-8")
         return {"Authorization": f"Basic {encoded}"}
 
-    def _get_channel_timezone(self, channel_key: str) -> ZoneInfo:
-        """Stub for resolving a channel's timezone."""
-        return ZoneInfo("UTC")
-
-    def _parse_filename_timestamp(
-        self, filename: str, channel_key: str
-    ) -> datetime.datetime:
+    def _parse_filename_timestamp(self, filename: str) -> datetime.datetime:
         """Extract and localize timestamp from Fire Notifications filename."""
         base = filename.removesuffix(".mp3")
         parts = base.split(" ")
@@ -115,7 +111,7 @@ class FireNotificationsRestClient(FireNotificationsClient):
         dt_naive = datetime.datetime.strptime(
             f"{date_str} {time_str}", "%Y-%m-%d %H-%M-%S"
         )
-        tz = self._get_channel_timezone(channel_key)
+        tz = self.timezone
         dt_aware = dt_naive.replace(tzinfo=tz)
         return dt_aware.astimezone(datetime.UTC)
 
@@ -189,9 +185,7 @@ class FireNotificationsRestClient(FireNotificationsClient):
                 continue
 
             try:
-                start_time = self._parse_filename_timestamp(
-                    name, source_feed_id
-                )
+                start_time = self._parse_filename_timestamp(name)
             except ValueError:
                 logger.warning(
                     "Failed to parse timestamp from filename: %s", name

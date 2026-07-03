@@ -4,6 +4,7 @@ import { type RuleCreate, SourceType } from '@transcription/common';
 
 import {
   buildRulePayload,
+  isValidTimezone,
   validateFeedSourceId,
   validateRule,
 } from './validationUtils';
@@ -378,5 +379,22 @@ describe('buildRulePayload', () => {
     const result = buildRulePayload(input);
     expect(result.scope.level).toBe('FEED_SPECIFIC');
     expect(result.scope.targetFeeds).toEqual(['feed-1']);
+  });
+
+  describe('timezone validation', () => {
+    describe('isValidTimezone', () => {
+      it('returns true for valid timezones', () => {
+        expect(isValidTimezone('UTC')).toBe(true);
+        expect(isValidTimezone('America/Los_Angeles')).toBe(true);
+        expect(isValidTimezone('America/New_York')).toBe(true);
+        expect(isValidTimezone('Europe/London')).toBe(true);
+      });
+
+      it('returns false for invalid timezones', () => {
+        expect(isValidTimezone('invalid-timezone')).toBe(false);
+        expect(isValidTimezone('')).toBe(false);
+        expect(isValidTimezone('America/New_Yorkish')).toBe(false);
+      });
+    });
   });
 });

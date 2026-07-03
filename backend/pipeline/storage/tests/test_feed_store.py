@@ -101,10 +101,22 @@ def _full_feed_row(**overrides: object) -> dict[str, object]:
 
 
 def _audit_snapshot_row(**overrides: object) -> dict[str, object]:
-    row = _full_feed_row(**overrides)
-    row["feed_properties.source_feed_id"] = row["source_feed_id"]
-    row["feed_properties.tags"] = row["tags"]
-    return row
+    return _full_feed_row(**overrides)
+
+
+def _feed_audit_event(action: str = "feed.recovered") -> dict[str, object]:
+    return {
+        "event_type": "radio_transcription.feed_change_notification",
+        "schema_version": 1,
+        "event_id": uuid.UUID("cccccccc-dddd-eeee-ffff-000000000000"),
+        "action": action,
+        "occurred_at": datetime.datetime(2026, 6, 26, tzinfo=datetime.UTC),
+        "actor_id": _COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
+        "feed_id": _FEED_ID,
+        "feed_revision": 2,
+        "before_values": {"status": "active"},
+        "after_values": {"status": "unclaimed"},
+    }
 
 
 class _RuntimePriorKwargs(TypedDict):
@@ -122,6 +134,7 @@ def _failure_update_row(
     retry_after: datetime.datetime | None = None,
     status_reason: str | None = "system_unexpected_error",
     status_reason_detail: str | None = None,
+    **overrides: object,
 ) -> dict[str, object]:
     return _audit_snapshot_row(
         status=status,
@@ -129,6 +142,7 @@ def _failure_update_row(
         retry_after=retry_after,
         status_reason=status_reason,
         status_reason_detail=status_reason_detail,
+        **overrides,
     )
 
 
@@ -512,8 +526,8 @@ class TestFeedAuditSql(unittest.TestCase):
             "'status_reason_updated_at'",
             "'status_reason_detail'",
             "'created_at'",
-            "'feed_properties.source_feed_id'",
-            "'feed_properties.tags'",
+            "'source_feed_id'",
+            "'tags'",
         ):
             self.assertIn(key, snapshot_sql)
 
@@ -527,8 +541,8 @@ class TestFeedAuditSql(unittest.TestCase):
         ):
             stripped = _sql_without_comments(sql)
             self.assertRegex(stripped, r"SELECT\s+f\.\*")
-            self.assertIn("'feed_properties.source_feed_id'", stripped)
-            self.assertIn("'feed_properties.tags'", stripped)
+            self.assertIn("'source_feed_id'", stripped)
+            self.assertIn("'tags'", stripped)
             self.assertNotIn("SELECT fp.*", stripped)
 
     def test_runtime_audit_actions_are_selected_in_sql(self) -> None:
@@ -828,21 +842,52 @@ class TestUpdateFeedProgress(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(result)
 
+    async def test_emits_sql_returned_audit_event(self) -> None:
+        """Successful progress writes emit only the returned audit payload."""
+        payload = _feed_audit_event()
+        pool = make_mock_pool(
+            fetchrow_result=_audit_snapshot_row(feed_audit_event=payload),
+        )
+        store = FeedStore(pool)
+
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.update_feed_progress(
+                _FEED_ID,
+                _WORKER_ID,
+                "gs://bucket/path/file.ogg",
+                1,
+                None,
+                actor_id=_COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
+            )
+
+        self.assertTrue(result)
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            payload
+        )
+
     async def test_returns_false_when_lease_lost(self) -> None:
         """False is returned when no row matches (lease was lost)."""
         pool = make_mock_pool(fetchrow_result=None)
         store = FeedStore(pool)
 
-        result = await store.update_feed_progress(
-            _FEED_ID,
-            _WORKER_ID,
-            "gs://bucket/path/file.ogg",
-            1,
-            None,
-            actor_id=_COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
-        )
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.update_feed_progress(
+                _FEED_ID,
+                _WORKER_ID,
+                "gs://bucket/path/file.ogg",
+                1,
+                None,
+                actor_id=_COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
+            )
 
         self.assertFalse(result)
+        notifications.emit_feed_change_notification.assert_not_called()
 
     async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed in the correct order."""
@@ -930,6 +975,7 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
     async def test_returns_diagnostic_result_when_row_exists(self) -> None:
         """Diagnostic row identifies whether the source observation was recorded."""
         resume_position = datetime.datetime(2026, 6, 8, tzinfo=datetime.UTC)
+        payload = _feed_audit_event()
         pool = make_mock_pool(
             fetchrow_result={
                 "id": _FEED_ID,
@@ -937,17 +983,22 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
                 "current_status": "active",
                 "current_fencing_token": 1,
                 "recorded": True,
+                "feed_audit_event": payload,
             },
         )
         store = FeedStore(pool)
 
-        result = await store.record_source_observation(
-            _FEED_ID,
-            _WORKER_ID,
-            1,
-            resume_position,
-            actor_id=_COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
-        )
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.record_source_observation(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                resume_position,
+                actor_id=_COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
+            )
 
         self.assertEqual(
             result,
@@ -958,6 +1009,9 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
                 "current_fencing_token": 1,
                 "recorded": True,
             },
+        )
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            payload
         )
         args = pool.fetchrow.call_args[0]
         self.assertEqual(
@@ -976,13 +1030,17 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
         pool = make_mock_pool(fetchrow_result=None)
         store = FeedStore(pool)
 
-        result = await store.record_source_observation(
-            _FEED_ID,
-            _WORKER_ID,
-            1,
-            None,
-            actor_id=_COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
-        )
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.record_source_observation(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                None,
+                actor_id=_COLLECTOR_SERVICE_ACCOUNT_ACTOR_ID,
+            )
 
         self.assertEqual(
             result,
@@ -994,6 +1052,7 @@ class TestRecordSourceObservation(unittest.IsolatedAsyncioTestCase):
                 "recorded": False,
             },
         )
+        notifications.emit_feed_change_notification.assert_not_called()
 
     async def test_record_source_observation_rejects_missing_actor_id(
         self,
@@ -1131,18 +1190,28 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_status_when_lease_held(self) -> None:
         """Status string is returned when the RETURNING row is present."""
+        payload = _feed_audit_event("feed.failure_reported")
         pool = make_mock_pool(transaction=True)
-        pool.acquired_connection.fetchrow.return_value = _failure_update_row()
+        pool.acquired_connection.fetchrow.return_value = _failure_update_row(
+            feed_audit_event=payload,
+        )
         store = FeedStore(pool)
 
-        result = await store.report_feed_failure(
-            _FEED_ID,
-            _WORKER_ID,
-            1,
-            **_runtime_prior_kwargs(),
-        )
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.report_feed_failure(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                **_runtime_prior_kwargs(),
+            )
 
         self.assertEqual(result, "failing")
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            payload
+        )
 
     async def test_returns_none_when_lease_lost(self) -> None:
         """None is returned when RETURNING yields no row."""
@@ -1150,15 +1219,66 @@ class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):
         pool.acquired_connection.fetchrow.return_value = None
         store = FeedStore(pool)
 
-        result = await store.report_feed_failure(
-            _FEED_ID,
-            _WORKER_ID,
-            1,
-            **_runtime_prior_kwargs(),
-        )
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.report_feed_failure(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                **_runtime_prior_kwargs(),
+            )
 
         self.assertIsNone(result)
         pool.acquired_connection.execute.assert_not_awaited()
+        notifications.emit_feed_change_notification.assert_not_called()
+
+    async def test_duplicate_failure_summary_logs_are_not_emitted(
+        self,
+    ) -> None:
+        """Audit notifications replace duplicate non-quarantine summaries."""
+        pool = make_mock_pool(transaction=True)
+        pool.acquired_connection.fetchrow.side_effect = [
+            _failure_update_row(
+                feed_audit_event=_feed_audit_event("feed.failure_reported"),
+            ),
+            _failure_update_row(
+                status="quarantined",
+                failure_count=5,
+                feed_audit_event=_feed_audit_event("feed.quarantined"),
+            ),
+        ]
+        store = FeedStore(pool)
+
+        with (
+            mock.patch(
+                "backend.pipeline.storage.feed_store.feed_change_notifications",
+                create=True,
+            ),
+            self.assertLogs(
+                "backend.pipeline.storage.feed_store",
+                "INFO",
+            ) as logs,
+        ):
+            await store.report_feed_failure(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                **_runtime_prior_kwargs(),
+            )
+            await store.report_feed_failure(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                **_runtime_prior_kwargs(),
+            )
+
+        self.assertNotIn("Feed failure recorded", "\n".join(logs.output))
+        self.assertIn(
+            "Feed failure threshold reached",
+            "\n".join(logs.output),
+        )
 
     async def test_returns_quarantined_status(self) -> None:
         """Quarantined status string is returned at threshold."""
@@ -1307,6 +1427,7 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_status_when_lease_held(self) -> None:
         """Status string is returned when the non-budgeted update succeeds."""
+        payload = _feed_audit_event("feed.failure_reported")
         retry_after = datetime.datetime(
             2026, 6, 14, 12, 15, tzinfo=datetime.UTC
         )
@@ -1314,21 +1435,29 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
         pool.acquired_connection.fetchrow.return_value = _failure_update_row(
             failure_count=0,
             retry_after=retry_after,
+            feed_audit_event=payload,
         )
         store = FeedStore(pool)
 
-        result = await store.release_non_budgeted_failure(
-            _FEED_ID,
-            _WORKER_ID,
-            1,
-            retry_after=retry_after,
-            status_reason=(
-                FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
-            ),
-            **_runtime_prior_kwargs(),
-        )
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.release_non_budgeted_failure(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                retry_after=retry_after,
+                status_reason=(
+                    FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+                ),
+                **_runtime_prior_kwargs(),
+            )
 
         self.assertEqual(result, "failing")
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            payload
+        )
 
     async def test_returns_none_when_lease_lost(self) -> None:
         """None is returned when no active lease matches."""
@@ -1339,17 +1468,22 @@ class TestReleaseNonBudgetedFailure(unittest.IsolatedAsyncioTestCase):
         pool.acquired_connection.fetchrow.return_value = None
         store = FeedStore(pool)
 
-        result = await store.release_non_budgeted_failure(
-            _FEED_ID,
-            _WORKER_ID,
-            1,
-            retry_after=retry_after,
-            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
-            **_runtime_prior_kwargs(),
-        )
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.release_non_budgeted_failure(
+                _FEED_ID,
+                _WORKER_ID,
+                1,
+                retry_after=retry_after,
+                status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+                **_runtime_prior_kwargs(),
+            )
 
         self.assertIsNone(result)
         pool.acquired_connection.execute.assert_not_awaited()
+        notifications.emit_feed_change_notification.assert_not_called()
 
     async def test_passes_correct_parameters(self) -> None:
         """Parameters are passed in the correct order."""
@@ -1509,6 +1643,48 @@ class TestAcquireFeedsBatch(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(result), 2)
         self.assertEqual(result[0]["id"], _FEED_ID)
         self.assertEqual(result[1]["id"], _FEED_ID_B)
+
+    async def test_parses_and_returns_tags(self) -> None:
+        """Feed tags are parsed and returned in the LeasedFeed dicts."""
+        rows = [
+            {
+                "id": _FEED_ID,
+                "name": "Feed A",
+                "source_type": "bcfy_feeds",
+                "last_processed_filename": None,
+                "last_bookmark_time": None,
+                "fencing_token": 1,
+                "failure_count": 0,
+                "status_reason": None,
+                "source_feed_id": "123",
+                "tags": '[{"key": "system/timezone", "value": "America/Los_Angeles"}]',
+            },
+            {
+                "id": _FEED_ID_B,
+                "name": "Feed B",
+                "source_type": "bcfy_feeds",
+                "last_processed_filename": None,
+                "last_bookmark_time": None,
+                "fencing_token": 1,
+                "failure_count": 0,
+                "status_reason": None,
+                "source_feed_id": None,
+                "tags": [{"key": "county", "value": "Ventura"}],
+            },
+        ]
+        pool = make_mock_pool(fetch_result=rows)
+        store = FeedStore(pool)
+
+        result = await store.acquire_feeds_batch(_WORKER_ID, _DEFAULT_LIMITS)
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(
+            result[0]["tags"],
+            [{"key": "system/timezone", "value": "America/Los_Angeles"}],
+        )
+        self.assertEqual(
+            result[1]["tags"], [{"key": "county", "value": "Ventura"}]
+        )
 
     async def test_returns_empty_list_when_none_available(self) -> None:
         """Empty list returned when no feeds can be leased."""
@@ -1949,23 +2125,31 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
 
     async def test_returns_feed_on_success(self) -> None:
         """A created feed is returned as a Feed dict."""
-        row = _full_feed_row(name="New Feed")
+        payload = _feed_audit_event("feed.created")
+        row = _full_feed_row(name="New Feed", feed_audit_event=payload)
         pool = make_mock_pool(transaction=True)
         conn = pool.acquired_connection
         conn.fetchrow.return_value = row
         store = FeedStore(pool)
 
-        result = await store.create_feed(
-            "New Feed",
-            "bcfy_feeds",
-            "123",
-            actor_id=_FEEDS_SERVICE_ACTOR_ID,
-        )
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.create_feed(
+                "New Feed",
+                "bcfy_feeds",
+                "123",
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
 
         self.assertEqual(result["id"], _FEED_ID)
         self.assertEqual(result["name"], "New Feed")
         self.assertEqual(result["source_type"], SourceType.BCFY_FEEDS)
         pool.transaction_context.__aenter__.assert_not_awaited()
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            payload
+        )
 
     async def test_create_feed_with_tags(self) -> None:
         """Tags are passed to the SQL and returned in the Feed."""
@@ -2142,26 +2326,35 @@ class TestUpdateFeedAuditing(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         tags = [{"key": "env", "value": "prod"}]
+        payload = _feed_audit_event("feed.updated")
         updated_row = _full_feed_row(
             name="Updated Feed",
             tags='[{"key": "env", "value": "prod"}]',
             status_reason_detail="after detail",
             feed_revision=2,
+            feed_audit_event=payload,
         )
         pool = make_mock_pool(transaction=True)
         conn = pool.acquired_connection
         conn.fetchrow.return_value = updated_row
         store = FeedStore(pool)
 
-        result = await store.update_feed(
-            _FEED_ID,
-            "Updated Feed",
-            tags=tags,
-            actor_id=_FEEDS_SERVICE_ACTOR_ID,
-        )
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.update_feed(
+                _FEED_ID,
+                "Updated Feed",
+                tags=tags,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
 
         assert result is not None
         self.assertEqual(result["name"], "Updated Feed")
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            payload
+        )
         conn.fetchrow.assert_awaited_once()
         conn.fetchval.assert_not_awaited()
         conn.execute.assert_not_awaited()
@@ -2186,21 +2379,29 @@ class TestUpdateFeedAuditing(unittest.IsolatedAsyncioTestCase):
         current = _full_feed_row(
             name="Same Feed",
             tags='[{"key": "env", "value": "prod"}]',
+            feed_audit_event=None,
         )
         pool = make_mock_pool(transaction=True)
         conn = pool.acquired_connection
         conn.fetchrow.return_value = current
         store = FeedStore(pool)
 
-        result = await store.update_feed(
-            _FEED_ID,
-            "Same Feed",
-            tags=tags,
-            actor_id=_FEEDS_SERVICE_ACTOR_ID,
-        )
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.update_feed(
+                _FEED_ID,
+                "Same Feed",
+                tags=tags,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
 
         assert result is not None
         self.assertEqual(result["name"], "Same Feed")
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            None
+        )
         conn.fetchrow.assert_awaited_once()
         conn.fetchval.assert_not_awaited()
         conn.execute.assert_not_awaited()
@@ -2468,22 +2669,31 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
 
     async def test_success_writes_feed_deactivated_audit_event(self) -> None:
         """Successful deactivation emits one feed.deactivated audit row."""
+        payload = _feed_audit_event("feed.deactivated")
         after = _audit_snapshot_row(
             status="deactivated",
             status_reason_detail="after deactivation detail",
             feed_revision=3,
+            feed_audit_event=payload,
         )
         pool = make_mock_pool(transaction=True)
         conn = pool.acquired_connection
         conn.fetchrow.return_value = after
         store = FeedStore(pool)
 
-        result = await store.deactivate_feed(
-            _FEED_ID,
-            actor_id=_FEEDS_SERVICE_ACTOR_ID,
-        )
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.deactivate_feed(
+                _FEED_ID,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
 
         self.assertTrue(result)
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            payload
+        )
         self.assertEqual(
             conn.fetchrow.await_args.args,
             (
@@ -2508,19 +2718,25 @@ class TestDeactivateFeed(unittest.IsolatedAsyncioTestCase):
             sql,
         )
         self.assertIn("SELECT before_row.id", sql)
-        self.assertIn("LEFT JOIN write_audit ON TRUE", sql)
+        self.assertIn("(SELECT write_audit.feed_audit_event", sql)
+        self.assertNotIn("LEFT JOIN write_audit", sql)
 
     async def test_missing_feed_returns_false_without_audit(self) -> None:
         """Missing deactivate target does not allocate sequence or audit."""
         pool = make_mock_pool(transaction=True)
         store = FeedStore(pool)
 
-        result = await store.deactivate_feed(
-            _FEED_ID,
-            actor_id=_FEEDS_SERVICE_ACTOR_ID,
-        )
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.deactivate_feed(
+                _FEED_ID,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
 
         self.assertFalse(result)
+        notifications.emit_feed_change_notification.assert_not_called()
         conn = pool.acquired_connection
         conn.fetchrow.assert_awaited_once_with(
             feed_queries.DEACTIVATE_FEED_SQL,
@@ -2546,6 +2762,7 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
 
     async def test_success_writes_feed_deleted_before_delete(self) -> None:
         """Successful hard delete inserts feed.deleted before deletion."""
+        payload = _feed_audit_event("feed.deleted")
         pool = make_mock_pool(transaction=True)
         conn = pool.acquired_connection
         conn.fetchrow.return_value = {
@@ -2553,15 +2770,23 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
             "blocked_active": False,
             "current_status": "unclaimed",
             "deleted": True,
+            "feed_audit_event": payload,
         }
         store = FeedStore(pool)
 
-        result = await store.delete_feed(
-            _FEED_ID,
-            actor_id=_FEEDS_SERVICE_ACTOR_ID,
-        )
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.delete_feed(
+                _FEED_ID,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
 
         self.assertTrue(result)
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            payload
+        )
         conn.fetchrow.assert_awaited_once_with(
             feed_queries.DELETE_FEED_SQL,
             _FEED_ID,
@@ -2615,17 +2840,42 @@ class TestDeleteFeed(unittest.IsolatedAsyncioTestCase):
             "blocked_active": True,
             "current_status": "active",
             "deleted": False,
+            "feed_audit_event": None,
         }
         store = FeedStore(pool)
 
-        with self.assertRaisesRegex(
-            FeedStateConflictError, "cannot be deleted"
-        ):
-            await store.delete_feed(
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            with self.assertRaisesRegex(
+                FeedStateConflictError, "cannot be deleted"
+            ):
+                await store.delete_feed(
+                    _FEED_ID,
+                    actor_id=_FEEDS_SERVICE_ACTOR_ID,
+                )
+        notifications.emit_feed_change_notification.assert_not_called()
+        conn.fetchval.assert_not_awaited()
+
+    async def test_missing_feed_delete_does_not_emit_notification(
+        self,
+    ) -> None:
+        """Missing delete target returns False without notification emission."""
+        pool = make_mock_pool(transaction=True)
+        store = FeedStore(pool)
+
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.delete_feed(
                 _FEED_ID,
                 actor_id=_FEEDS_SERVICE_ACTOR_ID,
             )
-        conn.fetchval.assert_not_awaited()
+
+        self.assertFalse(result)
+        notifications.emit_feed_change_notification.assert_not_called()
 
     async def test_missing_feed_returns_false_without_audit_or_delete(
         self,
@@ -2665,11 +2915,13 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
 
     async def test_success_writes_feed_reset_audit_event(self) -> None:
         """Successful reset emits one feed.reset audit row."""
+        payload = _feed_audit_event("feed.reset")
         reset_row = _full_feed_row(
             status="unclaimed",
             failure_count=0,
             status_reason_detail=None,
             feed_revision=4,
+            feed_audit_event=payload,
         )
         reset_row["blocked_active"] = False
         reset_row["current_status"] = "unclaimed"
@@ -2678,13 +2930,20 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
         conn.fetchrow.return_value = reset_row
         store = FeedStore(pool)
 
-        result = await store.reset_feed(
-            _FEED_ID,
-            actor_id=_FEEDS_SERVICE_ACTOR_ID,
-        )
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            result = await store.reset_feed(
+                _FEED_ID,
+                actor_id=_FEEDS_SERVICE_ACTOR_ID,
+            )
 
         assert result is not None
         self.assertEqual(result["status"], FeedStatus.UNCLAIMED)
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            payload
+        )
         self.assertEqual(
             conn.fetchrow.await_args.args,
             (
@@ -2716,14 +2975,22 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
             "id": None,
             "blocked_active": True,
             "current_status": "active",
+            "feed_audit_event": None,
         }
         store = FeedStore(pool)
 
-        with self.assertRaisesRegex(FeedStateConflictError, "cannot be reset"):
-            await store.reset_feed(
-                _FEED_ID,
-                actor_id=_FEEDS_SERVICE_ACTOR_ID,
-            )
+        with mock.patch(
+            "backend.pipeline.storage.feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            with self.assertRaisesRegex(
+                FeedStateConflictError, "cannot be reset"
+            ):
+                await store.reset_feed(
+                    _FEED_ID,
+                    actor_id=_FEEDS_SERVICE_ACTOR_ID,
+                )
+        notifications.emit_feed_change_notification.assert_not_called()
         conn.fetchval.assert_not_awaited()
 
     async def test_missing_feed_returns_none_without_audit(self) -> None:

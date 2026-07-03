@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import type { VirtuosoHandle } from 'react-virtuoso';
 
@@ -27,15 +20,18 @@ import {
   useAudioSegments,
 } from '../../hooks/useAudioSegments';
 import { useAudioSettings } from '../../hooks/useAudioSettings';
+import { useAudioTimelineWindow } from '../../hooks/useAudioTimelineWindow';
 import {
   type RenderableAudioSegment,
   useConsolidatedAudioSegments,
 } from '../../hooks/useConsolidatedAudioSegments';
+import { useScrollAnchor } from '../../hooks/useScrollAnchor';
 import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import {
+  type PlaybackState,
   getNextContinuousSegment,
   isWithinSegment,
 } from '../../utils/playbackUtils';
@@ -53,12 +49,6 @@ interface TranscriptViewProps {
 }
 
 const FEED_POLLING_INTERVAL_MS = 15000; // 15 seconds
-
-// Base index for Virtuoso's `firstItemIndex`. When newer segments are prepended
-// to the top of the list we decrease this value by the number of prepended
-// items, which lets Virtuoso preserve the user's scroll position instead of
-// jumping to the top. Starts high so it stays positive across many prepends.
-const VIRTUOSO_START_INDEX = 1_000_000;
 
 export function TranscriptView({
   triggerSnackbar,
@@ -109,15 +99,6 @@ export function TranscriptView({
   // top (not on the initial render, which starts at the top).
   const hasScrolledAwayFromTop = useRef(false);
 
-  // Virtuoso scroll-anchoring for prepended (newer) segments. When a newer load
-  // is triggered we remember the id of the current top item; once the prepend
-  // lands we lower firstItemIndex by however many items appeared above it, so
-  // the scroll position stays put. Only newer loads anchor this way — live
-  // polling intentionally leaves firstItemIndex alone so new items show at top.
-  const [firstItemIndex, setFirstItemIndex] = useState(VIRTUOSO_START_INDEX);
-  const newerLoadAnchorId = useRef<string | null>(null);
-  const wasFetchingNewer = useRef(false);
-
   const { volumeDb, setVolumeDb, pan, setPan, speed, setSpeed, reset } =
     useAudioSettings(searchedFeedId);
 
@@ -145,6 +126,14 @@ export function TranscriptView({
       }
     },
   });
+
+  // Drives the timeline playhead's color and label. Idle and un-paused reads as
+  // "listening" at the live edge.
+  const playbackState: PlaybackState = isAudioPlaying
+    ? 'playing'
+    : playbackIntent === 'paused'
+      ? 'paused'
+      : 'listening';
 
   // Side effects for segments that arrive from a live poll: notify, bump the
   // unread badge when backgrounded, and optionally autoplay the latest.
@@ -244,6 +233,8 @@ export function TranscriptView({
     };
   }, []);
 
+  const [searchQuery, setSearchQuery] = useState('');
+
   const {
     rawAudioSegments,
     loadOlderAudioSegments: fetchOlderAudioSegments,
@@ -265,12 +256,25 @@ export function TranscriptView({
     isFeedsSuccess,
     pollingEnabled: isViewAtTopOfAudioSegments,
     onNewSegments: handleNewAudioSegments,
+    searchQuery: searchQuery,
   });
 
   const audioSegments = useConsolidatedAudioSegments(
     rawAudioSegments,
     searchedFeed?.sourceType === SourceType.BCFY_FEEDS
   );
+
+  // Identity of the current query; a change replaces the list wholesale, so the
+  // window and scroll anchor both reset off it.
+  const audioWindowResetKey = `${searchedFeedId}|${searchedTimestamp?.getTime() ?? ''}|${alertFilter}|${searchQuery}`;
+
+  // Single source of truth for the audio timeline's visible window.
+  const { windowEndTime, windowDurationMs } = useAudioTimelineWindow({
+    audioSegments,
+    currentlyPlayingSegmentId,
+    highlightedSegmentId,
+    resetKey: audioWindowResetKey,
+  });
 
   // Keep the refs in sync with the audio segments so that audio lifecycle callbacks can access the latest list.
   useEffect(() => {
@@ -517,61 +521,24 @@ export function TranscriptView({
       if (!atTop) {
         hasScrolledAwayFromTop.current = true;
       } else if (hasScrolledAwayFromTop.current) {
-        // Remember the current top item so we can preserve the scroll position
-        // once the newer segments are prepended above it. Read from the ref so
-        // this callback stays stable across data updates.
-        newerLoadAnchorId.current = audioSegmentsRef.current[0]?.id ?? null;
         fetchNewerAudioSegments();
       }
     },
     [fetchNewerAudioSegments]
   );
 
-  // Once a newer load settles, lower firstItemIndex by the number of items that
-  // were prepended above the anchored top item, keeping the scroll position
-  // stable. react-query updates the data and clears isFetching in the same
-  // commit, so by the time fetching flips to false audioSegments is current.
-  // Runs before paint so the corrected offset is applied without a visible jump.
-  useLayoutEffect(() => {
-    const justSettled =
-      wasFetchingNewer.current && !isFetchingNewerAudioSegments;
-    wasFetchingNewer.current = isFetchingNewerAudioSegments;
-    if (!justSettled) return;
+  const firstItemIndex = useScrollAnchor({
+    headId: rawAudioSegments[0]?.id ?? null,
+    renderedSegments: audioSegments,
+    // At the top of an unfiltered list — i.e. pinned to live, not viewing the past.
+    followingLiveEdge: isViewAtTopOfAudioSegments && !searchedTimestamp,
+    resetKey: audioWindowResetKey,
+  });
 
-    const anchorId = newerLoadAnchorId.current;
-    newerLoadAnchorId.current = null;
-    if (!anchorId) return;
-
-    const prependedCount = audioSegments.findIndex((s) =>
-      isWithinSegment(s, anchorId)
-    );
-    if (prependedCount > 0) {
-      setFirstItemIndex((prev) => prev - prependedCount);
-    }
-  }, [isFetchingNewerAudioSegments, audioSegments]);
-
-  // A different feed / timestamp / alert filter replaces the list wholesale
-  // rather than prepending, so reset the anchoring baseline.
-  const [prevFeedId, setPrevFeedId] = useState(searchedFeedId);
-  const [prevTimestamp, setPrevTimestamp] = useState(searchedTimestamp);
-  const [prevAlertFilter, setPrevAlertFilter] = useState(alertFilter);
-
-  if (
-    searchedFeedId !== prevFeedId ||
-    searchedTimestamp?.getTime() !== prevTimestamp?.getTime() ||
-    alertFilter !== prevAlertFilter
-  ) {
-    setPrevFeedId(searchedFeedId);
-    setPrevTimestamp(searchedTimestamp);
-    setPrevAlertFilter(alertFilter);
-    setFirstItemIndex(VIRTUOSO_START_INDEX);
-  }
-
-  // Reset refs inside an effect since they should not be modified during render
+  // Reset the scroll-trigger guard when the query identity changes.
   useEffect(() => {
-    newerLoadAnchorId.current = null;
     hasScrolledAwayFromTop.current = false;
-  }, [searchedFeedId, searchedTimestamp, alertFilter]);
+  }, [searchedFeedId, searchedTimestamp, alertFilter, searchQuery]);
 
   const handleFilterByDateTime = (date: Date | null) => {
     setSearchParams((prev) => {
@@ -607,6 +574,7 @@ export function TranscriptView({
     setHighlightedSegmentId(null);
     setIsViewAtTopOfAudioSegments(true);
     setPlaybackIntent('playing');
+    setSearchQuery('');
     // Update URL params
     setSearchParams((prev) => {
       prev.set('feedId', feedId);
@@ -697,10 +665,14 @@ export function TranscriptView({
 
       <AudioDisplay
         audioSegments={audioSegments}
+        rawAudioSegments={rawAudioSegments}
         currentlyPlayingSegmentId={currentlyPlayingSegmentId}
         highlightedSegmentId={highlightedSegmentId}
         onClipClick={handleClipClick}
+        windowEndTime={windowEndTime}
+        windowDurationMs={windowDurationMs}
         isAudioPlaying={isAudioPlaying}
+        playbackState={playbackState}
         currentAudioRef={currentAudioRef}
         seekTrigger={seekTrigger}
       />
@@ -723,6 +695,8 @@ export function TranscriptView({
           alertFilter={alertFilter}
           setAlertFilter={setAlertFilter}
           onClickViewLatest={() => handleFilterByDateTime(null)}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
         />
         {audioSegments.length > 0 && isFeedsSuccess ? (
           <TranscriptDisplay

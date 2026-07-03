@@ -7,6 +7,7 @@ import requests
 from google.api_core.retry_async import AsyncRetry
 from google.genai import types
 
+from backend.pipeline.common import constants
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers.chirp import (
     CHIRP_UNINTELLIGIBLE_MARKER,
@@ -118,6 +119,48 @@ class TestTranscribers(unittest.IsolatedAsyncioTestCase):
             _, kwargs = mock_client_instance.recognize.call_args
             self.assertIn("retry", kwargs)
             self.assertIsInstance(kwargs["retry"], AsyncRetry)
+
+    async def test_google_chirp_transcriber_custom_retry_policy(self) -> None:
+        """Verifies that custom retry settings in ChirpConfig are propagated to AsyncRetry."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
+        ) as mock_speech_client_cls:
+            mock_client_instance = MagicMock()
+            mock_speech_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_result = MagicMock()
+            mock_result.alternatives = [MagicMock(transcript="Success")]
+            mock_response.results = [mock_result]
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
+
+            config = ChirpConfig(
+                phrase_hints=[],
+                custom_prompt=None,
+                retry_initial_delay=1.5,
+                retry_max_delay=45.0,
+                retry_multiplier=1.8,
+                retry_deadline=150.0,
+            )
+            transcriber = GoogleChirpV3Transcriber("test-project", config)
+            transcriber.setup()
+
+            dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
+            await transcriber.transcribe(
+                audio_data=dummy_audio, duration_ms=2500
+            )
+
+            mock_client_instance.recognize.assert_called_once()
+            _, kwargs = mock_client_instance.recognize.call_args
+            self.assertIn("retry", kwargs)
+            retry_policy = kwargs["retry"]
+            self.assertIsInstance(retry_policy, AsyncRetry)
+            self.assertEqual(retry_policy._initial, 1.5)
+            self.assertEqual(retry_policy._maximum, 45.0)
+            self.assertEqual(retry_policy._multiplier, 1.8)
+            self.assertEqual(retry_policy._timeout, 150.0)
 
     async def test_google_chirp_transcriber_no_phrase_hints_omits_adaptation(
         self,
@@ -645,7 +688,97 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 duration_ms=1000,
             )
 
-            self.assertEqual(transcript, "[UNINTELLIGIBLE]")
+            self.assertEqual(transcript, constants.UNINTELLIGIBLE_MARKER)
+
+    async def test_gemini_transcriber_empty_response_stop(self) -> None:
+        """Verifies that STOP finish reason with no content returns None and logs at INFO level."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = types.FinishReason.STOP
+            mock_candidate.content = None
+            mock_response.candidates = [mock_candidate]
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            with self.assertLogs(
+                "backend.pipeline.transcription.transcribers.gemini",
+                level="INFO",
+            ) as log_capture:
+                transcript = await transcriber.transcribe(
+                    audio_data=b"\x00" * 100,
+                    duration_ms=1000,
+                )
+
+            self.assertIsNone(transcript)
+            # Verify it logged at INFO level
+            info_logs = [
+                record
+                for record in log_capture.records
+                if record.levelname == "INFO"
+                and "Gemini returned empty content (finish reason: STOP)."
+                in record.getMessage()
+            ]
+            self.assertEqual(len(info_logs), 1)
+
+    async def test_gemini_transcriber_empty_response_other_reason(self) -> None:
+        """Verifies that other finish reasons (e.g. MAX_TOKENS) with no content return None and log at WARNING level."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = types.FinishReason.MAX_TOKENS
+            mock_candidate.content = None
+            mock_response.candidates = [mock_candidate]
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            with self.assertLogs(
+                "backend.pipeline.transcription.transcribers.gemini",
+                level="WARNING",
+            ) as log_capture:
+                transcript = await transcriber.transcribe(
+                    audio_data=b"\x00" * 100,
+                    duration_ms=1000,
+                )
+
+            self.assertIsNone(transcript)
+            # Verify it logged at WARNING level
+            warning_logs = [
+                record
+                for record in log_capture.records
+                if record.levelname == "WARNING"
+                and "Gemini response candidate had no content or parts"
+                in record.getMessage()
+            ]
+            self.assertEqual(len(warning_logs), 1)
 
     def test_gemini_transcriber_setup(self) -> None:
         """Verifies that the Gemini transcriber initializes the GenAI client with correct options."""
@@ -665,11 +798,35 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(kwargs.get("project"), "test-project")
             self.assertEqual(kwargs.get("location"), "us-test")
 
-            # Verify retry options are explicitly set to 5 attempts
+            # Verify retry options are explicitly set to 5 attempts and timeout is default
             http_options = kwargs.get("http_options")
             self.assertIsNotNone(http_options)
+            self.assertEqual(http_options.timeout, 30000)
             self.assertIsNotNone(http_options.retry_options)
             self.assertEqual(http_options.retry_options.attempts, 5)
+
+    def test_gemini_transcriber_setup_custom_retry(self) -> None:
+        """Verifies that the Gemini transcriber initializes the GenAI client with custom retry options."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-test", "retry_attempts": 8, "retry_initial_delay": 2.5, "retry_max_delay": 90.0, "retry_multiplier": 3.0, "client_timeout_ms": 120000}',
+            )
+            transcriber.setup()
+
+            mock_client_cls.assert_called_once()
+            _, kwargs = mock_client_cls.call_args
+            http_options = kwargs.get("http_options")
+            self.assertIsNotNone(http_options)
+            self.assertEqual(http_options.timeout, 120000)
+            self.assertIsNotNone(http_options.retry_options)
+            self.assertEqual(http_options.retry_options.attempts, 8)
+            self.assertEqual(http_options.retry_options.initial_delay, 2.5)
+            self.assertEqual(http_options.retry_options.max_delay, 90.0)
+            self.assertEqual(http_options.retry_options.exp_base, 3.0)
 
 
 if __name__ == "__main__":

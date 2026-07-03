@@ -27,6 +27,19 @@ import { updateFeed } from '../../service/updateFeed';
 import { renderWithQueryClient } from '../../test/testUtils';
 import FeedConfigurationView from './FeedConfigurationView';
 
+// Need to mock out the list because otherwise the list is too long and these tests will
+// time out.
+vi.hoisted(() => {
+  if (typeof Intl !== 'undefined') {
+    Intl.supportedValuesOf = (key: string) => {
+      if (key === 'timeZone') {
+        return ['America/Los_Angeles', 'America/New_York', 'UTC'];
+      }
+      return [];
+    };
+  }
+});
+
 // Mock API services
 vi.mock('../../service/listFeeds', () => ({
   listFeeds: vi.fn(),
@@ -917,5 +930,33 @@ describe('FeedConfigurationView', () => {
     expect(
       screen.queryByRole('menuitem', { name: /Reset feed/i })
     ).not.toBeInTheDocument();
+  });
+
+  it('handles timezone tag selection using dropdown', async () => {
+    renderView();
+
+    const tagKeyInput = screen.getByLabelText('Key');
+    const addTagBtn = screen.getByRole('button', { name: 'Add Tag' });
+
+    // Change key to 'system/timezone'
+    fireEvent.change(tagKeyInput, { target: { value: 'system/timezone' } });
+
+    // The 'Value' input should be a select since the tag is a timezone.
+    const timezoneSelect = screen.getByRole('combobox', { name: /Timezone/i });
+    expect(timezoneSelect).toBeInTheDocument();
+
+    // Click to open the dropdown
+    fireEvent.mouseDown(timezoneSelect);
+
+    const options = screen.getAllByRole('option');
+    fireEvent.click(options[0]);
+
+    // Check that the tag is added with a dropdown for editing
+    fireEvent.click(addTagBtn);
+    expect(screen.getAllByLabelText('Key')[1]).toHaveValue('system/timezone');
+    const addedTimezoneSelect = screen.getAllByRole('combobox', {
+      name: /Timezone/i,
+    })[0];
+    expect(addedTimezoneSelect).toHaveTextContent('UTC');
   });
 });
