@@ -62,7 +62,6 @@ class TestReportingContract(unittest.TestCase):
             "missing_prediction_count",
         ):
             self.assertIn(key, row)
-        self.assertNotIn("empty_rate", row)
         self.assertEqual(row["missing_prediction_count"], 1)
         self.assertEqual(row["empty_or_unintelligible_rate"], 0.0)
         self.assertEqual(

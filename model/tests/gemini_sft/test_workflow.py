@@ -769,7 +769,16 @@ class TestPrepareRun(unittest.TestCase):
             [turn["role"] for turn in second_contents],
             ["user", "model", "user", "model"],
         )
-        self.assertNotIn("fileData", second_contents[0]["parts"][0])
+        audio_parts = [
+            part
+            for turn in second_contents
+            for part in turn["parts"]
+            if "fileData" in part
+        ]
+        self.assertEqual(
+            [part["fileData"]["fileUri"] for part in audio_parts],
+            ["gs://audio/source-a/002.flac"],
+        )
         self.assertEqual(second_contents[1]["parts"][0]["text"], "first")
         current_user_parts = second_contents[2]["parts"]
         self.assertEqual(
@@ -1238,7 +1247,6 @@ class TestEvaluateRun(unittest.TestCase):
                 )
             )
             self.assertIn("target", metrics)
-            self.assertNotIn("targets", metrics)
             base_target = metrics["target"]
             self.assertEqual(base_target["target_label"], "base")
             artifacts = base_target["artifacts"]
@@ -1849,7 +1857,6 @@ class TestEvaluateRun(unittest.TestCase):
             )
         self.assertEqual(rc, 0)
         self.assertIn("target", metrics)
-        self.assertNotIn("targets", metrics)
         self.assertEqual(metrics["metadata"]["n_eval_examples"], 1)
         batch.assert_called_once()
         self.assertEqual(batch.call_args.kwargs["label"], "base")

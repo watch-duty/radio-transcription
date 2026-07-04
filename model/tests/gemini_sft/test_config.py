@@ -107,16 +107,6 @@ model = "{model}"
             record["gemini_validation_uri"], cfg.paths.gemini_validation_uri
         )
         self.assertIsNone(cfg.eval_model)
-        self.assertNotIn("eval_model", record)
-        removed_fields = {
-            "dataset",
-            "datasets",
-            "epochs",
-            "lr_multiplier",
-            "combined_train_uri",
-            "combined_val_uri",
-        }
-        self.assertFalse(removed_fields & set(record))
 
     def test_missing_validation_manifest_uri_raises(self) -> None:
         body = self._valid_toml(validation_manifest_uri='""')
@@ -646,17 +636,6 @@ prior_turn_count = {value}
 
                 with self.assertRaisesRegex(RunConfigError, "prior_turn_count"):
                     load_run_config(self._write_config(body))
-
-    def test_context_prior_context_mode_must_be_supported(self) -> None:
-        body = self._valid_toml(
-            context="""
-[context]
-prior_context_mode = "audio"
-"""
-        )
-
-        with self.assertRaisesRegex(RunConfigError, "prior_context_mode"):
-            load_run_config(self._write_config(body))
 
     def test_prompt_file_keys_are_rejected(self) -> None:
         body = self._valid_toml(

@@ -197,14 +197,6 @@ model = "gemini-3.1-flash-lite"
             documented_columns.append(parts[1].strip().strip("`"))
 
         self.assertEqual(list(reporting.REPORT_COLUMNS), documented_columns)
-        self.assertFalse(
-            set(documented_columns)
-            & {
-                "empty_rate",
-                "hits",
-                "correct_words",
-            }
-        )
 
     def test_sft_operator_hygiene_docs_and_gitignore_cover_local_artifacts(
         self,

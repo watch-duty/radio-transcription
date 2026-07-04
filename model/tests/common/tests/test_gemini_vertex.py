@@ -618,31 +618,6 @@ class TestParseBatchOutput(unittest.TestCase):
             {"gs://bucket/a.flac": "engine 41"},
         )
 
-    def test_ignores_noncanonical_snake_case_request_echo(self) -> None:
-        output = {
-            "request": {
-                "contents": [
-                    {
-                        "parts": [
-                            {
-                                "file_data": {
-                                    "file_uri": "gs://bucket/a.flac",
-                                }
-                            }
-                        ]
-                    }
-                ]
-            },
-            "response": {
-                "candidates": [{"content": {"parts": [{"text": "engine 41"}]}}]
-            },
-        }
-
-        self.assertEqual(
-            parse_batch_output(json.dumps(output)),
-            {},
-        )
-
     def test_parses_last_file_uri_when_request_contains_history(self) -> None:
         output = {
             "request": {

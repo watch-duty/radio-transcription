@@ -219,7 +219,7 @@ class TestEmptyOrUnintelligibleRate(unittest.TestCase):
             50.0,
         )
 
-    def test_mixed_unintelligible_and_empty_rate(self) -> None:
+    def test_mixed_unintelligible_and_empty_outputs(self) -> None:
         self.assertEqual(
             empty_or_unintelligible_rate(["", "[UNINTELLIGIBLE]", "copy"]),
             66.67,

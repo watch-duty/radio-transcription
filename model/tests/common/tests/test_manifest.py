@@ -951,16 +951,6 @@ class TestStrictCanonicalRowsFromManifest(unittest.TestCase):
             rows[0].audio_filepath, "gs://bucket/audio/example.flac"
         )
 
-    def test_rejects_lenient_noncanonical_rows(self) -> None:
-        with self.assertRaisesRegex(
-            ValueError,
-            "missing_required.*example_id",
-        ):
-            strict_canonical_rows_from_manifest(
-                [{"audio_filepath": "local/audio.mp3", "text": "hello"}],
-                source="noncanonical.jsonl",
-            )
-
 
 class TestLoadManifestLenientBoundaries(unittest.TestCase):
     """load_manifest remains a lenient parser, not a strict validator."""

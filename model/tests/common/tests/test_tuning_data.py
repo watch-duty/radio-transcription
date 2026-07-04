@@ -315,17 +315,6 @@ class TestValidateExample(unittest.TestCase):
 
         self.assertTrue(validate_audio_tuning_example(ex))
 
-    def test_audio_history_mode_is_not_supported(self) -> None:
-        with self.assertRaisesRegex(ValueError, "history_mode"):
-            build_audio_tuning_example(
-                "gs://b/current.flac",
-                "current",
-                "sys",
-                "user",
-                history=[ContextTurn("gs://b/prior.flac", "prior")],
-                history_mode="audio",
-            )
-
 
 class TestImportIsolation(unittest.TestCase):
     """TEST-03: `import common.prompts` (the light core) must load no heavy deps."""
