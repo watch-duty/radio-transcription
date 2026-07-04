@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import signal
+import socket
 import threading
 import time
 import uuid
@@ -458,6 +459,23 @@ class CollectorRuntime:
             self._reap_completed_tasks()
 
             if self._memory_watchdog.is_paused():
+                s = self._collector_settings
+                active_feeds = len(self._feed_tasks)
+                total_slack = s.max_feeds_per_worker - active_feeds
+                admission_budget = min(
+                    max(0, total_slack),
+                    s.lease_admission_cycle_budget,
+                )
+                self._emit_lease_admission_cycle(
+                    active_feeds=active_feeds,
+                    max_feeds=s.max_feeds_per_worker,
+                    slack=total_slack,
+                    admission_budget=admission_budget,
+                    primary_acquired=0,
+                    recovery_acquired=0,
+                    memory_paused=True,
+                    error=None,
+                )
                 if await self._sleep_or_shutdown(
                     self._collector_settings.rss_watchdog_poll_interval_sec,
                 ):
@@ -471,12 +489,16 @@ class CollectorRuntime:
             # worker survives — mass os._exit(1) across the MIG would cause
             # a thundering herd cold-start on recovery. Since the DB is down,
             # no other worker can steal leases either.
+            s = self._collector_settings
+            active_feeds = len(self._feed_tasks)
+            total_slack = s.max_feeds_per_worker - active_feeds
+            admission_budget = 0
+            primary_acquired = 0
+            recovery_acquired = 0
             try:
-                s = self._collector_settings
-                total_slack = s.max_feeds_per_worker - len(self._feed_tasks)
                 if total_slack > 0:
                     caps = s.caps
-                    effective_budget = min(
+                    admission_budget = min(
                         total_slack,
                         s.lease_admission_cycle_budget,
                     )
@@ -494,7 +516,7 @@ class CollectorRuntime:
                     # so the allocation math is unit-testable without the
                     # surrounding asyncio loop.
                     limits = self._calculate_branch_limits(
-                        effective_budget,
+                        admission_budget,
                         caps,
                         held,
                     )
@@ -503,7 +525,7 @@ class CollectorRuntime:
                         "(slack=%d, admission_budget=%d, caps=%s, "
                         "held=%s, limits=%s, total_ask=%d)",
                         total_slack,
-                        effective_budget,
+                        admission_budget,
                         {t.value: v for t, v in caps.items()},
                         {t.value: v for t, v in held.items()},
                         {t.value: v for t, v in limits.items()},
@@ -513,6 +535,7 @@ class CollectorRuntime:
                         s.worker_id,
                         limits,
                     )
+                    primary_acquired = len(primary)
                     leases: list[LeasedFeed] = list(primary)
                     # When the primary per-type CTE underfills (caps bound
                     # the ask below remaining slack, or there simply aren't
@@ -522,7 +545,7 @@ class CollectorRuntime:
                     # active-abandoned rows at 30 s cadence, but this path
                     # still earns its keep for failing-retryable and for
                     # reclaiming slack before the next sweep tick.
-                    if len(primary) < effective_budget:
+                    if len(primary) < admission_budget:
                         # Recovery must respect the SAME per-type caps
                         # the primary path enforced. Without re-running
                         # the apportion, recovery could push held > cap
@@ -542,7 +565,7 @@ class CollectorRuntime:
                             t: held.get(t, 0) + primary_by_type[t] for t in caps
                         }
                         recovery_remaining_budget = (
-                            effective_budget - len(primary)
+                            admission_budget - len(primary)
                         )
                         recovery_limits = self._calculate_branch_limits(
                             recovery_remaining_budget,
@@ -554,7 +577,19 @@ class CollectorRuntime:
                             s.abandonment_window_sec,
                             recovery_limits,
                         )
+                        recovery_acquired = len(recovery)
                         leases.extend(recovery)
+
+                    self._emit_lease_admission_cycle(
+                        active_feeds=active_feeds,
+                        max_feeds=s.max_feeds_per_worker,
+                        slack=total_slack,
+                        admission_budget=admission_budget,
+                        primary_acquired=primary_acquired,
+                        recovery_acquired=recovery_acquired,
+                        memory_paused=False,
+                        error=None,
+                    )
 
                     for lease in leases:
                         existing = self._feed_tasks.get(lease["id"])
@@ -617,7 +652,28 @@ class CollectorRuntime:
                             len(self._feed_tasks),
                             self._collector_settings.max_feeds_per_worker,
                         )
-            except Exception:
+                else:
+                    self._emit_lease_admission_cycle(
+                        active_feeds=active_feeds,
+                        max_feeds=s.max_feeds_per_worker,
+                        slack=total_slack,
+                        admission_budget=0,
+                        primary_acquired=0,
+                        recovery_acquired=0,
+                        memory_paused=False,
+                        error=None,
+                    )
+            except Exception as exc:
+                self._emit_lease_admission_cycle(
+                    active_feeds=active_feeds,
+                    max_feeds=s.max_feeds_per_worker,
+                    slack=total_slack,
+                    admission_budget=admission_budget,
+                    primary_acquired=primary_acquired,
+                    recovery_acquired=recovery_acquired,
+                    memory_paused=False,
+                    error=exc.__class__.__name__,
+                )
                 logger.exception(
                     "Lease acquisition failed -- will retry in %.1fs",
                     self._collector_settings.lease_poll_interval_sec,
@@ -629,6 +685,36 @@ class CollectorRuntime:
             )
             if await self._sleep_or_shutdown(poll_sleep_sec):
                 return
+
+    def _emit_lease_admission_cycle(
+        self,
+        *,
+        active_feeds: int,
+        max_feeds: int,
+        slack: int,
+        admission_budget: int,
+        primary_acquired: int,
+        recovery_acquired: int,
+        memory_paused: bool,
+        error: str | None,
+    ) -> None:
+        """Emit raw per-cycle lease admission telemetry."""
+        payload: dict[str, object] = {
+            "event_type": "lease_admission_cycle",
+            "worker_id": str(self._collector_settings.worker_id),
+            "worker_index": self._collector_settings.worker_index,
+            "hostname": socket.gethostname(),
+            "active_feeds": active_feeds,
+            "max_feeds": max_feeds,
+            "slack": slack,
+            "admission_budget": admission_budget,
+            "primary_acquired": primary_acquired,
+            "recovery_acquired": recovery_acquired,
+            "total_acquired": primary_acquired + recovery_acquired,
+            "memory_paused": memory_paused,
+            "error": error,
+        }
+        logger.info("Lease admission cycle", extra={"json_fields": payload})
 
     def _reap_completed_tasks(self) -> None:
         """Remove completed tasks and consume their exceptions.

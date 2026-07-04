@@ -124,7 +124,7 @@ _LEASE_ADMISSION_FIELDS = {
 _LEASE_ADMISSION_STATE_FIELDS = {
     "state",
     "status",
-    "admission_state",
+    "admission" "_state",
 }
 
 
