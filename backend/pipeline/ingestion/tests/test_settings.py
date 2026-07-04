@@ -26,6 +26,11 @@ class TestCollectorSettings(unittest.TestCase):
             "WORKER_ID": "00000000-0000-0000-0000-000000000123",
             "MAX_FEEDS_PER_WORKER": "500",
             "LEASE_POLL_INTERVAL_SEC": "2.5",
+            "LEASE_ADMISSION_CYCLE_BUDGET": "7",
+            "STARTUP_STAGGER_MAX_SEC": "12.5",
+            "STARTUP_JITTER_MAX_SEC": "0.25",
+            "LEASE_POLL_JITTER_MAX_SEC": "0.75",
+            "WORKER_INDEX": "2",
             "HEARTBEAT_INTERVAL_SEC": "10.0",
             "HEARTBEAT_STALL_TIMEOUT_SEC": "30.0",
             "GRACEFUL_SHUTDOWN_TIMEOUT_SEC": "15.0",
@@ -68,6 +73,11 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertEqual(settings.worker_id, uuid.UUID(env["WORKER_ID"]))
         self.assertEqual(settings.max_feeds_per_worker, 500)
         self.assertEqual(settings.lease_poll_interval_sec, 2.5)
+        self.assertEqual(settings.lease_admission_cycle_budget, 7)
+        self.assertEqual(settings.startup_stagger_max_sec, 12.5)
+        self.assertEqual(settings.startup_jitter_max_sec, 0.25)
+        self.assertEqual(settings.lease_poll_jitter_max_sec, 0.75)
+        self.assertEqual(settings.worker_index, 2)
         self.assertEqual(settings.heartbeat_interval_sec, 10.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 30.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 15.0)
@@ -123,6 +133,11 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertIsInstance(settings.worker_id, uuid.UUID)
         self.assertEqual(settings.max_feeds_per_worker, 800)
         self.assertEqual(settings.lease_poll_interval_sec, 5.0)
+        self.assertEqual(settings.lease_admission_cycle_budget, 20)
+        self.assertEqual(settings.startup_stagger_max_sec, 60.0)
+        self.assertEqual(settings.startup_jitter_max_sec, 2.0)
+        self.assertEqual(settings.lease_poll_jitter_max_sec, 1.0)
+        self.assertIsNone(settings.worker_index)
         self.assertEqual(settings.heartbeat_interval_sec, 15.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 45.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 90.0)
@@ -250,6 +265,72 @@ class TestCollectorSettings(unittest.TestCase):
         """Raises ValueError for non-float float-backed settings."""
         env = {**_required_env(), "LEASE_POLL_INTERVAL_SEC": "not-a-float"}
 
+        with patch.dict("os.environ", env, clear=True):
+            with self.assertRaises(ValueError):
+                CollectorSettings()
+
+    def test_invalid_lease_admission_cycle_budget_raises(self) -> None:
+        """Rejects non-numeric, zero, and negative admission budgets."""
+        for value in ("not-an-int", "0", "-1"):
+            with self.subTest(value=value):
+                env = {
+                    **_required_env(),
+                    "LEASE_ADMISSION_CYCLE_BUDGET": value,
+                }
+
+                with patch.dict("os.environ", env, clear=True):
+                    with self.assertRaises(ValueError):
+                        CollectorSettings()
+
+    def test_invalid_negative_startup_and_poll_jitter_raise(self) -> None:
+        """Rejects non-numeric and negative pacing/jitter values."""
+        cases = (
+            ("STARTUP_STAGGER_MAX_SEC", "not-a-float"),
+            ("STARTUP_STAGGER_MAX_SEC", "-0.1"),
+            ("STARTUP_JITTER_MAX_SEC", "not-a-float"),
+            ("STARTUP_JITTER_MAX_SEC", "-0.1"),
+            ("LEASE_POLL_JITTER_MAX_SEC", "not-a-float"),
+            ("LEASE_POLL_JITTER_MAX_SEC", "-0.1"),
+        )
+
+        for name, value in cases:
+            with self.subTest(name=name, value=value):
+                env = {**_required_env(), name: value}
+
+                with patch.dict("os.environ", env, clear=True):
+                    with self.assertRaises(ValueError):
+                        CollectorSettings()
+
+    def test_zero_pacing_values_disable_delays(self) -> None:
+        """Allows zero delay and jitter values to disable pacing."""
+        env = {
+            **_required_env(),
+            "STARTUP_STAGGER_MAX_SEC": "0",
+            "STARTUP_JITTER_MAX_SEC": "0",
+            "LEASE_POLL_JITTER_MAX_SEC": "0",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            settings = CollectorSettings()
+
+        self.assertEqual(settings.startup_stagger_max_sec, 0.0)
+        self.assertEqual(settings.startup_jitter_max_sec, 0.0)
+        self.assertEqual(settings.lease_poll_jitter_max_sec, 0.0)
+
+    def test_worker_index_nullable_and_invalid_values(self) -> None:
+        """Parses WORKER_INDEX when present and allows it to be absent."""
+        with patch.dict("os.environ", _required_env(), clear=True):
+            settings = CollectorSettings()
+
+        self.assertIsNone(settings.worker_index)
+
+        env = {**_required_env(), "WORKER_INDEX": "2"}
+        with patch.dict("os.environ", env, clear=True):
+            settings = CollectorSettings()
+
+        self.assertEqual(settings.worker_index, 2)
+
+        env = {**_required_env(), "WORKER_INDEX": "not-an-int"}
         with patch.dict("os.environ", env, clear=True):
             with self.assertRaises(ValueError):
                 CollectorSettings()
