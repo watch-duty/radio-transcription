@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import datetime
 import logging
+import socket
 import signal
 import unittest
 import uuid
@@ -104,6 +105,27 @@ _PUBLISH_SESSION_ID_ARG_INDEX = 5
 _PUBLISH_START_TIMESTAMP_ARG_INDEX = 6
 _PUBLISH_SOURCE_TYPE_ARG_INDEX = 8
 _PUBLISH_EXTERNAL_AUDIO_ID_ARG_INDEX = 9
+_LEASE_ADMISSION_EVENT_TYPE = "lease_admission_cycle"
+_LEASE_ADMISSION_FIELDS = {
+    "event_type",
+    "worker_id",
+    "worker_index",
+    "hostname",
+    "active_feeds",
+    "max_feeds",
+    "slack",
+    "admission_budget",
+    "primary_acquired",
+    "recovery_acquired",
+    "total_acquired",
+    "memory_paused",
+    "error",
+}
+_LEASE_ADMISSION_STATE_FIELDS = {
+    "state",
+    "status",
+    "admission_state",
+}
 
 
 class TestFeedFailureContract(unittest.TestCase):
@@ -273,6 +295,27 @@ def _make_runtime(**settings_overrides) -> CollectorRuntime:
     rt._lease_lost = asyncio.Event()
     rt._capture_resources = _default_resources()
     return rt
+
+
+def _lease_admission_payloads(
+    records: list[logging.LogRecord],
+) -> list[dict[str, Any]]:
+    """Return structured lease-admission payloads from captured logs."""
+    return [
+        cast("dict[str, Any]", record.__dict__["json_fields"])
+        for record in records
+        if getattr(record, "json_fields", {}).get("event_type")
+        == _LEASE_ADMISSION_EVENT_TYPE
+    ]
+
+
+def _assert_lease_admission_schema(
+    test_case: unittest.TestCase,
+    payload: dict[str, Any],
+) -> None:
+    """Assert the raw lease-admission telemetry schema is exact."""
+    test_case.assertEqual(set(payload), _LEASE_ADMISSION_FIELDS)
+    test_case.assertFalse(_LEASE_ADMISSION_STATE_FIELDS & set(payload))
 
 
 class TestSleepOrShutdown(unittest.IsolatedAsyncioTestCase):
@@ -2095,6 +2138,212 @@ class TestLeasingLoopAdmissionBudget(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(mock_process_feed.call_count, 5)
         self.assertFalse(hasattr(rt, "_pending_leases"))
         self.assertFalse(hasattr(rt, "_admitted_queue"))
+
+
+class TestLeasingLoopAdmissionTelemetry(unittest.IsolatedAsyncioTestCase):
+    """Lease-loop cycles emit raw structured admission telemetry."""
+
+    CAPS = {
+        SourceType.BCFY_FEEDS: 240,
+        SourceType.BCFY_CALLS: 600,
+        SourceType.OPENMHZ: 900,
+        SourceType.FIRE_NOTIFICATIONS: 300,
+    }
+
+    async def test_normal_cycle_emits_required_schema_and_counts(self) -> None:
+        """Primary and recovery acquisitions are reported in one event."""
+        rt = _make_runtime(
+            max_feeds_per_worker=10,
+            lease_admission_cycle_budget=5,
+            worker_index=3,
+            caps=self.CAPS,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(
+            self.CAPS,
+            0,
+        )
+        primary = [
+            _make_leased_feed(uuid.UUID(int=1)),
+            _make_leased_feed(uuid.UUID(int=2), SourceType.OPENMHZ),
+        ]
+        recovery = [_make_leased_feed(uuid.UUID(int=3))]
+        rt._store.acquire_feeds_batch.return_value = primary
+        rt._store.acquire_feeds_recovery.return_value = recovery
+
+        with (
+            mock.patch.object(
+                rt, "_process_feed", new_callable=mock.AsyncMock
+            ),
+            mock.patch.object(
+                socket,
+                "gethostname",
+                return_value="worker-host",
+            ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        await asyncio.gather(*rt._feed_tasks.values(), return_exceptions=True)
+        payloads = _lease_admission_payloads(cm.records)
+        self.assertEqual(len(payloads), 1)
+        payload = payloads[0]
+        _assert_lease_admission_schema(self, payload)
+        self.assertEqual(payload["worker_id"], str(_WORKER_ID))
+        self.assertEqual(payload["worker_index"], 3)
+        self.assertEqual(payload["hostname"], "worker-host")
+        self.assertEqual(payload["active_feeds"], 0)
+        self.assertEqual(payload["max_feeds"], 10)
+        self.assertEqual(payload["slack"], 10)
+        self.assertEqual(payload["admission_budget"], 5)
+        self.assertEqual(payload["primary_acquired"], 2)
+        self.assertEqual(payload["recovery_acquired"], 1)
+        self.assertEqual(payload["total_acquired"], 3)
+        self.assertFalse(payload["memory_paused"])
+        self.assertIsNone(payload["error"])
+
+    async def test_zero_slack_cycle_emits_zero_acquisition_event(self) -> None:
+        """Full workers still emit the raw cycle schema."""
+        rt = _make_runtime(
+            max_feeds_per_worker=1,
+            lease_admission_cycle_budget=5,
+            caps=self.CAPS,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        active_task = asyncio.create_task(asyncio.sleep(60))
+        rt._feed_tasks[_FEED_ID] = active_task
+
+        try:
+            with (
+                mock.patch.object(
+                    socket,
+                    "gethostname",
+                    return_value="worker-host",
+                ),
+                self.assertLogs(
+                    "backend.pipeline.ingestion.collector_runtime",
+                    level=logging.INFO,
+                ) as cm,
+            ):
+                rt._shutdown.set()
+                await rt._leasing_loop()
+        finally:
+            active_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await active_task
+
+        payloads = _lease_admission_payloads(cm.records)
+        self.assertEqual(len(payloads), 1)
+        payload = payloads[0]
+        _assert_lease_admission_schema(self, payload)
+        self.assertEqual(payload["active_feeds"], 1)
+        self.assertEqual(payload["max_feeds"], 1)
+        self.assertEqual(payload["slack"], 0)
+        self.assertEqual(payload["admission_budget"], 0)
+        self.assertEqual(payload["primary_acquired"], 0)
+        self.assertEqual(payload["recovery_acquired"], 0)
+        self.assertEqual(payload["total_acquired"], 0)
+        self.assertFalse(payload["memory_paused"])
+        self.assertIsNone(payload["error"])
+        rt._store.count_held_by_type.assert_not_awaited()
+        rt._store.acquire_feeds_batch.assert_not_awaited()
+
+    async def test_memory_paused_cycle_emits_pause_event(self) -> None:
+        """Memory pause emits the same schema before waiting."""
+        rt = _make_runtime(
+            max_feeds_per_worker=10,
+            lease_admission_cycle_budget=5,
+            caps=self.CAPS,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+
+        with (
+            mock.patch.object(
+                rt._memory_watchdog,
+                "is_paused",
+                return_value=True,
+            ),
+            mock.patch.object(
+                socket,
+                "gethostname",
+                return_value="worker-host",
+            ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        payloads = _lease_admission_payloads(cm.records)
+        self.assertEqual(len(payloads), 1)
+        payload = payloads[0]
+        _assert_lease_admission_schema(self, payload)
+        self.assertEqual(payload["active_feeds"], 0)
+        self.assertEqual(payload["max_feeds"], 10)
+        self.assertEqual(payload["slack"], 10)
+        self.assertEqual(payload["admission_budget"], 5)
+        self.assertEqual(payload["primary_acquired"], 0)
+        self.assertEqual(payload["recovery_acquired"], 0)
+        self.assertEqual(payload["total_acquired"], 0)
+        self.assertTrue(payload["memory_paused"])
+        self.assertIsNone(payload["error"])
+        rt._store.count_held_by_type.assert_not_awaited()
+        rt._store.acquire_feeds_batch.assert_not_awaited()
+
+    async def test_exception_cycle_emits_error_without_secrets(self) -> None:
+        """Acquisition exceptions emit concise class-name evidence."""
+        rt = _make_runtime(
+            max_feeds_per_worker=10,
+            lease_admission_cycle_budget=5,
+            caps=self.CAPS,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.side_effect = RuntimeError(
+            "connection string hidden"
+        )
+
+        with (
+            mock.patch.object(
+                socket,
+                "gethostname",
+                return_value="worker-host",
+            ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        payloads = _lease_admission_payloads(cm.records)
+        self.assertEqual(len(payloads), 1)
+        payload = payloads[0]
+        _assert_lease_admission_schema(self, payload)
+        self.assertEqual(payload["active_feeds"], 0)
+        self.assertEqual(payload["max_feeds"], 10)
+        self.assertEqual(payload["slack"], 10)
+        self.assertEqual(payload["admission_budget"], 5)
+        self.assertEqual(payload["primary_acquired"], 0)
+        self.assertEqual(payload["recovery_acquired"], 0)
+        self.assertEqual(payload["total_acquired"], 0)
+        self.assertFalse(payload["memory_paused"])
+        self.assertEqual(payload["error"], "RuntimeError")
+        self.assertNotIn("connection string hidden", str(payload))
 
 
 class TestSigtermRelease(unittest.IsolatedAsyncioTestCase):
