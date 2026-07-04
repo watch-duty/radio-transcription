@@ -108,6 +108,7 @@ class VMHealthSettingsTests(unittest.TestCase):
             ),
             ("http://127.0.0.1:8081/healthz,http://127.0.0.1:8081/healthz"),
             ("http://127.0.0.1:8081/healthz,http://localhost:8081/healthz"),
+            "http://127.0.0.1:8080/healthz,http://127.0.0.1:8082/healthz",
             "http://127.0.0.1/healthz,http://127.0.0.1:8082/healthz",
             "https://127.0.0.1:8081/healthz",
             "http://example.com:8081/healthz",

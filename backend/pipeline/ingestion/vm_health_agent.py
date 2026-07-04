@@ -105,6 +105,11 @@ class VMHealthSettings:
         if len(worker_ports) != 2:
             msg = "worker_endpoints must reference two distinct local ports."
             raise ValueError(msg)
+        if self.listen_port in worker_ports:
+            msg = (
+                "worker_endpoints must not reference the VM Health listen_port."
+            )
+            raise ValueError(msg)
 
 
 @dataclass(frozen=True, kw_only=True)
