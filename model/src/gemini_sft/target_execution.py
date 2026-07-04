@@ -274,14 +274,14 @@ async def run_online_target_inference(
     async def process_one(index: int, audio_uri: str) -> None:
         if audio_uri in completed:
             return
-        request = build_request(
-            audio_uri,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            history=history_list[index],
-            history_mode=prior_context_mode,
-        )["request"]
         async with semaphore:
+            request = build_request(
+                audio_uri,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                history=history_list[index],
+                history_mode=prior_context_mode,
+            )["request"]
             prediction, error = await _generate_with_retries(
                 client=client,
                 model_id=target_model,
