@@ -56,8 +56,7 @@ class VMHealthSettingsTests(unittest.TestCase):
     def test_env_overrides_are_vm_health_specific(self) -> None:
         env = {
             "VM_HEALTH_WORKER_ENDPOINTS": (
-                "http://127.0.0.1:9001/healthz,"
-                "http://localhost:9002/healthz"
+                "http://127.0.0.1:9001/healthz,http://localhost:9002/healthz"
             ),
             "VM_HEALTH_PROBE_TIMEOUT_SEC": "1.25",
             "VM_HEALTH_PROBE_INTERVAL_SEC": "7.5",

@@ -87,8 +87,7 @@ class VMHealthSettings:
 
         if self.listen_port <= 0 or self.listen_port > 65535:
             msg = (
-                f"listen_port ({self.listen_port}) must be between "
-                "1 and 65535."
+                f"listen_port ({self.listen_port}) must be between 1 and 65535."
             )
             raise ValueError(msg)
 
