@@ -328,6 +328,11 @@ jobs:
             -e ALLOYDB_HOST=localhost \
             -e ALLOYDB_USER=worker \
             -e ALLOYDB_DB=postgres \
+            -e LEASE_ADMISSION_CYCLE_BUDGET=20 \
+            -e STARTUP_STAGGER_MAX_SEC=60.0 \
+            -e STARTUP_JITTER_MAX_SEC=2.0 \
+            -e LEASE_POLL_JITTER_MAX_SEC=1.0 \
+            -e WORKER_INDEX=1 \
             ingestion-smoke-test \
             python -c "from backend.pipeline.ingestion.settings import CollectorSettings; CollectorSettings()"
 
