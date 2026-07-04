@@ -146,22 +146,22 @@ class WorkerProbeTests(AioHTTPTestCase):
         async with aiohttp.ClientSession() as session:
             ok = await vm_health_agent.probe_worker(
                 session,
-                str(self.make_url("/ok")),
+                str(self.server.make_url("/ok")),
                 timeout_sec=1.0,
             )
             redirect = await vm_health_agent.probe_worker(
                 session,
-                str(self.make_url("/redirect")),
+                str(self.server.make_url("/redirect")),
                 timeout_sec=1.0,
             )
             missing = await vm_health_agent.probe_worker(
                 session,
-                str(self.make_url("/missing")),
+                str(self.server.make_url("/missing")),
                 timeout_sec=1.0,
             )
             error = await vm_health_agent.probe_worker(
                 session,
-                str(self.make_url("/error")),
+                str(self.server.make_url("/error")),
                 timeout_sec=1.0,
             )
 
@@ -179,7 +179,7 @@ class WorkerProbeTests(AioHTTPTestCase):
         async with aiohttp.ClientSession() as session:
             timeout = await vm_health_agent.probe_worker(
                 session,
-                str(self.make_url("/slow")),
+                str(self.server.make_url("/slow")),
                 timeout_sec=0.001,
             )
             client_error = await vm_health_agent.probe_worker(
