@@ -1,12 +1,14 @@
-# `round_id` becomes gs://<bucket>/sft/runs/<round_id>/ and must be unique
-# for a new experiment.
+# This file is the canonical committed placeholder config. Copy it outside the
+# repo for real runs, replace every placeholder, and do not commit local
+# experiment configs.
+#
+# `round_id` becomes gs://<bucket>/sft/runs/<round_id>/ and must be unique for
+# a new experiment.
 round_id = "YYYY-MM-DD-short-description"
 
-# `dataset` identifies the SFT training recipe/version. `inference_dataset_slug`
-# identifies the evaluated corpus/split used for normalized inference-manifest
-# output placement, for example:
+# `inference_dataset_slug` identifies the evaluated corpus/split used for
+# normalized inference-manifest output placement, for example:
 # gs://<bucket>/inference_manifests/echo/eval/<model>/<round_id>/base.jsonl
-dataset = "dataset-version-name"
 inference_dataset_slug = "echo/eval"
 
 # These are canonical manifests. `prepare` derives Gemini SFT JSONL for train
@@ -27,6 +29,41 @@ base_model = "gemini-3.1-flash-lite"
 epoch_count = 6
 adapter_size = "SIXTEEN"
 learning_rate_multiplier = 1.0
+
+[context]
+# Number of prior same-source transcripts to include. `text_turns` is the
+# recommended SFT shape: prior user turns contain text only, prior model turns
+# contain prior transcripts, and only the current user turn contains audio.
+prior_turn_count = 8
+# Supported SFT/eval context modes:
+# - text_turns: prior text-only user/model turns, closest to conversation setup.
+# - transcript: simple numbered prior-transcript block in the current prompt.
+# - guarded_transcript_block: guarded prior-transcript block that says not to
+#   re-transcribe or continue prior turns.
+prior_context_mode = "text_turns"
+
+[eval.model]
+# `gemini-sft eval` supports one model per config. To compare base, tuned, or
+# checkpoint models, run separate config files in parallel with an external
+# wrapper.
+label = "base"
+model = "gemini-3.1-flash-lite"
+
+# For a checkpoint or tuned endpoint, use the same table shape:
+# label = "checkpoint_6"
+# model = "projects/PROJECT/locations/us-central1/endpoints/ENDPOINT_ID"
+#
+# Masked and unmasked evals should use separate config files with distinct
+# round_id, eval_manifest_uri, and inference_dataset_slug values.
+
+# Optional eval execution controls. Omit `backend` for default routing:
+# publisher/model IDs use batch inference, full endpoint resources use online
+# generate-content. To compare forced backends, use separate config files/runs.
+[eval.execution]
+# backend = "online"
+# limit = 100
+concurrency = 16
+max_retries = 3
 
 [prompts]
 # Optional inline overrides only. Prompt files are intentionally unsupported so
