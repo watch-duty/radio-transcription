@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Gate ingestion MIG rollouts using Cloud Logging settle telemetry."""
 
 from __future__ import annotations
@@ -9,10 +8,8 @@ import json
 import subprocess
 import sys
 import time
-from collections.abc import Mapping
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import Any
 
 _EXPECTED_WORKERS = (1, 2)
 _SNIPPET_MAX_CHARS = 500
@@ -50,7 +47,9 @@ def is_worker_settled(payload: Mapping[str, object]) -> bool:
         return False
 
     acquired = int(primary_acquired) + int(recovery_acquired)
-    return int(slack) <= int(admission_budget) or acquired < int(admission_budget)
+    return int(slack) <= int(admission_budget) or acquired < int(
+        admission_budget
+    )
 
 
 def build_log_filter(
@@ -191,7 +190,9 @@ def evaluate_gate(
 
 
 def _utc_now() -> str:
-    return datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
+    return (
+        datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "Z")
+    )
 
 
 def _validate_instance_id(instance_id: str) -> None:
@@ -280,7 +281,9 @@ def _print_human_summary(result: Mapping[str, object]) -> None:
     status = str(result.get("status", "unknown")).upper()
     reason = result.get("reason", "unknown")
     elapsed = result.get("elapsed_sec", 0.0)
-    sys.stdout.write(f"Ingestion rollout gate {status}: {reason} ({elapsed}s)\n")
+    sys.stdout.write(
+        f"Ingestion rollout gate {status}: {reason} ({elapsed}s)\n"
+    )
 
     critical_logs = result.get("critical_logs")
     if isinstance(critical_logs, list) and critical_logs:
@@ -331,7 +334,7 @@ def _failure_result(
     elapsed_sec: float,
     message: str,
 ) -> dict[str, object]:
-    result = {
+    return {
         "status": "failed",
         "reason": reason,
         "evaluated_at": _utc_now(),
@@ -349,7 +352,6 @@ def _failure_result(
         "critical_logs": [],
         "message": message,
     }
-    return result
 
 
 def main(argv: Sequence[str] | None = None) -> int:

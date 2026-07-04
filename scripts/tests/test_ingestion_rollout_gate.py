@@ -32,7 +32,9 @@ def _admission_entry(
     }
 
 
-def _critical_entry(timestamp: str = "2026-07-04T20:00:30Z") -> dict[str, object]:
+def _critical_entry(
+    timestamp: str = "2026-07-04T20:00:30Z",
+) -> dict[str, object]:
     return {
         "timestamp": timestamp,
         "severity": "CRITICAL",
@@ -67,7 +69,9 @@ def test_worker_is_settled_when_underfilled() -> None:
     assert gate.is_worker_settled(payload)
 
 
-def test_worker_is_unsettled_for_errors_pauses_pressure_or_missing_fields() -> None:
+def test_worker_is_unsettled_for_errors_pauses_pressure_or_missing_fields() -> (
+    None
+):
     base = {
         "error": None,
         "memory_paused": False,
@@ -80,7 +84,9 @@ def test_worker_is_unsettled_for_errors_pauses_pressure_or_missing_fields() -> N
     assert not gate.is_worker_settled({**base, "error": "db timeout"})
     assert not gate.is_worker_settled({**base, "memory_paused": True})
     assert not gate.is_worker_settled(base)
-    assert not gate.is_worker_settled({k: v for k, v in base.items() if k != "slack"})
+    assert not gate.is_worker_settled(
+        {k: v for k, v in base.items() if k != "slack"}
+    )
 
 
 def test_evaluate_gate_passes_using_latest_cycle_per_worker() -> None:
