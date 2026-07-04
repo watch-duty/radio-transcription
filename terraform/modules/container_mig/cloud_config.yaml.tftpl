@@ -26,65 +26,16 @@ ${env_file_content}
     net.ipv4.tcp_keepalive_intvl = 10
     net.ipv4.tcp_keepalive_probes = 3
 %{ if enable_autohealing }
-- path: /etc/nginx-aggregator/healthz.conf
-  permissions: "0644"
-  content: |
-    # Per-VM health aggregator (Phase 1 D-02 / D-06).
-    # OR-semantic: returns 200 if EITHER local worker /healthz responds 200,
-    # 5xx only when both fail. The MIG's google_compute_health_check probes
-    # this on :8080 and replaces the VM only when both workers are dead.
-    # Single-worker death is recovered by Restart=always on its systemd unit.
-    upstream workers {
-        # Try worker@1 first. fail_timeout=5s = mark down for 5s after one
-        # failed request, then probe again. max_fails default is 1 — fine
-        # for our use because proxy_next_upstream gives us per-request
-        # failover before nginx even marks the upstream down.
-        server 127.0.0.1:8081 fail_timeout=5s;
-        # backup = use this only if all non-backup peers are unavailable.
-        # That gives natural OR semantics: worker@2 is consulted only when
-        # worker@1 has failed, which is exactly what we want.
-        server 127.0.0.1:8082 backup;
-    }
-    server {
-        listen 8080;
-        # access_log off per D-03: ~30 req/min * 8+ VMs * 1440 min/day =
-        # ~345k log lines/day at fleet scale, all 200s, no signal value.
-        # State transitions (200->5xx, 5xx->200) flow through error_log.
-        access_log off;
-        error_log /dev/stderr warn;
-
-        location = /healthz {
-            proxy_pass http://workers/healthz;
-            # 2s connect, 2s read — generous vs the worker's ~10ms p99
-            # /healthz latency (no DB call, just JSON status reply).
-            proxy_connect_timeout 2s;
-            proxy_read_timeout 2s;
-            # Fall through to backup on connect error, read timeout, or
-            # any 5xx response from worker@1. This is the OR-semantic
-            # primitive: a single worker death does NOT 5xx the aggregator.
-            # nginx requires individual 5xx codes — `http_5xx` is not valid
-            # syntax (the directive's grammar has no wildcard). Listing the
-            # four codes the worker actually emits covers all real cases:
-            # 500 (asyncpg/aiohttp uncaught), 502 (upstream gone), 503
-            # (heartbeat stale / shutdown), 504 (DB query timeout).
-            proxy_next_upstream error timeout http_500 http_502 http_503 http_504;
-            proxy_next_upstream_tries 2;
-        }
-        # Default location for any unexpected path — return 404 cheaply,
-        # don't leak the upstream.
-        location / {
-            return 404;
-        }
-    }
 - path: /etc/systemd/system/${service_name}-health.service
   permissions: "0644"
   content: |
     [Unit]
-    Description=${service_name} per-VM health aggregator (nginx OR-semantic)
-    # Start nginx after BOTH worker units have been *attempted* (After=, not
-    # Requires=). If a worker is slow or never comes up, nginx still starts
-    # and reports the failed worker as upstream-down — preferable to having
-    # no aggregator (which would race the MIG's 300s initial_delay grace).
+    Description=${service_name} VM Health agent (Python same-image hysteresis)
+    # Start VM Health after BOTH worker units have been *attempted* (After=,
+    # not Requires=). If a worker is slow or never comes up, the agent still
+    # starts and reports worker HTTP status-code state. It returns 200 while
+    # either worker is healthy, and also during the 600s continuous both-down
+    # grace window before reporting VM-unhealthy to the MIG.
     After=docker.service network-online.target ${service_name}@1.service ${service_name}@2.service
     Requires=docker.service network-online.target
 
@@ -93,18 +44,21 @@ ${env_file_content}
     Restart=always
     RestartSec=10
     Environment=HOME=/home
-    # mirror.gcr.io is Google's GCR mirror of Docker Hub (no Hub rate limits,
-    # no auth needed). 1.27-alpine pinned per D-06; pull is cached after
-    # first boot. CVE update process: bump the tag in this file.
+    ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries ${registry_host}
     ExecStartPre=-/usr/bin/docker rm -f ${service_name}-health
-    ExecStartPre=/usr/bin/docker pull mirror.gcr.io/library/nginx:1.27-alpine
-    # --network host so nginx can reach 127.0.0.1:8081/8082 on the HOST's
-    # loopback (the workers' published ports are on the host, not inside
-    # nginx's container netns). Read-only mount for the config file.
+    ExecStartPre=/usr/bin/docker pull ${container_image}
+    # --network host lets the VM Health container reach 127.0.0.1:8081/8082
+    # on the HOST loopback. Pass only explicit non-secret VM_HEALTH_* values;
+    # do not mount or pass the broad worker env file into this container.
     ExecStart=/usr/bin/docker run --rm --name ${service_name}-health \
         --network host \
-        -v /etc/nginx-aggregator/healthz.conf:/etc/nginx/conf.d/default.conf:ro \
-        mirror.gcr.io/library/nginx:1.27-alpine
+        -e VM_HEALTH_WORKER_ENDPOINTS=http://127.0.0.1:8081/healthz,http://127.0.0.1:8082/healthz \
+        -e VM_HEALTH_PROBE_TIMEOUT_SEC=2.0 \
+        -e VM_HEALTH_PROBE_INTERVAL_SEC=5.0 \
+        -e VM_HEALTH_LISTEN_HOST=0.0.0.0 \
+        -e VM_HEALTH_LISTEN_PORT=8080 \
+        -e VM_HEALTH_HYSTERESIS_SEC=600.0 \
+        ${container_image} python -m backend.pipeline.ingestion.vm_health_agent
     ExecStop=/usr/bin/docker stop -t 10 ${service_name}-health
     TimeoutStopSec=20
 
@@ -145,7 +99,7 @@ ${env_file_content}
     # silently use kernel defaults (32768-60999 ephemeral ports, 7200s
     # keepalive idle), which defeats the entire HANDOFF-01 contract from
     # PR #359 worker hardening. The host /etc/sysctl.d/ values still apply
-    # to (a) the host network stack and (b) the nginx aggregator container
+    # to (a) the host network stack and (b) the VM Health container
     # (which runs --network host so it shares the host netns), so we keep
     # both for belt-and-suspenders coverage.
     ExecStart=/bin/sh -c '/usr/bin/docker run --rm --name ${service_name}-%i \
@@ -190,7 +144,7 @@ runcmd:
 # icmp, established, tcp/22 for SSH). The pre-Phase-2 single-worker setup
 # bypassed INPUT for port 8080 because Docker's `-p 8080:8080` mapping
 # routes inbound traffic via PREROUTING + FORWARD (DOCKER chain) — never
-# touching INPUT. The new k=2 setup runs the nginx aggregator with
+# touching INPUT. The new k=2 setup runs the VM Health agent with
 # `--network host`, which binds host port 8080 directly and traverses
 # INPUT. Without this rule, every Google autohealing probe to :8080 is
 # silently dropped by INPUT-DROP, the MIG marks the VM TIMEOUT after the
