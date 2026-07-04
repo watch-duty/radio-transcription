@@ -714,10 +714,7 @@ def _optional_prior_context_mode(data: dict[str, Any], key: str) -> str:
         raise RunConfigError(msg)
     mode = value.strip().lower()
     if mode not in PRIOR_CONTEXT_MODES:
-        msg = (
-            f"{key} must be one of {', '.join(sorted(PRIOR_CONTEXT_MODES))}; "
-            "Vertex SFT examples can contain only one audio part"
-        )
+        msg = f"{key} must be one of {', '.join(sorted(PRIOR_CONTEXT_MODES))}"
         raise RunConfigError(msg)
     return mode
 
