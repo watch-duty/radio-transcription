@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import uuid
 from dataclasses import dataclass, field
@@ -304,8 +305,10 @@ class CollectorSettings:
             ("lease_poll_jitter_max_sec", self.lease_poll_jitter_max_sec),
         )
         for field_name, value in non_negative_delays:
-            if value < 0:
-                msg = f"{field_name} ({value}s) must be non-negative."
+            if not math.isfinite(value) or value < 0:
+                msg = (
+                    f"{field_name} ({value}s) must be finite and non-negative."
+                )
                 raise ValueError(msg)
 
         # SHUTDOWN-02: validate the inner sub-timeout fits inside the

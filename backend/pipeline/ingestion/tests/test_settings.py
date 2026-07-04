@@ -311,6 +311,28 @@ class TestCollectorSettings(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         CollectorSettings()
 
+    def test_nonfinite_startup_and_poll_jitter_raise(self) -> None:
+        """Rejects NaN and infinity for pacing/jitter values."""
+        cases = (
+            ("STARTUP_STAGGER_MAX_SEC", "nan"),
+            ("STARTUP_STAGGER_MAX_SEC", "inf"),
+            ("STARTUP_STAGGER_MAX_SEC", "-inf"),
+            ("STARTUP_JITTER_MAX_SEC", "nan"),
+            ("STARTUP_JITTER_MAX_SEC", "inf"),
+            ("STARTUP_JITTER_MAX_SEC", "-inf"),
+            ("LEASE_POLL_JITTER_MAX_SEC", "nan"),
+            ("LEASE_POLL_JITTER_MAX_SEC", "inf"),
+            ("LEASE_POLL_JITTER_MAX_SEC", "-inf"),
+        )
+
+        for name, value in cases:
+            with self.subTest(name=name, value=value):
+                env = {**_required_env(), name: value}
+
+                with patch.dict("os.environ", env, clear=True):
+                    with self.assertRaises(ValueError):
+                        CollectorSettings()
+
     def test_zero_pacing_values_disable_delays(self) -> None:
         """Allows zero delay and jitter values to disable pacing."""
         env = {

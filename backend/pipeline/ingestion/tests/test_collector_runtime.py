@@ -2140,6 +2140,58 @@ class TestLeasingLoopAdmissionBudget(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(hasattr(rt, "_pending_leases"))
         self.assertFalse(hasattr(rt, "_admitted_queue"))
 
+    async def test_primary_leases_spawn_when_recovery_acquisition_fails(
+        self,
+    ) -> None:
+        """Primary leases are not stranded if recovery acquisition fails."""
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            lease_admission_cycle_budget=5,
+            caps=self.CAPS,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(
+            self.CAPS,
+            0,
+        )
+        primary = [
+            _make_leased_feed(uuid.UUID(int=1)),
+            _make_leased_feed(uuid.UUID(int=2)),
+        ]
+        rt._store.acquire_feeds_batch.return_value = primary
+        rt._store.acquire_feeds_recovery.side_effect = RuntimeError(
+            "recovery unavailable",
+        )
+
+        with (
+            mock.patch.object(
+                rt, "_process_feed", new_callable=mock.AsyncMock
+            ) as mock_process_feed,
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        await asyncio.gather(*rt._feed_tasks.values(), return_exceptions=True)
+        self.assertEqual(len(rt._feed_tasks), 2)
+        self.assertCountEqual(
+            rt._feed_tasks, [lease["id"] for lease in primary]
+        )
+        self.assertEqual(mock_process_feed.call_count, 2)
+        payloads = _lease_admission_payloads(cm.records)
+        self.assertEqual(len(payloads), 1)
+        payload = payloads[0]
+        self.assertEqual(payload["primary_acquired"], 2)
+        self.assertEqual(payload["recovery_acquired"], 0)
+        self.assertEqual(payload["total_acquired"], 2)
+        self.assertEqual(payload["error"], "RuntimeError")
+        self.assertNotIn("recovery unavailable", str(payload))
+
 
 class TestLeasingLoopAdmissionTelemetry(unittest.IsolatedAsyncioTestCase):
     """Lease-loop cycles emit raw structured admission telemetry."""
