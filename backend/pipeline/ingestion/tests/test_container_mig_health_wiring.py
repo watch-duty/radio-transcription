@@ -32,6 +32,22 @@ def _file_entry(text: str, path: str) -> str:
     return text[start:next_entry]
 
 
+def _terraform_block(text: str, marker: str) -> str:
+    start = text.index(marker)
+    brace_start = text.index("{", start)
+    depth = 0
+    for index in range(brace_start, len(text)):
+        char = text[index]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+
+    raise ValueError(f"Unclosed Terraform block: {marker}")
+
+
 class ContainerMigHealthWiringTests(unittest.TestCase):
     def test_health_unit_runs_same_image_python_vm_health_agent(self) -> None:
         cloud_config = _text(_CLOUD_CONFIG)
@@ -114,20 +130,28 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
         )
 
     def test_gcp_health_thresholds_unchanged(self) -> None:
-        main_tf = _text(_MAIN_TF)
+        main_tf = _without_comment_lines(_text(_MAIN_TF))
+        health_check = _terraform_block(
+            main_tf,
+            'resource "google_compute_health_check" "this"',
+        )
+        autohealing = _terraform_block(
+            main_tf,
+            'dynamic "auto_healing_policies"',
+        )
         threshold_patterns = (
-            r"check_interval_sec\s+=\s+30\b",
-            r"timeout_sec\s+=\s+10\b",
-            r"healthy_threshold\s+=\s+1\b",
-            r"unhealthy_threshold\s+=\s+3\b",
-            r"port\s+=\s+8080\b",
-            r'request_path\s+=\s+"/healthz"',
-            r"initial_delay_sec\s+=\s+300\b",
+            (health_check, r"check_interval_sec\s+=\s+30\b"),
+            (health_check, r"timeout_sec\s+=\s+10\b"),
+            (health_check, r"healthy_threshold\s+=\s+1\b"),
+            (health_check, r"unhealthy_threshold\s+=\s+3\b"),
+            (health_check, r"port\s+=\s+8080\b"),
+            (health_check, r'request_path\s+=\s+"/healthz"'),
+            (autohealing, r"initial_delay_sec\s+=\s+300\b"),
         )
 
-        for pattern in threshold_patterns:
+        for block, pattern in threshold_patterns:
             with self.subTest(pattern=pattern):
-                self.assertRegex(main_tf, pattern)
+                self.assertRegex(block, pattern)
 
     def test_enable_autohealing_documents_vm_health_contract(self) -> None:
         variables_tf = _text(_VARIABLES_TF)

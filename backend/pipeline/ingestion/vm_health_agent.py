@@ -91,8 +91,8 @@ class VMHealthSettings:
             )
             raise ValueError(msg)
 
-        if not self.worker_endpoints:
-            msg = "worker_endpoints must contain at least one URL."
+        if len(self.worker_endpoints) != 2:
+            msg = "worker_endpoints must contain exactly two local worker URLs."
             raise ValueError(msg)
 
         for endpoint in self.worker_endpoints:

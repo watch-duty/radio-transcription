@@ -100,6 +100,12 @@ class VMHealthSettingsTests(unittest.TestCase):
     def test_rejects_non_loopback_or_non_http_worker_endpoints(self) -> None:
         cases = (
             "",
+            "http://127.0.0.1:8081/healthz",
+            (
+                "http://127.0.0.1:8081/healthz,"
+                "http://127.0.0.1:8082/healthz,"
+                "http://127.0.0.1:8083/healthz"
+            ),
             "https://127.0.0.1:8081/healthz",
             "http://example.com:8081/healthz",
             "http://169.254.169.254/latest/meta-data",
