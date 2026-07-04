@@ -19,9 +19,6 @@ class ContextTurn:
     text: str
 
 
-HISTORY_MODES: Final = frozenset(
-    {"text_turns", "transcript", "guarded_transcript_block"}
-)
 PRIOR_CONTEXT_MODES: Final = frozenset(
     {"text_turns", "transcript", "guarded_transcript_block"}
 )
@@ -135,7 +132,7 @@ def build_transcription_contents(
 def validate_history_mode(history_mode: str) -> str:
     """Return a normalized history mode or raise ``ValueError``."""
     mode = history_mode.strip().lower()
-    if mode not in HISTORY_MODES:
+    if mode not in PRIOR_CONTEXT_MODES:
         msg = (
             "history_mode must be 'text_turns', 'transcript', or "
             "'guarded_transcript_block'"

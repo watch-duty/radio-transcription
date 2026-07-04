@@ -33,7 +33,7 @@ from common.gemini.vertex import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
     from pathlib import Path
 
     from common.gemini.context import ContextTurn
@@ -115,10 +115,6 @@ async def _upload_text_async(
         gcs_uri,
         content_type="application/jsonl",
     )
-
-
-async def _read_text_async(path: Path) -> str:
-    return await asyncio.to_thread(path.read_text, encoding="utf-8")
 
 
 async def _upload_periodic_prediction_snapshot(
@@ -300,7 +296,7 @@ async def run_online_target_inference(
             "target_label": target_label,
             "model": target_model,
         }
-        upload_snapshot: str | None = None
+        upload_rows: list[dict[str, Any]] | None = None
         async with lock:
             completed[audio_uri] = out_row
             _append_prediction(local_predictions_path, out_row)
@@ -310,7 +306,7 @@ async def run_online_target_inference(
                 progress["errors"] += 1
             if progress["since_sync"] >= ONLINE_SYNC_EVERY:
                 progress["since_sync"] = 0
-                upload_snapshot = await _read_text_async(local_predictions_path)
+                upload_rows = list(completed.values())
             if progress["done"] == len(audio_uri_list) or (
                 progress["done"] % ONLINE_LOG_EVERY == 0
             ):
@@ -321,10 +317,10 @@ async def run_online_target_inference(
                     len(audio_uri_list),
                     progress["errors"],
                 )
-        if upload_snapshot is not None:
+        if upload_rows is not None:
             await _upload_periodic_prediction_snapshot(
                 storage_client=storage_client,
-                snapshot=upload_snapshot,
+                snapshot=_prediction_rows_jsonl(upload_rows),
                 predictions_uri=predictions_uri,
                 target_label=target_label,
             )
@@ -337,7 +333,7 @@ async def run_online_target_inference(
     )
     await _upload_text_async(
         storage_client,
-        local_predictions_path.read_text(encoding="utf-8"),
+        _prediction_rows_jsonl(completed.values()),
         predictions_uri,
     )
     return _prediction_map(
@@ -404,6 +400,10 @@ def _append_prediction(path: Path, row: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def _prediction_rows_jsonl(rows: Iterable[dict[str, Any]]) -> str:
+    return "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
 
 
 async def _generate_with_retries(

@@ -490,7 +490,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
     @unittest.mock.patch("gemini_sft.target_execution.types")
     @unittest.mock.patch("gemini_sft.target_execution.genai")
-    def test_periodic_snapshot_read_runs_in_thread_pool(
+    def test_periodic_snapshot_uploads_completed_rows(
         self, mock_genai, mock_types
     ) -> None:
         class Response:
@@ -499,16 +499,10 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         async def generate_content(**kwargs):
             return Response()
 
-        read_text_thread_calls = 0
-
-        async def fake_to_thread(fn, *args, **kwargs):
-            nonlocal read_text_thread_calls
-            if getattr(fn, "__name__", "") == "read_text":
-                read_text_thread_calls += 1
-            return fn(*args, **kwargs)
+        snapshots: list[str] = []
 
         async def fake_periodic_upload(**kwargs):
-            self.assertGreater(read_text_thread_calls, 0)
+            snapshots.append(kwargs["snapshot"])
 
         mock_client = unittest.mock.MagicMock()
         mock_client.aio.models.generate_content = generate_content
@@ -518,10 +512,6 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         with (
             unittest.mock.patch(
                 "gemini_sft.target_execution.ONLINE_SYNC_EVERY", 1
-            ),
-            unittest.mock.patch(
-                "gemini_sft.target_execution.asyncio.to_thread",
-                fake_to_thread,
             ),
             unittest.mock.patch(
                 "gemini_sft.target_execution._upload_periodic_prediction_snapshot",
@@ -549,7 +539,24 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                 )
             )
 
-        self.assertGreaterEqual(read_text_thread_calls, 1)
+        self.assertEqual(len(snapshots), 1)
+        rows = [
+            json.loads(line)
+            for line in snapshots[0].splitlines()
+            if line.strip()
+        ]
+        self.assertEqual(
+            rows,
+            [
+                {
+                    "audio_filepath": "gs://audio/1.flac",
+                    "error": None,
+                    "model": "projects/p/locations/us-central1/endpoints/123",
+                    "pred_text": "recognized",
+                    "target_label": "checkpoint_6",
+                }
+            ],
+        )
 
     @unittest.mock.patch("gemini_sft.target_execution.types")
     @unittest.mock.patch("gemini_sft.target_execution.genai")
