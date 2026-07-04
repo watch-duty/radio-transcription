@@ -487,16 +487,17 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         self.assertIsNot(rt._feed_tasks[_FEED_ID], old_task)
 
     async def test_total_slack_bounded_across_branches(self) -> None:
-        """Sum of per-branch LIMITs must not exceed total_slack (cold start).
+        """Sum of per-branch LIMITs must not exceed admission budget.
 
         Regression: without the round-robin apportion, three branches each
-        get `min(cap, total_slack)`, so at max_feeds_per_worker=250 the
-        query could legitimately return 250 + 250 + 250 = 740 feeds and
+        got `min(cap, slack_or_budget)`, so a cold-start worker could
+        legitimately return many more rows than the intended budget and
         blow past the worker budget. The apportion must guarantee
-        sum(limits) <= total_slack.
+        sum(limits) <= the configured admission budget.
         """
         rt = _make_runtime(
             max_feeds_per_worker=250,
+            lease_admission_cycle_budget=20,
             caps={
                 SourceType.BCFY_FEEDS: 240,
                 SourceType.BCFY_CALLS: 600,
@@ -521,7 +522,7 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         # per-type LIMIT dict.
         call = rt._store.acquire_feeds_batch.await_args_list[0]
         limits_dict = call[0][1]
-        self.assertEqual(sum(limits_dict.values()), 250)  # exactly total_slack
+        self.assertEqual(sum(limits_dict.values()), 20)
         self.assertTrue(
             all(v >= 0 for v in limits_dict.values()),
             "no branch should receive a negative LIMIT",
@@ -1875,6 +1876,7 @@ class TestLeasingLoopHeldCounts(unittest.IsolatedAsyncioTestCase):
         """count_held_by_type is awaited and its result feeds branch limits."""
         rt = _make_runtime(
             max_feeds_per_worker=250,
+            lease_admission_cycle_budget=20,
             caps={
                 SourceType.BCFY_FEEDS: 240,
                 SourceType.BCFY_CALLS: 600,
@@ -1910,12 +1912,12 @@ class TestLeasingLoopHeldCounts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call[0][0], _WORKER_ID)
 
         # The acquire call's per-type limits dict must reflect the
-        # DB-derived held: bcfy_feeds=0 (capped), other two share
-        # total_slack=250.
+        # DB-derived held: bcfy_feeds=0 (capped), other types share
+        # the admission budget.
         acquire_call = rt._store.acquire_feeds_batch.await_args_list[0]
         limits_dict = acquire_call[0][1]
         self.assertEqual(limits_dict[SourceType.BCFY_FEEDS], 0)
-        self.assertEqual(sum(limits_dict.values()), 250)
+        self.assertEqual(sum(limits_dict.values()), 20)
 
 
 class TestLeasingLoopAdmissionBudget(unittest.IsolatedAsyncioTestCase):

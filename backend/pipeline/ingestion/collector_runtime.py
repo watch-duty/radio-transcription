@@ -472,13 +472,14 @@ class CollectorRuntime:
             # a thundering herd cold-start on recovery. Since the DB is down,
             # no other worker can steal leases either.
             try:
-                total_slack = (
-                    self._collector_settings.max_feeds_per_worker
-                    - len(self._feed_tasks)
-                )
+                s = self._collector_settings
+                total_slack = s.max_feeds_per_worker - len(self._feed_tasks)
                 if total_slack > 0:
-                    s = self._collector_settings
                     caps = s.caps
+                    effective_budget = min(
+                        total_slack,
+                        s.lease_admission_cycle_budget,
+                    )
                     # Pull the authoritative per-type held count from the
                     # DB before apportioning. See FeedStore.count_held_by_type
                     # for rationale: the previous in-memory counter leaked
@@ -493,14 +494,16 @@ class CollectorRuntime:
                     # so the allocation math is unit-testable without the
                     # surrounding asyncio loop.
                     limits = self._calculate_branch_limits(
-                        total_slack,
+                        effective_budget,
                         caps,
                         held,
                     )
                     logger.info(
                         "Attempting to acquire feeds "
-                        "(slack=%d, caps=%s, held=%s, limits=%s, total_ask=%d)",
+                        "(slack=%d, admission_budget=%d, caps=%s, "
+                        "held=%s, limits=%s, total_ask=%d)",
                         total_slack,
+                        effective_budget,
                         {t.value: v for t, v in caps.items()},
                         {t.value: v for t, v in held.items()},
                         {t.value: v for t, v in limits.items()},
@@ -519,7 +522,7 @@ class CollectorRuntime:
                     # active-abandoned rows at 30 s cadence, but this path
                     # still earns its keep for failing-retryable and for
                     # reclaiming slack before the next sweep tick.
-                    if len(primary) < total_slack:
+                    if len(primary) < effective_budget:
                         # Recovery must respect the SAME per-type caps
                         # the primary path enforced. Without re-running
                         # the apportion, recovery could push held > cap
@@ -538,8 +541,11 @@ class CollectorRuntime:
                         held_after_primary = {
                             t: held.get(t, 0) + primary_by_type[t] for t in caps
                         }
+                        recovery_remaining_budget = (
+                            effective_budget - len(primary)
+                        )
                         recovery_limits = self._calculate_branch_limits(
-                            total_slack - len(primary),
+                            recovery_remaining_budget,
                             caps,
                             held_after_primary,
                         )
