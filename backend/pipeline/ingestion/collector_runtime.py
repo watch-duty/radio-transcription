@@ -76,6 +76,49 @@ _PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
 _PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
 _NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
 _NON_BUDGETED_RETRY_MAX_SEC = 15 * 60
+_UUID_SPACE_SIZE = 1 << 128
+
+
+def _deterministic_startup_stagger(
+    worker_id: uuid.UUID,
+    max_sec: float,
+) -> float:
+    """Map a worker UUID into a stable delay in ``[0, max_sec)``."""
+    if max_sec <= 0.0:
+        return 0.0
+    return (worker_id.int / _UUID_SPACE_SIZE) * max_sec
+
+
+def _startup_pacing_delay(
+    worker_id: uuid.UUID,
+    startup_stagger_max_sec: float,
+    startup_jitter_max_sec: float,
+) -> tuple[float, float, float]:
+    """Return deterministic, random, and total startup pacing delays."""
+    deterministic_delay = _deterministic_startup_stagger(
+        worker_id,
+        startup_stagger_max_sec,
+    )
+    random_delay = 0.0
+    if startup_jitter_max_sec > 0.0:
+        random_delay = random.uniform(  # noqa: S311 -- scheduling jitter
+            0.0,
+            startup_jitter_max_sec,
+        )
+    return deterministic_delay, random_delay, deterministic_delay + random_delay
+
+
+def _lease_poll_sleep_seconds(
+    lease_poll_interval_sec: float,
+    lease_poll_jitter_max_sec: float,
+) -> float:
+    """Return the lease poll interval plus bounded scheduling jitter."""
+    if lease_poll_jitter_max_sec <= 0.0:
+        return lease_poll_interval_sec
+    return lease_poll_interval_sec + random.uniform(  # noqa: S311
+        0.0,
+        lease_poll_jitter_max_sec,
+    )
 
 
 class _PipelineFailure(Exception):
@@ -239,6 +282,49 @@ class CollectorRuntime:
             self._loop.add_signal_handler(sig, _on_signal, sig)
 
         settings = self._collector_settings
+        (
+            deterministic_delay,
+            random_delay,
+            total_startup_delay,
+        ) = _startup_pacing_delay(
+            settings.worker_id,
+            settings.startup_stagger_max_sec,
+            settings.startup_jitter_max_sec,
+        )
+        startup_pacing_fields: dict[str, object] = {
+            "event_type": "startup_pacing",
+            "worker_id": str(settings.worker_id),
+            "worker_index": settings.worker_index,
+            "hostname": os.uname().nodename,
+            "deterministic_delay_sec": deterministic_delay,
+            "random_delay_sec": random_delay,
+            "total_delay_sec": total_startup_delay,
+        }
+        logger.info(
+            "Startup pacing before pool creation",
+            extra={"json_fields": startup_pacing_fields},
+        )
+        if await self._sleep_or_shutdown(total_startup_delay):
+            logger.info(
+                "Startup pacing interrupted by shutdown",
+                extra={
+                    "json_fields": {
+                        **startup_pacing_fields,
+                        "event_type": "startup_pacing_interrupted",
+                    },
+                },
+            )
+            return
+        logger.info(
+            "Startup pacing complete",
+            extra={
+                "json_fields": {
+                    **startup_pacing_fields,
+                    "event_type": "startup_pacing_complete",
+                },
+            },
+        )
+
         # command_timeout: bounds query execution on established connections.
         # timeout (connect): bounds TCP handshake — without it, a VPC subnet
         # silently dropping packets hangs connect() for 2+ min (Linux TCP
@@ -531,9 +617,11 @@ class CollectorRuntime:
                     self._collector_settings.lease_poll_interval_sec,
                 )
 
-            if await self._sleep_or_shutdown(
+            poll_sleep_sec = _lease_poll_sleep_seconds(
                 self._collector_settings.lease_poll_interval_sec,
-            ):
+                self._collector_settings.lease_poll_jitter_max_sec,
+            )
+            if await self._sleep_or_shutdown(poll_sleep_sec):
                 return
 
     def _reap_completed_tasks(self) -> None:

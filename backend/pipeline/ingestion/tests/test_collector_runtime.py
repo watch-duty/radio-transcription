@@ -1505,9 +1505,9 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(call_order[:3], ["signal", "signal", "startup_sleep"])
         self.assertIn("pool", call_order)
-        startup_payload = mock_logger.info.call_args_list[0].kwargs[
-            "extra"
-        ]["json_fields"]
+        startup_payload = mock_logger.info.call_args_list[0].kwargs["extra"][
+            "json_fields"
+        ]
         self.assertEqual(startup_payload["event_type"], "startup_pacing")
         self.assertEqual(startup_payload["worker_id"], str(_WORKER_ID))
         self.assertEqual(startup_payload["worker_index"], 1)
