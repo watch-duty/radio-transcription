@@ -447,11 +447,14 @@ class TestBuildRequest(unittest.TestCase):
             result["request"]["generationConfig"]["temperature"], 0.5
         )
 
-    def test_history_is_encoded_before_current_request(self) -> None:
+    def test_history_defaults_to_text_turns_before_current_request(
+        self,
+    ) -> None:
+        user_prompt = "U"
         result = self.build_request(
             "gs://bucket/current.flac",
             system_prompt="S",
-            user_prompt="U",
+            user_prompt=user_prompt,
             history=[
                 ContextTurn("gs://bucket/prev-1.flac", "first"),
                 ContextTurn("gs://bucket/prev-2.flac", "second"),
@@ -463,17 +466,22 @@ class TestBuildRequest(unittest.TestCase):
             [turn["role"] for turn in contents],
             ["user", "model", "user", "model", "user"],
         )
+        audio_parts = [
+            part
+            for turn in contents
+            for part in turn["parts"]
+            if "fileData" in part
+        ]
+        self.assertEqual(len(audio_parts), 1)
         self.assertEqual(
-            contents[0]["parts"][0]["fileData"]["fileUri"],
-            "gs://bucket/prev-1.flac",
+            audio_parts[0]["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
         )
+        self.assertEqual(contents[0]["parts"][0]["text"], user_prompt)
         self.assertEqual(contents[1]["parts"][0]["text"], "first")
-        self.assertEqual(
-            contents[2]["parts"][0]["fileData"]["fileUri"],
-            "gs://bucket/prev-2.flac",
-        )
+        self.assertEqual(contents[2]["parts"][0]["text"], user_prompt)
         self.assertEqual(contents[3]["parts"][0]["text"], "second")
-        self.assertEqual(contents[4]["parts"][0]["text"], "U")
+        self.assertEqual(contents[4]["parts"][0]["text"], user_prompt)
         self.assertEqual(
             contents[4]["parts"][1]["fileData"]["fileUri"],
             "gs://bucket/current.flac",

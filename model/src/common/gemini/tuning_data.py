@@ -23,7 +23,7 @@ def build_audio_tuning_example(
     system_prompt: str,
     user_prompt: str,
     history: Sequence[ContextTurn] | None = None,
-    history_mode: str = "audio",
+    history_mode: str = "text_turns",
 ) -> dict[str, Any]:
     """Build a single Gemini/Vertex AI audio-SFT JSONL example.
 
@@ -37,12 +37,11 @@ def build_audio_tuning_example(
             ``common.gemini.prompts``).
         user_prompt: Per-turn user instruction (e.g. from
             ``common.gemini.prompts``).
-        history: Previous audio/transcript pairs from the same source
-            recording. Each pair is emitted as ``user(audio) -> model(text)``.
-        history_mode: ``audio`` emits notebook-style audio/text prior turns.
-            ``text_turns`` emits prior user/model turns with text-only user
-            turns and transcript model turns. ``transcript`` folds prior
-            transcripts into the current user prompt.
+        history: Previous same-source turns. Prior audio URIs are retained for
+            provenance, but prior context is emitted as transcript text only.
+        history_mode: ``text_turns`` emits prior user/model turns with
+            text-only user turns and transcript model turns. ``transcript``
+            folds prior transcripts into the current user prompt.
             ``guarded_transcript_block`` folds prior transcripts into a
             guarded block that explicitly says not to re-transcribe or continue
             prior turns.

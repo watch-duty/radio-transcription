@@ -40,10 +40,6 @@ Supported SFT/eval modes:
 | `transcript` | One current user turn with a simple numbered prior-transcript block plus current audio. | Compact one-turn context. |
 | `guarded_transcript_block` | One current user turn with a guarded numbered prior-transcript block plus current audio. | Compact context with explicit "do not re-transcribe or continue prior turns" instructions. |
 
-`audio` is available only to lower-level inference helpers for notebook-style
-prior audio turns. Do not use it in SFT configs because Vertex SFT examples
-must contain only the current audio part.
-
 ## Eval Target Snippets
 
 Each eval run has one `[eval.model]` target. Compare base, tuned, and

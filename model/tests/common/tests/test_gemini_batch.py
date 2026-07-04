@@ -55,8 +55,9 @@ class TestGeminiBatchInference(unittest.TestCase):
             current_audio_part["fileData"]["fileUri"], "gs://audio/a.flac"
         )
 
-    def test_build_batch_jsonl_uploads_context_requests(self) -> None:
+    def test_build_batch_jsonl_uploads_text_turn_context_requests(self) -> None:
         storage = FakeStorageClient()
+        user_prompt = "user"
         with tempfile.TemporaryDirectory() as tmp_s:
             input_uri, _ = build_batch_jsonl(
                 storage_client=storage,
@@ -64,7 +65,7 @@ class TestGeminiBatchInference(unittest.TestCase):
                 label="base",
                 audio_uris=["gs://audio/current.flac"],
                 system_prompt="sys",
-                user_prompt="user",
+                user_prompt=user_prompt,
                 histories=[
                     [ContextTurn("gs://audio/prior.flac", "prior transcript")]
                 ],
@@ -81,17 +82,28 @@ class TestGeminiBatchInference(unittest.TestCase):
             [turn["role"] for turn in contents],
             ["user", "model", "user"],
         )
+        audio_parts = [
+            part
+            for turn in contents
+            for part in turn["parts"]
+            if "fileData" in part
+        ]
+        self.assertEqual(len(audio_parts), 1)
         self.assertEqual(
-            contents[0]["parts"][0]["fileData"]["fileUri"],
-            "gs://audio/prior.flac",
+            audio_parts[0]["fileData"]["fileUri"],
+            "gs://audio/current.flac",
+        )
+        self.assertEqual(
+            contents[0]["parts"][0]["text"],
+            user_prompt,
         )
         self.assertEqual(
             contents[1]["parts"][0]["text"],
             "prior transcript",
         )
         self.assertEqual(
-            contents[2]["parts"][1]["fileData"]["fileUri"],
-            "gs://audio/current.flac",
+            contents[2]["parts"][0]["text"],
+            user_prompt,
         )
 
     def test_build_batch_jsonl_rejects_duplicate_audio_uris(self) -> None:

@@ -119,6 +119,10 @@ class TestGeminiContextHistories(unittest.TestCase):
             context_module._episode_key({"text": "second"}, 1),
         )
 
+    def test_audio_history_mode_is_not_supported(self) -> None:
+        with self.assertRaisesRegex(ValueError, "history_mode"):
+            context_module.validate_history_mode("audio")
+
 
 if __name__ == "__main__":
     unittest.main()

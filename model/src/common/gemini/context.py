@@ -13,14 +13,14 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class ContextTurn:
-    """One previous audio/transcript pair supplied as model context."""
+    """One previous transcript with its source audio URI for provenance."""
 
     audio_uri: str
     text: str
 
 
 HISTORY_MODES: Final = frozenset(
-    {"audio", "text_turns", "transcript", "guarded_transcript_block"}
+    {"text_turns", "transcript", "guarded_transcript_block"}
 )
 PRIOR_CONTEXT_MODES: Final = frozenset(
     {"text_turns", "transcript", "guarded_transcript_block"}
@@ -90,25 +90,13 @@ def build_transcription_contents(
     audio_uri: str,
     user_prompt: str,
     history: Sequence[ContextTurn] | None = None,
-    history_mode: str = "audio",
+    history_mode: str = "text_turns",
 ) -> list[dict[str, Any]]:
     """Return Gemini contents for prior context plus the current audio turn."""
     history_mode = validate_history_mode(history_mode)
     contents: list[dict[str, Any]] = []
     history_turns = list(history or ())
-    if history_mode == "audio":
-        for turn in history_turns:
-            contents.extend(
-                [
-                    {
-                        "role": "user",
-                        "parts": [audio_file_data_part(turn.audio_uri)],
-                    },
-                    {"role": "model", "parts": [{"text": turn.text}]},
-                ]
-            )
-        current_user_prompt = user_prompt
-    elif history_mode == "text_turns":
+    if history_mode == "text_turns":
         for turn in history_turns:
             contents.extend(
                 [
@@ -149,8 +137,8 @@ def validate_history_mode(history_mode: str) -> str:
     mode = history_mode.strip().lower()
     if mode not in HISTORY_MODES:
         msg = (
-            "history_mode must be 'audio', 'text_turns', 'transcript', "
-            "or 'guarded_transcript_block'"
+            "history_mode must be 'text_turns', 'transcript', or "
+            "'guarded_transcript_block'"
         )
         raise ValueError(msg)
     return mode

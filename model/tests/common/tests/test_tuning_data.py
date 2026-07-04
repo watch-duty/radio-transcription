@@ -76,12 +76,13 @@ class TestBuildExample(unittest.TestCase):
             msg=f"Expected user_prompt text not found in user turn parts: {example['contents'][0]['parts']}",
         )
 
-    def test_history_is_encoded_as_prior_audio_model_turn_pairs(self) -> None:
+    def test_history_defaults_to_text_turn_model_pairs(self) -> None:
+        user_prompt = "current prompt"
         example = build_audio_tuning_example(
             audio_uri="gs://bucket/current.flac",
             gt_text="current text",
             system_prompt="sys",
-            user_prompt="current prompt",
+            user_prompt=user_prompt,
             history=[
                 ContextTurn("gs://bucket/prev-1.flac", "first"),
                 ContextTurn("gs://bucket/prev-2.flac", "second"),
@@ -92,23 +93,28 @@ class TestBuildExample(unittest.TestCase):
             [turn["role"] for turn in example["contents"]],
             ["user", "model", "user", "model", "user", "model"],
         )
+        audio_parts = [
+            part
+            for turn in example["contents"]
+            for part in turn["parts"]
+            if "fileData" in part
+        ]
+        self.assertEqual(len(audio_parts), 1)
         self.assertEqual(
-            _first_file_part(example["contents"][0])["fileData"]["fileUri"],
-            "gs://bucket/prev-1.flac",
+            audio_parts[0]["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
+        )
+        self.assertEqual(
+            example["contents"][0]["parts"][0]["text"], user_prompt
         )
         self.assertEqual(example["contents"][1]["parts"][0]["text"], "first")
         self.assertEqual(
-            _first_file_part(example["contents"][2])["fileData"]["fileUri"],
-            "gs://bucket/prev-2.flac",
+            example["contents"][2]["parts"][0]["text"], user_prompt
         )
         self.assertEqual(example["contents"][3]["parts"][0]["text"], "second")
         self.assertEqual(
             example["contents"][4]["parts"][0]["text"],
-            "current prompt",
-        )
-        self.assertEqual(
-            _first_file_part(example["contents"][4])["fileData"]["fileUri"],
-            "gs://bucket/current.flac",
+            user_prompt,
         )
 
     def test_transcript_history_mode_keeps_one_audio_part(self) -> None:
@@ -309,19 +315,16 @@ class TestValidateExample(unittest.TestCase):
 
         self.assertTrue(validate_audio_tuning_example(ex))
 
-    def test_allows_provider_to_validate_audio_part_count(
-        self,
-    ) -> None:
-        ex = build_audio_tuning_example(
-            "gs://b/current.flac",
-            "current",
-            "sys",
-            "user",
-            history=[ContextTurn("gs://b/prior.flac", "prior")],
-            history_mode="audio",
-        )
-
-        self.assertTrue(validate_audio_tuning_example(ex))
+    def test_audio_history_mode_is_not_supported(self) -> None:
+        with self.assertRaisesRegex(ValueError, "history_mode"):
+            build_audio_tuning_example(
+                "gs://b/current.flac",
+                "current",
+                "sys",
+                "user",
+                history=[ContextTurn("gs://b/prior.flac", "prior")],
+                history_mode="audio",
+            )
 
 
 class TestImportIsolation(unittest.TestCase):

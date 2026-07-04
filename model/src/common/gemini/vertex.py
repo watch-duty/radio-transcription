@@ -59,7 +59,7 @@ def build_request(
     system_prompt: str,
     user_prompt: str,
     history: Sequence[ContextTurn] | None = None,
-    history_mode: str = "audio",
+    history_mode: str = "text_turns",
     generation_config: dict = GEMINI_GENERATION_CONFIG,
     safety_settings: list = GEMINI_SAFETY_SETTINGS,
 ) -> dict:
