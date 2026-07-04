@@ -24,6 +24,65 @@ def _without_comment_lines(text: str) -> str:
     return "\n".join(lines)
 
 
+def _without_terraform_comments(text: str) -> str:
+    chars = []
+    index = 0
+    in_string = False
+    in_block_comment = False
+    escaped = False
+
+    while index < len(text):
+        char = text[index]
+        next_char = text[index + 1] if index + 1 < len(text) else ""
+
+        if in_block_comment:
+            if char == "*" and next_char == "/":
+                in_block_comment = False
+                index += 2
+            else:
+                if char == "\n":
+                    chars.append(char)
+                index += 1
+            continue
+
+        if in_string:
+            chars.append(char)
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            index += 1
+            continue
+
+        if char == '"':
+            in_string = True
+            chars.append(char)
+            index += 1
+            continue
+
+        if char == "#":
+            while index < len(text) and text[index] != "\n":
+                index += 1
+            continue
+
+        if char == "/" and next_char == "/":
+            while index < len(text) and text[index] != "\n":
+                index += 1
+            continue
+
+        if char == "/" and next_char == "*":
+            in_block_comment = True
+            index += 2
+            continue
+
+        chars.append(char)
+        index += 1
+
+    return "".join(chars)
+
+
 def _file_entry(text: str, path: str) -> str:
     start = text.index(f"- path: {path}")
     next_entry = text.find("\n- path:", start + 1)
@@ -130,7 +189,7 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
         )
 
     def test_gcp_health_thresholds_unchanged(self) -> None:
-        main_tf = _without_comment_lines(_text(_MAIN_TF))
+        main_tf = _without_terraform_comments(_text(_MAIN_TF))
         health_check = _terraform_block(
             main_tf,
             'resource "google_compute_health_check" "this"',

@@ -98,6 +98,14 @@ class VMHealthSettings:
         for endpoint in self.worker_endpoints:
             _validate_worker_endpoint(endpoint)
 
+        worker_ports = {
+            urllib.parse.urlparse(endpoint).port
+            for endpoint in self.worker_endpoints
+        }
+        if len(worker_ports) != 2:
+            msg = "worker_endpoints must reference two distinct local ports."
+            raise ValueError(msg)
+
 
 @dataclass(frozen=True, kw_only=True)
 class WorkerProbeResult:
@@ -195,7 +203,10 @@ def _validate_worker_endpoint(endpoint: str) -> None:
     except ValueError as exc:
         msg = f"VM Health worker endpoint has invalid port: {endpoint}"
         raise ValueError(msg) from exc
-    if port is not None and (port <= 0 or port > 65535):
+    if port is None:
+        msg = f"VM Health worker endpoint must include an explicit port: {endpoint}"
+        raise ValueError(msg)
+    if port <= 0 or port > 65535:
         msg = f"VM Health worker endpoint has invalid port: {endpoint}"
         raise ValueError(msg)
 
