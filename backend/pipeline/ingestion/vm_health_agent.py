@@ -9,13 +9,16 @@ import os
 import time
 import urllib.parse
 from dataclasses import asdict, dataclass, field
-from typing import Sequence
+from typing import TYPE_CHECKING
 
 import aiohttp
 from aiohttp import web
 
 from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +66,7 @@ class VMHealthSettings:
     listen_host: str = field(
         default_factory=lambda: os.environ.get(
             "VM_HEALTH_LISTEN_HOST",
-            "0.0.0.0",
+            "0.0.0.0",  # noqa: S104 - VM health must bind the host port.
         ),
     )
     listen_port: int = field(default_factory=_listen_port_from_env)
@@ -209,7 +212,10 @@ def _validate_worker_endpoint(endpoint: str) -> None:
         msg = f"VM Health worker endpoint has invalid port: {endpoint}"
         raise ValueError(msg) from exc
     if port is None:
-        msg = f"VM Health worker endpoint must include an explicit port: {endpoint}"
+        msg = (
+            "VM Health worker endpoint must include an explicit port: "
+            f"{endpoint}"
+        )
         raise ValueError(msg)
     if port <= 0 or port > 65535:
         msg = f"VM Health worker endpoint has invalid port: {endpoint}"

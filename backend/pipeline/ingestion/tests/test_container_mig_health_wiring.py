@@ -3,7 +3,6 @@ from __future__ import annotations
 import pathlib
 import unittest
 
-
 _CLOUD_CONFIG = pathlib.Path(
     "terraform/modules/container_mig/cloud_config.yaml.tftpl"
 )
@@ -24,7 +23,7 @@ def _without_comment_lines(text: str) -> str:
     return "\n".join(lines)
 
 
-def _without_terraform_comments(text: str) -> str:
+def _without_terraform_comments(text: str) -> str:  # noqa: PLR0912
     chars = []
     index = 0
     in_string = False
@@ -104,7 +103,8 @@ def _terraform_block(text: str, marker: str) -> str:
             if depth == 0:
                 return text[start : index + 1]
 
-    raise ValueError(f"Unclosed Terraform block: {marker}")
+    msg = f"Unclosed Terraform block: {marker}"
+    raise ValueError(msg)
 
 
 class ContainerMigHealthWiringTests(unittest.TestCase):

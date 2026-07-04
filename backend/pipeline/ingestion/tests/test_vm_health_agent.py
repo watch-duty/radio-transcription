@@ -49,7 +49,7 @@ class VMHealthSettingsTests(unittest.TestCase):
         )
         self.assertEqual(settings.probe_timeout_sec, 2.0)
         self.assertEqual(settings.probe_interval_sec, 5.0)
-        self.assertEqual(settings.listen_host, "0.0.0.0")
+        self.assertEqual(settings.listen_host, "0.0.0.0")  # noqa: S104
         self.assertEqual(settings.listen_port, 8080)
         self.assertEqual(settings.hysteresis_sec, 600.0)
 
