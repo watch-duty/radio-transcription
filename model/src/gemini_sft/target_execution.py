@@ -117,6 +117,10 @@ async def _upload_text_async(
     )
 
 
+async def _read_text_async(path: Path) -> str:
+    return await asyncio.to_thread(path.read_text, encoding="utf-8")
+
+
 async def _upload_periodic_prediction_snapshot(
     *,
     storage_client: Any,
@@ -306,9 +310,7 @@ async def run_online_target_inference(
                 progress["errors"] += 1
             if progress["since_sync"] >= ONLINE_SYNC_EVERY:
                 progress["since_sync"] = 0
-                upload_snapshot = local_predictions_path.read_text(
-                    encoding="utf-8"
-                )
+                upload_snapshot = await _read_text_async(local_predictions_path)
             if progress["done"] == len(audio_uri_list) or (
                 progress["done"] % ONLINE_LOG_EVERY == 0
             ):
