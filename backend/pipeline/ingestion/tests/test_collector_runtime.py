@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import datetime
 import logging
+import signal
 import unittest
 import uuid
 from typing import Any, cast
@@ -15,7 +16,11 @@ from google.api_core import exceptions as google_exceptions
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-from backend.pipeline.ingestion import failure_policy, memory_watchdog
+from backend.pipeline.ingestion import (
+    collector_runtime,
+    failure_policy,
+    memory_watchdog,
+)
 from backend.pipeline.ingestion.collector_runtime import (
     CollectorRuntime,
     _PipelineFailure,
@@ -167,7 +172,12 @@ def _make_settings(**overrides) -> mock.MagicMock:
     defaults = {
         "worker_id": _WORKER_ID,
         "max_feeds_per_worker": 250,
+        "lease_admission_cycle_budget": 20,
         "lease_poll_interval_sec": 5.0,
+        "startup_stagger_max_sec": 60.0,
+        "startup_jitter_max_sec": 2.0,
+        "lease_poll_jitter_max_sec": 1.0,
+        "worker_index": None,
         "heartbeat_interval_sec": 15.0,
         "heartbeat_stall_timeout_sec": 45.0,
         "graceful_shutdown_timeout_sec": 10.0,
@@ -263,6 +273,98 @@ class TestSleepOrShutdown(unittest.IsolatedAsyncioTestCase):
         rt._shutdown.set()
         result = await rt._sleep_or_shutdown(10.0)
         self.assertTrue(result)
+
+
+class TestStartupPacingHelpers(unittest.TestCase):
+    """Tests for startup pacing and poll jitter helper functions."""
+
+    def test_deterministic_startup_stagger_zero_max(self) -> None:
+        """Zero max stagger disables deterministic startup delay."""
+        delay = collector_runtime._deterministic_startup_stagger(
+            _WORKER_ID,
+            0.0,
+        )
+
+        self.assertEqual(delay, 0.0)
+
+    def test_deterministic_startup_stagger_stable_and_bounded(self) -> None:
+        """Worker UUID maps to a stable delay inside [0, max_sec)."""
+        worker_id = uuid.UUID(int=1 << 127)
+
+        first = collector_runtime._deterministic_startup_stagger(
+            worker_id,
+            60.0,
+        )
+        second = collector_runtime._deterministic_startup_stagger(
+            worker_id,
+            60.0,
+        )
+
+        self.assertEqual(first, second)
+        self.assertGreaterEqual(first, 0.0)
+        self.assertLess(first, 60.0)
+        self.assertEqual(first, 30.0)
+
+    def test_startup_pacing_delay_adds_random_jitter(self) -> None:
+        """Startup pacing reports deterministic, random, and total delay."""
+        with mock.patch(
+            "backend.pipeline.ingestion.collector_runtime.random.uniform",
+            return_value=1.25,
+        ) as mock_uniform:
+            deterministic, random_delay, total = (
+                collector_runtime._startup_pacing_delay(
+                    _WORKER_ID,
+                    60.0,
+                    2.0,
+                )
+            )
+
+        mock_uniform.assert_called_once_with(0.0, 2.0)
+        self.assertEqual(random_delay, 1.25)
+        self.assertEqual(total, deterministic + random_delay)
+
+    def test_startup_pacing_delay_skips_zero_jitter(self) -> None:
+        """Zero jitter max avoids calling random.uniform."""
+        with mock.patch(
+            "backend.pipeline.ingestion.collector_runtime.random.uniform",
+        ) as mock_uniform:
+            _deterministic, random_delay, _total = (
+                collector_runtime._startup_pacing_delay(
+                    _WORKER_ID,
+                    60.0,
+                    0.0,
+                )
+            )
+
+        mock_uniform.assert_not_called()
+        self.assertEqual(random_delay, 0.0)
+
+    def test_lease_poll_sleep_seconds_adds_jitter(self) -> None:
+        """Lease poll sleep includes bounded non-cryptographic jitter."""
+        with mock.patch(
+            "backend.pipeline.ingestion.collector_runtime.random.uniform",
+            return_value=0.75,
+        ) as mock_uniform:
+            sleep_seconds = collector_runtime._lease_poll_sleep_seconds(
+                5.0,
+                1.0,
+            )
+
+        mock_uniform.assert_called_once_with(0.0, 1.0)
+        self.assertEqual(sleep_seconds, 5.75)
+
+    def test_lease_poll_sleep_seconds_skips_zero_jitter(self) -> None:
+        """Zero poll jitter max keeps the fixed poll interval."""
+        with mock.patch(
+            "backend.pipeline.ingestion.collector_runtime.random.uniform",
+        ) as mock_uniform:
+            sleep_seconds = collector_runtime._lease_poll_sleep_seconds(
+                5.0,
+                0.0,
+            )
+
+        mock_uniform.assert_not_called()
+        self.assertEqual(sleep_seconds, 5.0)
 
 
 class TestReapCompletedTasks(unittest.IsolatedAsyncioTestCase):
@@ -405,6 +507,34 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
             all(v >= 0 for v in limits_dict.values()),
             "no branch should receive a negative LIMIT",
         )
+
+    async def test_lease_loop_sleep_uses_poll_jitter(self) -> None:
+        """Normal lease-loop wait uses jitter and remains interruptible."""
+        rt = _make_runtime(
+            max_feeds_per_worker=0,
+            lease_poll_interval_sec=5.0,
+            lease_poll_jitter_max_sec=1.0,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.random.uniform",
+                return_value=0.75,
+            ) as mock_uniform,
+            mock.patch.object(
+                rt,
+                "_sleep_or_shutdown",
+                new_callable=mock.AsyncMock,
+                return_value=True,
+            ) as mock_sleep_or_shutdown,
+        ):
+            await rt._leasing_loop()
+
+        mock_uniform.assert_called_once_with(0.0, 1.0)
+        mock_sleep_or_shutdown.assert_awaited_once_with(5.75)
 
 
 class TestProcessFeedSideEffectOrdering(unittest.IsolatedAsyncioTestCase):
@@ -1296,6 +1426,140 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
 
 class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
     """Tests for pool creation in _main."""
+
+    @mock.patch(
+        "backend.pipeline.ingestion.collector_runtime.FeedStore",
+    )
+    @mock.patch(
+        "backend.pipeline.ingestion.collector_runtime.create_pool_with_retry",
+        new_callable=mock.AsyncMock,
+    )
+    async def test_startup_pacing_runs_before_pool_creation(
+        self,
+        mock_create_pool_with_retry: mock.AsyncMock,
+        _mock_feed_store: mock.MagicMock,
+    ) -> None:
+        """Startup pacing occurs after signal setup and before DB pools."""
+        rt = _make_runtime(startup_stagger_max_sec=0.0, worker_index=1)
+        call_order: list[str] = []
+        loop = asyncio.get_running_loop()
+
+        async def _sleep_or_shutdown(seconds: float) -> bool:
+            self.assertIsNotNone(rt._shutdown)
+            self.assertEqual(seconds, 0.5)
+            call_order.append("startup_sleep")
+            return False
+
+        async def _create_pool(_settings: AlloyDBSettings) -> mock.Mock:
+            call_order.append("pool")
+            return mock.Mock()
+
+        def _add_signal_handler(
+            _sig: signal.Signals,
+            _callback: Any,
+            *_args: Any,
+        ) -> None:
+            call_order.append("signal")
+
+        with (
+            mock.patch.object(
+                loop,
+                "add_signal_handler",
+                side_effect=_add_signal_handler,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.random.uniform",
+                return_value=0.5,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.aiohttp.TCPConnector"
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.aiohttp.ClientSession"
+            ),
+            mock.patch.object(
+                rt,
+                "_sleep_or_shutdown",
+                side_effect=_sleep_or_shutdown,
+            ),
+            mock.patch.object(rt, "_leasing_loop", new_callable=mock.AsyncMock),
+            mock.patch.object(
+                rt, "_shutdown_sequence", new_callable=mock.AsyncMock
+            ),
+            mock.patch("threading.Thread"),
+            mock.patch.object(rt._memory_watchdog, "start"),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.health_server.start",
+                new_callable=mock.AsyncMock,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry.configure"
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.logger",
+            ) as mock_logger,
+        ):
+            mock_create_pool_with_retry.side_effect = _create_pool
+
+            await rt._main()
+
+        self.assertEqual(call_order[:3], ["signal", "signal", "startup_sleep"])
+        self.assertIn("pool", call_order)
+        startup_payload = mock_logger.info.call_args_list[0].kwargs[
+            "extra"
+        ]["json_fields"]
+        self.assertEqual(startup_payload["event_type"], "startup_pacing")
+        self.assertEqual(startup_payload["worker_id"], str(_WORKER_ID))
+        self.assertEqual(startup_payload["worker_index"], 1)
+        self.assertEqual(startup_payload["deterministic_delay_sec"], 0.0)
+        self.assertEqual(startup_payload["random_delay_sec"], 0.5)
+        self.assertEqual(startup_payload["total_delay_sec"], 0.5)
+
+    @mock.patch(
+        "backend.pipeline.ingestion.collector_runtime.FeedStore",
+    )
+    @mock.patch(
+        "backend.pipeline.ingestion.collector_runtime.create_pool_with_retry",
+        new_callable=mock.AsyncMock,
+    )
+    async def test_startup_pacing_shutdown_opens_no_pools(
+        self,
+        mock_create_pool_with_retry: mock.AsyncMock,
+        mock_feed_store: mock.MagicMock,
+    ) -> None:
+        """Shutdown during startup pacing returns before pool creation."""
+        rt = _make_runtime(startup_stagger_max_sec=0.0)
+
+        with (
+            mock.patch.object(
+                rt,
+                "_sleep_or_shutdown",
+                new_callable=mock.AsyncMock,
+                return_value=True,
+            ) as mock_sleep,
+            mock.patch.object(
+                rt, "_shutdown_sequence", new_callable=mock.AsyncMock
+            ) as mock_shutdown_sequence,
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.random.uniform",
+                return_value=0.25,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.logger",
+            ) as mock_logger,
+        ):
+            await rt._main()
+
+        mock_sleep.assert_awaited_once_with(0.25)
+        mock_create_pool_with_retry.assert_not_awaited()
+        mock_feed_store.assert_not_called()
+        mock_shutdown_sequence.assert_not_awaited()
+        event_types = [
+            call.kwargs["extra"]["json_fields"]["event_type"]
+            for call in mock_logger.info.call_args_list
+            if "extra" in call.kwargs
+        ]
+        self.assertIn("startup_pacing_interrupted", event_types)
 
     @mock.patch(
         "backend.pipeline.ingestion.collector_runtime.FeedStore",
