@@ -5,10 +5,9 @@ import dataclasses
 import datetime
 import logging
 import socket
-import signal
 import unittest
 import uuid
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest import mock
 
 import aiohttp
@@ -43,6 +42,9 @@ from backend.pipeline.storage.feed_store import (
     SourceType,
 )
 from backend.pipeline.storage.settings import AlloyDBSettings
+
+if TYPE_CHECKING:
+    import signal
 
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -124,7 +126,7 @@ _LEASE_ADMISSION_FIELDS = {
 _LEASE_ADMISSION_STATE_FIELDS = {
     "state",
     "status",
-    "admission" "_state",
+    "admission_state",
 }
 
 
@@ -2010,10 +2012,7 @@ class TestLeasingLoopAdmissionBudget(unittest.IsolatedAsyncioTestCase):
             self.CAPS,
             0,
         )
-        primary = [
-            _make_leased_feed(uuid.UUID(int=i + 1))
-            for i in range(20)
-        ]
+        primary = [_make_leased_feed(uuid.UUID(int=i + 1)) for i in range(20)]
         rt._store.acquire_feeds_batch.return_value = primary
 
         with mock.patch.object(
@@ -2098,7 +2097,9 @@ class TestLeasingLoopAdmissionBudget(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recovery_limits[SourceType.BCFY_FEEDS], 0)
         self.assertEqual(sum(recovery_limits.values()), 3)
 
-    async def test_admitted_leases_spawn_tasks_without_local_queue(self) -> None:
+    async def test_admitted_leases_spawn_tasks_without_local_queue(
+        self,
+    ) -> None:
         """Only leases returned in this cycle become immediate feed tasks."""
         rt = _make_runtime(
             max_feeds_per_worker=250,
@@ -2174,9 +2175,7 @@ class TestLeasingLoopAdmissionTelemetry(unittest.IsolatedAsyncioTestCase):
         rt._store.acquire_feeds_recovery.return_value = recovery
 
         with (
-            mock.patch.object(
-                rt, "_process_feed", new_callable=mock.AsyncMock
-            ),
+            mock.patch.object(rt, "_process_feed", new_callable=mock.AsyncMock),
             mock.patch.object(
                 socket,
                 "gethostname",

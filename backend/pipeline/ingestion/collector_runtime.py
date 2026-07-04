@@ -427,7 +427,7 @@ class CollectorRuntime:
 
     # -- Leasing ----------------------------------------------------------
 
-    async def _leasing_loop(self) -> None:  # noqa: PLR0912
+    async def _leasing_loop(self) -> None:  # noqa: PLR0912, PLR0915
         """
         Continuously lease feeds in batches and spawn processing tasks.
 
@@ -564,8 +564,8 @@ class CollectorRuntime:
                         held_after_primary = {
                             t: held.get(t, 0) + primary_by_type[t] for t in caps
                         }
-                        recovery_remaining_budget = (
-                            admission_budget - len(primary)
+                        recovery_remaining_budget = admission_budget - len(
+                            primary
                         )
                         recovery_limits = self._calculate_branch_limits(
                             recovery_remaining_budget,

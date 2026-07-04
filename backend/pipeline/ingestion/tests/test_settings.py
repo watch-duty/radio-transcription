@@ -26,11 +26,6 @@ class TestCollectorSettings(unittest.TestCase):
             "WORKER_ID": "00000000-0000-0000-0000-000000000123",
             "MAX_FEEDS_PER_WORKER": "500",
             "LEASE_POLL_INTERVAL_SEC": "2.5",
-            "LEASE_ADMISSION_CYCLE_BUDGET": "7",
-            "STARTUP_STAGGER_MAX_SEC": "12.5",
-            "STARTUP_JITTER_MAX_SEC": "0.25",
-            "LEASE_POLL_JITTER_MAX_SEC": "0.75",
-            "WORKER_INDEX": "2",
             "HEARTBEAT_INTERVAL_SEC": "10.0",
             "HEARTBEAT_STALL_TIMEOUT_SEC": "30.0",
             "GRACEFUL_SHUTDOWN_TIMEOUT_SEC": "15.0",
@@ -73,11 +68,6 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertEqual(settings.worker_id, uuid.UUID(env["WORKER_ID"]))
         self.assertEqual(settings.max_feeds_per_worker, 500)
         self.assertEqual(settings.lease_poll_interval_sec, 2.5)
-        self.assertEqual(settings.lease_admission_cycle_budget, 7)
-        self.assertEqual(settings.startup_stagger_max_sec, 12.5)
-        self.assertEqual(settings.startup_jitter_max_sec, 0.25)
-        self.assertEqual(settings.lease_poll_jitter_max_sec, 0.75)
-        self.assertEqual(settings.worker_index, 2)
         self.assertEqual(settings.heartbeat_interval_sec, 10.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 30.0)
         self.assertEqual(settings.graceful_shutdown_timeout_sec, 15.0)
@@ -124,6 +114,26 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 400)
         self.assertEqual(settings.caps[SourceType.OPENMHZ], 700)
         self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 300)
+
+    def test_phase1_expected_inputs(self) -> None:
+        """Loads Phase 1 lease-admission settings from environment."""
+        env = {
+            **_required_env(),
+            "LEASE_ADMISSION_CYCLE_BUDGET": "7",
+            "STARTUP_STAGGER_MAX_SEC": "12.5",
+            "STARTUP_JITTER_MAX_SEC": "0.25",
+            "LEASE_POLL_JITTER_MAX_SEC": "0.75",
+            "WORKER_INDEX": "2",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            settings = CollectorSettings()
+
+        self.assertEqual(settings.lease_admission_cycle_budget, 7)
+        self.assertEqual(settings.startup_stagger_max_sec, 12.5)
+        self.assertEqual(settings.startup_jitter_max_sec, 0.25)
+        self.assertEqual(settings.lease_poll_jitter_max_sec, 0.75)
+        self.assertEqual(settings.worker_index, 2)
 
     def test_edge_case_uses_defaults_and_generates_worker_id(self) -> None:
         """Uses defaults for optional settings when only required vars are set."""
