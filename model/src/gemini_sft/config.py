@@ -8,14 +8,31 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from common.gemini.context import PRIOR_CONTEXT_MODES
 from common.gemini.prompts import (
     GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
     GEMINI_TRANSCRIBE_USER_PROMPT,
 )
-from common.inference_manifest import validate_inference_dataset_slug
+from common.inference_manifest import (
+    validate_artifact_label,
+    validate_inference_dataset_slug,
+)
 
 ADAPTER_SIZES: Final = frozenset({"ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"})
+EVAL_EXECUTION_BACKENDS: Final = frozenset({"batch", "online"})
+EVAL_MODEL_FIELDS: Final = frozenset({"label", "model"})
+EVAL_EXECUTION_FIELDS: Final = frozenset(
+    {"backend", "concurrency", "limit", "max_retries"}
+)
 ROUND_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+EVAL_MODEL_REQUIRED_MESSAGE: Final = (
+    "eval configs must define one [eval.model] target with required label and "
+    "model fields"
+)
+CONFIG_EVAL_MODEL_REQUIRED_MESSAGE: Final = (
+    "config.json missing required eval_model object; configure one "
+    "[eval.model] target with required label and model fields"
+)
 
 
 class RunConfigError(ValueError):
@@ -46,17 +63,57 @@ class RunPaths:
 
 
 @dataclass(frozen=True)
+class EvalModelTarget:
+    """Static eval target config for one model or endpoint string.
+
+    Attributes:
+        label: Safe artifact/report label for the target.
+        model: Unclassified model or endpoint string supplied by the operator.
+    """
+
+    label: str
+    model: str
+
+    def to_record_dict(self) -> dict[str, str]:
+        """Return the JSON-compatible config.json record for this target."""
+        return {"label": self.label, "model": self.model}
+
+
+@dataclass(frozen=True)
+class EvalExecutionConfig:
+    """Execution controls for eval target inference."""
+
+    backend: str | None = None
+    limit: int | None = None
+    concurrency: int = 16
+    max_retries: int = 3
+
+    def to_record_dict(self) -> dict[str, int | str]:
+        """Return the durable config.json execution record."""
+        record: dict[str, int | str] = {
+            "concurrency": self.concurrency,
+            "max_retries": self.max_retries,
+        }
+        if self.backend is not None:
+            record["backend"] = self.backend
+        if self.limit is not None:
+            record["limit"] = self.limit
+        return record
+
+
+@dataclass(frozen=True)
 class RunConfig:
     """Validated operator config with defaults and derived paths resolved."""
 
     source_path: Path
     raw_toml: str
     round_id: str
-    dataset: str
     inference_dataset_slug: str
     train_manifest_uri: str | None
     validation_manifest_uri: str | None
     eval_manifest_uri: str
+    eval_model: EvalModelTarget | None
+    eval_execution: EvalExecutionConfig
     gcp_project: str
     gcs_bucket: str
     location: str
@@ -64,6 +121,8 @@ class RunConfig:
     epoch_count: int
     adapter_size: str
     learning_rate_multiplier: float
+    prior_context_count: int
+    prior_context_mode: str
     system_prompt: str
     user_prompt: str
     paths: RunPaths
@@ -72,7 +131,6 @@ class RunConfig:
         """Return the resolved run config shape stored in config.json."""
         record = {
             "round_id": self.round_id,
-            "dataset": self.dataset,
             "inference_dataset_slug": self.inference_dataset_slug,
             "eval_manifest_uri": self.eval_manifest_uri,
             "gcp_project": self.gcp_project,
@@ -84,6 +142,8 @@ class RunConfig:
             "epoch_count": self.epoch_count,
             "adapter_size": self.adapter_size,
             "learning_rate_multiplier": self.learning_rate_multiplier,
+            "prior_context_count": self.prior_context_count,
+            "prior_context_mode": self.prior_context_mode,
             "system_prompt": self.system_prompt,
             "user_prompt": self.user_prompt,
             "canonical_train_uri": self.paths.canonical_train_uri,
@@ -96,6 +156,9 @@ class RunConfig:
             record["train_manifest_uri"] = self.train_manifest_uri
         if self.validation_manifest_uri is not None:
             record["validation_manifest_uri"] = self.validation_manifest_uri
+        if self.eval_model is not None:
+            record["eval_model"] = self.eval_model.to_record_dict()
+        record["eval_execution"] = self.eval_execution.to_record_dict()
         return record
 
 
@@ -129,7 +192,6 @@ def _load_run_config(
         raise RunConfigError(msg) from exc
 
     round_id = _required_round_id(data, "round_id")
-    dataset = _required_str(data, "dataset")
     inference_dataset_slug = _required_inference_dataset_slug(
         data, "inference_dataset_slug"
     )
@@ -146,6 +208,12 @@ def _load_run_config(
             "validation_manifest_uri",
         )
     eval_manifest_uri = _required_gcs_uri(data, "eval_manifest_uri")
+    eval_table = _eval_table(data)
+    eval_model = _eval_model_target(
+        eval_table,
+        required=not require_training_manifests,
+    )
+    eval_execution = _eval_execution_config(eval_table)
 
     gcp = _required_table(data, "gcp")
     gcp_project = _required_str(gcp, "gcp.project")
@@ -158,6 +226,21 @@ def _load_run_config(
     adapter_size = _required_adapter_size(sft, "sft.adapter_size")
     learning_rate_multiplier = _required_lr_multiplier(
         sft, "sft.learning_rate_multiplier"
+    )
+    context = data.get("context", {})
+    if context is None:
+        context = {}
+    if not isinstance(context, dict):
+        msg = "context must be a TOML table"
+        raise RunConfigError(msg)
+    prior_context_count = _optional_nonnegative_int(
+        context,
+        "context.prior_turn_count",
+        default=0,
+    )
+    prior_context_mode = _optional_prior_context_mode(
+        context,
+        "context.prior_context_mode",
     )
 
     prompts = data.get("prompts", {})
@@ -184,11 +267,12 @@ def _load_run_config(
         source_path=source_path,
         raw_toml=raw_toml,
         round_id=round_id,
-        dataset=dataset,
         inference_dataset_slug=inference_dataset_slug,
         train_manifest_uri=train_manifest_uri,
         validation_manifest_uri=validation_manifest_uri,
         eval_manifest_uri=eval_manifest_uri,
+        eval_model=eval_model,
+        eval_execution=eval_execution,
         gcp_project=gcp_project,
         gcs_bucket=gcs_bucket,
         location=location,
@@ -196,6 +280,8 @@ def _load_run_config(
         epoch_count=epoch_count,
         adapter_size=adapter_size,
         learning_rate_multiplier=learning_rate_multiplier,
+        prior_context_count=prior_context_count,
+        prior_context_mode=prior_context_mode,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         paths=paths,
@@ -229,12 +315,269 @@ def require_config_float(config: dict[str, Any], key: str) -> float:
     return float(value)
 
 
+def require_config_eval_model(config: dict[str, Any]) -> EvalModelTarget:
+    """Return the validated eval target from durable GCS config.json state."""
+    raw_target = config.get("eval_model")
+    if raw_target is None:
+        raise ValueError(CONFIG_EVAL_MODEL_REQUIRED_MESSAGE)
+    if not isinstance(raw_target, dict):
+        msg = (
+            "config.json field eval_model must be an object with exactly "
+            "label and model fields"
+        )
+        raise TypeError(msg)
+    return _parse_eval_model_mapping(
+        raw_target,
+        object_name="config.json field eval_model",
+        label_name="config.json field eval_model.label",
+        model_name="config.json field eval_model.model",
+        error_cls=ValueError,
+    )
+
+
+def require_config_eval_execution(
+    config: dict[str, Any],
+) -> EvalExecutionConfig:
+    """Return validated eval execution controls from durable config.json."""
+    raw_execution = config.get("eval_execution")
+    if raw_execution is None:
+        return EvalExecutionConfig()
+    if not isinstance(raw_execution, dict):
+        msg = "config.json field eval_execution must be an object"
+        raise TypeError(msg)
+    return _config_eval_execution_config(raw_execution)
+
+
+def optional_config_prior_context_mode(config: dict[str, Any], key: str) -> str:
+    """Return a validated durable prior-context mode."""
+    value = config.get(key, "text_turns")
+    if not isinstance(value, str):
+        msg = (
+            f"config.json field must be one of "
+            f"{', '.join(sorted(PRIOR_CONTEXT_MODES))}: {key}"
+        )
+        raise TypeError(msg)
+    mode = value.strip().lower()
+    if mode not in PRIOR_CONTEXT_MODES:
+        msg = (
+            f"config.json field must be one of "
+            f"{', '.join(sorted(PRIOR_CONTEXT_MODES))}: {key}"
+        )
+        raise ValueError(msg)
+    return mode
+
+
 def _required_table(data: dict[str, Any], key: str) -> dict[str, Any]:
     value = data.get(key)
     if not isinstance(value, dict):
         msg = f"missing required [{key}] table"
         raise RunConfigError(msg)
     return value
+
+
+def _eval_table(data: dict[str, Any]) -> dict[str, Any] | None:
+    eval_table = data.get("eval")
+    if eval_table is None:
+        return None
+    if not isinstance(eval_table, dict):
+        msg = "eval must be a TOML table"
+        raise RunConfigError(msg)
+
+    unsupported_eval_fields = sorted(set(eval_table) - {"execution", "model"})
+    if unsupported_eval_fields:
+        msg = (
+            "eval must contain only [eval.model] and [eval.execution]; "
+            "unsupported fields: "
+            f"{', '.join(unsupported_eval_fields)}"
+        )
+        raise RunConfigError(msg)
+    return eval_table
+
+
+def _eval_model_target(
+    eval_table: dict[str, Any] | None,
+    *,
+    required: bool,
+) -> EvalModelTarget | None:
+    if eval_table is None:
+        if required:
+            raise RunConfigError(EVAL_MODEL_REQUIRED_MESSAGE)
+        return None
+
+    raw_target = eval_table.get("model")
+    if raw_target is None:
+        if required:
+            raise RunConfigError(EVAL_MODEL_REQUIRED_MESSAGE)
+        return None
+    if not isinstance(raw_target, dict):
+        msg = (
+            "eval.model must be a TOML table with exactly label and model "
+            "fields"
+        )
+        raise RunConfigError(msg)
+    return _parse_eval_model_mapping(
+        raw_target,
+        object_name="eval.model",
+        label_name="eval.model.label",
+        model_name="eval.model.model",
+        error_cls=RunConfigError,
+    )
+
+
+def _parse_eval_model_mapping(
+    raw_target: dict[str, Any],
+    *,
+    object_name: str,
+    label_name: str,
+    model_name: str,
+    error_cls: type[Exception],
+) -> EvalModelTarget:
+    keys = set(raw_target)
+    if keys != EVAL_MODEL_FIELDS:
+        missing = sorted(EVAL_MODEL_FIELDS - keys)
+        unsupported = sorted(keys - EVAL_MODEL_FIELDS)
+        details = []
+        if missing:
+            details.append(f"missing: {', '.join(missing)}")
+        if unsupported:
+            details.append(f"unsupported: {', '.join(unsupported)}")
+        msg = (
+            f"{object_name} must contain exactly label and model fields "
+            f"({'; '.join(details)})"
+        )
+        raise error_cls(msg)
+
+    label_value = raw_target["label"]
+    if not isinstance(label_value, str) or not label_value.strip():
+        msg = f"{label_name} must be a non-empty string"
+        raise error_cls(msg)
+    try:
+        label = validate_artifact_label(label_value.strip())
+    except ValueError as exc:
+        msg = f"{label_name} is invalid: {exc}"
+        raise error_cls(msg) from exc
+
+    model_value = raw_target["model"]
+    if not isinstance(model_value, str) or not model_value.strip():
+        msg = f"{model_name} must be a non-empty string"
+        raise error_cls(msg)
+    return EvalModelTarget(label=label, model=model_value.strip())
+
+
+def _eval_execution_config(
+    eval_table: dict[str, Any] | None,
+) -> EvalExecutionConfig:
+    if eval_table is None:
+        return EvalExecutionConfig()
+    raw_execution = eval_table.get("execution")
+    if raw_execution is None:
+        return EvalExecutionConfig()
+    if not isinstance(raw_execution, dict):
+        msg = "eval.execution must be a TOML table"
+        raise RunConfigError(msg)
+
+    _reject_unsupported_fields(
+        raw_execution,
+        allowed=EVAL_EXECUTION_FIELDS,
+        context="eval.execution",
+        error_cls=RunConfigError,
+    )
+    return EvalExecutionConfig(
+        backend=_optional_eval_execution_backend(
+            raw_execution,
+            "eval.execution.backend",
+        ),
+        limit=_optional_positive_int(
+            raw_execution,
+            "eval.execution.limit",
+            default=None,
+        ),
+        concurrency=_optional_positive_int(
+            raw_execution,
+            "eval.execution.concurrency",
+            default=16,
+        ),
+        max_retries=_optional_positive_int(
+            raw_execution,
+            "eval.execution.max_retries",
+            default=3,
+        ),
+    )
+
+
+def _config_eval_execution_config(
+    raw_execution: dict[str, Any],
+) -> EvalExecutionConfig:
+    _reject_unsupported_fields(
+        raw_execution,
+        allowed=EVAL_EXECUTION_FIELDS,
+        context="config.json field eval_execution",
+        error_cls=ValueError,
+    )
+    return EvalExecutionConfig(
+        backend=_optional_config_eval_execution_backend(raw_execution),
+        limit=_optional_config_positive_int(
+            raw_execution,
+            "limit",
+            default=None,
+        ),
+        concurrency=_optional_config_positive_int(
+            raw_execution,
+            "concurrency",
+            default=16,
+        ),
+        max_retries=_optional_config_positive_int(
+            raw_execution,
+            "max_retries",
+            default=3,
+        ),
+    )
+
+
+def _reject_unsupported_fields(
+    data: dict[str, Any],
+    *,
+    allowed: frozenset[str],
+    context: str,
+    error_cls: type[Exception],
+) -> None:
+    unsupported_fields = sorted(set(data) - allowed)
+    if unsupported_fields:
+        msg = f"{context} unsupported fields: {', '.join(unsupported_fields)}"
+        raise error_cls(msg)
+
+
+def _optional_eval_execution_backend(
+    data: dict[str, Any],
+    key: str,
+) -> str | None:
+    value = _lookup(data, key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        msg = f"{key} must be one of batch, online"
+        raise RunConfigError(msg)
+    backend = value.strip()
+    if backend not in EVAL_EXECUTION_BACKENDS:
+        msg = f"{key} must be one of batch, online"
+        raise RunConfigError(msg)
+    return backend
+
+
+def _optional_config_eval_execution_backend(
+    data: dict[str, Any],
+) -> str | None:
+    value = data.get("backend")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        msg = "config.json field eval_execution.backend must be one of batch, online"
+        raise TypeError(msg)
+    backend = value.strip()
+    if backend not in EVAL_EXECUTION_BACKENDS:
+        msg = "config.json field eval_execution.backend must be one of batch, online"
+        raise ValueError(msg)
+    return backend
 
 
 def _required_str(data: dict[str, Any], key: str) -> str:
@@ -262,6 +605,17 @@ def _required_gcs_uri(data: dict[str, Any], key: str) -> str:
         msg = f"{key} must be a gs:// URI"
         raise RunConfigError(msg)
     return value
+
+
+def _optional_stripped_str(data: dict[str, Any], key: str) -> str | None:
+    value = _lookup(data, key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        msg = f"{key} must be a string"
+        raise RunConfigError(msg)
+    text = value.strip()
+    return text or None
 
 
 def _optional_gcs_uri(data: dict[str, Any], key: str) -> str | None:
@@ -299,10 +653,70 @@ def _required_bucket(data: dict[str, Any], key: str) -> str:
 
 def _required_positive_int(data: dict[str, Any], key: str) -> int:
     value = _lookup(data, key)
-    if not isinstance(value, int) or value <= 0:
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         msg = f"{key} must be a positive integer"
         raise RunConfigError(msg)
     return value
+
+
+def _optional_positive_int(
+    data: dict[str, Any],
+    key: str,
+    *,
+    default: int | None,
+) -> int | None:
+    value = _lookup(data, key)
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        msg = f"{key} must be a positive integer"
+        raise RunConfigError(msg)
+    return value
+
+
+def _optional_config_positive_int(
+    data: dict[str, Any],
+    key: str,
+    *,
+    default: int | None,
+) -> int | None:
+    value = data.get(key)
+    if value is None:
+        return default
+    field = f"config.json field eval_execution.{key}"
+    if isinstance(value, bool) or not isinstance(value, int):
+        msg = f"{field} must be a positive integer"
+        raise TypeError(msg)
+    if value <= 0:
+        msg = f"{field} must be a positive integer"
+        raise ValueError(msg)
+    return value
+
+
+def _optional_nonnegative_int(
+    data: dict[str, Any], key: str, *, default: int
+) -> int:
+    value = _lookup(data, key)
+    if value is None:
+        return default
+    if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+        msg = f"{key} must be a non-negative integer"
+        raise RunConfigError(msg)
+    return value
+
+
+def _optional_prior_context_mode(data: dict[str, Any], key: str) -> str:
+    value = _lookup(data, key)
+    if value is None:
+        return "text_turns"
+    if not isinstance(value, str):
+        msg = f"{key} must be one of {', '.join(sorted(PRIOR_CONTEXT_MODES))}"
+        raise RunConfigError(msg)
+    mode = value.strip().lower()
+    if mode not in PRIOR_CONTEXT_MODES:
+        msg = f"{key} must be one of {', '.join(sorted(PRIOR_CONTEXT_MODES))}"
+        raise RunConfigError(msg)
+    return mode
 
 
 def _required_adapter_size(data: dict[str, Any], key: str) -> str:

@@ -7,6 +7,7 @@ from common.gcs_utils import (
     download_gcs_directory,
     download_gcs_uri,
     download_json_text,
+    download_jsonl_manifest,
     download_to_scratch,
     gcs_prefix_has_any_blob,
     gcs_uri_exists,
@@ -152,6 +153,29 @@ class TestGcsObjectHelpers(unittest.TestCase):
         )
         with self.assertRaisesRegex(TypeError, "Expected JSON object"):
             download_json_text(storage, "gs://bucket/list.json")
+
+    def test_download_jsonl_manifest_uses_shared_lenient_parser(self) -> None:
+        storage = FakeStorageClient()
+        storage.put(
+            "gs://bucket/manifest/eval.jsonl",
+            '{"audio_filepath": "gs://b/a.flac", "text": null}\n'
+            "{bad json}\n"
+            '["not", "an", "object"]\n'
+            '{"audio_filepath": "gs://b/b.flac", "text": "line\\nbreak"}',
+        )
+
+        rows = download_jsonl_manifest(
+            storage,
+            "gs://bucket/manifest/eval.jsonl",
+        )
+
+        self.assertEqual(
+            rows,
+            [
+                {"audio_filepath": "gs://b/a.flac", "text": ""},
+                {"audio_filepath": "gs://b/b.flac", "text": "line break"},
+            ],
+        )
 
     def test_upload_and_download_local_text_artifacts(self) -> None:
         storage = FakeStorageClient()

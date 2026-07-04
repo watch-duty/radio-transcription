@@ -16,6 +16,7 @@ from common.inference_manifest import (  # noqa: E402
     build_inference_manifest_rows,
     model_family_slug_from_model_id,
     upload_inference_manifest,
+    validate_artifact_label,
 )
 
 
@@ -219,6 +220,24 @@ class TestInferenceManifest(unittest.TestCase):
                 with self.subTest(field_name=field_name, value=value):
                     with self.assertRaises(ValueError):
                         build_inference_manifest_blob_path(**kwargs)
+
+    def test_validate_artifact_label_returns_valid_labels(self) -> None:
+        for label in ("base", "tuned", "checkpoint_6"):
+            with self.subTest(label=label):
+                self.assertEqual(validate_artifact_label(label), label)
+
+    def test_validate_artifact_label_rejects_invalid_labels(self) -> None:
+        for label in (
+            "",
+            ".",
+            "..",
+            "bad label",
+            "nested/label",
+            "base.jsonl",
+        ):
+            with self.subTest(label=label):
+                with self.assertRaises(ValueError):
+                    validate_artifact_label(label)
 
     def test_upload_inference_manifest_writes_jsonl_and_returns_uri(
         self,

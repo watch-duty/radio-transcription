@@ -9,17 +9,18 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from common.gcs_utils import upload_local_file
+from common.gemini.context import build_context_histories
 from common.manifest import (
     CanonicalRow,
     canonical_row_identity,
     load_manifest,
-    require_canonical_manifest,
-    rows_from_manifest,
+    strict_canonical_rows_from_manifest,
 )
 
 from gemini_sft.records import write_config
 
 if TYPE_CHECKING:
+    from common.gemini.context import ContextTurn
     from google.cloud import storage
 
     from gemini_sft.config import RunConfig
@@ -43,6 +44,15 @@ class PreparedRunArtifacts:
     canonical_train_rows: int
     canonical_validation_rows: int
     canonical_eval_rows: int
+
+
+@dataclass(frozen=True)
+class EvalRowsWithHistory:
+    """Canonical eval rows plus aligned prior-context histories."""
+
+    source_rows: list[dict[str, Any]]
+    eval_rows: list[CanonicalRow]
+    histories: list[list[ContextTurn]]
 
 
 def utc_now() -> str:
@@ -133,9 +143,39 @@ def canonical_rows_from_entries(
     if not entries:
         msg = f"{split} manifest has zero parsed rows: {source}"
         raise ValueError(msg)
-    require_canonical_manifest(entries, expected_split=split)
-    rows = rows_from_manifest(entries)
-    return entries, rows
+    return strict_canonical_rows_from_manifest(
+        entries,
+        expected_split=split,
+        source=source,
+    )
+
+
+def eval_rows_with_histories_from_entries(
+    entries: list[dict[str, Any]],
+    *,
+    source: str,
+    prior_context_count: int,
+    limit: int | None = None,
+) -> EvalRowsWithHistory:
+    """Return eval source rows, canonical rows, and aligned histories."""
+    source_rows, eval_rows = canonical_rows_from_entries(
+        entries,
+        split="eval",
+        source=source,
+    )
+    histories = build_context_histories(
+        source_rows,
+        max_turns=prior_context_count,
+    )
+    if limit is not None:
+        source_rows = source_rows[:limit]
+        eval_rows = eval_rows[:limit]
+        histories = histories[:limit]
+    return EvalRowsWithHistory(
+        source_rows=source_rows,
+        eval_rows=eval_rows,
+        histories=histories,
+    )
 
 
 def reject_split_overlap(

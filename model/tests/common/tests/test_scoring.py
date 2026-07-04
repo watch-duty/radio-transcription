@@ -18,7 +18,7 @@ from common.scoring import (
     compute_wer,
     count_keyword_occurrences,
     duration_bucket_wer,
-    hallucination_rate,
+    empty_or_unintelligible_rate,
     keyword_metrics,
 )
 
@@ -142,6 +142,40 @@ class TestComputeWerPolicies(unittest.TestCase):
         for key in ("wer", "insertions", "deletions", "substitutions", "hits"):
             self.assertIn(key, result)
 
+    def test_normalized_empty_reference_scores_empty_hypothesis_correct(
+        self,
+    ) -> None:
+        result = compute_wer(["Um"], [""], normalizer=build_normalizer())
+        self.assertEqual(result["wer"], 0)
+
+    def test_normalized_empty_reference_penalizes_nonempty_hypothesis(
+        self,
+    ) -> None:
+        result = compute_wer(["Um"], ["copy"], normalizer=build_normalizer())
+        self.assertGreater(result["wer"], 0)
+
+    def test_empty_reference_hallucination_counts_as_insertions(self) -> None:
+        result = compute_wer(
+            ["engine copy", ""],
+            ["engine copy", "extra words"],
+            normalizer=None,
+        )
+
+        self.assertEqual(result["wer"], 100.0)
+        self.assertEqual(result["insertions"], 2)
+        self.assertEqual(result["deletions"], 0)
+        self.assertEqual(result["substitutions"], 0)
+        self.assertEqual(result["hits"], 2)
+
+    def test_all_empty_references_with_hypothesis_reports_insertions(
+        self,
+    ) -> None:
+        result = compute_wer([""], ["extra words"], normalizer=None)
+
+        self.assertEqual(result["wer"], 100.0)
+        self.assertEqual(result["insertions"], 2)
+        self.assertEqual(result["hits"], 0)
+
 
 @_scoring_required
 class TestComputeCer(unittest.TestCase):
@@ -153,20 +187,42 @@ class TestComputeCer(unittest.TestCase):
         result = compute_cer(["engine 41"], ["engine 41"])
         self.assertIn("cer", result)
 
+    def test_normalized_empty_reference_scores_empty_hypothesis_correct(
+        self,
+    ) -> None:
+        result = compute_cer(["Uh,"], [""], normalizer=build_normalizer())
+        self.assertEqual(result["cer"], 0)
 
-class TestHallucinationRate(unittest.TestCase):
+    def test_empty_reference_hallucination_counts_as_char_insertions(
+        self,
+    ) -> None:
+        result = compute_cer(["abc", ""], ["abc", "xy"], normalizer=None)
+
+        self.assertEqual(result["cer"], 66.67)
+
+
+class TestEmptyOrUnintelligibleRate(unittest.TestCase):
     def test_empty_list_returns_zero(self) -> None:
-        self.assertEqual(hallucination_rate([]), 0.0)
+        self.assertEqual(empty_or_unintelligible_rate([]), 0.0)
 
     def test_flags_empty_string(self) -> None:
-        self.assertEqual(hallucination_rate([""]), 100.0)
+        self.assertEqual(empty_or_unintelligible_rate([""]), 100.0)
 
     def test_flags_unintelligible_token(self) -> None:
-        self.assertEqual(hallucination_rate(["[UNINTELLIGIBLE]"]), 100.0)
+        self.assertEqual(
+            empty_or_unintelligible_rate(["[UNINTELLIGIBLE]"]), 100.0
+        )
 
     def test_mixed_list_partial_rate(self) -> None:
         self.assertEqual(
-            hallucination_rate(["engine 41", "", "copy", ""]), 50.0
+            empty_or_unintelligible_rate(["engine 41", "", "copy", ""]),
+            50.0,
+        )
+
+    def test_mixed_unintelligible_and_empty_outputs(self) -> None:
+        self.assertEqual(
+            empty_or_unintelligible_rate(["", "[UNINTELLIGIBLE]", "copy"]),
+            66.67,
         )
 
 

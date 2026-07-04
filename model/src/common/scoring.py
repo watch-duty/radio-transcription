@@ -11,9 +11,10 @@ a version bump can silently change normalization output and therefore WER.
 The WER-bearing functions (``build_normalizer``, ``compute_wer``,
 ``compute_cer``, ``duration_bucket_wer``, ``bootstrap_paired``) require the
 ``[scoring]`` extra (``jiwer`` + ``nemo_text_processing``). The pure-Python
-helpers (``hallucination_rate``, ``count_keyword_occurrences``,
-``keyword_metrics``) work without it. Importing this module WITHOUT the
-extra is always safe — the heavy deps are loaded lazily so
+helpers (``empty_or_unintelligible_rate``, ``count_keyword_occurrences``,
+``keyword_metrics``) work without it.
+Importing this module WITHOUT the extra is always safe — the heavy deps
+are loaded lazily so
 ``import common.scoring`` never triggers NeMo.
 """
 
@@ -24,7 +25,6 @@ from functools import cache
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
 # Heavy deps behind the [scoring] extra — deferred so `import common.scoring`
 # never triggers NeMo when [scoring] is not installed.
 try:
@@ -180,10 +180,34 @@ def compute_wer(
     if normalizer is not None:
         references = [normalizer(r) for r in references]
         hypotheses = [normalizer(h) for h in hypotheses]
-    output = jiwer.process_words(references, hypotheses)
+    valid_refs, valid_hyps, empty_ref_insertions = _split_empty_references(
+        references, hypotheses
+    )
+    if not valid_refs:
+        return {
+            "wer": 100.0 if empty_ref_insertions else 0.0,
+            "insertions": empty_ref_insertions,
+            "deletions": 0,
+            "substitutions": 0,
+            "hits": 0,
+        }
+    output = jiwer.process_words(valid_refs, valid_hyps)
+    total_reference_words = (
+        output.hits + output.substitutions + output.deletions
+    )
+    total_errors = (
+        output.insertions
+        + output.deletions
+        + output.substitutions
+        + empty_ref_insertions
+    )
+    if total_reference_words == 0:
+        wer = 100.0 if total_errors else 0.0
+    else:
+        wer = round(100 * total_errors / total_reference_words, 2)
     return {
-        "wer": round(100 * output.wer, 2),
-        "insertions": output.insertions,
+        "wer": wer,
+        "insertions": output.insertions + empty_ref_insertions,
         "deletions": output.deletions,
         "substitutions": output.substitutions,
         "hits": output.hits,
@@ -212,15 +236,82 @@ def compute_cer(
     if normalizer is not None:
         references = [normalizer(r) for r in references]
         hypotheses = [normalizer(h) for h in hypotheses]
-    value = jiwer.cer(references, hypotheses)
-    return {"cer": round(100 * value, 2)}
+    valid_refs, valid_hyps, empty_ref_insertions = (
+        _split_empty_references_for_cer(
+            references,
+            hypotheses,
+        )
+    )
+    if not valid_refs:
+        return {"cer": 100.0 if empty_ref_insertions else 0.0}
+    output = jiwer.process_characters(valid_refs, valid_hyps)
+    total_reference_chars = (
+        output.hits + output.substitutions + output.deletions
+    )
+    total_errors = (
+        output.insertions
+        + output.deletions
+        + output.substitutions
+        + empty_ref_insertions
+    )
+    if total_reference_chars == 0:
+        cer = 100.0 if total_errors else 0.0
+    else:
+        cer = round(100 * total_errors / total_reference_chars, 2)
+    return {"cer": cer}
 
 
-def hallucination_rate(hypotheses: list[str]) -> float:
+def _split_empty_references(
+    references: list[str], hypotheses: list[str]
+) -> tuple[list[str], list[str], int]:
+    """Split empty-reference rows out so they count as insertions only.
+
+    ``jiwer.process_words`` raises on empty references. Instead of injecting a
+    fake reference token, keep non-empty references in the corpus alignment and
+    count every predicted word against an empty reference as an insertion. This
+    preserves the true WER denominator: empty-reference rows add zero reference
+    words.
+    """
+    valid_refs: list[str] = []
+    valid_hyps: list[str] = []
+    empty_ref_insertions = 0
+    for ref, hyp in zip(references, hypotheses, strict=True):
+        if ref.strip():
+            valid_refs.append(ref)
+            valid_hyps.append(hyp)
+        else:
+            empty_ref_insertions += len(hyp.split())
+    return valid_refs, valid_hyps, empty_ref_insertions
+
+
+def _split_empty_references_for_cer(
+    references: list[str], hypotheses: list[str]
+) -> tuple[list[str], list[str], int]:
+    """Split empty-reference rows for CER, counting hypothesis chars."""
+    valid_refs: list[str] = []
+    valid_hyps: list[str] = []
+    empty_ref_insertions = 0
+    for ref, hyp in zip(references, hypotheses, strict=True):
+        if ref.strip():
+            valid_refs.append(ref)
+            valid_hyps.append(hyp)
+        else:
+            empty_ref_insertions += len(hyp.strip())
+    return valid_refs, valid_hyps, empty_ref_insertions
+
+
+def empty_or_unintelligible_rate(
+    hypotheses: list[str],
+    *,
+    missing_prediction_count: int = 0,
+) -> float:
     """Percentage of hypotheses that are empty or the [UNINTELLIGIBLE] token.
 
     Args:
         hypotheses: List of model-predicted transcript strings.
+        missing_prediction_count: Number of missing provider rows represented
+            as empty-string fallbacks. These stay in the denominator but are
+            not counted as explicit empty model responses.
 
     Returns:
         Float between 0.0 and 100.0 (percentage of flagged hypotheses).
@@ -232,7 +323,8 @@ def hallucination_rate(hypotheses: list[str]) -> float:
         for h in hypotheses
         if not h.strip() or h.strip() == "[UNINTELLIGIBLE]"
     )
-    return round(100 * flagged / len(hypotheses), 2)
+    explicit_flagged = max(0, flagged - missing_prediction_count)
+    return round(100 * explicit_flagged / len(hypotheses), 2)
 
 
 def duration_bucket_wer(

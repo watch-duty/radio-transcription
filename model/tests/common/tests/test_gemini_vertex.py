@@ -8,6 +8,7 @@ import unittest.mock
 from pathlib import Path
 
 import common.gemini.vertex as vmod
+from common.gemini.context import ContextTurn
 from common.gemini.vertex import (
     _ADAPTER_ENUM,
     GEMINI_GENERATION_CONFIG,
@@ -207,6 +208,29 @@ class TestPollTuningJob(unittest.TestCase):
             name="projects/p/locations/l/tuningJobs/123"
         )
 
+    @unittest.mock.patch("common.gemini.vertex.time.sleep")
+    @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_default_poll_interval_is_five_minutes(
+        self, mock_genai, mock_sleep
+    ) -> None:
+        mock_client = unittest.mock.MagicMock()
+        running = unittest.mock.MagicMock()
+        running.state.name = "JOB_STATE_RUNNING"
+        succeeded = unittest.mock.MagicMock()
+        succeeded.state.name = "JOB_STATE_SUCCEEDED"
+        succeeded.tuned_model.endpoint = "projects/p/locations/l/endpoints/e"
+        mock_client.tunings.get.side_effect = [running, succeeded]
+        mock_genai.Client.return_value = mock_client
+
+        result = poll_tuning_job(
+            name="projects/p/locations/l/tuningJobs/123",
+            project="p",
+            location="us-central1",
+        )
+
+        self.assertIn("endpoints", result)
+        mock_sleep.assert_called_once_with(300)
+
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_raises_timeout_when_never_terminal(self, mock_genai) -> None:
         """poll_tuning_job raises TimeoutError if no terminal state within timeout_hours."""
@@ -346,14 +370,14 @@ class TestBuildRequest(unittest.TestCase):
         )
         req = result["request"]
         self.assertIn("contents", req)
-        self.assertIn("system_instruction", req)
-        self.assertIn("generation_config", req)
-        self.assertIn("safety_settings", req)
-        part = req["contents"][0]["parts"][0]
-        self.assertEqual(
-            part["file_data"]["file_uri"], "gs://bucket/audio.flac"
+        self.assertIn("systemInstruction", req)
+        self.assertIn("generationConfig", req)
+        self.assertIn("safetySettings", req)
+        part = next(
+            part for part in req["contents"][0]["parts"] if "fileData" in part
         )
-        self.assertEqual(part["file_data"]["mime_type"], "audio/flac")
+        self.assertEqual(part["fileData"]["fileUri"], "gs://bucket/audio.flac")
+        self.assertEqual(part["fileData"]["mimeType"], "audio/flac")
 
     def test_default_generation_config(self) -> None:
         """Default generation_config has temperature 0.0 and max_output_tokens 512."""
@@ -362,7 +386,7 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt="U",
         )
-        gen_cfg = result["request"]["generation_config"]
+        gen_cfg = result["request"]["generationConfig"]
         self.assertEqual(gen_cfg["temperature"], 0.0)
         self.assertEqual(gen_cfg["max_output_tokens"], 512)
 
@@ -373,7 +397,7 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt="U",
         )
-        result["request"]["generation_config"]["extra_key"] = (
+        result["request"]["generationConfig"]["extra_key"] = (
             "should_not_propagate"
         )
         self.assertNotIn("extra_key", self.default_gen_config)
@@ -385,7 +409,7 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt="U",
         )
-        safety = result["request"]["safety_settings"]
+        safety = result["request"]["safetySettings"]
         self.assertEqual(len(safety), 4)
         for entry in safety:
             self.assertEqual(entry["threshold"], "BLOCK_NONE")
@@ -397,7 +421,7 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt="U",
         )
-        result["request"]["safety_settings"].pop()
+        result["request"]["safetySettings"].pop()
         self.assertEqual(len(self.default_safety), 4)
 
     def test_system_prompt_preserved_exactly(self) -> None:
@@ -407,7 +431,7 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="  Leading space.  ",
             user_prompt="U",
         )
-        parts = result["request"]["system_instruction"]["parts"]
+        parts = result["request"]["systemInstruction"]["parts"]
         self.assertEqual(parts[0]["text"], "  Leading space.  ")
 
     def test_custom_generation_config_override(self) -> None:
@@ -420,8 +444,152 @@ class TestBuildRequest(unittest.TestCase):
             generation_config=custom_cfg,
         )
         self.assertEqual(
-            result["request"]["generation_config"]["temperature"], 0.5
+            result["request"]["generationConfig"]["temperature"], 0.5
         )
+
+    def test_history_defaults_to_text_turns_before_current_request(
+        self,
+    ) -> None:
+        user_prompt = "U"
+        result = self.build_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt=user_prompt,
+            history=[
+                ContextTurn("gs://bucket/prev-1.flac", "first"),
+                ContextTurn("gs://bucket/prev-2.flac", "second"),
+            ],
+        )
+
+        contents = result["request"]["contents"]
+        self.assertEqual(
+            [turn["role"] for turn in contents],
+            ["user", "model", "user", "model", "user"],
+        )
+        audio_parts = [
+            part
+            for turn in contents
+            for part in turn["parts"]
+            if "fileData" in part
+        ]
+        self.assertEqual(len(audio_parts), 1)
+        self.assertEqual(
+            audio_parts[0]["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
+        )
+        self.assertEqual(contents[0]["parts"][0]["text"], user_prompt)
+        self.assertEqual(contents[1]["parts"][0]["text"], "first")
+        self.assertEqual(contents[2]["parts"][0]["text"], user_prompt)
+        self.assertEqual(contents[3]["parts"][0]["text"], "second")
+        self.assertEqual(contents[4]["parts"][0]["text"], user_prompt)
+        self.assertEqual(
+            contents[4]["parts"][1]["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
+        )
+
+    def test_transcript_history_mode_keeps_one_audio_part(self) -> None:
+        result = self.build_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt="U",
+            history=[
+                ContextTurn("gs://bucket/prev-1.flac", "first"),
+                ContextTurn("gs://bucket/prev-2.flac", "second"),
+            ],
+            history_mode="transcript",
+        )
+
+        contents = result["request"]["contents"]
+        self.assertEqual([turn["role"] for turn in contents], ["user"])
+        file_parts = [
+            part for part in contents[0]["parts"] if "fileData" in part
+        ]
+        self.assertEqual(len(file_parts), 1)
+        self.assertEqual(
+            file_parts[0]["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
+        )
+        self.assertIn(
+            "Prior same-source transcripts",
+            contents[0]["parts"][0]["text"],
+        )
+
+    def test_guarded_transcript_block_history_mode_uses_exact_template(
+        self,
+    ) -> None:
+        result = self.build_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt="IMPORTANT: current prompt",
+            history=[
+                ContextTurn("gs://bucket/prev-1.flac", " first   transcript "),
+                ContextTurn("gs://bucket/prev-2.flac", "second transcript"),
+            ],
+            history_mode="guarded_transcript_block",
+        )
+
+        contents = result["request"]["contents"]
+        self.assertEqual([turn["role"] for turn in contents], ["user"])
+        file_parts = [
+            part for part in contents[0]["parts"] if "fileData" in part
+        ]
+        self.assertEqual(len(file_parts), 1)
+        self.assertEqual(
+            file_parts[0]["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
+        )
+        self.assertEqual(
+            contents[0]["parts"][0]["text"],
+            (
+                "The following prior same-source transcripts are for "
+                "situational awareness only.\n"
+                "Do not re-transcribe them. Do not continue them.\n"
+                "Transcribe exclusively the current audio clip.\n"
+                "\n"
+                "Prior transcripts, oldest to newest:\n"
+                "1. first transcript\n"
+                "2. second transcript\n"
+                "\n"
+                "IMPORTANT: current prompt"
+            ),
+        )
+
+    def test_text_turn_history_mode_uses_prior_user_model_turns_with_one_audio(
+        self,
+    ) -> None:
+        user_prompt = "U"
+        result = self.build_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt=user_prompt,
+            history=[
+                ContextTurn("gs://bucket/prev-1.flac", "first"),
+                ContextTurn("gs://bucket/prev-2.flac", "second"),
+            ],
+            history_mode="text_turns",
+        )
+
+        contents = result["request"]["contents"]
+        self.assertEqual(
+            [turn["role"] for turn in contents],
+            ["user", "model", "user", "model", "user"],
+        )
+        audio_parts = [
+            part
+            for turn in contents
+            for part in turn["parts"]
+            if "fileData" in part
+        ]
+        self.assertEqual(len(audio_parts), 1)
+        self.assertEqual(
+            audio_parts[0]["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
+        )
+        self.assertEqual(contents[0]["parts"][0]["text"], user_prompt)
+        self.assertEqual(contents[1]["parts"][0]["text"], "first")
+        self.assertEqual(contents[2]["parts"][0]["text"], user_prompt)
+        self.assertEqual(contents[3]["parts"][0]["text"], "second")
+        self.assertEqual(contents[4]["parts"][0]["text"], user_prompt)
 
 
 class TestParseBatchOutput(unittest.TestCase):
@@ -446,33 +614,44 @@ class TestParseBatchOutput(unittest.TestCase):
         }
 
         self.assertEqual(
-            parse_batch_output(__import__("json").dumps(output)),
+            parse_batch_output([json.dumps(output)]),
             {"gs://bucket/a.flac": "engine 41"},
         )
 
-    def test_parses_snake_case_request_echo(self) -> None:
+    def test_parses_last_file_uri_when_request_contains_history(self) -> None:
         output = {
             "request": {
                 "contents": [
                     {
                         "parts": [
                             {
-                                "file_data": {
-                                    "file_uri": "gs://bucket/a.flac",
+                                "fileData": {
+                                    "fileUri": "gs://bucket/prior.flac",
                                 }
                             }
                         ]
-                    }
+                    },
+                    {"parts": [{"text": "prior transcript"}]},
+                    {
+                        "parts": [
+                            {"text": "current prompt"},
+                            {
+                                "fileData": {
+                                    "fileUri": "gs://bucket/current.flac",
+                                }
+                            },
+                        ]
+                    },
                 ]
             },
             "response": {
-                "candidates": [{"content": {"parts": [{"text": "engine 41"}]}}]
+                "candidates": [{"content": {"parts": [{"text": "current"}]}}]
             },
         }
 
         self.assertEqual(
-            parse_batch_output(json.dumps(output)),
-            {"gs://bucket/a.flac": "engine 41"},
+            parse_batch_output([json.dumps(output)]),
+            {"gs://bucket/current.flac": "current"},
         )
 
     def test_skips_status_and_malformed_rows(self) -> None:
@@ -482,7 +661,43 @@ class TestParseBatchOutput(unittest.TestCase):
             json.dumps({"request": {}, "response": {}}),
         ]
 
-        self.assertEqual(parse_batch_output("\n".join(lines)), {})
+        self.assertEqual(parse_batch_output(lines), {})
+
+    def test_rejects_single_string_to_avoid_character_iteration(self) -> None:
+        with self.assertRaisesRegex(TypeError, "iterable of JSONL lines"):
+            parse_batch_output("{}")
+
+    def test_accepts_line_iterators_without_full_file_read(self) -> None:
+        rows = (
+            json.dumps(
+                {
+                    "request": {
+                        "contents": [
+                            {
+                                "parts": [
+                                    {
+                                        "fileData": {
+                                            "fileUri": "gs://bucket/a.flac"
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    "response": {
+                        "candidates": [
+                            {"content": {"parts": [{"text": "copy"}]}}
+                        ]
+                    },
+                }
+            )
+            for _ in range(1)
+        )
+
+        self.assertEqual(
+            parse_batch_output(rows),
+            {"gs://bucket/a.flac": "copy"},
+        )
 
 
 class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
@@ -544,6 +759,36 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.time.sleep")
     @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_batch_default_poll_interval_is_five_minutes(
+        self, mock_genai, mock_sleep
+    ) -> None:
+        mock_dest = unittest.mock.MagicMock()
+        mock_dest.gcs_uri = "gs://bucket/output/"
+        mock_batch_job = unittest.mock.MagicMock()
+        mock_batch_job.name = "projects/p/locations/l/batchPredictionJobs/1"
+        running = unittest.mock.MagicMock()
+        running.state.name = "JOB_STATE_RUNNING"
+        succeeded = unittest.mock.MagicMock()
+        succeeded.state.name = "JOB_STATE_SUCCEEDED"
+        succeeded.dest = mock_dest
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.return_value = mock_batch_job
+        mock_client.batches.get.side_effect = [running, succeeded]
+        mock_genai.Client.return_value = mock_client
+
+        result = submit_batch_inference(
+            input_uri="gs://bucket/input.jsonl",
+            output_uri="gs://bucket/output/",
+            model="gemini-2.5-flash",
+            project="p",
+            location="us-central1",
+        )
+
+        self.assertEqual(result, "gs://bucket/output/")
+        mock_sleep.assert_called_once_with(300)
+
+    @unittest.mock.patch("common.gemini.vertex.time.sleep")
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_batch_poll_retries_transient_get_error(
         self, mock_genai, mock_sleep
     ) -> None:
@@ -594,6 +839,33 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
             input_uri="gs://bucket/input.jsonl",
             output_uri="gs://bucket/output/",
             model="projects/p/locations/us/endpoints/123",
+            project="p",
+            location="us-central1",
+        )
+
+        mock_genai.Client.assert_called_once_with(
+            vertexai=True, project="p", location="us"
+        )
+
+    @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_batch_uses_us_location_for_31_flash_lite(self, mock_genai) -> None:
+        """Gemini 3.1 Flash-Lite batch jobs are served from Vertex location us."""
+        mock_dest = unittest.mock.MagicMock()
+        mock_dest.gcs_uri = "gs://bucket/output/"
+        mock_batch_job = unittest.mock.MagicMock()
+        mock_batch_job.name = "projects/p/locations/us/batchPredictionJobs/1"
+        mock_cur = unittest.mock.MagicMock()
+        mock_cur.state.name = "JOB_STATE_SUCCEEDED"
+        mock_cur.dest = mock_dest
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.return_value = mock_batch_job
+        mock_client.batches.get.return_value = mock_cur
+        mock_genai.Client.return_value = mock_client
+
+        submit_batch_inference(
+            input_uri="gs://bucket/input.jsonl",
+            output_uri="gs://bucket/output/",
+            model="gemini-3.1-flash-lite",
             project="p",
             location="us-central1",
         )

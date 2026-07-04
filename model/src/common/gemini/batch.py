@@ -7,12 +7,20 @@ import logging
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from common.gcs_utils import (
+    blob_exists,
     download_blob_to_file,
+    download_gcs_uri,
     parse_gcs_uri,
     upload_file_to_blob,
+    upload_local_file,
+)
+from common.gemini import request_identity
+from common.gemini.eval_artifacts import (
+    batch_prediction_metadata_uri,
+    eval_target_artifact_paths,
 )
 from common.gemini.vertex import (
     build_request,
@@ -22,6 +30,8 @@ from common.gemini.vertex import (
 
 if TYPE_CHECKING:
     from google.cloud import storage
+
+    from common.gemini.context import ContextTurn
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +55,11 @@ def run_batch_audio_inference(
     audio_uris: Sequence[str],
     system_prompt: str,
     user_prompt: str,
+    prior_context_count: int,
+    prior_context_mode: str,
+    eval_manifest_uri: str,
+    histories: Sequence[Sequence[ContextTurn]] | None = None,
+    history_mode: str = "text_turns",
     submit_fn: BatchSubmitFn = submit_batch_inference,
 ) -> BatchPredictionMap | None:
     """Run Gemini batch inference for audio URIs and return parsed predictions."""
@@ -56,6 +71,17 @@ def run_batch_audio_inference(
             label,
         )
         return None
+    audio_uri_list = list(audio_uris)
+    identity = request_identity.build_gemini_eval_request_identity(
+        target_label=label,
+        model=model_id,
+        eval_manifest_uri=eval_manifest_uri,
+        audio_uris=audio_uri_list,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        prior_context_count=prior_context_count,
+        prior_context_mode=prior_context_mode,
+    )
     with tempfile.TemporaryDirectory() as tmp:
         batch_input_gcs, batch_output_gcs = build_batch_jsonl(
             storage_client=storage_client,
@@ -64,28 +90,61 @@ def run_batch_audio_inference(
             audio_uris=audio_uris,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
+            histories=histories,
+            history_mode=history_mode,
             tmp_dir=Path(tmp),
         )
-        try:
-            output_loc = submit_fn(
-                input_uri=batch_input_gcs,
-                output_uri=batch_output_gcs,
-                model=model_id,
-                project=gcp_project,
-                location=location,
+        metadata_uri = batch_prediction_metadata_uri(run_gcs_prefix, label)
+        metadata_path = Path(tmp) / f"batch_predictions_{label}.meta.json"
+        pred_blobs = _list_batch_prediction_blobs(
+            storage_client,
+            batch_output_gcs,
+        )
+        if pred_blobs:
+            _validate_reusable_batch_output(
+                storage_client=storage_client,
+                metadata_uri=metadata_uri,
+                metadata_path=metadata_path,
+                request_identity_payload=identity,
             )
-        except (RuntimeError, TimeoutError) as exc:
-            logger.exception("[%s] Batch inference failed: %s", label, exc)
-            return None
+            preds = _load_batch_predictions(
+                storage_client=storage_client,
+                output_uri=batch_output_gcs,
+                label=label,
+                tmp_dir=Path(tmp),
+                pred_blobs=pred_blobs,
+            )
+            if preds is None:
+                return None
+            output_loc = batch_output_gcs
+            logger.info(
+                "[%s] Reusing existing batch prediction output under %s.",
+                label,
+                batch_output_gcs,
+            )
+        else:
+            try:
+                output_loc = submit_fn(
+                    input_uri=batch_input_gcs,
+                    output_uri=batch_output_gcs,
+                    model=model_id,
+                    project=gcp_project,
+                    location=location,
+                )
+            except (RuntimeError, TimeoutError) as exc:
+                logger.exception("[%s] Batch inference failed: %s", label, exc)
+                return None
 
-        preds = _load_batch_predictions(
-            storage_client=storage_client,
-            output_uri=output_loc,
-            label=label,
-            tmp_dir=Path(tmp),
-        )
-        if preds is None:
-            return None
+            preds = _load_batch_predictions(
+                storage_client=storage_client,
+                output_uri=output_loc,
+                label=label,
+                tmp_dir=Path(tmp),
+            )
+            if preds is None:
+                return None
+            request_identity.write_metadata(metadata_path, identity)
+            upload_local_file(storage_client, metadata_path, metadata_uri)
 
     extra_prediction_uris = set(preds) - expected_audio_uris
     if extra_prediction_uris:
@@ -119,24 +178,39 @@ def build_batch_jsonl(
     audio_uris: Sequence[str],
     system_prompt: str,
     user_prompt: str,
+    histories: Sequence[Sequence[ContextTurn]] | None = None,
+    history_mode: str = "text_turns",
     tmp_dir: Path,
 ) -> tuple[str, str]:
     """Write and upload a Vertex batch input JSONL file."""
+    if histories is not None and len(histories) != len(audio_uris):
+        msg = "histories must have one entry per audio URI"
+        raise ValueError(msg)
+    if _unique_audio_uris(audio_uris) is None:
+        msg = (
+            "duplicate audio_uri in batch eval input; cannot map predictions "
+            "safely"
+        )
+        raise ValueError(msg)
     batch_input_path = tmp_dir / f"batch_input_{label}.jsonl"
     with batch_input_path.open("w", encoding="utf-8") as fh:
-        for audio_uri in audio_uris:
+        for index, audio_uri in enumerate(audio_uris):
+            history = histories[index] if histories is not None else None
             fh.write(
                 json.dumps(
                     build_request(
                         audio_uri,
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
+                        history=history,
+                        history_mode=history_mode,
                     )
                 )
                 + "\n"
             )
-    batch_input_gcs = f"{run_gcs_prefix}/evals/{label}/input.jsonl"
-    batch_output_gcs = f"{run_gcs_prefix}/evals/{label}/output/"
+    paths = eval_target_artifact_paths(run_gcs_prefix, label)
+    batch_input_gcs = paths.input_uri
+    batch_output_gcs = paths.output_uri
     in_bucket, in_blob = parse_gcs_uri(batch_input_gcs)
     upload_file_to_blob(
         storage_client, in_bucket, in_blob, str(batch_input_path)
@@ -150,28 +224,67 @@ def _load_batch_predictions(
     output_uri: str,
     label: str,
     tmp_dir: Path,
+    pred_blobs: Sequence[Any] | None = None,
+    missing_ok: bool = False,
 ) -> BatchPredictionMap | None:
-    out_bucket, out_prefix = parse_gcs_uri(output_uri.rstrip("/") + "/")
-    pred_blobs = [
-        blob
-        for blob in storage_client.bucket(out_bucket).list_blobs(
-            prefix=out_prefix
-        )
-        if blob.name.endswith(".jsonl")
-    ]
+    pred_blobs = pred_blobs or _list_batch_prediction_blobs(
+        storage_client,
+        output_uri,
+    )
     if not pred_blobs:
-        logger.error(
-            "[%s] no .jsonl prediction output under %s.", label, output_uri
-        )
+        if not missing_ok:
+            logger.error(
+                "[%s] no .jsonl prediction output under %s.",
+                label,
+                output_uri,
+            )
         return None
+    out_bucket, _ = parse_gcs_uri(output_uri.rstrip("/") + "/")
     preds = BatchPredictionMap()
     for i, blob in enumerate(pred_blobs):
         local_path = tmp_dir / f"predictions_{i}.jsonl"
         download_blob_to_file(
             storage_client, out_bucket, blob.name, str(local_path)
         )
-        preds.update(parse_batch_output(local_path.read_text(encoding="utf-8")))
+        with local_path.open(encoding="utf-8") as handle:
+            preds.update(parse_batch_output(handle))
     return preds
+
+
+def _list_batch_prediction_blobs(
+    storage_client: storage.Client,
+    output_uri: str,
+) -> list[Any]:
+    out_bucket, out_prefix = parse_gcs_uri(output_uri.rstrip("/") + "/")
+    return [
+        blob
+        for blob in storage_client.bucket(out_bucket).list_blobs(
+            prefix=out_prefix
+        )
+        if blob.name.endswith(".jsonl")
+    ]
+
+
+def _validate_reusable_batch_output(
+    *,
+    storage_client: storage.Client,
+    metadata_uri: str,
+    metadata_path: Path,
+    request_identity_payload: dict[str, Any],
+) -> None:
+    if not blob_exists(storage_client, metadata_uri):
+        msg = f"batch prediction metadata missing: {metadata_uri}"
+        raise ValueError(msg)
+    download_gcs_uri(storage_client, metadata_uri, metadata_path)
+    existing_identity = request_identity.load_metadata_identity(
+        metadata_path,
+        error_message="batch prediction request identity mismatch",
+    )
+    request_identity.validate_exact_identity(
+        existing_identity,
+        request_identity_payload,
+        "batch prediction request identity mismatch",
+    )
 
 
 def _unique_audio_uris(audio_uris: Sequence[str]) -> set[str] | None:
