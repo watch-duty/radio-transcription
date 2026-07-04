@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import subprocess
+
 from scripts import ingestion_rollout_gate as gate
 
 
@@ -224,3 +227,107 @@ def test_critical_filter_contract_uses_general_severity() -> None:
 
     assert "severity>=CRITICAL" in filter_text
     assert "severity >= CRITICAL" not in filter_text
+
+
+def test_read_logs_uses_gcloud_logging_read_as_json(monkeypatch) -> None:
+    calls = []
+
+    def fake_run(args, *, capture_output, text, check):
+        calls.append(
+            {
+                "args": args,
+                "capture_output": capture_output,
+                "text": text,
+                "check": check,
+            }
+        )
+        return subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout=json.dumps([_critical_entry()]),
+            stderr="",
+        )
+
+    monkeypatch.setattr(gate.subprocess, "run", fake_run)
+
+    entries = gate._read_logs(
+        project="prod-project",
+        filter_text="severity>=CRITICAL",
+        limit=7,
+    )
+
+    assert entries[0]["severity"] == "CRITICAL"
+    assert calls == [
+        {
+            "args": [
+                "gcloud",
+                "logging",
+                "read",
+                "severity>=CRITICAL",
+                "--project",
+                "prod-project",
+                "--limit",
+                "7",
+                "--format",
+                "json",
+            ],
+            "capture_output": True,
+            "text": True,
+            "check": False,
+        }
+    ]
+
+
+def test_main_writes_json_artifact_when_workers_settle(
+    tmp_path, monkeypatch
+) -> None:
+    def fake_read_logs(*, project, filter_text, limit):
+        assert project == "prod-project"
+        assert limit == 200
+        if "severity>=CRITICAL" in filter_text:
+            return []
+        return [
+            _admission_entry(
+                timestamp="2026-07-04T20:00:10Z",
+                worker_index=1,
+                slack=1,
+                admission_budget=20,
+                primary_acquired=20,
+            ),
+            _admission_entry(
+                timestamp="2026-07-04T20:00:12Z",
+                worker_index=2,
+                slack=30,
+                admission_budget=20,
+                primary_acquired=4,
+            ),
+        ]
+
+    output_json = tmp_path / "gate" / "result.json"
+    monkeypatch.setattr(gate, "_read_logs", fake_read_logs)
+
+    exit_code = gate.main(
+        [
+            "--project",
+            "prod-project",
+            "--instance-id",
+            "1234567890",
+            "--since",
+            "2026-07-04T20:00:00Z",
+            "--timeout-sec",
+            "0",
+            "--poll-interval-sec",
+            "0",
+            "--output-json",
+            str(output_json),
+        ]
+    )
+
+    result = json.loads(output_json.read_text())
+    assert exit_code == 0
+    assert result["status"] == "passed"
+    assert result["reason"] == "settled"
+    assert result["project"] == "prod-project"
+    assert result["instance_id"] == "1234567890"
+    assert result["since"] == "2026-07-04T20:00:00Z"
+    assert result["expected_workers"] == [1, 2]
