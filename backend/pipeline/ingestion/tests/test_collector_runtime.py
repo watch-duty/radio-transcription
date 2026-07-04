@@ -81,6 +81,25 @@ _FEED = LeasedFeed(
     source_feed_id="123",
 )
 
+
+def _make_leased_feed(
+    feed_id: uuid.UUID,
+    source_type: SourceType = SourceType.BCFY_FEEDS,
+) -> LeasedFeed:
+    """Build a leased feed with a stable id and source type."""
+    return LeasedFeed(
+        id=feed_id,
+        name=f"Test Feed {feed_id}",
+        source_type=source_type,
+        last_processed_filename=None,
+        last_bookmark_time=None,
+        fencing_token=1,
+        failure_count=0,
+        status_reason=None,
+        source_feed_id=str(feed_id),
+    )
+
+
 _PUBLISH_SESSION_ID_ARG_INDEX = 5
 _PUBLISH_START_TIMESTAMP_ARG_INDEX = 6
 _PUBLISH_SOURCE_TYPE_ARG_INDEX = 8
@@ -1897,6 +1916,183 @@ class TestLeasingLoopHeldCounts(unittest.IsolatedAsyncioTestCase):
         limits_dict = acquire_call[0][1]
         self.assertEqual(limits_dict[SourceType.BCFY_FEEDS], 0)
         self.assertEqual(sum(limits_dict.values()), 250)
+
+
+class TestLeasingLoopAdmissionBudget(unittest.IsolatedAsyncioTestCase):
+    """Lease admission budget applies across primary and recovery paths."""
+
+    CAPS = {
+        SourceType.BCFY_FEEDS: 240,
+        SourceType.BCFY_CALLS: 600,
+        SourceType.OPENMHZ: 900,
+        SourceType.FIRE_NOTIFICATIONS: 300,
+    }
+
+    async def test_admission_budget_bounds_primary_limits(self) -> None:
+        """Primary acquisition is bounded by lease_admission_cycle_budget."""
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            lease_admission_cycle_budget=20,
+            caps=self.CAPS,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(
+            self.CAPS,
+            0,
+        )
+        rt._store.acquire_feeds_batch.return_value = []
+
+        rt._shutdown.set()
+        await rt._leasing_loop()
+
+        call = rt._store.acquire_feeds_batch.await_args_list[0]
+        limits = call.args[1]
+        self.assertEqual(sum(limits.values()), 20)
+
+    async def test_recovery_skipped_when_primary_fills_budget(self) -> None:
+        """Recovery is not called when primary fills the cycle budget."""
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            lease_admission_cycle_budget=20,
+            caps=self.CAPS,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(
+            self.CAPS,
+            0,
+        )
+        primary = [
+            _make_leased_feed(uuid.UUID(int=i + 1))
+            for i in range(20)
+        ]
+        rt._store.acquire_feeds_batch.return_value = primary
+
+        with mock.patch.object(
+            rt, "_process_feed", new_callable=mock.AsyncMock
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        rt._store.acquire_feeds_recovery.assert_not_awaited()
+
+    async def test_recovery_uses_remaining_admission_budget(self) -> None:
+        """Recovery asks only for budget left after primary acquisition."""
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            lease_admission_cycle_budget=5,
+            caps=self.CAPS,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(
+            self.CAPS,
+            0,
+        )
+        rt._store.acquire_feeds_batch.return_value = [
+            _make_leased_feed(uuid.UUID(int=1)),
+            _make_leased_feed(uuid.UUID(int=2)),
+            _make_leased_feed(uuid.UUID(int=3)),
+        ]
+        rt._store.acquire_feeds_recovery.return_value = []
+
+        with mock.patch.object(
+            rt, "_process_feed", new_callable=mock.AsyncMock
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        call = rt._store.acquire_feeds_recovery.await_args_list[0]
+        recovery_limits = call.args[2]
+        self.assertEqual(sum(recovery_limits.values()), 2)
+
+    async def test_recovery_limits_include_primary_counts(self) -> None:
+        """Recovery cap math includes DB-held counts plus primary leases."""
+        caps = {
+            SourceType.BCFY_FEEDS: 3,
+            SourceType.BCFY_CALLS: 5,
+            SourceType.OPENMHZ: 5,
+        }
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            lease_admission_cycle_budget=5,
+            caps=caps,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = {
+            SourceType.BCFY_FEEDS: 1,
+            SourceType.BCFY_CALLS: 0,
+            SourceType.OPENMHZ: 0,
+        }
+        rt._store.acquire_feeds_batch.return_value = [
+            _make_leased_feed(
+                uuid.UUID(int=1),
+                SourceType.BCFY_FEEDS,
+            ),
+            _make_leased_feed(
+                uuid.UUID(int=2),
+                SourceType.BCFY_FEEDS,
+            ),
+        ]
+        rt._store.acquire_feeds_recovery.return_value = []
+
+        with mock.patch.object(
+            rt, "_process_feed", new_callable=mock.AsyncMock
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        call = rt._store.acquire_feeds_recovery.await_args_list[0]
+        recovery_limits = call.args[2]
+        self.assertEqual(recovery_limits[SourceType.BCFY_FEEDS], 0)
+        self.assertEqual(sum(recovery_limits.values()), 3)
+
+    async def test_admitted_leases_spawn_tasks_without_local_queue(self) -> None:
+        """Only leases returned in this cycle become immediate feed tasks."""
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            lease_admission_cycle_budget=5,
+            caps=self.CAPS,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(
+            self.CAPS,
+            0,
+        )
+        primary = [
+            _make_leased_feed(uuid.UUID(int=1)),
+            _make_leased_feed(uuid.UUID(int=2)),
+            _make_leased_feed(uuid.UUID(int=3)),
+        ]
+        recovery = [
+            _make_leased_feed(uuid.UUID(int=4)),
+            _make_leased_feed(uuid.UUID(int=5)),
+        ]
+        rt._store.acquire_feeds_batch.return_value = primary
+        rt._store.acquire_feeds_recovery.return_value = recovery
+
+        with mock.patch.object(
+            rt, "_process_feed", new_callable=mock.AsyncMock
+        ) as mock_process_feed:
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        self.assertEqual(len(rt._feed_tasks), 5)
+        self.assertCountEqual(
+            rt._feed_tasks,
+            [lease["id"] for lease in primary + recovery],
+        )
+        self.assertEqual(mock_process_feed.call_count, 5)
+        self.assertFalse(hasattr(rt, "_pending_leases"))
+        self.assertFalse(hasattr(rt, "_admitted_queue"))
 
 
 class TestSigtermRelease(unittest.IsolatedAsyncioTestCase):
