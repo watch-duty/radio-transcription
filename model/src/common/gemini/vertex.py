@@ -28,7 +28,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from common.gemini.context import (
@@ -95,7 +95,7 @@ def build_request(
     }
 
 
-def parse_batch_output(text: str) -> dict[str, str]:
+def parse_batch_output(lines: Iterable[str]) -> dict[str, str]:
     """Parse Vertex Gemini batch output JSONL into ``{audio_uri: prediction}``.
 
     Vertex echoes the original request in batch output. This parser accepts the
@@ -103,8 +103,11 @@ def parse_batch_output(text: str) -> dict[str, str]:
     rows, malformed JSONL rows, and output rows without an identifiable audio
     URI are skipped.
     """
+    if isinstance(lines, str):
+        msg = "parse_batch_output expects an iterable of JSONL lines, not a string"
+        raise TypeError(msg)
     result: dict[str, str] = {}
-    for line in text.splitlines():
+    for line in lines:
         if not line.strip():
             continue
         try:

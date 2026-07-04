@@ -201,8 +201,12 @@ def compute_wer(
         + output.substitutions
         + empty_ref_insertions
     )
+    if total_reference_words == 0:
+        wer = 100.0 if total_errors else 0.0
+    else:
+        wer = round(100 * total_errors / total_reference_words, 2)
     return {
-        "wer": round(100 * total_errors / total_reference_words, 2),
+        "wer": wer,
         "insertions": output.insertions + empty_ref_insertions,
         "deletions": output.deletions,
         "substitutions": output.substitutions,
@@ -250,7 +254,11 @@ def compute_cer(
         + output.substitutions
         + empty_ref_insertions
     )
-    return {"cer": round(100 * total_errors / total_reference_chars, 2)}
+    if total_reference_chars == 0:
+        cer = 100.0 if total_errors else 0.0
+    else:
+        cer = round(100 * total_errors / total_reference_chars, 2)
+    return {"cer": cer}
 
 
 def _split_empty_references(

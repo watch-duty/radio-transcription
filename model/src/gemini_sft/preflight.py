@@ -225,9 +225,10 @@ def run_preflight(
         _write_report(report, report_path)
         return report
 
-    train_target_uris = _check_duplicate_train_uris(train_examples, report)
+    _check_duplicate_train_uris(train_examples, report)
+    train_all_uris = _extract_all_file_uris(train_examples)
     val_examples, _ = _load_and_check_val_split(
-        val_jsonl_path, train_target_uris, report
+        val_jsonl_path, train_all_uris, report
     )
 
     unreachable: set[str] = set()

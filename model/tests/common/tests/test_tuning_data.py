@@ -315,6 +315,18 @@ class TestValidateExample(unittest.TestCase):
 
         self.assertTrue(validate_audio_tuning_example(ex))
 
+    def test_rejects_empty_current_target_even_with_history(self) -> None:
+        ex = build_audio_tuning_example(
+            "gs://b/current.flac",
+            "   ",
+            "sys",
+            "user",
+            history=[ContextTurn("gs://b/prior.flac", "prior")],
+            history_mode="text_turns",
+        )
+
+        self.assertFalse(validate_audio_tuning_example(ex))
+
 
 class TestImportIsolation(unittest.TestCase):
     """TEST-03: `import common.prompts` (the light core) must load no heavy deps."""

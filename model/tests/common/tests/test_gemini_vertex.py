@@ -614,7 +614,7 @@ class TestParseBatchOutput(unittest.TestCase):
         }
 
         self.assertEqual(
-            parse_batch_output(__import__("json").dumps(output)),
+            parse_batch_output([json.dumps(output)]),
             {"gs://bucket/a.flac": "engine 41"},
         )
 
@@ -650,7 +650,7 @@ class TestParseBatchOutput(unittest.TestCase):
         }
 
         self.assertEqual(
-            parse_batch_output(json.dumps(output)),
+            parse_batch_output([json.dumps(output)]),
             {"gs://bucket/current.flac": "current"},
         )
 
@@ -661,7 +661,43 @@ class TestParseBatchOutput(unittest.TestCase):
             json.dumps({"request": {}, "response": {}}),
         ]
 
-        self.assertEqual(parse_batch_output("\n".join(lines)), {})
+        self.assertEqual(parse_batch_output(lines), {})
+
+    def test_rejects_single_string_to_avoid_character_iteration(self) -> None:
+        with self.assertRaisesRegex(TypeError, "iterable of JSONL lines"):
+            parse_batch_output("{}")
+
+    def test_accepts_line_iterators_without_full_file_read(self) -> None:
+        rows = (
+            json.dumps(
+                {
+                    "request": {
+                        "contents": [
+                            {
+                                "parts": [
+                                    {
+                                        "fileData": {
+                                            "fileUri": "gs://bucket/a.flac"
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    "response": {
+                        "candidates": [
+                            {"content": {"parts": [{"text": "copy"}]}}
+                        ]
+                    },
+                }
+            )
+            for _ in range(1)
+        )
+
+        self.assertEqual(
+            parse_batch_output(rows),
+            {"gs://bucket/a.flac": "copy"},
+        )
 
 
 class TestSubmitBatchInferenceOutputUri(unittest.TestCase):

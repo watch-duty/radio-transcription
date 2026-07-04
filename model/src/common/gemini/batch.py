@@ -246,7 +246,8 @@ def _load_batch_predictions(
         download_blob_to_file(
             storage_client, out_bucket, blob.name, str(local_path)
         )
-        preds.update(parse_batch_output(local_path.read_text(encoding="utf-8")))
+        with local_path.open(encoding="utf-8") as handle:
+            preds.update(parse_batch_output(handle))
     return preds
 
 

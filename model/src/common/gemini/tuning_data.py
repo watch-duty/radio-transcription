@@ -87,12 +87,10 @@ def validate_audio_tuning_example(example: dict[str, Any]) -> bool:
     contents = example.get("contents")
     if not isinstance(contents, list) or not contents:
         return False
-    target_turns = (
-        turn
-        for turn in contents
-        if isinstance(turn, dict) and turn.get("role") == "model"
-    )
-    return any(_extract_model_text(turn).strip() for turn in target_turns)
+    target_turn = contents[-1]
+    if not isinstance(target_turn, dict) or target_turn.get("role") != "model":
+        return False
+    return bool(_extract_model_text(target_turn).strip())
 
 
 def _extract_model_text(model_turn: dict[str, Any]) -> str:

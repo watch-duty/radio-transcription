@@ -13,12 +13,14 @@ from typing import Any
 
 from common.gemini.batch import BatchPredictionMap
 from common.gemini.eval_artifacts import batch_prediction_metadata_uri
+from common.gemini.tuning_data import build_audio_tuning_example
 from fake_gcs import FakeStorageClient
 from gemini_sft import cli
 from gemini_sft import evaluate as evaluate_module
 from gemini_sft import reporting as reporting_module
 from gemini_sft import tune as tune_module
 from gemini_sft.config import load_run_config
+from gemini_sft.preflight import run_preflight
 from gemini_sft.prepare import prepare_run
 from sft_eval_fixtures import (
     batch_input_uri,
@@ -276,6 +278,56 @@ class TestCli(unittest.TestCase):
         }
         for logger_name, level in expected_levels.items():
             loggers[logger_name].setLevel.assert_called_once_with(level)
+
+
+class TestPreflight(unittest.TestCase):
+    def test_validation_target_uri_cannot_appear_anywhere_in_train_files(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            train_example = build_audio_tuning_example(
+                "gs://audio/train.flac",
+                "train",
+                "sys",
+                "user",
+            )
+            train_example["contents"][0]["parts"].insert(
+                0,
+                {
+                    "fileData": {
+                        "fileUri": "gs://audio/validation.flac",
+                        "mimeType": "audio/flac",
+                    }
+                },
+            )
+            val_example = build_audio_tuning_example(
+                "gs://audio/validation.flac",
+                "validation",
+                "sys",
+                "user",
+            )
+            train_path = tmp / "train.jsonl"
+            val_path = tmp / "val.jsonl"
+            report_path = tmp / "report.json"
+            train_path.write_text(json.dumps(train_example) + "\n")
+            val_path.write_text(json.dumps(val_example) + "\n")
+
+            report = run_preflight(
+                train_jsonl_path=train_path,
+                val_jsonl_path=val_path,
+                storage_client=None,
+                report_path=report_path,
+                system_prompt="sys",
+                user_prompt="user",
+            )
+
+        self.assertFalse(report.passed)
+        self.assertTrue(
+            any(
+                "gs://audio/validation.flac" in item for item in report.failures
+            )
+        )
 
 
 class TestPrepareRun(unittest.TestCase):
