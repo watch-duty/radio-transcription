@@ -65,21 +65,6 @@ variable "target_size" {
   }
 }
 
-variable "worker_count" {
-  description = "Number of worker containers to start on each VM. Worker units are indexed from 1, published on host-loopback ports 8081..(8080 + worker_count), and probed by VM Health when autohealing is enabled."
-  type        = number
-  default     = 2
-
-  validation {
-    condition = (
-      var.worker_count >= 1
-      && var.worker_count == floor(var.worker_count)
-      && var.worker_count <= 57455
-    )
-    error_message = "worker_count must be an integer from 1 to 57455 so worker health ports stay in the valid TCP port range."
-  }
-}
-
 variable "boot_disk_size_gb" {
   description = "Boot disk size in GB."
   type        = number

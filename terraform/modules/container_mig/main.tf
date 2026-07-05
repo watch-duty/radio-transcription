@@ -10,7 +10,7 @@
 
 locals {
   registry_host  = split("/", var.container_image)[0]
-  worker_indices = range(1, var.worker_count + 1)
+  worker_indices = [1, 2]
   vm_health_worker_endpoints = join(",", [
     for worker_index in local.worker_indices :
     "http://127.0.0.1:${8080 + worker_index}/healthz"
@@ -85,7 +85,6 @@ resource "google_compute_instance_template" "this" {
       container_image            = var.container_image
       env_file_content           = local.env_file_content
       enable_autohealing         = var.enable_autohealing
-      worker_count               = var.worker_count
       worker_indices             = local.worker_indices
       vm_health_worker_endpoints = local.vm_health_worker_endpoints
       worker_systemd_after_units = local.worker_systemd_after_units

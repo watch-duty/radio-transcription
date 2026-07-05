@@ -167,7 +167,7 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
         self.assertNotIn("mirror.gcr.io/library/nginx", cloud_config)
         self.assertNotIn("nginx", cloud_config.lower())
 
-    def test_worker_topology_is_generated_from_worker_count(self) -> None:
+    def test_worker_topology_is_generated_from_worker_indices(self) -> None:
         cloud_config = _text(_CLOUD_CONFIG)
 
         self.assertIn(
@@ -197,18 +197,17 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
             cloud_config,
         )
 
-    def test_template_inputs_derive_worker_health_contract_from_worker_count(
+    def test_template_inputs_derive_worker_health_contract_from_worker_indices(
         self,
     ) -> None:
         main_tf = _text(_MAIN_TF)
         variables_tf = _text(_VARIABLES_TF)
 
-        self.assertIn('variable "worker_count"', variables_tf)
+        self.assertNotIn('variable "worker_count"', variables_tf)
         self.assertIn("worker_indices", main_tf)
-        self.assertIn("range(1, var.worker_count + 1)", main_tf)
+        self.assertIn("worker_indices = [1, 2]", main_tf)
         self.assertIn("vm_health_worker_endpoints", main_tf)
         self.assertIn("worker_systemd_after_units", main_tf)
-        self.assertIn("worker_count", main_tf)
 
     def test_gcp_health_thresholds_unchanged(self) -> None:
         main_tf = _without_terraform_comments(_text(_MAIN_TF))
