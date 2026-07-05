@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import unittest
+from typing import cast
 from unittest import mock
 
 import aiohttp
@@ -234,8 +235,9 @@ class WorkerProbeTests(AioHTTPTestCase):
             def get(self, *args: object, **kwargs: object) -> object:
                 raise RuntimeError
 
+        session = cast("aiohttp.ClientSession", BrokenSession())
         result = await vm_health_agent.probe_worker(
-            BrokenSession(),  # type: ignore[arg-type]
+            session,
             "http://127.0.0.1:8081/healthz",
             timeout_sec=1.0,
         )
