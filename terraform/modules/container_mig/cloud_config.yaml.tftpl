@@ -46,6 +46,12 @@ ${env_file_content}
     Environment=HOME=/home
     ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries ${registry_host}
     ExecStartPre=-/usr/bin/docker rm -f ${service_name}-health
+    # COS ships with `iptables INPUT policy DROP` plus a small allow-list (lo,
+    # icmp, established, tcp/22 for SSH). The VM Health agent binds host port
+    # 8080 via `--network host`, so Google autohealing probes traverse host
+    # INPUT. Re-assert this rule idempotently whenever the health service starts
+    # so a health-container restart also repairs a flushed host firewall rule.
+    ExecStartPre=/bin/sh -c 'iptables -C INPUT -p tcp --dport 8080 -j ACCEPT || iptables -I INPUT -p tcp --dport 8080 -j ACCEPT'
     ExecStartPre=/usr/bin/docker pull ${container_image}
     # --network host lets the VM Health container reach worker health ports on
     # the HOST loopback. Pass only explicit non-secret VM_HEALTH_* values; do
@@ -139,21 +145,6 @@ ${env_file_content}
 runcmd:
 - sysctl --system
 - systemctl daemon-reload
-%{ if enable_autohealing }
-# COS ships with `iptables INPUT policy DROP` plus a small allow-list (lo,
-# icmp, established, tcp/22 for SSH). The pre-Phase-2 single-worker setup
-# bypassed INPUT for port 8080 because Docker's `-p 8080:8080` mapping
-# routes inbound traffic via PREROUTING + FORWARD (DOCKER chain) — never
-# touching INPUT. The multi-worker setup runs the VM Health agent with
-# `--network host`, which binds host port 8080 directly and traverses
-# INPUT. Without this rule, every Google autohealing probe to :8080 is
-# silently dropped by INPUT-DROP, the MIG marks the VM TIMEOUT after the
-# initial_delay grace, and autohealing infinite-replaces the instance.
-# Diagnosed in dev 2026-05-01 (4 instance recreations before the cause
-# surfaced — the local probe always returned 200, masking the network
-# block at the host iptables layer).
-- iptables -I INPUT -p tcp --dport 8080 -j ACCEPT
-%{ endif }
 %{ for worker_index in worker_indices }
 - systemctl enable --now ${service_name}@${worker_index}.service
 %{ endfor }

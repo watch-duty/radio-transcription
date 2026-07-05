@@ -160,6 +160,24 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
             health_unit,
         )
 
+    def test_vm_health_unit_reasserts_host_firewall_rule(self) -> None:
+        cloud_config = _text(_CLOUD_CONFIG)
+        health_unit = _file_entry(
+            cloud_config,
+            "/etc/systemd/system/${service_name}-health.service",
+        )
+        runcmd = cloud_config[cloud_config.index("\nruncmd:") :]
+        expected_exec_start_pre = (
+            "ExecStartPre=/bin/sh -c 'iptables -C INPUT -p tcp --dport 8080 "
+            "-j ACCEPT || iptables -I INPUT -p tcp --dport 8080 -j ACCEPT'"
+        )
+
+        self.assertIn(expected_exec_start_pre, health_unit)
+        self.assertNotIn(
+            "- iptables -I INPUT -p tcp --dport 8080 -j ACCEPT",
+            runcmd,
+        )
+
     def test_nginx_health_aggregator_is_removed(self) -> None:
         cloud_config = _without_comment_lines(_text(_CLOUD_CONFIG))
 
