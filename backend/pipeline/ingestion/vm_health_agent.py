@@ -270,6 +270,13 @@ async def probe_worker(
             status_code=None,
             error=exc.__class__.__name__,
         )
+    except Exception as exc:
+        return WorkerProbeResult(
+            url=url,
+            healthy=False,
+            status_code=None,
+            error=exc.__class__.__name__,
+        )
 
 
 async def probe_workers(

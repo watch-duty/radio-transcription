@@ -229,6 +229,21 @@ class WorkerProbeTests(AioHTTPTestCase):
         self.assertIsNone(client_error.status_code)
         self.assertIsNotNone(client_error.error)
 
+    async def test_unexpected_probe_exception_is_unhealthy_result(self) -> None:
+        class BrokenSession:
+            def get(self, *args: object, **kwargs: object) -> object:
+                raise RuntimeError
+
+        result = await vm_health_agent.probe_worker(
+            BrokenSession(),  # type: ignore[arg-type]
+            "http://127.0.0.1:8081/healthz",
+            timeout_sec=1.0,
+        )
+
+        self.assertFalse(result.healthy)
+        self.assertIsNone(result.status_code)
+        self.assertEqual(result.error, "RuntimeError")
+
 
 class VMHealthStateTests(unittest.TestCase):
     def setUp(self) -> None:
