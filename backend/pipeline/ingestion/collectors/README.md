@@ -80,10 +80,10 @@ regularly, respect cancellation, and keep blocking work out of the event loop.
 Do not rely on VM Health to hide real worker stalls.
 
 VM Health is the VM-level same-image health agent used by the MIG health check.
-It probes the two local Worker Health endpoints by HTTP status and protects the
-VM from immediate autohealing until both workers have been continuously
-unhealthy for 600 seconds. That hysteresis absorbs transient overload; it does
-not make worker-level stalls acceptable.
+It probes all configured local Worker Health endpoints by HTTP status and
+protects the VM from immediate autohealing until every configured worker has
+been continuously unhealthy for 600 seconds. That hysteresis absorbs transient
+overload; it does not make worker-level stalls acceptable.
 
 Recovery acquisition remains primary-first for v1. If primary acquisition keeps
 filling the Lease Admission budget, recovery rows can wait behind continuous

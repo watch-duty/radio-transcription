@@ -94,8 +94,8 @@ class VMHealthSettings:
             )
             raise ValueError(msg)
 
-        if len(self.worker_endpoints) != 2:
-            msg = "worker_endpoints must contain exactly two local worker URLs."
+        if not self.worker_endpoints:
+            msg = "worker_endpoints must contain at least one local worker URL."
             raise ValueError(msg)
 
         for endpoint in self.worker_endpoints:
@@ -105,8 +105,8 @@ class VMHealthSettings:
             urllib.parse.urlparse(endpoint).port
             for endpoint in self.worker_endpoints
         }
-        if len(worker_ports) != 2:
-            msg = "worker_endpoints must reference two distinct local ports."
+        if len(worker_ports) != len(self.worker_endpoints):
+            msg = "worker_endpoints must reference distinct local ports."
             raise ValueError(msg)
         if self.listen_port in worker_ports:
             msg = (
@@ -128,14 +128,14 @@ class VMHealthDecision:
     vm_healthy: bool
     http_status: int
     workers: tuple[WorkerProbeResult, ...]
-    both_unhealthy_since: float | None
-    both_unhealthy_for_sec: float
+    all_workers_unhealthy_since: float | None
+    all_workers_unhealthy_for_sec: float
     hysteresis_sec: float
 
 
 @dataclass
 class VMHealthState:
-    both_unhealthy_since: float | None = None
+    all_workers_unhealthy_since: float | None = None
     worker_results: tuple[WorkerProbeResult, ...] = field(
         default_factory=tuple,
     )
@@ -148,15 +148,15 @@ class VMHealthState:
         hysteresis_sec: float,
     ) -> VMHealthDecision:
         self.worker_results = tuple(results)
-        both_unhealthy = bool(self.worker_results) and all(
+        all_workers_unhealthy = bool(self.worker_results) and all(
             not result.healthy for result in self.worker_results
         )
 
-        if both_unhealthy:
-            if self.both_unhealthy_since is None:
-                self.both_unhealthy_since = now
+        if all_workers_unhealthy:
+            if self.all_workers_unhealthy_since is None:
+                self.all_workers_unhealthy_since = now
         else:
-            self.both_unhealthy_since = None
+            self.all_workers_unhealthy_since = None
 
         return self.current_decision(
             now=now,
@@ -169,21 +169,24 @@ class VMHealthState:
         now: float,
         hysteresis_sec: float,
     ) -> VMHealthDecision:
-        both_unhealthy = bool(self.worker_results) and all(
+        all_workers_unhealthy = bool(self.worker_results) and all(
             not result.healthy for result in self.worker_results
         )
-        if both_unhealthy and self.both_unhealthy_since is not None:
-            elapsed = max(0.0, now - self.both_unhealthy_since)
+        if (
+            all_workers_unhealthy
+            and self.all_workers_unhealthy_since is not None
+        ):
+            elapsed = max(0.0, now - self.all_workers_unhealthy_since)
         else:
             elapsed = 0.0
 
-        vm_healthy = not both_unhealthy or elapsed < hysteresis_sec
+        vm_healthy = not all_workers_unhealthy or elapsed < hysteresis_sec
         return VMHealthDecision(
             vm_healthy=vm_healthy,
             http_status=200 if vm_healthy else 503,
             workers=self.worker_results,
-            both_unhealthy_since=self.both_unhealthy_since,
-            both_unhealthy_for_sec=elapsed,
+            all_workers_unhealthy_since=self.all_workers_unhealthy_since,
+            all_workers_unhealthy_for_sec=elapsed,
             hysteresis_sec=hysteresis_sec,
         )
 
@@ -316,7 +319,9 @@ async def _healthz(request: web.Request) -> web.Response:
         {
             "status": "healthy" if decision.vm_healthy else "unhealthy",
             "workers": [asdict(worker) for worker in decision.workers],
-            "both_unhealthy_for_sec": decision.both_unhealthy_for_sec,
+            "all_workers_unhealthy_for_sec": (
+                decision.all_workers_unhealthy_for_sec
+            ),
             "hysteresis_sec": decision.hysteresis_sec,
         },
         status=decision.http_status,

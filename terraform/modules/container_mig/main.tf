@@ -9,7 +9,16 @@
 # =============================================================================
 
 locals {
-  registry_host = split("/", var.container_image)[0]
+  registry_host  = split("/", var.container_image)[0]
+  worker_indices = range(1, var.worker_count + 1)
+  vm_health_worker_endpoints = join(",", [
+    for worker_index in local.worker_indices :
+    "http://127.0.0.1:${8080 + worker_index}/healthz"
+  ])
+  worker_systemd_after_units = join(" ", [
+    for worker_index in local.worker_indices :
+    "${var.name_prefix}@${worker_index}.service"
+  ])
 
   # Docker --env-file format: KEY=VALUE per line, no quoting needed.
   # Values are taken literally — safe for special chars like $ ' " \
@@ -71,11 +80,15 @@ resource "google_compute_instance_template" "this" {
   metadata = {
     google-logging-enabled = "true"
     user-data = templatefile("${path.module}/cloud_config.yaml.tftpl", {
-      service_name       = var.name_prefix
-      registry_host      = local.registry_host
-      container_image    = var.container_image
-      env_file_content   = local.env_file_content
-      enable_autohealing = var.enable_autohealing
+      service_name               = var.name_prefix
+      registry_host              = local.registry_host
+      container_image            = var.container_image
+      env_file_content           = local.env_file_content
+      enable_autohealing         = var.enable_autohealing
+      worker_count               = var.worker_count
+      worker_indices             = local.worker_indices
+      vm_health_worker_endpoints = local.vm_health_worker_endpoints
+      worker_systemd_after_units = local.worker_systemd_after_units
     })
   }
 

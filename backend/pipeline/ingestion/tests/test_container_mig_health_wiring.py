@@ -144,9 +144,7 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
         )
 
         expected_env = (
-            "VM_HEALTH_WORKER_ENDPOINTS="
-            "http://127.0.0.1:8081/healthz,"
-            "http://127.0.0.1:8082/healthz",
+            "VM_HEALTH_WORKER_ENDPOINTS=${vm_health_worker_endpoints}",
             "VM_HEALTH_PROBE_TIMEOUT_SEC=2.0",
             "VM_HEALTH_PROBE_INTERVAL_SEC=5.0",
             "VM_HEALTH_LISTEN_HOST=0.0.0.0",
@@ -157,6 +155,11 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
             with self.subTest(env_var=env_var):
                 self.assertIn(env_var, health_unit)
 
+        self.assertNotIn(
+            "http://127.0.0.1:8081/healthz,http://127.0.0.1:8082/healthz",
+            health_unit,
+        )
+
     def test_nginx_health_aggregator_is_removed(self) -> None:
         cloud_config = _without_comment_lines(_text(_CLOUD_CONFIG))
 
@@ -164,7 +167,7 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
         self.assertNotIn("mirror.gcr.io/library/nginx", cloud_config)
         self.assertNotIn("nginx", cloud_config.lower())
 
-    def test_worker_topology_and_host_probe_port_are_preserved(self) -> None:
+    def test_worker_topology_is_generated_from_worker_count(self) -> None:
         cloud_config = _text(_CLOUD_CONFIG)
 
         self.assertIn(
@@ -172,12 +175,18 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
             cloud_config,
         )
         self.assertIn(
-            "systemctl enable --now ${service_name}@1.service",
+            "%{ for worker_index in worker_indices",
             cloud_config,
         )
         self.assertIn(
-            "systemctl enable --now ${service_name}@2.service",
+            "systemctl enable --now ${service_name}@${worker_index}.service",
             cloud_config,
+        )
+        self.assertNotIn(
+            "systemctl enable --now ${service_name}@1.service", cloud_config
+        )
+        self.assertNotIn(
+            "systemctl enable --now ${service_name}@2.service", cloud_config
         )
         self.assertIn(
             "systemctl enable --now ${service_name}-health.service",
@@ -187,6 +196,19 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
             "iptables -I INPUT -p tcp --dport 8080 -j ACCEPT",
             cloud_config,
         )
+
+    def test_template_inputs_derive_worker_health_contract_from_worker_count(
+        self,
+    ) -> None:
+        main_tf = _text(_MAIN_TF)
+        variables_tf = _text(_VARIABLES_TF)
+
+        self.assertIn('variable "worker_count"', variables_tf)
+        self.assertIn("worker_indices", main_tf)
+        self.assertIn("range(1, var.worker_count + 1)", main_tf)
+        self.assertIn("vm_health_worker_endpoints", main_tf)
+        self.assertIn("worker_systemd_after_units", main_tf)
+        self.assertIn("worker_count", main_tf)
 
     def test_gcp_health_thresholds_unchanged(self) -> None:
         main_tf = _without_terraform_comments(_text(_MAIN_TF))
@@ -219,6 +241,7 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
         self.assertIn("same-image", variables_tf)
         self.assertIn("port 8080", variables_tf)
         self.assertIn("GCP probe sources", variables_tf)
+        self.assertIn("all configured worker", variables_tf)
 
 
 if __name__ == "__main__":

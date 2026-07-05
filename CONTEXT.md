@@ -213,11 +213,11 @@ worker may report unhealthy even when the VM should not yet be autohealed.
 ### VM Health
 
 The VM-level same-image health agent served on host port 8080. VM Health probes
-the two local worker `/healthz` endpoints by HTTP status code only and does not
-inspect Docker, systemd, SSH, worker process state, or worker response bodies.
-It returns unhealthy for the MIG health check only after both workers are
-continuously unhealthy in the same probe stream for 600 seconds, and resets
-immediately when either worker is healthy.
+all configured local worker `/healthz` endpoints by HTTP status code only and
+does not inspect Docker, systemd, SSH, worker process state, or worker response
+bodies. It returns unhealthy for the MIG health check only after every
+configured worker is continuously unhealthy in the same probe stream for 600
+seconds, and resets immediately when any worker is healthy.
 
 VM Health owns VM autohealing hysteresis. Worker Health owns worker liveness
 truth. Keeping those signals separate prevents short worker overload from

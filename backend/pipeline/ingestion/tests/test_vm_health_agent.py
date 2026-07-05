@@ -56,7 +56,9 @@ class VMHealthSettingsTests(unittest.TestCase):
     def test_env_overrides_are_vm_health_specific(self) -> None:
         env = {
             "VM_HEALTH_WORKER_ENDPOINTS": (
-                "http://127.0.0.1:9001/healthz,http://localhost:9002/healthz"
+                "http://127.0.0.1:9001/healthz,"
+                "http://localhost:9002/healthz,"
+                "http://127.0.0.1:9003/healthz"
             ),
             "VM_HEALTH_PROBE_TIMEOUT_SEC": "1.25",
             "VM_HEALTH_PROBE_INTERVAL_SEC": "7.5",
@@ -72,6 +74,7 @@ class VMHealthSettingsTests(unittest.TestCase):
             (
                 "http://127.0.0.1:9001/healthz",
                 "http://localhost:9002/healthz",
+                "http://127.0.0.1:9003/healthz",
             ),
         )
         self.assertEqual(settings.probe_timeout_sec, 1.25)
@@ -97,15 +100,37 @@ class VMHealthSettingsTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         vm_health_agent.VMHealthSettings()
 
-    def test_rejects_non_loopback_or_non_http_worker_endpoints(self) -> None:
+    def test_accepts_one_or_more_distinct_local_worker_endpoints(self) -> None:
         cases = (
-            "",
-            "http://127.0.0.1:8081/healthz",
+            (
+                "http://127.0.0.1:8081/healthz",
+                ("http://127.0.0.1:8081/healthz",),
+            ),
             (
                 "http://127.0.0.1:8081/healthz,"
                 "http://127.0.0.1:8082/healthz,"
-                "http://127.0.0.1:8083/healthz"
+                "http://127.0.0.1:8083/healthz",
+                (
+                    "http://127.0.0.1:8081/healthz",
+                    "http://127.0.0.1:8082/healthz",
+                    "http://127.0.0.1:8083/healthz",
+                ),
             ),
+        )
+        for value, expected in cases:
+            with self.subTest(value=value):
+                with mock.patch.dict(
+                    os.environ,
+                    {"VM_HEALTH_WORKER_ENDPOINTS": value},
+                    clear=True,
+                ):
+                    settings = vm_health_agent.VMHealthSettings()
+
+                self.assertEqual(settings.worker_endpoints, expected)
+
+    def test_rejects_invalid_worker_endpoints(self) -> None:
+        cases = (
+            "",
             ("http://127.0.0.1:8081/healthz,http://127.0.0.1:8081/healthz"),
             ("http://127.0.0.1:8081/healthz,http://localhost:8081/healthz"),
             "http://127.0.0.1:8080/healthz,http://127.0.0.1:8082/healthz",
@@ -218,8 +243,10 @@ class VMHealthStateTests(unittest.TestCase):
             status_code=503,
         )
 
-    def test_new_state_has_no_persisted_both_down_timer(self) -> None:
-        self.assertIsNone(vm_health_agent.VMHealthState().both_unhealthy_since)
+    def test_new_state_has_no_persisted_all_down_timer(self) -> None:
+        self.assertIsNone(
+            vm_health_agent.VMHealthState().all_workers_unhealthy_since
+        )
 
     def test_one_unhealthy_worker_keeps_vm_healthy_and_resets_timer(
         self,
@@ -231,25 +258,44 @@ class VMHealthStateTests(unittest.TestCase):
             hysteresis_sec=600.0,
         )
 
-        self.assertIsNone(state.both_unhealthy_since)
+        self.assertIsNone(state.all_workers_unhealthy_since)
         self.assertTrue(decision.vm_healthy)
         self.assertEqual(decision.http_status, 200)
-        self.assertEqual(decision.both_unhealthy_for_sec, 0.0)
+        self.assertEqual(decision.all_workers_unhealthy_for_sec, 0.0)
 
-    def test_both_unhealthy_grace_and_600_second_expiry(self) -> None:
+    def test_one_worker_unhealthy_grace_and_600_second_expiry(self) -> None:
         state = vm_health_agent.VMHealthState()
         grace_start = state.update(
-            (self.unhealthy, self.unhealthy),
+            (self.unhealthy,),
+            now=100.0,
+            hysteresis_sec=600.0,
+        )
+        expired = state.update(
+            (self.unhealthy,),
+            now=700.0,
+            hysteresis_sec=600.0,
+        )
+
+        self.assertTrue(grace_start.vm_healthy)
+        self.assertEqual(grace_start.http_status, 200)
+        self.assertFalse(expired.vm_healthy)
+        self.assertEqual(expired.http_status, 503)
+        self.assertEqual(expired.all_workers_unhealthy_for_sec, 600.0)
+
+    def test_all_workers_unhealthy_grace_and_600_second_expiry(self) -> None:
+        state = vm_health_agent.VMHealthState()
+        grace_start = state.update(
+            (self.unhealthy, self.unhealthy, self.unhealthy),
             now=100.0,
             hysteresis_sec=600.0,
         )
         almost_expired = state.update(
-            (self.unhealthy, self.unhealthy),
+            (self.unhealthy, self.unhealthy, self.unhealthy),
             now=699.9,
             hysteresis_sec=600.0,
         )
         expired = state.update(
-            (self.unhealthy, self.unhealthy),
+            (self.unhealthy, self.unhealthy, self.unhealthy),
             now=700.0,
             hysteresis_sec=600.0,
         )
@@ -259,38 +305,38 @@ class VMHealthStateTests(unittest.TestCase):
         self.assertTrue(almost_expired.vm_healthy)
         self.assertEqual(almost_expired.http_status, 200)
         self.assertAlmostEqual(
-            almost_expired.both_unhealthy_for_sec,
+            almost_expired.all_workers_unhealthy_for_sec,
             599.9,
         )
         self.assertFalse(expired.vm_healthy)
         self.assertEqual(expired.http_status, 503)
-        self.assertEqual(expired.both_unhealthy_for_sec, 600.0)
+        self.assertEqual(expired.all_workers_unhealthy_for_sec, 600.0)
 
-    def test_recovered_worker_resets_continuous_unhealthy_window(
+    def test_any_recovered_worker_resets_continuous_unhealthy_window(
         self,
     ) -> None:
         state = vm_health_agent.VMHealthState()
         state.update(
-            (self.unhealthy, self.unhealthy),
+            (self.unhealthy, self.unhealthy, self.unhealthy),
             now=100.0,
             hysteresis_sec=600.0,
         )
         recovered = state.update(
-            (self.unhealthy, self.healthy),
+            (self.unhealthy, self.healthy, self.unhealthy),
             now=699.9,
             hysteresis_sec=600.0,
         )
         restarted = state.update(
-            (self.unhealthy, self.unhealthy),
+            (self.unhealthy, self.unhealthy, self.unhealthy),
             now=700.0,
             hysteresis_sec=600.0,
         )
 
-        self.assertIsNone(recovered.both_unhealthy_since)
-        self.assertEqual(recovered.both_unhealthy_for_sec, 0.0)
+        self.assertIsNone(recovered.all_workers_unhealthy_since)
+        self.assertEqual(recovered.all_workers_unhealthy_for_sec, 0.0)
         self.assertTrue(restarted.vm_healthy)
-        self.assertEqual(restarted.both_unhealthy_for_sec, 0.0)
-        self.assertEqual(restarted.both_unhealthy_since, 700.0)
+        self.assertEqual(restarted.all_workers_unhealthy_for_sec, 0.0)
+        self.assertEqual(restarted.all_workers_unhealthy_since, 700.0)
 
 
 class VMHealthHandlerTests(AioHTTPTestCase):
@@ -327,14 +373,14 @@ class VMHealthHandlerTests(AioHTTPTestCase):
 
         self.assertEqual(status, 200)
         self.assertEqual(body["status"], "healthy")
-        self.assertEqual(body["both_unhealthy_for_sec"], 0.0)
+        self.assertEqual(body["all_workers_unhealthy_for_sec"], 0.0)
         self.assertEqual(body["hysteresis_sec"], 600.0)
         self.assertEqual(
             set(body.keys()),
             {
                 "status",
                 "workers",
-                "both_unhealthy_for_sec",
+                "all_workers_unhealthy_for_sec",
                 "hysteresis_sec",
             },
         )

@@ -11,7 +11,7 @@ ${env_file_content}
     # Expand ephemeral TCP source-port range so a single VM can sustain
     # tens of thousands of outbound connections to upstream Icecast/HTTP
     # sources without exhausting the default 32768-60999 range. Required
-    # for k=2 worker density (each worker may hold hundreds of long-lived
+    # for multi-worker density (each worker may hold hundreds of long-lived
     # connections). Applied via `sysctl --system` in runcmd.
     net.ipv4.ip_local_port_range = 10000 65535
 
@@ -31,12 +31,12 @@ ${env_file_content}
   content: |
     [Unit]
     Description=${service_name} VM Health agent (Python same-image hysteresis)
-    # Start VM Health after BOTH worker units have been *attempted* (After=,
-    # not Requires=). If a worker is slow or never comes up, the agent still
-    # starts and reports worker HTTP status-code state. It returns 200 while
-    # either worker is healthy, and also during the 600s continuous both-down
-    # grace window before reporting VM-unhealthy to the MIG.
-    After=docker.service network-online.target ${service_name}@1.service ${service_name}@2.service
+    # Start VM Health after all configured worker units have been *attempted*
+    # (After=, not Requires=). If a worker is slow or never comes up, the
+    # agent still starts and reports worker HTTP status-code state. It returns
+    # 200 while any worker is healthy, and also during the 600s continuous
+    # all-workers-down grace window before reporting VM-unhealthy to the MIG.
+    After=docker.service network-online.target ${worker_systemd_after_units}
     Requires=docker.service network-online.target
 
     [Service]
@@ -47,12 +47,12 @@ ${env_file_content}
     ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries ${registry_host}
     ExecStartPre=-/usr/bin/docker rm -f ${service_name}-health
     ExecStartPre=/usr/bin/docker pull ${container_image}
-    # --network host lets the VM Health container reach 127.0.0.1:8081/8082
-    # on the HOST loopback. Pass only explicit non-secret VM_HEALTH_* values;
-    # do not mount or pass the broad worker env file into this container.
+    # --network host lets the VM Health container reach worker health ports on
+    # the HOST loopback. Pass only explicit non-secret VM_HEALTH_* values; do
+    # not mount or pass the broad worker env file into this container.
     ExecStart=/usr/bin/docker run --rm --name ${service_name}-health \
         --network host \
-        -e VM_HEALTH_WORKER_ENDPOINTS=http://127.0.0.1:8081/healthz,http://127.0.0.1:8082/healthz \
+        -e VM_HEALTH_WORKER_ENDPOINTS=${vm_health_worker_endpoints} \
         -e VM_HEALTH_PROBE_TIMEOUT_SEC=2.0 \
         -e VM_HEALTH_PROBE_INTERVAL_SEC=5.0 \
         -e VM_HEALTH_LISTEN_HOST=0.0.0.0 \
@@ -69,8 +69,8 @@ ${env_file_content}
   permissions: "0644"
   content: |
     [Unit]
-    # %i is the systemd instance specifier — expanded to "1" or "2" when
-    # the unit is enabled as ${service_name}@1.service / @2.service.
+    # %i is the systemd instance specifier — expanded to the worker index
+    # when each configured ${service_name}@N.service unit is enabled below.
     Description=${service_name} worker container (instance %i)
     After=docker.service network-online.target
     Requires=docker.service network-online.target
@@ -144,7 +144,7 @@ runcmd:
 # icmp, established, tcp/22 for SSH). The pre-Phase-2 single-worker setup
 # bypassed INPUT for port 8080 because Docker's `-p 8080:8080` mapping
 # routes inbound traffic via PREROUTING + FORWARD (DOCKER chain) — never
-# touching INPUT. The new k=2 setup runs the VM Health agent with
+# touching INPUT. The multi-worker setup runs the VM Health agent with
 # `--network host`, which binds host port 8080 directly and traverses
 # INPUT. Without this rule, every Google autohealing probe to :8080 is
 # silently dropped by INPUT-DROP, the MIG marks the VM TIMEOUT after the
@@ -154,8 +154,9 @@ runcmd:
 # block at the host iptables layer).
 - iptables -I INPUT -p tcp --dport 8080 -j ACCEPT
 %{ endif }
-- systemctl enable --now ${service_name}@1.service
-- systemctl enable --now ${service_name}@2.service
+%{ for worker_index in worker_indices }
+- systemctl enable --now ${service_name}@${worker_index}.service
+%{ endfor }
 %{ if enable_autohealing }
 - systemctl enable --now ${service_name}-health.service
 %{ endif }

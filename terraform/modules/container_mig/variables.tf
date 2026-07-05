@@ -65,6 +65,21 @@ variable "target_size" {
   }
 }
 
+variable "worker_count" {
+  description = "Number of worker containers to start on each VM. Worker units are indexed from 1, published on host-loopback ports 8081..(8080 + worker_count), and probed by VM Health when autohealing is enabled."
+  type        = number
+  default     = 2
+
+  validation {
+    condition = (
+      var.worker_count >= 1
+      && var.worker_count == floor(var.worker_count)
+      && var.worker_count <= 57455
+    )
+    error_message = "worker_count must be an integer from 1 to 57455 so worker health ports stay in the valid TCP port range."
+  }
+}
+
 variable "boot_disk_size_gb" {
   description = "Boot disk size in GB."
   type        = number
@@ -99,7 +114,7 @@ variable "distribution_policy_target_shape" {
 }
 
 variable "enable_autohealing" {
-  description = "If true, attach a google_compute_health_check that probes /healthz on port 8080, start a same-image VM Health agent on host port 8080, and wire the check into the MIG's auto_healing_policies. The agent probes the two local worker /healthz endpoints and applies 600s continuous both-worker-unhealthy hysteresis before returning VM-unhealthy. VMs that fail 3 consecutive GCP probes after the initial_delay_sec window are replaced. The consumer is responsible for adding a firewall rule that allows GCP probe sources (130.211.0.0/22, 35.191.0.0/16) to reach port 8080 on the instances. Without the firewall, every VM is flagged unhealthy and the autohealer recreates instances in a loop."
+  description = "If true, attach a google_compute_health_check that probes /healthz on port 8080, start a same-image VM Health agent on host port 8080, and wire the check into the MIG's auto_healing_policies. The agent probes all configured worker /healthz endpoints and applies 600s continuous all-workers-unhealthy hysteresis before returning VM-unhealthy. VMs that fail 3 consecutive GCP probes after the initial_delay_sec window are replaced. The consumer is responsible for adding a firewall rule that allows GCP probe sources (130.211.0.0/22, 35.191.0.0/16) to reach port 8080 on the instances. Without the firewall, every VM is flagged unhealthy and the autohealer recreates instances in a loop."
   type        = bool
   default     = false
 }
