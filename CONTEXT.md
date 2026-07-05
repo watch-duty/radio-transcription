@@ -198,10 +198,9 @@ delayed. That primary-first residual risk is intentional for v1 and remains a
 future tuning concern.
 
 Each lease cycle emits raw structured `lease_admission_cycle` telemetry so
-rollout and incident review can see active feeds, slack, admission budget,
-primary acquisitions, recovery acquisitions, memory pause state, worker
-identity, and concise error state without inferring a hard-coded admission
-state enum.
+incident review can see active feeds, slack, admission budget, primary
+acquisitions, recovery acquisitions, memory pause state, worker identity, and
+concise error state without inferring a hard-coded admission state enum.
 
 ### Worker Health
 
@@ -224,15 +223,6 @@ VM Health owns VM autohealing hysteresis. Worker Health owns worker liveness
 truth. Keeping those signals separate prevents short worker overload from
 becoming immediate VM replacement while preserving a meaningful worker stall
 signal.
-
-### Ingestion Rollout Gate
-
-The automatic deployment-loop gate that runs after each ingestion MIG VM
-recreate reaches `currentAction=NONE` and before the next VM can be recreated.
-The gate scopes Cloud Logging queries to the fresh numeric GCE `instance_id`
-and recreate-start timestamp, fails fast on any `severity>=CRITICAL` entry for
-that VM, and waits for latest `lease_admission_cycle` telemetry to show worker
-settlement. It is halt-only: failure exits nonzero and does not auto-rollback.
 
 ### Captured Chunk
 

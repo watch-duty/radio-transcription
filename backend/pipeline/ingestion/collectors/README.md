@@ -90,11 +90,6 @@ filling the Lease Admission budget, recovery rows can wait behind continuous
 primary backlog. Treat that as an explicit residual risk and future tuning area,
 not as something an individual collector should work around locally.
 
-The production rollout gate is automatic in the private deployment workflow. It
-uses fresh VM identity, `severity>=CRITICAL` logs, and `lease_admission_cycle`
-worker-settle telemetry to halt a bad ingestion MIG rollout before the next VM
-is recreated. Collector changes should keep those signals meaningful.
-
 ## Status Reason Policy
 
 `feeds.status` remains lifecycle and scheduling state. `feeds.status_reason`
