@@ -1483,7 +1483,7 @@ class TestBuildAuthAndUrl(unittest.TestCase):
         )
 
     def test_basic_auth_fallback_swaps_partner_url(self) -> None:
-        """When BROADCASTIFY_XAN_TOKEN is not set and url_base is partner.broadcastify.com, it swaps the URL to api.bcfy.io."""
+        """When BROADCASTIFY_XAN_TOKEN is not set and url_base is partner.broadcastify.com, it swaps the URL to audio.broadcastify.com."""
         os.environ.pop("BROADCASTIFY_XAN_TOKEN", None)
         os.environ["BROADCASTIFY_USERNAME"] = "test-user"
         os.environ["BROADCASTIFY_PASSWORD"] = "test-password"
@@ -1499,7 +1499,7 @@ class TestBuildAuthAndUrl(unittest.TestCase):
         )
         self.assertEqual(
             url,
-            "https://api.bcfy.io/12345.mp3?burst=0",
+            "https://audio.broadcastify.com/12345.mp3?burst=0",
         )
 
     def test_basic_auth_missing_credentials(self) -> None:
