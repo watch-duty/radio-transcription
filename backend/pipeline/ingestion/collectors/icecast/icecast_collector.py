@@ -486,6 +486,7 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                                 expected_timeline_time
                                 + datetime.timedelta(seconds=duration)
                             )
+                            # Positive = receipt late (stall/jitter), negative = receipt early (clock skew)
                             drift = (
                                 receipt_time - expected_end_time
                             ).total_seconds()

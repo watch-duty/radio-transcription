@@ -1495,6 +1495,60 @@ class TestIcecastTimestampAlignment(unittest.IsolatedAsyncioTestCase):
             3.5,
         )
 
+    def test_parse_flac_duration_from_bytes_invalid_header(self) -> None:
+        """Asserts that parse_flac_duration_from_bytes returns None for invalid/truncated header."""
+        duration = icecast_collector.parse_flac_duration_from_bytes(b"not_flac")
+        self.assertIsNone(duration)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector.parse_flac_duration_from_bytes",
+        return_value=None,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._path_mtime",
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_fallback_to_chunk_duration_when_flac_parsing_fails(
+        self,
+        mock_create_ffmpeg: AsyncMock,
+        mock_path_mtime: MagicMock,
+        mock_parse_duration: MagicMock,
+    ) -> None:
+        """Confirm that if flac duration parsing fails (returns None), the system falls back to _CHUNK_DURATION."""
+        t0 = datetime.datetime(2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC)
+        mock_path_mtime.side_effect = _mock_path_mtime(t0.timestamp())
+
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=123,
+            segments=[b"SOME_SEGMENT_DATA"],
+            wait_delay=0.0,
+            wait_result=0,
+        )
+
+        feed = _make_feed("test", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+        results = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(results), 1)
+        mock_parse_duration.assert_called_once_with(b"SOME_SEGMENT_DATA")
+
+        # Verify that start time anchors exactly CHUNK_DURATION_SECONDS (15.0) before receipt time (t0)
+        self.assertEqual(
+            results[0].chunk_start_time,
+            t0 - datetime.timedelta(seconds=CHUNK_DURATION_SECONDS),
+        )
+        self.assertEqual(results[0].chunk_end_time, t0)
+
 
 if __name__ == "__main__":
     unittest.main()
