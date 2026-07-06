@@ -231,6 +231,75 @@ class TestAudioUtils(unittest.TestCase):
         self.assertGreaterEqual(duration_ms, 7200)
         self.assertLessEqual(duration_ms, 7800)
 
+    def test_parse_flac_duration_success(self) -> None:
+        """Test parsing duration from valid FLAC header bytes."""
+        header = bytearray(42)
+        header[0:4] = b"fLaC"
+        header[4] = 0  # STREAMINFO block
+        # Sample rate = 16000 (0x03E80)
+        header[18] = 0x03
+        header[19] = 0xE8
+        header[20] = 0x00
+        # Total samples = 32000 (0x000007D00)
+        header[21] = 0x00
+        header[22] = 0x00
+        header[23] = 0x00
+        header[24] = 0x7D
+        header[25] = 0x00
+
+        duration = audio_helper.parse_flac_duration_from_bytes(bytes(header))
+        self.assertEqual(duration, 2.0)
+
+    def test_parse_flac_duration_too_short(self) -> None:
+        """Test duration parsing on bytes that are too short."""
+        self.assertIsNone(audio_helper.parse_flac_duration_from_bytes(b"fLaC"))
+
+    def test_parse_flac_duration_invalid_magic(self) -> None:
+        """Test duration parsing on bytes without the FLAC magic header."""
+        header = bytearray(42)
+        header[0:4] = b"MIDI"
+        self.assertIsNone(
+            audio_helper.parse_flac_duration_from_bytes(bytes(header))
+        )
+
+    def test_parse_flac_duration_invalid_block_type(self) -> None:
+        """Test duration parsing where the first block is not STREAMINFO."""
+        header = bytearray(42)
+        header[0:4] = b"fLaC"
+        header[4] = 1  # PADDING block, not STREAMINFO
+        self.assertIsNone(
+            audio_helper.parse_flac_duration_from_bytes(bytes(header))
+        )
+
+    def test_parse_flac_duration_zero_sample_rate(self) -> None:
+        """Test duration parsing where sample rate is zero."""
+        header = bytearray(42)
+        header[0:4] = b"fLaC"
+        header[4] = 0
+        header[18:21] = b"\x00\x00\x00"
+        header[21:26] = b"\x00\x00\x00\x7d\x00"
+        self.assertIsNone(
+            audio_helper.parse_flac_duration_from_bytes(bytes(header))
+        )
+
+    @patch("backend.pipeline.common.audio.logger")
+    def test_parse_flac_duration_exception_handling(
+        self, mock_logger: MagicMock
+    ) -> None:
+        """Test that exception is caught and logged, returning None."""
+
+        # Pass an object that raises when indexed
+        class BadBytes:
+            def __len__(self) -> int:
+                return 100
+
+            def __getitem__(self, item: object) -> int:
+                raise ValueError
+
+        duration = audio_helper.parse_flac_duration_from_bytes(BadBytes())  # type: ignore
+        self.assertIsNone(duration)
+        mock_logger.exception.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

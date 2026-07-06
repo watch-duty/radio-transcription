@@ -48,9 +48,11 @@ def _make_feed(name: str, source_feed_id: str | None) -> LeasedFeed:
 
 def _mock_path_mtime(
     t0_epoch: float,
-    step: float = 15.0,
+    step: float = CHUNK_DURATION_SECONDS,
     overrides: dict[int, float] | None = None,
 ):
+    """Return a callable that simulates file modification times for test chunks."""
+
     def _impl(path: Path) -> float | None:
         name = path.name
         if "chunk_" in name:
@@ -1026,9 +1028,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
         )
         t0 = fixed_anchor
-        mock_path_mtime.side_effect = _mock_path_mtime(
-            t0.timestamp(), step=15.0
-        )
+        mock_path_mtime.side_effect = _mock_path_mtime(t0.timestamp())
 
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=3333,

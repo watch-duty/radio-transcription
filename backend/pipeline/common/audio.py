@@ -223,6 +223,40 @@ def get_audio_duration(
     return duration_ms
 
 
+def parse_flac_duration_from_bytes(audio_bytes: bytes) -> float | None:
+    """Parse duration in seconds from STREAMINFO block of FLAC bytes.
+
+    This function is deliberately non-raising; it catches any exceptions during
+    parsing and returns None to handle malformed stream packets gracefully.
+    """
+    try:
+        if len(audio_bytes) < 42:
+            return None
+        if audio_bytes[0:4] != b"fLaC":
+            return None
+        block_type = audio_bytes[4] & 0x7F
+        if block_type != 0:
+            return None
+        sample_rate = (
+            (audio_bytes[18] << 12)
+            | (audio_bytes[19] << 4)
+            | ((audio_bytes[20] & 0xF0) >> 4)
+        )
+        total_samples = (
+            ((audio_bytes[21] & 0x0F) << 32)
+            | (audio_bytes[22] << 24)
+            | (audio_bytes[23] << 16)
+            | (audio_bytes[24] << 8)
+            | audio_bytes[25]
+        )
+        if sample_rate == 0:
+            return None
+        return total_samples / sample_rate
+    except Exception as e:
+        logger.exception("Failed to parse FLAC duration from bytes: %s", e)
+        return None
+
+
 def _input_format_args(input_format: AudioInputFormat | None) -> list[str]:
     if input_format is None:
         return []

@@ -18,6 +18,7 @@ from urllib.parse import urlencode, urljoin
 
 import aiohttp
 
+from backend.pipeline.common.audio import parse_flac_duration_from_bytes
 from backend.pipeline.common.constants import (
     AUDIO_FORMAT,
     CHUNK_DURATION_SECONDS,
@@ -63,6 +64,7 @@ STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
 _STREAM_PROBE_TIMEOUT_SEC = 10
 _MAX_ALLOWED_LAG_SECONDS = 60.0
+# Resync if wall-clock receipt time diverges from expected by more than this
 _MAX_DRIFT_THRESHOLD_SECONDS = 2.0
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
 
@@ -107,39 +109,6 @@ def _build_auth_header() -> str:
 
 def _now_utc() -> datetime.datetime:
     return datetime.datetime.now(tz=datetime.UTC)
-
-
-def _parse_flac_duration_from_bytes(audio_bytes: bytes) -> float | None:
-    """Parse duration in seconds from STREAMINFO block of FLAC bytes."""
-    try:
-        if len(audio_bytes) < 42:
-            return None
-        if audio_bytes[0:4] != b"fLaC":
-            return None
-        block_type = audio_bytes[4] & 0x7F
-        if block_type != 0:
-            return None
-        sample_rate = (
-            (audio_bytes[18] << 12)
-            | (audio_bytes[19] << 4)
-            | ((audio_bytes[20] & 0xF0) >> 4)
-        )
-        total_samples = (
-            ((audio_bytes[21] & 0x0F) << 32)
-            | (audio_bytes[22] << 24)
-            | (audio_bytes[23] << 16)
-            | (audio_bytes[24] << 8)
-            | audio_bytes[25]
-        )
-        if sample_rate == 0:
-            return None
-        return total_samples / sample_rate
-    except Exception:
-        logger.warning(
-            "Failed to parse FLAC duration from bytes",
-            exc_info=True,
-        )
-        return None
 
 
 def _classify_stream_http_status(
@@ -490,7 +459,7 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                     )
                     if segment_bytes:
                         # Parse actual duration of this segment
-                        parsed_duration = _parse_flac_duration_from_bytes(
+                        parsed_duration = parse_flac_duration_from_bytes(
                             segment_bytes
                         )
                         duration = (
