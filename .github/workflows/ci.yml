@@ -97,6 +97,13 @@ jobs:
         run: uv sync
       - name: Generate Protobuf Python files
         run: mise run generate:protos
+      - name: Verify generated schemas are committed
+        run: |
+          if [[ -n $(git status --porcelain backend/pipeline/schema_types/) ]]; then
+            echo "Error: Generated Protobuf files are out of sync. Run 'mise run generate:protos' and commit the result."
+            git status --porcelain backend/pipeline/schema_types/
+            exit 1
+          fi
       - name: Validate protobuf schemas
         run: mise run lint:schemas
       - name: Run Python code quality checks
