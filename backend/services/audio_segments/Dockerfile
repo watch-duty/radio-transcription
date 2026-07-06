@@ -19,7 +19,9 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/services/*/pyproject.toml ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --package audio-segments-service --group build
+    uv sync --frozen --no-dev --package audio-segments-service && \
+    uv export --group build --locked -o build-requirements.txt && \
+    uv pip install -r build-requirements.txt
 
 COPY protos/ ./protos
 
