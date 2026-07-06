@@ -21,7 +21,7 @@ COPY --from=gcr.io/dataflow-templates-base/python313-template-launcher-base:late
 WORKDIR /app
 
 # Copy lockfiles and manifests
-COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml ./
+COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/services/*/pyproject.toml ./
 
 # Set environment variables for uv to use system python
 ENV UV_PROJECT_ENVIRONMENT="/usr/local/"
