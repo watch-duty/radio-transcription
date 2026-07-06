@@ -53,8 +53,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Audio processing constants
-SAMPLE_FORMAT = "s16"  # 16-bit signed integer
 
 READ_TIMEOUT_SEC = 30  # Max seconds without a finalized segment before timeout
 POLL_INTERVAL_SEC = 0.25  # Polling interval for segment file checks
