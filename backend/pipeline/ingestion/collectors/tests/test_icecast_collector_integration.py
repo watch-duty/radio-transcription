@@ -211,7 +211,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         ) -> AsyncMock:
             segment_dir = Path(segment_pattern).parent
             for index, segment in enumerate(segments):
-                (segment_dir / f"chunk_{index:06d}.flac").write_bytes(segment)
+                (segment_dir / f"chunk_{index:06d}.wav").write_bytes(segment)
 
             mock_proc = AsyncMock()
             mock_proc.pid = 12345

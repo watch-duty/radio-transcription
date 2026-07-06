@@ -19,7 +19,6 @@ from urllib.parse import urlencode, urljoin
 import aiohttp
 
 from backend.pipeline.common.constants import (
-    AUDIO_FORMAT,
     CHUNK_DURATION_SECONDS,
     FLAC_COMPRESSION_LEVEL,
     NUM_AUDIO_CHANNELS,
@@ -94,8 +93,20 @@ class _StreamProbeResult:
     failure: FeedFailure | None = None
 
 
-def _build_auth_header() -> str:
-    """Build Basic Auth header from env vars, raising if missing."""
+def _build_auth_and_url(url_base: str, source_feed_id: str) -> tuple[str, str]:
+    """Build the auth header and stream URL, supporting both XAN token and Basic Auth."""
+    xan_token = os.getenv("BROADCASTIFY_XAN_TOKEN")
+    normalized_url_base = url_base if url_base.endswith("/") else f"{url_base}/"
+    params: dict[str, int | str] = {"burst": 0}
+
+    if xan_token:
+        params["xan"] = xan_token
+        url = urljoin(
+            normalized_url_base,
+            f"{source_feed_id.strip()}.mp3?{urlencode(params)}",
+        )
+        return "", url
+
     user = os.getenv("BROADCASTIFY_USERNAME")
     password = os.getenv("BROADCASTIFY_PASSWORD")
     if not user or not password:
@@ -105,7 +116,12 @@ def _build_auth_header() -> str:
         )
     credentials = f"{user}:{password}"
     encoded = base64.b64encode(credentials.encode()).decode()
-    return f"Authorization: Basic {encoded}\r\n"
+    auth_header = f"Authorization: Basic {encoded}\r\n"
+    url = urljoin(
+        normalized_url_base,
+        f"{source_feed_id.strip()}.mp3?{urlencode(params)}",
+    )
+    return auth_header, url
 
 
 def _now_utc() -> datetime.datetime:
@@ -274,8 +290,8 @@ async def _drain_stderr(
         logger.warning("stderr drain failed", exc_info=True)
 
 
-def _segment_path(directory: Path, index: int) -> Path:
-    return directory / f"chunk_{index:06d}.{AUDIO_FORMAT}"
+def _segment_path(directory: Path, index: int, ext: str = "wav") -> Path:
+    return directory / f"chunk_{index:06d}.{ext}"
 
 
 def _path_size(path: Path) -> int | None:
@@ -307,23 +323,12 @@ async def _cleanup_subprocess(process: asyncio.subprocess.Process) -> None:
         await process.wait()
 
 
-async def _fix_flac_header(file_path: Path) -> bool:
-    """Re-encodes a FLAC segment in-place to write a valid STREAMINFO header.
+async def _transcode_wav_to_flac(wav_path: Path, flac_path: Path) -> bool:
+    """Transcodes a WAV segment to FLAC.
 
-    This is a critical performance and correctness fix: ffmpeg's segment muxer
-    writes sequential FLAC files without seek tables and with an unknown number of frames
-    in the header. When downstream services try to read these files, soundfile/libsndfile
-    attempts to allocate an infinite array (2^63 - 1 frames) and crashes or thrashes.
-    Re-encoding the segment in-place takes ~10ms but writes a perfect, standard FLAC header.
-
-    Returns:
-        True if *file_path* now has a repaired header, False if the repair
-        timed out, exited non-zero, or raised — callers must not read the
-        original file in that case, since it may still carry the malformed
-        header that motivated this fix.
-
+    Writes standard StreamInfo metadata and headers. This runs FLAC encoding
+    exactly once per finalized segment.
     """
-    temp_path = file_path.with_name(f"{file_path.name}.fixed.flac")
     process = None
     success = False
     try:
@@ -332,39 +337,39 @@ async def _fix_flac_header(file_path: Path) -> bool:
             "-y",
             "-nostdin",
             "-i",
-            str(file_path),
+            str(wav_path),
             "-acodec",
             "flac",
-            str(temp_path),
+            "-compression_level",
+            FLAC_COMPRESSION_LEVEL,
+            str(flac_path),
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
         await asyncio.wait_for(process.wait(), timeout=_FIX_HEADER_TIMEOUT_SEC)
         if process.returncode == 0:
-            await asyncio.to_thread(temp_path.replace, file_path)
             success = True
         else:
             logger.error(
-                "ffmpeg header fix failed for %s with exit code %s",
-                file_path,
+                "ffmpeg WAV to FLAC transcode failed for %s with exit code %s",
+                wav_path,
                 process.returncode,
             )
     except TimeoutError:
         logger.warning(
-            "ffmpeg header fix timed out for %s after %.1fs",
-            file_path,
+            "ffmpeg WAV to FLAC transcode timed out for %s after %.1fs",
+            wav_path,
             _FIX_HEADER_TIMEOUT_SEC,
         )
     except Exception as e:
         logger.exception(
-            "Exception fixing FLAC header for %s: %s", file_path, e
+            "Exception transcoding WAV to FLAC for %s: %s", wav_path, e
         )
     finally:
         if process is not None:
             task = asyncio.create_task(_cleanup_subprocess(process))
             _background_tasks.add(task)
             task.add_done_callback(_background_tasks.discard)
-        await asyncio.to_thread(temp_path.unlink, missing_ok=True)
     return success
 
 
@@ -411,19 +416,14 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
         )
         raise missing_source_feed_id_failure()
 
-    auth_header = _build_auth_header()
-    normalized_url_base = url_base if url_base.endswith("/") else f"{url_base}/"
-    # Disable burst-on-connect behavior to prevent sputtering during initial ffmpeg streaming.
-    # Note: Some Icecast servers may not support this parameter.
-    params = urlencode({"burst": 0})
-    url = urljoin(normalized_url_base, f"{source_feed_id.strip()}.mp3?{params}")
+    auth_header, url = _build_auth_and_url(url_base, source_feed_id)
 
     with tempfile.TemporaryDirectory(prefix="icecast_segments_") as tmp_dir:
         segment_dir = Path(tmp_dir)
-        segment_pattern = str(segment_dir / f"chunk_%06d.{AUDIO_FORMAT}")
+        segment_pattern_wav = str(segment_dir / "chunk_%06d.wav")
 
         process = await _create_ffmpeg_process(
-            url, segment_pattern, auth_header
+            url, segment_pattern_wav, auth_header
         )
         if (
             process.stderr is None
@@ -463,13 +463,17 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                     )
                     return
 
-                current_segment = _segment_path(segment_dir, next_index)
-                next_segment = _segment_path(segment_dir, next_index + 1)
+                current_segment_wav = _segment_path(
+                    segment_dir, next_index, "wav"
+                )
+                next_segment_wav = _segment_path(
+                    segment_dir, next_index + 1, "wav"
+                )
                 process_done = wait_task.done()
 
                 # Run file checks in threadpool to prevent event loop stalls on disk latency
-                current_exists = await asyncio.to_thread(current_segment.exists)
-                next_exists = await asyncio.to_thread(next_segment.exists)
+                current_exists = await asyncio.to_thread(current_segment_wav.exists)
+                next_exists = await asyncio.to_thread(next_segment_wav.exists)
 
                 # Read a segment only once we know ffmpeg finished writing it.
                 # A segment is considered finalized when either:
@@ -479,25 +483,41 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                     # SLO: receipt_time stamp — Icecast segment finalized, bytes available
                     receipt_time = _now_utc()
 
-                    # Fix the FLAC header in-place so downstream decoders don't crash
-                    header_fixed = await _fix_flac_header(current_segment)
-                    if not header_fixed:
+                    current_segment_flac = _segment_path(
+                        segment_dir, next_index, "flac"
+                    )
+                    # Transcode the WAV segment to FLAC in one step to build
+                    # correct headers
+                    transcode_success = await _transcode_wav_to_flac(
+                        current_segment_wav, current_segment_flac
+                    )
+                    if not transcode_success:
                         logger.warning(
                             "Feed %s (%s): dropping segment %s after failed "
-                            "header repair",
+                            "transcode to FLAC",
                             feed_id,
                             feed_name,
-                            current_segment,
+                            current_segment_wav,
                         )
                         await asyncio.to_thread(
-                            current_segment.unlink, missing_ok=True
+                            current_segment_wav.unlink, missing_ok=True
                         )
                         next_index += 1
                         continue
 
                     segment_bytes = await asyncio.to_thread(
-                        current_segment.read_bytes
+                        current_segment_flac.read_bytes
                     )
+                    # Clean up both the temporary WAV and FLAC files
+                    await asyncio.gather(
+                        asyncio.to_thread(
+                            current_segment_wav.unlink, missing_ok=True
+                        ),
+                        asyncio.to_thread(
+                            current_segment_flac.unlink, missing_ok=True
+                        ),
+                    )
+
                     if segment_bytes:
                         # Calculate the start and end times of this specific chunk's window
                         chunk_start_time = (
@@ -534,9 +554,6 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         )
 
                         last_activity_time = time.monotonic()
-                    await asyncio.to_thread(
-                        current_segment.unlink, missing_ok=True
-                    )
                     next_index += 1
                     continue
 
@@ -586,16 +603,22 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         "\n".join(stderr_tail) if stderr_tail else None
                     )
                     stderr_log_text = stderr_snippet or "(no stderr captured)"
+                    current_segment_wav = _segment_path(
+                        segment_dir, next_index, "wav"
+                    )
+                    next_segment_wav = _segment_path(
+                        segment_dir, next_index + 1, "wav"
+                    )
                     (
                         current_segment_size,
                         next_segment_size,
                         current_segment_mtime,
                         next_segment_mtime,
                     ) = await asyncio.gather(
-                        asyncio.to_thread(_path_size, current_segment),
-                        asyncio.to_thread(_path_size, next_segment),
-                        asyncio.to_thread(_path_mtime, current_segment),
-                        asyncio.to_thread(_path_mtime, next_segment),
+                        asyncio.to_thread(_path_size, current_segment_wav),
+                        asyncio.to_thread(_path_size, next_segment_wav),
+                        asyncio.to_thread(_path_mtime, current_segment_wav),
+                        asyncio.to_thread(_path_mtime, next_segment_wav),
                     )
                     logger.error(
                         "Feed %s (%s) no finalized segment within %ss; "
@@ -655,59 +678,93 @@ async def _create_ffmpeg_process(
     segment_pattern: str,
     auth_header: str,
 ) -> asyncio.subprocess.Process:
-    """
-    Create and launch ffmpeg subprocess configured for segmented audio output.
+    """Create and launch ffmpeg subprocess configured for segmented audio output.
 
     Args:
         url: The stream URL to connect to
-        segment_pattern: Segment filename pattern for ffmpeg
-        auth_header: HTTP Authorization header for the stream
+        segment_pattern: Segment filename pattern for ffmpeg (should end in .wav)
+        auth_header: HTTP Authorization header for the stream, if applicable
 
     Returns:
         The subprocess process object
 
     """
-    # Low-latency live stream network optimizations used below:
-    # 1. -analyzeduration 0 / -probesize 32768: Bypasses the default 5-second/5MB
-    #    initialization handicap, instantly locking the demuxer on the first 32KB of data.
-    #    This reduces the time-to-first-byte from the start timestamp when ffmpeg starts recording.
-    # 2. -fflags nobuffer+flush_packets: Drops the demuxer/muxer packet buffering
-    #    for true real-time network flow.
-    # 3. discardcorrupt: Mitigates parsing crashes over TCP jitter, which is necessary
-    #    since our micro probesize doesn't deeply validate stream integrity.
-    # 4. -reconnect 1 / -reconnect_at_eof 1 / -reconnect_streamed 1: Enables native
-    #    HTTP/TCP reconnects for short internet drops.
-    # 5. -timeout: Sets a socket I/O timeout to prevent ffmpeg from
-    #    hanging indefinitely on a stalled TCP connection, allowing it to exit
-    #    gracefully instead of requiring a hard force-kill.
+    # Low-latency live stream network optimizations:
+    # 1. -analyzeduration 0 / -probesize 32768: Bypasses the default
+    #    5-second/5MB initialization handicap, instantly locking the demuxer
+    #    on the first 32KB of data.
+    # 2. -fflags nobuffer+flush_packets+discardcorrupt: Drops the demuxer/muxer
+    #    packet buffering for true real-time network flow.
+    # 3. -flags low_delay: Configures decoders/demuxers to minimize delay.
+    # 4. -reconnect 1 / -reconnect_streamed 1: Enables native HTTP/TCP
+    #    reconnects.
+    # 5. -reconnect_delay_max 30: Wait up to 30 seconds backoff between
+    #    reconnect attempts.
+    # 6. -timeout: Sets socket timeout to prevent indefinite hangs.
+    # 7. -af aresample: dynamic audio resampling to absorb clock drift and
+    #    prevent delay pools.
+    cmd = [
+        "ffmpeg",
+        "-nostdin",
+        "-reconnect",
+        "1",
+        "-reconnect_at_eof",
+        "1",
+        "-reconnect_streamed",
+        "1",
+        "-reconnect_delay_max",
+        "30",
+        "-reconnect_on_http_error",
+        "429,500,502,503,504",
+        "-analyzeduration",
+        "0",
+        "-probesize",
+        "32768",
+        "-fflags",
+        "nobuffer+flush_packets+discardcorrupt",
+        "-flags",
+        "low_delay",
+        "-timeout",
+        str(FFMPEG_TIMEOUT_SEC * 1_000_000),
+    ]
+
+    if auth_header:
+        cmd.extend(["-headers", auth_header])
+
+    cmd.extend(
+        [
+            "-i",
+            url,
+            "-vn",
+            "-sn",
+            "-dn",
+            "-af",
+            "aresample=async=1:min_hard_comp=0.100:first_pts=0",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            str(SAMPLE_RATE_HZ),
+            "-ac",
+            str(NUM_AUDIO_CHANNELS),
+            "-f",
+            "segment",
+            "-segment_time",
+            str(_CHUNK_DURATION),
+            "-segment_format",
+            "wav",
+            "-reset_timestamps",
+            "1",
+            "-segment_start_number",
+            "0",
+            segment_pattern,
+        ]
+    )
+
     return await asyncio.create_subprocess_exec(
-        "ffmpeg", "-nostdin",
-        "-reconnect", "1",
-        "-reconnect_at_eof", "1",
-        "-reconnect_streamed", "1",
-        "-reconnect_delay_max", "2",
-        "-reconnect_on_http_error", "429,500,502,503,504",
-        "-analyzeduration", "0",
-        "-probesize", "32768",
-        "-fflags", "nobuffer+flush_packets+discardcorrupt",
-        "-timeout", str(FFMPEG_TIMEOUT_SEC * 1_000_000),
-        "-headers", auth_header,
-        "-i", url,
-        "-vn", "-sn", "-dn",
-        "-acodec", AUDIO_FORMAT,
-        "-ar", str(SAMPLE_RATE_HZ),
-        "-sample_fmt", SAMPLE_FORMAT,
-        "-ac", str(NUM_AUDIO_CHANNELS),
-        "-compression_level", FLAC_COMPRESSION_LEVEL,
-        "-f", "segment",
-        "-segment_time", str(_CHUNK_DURATION),
-        "-segment_format", AUDIO_FORMAT,
-        "-reset_timestamps", "1",
-        "-segment_start_number", "0",
-        segment_pattern,
+        *cmd,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
-    )  # fmt: skip
+    )
 
 
 async def _cleanup_ffmpeg_process(
