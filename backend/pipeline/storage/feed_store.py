@@ -194,6 +194,24 @@ class PaginatedFeeds:
     total: int
 
 
+class FeedAuditEvent(TypedDict):
+    id: uuid.UUID
+    feed_id: uuid.UUID
+    action: str
+    actor_id: str
+    occurred_at: datetime.datetime
+    feed_revision: int
+    before_values: dict
+    after_values: dict
+
+
+@dataclass
+class PaginatedFeedAuditEvents:
+    audit_events: list[FeedAuditEvent]
+    next_token: str | None
+    total: int
+
+
 def _require_actor_id(actor_id: str | None) -> str:
     if actor_id is None:
         msg = "actor_id is required for audited feed lifecycle writes"
@@ -1109,3 +1127,65 @@ class FeedStore:
             row.get("feed_audit_event")
         )
         return feed
+
+    async def list_feed_history_records(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        limit: int = 100,
+        next_token: str | None = None,
+        order: SortOrder = SortOrder.DESC,
+    ) -> PaginatedFeedAuditEvents:
+        """List audit events for a feed with keyset pagination."""
+        if limit < 1:
+            msg = "limit must be >= 1"
+            raise ValueError(msg)
+
+        cursor_ts = None
+        cursor_uid = None
+        if next_token:
+            cursor_ts, cursor_uid = decode_cursor(next_token)
+
+        is_asc = order == SortOrder.ASC or order == "asc"
+        query = (
+            feed_queries.LIST_FEED_AUDIT_EVENTS_ASC_SQL
+            if is_asc
+            else feed_queries.LIST_FEED_AUDIT_EVENTS_DESC_SQL
+        )
+
+        rows_task = self._pool.fetch(
+            query,
+            feed_id,
+            cursor_ts,
+            cursor_uid,
+            limit + 1,
+        )
+        total_task = self._pool.fetchval(
+            feed_queries.COUNT_FEED_AUDIT_EVENTS_SQL,
+            feed_id,
+        )
+
+        rows, total = await asyncio.gather(rows_task, total_task)
+
+        rows, new_next_token = get_paginated_results(
+            rows, limit, "occurred_at", "id"
+        )
+
+        events = [
+            FeedAuditEvent(
+                id=row["id"],
+                feed_id=row["feed_id"],
+                action=row["action"],
+                actor_id=row["actor_id"],
+                occurred_at=row["occurred_at"],
+                feed_revision=row["feed_revision"],
+                before_values=json.loads(row["before_values"])
+                if isinstance(row["before_values"], str)
+                else row["before_values"],
+                after_values=json.loads(row["after_values"])
+                if isinstance(row["after_values"], str)
+                else row["after_values"],
+            )
+            for row in rows
+        ]
+        return PaginatedFeedAuditEvents(events, new_next_token, total)

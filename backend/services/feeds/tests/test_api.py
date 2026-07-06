@@ -20,7 +20,13 @@ from backend.pipeline.storage.feed_store import (
 )
 from backend.pipeline.storage.pagination_utils import SortOrder
 from backend.services.feeds.main import app
-from backend.services.feeds.models import Feed, ListFeedsResponse, Tag
+from backend.services.feeds.models import (
+    Feed,
+    FeedHistoryEvent,
+    ListFeedHistoryResponse,
+    ListFeedsResponse,
+    Tag,
+)
 
 _ACTOR_ID = "user:google:admin@example.com"
 _ACTOR_HEADERS = {"X-WD-Actor-Id": _ACTOR_ID}
@@ -961,6 +967,59 @@ class TestFeedsAPI(unittest.TestCase):
         )
         self.assertEqual(
             response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+
+    def test_list_feed_history_success(self) -> None:
+        feed_id = uuid.uuid4()
+
+        mock_response = ListFeedHistoryResponse(
+            history_events=[
+                FeedHistoryEvent(
+                    id=uuid.uuid4(),
+                    feed_id=feed_id,
+                    action="feed.recovered",
+                    actor="user:google:admin@example.com",
+                    occurred_at=datetime.datetime(
+                        2026, 6, 26, tzinfo=datetime.UTC
+                    ),
+                    feed_revision=2,
+                    before_values={},
+                    after_values={},
+                )
+            ],
+            next_token="token123",
+            total=1,
+        )
+        self.mock_service.list_feed_history.return_value = mock_response
+
+        response = self.client.get(
+            f"/v1/feeds/{feed_id}/history?limit=10&next_token=token123&order=asc"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        data = response.json()
+        self.assertEqual(len(data["history_events"]), 1)
+        self.assertEqual(data["next_token"], "token123")
+        self.assertEqual(data["total"], 1)
+        self.mock_service.list_feed_history.assert_called_once_with(
+            feed_id=str(feed_id),
+            limit=10,
+            next_token="token123",
+            order=SortOrder.ASC,
+        )
+
+    def test_list_feed_history_not_found(self) -> None:
+        feed_id = uuid.uuid4()
+        self.mock_service.list_feed_history.return_value = None
+
+        response = self.client.get(f"/v1/feeds/{feed_id}/history")
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.mock_service.list_feed_history.assert_called_once_with(
+            feed_id=str(feed_id),
+            limit=100,
+            next_token=None,
+            order=SortOrder.DESC,
         )
 
 

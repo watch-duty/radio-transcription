@@ -6,7 +6,14 @@ from typing import TYPE_CHECKING
 
 from backend.pipeline.storage.pagination_utils import SortOrder
 
-from .models import Feed, FeedCreate, FeedUpdate, ListFeedsResponse
+from .models import (
+    Feed,
+    FeedCreate,
+    FeedHistoryEvent,
+    FeedUpdate,
+    ListFeedHistoryResponse,
+    ListFeedsResponse,
+)
 
 if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import (
@@ -174,3 +181,40 @@ class FeedService:
             },
         )
         return Feed.model_validate(store_feed)
+
+    async def list_feed_history(
+        self,
+        feed_id: str,
+        *,
+        limit: int = 100,
+        next_token: str | None = None,
+        order: SortOrder = SortOrder.DESC,
+    ) -> ListFeedHistoryResponse | None:
+        """List state history for a feed."""
+        try:
+            uid = uuid.UUID(feed_id)
+        except ValueError:
+            return None
+        store_events = await self._store.list_feed_history_records(
+            uid,
+            limit=limit,
+            next_token=next_token,
+            order=order,
+        )
+        return ListFeedHistoryResponse(
+            history_events=[
+                FeedHistoryEvent(
+                    id=e["id"],
+                    feed_id=e["feed_id"],
+                    action=e["action"],
+                    actor=e["actor_id"],
+                    occurred_at=e["occurred_at"],
+                    feed_revision=e["feed_revision"],
+                    before_values=e["before_values"],
+                    after_values=e["after_values"],
+                )
+                for e in store_events.audit_events
+            ],
+            next_token=store_events.next_token,
+            total=store_events.total,
+        )
