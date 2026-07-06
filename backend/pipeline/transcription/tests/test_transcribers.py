@@ -727,9 +727,11 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(transcript)
             # Verify it logged at INFO level
             info_logs = [
-                log
-                for log in log_capture.output
-                if "Gemini returned empty content (finish reason: STOP)." in log
+                record
+                for record in log_capture.records
+                if record.levelname == "INFO"
+                and "Gemini returned empty content (finish reason: STOP)."
+                in record.getMessage()
             ]
             self.assertEqual(len(info_logs), 1)
 
@@ -770,10 +772,11 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(transcript)
             # Verify it logged at WARNING level
             warning_logs = [
-                log
-                for log in log_capture.output
-                if "WARNING:backend.pipeline.transcription.transcribers.gemini:Gemini response candidate had no content or parts"
-                in log
+                record
+                for record in log_capture.records
+                if record.levelname == "WARNING"
+                and "Gemini response candidate had no content or parts"
+                in record.getMessage()
             ]
             self.assertEqual(len(warning_logs), 1)
 
