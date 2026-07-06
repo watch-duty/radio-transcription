@@ -1482,6 +1482,26 @@ class TestBuildAuthAndUrl(unittest.TestCase):
             "https://audio.example.com/12345.mp3?burst=0",
         )
 
+    def test_basic_auth_fallback_swaps_partner_url(self) -> None:
+        """When BROADCASTIFY_XAN_TOKEN is not set and url_base is partner.broadcastify.com, it swaps the URL to api.bcfy.io."""
+        os.environ.pop("BROADCASTIFY_XAN_TOKEN", None)
+        os.environ["BROADCASTIFY_USERNAME"] = "test-user"
+        os.environ["BROADCASTIFY_PASSWORD"] = "test-password"
+
+        auth_header, url = icecast_collector._build_auth_and_url(
+            url_base="https://partner.broadcastify.com/",
+            source_feed_id="12345",
+        )
+
+        self.assertEqual(
+            auth_header,
+            "Authorization: Basic dGVzdC11c2VyOnRlc3QtcGFzc3dvcmQ=\r\n",
+        )
+        self.assertEqual(
+            url,
+            "https://api.bcfy.io/12345.mp3?burst=0",
+        )
+
     def test_basic_auth_missing_credentials(self) -> None:
         """When token is missing and credentials are also missing, it raises config error."""
         os.environ.pop("BROADCASTIFY_XAN_TOKEN", None)

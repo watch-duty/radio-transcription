@@ -94,16 +94,31 @@ class _StreamProbeResult:
 def _build_auth_and_url(url_base: str, source_feed_id: str) -> tuple[str, str]:
     """Build the auth header and stream URL, supporting both XAN token and Basic Auth."""
     xan_token = os.getenv("BROADCASTIFY_XAN_TOKEN")
-    normalized_url_base = url_base if url_base.endswith("/") else f"{url_base}/"
     params: dict[str, int | str] = {"burst": 0}
 
     if xan_token:
+        # XAN token streams are served on the partner relay endpoint (e.g. partner.broadcastify.com)
+        normalized_url_base = (
+            url_base if url_base.endswith("/") else f"{url_base}/"
+        )
         params["xan"] = xan_token
         url = urljoin(
             normalized_url_base,
             f"{source_feed_id.strip()}.mp3?{urlencode(params)}",
         )
         return "", url
+
+    # Basic Auth (non-XAN) requests must go to the main api.bcfy.io endpoint
+    basic_auth_url_base = (
+        "https://api.bcfy.io/"
+        if url_base.strip() == "https://partner.broadcastify.com/"
+        else url_base
+    )
+    normalized_url_base = (
+        basic_auth_url_base
+        if basic_auth_url_base.endswith("/")
+        else f"{basic_auth_url_base}/"
+    )
 
     user = os.getenv("BROADCASTIFY_USERNAME")
     password = os.getenv("BROADCASTIFY_PASSWORD")
