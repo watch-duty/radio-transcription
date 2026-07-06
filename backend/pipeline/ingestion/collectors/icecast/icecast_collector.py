@@ -418,7 +418,10 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
     params = urlencode({"burst": 0})
     url = urljoin(normalized_url_base, f"{source_feed_id.strip()}.mp3?{params}")
 
-    with tempfile.TemporaryDirectory(prefix="icecast_segments_") as tmp_dir:
+    segment_dir_parent = resources.segment_temp_dir
+    with tempfile.TemporaryDirectory(
+        prefix="icecast_segments_", dir=segment_dir_parent
+    ) as tmp_dir:
         segment_dir = Path(tmp_dir)
         segment_pattern = str(segment_dir / f"chunk_%06d.{AUDIO_FORMAT}")
 
