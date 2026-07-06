@@ -1055,6 +1055,13 @@ class CollectorRuntime:
                 feed["name"],
                 reason,
             )
+        elif "Stream capture timed out" in reason:
+            logger.warning(
+                "Feed processing error suppressed from quarantine budget (timeout): "
+                "feed=%s reason=%s",
+                feed["name"],
+                reason,
+            )
         else:
             logger.exception(
                 "Feed processing error suppressed from quarantine budget: "
