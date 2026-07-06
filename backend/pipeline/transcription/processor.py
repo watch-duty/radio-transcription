@@ -324,7 +324,7 @@ def _is_transient_exception(e: Exception) -> bool:
             )
 
         case exceptions.GoogleAPICallError() | genai_errors.APIError():
-            return e.code in (429, 409) or bool(e.code and e.code >= 500)
+            return e.code in (409, 429, 499) or bool(e.code and e.code >= 500)
 
         case grpc.Call():
             return _is_grpc_transient(e)
