@@ -4,6 +4,7 @@ import Box from '@mui/material/Box';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { type Theme, useTheme } from '@mui/material/styles';
+import { type AudioSegment } from '@transcription/common';
 
 import type { PlaybackController } from '../../audio/WebAudioPlayer';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
@@ -13,17 +14,20 @@ import {
   segmentHasSpeech,
 } from '../../utils/annotationUtils';
 import { type PlaybackState } from '../../utils/playbackUtils';
-import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
 import TimelinePlayhead from './TimelinePlayhead';
 import { computePlayhead } from './computePlayhead';
 
 interface AudioDisplayProps {
   audioSegments: RenderableAudioSegment[];
+  // Unconsolidated segments, so the playhead can anchor on the raw clip playing.
+  rawAudioSegments: AudioSegment[];
   currentlyPlayingSegmentId: string | null;
   highlightedSegmentId: string | null;
   onClipClick: (segmentId: string) => void;
-  userDuration?: string | null;
+  // Visible window, owned by useAudioTimelineWindow; null follows the live edge.
+  windowEndTime: number | null;
+  windowDurationMs: number;
   isAudioPlaying: boolean;
   playbackState: PlaybackState;
   currentAudioRef?: React.RefObject<PlaybackController | null>;
@@ -234,33 +238,14 @@ const TimelineClip = React.memo(
   }
 );
 
-/**
- * Determines whether the timeline window was aligned to the previous live head.
- *
- * If it was aligned to the head (or if there is no previous state/window bounds),
- * the viewport should automatically advance forward to show newly arriving segments.
- * If the user has scrolled back in time, we should keep the viewport anchored at their scroll position.
- */
-function isViewportAlignedToHead(
-  windowEndTime: number | null,
-  prevFirstTranscriptEndTimestamp: string | null,
-  isInitialLoad: boolean
-): boolean {
-  if (isInitialLoad || !windowEndTime || !prevFirstTranscriptEndTimestamp) {
-    return true;
-  }
-  const prevHeadTime = new Date(prevFirstTranscriptEndTimestamp).getTime();
-  const timeDifferenceMs = Math.abs(windowEndTime - prevHeadTime);
-  // Allow a 1-second tolerance for floating point rounding in time conversions
-  return timeDifferenceMs < 1000;
-}
-
 export function AudioDisplay({
   audioSegments,
+  rawAudioSegments,
   currentlyPlayingSegmentId,
   highlightedSegmentId,
   onClipClick,
-  userDuration,
+  windowEndTime,
+  windowDurationMs,
   isAudioPlaying,
   playbackState,
   currentAudioRef,
@@ -305,103 +290,14 @@ export function AudioDisplay({
     }
   }, [seekTrigger, currentAudioRef]);
 
-  const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
-
-  const [prevFirstAudioSegmentId, setPrevFirstAudioSegmentId] = useState<
-    string | null
-  >(null);
-  const [
-    prevFirstAudioSegmentEndTimestamp,
-    setPrevFirstAudioSegmentEndTimestamp,
-  ] = useState<string | null>(null);
-  const [prevPlayingId, setPrevPlayingId] = useState<string | null>(null);
-  const [prevHighlightedId, setPrevHighlightedId] = useState<string | null>(
-    null
+  // Reset the playback position when the playing segment changes, so the
+  // playhead starts at the new clip instead of flashing the previous offset.
+  const [prevPlayingId, setPrevPlayingId] = useState<string | null>(
+    currentlyPlayingSegmentId
   );
-  const [prevUserDuration, setPrevUserDuration] = useState<string | null>(
-    userDuration ?? null
-  );
-
-  const windowDurationMs = useMemo(() => {
-    if (!userDuration) return MAX_WINDOW_DURATION_MS;
-    const parsed = parseFloat(userDuration);
-    if (isNaN(parsed) || parsed <= 0) return MAX_WINDOW_DURATION_MS;
-    const userMs = parsed * 2 * 60 * 1000;
-    return Math.min(MAX_WINDOW_DURATION_MS, userMs);
-  }, [userDuration]);
-
-  const firstAudioSegment = audioSegments[0];
-  const firstAudioSegmentId = firstAudioSegment?.id || null;
-  const firstAudioSegmentEndTimestamp = firstAudioSegment?.endTimestamp || null;
-
-  // Check if a new segment has been added to the top of the feed
-  const isNewFirstAudioSegment =
-    firstAudioSegmentId !== prevFirstAudioSegmentId;
-
-  // Check if the current top audio segment has been extended (e.g. an ongoing silence bundle).
-  // When a silence bundle is extended, its ID remains the same but its end timestamp advances.
-  const isFirstAudioSegmentExtended =
-    firstAudioSegmentEndTimestamp !== prevFirstAudioSegmentEndTimestamp;
-
-  const shouldUpdateWindow =
-    isNewFirstAudioSegment || isFirstAudioSegmentExtended;
-
-  if (shouldUpdateWindow) {
-    const wasAlignedToHead = isViewportAlignedToHead(
-      windowEndTime,
-      prevFirstAudioSegmentEndTimestamp,
-      !prevFirstAudioSegmentId
-    );
-
-    setPrevFirstAudioSegmentId(firstAudioSegmentId);
-    setPrevFirstAudioSegmentEndTimestamp(firstAudioSegmentEndTimestamp);
-
-    if (wasAlignedToHead) {
-      setWindowEndTime(
-        firstAudioSegmentEndTimestamp
-          ? new Date(firstAudioSegmentEndTimestamp).getTime()
-          : null
-      );
-    }
-    setPrevPlayingId(null); // Force re-check of bounds
-  }
-
-  const playingId = currentlyPlayingSegmentId || null;
-
-  // Shift windowEndTime when playing or highlighted transcript goes out of bounds
-  if (
-    playingId !== prevPlayingId ||
-    highlightedSegmentId !== prevHighlightedId ||
-    (userDuration ?? null) !== prevUserDuration
-  ) {
-    if (playingId !== prevPlayingId) {
-      setLocalCurrentTimeSeconds(0);
-    }
-    setPrevPlayingId(playingId);
-    setPrevHighlightedId(highlightedSegmentId);
-    setPrevUserDuration(userDuration ?? null);
-
-    const targetId = highlightedSegmentId || playingId;
-    if (targetId) {
-      const targetAudioSegment = audioSegments.find((t) => t.id === targetId);
-      if (targetAudioSegment) {
-        const tStart = new Date(targetAudioSegment.startTimestamp).getTime();
-        const tEnd = new Date(targetAudioSegment.endTimestamp).getTime();
-
-        const newestEnd = firstAudioSegment
-          ? new Date(firstAudioSegment.endTimestamp).getTime()
-          : 0;
-
-        const currentEndTime = windowEndTime || newestEnd;
-        const currentStartTime = currentEndTime - windowDurationMs;
-
-        if (tStart < currentStartTime || tEnd > currentEndTime) {
-          const preferredEndTime = tStart + windowDurationMs / 2;
-          const newEndTime = Math.min(preferredEndTime, newestEnd);
-          setWindowEndTime(newEndTime);
-        }
-      }
-    }
+  if (currentlyPlayingSegmentId !== prevPlayingId) {
+    setPrevPlayingId(currentlyPlayingSegmentId);
+    setLocalCurrentTimeSeconds(0);
   }
 
   // Calculates the visible time window bounds and processes audio segments into positioned clips for the waveform display.
@@ -469,6 +365,7 @@ export function AudioDisplay({
 
   const playhead = computePlayhead({
     audioSegments,
+    rawAudioSegments,
     currentlyPlayingSegmentId,
     state: playbackState,
     localCurrentTimeSeconds,

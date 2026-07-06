@@ -5,6 +5,9 @@ from __future__ import annotations
 import pathlib
 import unittest
 
+from backend.pipeline.common.feed_change_notifications_contract import (
+    FeedChangeNotificationPayload,
+)
 from backend.pipeline.storage import (
     feed_audit_sql,
     feed_queries,
@@ -95,6 +98,40 @@ class TestFeedAuditEventSqlContract(unittest.TestCase):
         self.assertIn("before_values, after_values", sql)
         self.assertIn("RETURNING id", sql)
 
+    def test_shared_notification_payload_builder_renders_flat_contract(
+        self,
+    ) -> None:
+        sql = feed_audit_sql.feed_audit_event_payload_sql()
+
+        expected_keys = [
+            f"{field_name!r}"
+            for field_name in FeedChangeNotificationPayload.model_fields
+        ]
+        rendered_keys = [
+            line.strip().split(",", maxsplit=1)[0]
+            for line in sql.splitlines()
+            if line.strip().startswith("'")
+        ]
+
+        self.assertIn("jsonb_build_object(", sql)
+        self.assertEqual(expected_keys, rendered_keys)
+        self.assertIn(
+            "'event_type', 'radio_transcription.feed_change_notification'",
+            sql,
+        )
+        self.assertIn("'schema_version', 1", sql)
+        for column in (
+            "id",
+            "action",
+            "occurred_at",
+            "actor_id",
+            "feed_id",
+            "feed_revision",
+            "before_values",
+            "after_values",
+        ):
+            self.assertIn(f"feed_audit_events.{column}", sql)
+
     def test_audited_mutation_sql_embeds_audit_insert(self) -> None:
         audited_sql = (
             feed_queries.CREATE_FEED_SQL,
@@ -115,6 +152,62 @@ class TestFeedAuditEventSqlContract(unittest.TestCase):
             stripped = _sql_without_comments(sql)
             self.assertIn("INSERT INTO feed_audit_events", stripped)
             self.assertIn("feed_revision", stripped)
+
+    def test_async_audited_mutation_sql_returns_feed_audit_event(
+        self,
+    ) -> None:
+        audited_sql = {
+            "CREATE_FEED_SQL": feed_queries.CREATE_FEED_SQL,
+            "UPDATE_FEED_SQL": feed_queries.UPDATE_FEED_SQL,
+            "DEACTIVATE_FEED_SQL": feed_queries.DEACTIVATE_FEED_SQL,
+            "DELETE_FEED_SQL": feed_queries.DELETE_FEED_SQL,
+            "RESET_FEED_SQL": feed_queries.RESET_FEED_SQL,
+            "UPDATE_PROGRESS_SQL": feed_queries.UPDATE_PROGRESS_SQL,
+            "RECORD_SOURCE_OBSERVATION_SQL": (
+                feed_queries.RECORD_SOURCE_OBSERVATION_SQL
+            ),
+            "REPORT_FAILURE_SQL": feed_queries.REPORT_FAILURE_SQL,
+            "RELEASE_NON_BUDGETED_FAILURE_SQL": (
+                feed_queries.RELEASE_NON_BUDGETED_FAILURE_SQL
+            ),
+        }
+
+        for name, sql in audited_sql.items():
+            with self.subTest(sql=name):
+                stripped = _sql_without_comments(sql)
+                self.assertIn("AS feed_audit_event", stripped)
+                self.assertIn("write_audit.feed_audit_event", stripped)
+                self.assertIn("(SELECT write_audit.feed_audit_event", stripped)
+                self.assertNotIn("LEFT JOIN write_audit", stripped)
+
+    def test_delete_feed_sql_keeps_audit_feed_id_for_child_deletes(
+        self,
+    ) -> None:
+        sql = _sql_without_comments(feed_queries.DELETE_FEED_SQL)
+
+        self.assertIn("RETURNING feed_id,", sql)
+        self.assertIn("WHERE feed_id IN (SELECT feed_id FROM write_audit)", sql)
+
+    def test_sync_audited_mutation_sql_returns_feed_audit_event(
+        self,
+    ) -> None:
+        audited_sql = {
+            "HEARTBEAT_SQL": sync_feed_queries.HEARTBEAT_SQL,
+            "RECORD_FAILURE_SQL": sync_feed_queries.RECORD_FAILURE_SQL,
+            "RECORD_NON_BUDGETED_FAILURE_SQL": (
+                sync_feed_queries.RECORD_NON_BUDGETED_FAILURE_SQL
+            ),
+        }
+
+        for name, sql in audited_sql.items():
+            with self.subTest(sql=name):
+                stripped = _sql_without_comments(sql)
+                self.assertIn("AS feed_audit_event", stripped)
+                self.assertIn("write_audit.feed_audit_event", stripped)
+                self.assertIn("(SELECT write_audit.feed_audit_event", stripped)
+                self.assertNotIn("LEFT JOIN write_audit", stripped)
+                self.assertIn("%s", stripped)
+                self.assertNotIn("$", stripped)
 
 
 class TestStatusReasonLifecycleIsolation(unittest.TestCase):
@@ -223,6 +316,7 @@ class TestReportFailureSqlStatusReason(unittest.TestCase):
         )
         self.assertIn("WHERE f.id = $1", sql)
         self.assertIn("AND f.worker_id = $2", sql)
+        self.assertIn("after_row.failure_count", sql)
         self.assertIn("AND f.fencing_token = $4", sql)
 
 

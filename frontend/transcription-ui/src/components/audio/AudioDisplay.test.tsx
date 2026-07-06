@@ -9,7 +9,6 @@ import {
 } from '@transcription/common';
 
 import type { PlaybackController } from '../../audio/WebAudioPlayer';
-import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
 import { AudioDisplay } from './AudioDisplay';
 
 function makeMockAudioSegment(
@@ -80,10 +79,13 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         audioSegments={[]}
+        rawAudioSegments={[]}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         playbackState="listening"
+        windowEndTime={null}
+        windowDurationMs={15 * 60 * 1000}
         highlightedSegmentId={null}
       />
     );
@@ -105,10 +107,13 @@ describe('AudioDisplay', () => {
     const { container } = render(
       <AudioDisplay
         audioSegments={mockAudioSegments}
+        rawAudioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         playbackState="listening"
+        windowEndTime={null}
+        windowDurationMs={15 * 60 * 1000}
         highlightedSegmentId={null}
       />
     );
@@ -136,69 +141,18 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         audioSegments={mockAudioSegments}
+        rawAudioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         playbackState="listening"
+        windowEndTime={null}
+        windowDurationMs={15 * 60 * 1000}
         highlightedSegmentId={null}
       />
     );
 
     expect(screen.getByTestId('warning-icon')).toBeTruthy();
-  });
-
-  it('should shift window when playing segment is outside window', async () => {
-    const mockAudioSegments: AudioSegment[] = [
-      makeMockAudioSegment(
-        '1',
-        'feed1',
-        new Date('2026-04-20T09:00:00Z').toISOString(),
-        new Date('2026-04-20T09:00:05Z').toISOString(),
-        'Test 1',
-        'audio1.m4a'
-      ),
-      makeMockAudioSegment(
-        '2',
-        'feed1',
-        new Date('2026-04-20T08:20:00Z').toISOString(),
-        new Date('2026-04-20T08:20:05Z').toISOString(),
-        'Test 2',
-        'audio2.m4a'
-      ),
-    ];
-
-    const { rerender } = render(
-      <AudioDisplay
-        audioSegments={mockAudioSegments}
-        currentlyPlayingSegmentId={null}
-        onClipClick={vi.fn()}
-        isAudioPlaying={false}
-        playbackState="listening"
-        highlightedSegmentId={null}
-      />
-    );
-
-    const labelsBefore = screen
-      .getAllByText(/\d{2}:\d{2}/)
-      .map((el) => el.textContent);
-
-    rerender(
-      <AudioDisplay
-        audioSegments={mockAudioSegments}
-        currentlyPlayingSegmentId="2"
-        onClipClick={vi.fn()}
-        isAudioPlaying={false}
-        playbackState="listening"
-        highlightedSegmentId={null}
-      />
-    );
-
-    await waitFor(() => {
-      const labelsAfter = screen
-        .getAllByText(/\d{2}:\d{2}/)
-        .map((el) => el.textContent);
-      expect(labelsAfter).not.toEqual(labelsBefore);
-    });
   });
 
   it('should reset window when transcripts[0] changes', async () => {
@@ -227,10 +181,13 @@ describe('AudioDisplay', () => {
     const { rerender } = render(
       <AudioDisplay
         audioSegments={mockAudioSegments1}
+        rawAudioSegments={mockAudioSegments1}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         playbackState="listening"
+        windowEndTime={null}
+        windowDurationMs={15 * 60 * 1000}
         highlightedSegmentId={null}
       />
     );
@@ -242,10 +199,13 @@ describe('AudioDisplay', () => {
     rerender(
       <AudioDisplay
         audioSegments={mockAudioSegments2}
+        rawAudioSegments={mockAudioSegments2}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         playbackState="listening"
+        windowEndTime={null}
+        windowDurationMs={15 * 60 * 1000}
         highlightedSegmentId={null}
       />
     );
@@ -255,65 +215,6 @@ describe('AudioDisplay', () => {
         .getAllByText(/\d{2}:\d{2}/)
         .map((el) => el.textContent);
       expect(labelsAfter).not.toEqual(labelsBefore);
-    });
-  });
-
-  it('should adjust window duration based on userDuration capped at 15 minutes', async () => {
-    const mockAudioSegments: AudioSegment[] = [
-      makeMockAudioSegment(
-        '1',
-        'feed1',
-        new Date('2026-04-20T09:15:00Z').toISOString(),
-        new Date('2026-04-20T09:15:00Z').toISOString(),
-        'Test 1',
-        'audio1.m4a'
-      ),
-    ];
-
-    const { rerender } = render(
-      <AudioDisplay
-        audioSegments={mockAudioSegments}
-        currentlyPlayingSegmentId={null}
-        userDuration="5"
-        onClipClick={vi.fn()}
-        isAudioPlaying={false}
-        playbackState="listening"
-        highlightedSegmentId={null}
-      />
-    );
-
-    const labels5 = screen
-      .getAllByText(/\d{2}:\d{2}/)
-      .map((el) => el.textContent || '');
-    expect(labels5.length).toBe(4);
-    const [h0, m0] = labels5[0].split(':').map(Number);
-    const [h3, m3] = labels5[3].split(':').map(Number);
-    let diff5 = h3 * 60 + m3 - (h0 * 60 + m0);
-    if (diff5 < 0) diff5 += 24 * 60;
-    expect(diff5).toBe(10);
-
-    rerender(
-      <AudioDisplay
-        audioSegments={mockAudioSegments}
-        currentlyPlayingSegmentId={null}
-        userDuration="30"
-        onClipClick={vi.fn()}
-        isAudioPlaying={false}
-        playbackState="listening"
-        highlightedSegmentId={null}
-      />
-    );
-
-    await waitFor(() => {
-      const labels30 = screen
-        .getAllByText(/\d{2}:\d{2}/)
-        .map((el) => el.textContent || '');
-      expect(labels30.length).toBe(4);
-      const [h0_30, m0_30] = labels30[0].split(':').map(Number);
-      const [h3_30, m3_30] = labels30[3].split(':').map(Number);
-      let diff = h3_30 * 60 + m3_30 - (h0_30 * 60 + m0_30);
-      if (diff < 0) diff += 24 * 60;
-      expect(diff).toBe(MAX_WINDOW_DURATION_MS / 60 / 1000);
     });
   });
 
@@ -332,10 +233,13 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         audioSegments={mockAudioSegments}
+        rawAudioSegments={mockAudioSegments}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         playbackState="listening"
+        windowEndTime={null}
+        windowDurationMs={15 * 60 * 1000}
         highlightedSegmentId={null}
       />
     );
@@ -359,10 +263,13 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         audioSegments={[segment]}
+        rawAudioSegments={[segment]}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         playbackState="listening"
+        windowEndTime={null}
+        windowDurationMs={15 * 60 * 1000}
         highlightedSegmentId={null}
       />
     );
@@ -391,10 +298,13 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         audioSegments={[segment]}
+        rawAudioSegments={[segment]}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         playbackState="listening"
+        windowEndTime={null}
+        windowDurationMs={15 * 60 * 1000}
         highlightedSegmentId={null}
       />
     );
@@ -421,70 +331,19 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         audioSegments={[segment]}
+        rawAudioSegments={[segment]}
         currentlyPlayingSegmentId={null}
         onClipClick={vi.fn()}
         isAudioPlaying={false}
         playbackState="listening"
+        windowEndTime={null}
+        windowDurationMs={15 * 60 * 1000}
         highlightedSegmentId={null}
       />
     );
 
     expect(screen.getByTestId('waveform-missing-block')).toBeTruthy();
     expect(screen.queryByTestId('waveform-silence-line')).toBeNull();
-  });
-
-  it('should shift window when highlighted segment is outside window', async () => {
-    const mockAudioSegments: AudioSegment[] = [
-      makeMockAudioSegment(
-        '1',
-        'feed1',
-        new Date('2026-04-20T09:00:00Z').toISOString(),
-        new Date('2026-04-20T09:00:05Z').toISOString(),
-        'Test 1',
-        'audio1.m4a'
-      ),
-      makeMockAudioSegment(
-        '2',
-        'feed1',
-        new Date('2026-04-20T08:20:00Z').toISOString(),
-        new Date('2026-04-20T08:20:05Z').toISOString(),
-        'Test 2',
-        'audio2.m4a'
-      ),
-    ];
-
-    const { rerender } = render(
-      <AudioDisplay
-        audioSegments={mockAudioSegments}
-        currentlyPlayingSegmentId={null}
-        onClipClick={vi.fn()}
-        isAudioPlaying={false}
-        playbackState="listening"
-        highlightedSegmentId={null}
-      />
-    );
-
-    const labelsBefore = screen
-      .getAllByText(/\d{2}:\d{2}/)
-      .map((el) => el.textContent);
-
-    rerender(
-      <AudioDisplay
-        audioSegments={mockAudioSegments}
-        currentlyPlayingSegmentId={null}
-        onClipClick={vi.fn()}
-        isAudioPlaying={false}
-        playbackState="listening"
-        highlightedSegmentId="2"
-      />
-    );
-
-    await waitFor(() => {
-      const labelsAfter = screen
-        .getAllByText(/\d{2}:\d{2}/)
-        .map((el) => el.textContent);
-      expect(labelsAfter).not.toEqual(labelsBefore);
-    });
   });
 
   it('polls progress and shows the playhead while playing', async () => {
@@ -510,10 +369,13 @@ describe('AudioDisplay', () => {
     render(
       <AudioDisplay
         audioSegments={mockAudioSegments}
+        rawAudioSegments={mockAudioSegments}
         currentlyPlayingSegmentId="1"
         onClipClick={vi.fn()}
         isAudioPlaying={true}
         playbackState="playing"
+        windowEndTime={null}
+        windowDurationMs={15 * 60 * 1000}
         highlightedSegmentId={null}
         currentAudioRef={currentAudioRef}
       />

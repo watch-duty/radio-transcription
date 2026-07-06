@@ -3,6 +3,9 @@ from typing import Final
 
 import numpy as np
 
+from backend.pipeline.segmentation.constants import (
+    UPSTREAM_GAP_DRIFT_TOLERANCE_MS,
+)
 from backend.pipeline.segmentation.datatypes import (
     AppendBufferAction,
     AudioChunkData,
@@ -520,3 +523,45 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
             other_flush.time_range.end_ms - other_flush.time_range.start_ms,
             20000,
         )
+
+    def test_upstream_gap_within_tolerance_absorbed(self) -> None:
+        """Verifies that an upstream gap within the tolerance does not trigger a flush."""
+        # Start an active transmission with chunk 1 ending at 3000ms
+        chunk1 = mock_audio_chunk(0, 3000, [(1.0, 2.0)], "gs://fake/1.flac")
+        self._process(chunk1)
+
+        # Process a second chunk that starts within the tolerance late
+        # (at 3000 + tolerance - 10 ms)
+        late_start = 3000 + UPSTREAM_GAP_DRIFT_TOLERANCE_MS - 10
+        chunk2 = mock_audio_chunk(late_start, 3000, [], "gs://fake/2.flac")
+        actions = self._process(chunk2)
+
+        # No forced flush actions should occur
+        flush_actions = [
+            a
+            for a in actions
+            if isinstance(a, FlushAction)
+            and a.reason == "Forced flush due to upstream audio chunk gap"
+        ]
+        self.assertEqual(len(flush_actions), 0)
+
+    def test_upstream_gap_exceeding_tolerance_flushes(self) -> None:
+        """Verifies that an upstream gap exceeding the tolerance triggers a flush."""
+        # Start an active transmission with chunk 1 ending at 3000ms
+        chunk1 = mock_audio_chunk(0, 3000, [(1.0, 2.0)], "gs://fake/1.flac")
+        self._process(chunk1)
+
+        # Process a second chunk that starts past the tolerance late
+        # (at 3000 + tolerance + 10 ms)
+        late_start = 3000 + UPSTREAM_GAP_DRIFT_TOLERANCE_MS + 10
+        chunk2 = mock_audio_chunk(late_start, 3000, [], "gs://fake/2.flac")
+        actions = self._process(chunk2)
+
+        # A forced flush action should occur
+        flush_actions = [
+            a
+            for a in actions
+            if isinstance(a, FlushAction)
+            and a.reason == "Forced flush due to upstream audio chunk gap"
+        ]
+        self.assertEqual(len(flush_actions), 1)

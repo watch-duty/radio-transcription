@@ -11,6 +11,10 @@ from backend.pipeline.storage import feed_audit_sql
 
 _AUDIT_BEFORE_SNAPSHOT_SQL = feed_audit_sql.audit_snapshot_sql("before_row")
 _AUDIT_AFTER_SNAPSHOT_SQL = feed_audit_sql.audit_snapshot_sql("after_row")
+_AUDIT_EVENT_RETURNING_SQL = (
+    f"{feed_audit_sql.feed_audit_event_payload_sql()} AS feed_audit_event"
+)
+_AUDIT_EVENT_SELECT_SQL = feed_audit_sql.feed_audit_event_scalar_sql()
 _AUDIT_ACTOR_CTE_SQL = """audit_actor AS (
     SELECT %s::text AS actor_id
 )"""
@@ -79,9 +83,10 @@ after_row AS (
             "    CROSS JOIN audit_actor"
         ),
         where_sql="audit_action.action IS NOT NULL",
+        returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
-SELECT after_row.*
+SELECT {_AUDIT_EVENT_SELECT_SQL}
 FROM after_row
 """
 
@@ -150,9 +155,10 @@ after_row AS (
             "    CROSS JOIN audit_actor"
         ),
         where_sql="audit_action.action IS NOT NULL",
+        returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
-SELECT after_row.*
+SELECT {_AUDIT_EVENT_SELECT_SQL}
 FROM after_row
 """
 
@@ -207,8 +213,9 @@ after_row AS (
             "    CROSS JOIN audit_actor"
         ),
         where_sql="audit_action.action IS NOT NULL",
+        returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
-SELECT after_row.*
+SELECT {_AUDIT_EVENT_SELECT_SQL}
 FROM after_row
 """
