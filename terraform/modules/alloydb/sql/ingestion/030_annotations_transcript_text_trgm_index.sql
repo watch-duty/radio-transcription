@@ -1,3 +1,4 @@
+-- AUTOCOMMIT
 -- Create pg_trgm extension if not exists for trigram index.
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
