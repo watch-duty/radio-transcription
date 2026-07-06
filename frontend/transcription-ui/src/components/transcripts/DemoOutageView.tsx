@@ -133,6 +133,8 @@ export function DemoOutageView() {
           currentlyPlayingSegmentId={null}
           highlightedSegmentId={highlightedId}
           onClipClick={(id) => setHighlightedId(id)}
+          windowEndTime={null}
+          windowDurationMs={15 * 60 * 1000}
           isAudioPlaying={false}
           playbackState="listening"
         />
