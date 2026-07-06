@@ -31,7 +31,8 @@ ENV UV_NO_CACHE=1
 
 # Install dependencies using uv sync directly into system python
 RUN uv sync --frozen --no-dev --no-install-workspace --package segmentation-pipeline && \
-    uv pip install grpcio-tools
+    GRPCIO_TOOLS_VERSION=$(python3 -c "import tomllib; print(next(p['version'] for p in tomllib.load(open('uv.lock', 'rb'))['package'] if p['name'] == 'grpcio-tools'))") && \
+    uv pip install "grpcio-tools==$GRPCIO_TOOLS_VERSION"
 
 ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/segmentation/main.py"
 ENV PYTHONPATH="/app"
@@ -42,11 +43,12 @@ COPY backend/ ./backend/
 COPY protos/ ./protos
 
 # Generate protobuf bindings
-RUN mkdir -p ./backend/pipeline/schema_types && \
+RUN GRPCIO_TOOLS_VERSION=$(python3 -c "import tomllib; print(next(p['version'] for p in tomllib.load(open('uv.lock', 'rb'))['package'] if p['name'] == 'grpcio-tools'))") && \
+    mkdir -p ./backend/pipeline/schema_types && \
     touch ./backend/pipeline/schema_types/__init__.py && \
-    uv run --with grpcio-tools python3 -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && \
+    uv run --with "grpcio-tools==$GRPCIO_TOOLS_VERSION" python3 -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && \
     mkdir -p .betterproto_out && \
-    uv run --with grpcio-tools --with "betterproto[compiler]>=2.0.0b6" python3 -m grpc_tools.protoc -I=protos --python_betterproto_out=.betterproto_out protos/streaming_state.proto && \
+    uv run --with "grpcio-tools==$GRPCIO_TOOLS_VERSION" --with "betterproto[compiler]>=2.0.0b6" python3 -m grpc_tools.protoc -I=protos --python_betterproto_out=.betterproto_out protos/streaming_state.proto && \
     cp .betterproto_out/streaming/pipeline/state/v1/__init__.py backend/pipeline/schema_types/streaming_state.py && \
     rm -rf .betterproto_out
 

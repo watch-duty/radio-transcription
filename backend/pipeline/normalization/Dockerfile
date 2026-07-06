@@ -25,7 +25,8 @@ ENV UV_COMPILE_BYTECODE=1
 # Install dependencies using uv sync directly into system python
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-workspace --package normalization-pipeline && \
-    uv pip install grpcio-tools
+    GRPCIO_TOOLS_VERSION=$(python3 -c "import tomllib; print(next(p['version'] for p in tomllib.load(open('uv.lock', 'rb'))['package'] if p['name'] == 'grpcio-tools'))") && \
+    uv pip install "grpcio-tools==$GRPCIO_TOOLS_VERSION"
 
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1

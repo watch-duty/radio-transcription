@@ -19,7 +19,9 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/services/*/pyproject.toml ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --package audio-segments-service && uv pip install grpcio-tools
+    uv sync --frozen --no-dev --package audio-segments-service && \
+    GRPCIO_TOOLS_VERSION=$(python3 -c "import tomllib; print(next(p['version'] for p in tomllib.load(open('uv.lock', 'rb'))['package'] if p['name'] == 'grpcio-tools'))") && \
+    uv pip install "grpcio-tools==$GRPCIO_TOOLS_VERSION"
 
 COPY protos/ ./protos
 

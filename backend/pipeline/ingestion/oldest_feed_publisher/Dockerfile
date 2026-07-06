@@ -16,7 +16,9 @@ COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-workspace && uv pip install grpcio-tools
+    uv sync --frozen --no-dev --no-install-workspace && \
+    GRPCIO_TOOLS_VERSION=$(python3 -c "import tomllib; print(next(p['version'] for p in tomllib.load(open('uv.lock', 'rb'))['package'] if p['name'] == 'grpcio-tools'))") && \
+    uv pip install "grpcio-tools==$GRPCIO_TOOLS_VERSION"
 COPY backend/ ./backend/
 COPY protos/ ./protos
 
