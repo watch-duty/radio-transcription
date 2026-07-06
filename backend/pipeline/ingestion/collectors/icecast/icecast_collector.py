@@ -472,7 +472,10 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                             stream_anchor_time is None
                             or expected_timeline_time is None
                         ):
-                            # First chunk initialization
+                            # First chunk initialization.
+                            # The stream start is estimated as one chunk before the first segment's mtime.
+                            # Startup latency < 1 chunk duration is absorbed here and is typically within
+                            # acceptable SLO bounds.
                             stream_anchor_time = (
                                 receipt_time
                                 - datetime.timedelta(seconds=duration)
