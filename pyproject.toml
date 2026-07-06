@@ -21,6 +21,7 @@ dependencies = [
     "transcription-function",
     "evaluation-function",
     "notification-function",
+    "feed-change-webhook",
     # Dependencies for non-packaged directories (ingestion, storage, etc.)
     "uvloop>=0.21.0",
     "curl-cffi>=0.9.1",
@@ -63,6 +64,8 @@ dev = [
   "pyopenssl>=26.0.0",
   "deepdiff>=9.1.0",
   "types-protobuf>=7.34.1",
+  "google-cloud-storage>=2.14.0",
+  "requests>=2.31.0",
 ]
 
 [tool.ruff]
@@ -313,6 +316,7 @@ members = [
     "backend/pipeline/transcription",
     "backend/pipeline/evaluation",
     "backend/pipeline/notification",
+    "backend/pipeline/feed_change_webhook",
     "backend/services/audio_segments",
     "backend/services/feeds",
     "backend/services/rules",
@@ -328,6 +332,7 @@ segmentation-pipeline = { workspace = true }
 transcription-function = { workspace = true }
 evaluation-function = { workspace = true }
 notification-function = { workspace = true }
+feed-change-webhook = { workspace = true }
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
@@ -356,4 +361,3 @@ exclude = [
 ]
 paths = ["backend", "vulture_whitelist.py", "vulture_manual_whitelist.py"]
 min_confidence = 60
-

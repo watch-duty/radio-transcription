@@ -9,6 +9,7 @@ from google.api_core.retry_async import AsyncRetry
 from google.cloud import speech_v2 as cloud_speech
 from google.cloud.speech_v2 import SpeechAsyncClient
 
+from backend.pipeline.common import constants
 from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.common.utils import ConfigBase
 from backend.pipeline.transcription.transcribers.base import Transcriber
@@ -22,7 +23,7 @@ DEFAULT_CHIRP_PROMPT_FILE_PATH = (
 )
 
 # Marker defined in the prompt to indicate when the model detects no intelligible speech.
-CHIRP_UNINTELLIGIBLE_MARKER = "[UNINTELLIGIBLE]"
+CHIRP_UNINTELLIGIBLE_MARKER = constants.UNINTELLIGIBLE_MARKER
 
 # Chirp model configuration defaults
 DEFAULT_CHIRP_LOCATION = "us"
