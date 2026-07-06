@@ -305,12 +305,13 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.mock_logger = MagicMock()
+        self.mock_fix_flac_header = AsyncMock()
         self.patchers = [
             patch.object(icecast_collector, "logger", self.mock_logger),
             patch.object(
                 icecast_collector,
                 "_fix_flac_header",
-                new_callable=AsyncMock,
+                self.mock_fix_flac_header,
             ),
             patch.object(icecast_collector, "_path_mtime", return_value=None),
             patch.dict(os.environ, MOCK_ENV_VARS),
@@ -356,6 +357,36 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(chunks), 2)
         for chunk in chunks:
             self.assertIsInstance(chunk, bytes)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_failed_header_repair_drops_segment(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """A segment whose header repair fails must not be read or yielded."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=42,
+            segments=[b"BAD_SEGMENT", b"GOOD_SEGMENT"],
+            wait_delay=0.1,
+            wait_result=0,
+        )
+        self.mock_fix_flac_header.side_effect = [False, True]
+
+        feed = _make_feed("test-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+        chunks = await _collect_chunks(gen)
+
+        # Only the segment whose repair succeeded reaches the caller.
+        self.assertEqual(chunks, [b"GOOD_SEGMENT"])
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
@@ -1277,7 +1308,7 @@ class TestFixFlacHeader(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(sf.LibsndfileError):
                 sf.read(str(segment))
 
-            await icecast_collector._fix_flac_header(segment)
+            self.assertTrue(await icecast_collector._fix_flac_header(segment))
 
             info = sf.info(str(segment))
             samples, sample_rate = sf.read(str(segment), dtype="float32")
@@ -1288,6 +1319,102 @@ class TestFixFlacHeader(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(info.frames, len(samples))
         self.assertEqual(sample_rate, 16000)
         self.assertAlmostEqual(len(samples) / sample_rate, 15.0, delta=0.5)
+
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    async def test_fix_flac_header_timeout_triggers_cleanup(
+        self, mock_create_exec: AsyncMock
+    ) -> None:
+        mock_process = AsyncMock()
+        mock_process.returncode = None
+
+        terminated_event = asyncio.Event()
+
+        def mock_terminate():
+            terminated_event.set()
+
+        mock_process.terminate = mock_terminate
+
+        async def mock_wait():
+            await terminated_event.wait()
+            return 0
+
+        mock_process.wait = mock_wait
+        mock_create_exec.return_value = mock_process
+
+        with patch.object(icecast_collector, "_FIX_HEADER_TIMEOUT_SEC", 0.05):
+            with tempfile.TemporaryDirectory() as tmp:
+                segment = Path(tmp) / "chunk_000000.flac"
+                segment.write_bytes(b"dummy_data")
+
+                repaired = await icecast_collector._fix_flac_header(segment)
+
+                # Give background tasks (cleanup) a tick to run
+                await asyncio.sleep(0.02)
+
+                self.assertTrue(terminated_event.is_set())
+                self.assertFalse(
+                    repaired,
+                    "a timed-out repair must not report success — the "
+                    "caller relies on this to avoid reading the original "
+                    "segment",
+                )
+
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    async def test_fix_flac_header_nonzero_exit_reports_failure(
+        self, mock_create_exec: AsyncMock
+    ) -> None:
+        mock_process = AsyncMock()
+        mock_process.returncode = 1
+        mock_process.wait = AsyncMock(return_value=1)
+        mock_create_exec.return_value = mock_process
+
+        with tempfile.TemporaryDirectory() as tmp:
+            segment = Path(tmp) / "chunk_000000.flac"
+            segment.write_bytes(b"dummy_data")
+
+            repaired = await icecast_collector._fix_flac_header(segment)
+
+            self.assertFalse(repaired)
+
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    async def test_fix_flac_header_cancellation_triggers_cleanup(
+        self, mock_create_exec: AsyncMock
+    ) -> None:
+        mock_process = AsyncMock()
+        mock_process.returncode = None
+
+        terminated_event = asyncio.Event()
+
+        def mock_terminate():
+            terminated_event.set()
+
+        mock_process.terminate = mock_terminate
+
+        async def mock_wait():
+            await terminated_event.wait()
+            return 0
+
+        mock_process.wait = mock_wait
+        mock_create_exec.return_value = mock_process
+
+        with tempfile.TemporaryDirectory() as tmp:
+            segment = Path(tmp) / "chunk_000000.flac"
+            segment.write_bytes(b"dummy_data")
+
+            # Start the task and cancel it immediately
+            task = asyncio.create_task(
+                icecast_collector._fix_flac_header(segment)
+            )
+            await asyncio.sleep(0.01)  # let it start and await wait_for
+            task.cancel()
+
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+            # Give background tasks (cleanup) a tick to run
+            await asyncio.sleep(0.02)
+
+            self.assertTrue(terminated_event.is_set())
 
 
 class TestIcecastTimestampAlignment(unittest.IsolatedAsyncioTestCase):

@@ -16,8 +16,9 @@ COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv export --package transcription-function --no-dev --locked --no-emit-project -o requirements.txt && \
+    uv export --group build --locked -o build-requirements.txt && \
     uv pip install --system -r requirements.txt && \
-    uv pip install --system grpcio-tools
+    uv pip install --system -r build-requirements.txt
 
 COPY backend/ ./backend/
 COPY protos/ ./protos
