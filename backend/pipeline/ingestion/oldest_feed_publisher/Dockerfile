@@ -16,7 +16,9 @@ COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-workspace --group build
+    uv sync --frozen --no-dev --no-install-workspace && \
+    uv export --group build --locked -o build-requirements.txt && \
+    uv pip install -r build-requirements.txt
 COPY backend/ ./backend/
 COPY protos/ ./protos
 
