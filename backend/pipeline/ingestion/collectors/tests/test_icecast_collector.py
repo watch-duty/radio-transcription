@@ -336,6 +336,36 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
+    async def test_failed_header_repair_drops_segment(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """A segment whose header repair fails must not be read or yielded."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=42,
+            segments=[b"BAD_SEGMENT", b"GOOD_SEGMENT"],
+            wait_delay=0.1,
+            wait_result=0,
+        )
+        icecast_collector._fix_flac_header.side_effect = [False, True]
+
+        feed = _make_feed("test-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+        chunks = await _collect_chunks(gen)
+
+        # Only the segment whose repair succeeded reaches the caller.
+        self.assertEqual(chunks, [b"GOOD_SEGMENT"])
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
     async def test_shutdown_signal_stops_capture(
         self, mock_create_ffmpeg: AsyncMock
     ) -> None:
@@ -1250,7 +1280,7 @@ class TestFixFlacHeader(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(sf.LibsndfileError):
                 sf.read(str(segment))
 
-            await icecast_collector._fix_flac_header(segment)
+            self.assertTrue(await icecast_collector._fix_flac_header(segment))
 
             info = sf.info(str(segment))
             samples, sample_rate = sf.read(str(segment), dtype="float32")
@@ -1288,12 +1318,35 @@ class TestFixFlacHeader(unittest.IsolatedAsyncioTestCase):
                 segment = Path(tmp) / "chunk_000000.flac"
                 segment.write_bytes(b"dummy_data")
 
-                await icecast_collector._fix_flac_header(segment)
+                repaired = await icecast_collector._fix_flac_header(segment)
 
                 # Give background tasks (cleanup) a tick to run
                 await asyncio.sleep(0.02)
 
                 self.assertTrue(terminated_event.is_set())
+                self.assertFalse(
+                    repaired,
+                    "a timed-out repair must not report success — the "
+                    "caller relies on this to avoid reading the original "
+                    "segment",
+                )
+
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    async def test_fix_flac_header_nonzero_exit_reports_failure(
+        self, mock_create_exec: AsyncMock
+    ) -> None:
+        mock_process = AsyncMock()
+        mock_process.returncode = 1
+        mock_process.wait = AsyncMock(return_value=1)
+        mock_create_exec.return_value = mock_process
+
+        with tempfile.TemporaryDirectory() as tmp:
+            segment = Path(tmp) / "chunk_000000.flac"
+            segment.write_bytes(b"dummy_data")
+
+            repaired = await icecast_collector._fix_flac_header(segment)
+
+            self.assertFalse(repaired)
 
     @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
     async def test_fix_flac_header_cancellation_triggers_cleanup(
