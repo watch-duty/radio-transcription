@@ -24,20 +24,14 @@ ENV UV_COMPILE_BYTECODE=1
 
 # Install dependencies using uv sync directly into system python
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-workspace --package normalization-pipeline && \
-    uv pip install grpcio-tools
+    uv sync --frozen --no-dev --no-install-workspace --package normalization-pipeline
 
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1
 
 # Copy full source
 COPY backend/ ./backend/
-COPY protos/ ./protos
 
-# 2. Create the directory for the generated files
-RUN mkdir -p ./backend/pipeline/schema_types
-RUN touch ./backend/pipeline/schema_types/__init__.py
-RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
 CMD ["functions-framework", \
      "--source=backend/pipeline/normalization/main.py", \

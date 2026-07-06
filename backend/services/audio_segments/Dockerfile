@@ -19,14 +19,10 @@ ENV PATH="/app/.venv/bin:$PATH"
 
 COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/services/*/pyproject.toml ./
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --package audio-segments-service && uv pip install grpcio-tools
+    uv sync --frozen --no-dev --package audio-segments-service
 
-COPY protos/ ./protos
 
 # Create directory for generated files
-RUN mkdir -p ./backend/pipeline/schema_types
-RUN touch ./backend/pipeline/schema_types/__init__.py
-RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
 COPY backend/pipeline/common/ ./backend/pipeline/common/
 COPY backend/pipeline/storage/ ./backend/pipeline/storage/

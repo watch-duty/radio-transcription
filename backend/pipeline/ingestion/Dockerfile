@@ -67,14 +67,10 @@ COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev && uv pip install grpcio-tools
+    uv sync --frozen --no-dev
 
 COPY backend/ ./backend/
-COPY protos/ ./protos
 
 # 3. Create the directory for the generated files
-RUN mkdir -p ./backend/pipeline/schema_types
-RUN touch ./backend/pipeline/schema_types/__init__.py
-RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
 CMD ["python", "-m", "backend.pipeline.ingestion.main"]

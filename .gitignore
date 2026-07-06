@@ -58,10 +58,6 @@ backend/pipeline/ingestion/collectors/.*
 .worktrees/
 
 # Generated protobuf files
-*_pb2.py
-*_pb2.pyi
-*_pb2_grpc.py
-*_betterproto.py
 
 # Python build artifacts
 *.egg-info/
@@ -84,7 +80,6 @@ dist/
 
 # GSD workflow (user chose commit_docs=false on 2026-04-21)
 .planning/
-backend/pipeline/schema_types/streaming_state.py
 
 # SFT pipeline build outputs (D-16 governance: JSONL may contain NonCommercial
 # UWB-ATCC data and proprietary Watch Duty Echo transcripts — not git-committed).
