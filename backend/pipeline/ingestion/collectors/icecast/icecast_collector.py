@@ -63,6 +63,7 @@ _MAX_ALLOWED_LAG_SECONDS = 60.0
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
 _FIX_HEADER_TIMEOUT_SEC = 10.0
 _CLEANUP_SUBPROCESS_TIMEOUT_SEC = 2.0
+MAX_CONCURRENT_TRANSCODES = 8
 
 _background_tasks: set[asyncio.Task[None]] = set()
 
@@ -321,6 +322,9 @@ async def _cleanup_subprocess(process: asyncio.subprocess.Process) -> None:
         await process.wait()
 
 
+_TRANSCODE_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_TRANSCODES)
+
+
 async def _transcode_wav_to_flac(wav_path: Path, flac_path: Path) -> bool:
     """Transcodes a WAV segment to FLAC.
 
@@ -330,21 +334,24 @@ async def _transcode_wav_to_flac(wav_path: Path, flac_path: Path) -> bool:
     process = None
     success = False
     try:
-        process = await asyncio.create_subprocess_exec(
-            "ffmpeg",
-            "-y",
-            "-nostdin",
-            "-i",
-            str(wav_path),
-            "-acodec",
-            "flac",
-            "-compression_level",
-            FLAC_COMPRESSION_LEVEL,
-            str(flac_path),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await asyncio.wait_for(process.wait(), timeout=_FIX_HEADER_TIMEOUT_SEC)
+        async with _TRANSCODE_SEMAPHORE:
+            process = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-y",
+                "-nostdin",
+                "-i",
+                str(wav_path),
+                "-acodec",
+                "flac",
+                "-compression_level",
+                FLAC_COMPRESSION_LEVEL,
+                str(flac_path),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(
+                process.wait(), timeout=_FIX_HEADER_TIMEOUT_SEC
+            )
         if process.returncode == 0:
             success = True
         else:
