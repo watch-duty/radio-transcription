@@ -149,6 +149,14 @@ def _formatted_error_calls(mock_logger: MagicMock) -> str:
     )
 
 
+def _formatted_warning_calls(mock_logger: MagicMock) -> str:
+    """Render every captured logger.warning call into a single newline-joined string."""
+    return "\n".join(
+        (call.args[0] % call.args[1:]) if len(call.args) > 1 else call.args[0]
+        for call in mock_logger.warning.call_args_list
+    )
+
+
 class TestPathDiagnostics(unittest.TestCase):
     """Tests for local file diagnostics used in timeout logging."""
 
@@ -991,7 +999,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             FeedStatusReason.SOURCE_OFFLINE,
             "HTTP error 404 Not Found",
         )
-        formatted = _formatted_error_calls(self.mock_logger)
+        formatted = _formatted_warning_calls(self.mock_logger)
         self.assertIn("no finalized segment within", formatted)
         self.assertIn("next_index=0", formatted)
         self.assertIn("current_segment_exists=False", formatted)
