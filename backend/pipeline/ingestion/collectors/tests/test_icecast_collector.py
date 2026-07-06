@@ -281,12 +281,13 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.mock_logger = MagicMock()
+        self.mock_fix_flac_header = AsyncMock()
         self.patchers = [
             patch.object(icecast_collector, "logger", self.mock_logger),
             patch.object(
                 icecast_collector,
                 "_fix_flac_header",
-                new_callable=AsyncMock,
+                self.mock_fix_flac_header,
             ),
             patch.dict(os.environ, MOCK_ENV_VARS),
         ]
@@ -346,7 +347,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             wait_delay=0.1,
             wait_result=0,
         )
-        icecast_collector._fix_flac_header.side_effect = [False, True]
+        self.mock_fix_flac_header.side_effect = [False, True]
 
         feed = _make_feed("test-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()

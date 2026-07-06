@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from backend.pipeline.common.feed_change_notifications_contract import (
+    FEED_CHANGE_NOTIFICATION_EVENT_TYPE,
+    FEED_CHANGE_NOTIFICATION_SCHEMA_VERSION,
+)
+
 # ruff: noqa: S608
 
 AUDITED_FEED_STATE_FIELDS = (
@@ -15,9 +20,37 @@ AUDITED_FEED_STATE_FIELDS = (
     ("status_reason_updated_at", "status_reason_updated_at"),
     ("status_reason_detail", "status_reason_detail"),
     ("created_at", "created_at"),
-    ("feed_properties.source_feed_id", "source_feed_id"),
-    ("feed_properties.tags", "tags"),
+    ("source_feed_id", "source_feed_id"),
+    ("tags", "tags"),
 )
+
+
+def feed_audit_event_payload_sql(
+    alias: str = "feed_audit_events",
+) -> str:
+    """Return the schema version 1 Feed Change Notification JSONB payload."""
+    return f"""jsonb_build_object(
+        'event_type', {FEED_CHANGE_NOTIFICATION_EVENT_TYPE!r},
+        'schema_version', {FEED_CHANGE_NOTIFICATION_SCHEMA_VERSION},
+        'event_id', {alias}.id,
+        'action', {alias}.action,
+        'occurred_at', {alias}.occurred_at,
+        'actor_id', {alias}.actor_id,
+        'feed_id', {alias}.feed_id,
+        'feed_revision', {alias}.feed_revision,
+        'before_values', {alias}.before_values,
+        'after_values', {alias}.after_values
+    )"""
+
+
+def feed_audit_event_scalar_sql(alias: str = "write_audit") -> str:
+    """Return nullable notification payload from a one-row audit CTE.
+
+    Do not use this helper for batch mutation queries. It intentionally relies
+    on a scalar subquery and PostgreSQL will fail the statement if the CTE can
+    return more than one audit row.
+    """
+    return f"(SELECT {alias}.feed_audit_event FROM {alias}) AS feed_audit_event"
 
 
 def audit_snapshot_sql(alias: str) -> str:
