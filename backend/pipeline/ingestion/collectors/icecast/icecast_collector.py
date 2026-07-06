@@ -64,6 +64,10 @@ STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 _STREAM_PROBE_TIMEOUT_SEC = 10
 _MAX_ALLOWED_LAG_SECONDS = 60.0
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
+_FIX_HEADER_TIMEOUT_SEC = 10.0
+_CLEANUP_SUBPROCESS_TIMEOUT_SEC = 2.0
+
+_background_tasks: set[asyncio.Task[None]] = set()
 
 
 # Stream endpoint semantics differ from item/API endpoints: a stream 404 means
@@ -288,7 +292,22 @@ def _path_mtime(path: Path) -> float | None:
         return None
 
 
-async def _fix_flac_header(file_path: Path) -> None:
+async def _cleanup_subprocess(process: asyncio.subprocess.Process) -> None:
+    """Ensure a subprocess is terminated or killed and its resources reaped."""
+    if process.returncode is not None:
+        return
+    with contextlib.suppress(Exception):
+        process.terminate()
+        await asyncio.wait_for(
+            process.wait(), timeout=_CLEANUP_SUBPROCESS_TIMEOUT_SEC
+        )
+        return
+    with contextlib.suppress(Exception):
+        process.kill()
+        await process.wait()
+
+
+async def _fix_flac_header(file_path: Path) -> bool:
     """Re-encodes a FLAC segment in-place to write a valid STREAMINFO header.
 
     This is a critical performance and correctness fix: ffmpeg's segment muxer
@@ -296,8 +315,17 @@ async def _fix_flac_header(file_path: Path) -> None:
     in the header. When downstream services try to read these files, soundfile/libsndfile
     attempts to allocate an infinite array (2^63 - 1 frames) and crashes or thrashes.
     Re-encoding the segment in-place takes ~10ms but writes a perfect, standard FLAC header.
+
+    Returns:
+        True if *file_path* now has a repaired header, False if the repair
+        timed out, exited non-zero, or raised — callers must not read the
+        original file in that case, since it may still carry the malformed
+        header that motivated this fix.
+
     """
     temp_path = file_path.with_name(f"{file_path.name}.fixed.flac")
+    process = None
+    success = False
     try:
         process = await asyncio.create_subprocess_exec(
             "ffmpeg",
@@ -311,21 +339,33 @@ async def _fix_flac_header(file_path: Path) -> None:
             stdout=asyncio.subprocess.DEVNULL,
             stderr=asyncio.subprocess.DEVNULL,
         )
-        await process.wait()
+        await asyncio.wait_for(process.wait(), timeout=_FIX_HEADER_TIMEOUT_SEC)
         if process.returncode == 0:
-            temp_path.replace(file_path)
+            await asyncio.to_thread(temp_path.replace, file_path)
+            success = True
         else:
             logger.error(
                 "ffmpeg header fix failed for %s with exit code %s",
                 file_path,
                 process.returncode,
             )
+    except TimeoutError:
+        logger.warning(
+            "ffmpeg header fix timed out for %s after %.1fs",
+            file_path,
+            _FIX_HEADER_TIMEOUT_SEC,
+        )
     except Exception as e:
         logger.exception(
             "Exception fixing FLAC header for %s: %s", file_path, e
         )
     finally:
-        temp_path.unlink(missing_ok=True)
+        if process is not None:
+            task = asyncio.create_task(_cleanup_subprocess(process))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+        await asyncio.to_thread(temp_path.unlink, missing_ok=True)
+    return success
 
 
 async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
@@ -427,18 +467,33 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                 next_segment = _segment_path(segment_dir, next_index + 1)
                 process_done = wait_task.done()
 
+                # Run file checks in threadpool to prevent event loop stalls on disk latency
+                current_exists = await asyncio.to_thread(current_segment.exists)
+                next_exists = await asyncio.to_thread(next_segment.exists)
+
                 # Read a segment only once we know ffmpeg finished writing it.
                 # A segment is considered finalized when either:
                 # - the next segment exists, or
                 # - ffmpeg has exited.
-                if current_segment.exists() and (
-                    next_segment.exists() or process_done
-                ):
+                if current_exists and (next_exists or process_done):
                     # SLO: receipt_time stamp — Icecast segment finalized, bytes available
                     receipt_time = _now_utc()
 
                     # Fix the FLAC header in-place so downstream decoders don't crash
-                    await _fix_flac_header(current_segment)
+                    header_fixed = await _fix_flac_header(current_segment)
+                    if not header_fixed:
+                        logger.warning(
+                            "Feed %s (%s): dropping segment %s after failed "
+                            "header repair",
+                            feed_id,
+                            feed_name,
+                            current_segment,
+                        )
+                        await asyncio.to_thread(
+                            current_segment.unlink, missing_ok=True
+                        )
+                        next_index += 1
+                        continue
 
                     segment_bytes = await asyncio.to_thread(
                         current_segment.read_bytes
@@ -487,7 +542,7 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
 
                 # If ffmpeg is done and there is no pending finalized segment,
                 # we are finished.
-                if process_done and not current_segment.exists():
+                if process_done and not current_exists:
                     exit_code = wait_task.result()
                     if exit_code != 0:
                         stderr_snippet = (
@@ -531,6 +586,17 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         "\n".join(stderr_tail) if stderr_tail else None
                     )
                     stderr_log_text = stderr_snippet or "(no stderr captured)"
+                    (
+                        current_segment_size,
+                        next_segment_size,
+                        current_segment_mtime,
+                        next_segment_mtime,
+                    ) = await asyncio.gather(
+                        asyncio.to_thread(_path_size, current_segment),
+                        asyncio.to_thread(_path_size, next_segment),
+                        asyncio.to_thread(_path_mtime, current_segment),
+                        asyncio.to_thread(_path_mtime, next_segment),
+                    )
                     logger.error(
                         "Feed %s (%s) no finalized segment within %ss; "
                         "next_index=%s current_segment_exists=%s "
@@ -543,12 +609,12 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         feed_name,
                         READ_TIMEOUT_SEC,
                         next_index,
-                        current_segment.exists(),
-                        next_segment.exists(),
-                        _path_size(current_segment),
-                        _path_size(next_segment),
-                        _path_mtime(current_segment),
-                        _path_mtime(next_segment),
+                        current_exists,
+                        next_exists,
+                        current_segment_size,
+                        next_segment_size,
+                        current_segment_mtime,
+                        next_segment_mtime,
                         last_activity_age_sec,
                         READ_TIMEOUT_SEC,
                         process.pid,
@@ -581,7 +647,7 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                 wait_task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await wait_task
-            await _cleanup_ffmpeg_process(process, str(feed_id), str(feed_name))
+            await _cleanup_ffmpeg_process(process, str(feed_id), feed_name)
 
 
 async def _create_ffmpeg_process(
