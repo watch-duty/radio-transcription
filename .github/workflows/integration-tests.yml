@@ -99,10 +99,6 @@ jobs:
             run --rm integration-tests sh -c "
               pip install -q uv && \
               uv sync && \
-              uv run python -m grpc_tools.protoc \
-                -I=protos \
-                --python_out=backend/pipeline/schema_types \
-                protos/*.proto && \
               uv run pytest integration_tests/ \
                 --ignore=integration_tests/storage/ \
                 -n auto -v -s \

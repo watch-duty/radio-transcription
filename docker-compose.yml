@@ -421,7 +421,6 @@ services:
     working_dir: /app
     command: >
       sh -c "pip install uv && uv sync &&
-      uv run python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto &&
       uv run pytest integration_tests/* -v -s --log-cli-level=INFO"
     networks:
       - pipeline-network
