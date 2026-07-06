@@ -79,7 +79,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         )
         cls.db_container.start()
         cls._db_host = cls.db_container.get_container_host_ip()
-        cls._db_port = int(cls.db_container.get_exposed_port(5432))
+        cls._db_port = cls.db_container.get_exposed_port(5432)
 
         async def _setup_schema() -> None:
             conn = await asyncpg.connect(
@@ -104,7 +104,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         cls.gcs_container.start()
 
         cls._gcs_host = cls.gcs_container.get_container_host_ip()
-        cls._gcs_port = int(cls.gcs_container.get_exposed_port(_FAKE_GCS_PORT))
+        cls._gcs_port = cls.gcs_container.get_exposed_port(_FAKE_GCS_PORT)
         cls._gcs_url = f"http://{cls._gcs_host}:{cls._gcs_port}"
 
         # Create test bucket via fake-gcs-server JSON API
@@ -143,8 +143,16 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
         self.gcs_client = gcs_client.GcsClient()
 
+        self.mock_fix_flac_header = patch(
+            "backend.pipeline.ingestion.collectors.icecast.icecast_collector._fix_flac_header",
+            new_callable=AsyncMock,
+            return_value=True,
+        )
+        self.mock_fix_flac_header.start()
+
     async def asyncTearDown(self) -> None:
         """Close GCS client, remove env var, and close pool."""
+        self.mock_fix_flac_header.stop()
         await self.gcs_client.close()
         os.environ.pop("STORAGE_EMULATOR_HOST", None)
         for key in MOCK_ENV_VARS:
@@ -315,40 +323,44 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self, mock_create_ffmpeg
     ) -> None:
         """No segment leaves ingestion with the unreadable muxer header."""
-        feed = await self._lease_feed("flac-header-feed")
+        self.mock_fix_flac_header.stop()
+        try:
+            feed = await self._lease_feed("flac-header-feed")
 
-        # The muxer emits a segment with a bad STREAMINFO header; the capture
-        # path must repair it before upload.
-        raw = _BAD_STREAMINFO_FLAC.read_bytes()
-        mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg([raw])
+            # The muxer emits a segment with a bad STREAMINFO header; the capture
+            # path must repair it before upload.
+            raw = _BAD_STREAMINFO_FLAC.read_bytes()
+            mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg([raw])
 
-        shutdown = asyncio.Event()
-        uploaded_paths = []
-        async for capture_chunk in icecast_collector.capture_icecast_stream(
-            feed,
-            shutdown,
-            url_base="https://mock.example.com/",
-            resources=_default_resources(),
-        ):
-            uploaded_paths.append(
-                await gcp_helper.upload_staged_audio(
-                    self.gcs_client,
-                    capture_chunk.audio_bytes,
-                    feed,
-                    _TEST_BUCKET,
-                    len(uploaded_paths),
+            shutdown = asyncio.Event()
+            uploaded_paths = []
+            async for capture_chunk in icecast_collector.capture_icecast_stream(
+                feed,
+                shutdown,
+                url_base="https://mock.example.com/",
+                resources=_default_resources(),
+            ):
+                uploaded_paths.append(
+                    await gcp_helper.upload_staged_audio(
+                        self.gcs_client,
+                        capture_chunk.audio_bytes,
+                        feed,
+                        _TEST_BUCKET,
+                        len(uploaded_paths),
+                    )
                 )
-            )
 
-        self.assertEqual(len(uploaded_paths), 1)
-        object_name = uploaded_paths[0].replace(f"gs://{_TEST_BUCKET}/", "")
-        downloaded = await self._download_gcs_object(object_name)
+            self.assertEqual(len(uploaded_paths), 1)
+            object_name = uploaded_paths[0].replace(f"gs://{_TEST_BUCKET}/", "")
+            downloaded = await self._download_gcs_object(object_name)
 
-        # The repaired bytes differ from the raw muxer output and are now
-        # decodable by libsndfile (header accuracy is covered by the unit test).
-        self.assertNotEqual(downloaded, raw)
-        samples, _ = sf.read(io.BytesIO(downloaded), dtype="float32")
-        self.assertGreater(len(samples), 0)
+            # The repaired bytes differ from the raw muxer output and are now
+            # decodable by libsndfile (header accuracy is covered by the unit test).
+            self.assertNotEqual(downloaded, raw)
+            samples, _ = sf.read(io.BytesIO(downloaded), dtype="float32")
+            self.assertGreater(len(samples), 0)
+        finally:
+            self.mock_fix_flac_header.start()
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",

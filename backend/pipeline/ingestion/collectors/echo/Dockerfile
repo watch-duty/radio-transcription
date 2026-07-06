@@ -20,7 +20,7 @@ COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-workspace && uv pip install grpcio-tools
+    uv sync --frozen --no-dev --no-install-workspace --group build
 COPY backend/ ./backend/
 
 # 3. Compile proto definitions
