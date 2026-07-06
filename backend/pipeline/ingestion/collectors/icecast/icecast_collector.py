@@ -470,7 +470,9 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                 process_done = wait_task.done()
 
                 # Run file checks in threadpool to prevent event loop stalls on disk latency
-                current_exists = await asyncio.to_thread(current_segment_wav.exists)
+                current_exists = await asyncio.to_thread(
+                    current_segment_wav.exists
+                )
                 next_exists = await asyncio.to_thread(next_segment_wav.exists)
 
                 # Read a segment only once we know ffmpeg finished writing it.

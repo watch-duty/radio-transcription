@@ -329,7 +329,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self, mock_create_ffmpeg
     ) -> None:
         """No segment leaves ingestion with the unreadable muxer header."""
-        self.mock_fix_flac_header.stop()
+        self.patcher_transcode.stop()
         try:
             feed = await self._lease_feed("flac-header-feed")
 
@@ -338,8 +338,6 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             raw = _BAD_STREAMINFO_FLAC.read_bytes()
             mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg([raw])
 
-        self.patcher_transcode.stop()
-        try:
             shutdown = asyncio.Event()
             uploaded_paths = []
             async for capture_chunk in icecast_collector.capture_icecast_stream(
@@ -359,16 +357,16 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 )
 
             self.assertEqual(len(uploaded_paths), 1)
-        finally:
-            self.patcher_transcode.start()
-        object_name = uploaded_paths[0].replace(f"gs://{_TEST_BUCKET}/", "")
-        downloaded = await self._download_gcs_object(object_name)
+            object_name = uploaded_paths[0].replace(f"gs://{_TEST_BUCKET}/", "")
+            downloaded = await self._download_gcs_object(object_name)
 
             # The repaired bytes differ from the raw muxer output and are now
             # decodable by libsndfile (header accuracy is covered by the unit test).
             self.assertNotEqual(downloaded, raw)
             samples, _ = sf.read(io.BytesIO(downloaded), dtype="float32")
             self.assertGreater(len(samples), 0)
+        finally:
+            self.patcher_transcode.start()
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
