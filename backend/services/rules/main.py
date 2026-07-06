@@ -32,7 +32,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="Rules Management Service",
-    description="API for creating, reading, updating, and deleting transcription rules.",
+    description=(
+        "API for creating, reading, updating, and deleting transcription rules."
+    ),
     version="1.0.0",
     lifespan=lifespan,
     dependencies=[Depends(verify_oidc_token)],
@@ -41,7 +43,7 @@ setup_fastapi_tracing(app, service_name="rules-service")
 
 
 def get_rules_service(request: Request) -> BaseRulesService:
-    """Dependency that retrieves the rules service from the application state."""
+    """Dependency that retrieves the rules service from application state."""
     return request.app.state.rules_service
 
 

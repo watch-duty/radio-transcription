@@ -2,6 +2,9 @@ import { AudioClassification, type AudioSegment } from '@transcription/common';
 
 import { type RenderableAudioSegment } from '../hooks/useConsolidatedAudioSegments';
 
+// `listening` = idle and caught up at the live edge (not paused, not playing).
+export type PlaybackState = 'playing' | 'paused' | 'listening';
+
 /**
  * Matches a consolidated segment by its own id or, for silence bundles, by any
  * of the raw segment ids it contains.

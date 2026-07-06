@@ -8,6 +8,7 @@ import pathlib
 import unittest
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
+from zoneinfo import ZoneInfo
 
 from backend.pipeline.ingestion.collectors import (
     item_downloads,
@@ -88,6 +89,7 @@ class TestCrossCollectorShutdownSemantics(unittest.IsolatedAsyncioTestCase):
             s3_base_url="http://mock-s3-bucket",
             user="test-user",
             password="test-password",
+            timezone=ZoneInfo("UTC"),
         )
 
         with self.assertRaises(asyncio.CancelledError):

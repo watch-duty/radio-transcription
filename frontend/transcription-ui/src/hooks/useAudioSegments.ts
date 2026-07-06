@@ -44,6 +44,7 @@ interface UseAudioSegmentsOptions {
   // Called once per poll with the brand-new segments that were merged into the
   // cache, so the view can run UI side effects (snackbar, autoplay, unread).
   onNewSegments?: (segments: AudioSegment[]) => void;
+  searchQuery?: string;
 }
 
 export function useAudioSegments({
@@ -54,6 +55,7 @@ export function useAudioSegments({
   isFeedsSuccess,
   pollingEnabled,
   onNewSegments,
+  searchQuery,
 }: UseAudioSegmentsOptions) {
   const queryClient = useQueryClient();
 
@@ -64,8 +66,9 @@ export function useAudioSegments({
       searchedFeedId,
       searchedTimestamp,
       alertFilter,
+      searchQuery,
     ],
-    [token, searchedFeedId, searchedTimestamp, alertFilter]
+    [token, searchedFeedId, searchedTimestamp, alertFilter, searchQuery]
   );
 
   const {
@@ -103,7 +106,8 @@ export function useAudioSegments({
         /*startTime=*/ order === 'asc' ? originalTimestampMs : undefined,
         /*endTime=*/ order === 'desc' ? originalTimestampMs : undefined,
         order,
-        alertFilter === 'alerts' ? true : undefined
+        alertFilter === 'alerts' ? true : undefined,
+        searchQuery || undefined
       );
 
       if (order === 'asc' && response.segments) {
@@ -198,7 +202,8 @@ export function useAudioSegments({
               POLLING_LOOKBACK_BUFFER_MS,
             /*endTime=*/ undefined,
             /*order=*/ 'asc',
-            alertFilter === 'alerts' ? true : undefined
+            alertFilter === 'alerts' ? true : undefined,
+            searchQuery || undefined
           );
 
           if (response.segments && response.segments.length > 0) {
@@ -222,7 +227,8 @@ export function useAudioSegments({
           /*startTime=*/ undefined,
           /*endTime=*/ undefined,
           /*order=*/ 'desc',
-          alertFilter === 'alerts' ? true : undefined
+          alertFilter === 'alerts' ? true : undefined,
+          searchQuery || undefined
         );
         return response.segments || [];
       } catch (error) {
@@ -233,7 +239,7 @@ export function useAudioSegments({
         return [];
       }
     }
-  }, [newestTimestamp, searchedFeedId, token, alertFilter]);
+  }, [newestTimestamp, searchedFeedId, token, alertFilter, searchQuery]);
 
   const updateCacheWithNewAudioSegments = useCallback(
     (newAudioSegments: AudioSegment[]): AudioSegment[] => {
@@ -299,7 +305,12 @@ export function useAudioSegments({
   // Live polling for newer segments at the head of the stream. React Query owns
   // the timer to take advantage of its refetch-on-focus/reconnect/background behavior.
   const pollingQuery = useQuery({
-    queryKey: ['liveAudioSegmentsPoll', searchedFeedId, alertFilter],
+    queryKey: [
+      'liveAudioSegmentsPoll',
+      searchedFeedId,
+      alertFilter,
+      searchQuery,
+    ],
     queryFn: pollNewerAudioSegments,
     enabled:
       isAudioSegmentsSuccess &&

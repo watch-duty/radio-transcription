@@ -26,6 +26,8 @@ def _record_e2e_latency(feed_id: str) -> None:
     if not isinstance(ingest_time_ms_str, str):
         return
 
+    feed_type = baggage.get_baggage("feed_type") or "unknown"
+
     try:
         ingest_time_ms = int(ingest_time_ms_str)
         current_time_ms = int(
@@ -34,12 +36,13 @@ def _record_e2e_latency(feed_id: str) -> None:
         latency_ms = current_time_ms - ingest_time_ms
 
         pipeline_metrics_logger.info(
-            f"Recorded E2E latency: {latency_ms}ms (feed_id: {feed_id})",
+            f"Recorded E2E latency: {latency_ms}ms (feed_id: {feed_id}, feed_type: {feed_type})",
             extra={
                 "json_fields": {
                     "event_type": "e2e_latency",
                     "latency_ms": latency_ms,
                     "feed_id": feed_id,
+                    "feed_type": feed_type,
                 }
             },
         )

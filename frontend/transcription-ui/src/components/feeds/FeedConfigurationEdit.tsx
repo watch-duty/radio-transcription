@@ -5,6 +5,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import TagIcon from '@mui/icons-material/Tag';
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
@@ -34,7 +35,10 @@ import type {
 import { SourceType } from '@transcription/common';
 
 import { toSourceTypeString } from '../../utils/textUtils';
-import { validateFeedSourceId } from '../../utils/validationUtils';
+import {
+  isValidTimezone,
+  validateFeedSourceId,
+} from '../../utils/validationUtils';
 import {
   ConfirmationDialog,
   type ConfirmationDialogProps,
@@ -42,6 +46,23 @@ import {
 
 const ALL_SOURCE_TYPES = Object.values(SourceType).map((value) => {
   return { value, label: toSourceTypeString(value) };
+});
+
+const SYSTEM_TIMEZONE = 'system/timezone';
+
+const ALL_TIMEZONES = Array.from(
+  // Some older browsers might not support UTC in this list.
+  new Set([...Intl.supportedValuesOf('timeZone'), 'UTC'])
+).sort((a, b) => {
+  if (a === 'UTC') return -1;
+  if (b === 'UTC') return 1;
+
+  const aIsAmerica = a.startsWith('America/');
+  const bIsAmerica = b.startsWith('America/');
+  if (aIsAmerica && !bIsAmerica) return -1;
+  if (!aIsAmerica && bIsAmerica) return 1;
+
+  return a.localeCompare(b);
 });
 
 export const DialogType = {
@@ -186,7 +207,17 @@ export function FeedConfigurationEdit({
   };
 
   const handleKeyChange = (val: string) => {
+    const trimmedVal = val.trim();
     setNewTagKey(val);
+
+    // Reset the tag value if the tag is intended to be a timezone since the possible
+    // values are enums.
+    if (trimmedVal === SYSTEM_TIMEZONE) {
+      if (!isValidTimezone(newTagValue)) {
+        setNewTagValue('');
+      }
+    }
+
     setValidationErrors((prev) => {
       if (!prev.tags) return prev;
       const copy = { ...prev };
@@ -265,6 +296,12 @@ export function FeedConfigurationEdit({
   ) => {
     const copy = [...feedTags];
     copy[index] = { ...copy[index], [field]: newValue };
+
+    // Value needs to reset since only enums are allowed for timezone tags.
+    if (field === 'key' && newValue === SYSTEM_TIMEZONE) {
+      copy[index].value = '';
+    }
+
     setFeedTags(copy);
     setValidationErrors((prev) => {
       const copy = { ...prev };
@@ -304,6 +341,18 @@ export function FeedConfigurationEdit({
       }
     } else if (trimmedNewKey || trimmedNewValue) {
       errors.tags = 'Both key and value must be populated to add a tag.';
+    }
+
+    // Validate timezone tag values
+    // NOTE: The SYSTEM_TIMEZONE tag is currently only recognized by the Fire Notifications collector.
+    for (const tag of combinedTags) {
+      if (tag.key.trim() === SYSTEM_TIMEZONE) {
+        const tzValue = tag.value.trim();
+        if (!isValidTimezone(tzValue)) {
+          errors.tags = `Invalid timezone. Please select a valid timezone from the list.`;
+          break;
+        }
+      }
     }
 
     // Verify tags data integrity across the combined set
@@ -432,7 +481,7 @@ export function FeedConfigurationEdit({
 
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, sm: 6 }}>
-                <FormControl fullWidth disabled={!!isEditing || isSubmitting}>
+                <FormControl disabled={!!isEditing || isSubmitting}>
                   <InputLabel id="source-type-select-label">
                     Source Type
                   </InputLabel>
@@ -517,6 +566,10 @@ export function FeedConfigurationEdit({
                 Tags (e.g. county, agency, state) allow for better
                 searchability, grouping, and routing of notifications.
               </Typography>
+              <Alert severity="info" sx={{ mb: 2 }}>
+                The system/timezone tag can be used to correct the timestamps.
+                This is only supported in Fire Notification feeds.
+              </Alert>
 
               <Stack
                 direction="row"
@@ -531,18 +584,40 @@ export function FeedConfigurationEdit({
                   onChange={(e) => handleKeyChange(e.target.value)}
                   error={!!validationErrors.tags}
                   disabled={isSubmitting}
-                  sx={{ flexGrow: 1 }}
+                  sx={{ flex: 1 }}
                 />
-                <TextField
-                  size="small"
-                  label="Value"
-                  placeholder="Ventura"
-                  value={newTagValue}
-                  onChange={(e) => handleValueChange(e.target.value)}
-                  error={!!validationErrors.tags}
-                  disabled={isSubmitting}
-                  sx={{ flexGrow: 1 }}
-                />
+                {newTagKey.trim() === SYSTEM_TIMEZONE ? (
+                  <FormControl size="small" sx={{ flex: 1 }}>
+                    <InputLabel id="timezone-tag-label">Timezone</InputLabel>
+                    <Select
+                      labelId="timezone-tag-label"
+                      id="timezone-tag-dropdown"
+                      value={newTagValue}
+                      label="Timezone"
+                      onChange={(e) => handleValueChange(e.target.value)}
+                      error={!!validationErrors.tags}
+                      disabled={isSubmitting}
+                      fullWidth
+                    >
+                      {ALL_TIMEZONES.map((tz) => (
+                        <MenuItem key={tz} value={tz}>
+                          {tz}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                ) : (
+                  <TextField
+                    size="small"
+                    label="Value"
+                    placeholder="Ventura"
+                    value={newTagValue}
+                    onChange={(e) => handleValueChange(e.target.value)}
+                    error={!!validationErrors.tags}
+                    disabled={isSubmitting}
+                    sx={{ flex: 1 }}
+                  />
+                )}
                 <Button
                   variant="outlined"
                   onClick={handleAddTag}
@@ -600,22 +675,48 @@ export function FeedConfigurationEdit({
                         size="small"
                         label="Key"
                         value={tag.key}
-                        onChange={(e) =>
-                          handleUpdateTag(index, 'key', e.target.value)
-                        }
+                        onChange={(e) => {
+                          const newKey = e.target.value;
+                          handleUpdateTag(index, 'key', newKey);
+                        }}
                         disabled={isSubmitting}
-                        sx={{ flexGrow: 1 }}
+                        sx={{ flex: 1 }}
                       />
-                      <TextField
-                        size="small"
-                        label="Value"
-                        value={tag.value}
-                        onChange={(e) =>
-                          handleUpdateTag(index, 'value', e.target.value)
-                        }
-                        disabled={isSubmitting}
-                        sx={{ flexGrow: 1 }}
-                      />
+                      {tag.key.trim() === SYSTEM_TIMEZONE ? (
+                        <FormControl size="small" sx={{ flex: 1 }}>
+                          <InputLabel id={`timezone-tag-label-${index}`}>
+                            Timezone
+                          </InputLabel>
+                          <Select
+                            labelId={`timezone-tag-label-${index}`}
+                            id={`timezone-tag-dropdown-${index}`}
+                            value={tag.value}
+                            label="Timezone"
+                            onChange={(e) =>
+                              handleUpdateTag(index, 'value', e.target.value)
+                            }
+                            disabled={isSubmitting}
+                            fullWidth
+                          >
+                            {ALL_TIMEZONES.map((tz) => (
+                              <MenuItem key={tz} value={tz}>
+                                {tz}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      ) : (
+                        <TextField
+                          size="small"
+                          label="Value"
+                          value={tag.value}
+                          onChange={(e) =>
+                            handleUpdateTag(index, 'value', e.target.value)
+                          }
+                          disabled={isSubmitting}
+                          sx={{ flex: 1 }}
+                        />
+                      )}
                       <IconButton
                         size="small"
                         onClick={() => handleRemoveTag(tag.key)}

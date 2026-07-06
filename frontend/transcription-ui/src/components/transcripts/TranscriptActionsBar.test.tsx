@@ -443,4 +443,67 @@ describe('TranscriptActionsBar', () => {
     expect(twoBadge).toBeTruthy();
     expect(twoBadge.className).not.toContain('MuiBadge-invisible');
   });
+
+  it('renders search input in popover, calls setSearchQuery on Apply, displays search Chip, and deletes search Chip', () => {
+    const mockSetSearchQuery = vi.fn();
+    const { rerender } = render(
+      <TranscriptActionsBar
+        searchedTimestamp={null}
+        hasNewerAudioSegments={false}
+        redactTranscripts={false}
+        setRedactTranscripts={vi.fn()}
+        dateTime={null}
+        setDateTime={vi.fn()}
+        alertFilter="all"
+        setAlertFilter={vi.fn()}
+        onClickViewLatest={vi.fn()}
+        searchQuery=""
+        setSearchQuery={mockSetSearchQuery}
+      />
+    );
+
+    // Open filter popover
+    const filterButton = screen.getByRole('button', { name: 'filter' });
+    fireEvent.click(filterButton);
+
+    const searchInput = screen.getByPlaceholderText('Search transcripts...');
+    expect(searchInput).toBeTruthy();
+
+    fireEvent.change(searchInput, { target: { value: 'fire' } });
+
+    // Before applying, setSearchQuery should not be called
+    expect(mockSetSearchQuery).not.toHaveBeenCalled();
+
+    const applyButton = screen.getByRole('button', { name: 'Apply' });
+    fireEvent.click(applyButton);
+
+    expect(mockSetSearchQuery).toHaveBeenCalledWith('fire');
+
+    // Simulate parent state update
+    rerender(
+      <TranscriptActionsBar
+        searchedTimestamp={null}
+        hasNewerAudioSegments={false}
+        redactTranscripts={false}
+        setRedactTranscripts={vi.fn()}
+        dateTime={null}
+        setDateTime={vi.fn()}
+        alertFilter="all"
+        setAlertFilter={vi.fn()}
+        onClickViewLatest={vi.fn()}
+        searchQuery="fire"
+        setSearchQuery={mockSetSearchQuery}
+      />
+    );
+
+    // Check search Chip is rendered
+    expect(screen.getByText('Search:')).toBeTruthy();
+    expect(screen.getByText('fire')).toBeTruthy();
+
+    // Click delete icon on search Chip
+    const deleteIcons = screen.getAllByTestId('CancelIcon');
+    // The search chip's cancel icon is the only one since datetime and alertFilter are inactive
+    fireEvent.click(deleteIcons[0]);
+    expect(mockSetSearchQuery).toHaveBeenLastCalledWith('');
+  });
 });

@@ -20,7 +20,10 @@ if TYPE_CHECKING:
 
 
 class AudioSegmentService:
-    """Service for managing audio segments, handling interactions with AudioSegmentStore."""
+    """Service for managing audio segments.
+
+    Handles interactions with AudioSegmentStore.
+    """
 
     def __init__(self, store: AudioSegmentStore) -> None:
         self._store = store
@@ -35,6 +38,7 @@ class AudioSegmentService:
         order: SortOrder = SortOrder.DESC,
         *,
         is_alert: bool | None = None,
+        text_query: str | None = None,
     ) -> ListAudioSegmentsResponse:
         """Lists all audio segments with annotations and pagination."""
         result = await self._store.list_audio_segments(
@@ -45,6 +49,7 @@ class AudioSegmentService:
             end_time=end_time,
             order=order,
             is_alert=is_alert,
+            text_query=text_query,
         )
         return ListAudioSegmentsResponse(
             segments=result.segments, next_token=result.next_token
