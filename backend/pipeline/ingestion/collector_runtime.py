@@ -77,6 +77,7 @@ _PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
 _PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
 _NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
 _NON_BUDGETED_RETRY_MAX_SEC = 15 * 60
+INGESTION_IO_MAX_WORKERS = 512
 
 
 class _PipelineFailure(Exception):
@@ -220,6 +221,12 @@ class CollectorRuntime:
     async def _main(self) -> None:
         """Top-level async entry: setup, run leasing loop, then shutdown."""
         self._loop = asyncio.get_running_loop()
+        self._loop.set_default_executor(
+            concurrent.futures.ThreadPoolExecutor(
+                max_workers=INGESTION_IO_MAX_WORKERS,
+                thread_name_prefix="ingestion_io",
+            )
+        )
         setup_asyncio_logging(self._loop)
         self._shutdown = asyncio.Event()
         self._lease_lost = asyncio.Event()
