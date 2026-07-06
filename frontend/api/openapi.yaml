@@ -301,6 +301,73 @@ components:
           type: string
       type: object
       additionalProperties: false
+    Record_string.unknown_:
+      properties: {}
+      additionalProperties: {}
+      type: object
+      description: Construct a type with a set of properties K of type T
+    FeedHistoryEvent:
+      properties:
+        id:
+          type: string
+        feedId:
+          type: string
+        action:
+          type: string
+        actor:
+          type: string
+        occurredAt:
+          type: number
+          format: double
+        feedRevision:
+          type: number
+          format: double
+        beforeValues:
+          $ref: "#/components/schemas/Record_string.unknown_"
+        afterValues:
+          $ref: "#/components/schemas/Record_string.unknown_"
+      required:
+        - id
+        - feedId
+        - action
+        - actor
+        - occurredAt
+        - feedRevision
+        - beforeValues
+        - afterValues
+      type: object
+      additionalProperties: false
+    ListFeedHistoryResponse:
+      properties:
+        historyEvents:
+          items:
+            $ref: "#/components/schemas/FeedHistoryEvent"
+          type: array
+        nextToken:
+          type: string
+        total:
+          type: number
+          format: double
+      required:
+        - historyEvents
+        - total
+      type: object
+      additionalProperties: false
+    ListFeedHistoryQueryParams:
+      properties:
+        limit:
+          type: integer
+          format: int32
+          default: 100
+        nextToken:
+          type: string
+        order:
+          type: string
+          enum:
+            - asc
+            - desc
+      type: object
+      additionalProperties: false
     FeedCreate:
       properties:
         name:
@@ -1245,6 +1312,91 @@ paths:
           required: true
           schema:
             type: string
+      x-google-backend: radio-transcription-api
+  /api/v1/feeds/{feedId}/history:
+    get:
+      operationId: ListFeedHistory
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListFeedHistoryResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Feeds
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: feedId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            default: 100
+            format: int32
+            type: integer
+        - in: query
+          name: nextToken
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: order
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
       x-google-backend: radio-transcription-api
   /api/v1/feeds/{feedId}/reset:
     post:

@@ -33,6 +33,7 @@ import {
 import { consolidateAudioSegments } from '../../hooks/useConsolidatedAudioSegments';
 import { getFeed } from '../../service/getFeed';
 import { listAudioSegments } from '../../service/listAudioSegments';
+import { listFeedHistory } from '../../service/listFeedHistory';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { renderWithQueryClient } from '../../test/testUtils';
@@ -172,9 +173,14 @@ vi.mock('../../service/listRules', () => ({
   listRules: vi.fn(),
 }));
 
+vi.mock('../../service/listFeedHistory', () => ({
+  listFeedHistory: vi.fn(),
+}));
+
+const mockAuth = { token: 'fake-token', isAdmin: false };
 // Mock AuthContext
 vi.mock('../../context/AuthContext', () => ({
-  useAuth: () => ({ token: 'fake-token' }),
+  useAuth: () => mockAuth,
 }));
 
 vi.mock('@wavesurfer/react', () => ({
@@ -1967,6 +1973,124 @@ describe('TranscriptView', () => {
       expect(result).toHaveLength(2);
       expect(result[0].id).toBe('seg-2');
       expect(result[1].id).toBe('seg-1');
+    });
+  });
+
+  describe('Feed history state change history for admins', () => {
+    const mockHistoryEvents = [
+      {
+        id: 'evt-1',
+        feedId: 'feed123',
+        action: 'feed.recovered',
+        actor: 'system',
+        occurredAt: Date.parse('2026-04-10T12:03:00Z'),
+        feedRevision: 2,
+        beforeValues: { status: 'failing' },
+        afterValues: { status: 'active' },
+      },
+    ];
+
+    beforeEach(() => {
+      vi.mocked(listFeedHistory).mockResolvedValue({
+        historyEvents: mockHistoryEvents,
+        total: 1,
+      });
+    });
+
+    it('does not fetch or show history events when user is not an admin', async () => {
+      mockAuth.isAdmin = false;
+      const mockAudioSegments = [
+        makeMockAudioSegment(
+          '1',
+          'feed123',
+          '2026-04-10T12:00:00Z',
+          '2026-04-10T12:00:05Z',
+          'Hello',
+          'gs:://foo.m4a',
+          []
+        ),
+      ];
+      vi.mocked(listAudioSegments).mockResolvedValueOnce({
+        segments: mockAudioSegments,
+        nextToken: undefined,
+      });
+
+      renderTranscriptView(
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+        { initialEntries: ['/?feedId=feed123'] }
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('Hello')).toBeTruthy();
+      });
+
+      expect(listFeedHistory).not.toHaveBeenCalled();
+      expect(screen.queryByText('[System Event]')).toBeNull();
+    });
+
+    it('fetches and merges history events chronologically when user is an admin', async () => {
+      mockAuth.isAdmin = true;
+      const mockAudioSegments = [
+        makeMockAudioSegment(
+          'seg-before',
+          'feed123',
+          '2026-04-10T12:00:00Z',
+          '2026-04-10T12:00:05Z',
+          'Before Event',
+          'gs:://foo.m4a',
+          []
+        ),
+        makeMockAudioSegment(
+          'seg-after',
+          'feed123',
+          '2026-04-10T12:05:00Z',
+          '2026-04-10T12:05:05Z',
+          'After Event',
+          'gs:://foo.m4a',
+          []
+        ),
+      ];
+      vi.mocked(listAudioSegments).mockResolvedValueOnce({
+        segments: mockAudioSegments,
+        nextToken: undefined,
+      });
+
+      renderTranscriptView(
+        <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+        { initialEntries: ['/?feedId=feed123'] }
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText('After Event')).toBeTruthy();
+      });
+
+      expect(listFeedHistory).toHaveBeenCalledWith('feed123', 'fake-token');
+
+      // Verify history row is rendered
+      expect(screen.getByText('[System Event]')).toBeTruthy();
+      expect(screen.getByText(/Feed recovered successfully/)).toBeTruthy();
+
+      const afterElement = screen
+        .getByText('After Event')
+        .closest('[id^="transcript-"]');
+      const eventElement = screen
+        .getByText('[System Event]')
+        .closest('.MuiListItem-root');
+      const beforeElement = screen
+        .getByText('Before Event')
+        .closest('[id^="transcript-"]');
+
+      expect(afterElement).toBeTruthy();
+      expect(eventElement).toBeTruthy();
+      expect(beforeElement).toBeTruthy();
+
+      // Verify correct order (descending): After Event -> System Event -> Before Event
+      expect(afterElement!.compareDocumentPosition(eventElement!)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING
+      );
+      expect(eventElement!.compareDocumentPosition(beforeElement!)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING
+      );
     });
   });
 });

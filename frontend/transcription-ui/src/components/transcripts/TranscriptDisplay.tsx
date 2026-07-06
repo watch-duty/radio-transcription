@@ -9,6 +9,7 @@ import Typography from '@mui/material/Typography';
 
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import { getRelativeTimeString } from '../../utils/timeUtils';
+import { AuditRow } from './AuditRow';
 import TranscriptRow from './TranscriptRow';
 
 // Start loading the next page a few rows before the user reaches the very edge
@@ -188,6 +189,14 @@ export const TranscriptDisplay: React.FC<TranscriptDisplayProps> = ({
           const position = index - firstItemIndex;
           const audioSegment = audioSegments[position];
           if (!audioSegment) return null;
+          if (audioSegment.isAuditEvent) {
+            return (
+              <AuditRow
+                key={audioSegment.id}
+                auditEvent={audioSegment.auditEvent!}
+              />
+            );
+          }
           return (
             <TranscriptRow
               key={audioSegment.id}

@@ -70,3 +70,20 @@ export interface ListFeedsResponse {
   nextToken?: string;
   total: number;
 }
+
+export interface FeedHistoryEvent {
+  id: string;
+  feedId: string;
+  action: string;
+  actor: string;
+  occurredAt: number;
+  feedRevision: number;
+  beforeValues: Record<string, unknown>;
+  afterValues: Record<string, unknown>;
+}
+
+export interface ListFeedHistoryResponse {
+  historyEvents: FeedHistoryEvent[];
+  nextToken?: string;
+  total: number;
+}

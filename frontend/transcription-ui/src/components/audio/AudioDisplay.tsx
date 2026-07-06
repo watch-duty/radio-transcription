@@ -317,6 +317,7 @@ export function AudioDisplay({
 
     // Filter for audio segments that overlap with the current visible time window
     const clips = audioSegments
+      .filter((t) => !t.isAuditEvent)
       .filter((t) => {
         const tStart = new Date(t.startTimestamp).getTime();
         const tEnd = new Date(t.endTimestamp).getTime();

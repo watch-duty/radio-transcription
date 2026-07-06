@@ -28,6 +28,7 @@ import {
 import { useScrollAnchor } from '../../hooks/useScrollAnchor';
 import { useTranscriptPlayback } from '../../hooks/useTranscriptPlayback';
 import { getFeed } from '../../service/getFeed';
+import { listFeedHistory } from '../../service/listFeedHistory';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import {
@@ -55,7 +56,7 @@ export function TranscriptView({
   onError,
 }: TranscriptViewProps) {
   const theme = useTheme();
-  const { token } = useAuth();
+  const { token, isAdmin } = useAuth();
 
   const [searchParams, setSearchParams] = useSearchParams();
   const targetFeedId = searchParams.get('feedId');
@@ -259,10 +260,52 @@ export function TranscriptView({
     searchQuery: searchQuery,
   });
 
-  const audioSegments = useConsolidatedAudioSegments(
+  const { data: historyData } = useQuery({
+    queryKey: ['listFeedHistory', token, searchedFeedId],
+    queryFn: () => listFeedHistory(searchedFeedId!, token!),
+    enabled: !!token && !!searchedFeedId && isAdmin,
+    refetchInterval: FEED_POLLING_INTERVAL_MS,
+    refetchOnWindowFocus: true,
+  });
+
+  const consolidatedSegments = useConsolidatedAudioSegments(
     rawAudioSegments,
     searchedFeed?.sourceType === SourceType.BCFY_FEEDS
   );
+
+  const audioSegments = useMemo(() => {
+    if (!isAdmin || !historyData?.historyEvents?.length) {
+      return consolidatedSegments;
+    }
+
+    const mappedEvents = historyData.historyEvents.map(
+      (event) =>
+        ({
+          id: event.id,
+          feedId: event.feedId,
+          classification: AudioClassification.UNSPECIFIED,
+          startTimestamp: new Date(event.occurredAt).toISOString(),
+          endTimestamp: new Date(event.occurredAt).toISOString(),
+          missingPriorContext: false,
+          missingPostContext: false,
+          sourceAudioUris: [],
+          canonicalAudioUri: '',
+          playbackAudioUri: '',
+          startAudioOffset: '0',
+          endAudioOffset: '0',
+          createdAt: new Date(event.occurredAt).toISOString(),
+          annotations: [],
+          isAuditEvent: true,
+          auditEvent: event,
+        }) as RenderableAudioSegment
+    );
+
+    return [...consolidatedSegments, ...mappedEvents].sort(
+      (a, b) =>
+        new Date(b.startTimestamp).getTime() -
+        new Date(a.startTimestamp).getTime()
+    );
+  }, [consolidatedSegments, historyData, isAdmin]);
 
   // Identity of the current query; a change replaces the list wholesale, so the
   // window and scroll anchor both reset off it.
