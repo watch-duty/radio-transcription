@@ -143,16 +143,22 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
         self.gcs_client = gcs_client.GcsClient()
 
-        self.mock_fix_flac_header = patch(
-            "backend.pipeline.ingestion.collectors.icecast.icecast_collector._fix_flac_header",
-            new_callable=AsyncMock,
-            return_value=True,
+        async def _mock_transcode(wav_path: Path, flac_path: Path) -> bool:
+            if await asyncio.to_thread(wav_path.exists):
+                data = await asyncio.to_thread(wav_path.read_bytes)
+                await asyncio.to_thread(flac_path.write_bytes, data)
+                return True
+            return False
+
+        self.patcher_transcode = patch(
+            "backend.pipeline.ingestion.collectors.icecast.icecast_collector._transcode_wav_to_flac",
+            AsyncMock(side_effect=_mock_transcode),
         )
-        self.mock_fix_flac_header.start()
+        self.patcher_transcode.start()
 
     async def asyncTearDown(self) -> None:
         """Close GCS client, remove env var, and close pool."""
-        self.mock_fix_flac_header.stop()
+        self.patcher_transcode.stop()
         await self.gcs_client.close()
         os.environ.pop("STORAGE_EMULATOR_HOST", None)
         for key in MOCK_ENV_VARS:
@@ -332,6 +338,8 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             raw = _BAD_STREAMINFO_FLAC.read_bytes()
             mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg([raw])
 
+        self.patcher_transcode.stop()
+        try:
             shutdown = asyncio.Event()
             uploaded_paths = []
             async for capture_chunk in icecast_collector.capture_icecast_stream(
@@ -351,16 +359,16 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
                 )
 
             self.assertEqual(len(uploaded_paths), 1)
-            object_name = uploaded_paths[0].replace(f"gs://{_TEST_BUCKET}/", "")
-            downloaded = await self._download_gcs_object(object_name)
+        finally:
+            self.patcher_transcode.start()
+        object_name = uploaded_paths[0].replace(f"gs://{_TEST_BUCKET}/", "")
+        downloaded = await self._download_gcs_object(object_name)
 
             # The repaired bytes differ from the raw muxer output and are now
             # decodable by libsndfile (header accuracy is covered by the unit test).
             self.assertNotEqual(downloaded, raw)
             samples, _ = sf.read(io.BytesIO(downloaded), dtype="float32")
             self.assertGreater(len(samples), 0)
-        finally:
-            self.mock_fix_flac_header.start()
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
