@@ -30,7 +30,9 @@ ENV UV_COMPILE_BYTECODE=1
 ENV UV_NO_CACHE=1
 
 # Install dependencies using uv sync directly into system python
-RUN uv sync --frozen --no-dev --no-install-workspace --package segmentation-pipeline --group build
+RUN uv sync --frozen --no-dev --no-install-workspace --package segmentation-pipeline && \
+    uv export --group build --locked -o build-requirements.txt && \
+    uv pip install -r build-requirements.txt
 
 ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/segmentation/main.py"
 ENV PYTHONPATH="/app"
