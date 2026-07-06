@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 
 import aiohttp
 import asyncpg
@@ -302,8 +303,14 @@ class CollectorRuntime:
                 ),
                 timeout=aiohttp.ClientTimeout(total=30, connect=10),
             )
+            segment_dir = (
+                Path(settings.segment_temp_dir)
+                if settings.segment_temp_dir
+                else None
+            )
             self._capture_resources = CaptureResources(
                 http_session=self._http_session,
+                segment_temp_dir=segment_dir,
             )
 
             # Start /healthz HTTP server. Runs on the same event loop as the

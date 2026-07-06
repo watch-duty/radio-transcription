@@ -416,7 +416,10 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
 
     auth_header, url = _build_auth_and_url(url_base, source_feed_id)
 
-    with tempfile.TemporaryDirectory(prefix="icecast_segments_") as tmp_dir:
+    segment_dir_parent = resources.segment_temp_dir
+    with tempfile.TemporaryDirectory(
+        prefix="icecast_segments_", dir=segment_dir_parent
+    ) as tmp_dir:
         segment_dir = Path(tmp_dir)
         segment_pattern_wav = str(segment_dir / "chunk_%06d.wav")
 
