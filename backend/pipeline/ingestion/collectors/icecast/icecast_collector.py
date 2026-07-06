@@ -108,9 +108,9 @@ def _build_auth_and_url(url_base: str, source_feed_id: str) -> tuple[str, str]:
         )
         return "", url
 
-    # Basic Auth (non-XAN) requests must go to the main api.bcfy.io endpoint
+    # Basic Auth (non-XAN) requests must go to the public Icecast relay endpoint
     basic_auth_url_base = (
-        "https://api.bcfy.io/"
+        "https://audio.broadcastify.com/"
         if url_base.strip() == "https://partner.broadcastify.com/"
         else url_base
     )
