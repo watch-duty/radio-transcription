@@ -7,8 +7,25 @@ import { getLiveEdgeMs } from '../utils/timeUtils';
 // Safety bound on the eager preload for pathological feeds (per direction).
 const MAX_PRELOAD_PAGES = 30;
 
+// Per-query preload progress. pagesFetched bounds each direction; cappedWarned
+// keeps the cap warning to once per side per query (not once per render).
+type PreloadProgress = {
+  olderPages: number;
+  newerPages: number;
+  olderCappedWarned: boolean;
+  newerCappedWarned: boolean;
+};
+
+const INITIAL_PRELOAD_PROGRESS: PreloadProgress = {
+  olderPages: 0,
+  newerPages: 0,
+  olderCappedWarned: false,
+  newerCappedWarned: false,
+};
+
 interface UseAudioWindowPreloadOptions {
-  // Gate on the initial load having settled.
+  // When false, the hook pages nothing; callers pass their query-success flag so
+  // preloading only starts once the first page (and its anchor) has loaded.
   enabled: boolean;
   // Total span to fill; undefined disables the preload.
   windowMs: number | undefined;
@@ -44,12 +61,7 @@ export function useAudioWindowPreload({
   fetchNewer,
   resetKey,
 }: UseAudioWindowPreloadOptions): void {
-  const olderPagesRef = useRef(0);
-  const newerPagesRef = useRef(0);
-  // One flag per direction so a capped feed warns once per side per query (not
-  // spamming every render) while still surfacing both sides when both cap.
-  const olderCappedWarnedRef = useRef(false);
-  const newerCappedWarnedRef = useRef(false);
+  const progressRef = useRef<PreloadProgress>({ ...INITIAL_PRELOAD_PROGRESS });
   const prevResetKeyRef = useRef(resetKey);
 
   useEffect(() => {
@@ -57,19 +69,15 @@ export function useAudioWindowPreload({
     // the per-query counters before the paging logic below reads them.
     if (prevResetKeyRef.current !== resetKey) {
       prevResetKeyRef.current = resetKey;
-      olderPagesRef.current = 0;
-      newerPagesRef.current = 0;
-      olderCappedWarnedRef.current = false;
-      newerCappedWarnedRef.current = false;
+      progressRef.current = { ...INITIAL_PRELOAD_PROGRESS };
     }
 
     if (!enabled || !windowMs || segments.length === 0) return;
 
     const warnCappedOnce = (side: 'older' | 'newer') => {
-      const warnedRef =
-        side === 'older' ? olderCappedWarnedRef : newerCappedWarnedRef;
-      if (warnedRef.current) return;
-      warnedRef.current = true;
+      const key = side === 'older' ? 'olderCappedWarned' : 'newerCappedWarned';
+      if (progressRef.current[key]) return;
+      progressRef.current[key] = true;
       console.warn(
         `useAudioWindowPreload: hit the ${MAX_PRELOAD_PAGES}-page cap paging ${side} ` +
           `before covering the ${windowMs}ms window; timeline overview density may be incomplete for this feed.`
@@ -91,8 +99,8 @@ export function useAudioWindowPreload({
       segments[segments.length - 1].startTimestamp
     ).getTime();
     if (oldestMs > winStartMs && hasOlder && !isFetchingOlder) {
-      if (olderPagesRef.current < MAX_PRELOAD_PAGES) {
-        olderPagesRef.current += 1;
+      if (progressRef.current.olderPages < MAX_PRELOAD_PAGES) {
+        progressRef.current.olderPages += 1;
         fetchOlder();
         return;
       }
@@ -107,8 +115,8 @@ export function useAudioWindowPreload({
       hasNewer &&
       !isFetchingNewer
     ) {
-      if (newerPagesRef.current < MAX_PRELOAD_PAGES) {
-        newerPagesRef.current += 1;
+      if (progressRef.current.newerPages < MAX_PRELOAD_PAGES) {
+        progressRef.current.newerPages += 1;
         fetchNewer();
         return;
       }

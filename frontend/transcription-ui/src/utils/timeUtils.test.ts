@@ -8,7 +8,7 @@ import {
   getRelativeTimeString,
 } from './timeUtils';
 
-function seg(startMs: number, endMs: number): AudioSegment {
+function makeSegment(startMs: number, endMs: number): AudioSegment {
   return {
     id: `s-${startMs}`,
     feedId: 'feed-1',
@@ -121,16 +121,16 @@ describe('timeUtils', () => {
 
     it('returns the newest segment end', () => {
       const t = new Date('2026-06-20T12:00:00.000Z').getTime();
-      expect(getLiveEdgeMs([seg(t, t + 5000)])).toBe(t + 5000);
+      expect(getLiveEdgeMs([makeSegment(t, t + 5000)])).toBe(t + 5000);
     });
 
     it('picks the max end even when it is not the first/last segment', () => {
       // Sorted by start, but an earlier-starting long clip ends latest.
       const t = new Date('2026-06-20T12:00:00.000Z').getTime();
       const segments = [
-        seg(t + 10_000, t + 12_000),
-        seg(t, t + 60_000), // starts first, ends last
-        seg(t + 5000, t + 6000),
+        makeSegment(t + 10_000, t + 12_000),
+        makeSegment(t, t + 60_000), // starts first, ends last
+        makeSegment(t + 5000, t + 6000),
       ];
       expect(getLiveEdgeMs(segments)).toBe(t + 60_000);
     });

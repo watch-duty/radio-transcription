@@ -32,8 +32,8 @@ const POLLING_LOOKBACK_BUFFER_MS = 90 * 1000;
 // How often the live "newer segments" poll runs while at the head of the stream.
 const POLL_INTERVAL_MS = 10000;
 
-// Page size used only while preloading the overview window, so its 24h span is
-// covered in far fewer sequential round-trips than the server default (100).
+// Page size when preloadWindowMs is set, to cover the 24h window in fewer
+// round-trips. Plain scroll keeps the server default (100) to avoid over-fetching.
 const AUDIO_SEGMENTS_PAGE_LIMIT = 500;
 
 interface UseAudioSegmentsOptions {
@@ -50,8 +50,9 @@ interface UseAudioSegmentsOptions {
   // cache, so the view can run UI side effects (snackbar, autoplay, unread).
   onNewSegments?: (segments: AudioSegment[]) => void;
   searchQuery?: string;
-  // When set, eagerly preload this much of the timeline window into the list
-  // (paging in larger batches). Unset leaves fetch behavior at the default.
+  // When set, eagerly preload this span into the list in
+  // AUDIO_SEGMENTS_PAGE_LIMIT batches (direction per useAudioWindowPreload).
+  // Unset: server-default page size (100), no preload — the list pages on scroll.
   preloadWindowMs?: number;
 }
 

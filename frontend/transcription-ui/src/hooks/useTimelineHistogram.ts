@@ -53,11 +53,9 @@ interface UseTimelineHistogramOptions {
   anchorTimestamp: Date | null;
 }
 
-// Buckets the loaded segments into 5-minute marks for the 24h timeline overview.
-// A pure derivation over the segments the list already loaded — no fetch of its
-// own (the list eagerly preloads the window; see useAudioSegments). Live mode
-// anchors the window's right edge at the live edge; a date filter centers it on
-// the picked time so an approximate guess keeps context on both sides.
+// Buckets the given segments into 5-minute marks for the 24h timeline overview.
+// Live mode anchors the window's right edge at the live edge; a date filter
+// centers it on the picked time so an approximate guess keeps context on both sides.
 export function useTimelineHistogram({
   segments,
   anchorTimestamp,
