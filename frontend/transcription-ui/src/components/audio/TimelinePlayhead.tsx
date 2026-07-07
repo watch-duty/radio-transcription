@@ -43,6 +43,8 @@ function TimelinePlayhead({
         bgcolor: color,
         zIndex: 2,
         pointerEvents: 'none',
+        willChange: 'left',
+        transform: 'translateZ(0)',
       }}
     >
       <Box
