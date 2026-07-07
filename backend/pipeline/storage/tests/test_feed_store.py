@@ -3037,8 +3037,8 @@ class TestFeedStoreListFeedHistoryRecords(unittest.IsolatedAsyncioTestCase):
                         2026, 6, 26, tzinfo=datetime.UTC
                     ),
                     "feed_revision": 2,
-                    "before_values": {"status": "failing"},
-                    "after_values": {"status": "active"},
+                    "before_values": '{"status": "failing"}',
+                    "after_values": '{"status": "active"}',
                 }
             ],
             fetchval_result=1,
@@ -3082,8 +3082,8 @@ class TestFeedStoreListFeedHistoryRecords(unittest.IsolatedAsyncioTestCase):
                     "actor_id": _FEEDS_SERVICE_ACTOR_ID,
                     "occurred_at": occurred_at,
                     "feed_revision": 2,
-                    "before_values": {},
-                    "after_values": {},
+                    "before_values": "{}",
+                    "after_values": "{}",
                 },
                 {
                     "id": uuid.uuid4(),
@@ -3092,8 +3092,8 @@ class TestFeedStoreListFeedHistoryRecords(unittest.IsolatedAsyncioTestCase):
                     "actor_id": _FEEDS_SERVICE_ACTOR_ID,
                     "occurred_at": occurred_at - datetime.timedelta(days=1),
                     "feed_revision": 1,
-                    "before_values": {},
-                    "after_values": {},
+                    "before_values": "{}",
+                    "after_values": "{}",
                 },
             ],
             fetchval_result=2,
