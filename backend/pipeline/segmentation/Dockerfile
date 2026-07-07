@@ -21,7 +21,7 @@ COPY --from=gcr.io/dataflow-templates-base/python313-template-launcher-base:late
 WORKDIR /app
 
 # Copy lockfiles and manifests
-COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml ./
+COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/services/*/pyproject.toml ./
 
 # Set environment variables for uv to use system python
 ENV UV_PROJECT_ENVIRONMENT="/usr/local/"
@@ -31,7 +31,8 @@ ENV UV_NO_CACHE=1
 
 # Install dependencies using uv sync directly into system python
 RUN uv sync --frozen --no-dev --no-install-workspace --package segmentation-pipeline && \
-    uv pip install grpcio-tools
+    uv export --group build --locked -o build-requirements.txt && \
+    uv pip install -r build-requirements.txt
 
 ENV FLEX_TEMPLATE_PYTHON_PY_FILE="/app/backend/pipeline/segmentation/main.py"
 ENV PYTHONPATH="/app"
@@ -44,9 +45,9 @@ COPY protos/ ./protos
 # Generate protobuf bindings
 RUN mkdir -p ./backend/pipeline/schema_types && \
     touch ./backend/pipeline/schema_types/__init__.py && \
-    uv run --with grpcio-tools python3 -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && \
+    python3 -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto && \
     mkdir -p .betterproto_out && \
-    uv run --with grpcio-tools --with "betterproto[compiler]>=2.0.0b6" python3 -m grpc_tools.protoc -I=protos --python_betterproto_out=.betterproto_out protos/streaming_state.proto && \
+    uv run --with "betterproto[compiler]>=2.0.0b6" python3 -m grpc_tools.protoc -I=protos --python_betterproto_out=.betterproto_out protos/streaming_state.proto && \
     cp .betterproto_out/streaming/pipeline/state/v1/__init__.py backend/pipeline/schema_types/streaming_state.py && \
     rm -rf .betterproto_out
 
