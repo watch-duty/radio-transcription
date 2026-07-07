@@ -6,6 +6,7 @@ import collections
 import contextlib
 import dataclasses
 import datetime
+import io
 import logging
 import os
 import tempfile
@@ -17,10 +18,11 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlencode, urljoin
 
 import aiohttp
+import numpy as np
+import soundfile as sf
 
 from backend.pipeline.common.constants import (
     CHUNK_DURATION_SECONDS,
-    FLAC_COMPRESSION_LEVEL,
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
@@ -60,20 +62,6 @@ STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
 _STREAM_PROBE_TIMEOUT_SEC = 10
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
-_CLEANUP_SUBPROCESS_TIMEOUT_SEC = 2.0
-_HEADER_REPAIR_TIMEOUT_SEC = 10.0
-# _repair_flac_header is a full decode+re-encode (a -c copy remux does not
-# patch STREAMINFO -- verified empirically). A single repair measured ~140ms
-# on an idle sandbox for a 15s clip, uncomfortably close to the ~150ms
-# Little's-Law threshold where 8 slots stop clearing the ~53/sec arrival
-# rate at 800 feeds/worker even before production demuxer contention is
-# factored in. 16 doubles that margin as a reasoned starting point; tune
-# from the stream_interval_lag_sec SLO field rather than guessing further.
-MAX_CONCURRENT_HEADER_REPAIRS = int(
-    os.environ.get("INGESTION_MAX_CONCURRENT_HEADER_REPAIRS", "16")
-)
-
-_background_tasks: set[asyncio.Task[None]] = set()
 
 
 # Stream endpoint semantics differ from item/API endpoints: a stream 404 means
@@ -297,7 +285,7 @@ async def _drain_stderr(
         logger.warning("stderr drain failed", exc_info=True)
 
 
-def _segment_path(directory: Path, index: int, ext: str = "flac") -> Path:
+def _segment_path(directory: Path, index: int, ext: str = "pcm") -> Path:
     return directory / f"chunk_{index:06d}.{ext}"
 
 
@@ -315,88 +303,45 @@ def _path_mtime(path: Path) -> float | None:
         return None
 
 
-async def _cleanup_subprocess(process: asyncio.subprocess.Process) -> None:
-    """Ensure a subprocess is terminated or killed and its resources reaped."""
-    if process.returncode is not None:
-        return
-    with contextlib.suppress(Exception):
-        process.terminate()
-        await asyncio.wait_for(
-            process.wait(), timeout=_CLEANUP_SUBPROCESS_TIMEOUT_SEC
-        )
-        return
-    with contextlib.suppress(Exception):
-        process.kill()
-        await process.wait()
+def _encode_pcm_bytes_to_flac(pcm_bytes: bytes) -> bytes:
+    samples = np.frombuffer(pcm_bytes, dtype="<i2")
+    if NUM_AUDIO_CHANNELS > 1:
+        samples = samples.reshape(-1, NUM_AUDIO_CHANNELS)
+    buf = io.BytesIO()
+    sf.write(buf, samples, SAMPLE_RATE_HZ, format="FLAC", subtype="PCM_16")
+    return buf.getvalue()
 
 
-_HEADER_REPAIR_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_HEADER_REPAIRS)
+async def _encode_pcm_segment_to_flac(pcm_path: Path) -> bytes | None:
+    """Reads a raw PCM segment and encodes it to FLAC bytes in-process.
 
-
-async def _repair_flac_header(flac_path: Path) -> bool:
-    """Repairs a segment's FLAC header in place via a full re-encode.
-
-    ffmpeg's segment muxer writes each segment without seeking back to patch
-    STREAMINFO, so segments carry an unknown-length (0) sample count. Reading
-    that header downstream makes libsndfile treat the file as unbounded and
-    attempt to allocate on the order of 2**63 frames.
-
-    A `-c copy` stream-copy remux does NOT fix this: ffmpeg's FLAC muxer only
-    computes and writes total_samples when it actually encodes (verified
-    empirically -- copy left total_samples at 0 even after a full remux to a
-    fresh seekable file). Only a real decode+re-encode makes the encoder
-    compute the true sample count, so this reintroduces the CPU cost this
-    pipeline has otherwise been trying to avoid; there is no cheaper correct
-    option with ffmpeg's flac muxer.
+    The primary ffmpeg process segments to headerless raw PCM rather than
+    FLAC: ffmpeg's FLAC muxer only patches STREAMINFO's sample count when a
+    packet carries side-data emitted by its own encoder on close, which
+    stream-copied/segment-rotated packets never carry (verified against
+    ffmpeg's flacenc.c) -- so a segment written directly to FLAC would need
+    a full second re-encode anyway to be readable downstream. Encoding a
+    complete, already-buffered PCM segment here with soundfile gets a
+    correct header for free (no live/open-ended stream to guess against),
+    without a second ffmpeg subprocess.
     """
-    temp_path = flac_path.with_name(f"{flac_path.name}.fixed.flac")
-    process = None
-    success = False
     try:
-        async with _HEADER_REPAIR_SEMAPHORE:
-            process = await asyncio.create_subprocess_exec(
-                "ffmpeg",
-                "-y",
-                "-nostdin",
-                "-i",
-                str(flac_path),
-                "-acodec",
-                "flac",
-                "-compression_level",
-                FLAC_COMPRESSION_LEVEL,
-                str(temp_path),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await asyncio.wait_for(
-                process.wait(), timeout=_HEADER_REPAIR_TIMEOUT_SEC
-            )
-        if process.returncode == 0:
-            await asyncio.to_thread(temp_path.replace, flac_path)
-            success = True
-        else:
-            logger.error(
-                "ffmpeg FLAC header repair failed for %s with exit code %s",
-                flac_path,
-                process.returncode,
-            )
-    except TimeoutError:
-        logger.warning(
-            "ffmpeg FLAC header repair timed out for %s after %.1fs",
-            flac_path,
-            _HEADER_REPAIR_TIMEOUT_SEC,
-        )
-    except Exception as e:
-        logger.exception(
-            "Exception repairing FLAC header for %s: %s", flac_path, e
-        )
+        pcm_bytes = await asyncio.to_thread(pcm_path.read_bytes)
     finally:
-        if process is not None:
-            task = asyncio.create_task(_cleanup_subprocess(process))
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
-        await asyncio.to_thread(temp_path.unlink, missing_ok=True)
-    return success
+        await asyncio.to_thread(pcm_path.unlink, missing_ok=True)
+
+    if not pcm_bytes:
+        return None
+
+    try:
+        return await asyncio.to_thread(_encode_pcm_bytes_to_flac, pcm_bytes)
+    except Exception:
+        logger.exception(
+            "In-process FLAC encode failed for segment %s (%d bytes)",
+            pcm_path,
+            len(pcm_bytes),
+        )
+        return None
 
 
 async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
@@ -449,10 +394,10 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
         prefix="icecast_segments_", dir=segment_dir_parent
     ) as tmp_dir:
         segment_dir = Path(tmp_dir)
-        segment_pattern_flac = str(segment_dir / "chunk_%06d.flac")
+        segment_pattern_pcm = str(segment_dir / "chunk_%06d.pcm")
 
         process = await _create_ffmpeg_process(
-            url, segment_pattern_flac, auth_header
+            url, segment_pattern_pcm, auth_header
         )
         if (
             process.stderr is None
@@ -497,19 +442,19 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                     )
                     return
 
-                current_segment_flac = _segment_path(
-                    segment_dir, next_index, "flac"
+                current_segment_pcm = _segment_path(
+                    segment_dir, next_index, "pcm"
                 )
-                next_segment_flac = _segment_path(
-                    segment_dir, next_index + 1, "flac"
+                next_segment_pcm = _segment_path(
+                    segment_dir, next_index + 1, "pcm"
                 )
                 process_done = wait_task.done()
 
                 # Run file checks in threadpool to prevent event loop stalls on disk latency
                 current_exists = await asyncio.to_thread(
-                    current_segment_flac.exists
+                    current_segment_pcm.exists
                 )
-                next_exists = await asyncio.to_thread(next_segment_flac.exists)
+                next_exists = await asyncio.to_thread(next_segment_pcm.exists)
 
                 # Read a segment only once we know ffmpeg finished writing it.
                 # A segment is considered finalized when either:
@@ -517,81 +462,61 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                 # - ffmpeg has exited.
                 if current_exists and (next_exists or process_done):
                     # Mark liveness as soon as ffmpeg itself shows forward
-                    # progress (a new segment finalized on disk), not after
-                    # our own header-repair subprocess completes. Repair
-                    # queues behind MAX_CONCURRENT_HEADER_REPAIRS under
-                    # load; gating READ_TIMEOUT_SEC on it would let our own
-                    # internal contention masquerade as a dead stream and
-                    # raise a spurious "Stream capture timed out" failure,
-                    # exactly like the semaphore-starvation false-timeouts
-                    # this pipeline has already been bitten by once.
+                    # progress (a new segment finalized on disk), independent
+                    # of how long our own in-process FLAC encode below takes.
                     last_activity_time = time.monotonic()
 
                     # SLO: receipt_time stamp — Icecast segment finalized, bytes available
                     receipt_time = _now_utc()
 
-                    # ffmpeg's segment muxer never seeks back to patch
-                    # STREAMINFO, so the header must be repaired before this
-                    # segment is readable by downstream FLAC decoders.
-                    header_repaired = await _repair_flac_header(
-                        current_segment_flac
+                    # The primary process segments to raw PCM (no container
+                    # header to get wrong); encode the complete buffered
+                    # segment to FLAC here.
+                    segment_bytes = await _encode_pcm_segment_to_flac(
+                        current_segment_pcm
                     )
-                    if not header_repaired:
+                    if segment_bytes is None:
                         logger.warning(
                             "Feed %s (%s): dropping segment %s after failed "
-                            "header repair",
+                            "FLAC encode",
                             feed_id,
                             feed_name,
-                            current_segment_flac,
-                        )
-                        await asyncio.to_thread(
-                            current_segment_flac.unlink, missing_ok=True
+                            current_segment_pcm,
                         )
                         next_index += 1
                         continue
 
-                    segment_bytes = await asyncio.to_thread(
-                        current_segment_flac.read_bytes
+                    # Calculate the start and end times of this specific chunk's window
+                    chunk_start_time = stream_anchor_time + datetime.timedelta(
+                        seconds=next_index * _CHUNK_DURATION
                     )
-                    await asyncio.to_thread(
-                        current_segment_flac.unlink, missing_ok=True
+                    chunk_end_time = chunk_start_time + datetime.timedelta(
+                        seconds=_CHUNK_DURATION
                     )
+                    if process_done:
+                        chunk_end_time = min(chunk_end_time, _now_utc())
 
-                    if segment_bytes:
-                        # Calculate the start and end times of this specific chunk's window
-                        chunk_start_time = (
-                            stream_anchor_time
-                            + datetime.timedelta(
-                                seconds=next_index * _CHUNK_DURATION
-                            )
-                        )
-                        chunk_end_time = chunk_start_time + datetime.timedelta(
-                            seconds=_CHUNK_DURATION
-                        )
-                        if process_done:
-                            chunk_end_time = min(chunk_end_time, _now_utc())
+                    # Per-interval lag: how much longer this segment took
+                    # to finalize than a healthy interval would. Measured
+                    # against the previous segment's receipt rather than
+                    # a fixed session-start anchor so it reflects fresh
+                    # backlog, not cumulative source-clock drift over a
+                    # long-lived connection.
+                    stream_interval_lag_sec = None
+                    if previous_receipt_time is not None:
+                        stream_interval_lag_sec = (
+                            receipt_time - previous_receipt_time
+                        ).total_seconds() - _CHUNK_DURATION
+                    previous_receipt_time = receipt_time
 
-                        # Per-interval lag: how much longer this segment took
-                        # to finalize than a healthy interval would. Measured
-                        # against the previous segment's receipt rather than
-                        # a fixed session-start anchor so it reflects fresh
-                        # backlog, not cumulative source-clock drift over a
-                        # long-lived connection.
-                        stream_interval_lag_sec = None
-                        if previous_receipt_time is not None:
-                            stream_interval_lag_sec = (
-                                receipt_time - previous_receipt_time
-                            ).total_seconds() - _CHUNK_DURATION
-                        previous_receipt_time = receipt_time
-
-                        yield CapturedChunk(
-                            audio_bytes=segment_bytes,
-                            chunk_start_time=chunk_start_time,
-                            chunk_end_time=chunk_end_time,
-                            session_id=session_id,
-                            receipt_time=receipt_time,
-                            stream_interval_lag_sec=stream_interval_lag_sec,
-                        )
+                    yield CapturedChunk(
+                        audio_bytes=segment_bytes,
+                        chunk_start_time=chunk_start_time,
+                        chunk_end_time=chunk_end_time,
+                        session_id=session_id,
+                        receipt_time=receipt_time,
+                        stream_interval_lag_sec=stream_interval_lag_sec,
+                    )
                     next_index += 1
                     continue
 
@@ -653,11 +578,11 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         "\n".join(stderr_tail) if stderr_tail else None
                     )
                     stderr_log_text = stderr_snippet or "(no stderr captured)"
-                    current_segment_flac = _segment_path(
-                        segment_dir, next_index, "flac"
+                    current_segment_pcm = _segment_path(
+                        segment_dir, next_index, "pcm"
                     )
-                    next_segment_flac = _segment_path(
-                        segment_dir, next_index + 1, "flac"
+                    next_segment_pcm = _segment_path(
+                        segment_dir, next_index + 1, "pcm"
                     )
                     (
                         current_segment_size,
@@ -665,10 +590,10 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         current_segment_mtime,
                         next_segment_mtime,
                     ) = await asyncio.gather(
-                        asyncio.to_thread(_path_size, current_segment_flac),
-                        asyncio.to_thread(_path_size, next_segment_flac),
-                        asyncio.to_thread(_path_mtime, current_segment_flac),
-                        asyncio.to_thread(_path_mtime, next_segment_flac),
+                        asyncio.to_thread(_path_size, current_segment_pcm),
+                        asyncio.to_thread(_path_size, next_segment_pcm),
+                        asyncio.to_thread(_path_mtime, current_segment_pcm),
+                        asyncio.to_thread(_path_mtime, next_segment_pcm),
                     )
                     classification_text = (
                         "\n".join(stderr_http_status_lines)
@@ -741,7 +666,7 @@ async def _create_ffmpeg_process(
 
     Args:
         url: The stream URL to connect to
-        segment_pattern: Segment filename pattern for ffmpeg (should end in .flac)
+        segment_pattern: Segment filename pattern for ffmpeg (should end in .pcm)
         auth_header: HTTP Authorization header for the stream, if applicable
 
     Returns:
@@ -800,9 +725,7 @@ async def _create_ffmpeg_process(
             "-af",
             "aresample=async=1:min_hard_comp=0.100:first_pts=0",
             "-acodec",
-            "flac",
-            "-compression_level",
-            FLAC_COMPRESSION_LEVEL,
+            "pcm_s16le",
             "-ar",
             str(SAMPLE_RATE_HZ),
             "-ac",
@@ -812,7 +735,7 @@ async def _create_ffmpeg_process(
             "-segment_time",
             str(_CHUNK_DURATION),
             "-segment_format",
-            "flac",
+            "s16le",
             "-reset_timestamps",
             "1",
             "-segment_start_number",
