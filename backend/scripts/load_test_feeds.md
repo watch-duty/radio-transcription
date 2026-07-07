@@ -3,13 +3,105 @@
 This guide is self-contained. You do not need any context from Experiment 1b
 or from the conversation that created this branch.
 
-The default path does not require you to provide a feed CSV. It builds a fresh
-wildfire feed catalog from the included crawler, inserts the generated feeds
-into AlloyDB as dormant rows, and lets you activate by a total count such as
-10,000.
+Read this first:
+
+- You do not provide a feed CSV for the normal path.
+- To seed the database with the whole generated >10k catalog, run one command:
+  `seed-catalog`.
+- Seeding does not start ingestion. It inserts dormant rows with
+  `status = 'deactivated'`.
+- To start the load test, start a latest-`main` worker, then run one
+  `activate --target-total N` command.
+- For exactly 10,000 seeded rows, use `seed-catalog --target-total 10000`.
+- For more than 10,000 seeded rows, omit `--target-total` on `seed-catalog`.
 
 You still need database access and provider credentials. "No input" means no
 handwritten feed list.
+
+Every command below assumes your shell is at the repository root.
+
+## Copy/Paste Happy Path
+
+Use this section when you want the default load-test setup and do not have a
+hand-curated feed list.
+
+Replace every `<...>` placeholder before running the command that contains it.
+
+```bash
+# 1. Check out the branch that contains this runbook and helper.
+git fetch origin
+git checkout experiment/main-load-test-feed-loader
+git pull --ff-only
+
+# 2. Create a unique prefix. Use one new prefix per load test.
+export LOAD_PREFIX="loadtest-$(date -u +%Y%m%dT%H%M%SZ)-"
+echo "$LOAD_PREFIX"
+
+# 3. Configure AlloyDB access for the loader.
+export DATABASE_URL='postgresql://<user>:<password>@<host>:5432/ingestion'
+
+# 4. Configure Broadcastify credentials for catalog generation.
+export BCFY_API_KEY='<broadcastify-api-key>'
+export BROADCASTIFY_API_KEY_ID='<broadcastify-api-key-id>'
+
+# Optional. Leave unset unless your Broadcastify account requires a custom app ID.
+# export BROADCASTIFY_APP_ID='<broadcastify-app-id>'
+
+# 5. Confirm this prefix has no existing rows.
+uv run python backend/scripts/load_test_feeds.py \
+  --prefix "$LOAD_PREFIX" \
+  counts
+
+# 6. Dry-run the generated catalog import. This can take about 35 minutes
+#    the first time because it crawls provider APIs.
+uv run python backend/scripts/load_test_feeds.py \
+  --prefix "$LOAD_PREFIX" \
+  seed-catalog \
+  --dry-run
+
+# 7. If the dry run selects more than 10,000 rows and no source is zero,
+#    insert those generated feeds as deactivated rows. This reuses the
+#    output CSV from the dry run and does not crawl providers again.
+uv run python backend/scripts/load_test_feeds.py \
+  --prefix "$LOAD_PREFIX" \
+  seed-catalog \
+  --skip-catalog-build
+
+# 8. Confirm rows exist and are still deactivated.
+uv run python backend/scripts/load_test_feeds.py \
+  --prefix "$LOAD_PREFIX" \
+  counts
+```
+
+At this point feeds are seeded but not ingesting. Start the latest `main`
+worker using Step 5 below, then activate a small probe:
+
+```bash
+uv run python backend/scripts/load_test_feeds.py \
+  --prefix "$LOAD_PREFIX" \
+  activate \
+  --target-total 12
+```
+
+After the probe works, activate the target count:
+
+```bash
+uv run python backend/scripts/load_test_feeds.py \
+  --prefix "$LOAD_PREFIX" \
+  activate \
+  --target-total 10000
+```
+
+For a >10k run, replace `10000` with a number at or below the total seeded row
+count shown by `counts`.
+
+Stop immediately if:
+
+- `counts` before seeding prints anything other than `No matching load-test rows.`
+- `seed-catalog --dry-run` selects fewer rows than your planned target.
+- Any selected source type is unexpectedly zero.
+- Catalog logs show repeated Broadcastify authentication or API failures.
+- The worker fails the 12-feed probe.
 
 ## Files
 
@@ -52,8 +144,14 @@ You need:
 - This branch checked out.
 - Permission to insert/update `feeds`, `feed_properties`, and
   `feed_audit_events`.
-- Broadcastify API credentials for catalog generation and for `bcfy_*`
-  ingestion.
+- Broadcastify API credentials for catalog generation:
+  `BCFY_API_KEY` and `BROADCASTIFY_API_KEY_ID`.
+- Broadcastify stream credentials for worker ingestion:
+  `BROADCASTIFY_XAN_TOKEN`, or both `BROADCASTIFY_USERNAME` and
+  `BROADCASTIFY_PASSWORD`.
+- Broadcastify Calls JWT access for worker ingestion:
+  `GOOGLE_CLOUD_PROJECT` and `BROADCASTIFY_JWT_SECRET_ID`, unless your worker
+  environment already injects `MOCK_JWT_TOKEN` for a non-production test.
 - GCS bucket and Pub/Sub topics for the ingestion worker.
 - A worker image built from latest `main`, not from `experiment/1b-stream-copy`.
 
@@ -107,7 +205,13 @@ Set Broadcastify catalog credentials:
 ```bash
 export BCFY_API_KEY=<broadcastify-api-key>
 export BROADCASTIFY_API_KEY_ID=<broadcastify-api-key-id>
-export BROADCASTIFY_APP_ID=<broadcastify-app-id>
+```
+
+Set this only if your Broadcastify account requires a custom app ID. The
+catalog helper has a default app ID when this variable is unset.
+
+```bash
+# export BROADCASTIFY_APP_ID=<broadcastify-app-id>
 ```
 
 Smoke-test the DB connection before changing anything:
@@ -188,12 +292,14 @@ uv run python backend/scripts/load_test_feeds.py \
 
 ## Step 4: Insert Dormant Rows
 
-If the dry run looks right, insert for real:
+If the dry run looks right, insert for real. This reuses the generated CSV from
+Step 3 and does not crawl providers again:
 
 ```bash
 uv run python backend/scripts/load_test_feeds.py \
   --prefix "$LOAD_PREFIX" \
-  seed-catalog
+  seed-catalog \
+  --skip-catalog-build
 ```
 
 For exactly 10,000 seed rows:
@@ -202,8 +308,16 @@ For exactly 10,000 seed rows:
 uv run python backend/scripts/load_test_feeds.py \
   --prefix "$LOAD_PREFIX" \
   seed-catalog \
+  --skip-catalog-build \
   --target-total 10000
 ```
+
+For more than 10,000 seed rows, do not pass `--target-total`; the script will
+insert the whole generated Tier 1+2 Broadcastify/OpenMHz catalog.
+
+If you intentionally skipped the dry run and do not already have
+`model/data/wildfire_catalog/output/wildfire_feed_catalog_admin_review.csv`,
+omit `--skip-catalog-build` so the script builds the catalog before inserting.
 
 Verify the rows are dormant:
 
@@ -239,6 +353,31 @@ test:
 export AUDIO_STAGING_BUCKET=<load-test-gcs-bucket>
 export CONTINUOUS_PUBSUB_TOPIC_PATH=projects/<project>/topics/<continuous-topic>
 export SEGMENTED_PUBSUB_TOPIC_PATH=projects/<project>/topics/<segmented-topic>
+```
+
+Configure Broadcastify worker credentials for the activated source types.
+
+For `bcfy_feeds`, choose exactly one option.
+
+Option A: XAN token:
+
+```bash
+export BROADCASTIFY_XAN_TOKEN=<broadcastify-xan-token>
+```
+
+Option B: username/password:
+
+```bash
+unset BROADCASTIFY_XAN_TOKEN
+export BROADCASTIFY_USERNAME=<broadcastify-username>
+export BROADCASTIFY_PASSWORD=<broadcastify-password>
+```
+
+For `bcfy_calls`, set the JWT secret location:
+
+```bash
+export GOOGLE_CLOUD_PROJECT=<gcp-project-id>
+export BROADCASTIFY_JWT_SECRET_ID=<secret-manager-secret-id>
 ```
 
 Set caps high enough for your target. For a one-worker 10k test:
