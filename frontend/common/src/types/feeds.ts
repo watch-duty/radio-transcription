@@ -71,6 +71,8 @@ export interface ListFeedsResponse {
   total: number;
 }
 
+export type AuditTrailValues = Record<string, unknown>;
+
 export interface FeedHistoryEvent {
   id: string;
   feedId: string;
@@ -78,8 +80,8 @@ export interface FeedHistoryEvent {
   actor: string;
   occurredAt: number;
   feedRevision: number;
-  beforeValues: Record<string, unknown>;
-  afterValues: Record<string, unknown>;
+  beforeValues: AuditTrailValues;
+  afterValues: AuditTrailValues;
 }
 
 export interface ListFeedHistoryResponse {

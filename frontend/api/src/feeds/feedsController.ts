@@ -1,4 +1,5 @@
 import type {
+  AuditTrailValues,
   BackendFeedStatus,
   BackendFeedStatusReason,
   Feed,
@@ -100,8 +101,8 @@ interface FeedHistoryEventBackend {
   actor: string;
   occurred_at: string;
   feed_revision_num: number;
-  before_values: Record<string, unknown>;
-  after_values: Record<string, unknown>;
+  before_values: AuditTrailValues;
+  after_values: AuditTrailValues;
 }
 
 function convertFeedHistoryEventBackend(

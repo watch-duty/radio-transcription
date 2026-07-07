@@ -306,6 +306,8 @@ components:
       additionalProperties: {}
       type: object
       description: Construct a type with a set of properties K of type T
+    AuditTrailValues:
+      $ref: "#/components/schemas/Record_string.unknown_"
     FeedHistoryEvent:
       properties:
         id:
@@ -323,9 +325,9 @@ components:
           type: number
           format: double
         beforeValues:
-          $ref: "#/components/schemas/Record_string.unknown_"
+          $ref: "#/components/schemas/AuditTrailValues"
         afterValues:
-          $ref: "#/components/schemas/Record_string.unknown_"
+          $ref: "#/components/schemas/AuditTrailValues"
       required:
         - id
         - feedId
