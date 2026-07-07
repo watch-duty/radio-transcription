@@ -44,7 +44,8 @@ async def retry_with_lease_check[T](
         *args: Positional arguments forwarded to *fn*.
         lease_lost: Monotonic event set when lease loss is confirmed.
         shutdown: Event set on SIGTERM for graceful shutdown.
-        max_retries: Maximum number of retry attempts (total calls = max_retries + 1).
+        max_retries: Maximum number of retry attempts (total calls =
+            max_retries + 1).
         base_delay_sec: Base delay for exponential backoff.
         max_delay_sec: Cap on backoff delay.
         retryable: Exception types eligible for retry.

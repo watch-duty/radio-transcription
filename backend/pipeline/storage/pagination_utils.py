@@ -54,7 +54,9 @@ def get_paginated_results(
     timestamp_key: str,
     id_key: str,
 ) -> tuple[collections.abc.Sequence[typing.Any], str | None]:
-    """Slice rows exceeding limit and generate a pagination token based on timestamp and ID."""
+    """Slice rows exceeding limit and generate a pagination token based on
+    timestamp and ID.
+    """
     if len(rows) > limit:
         sliced_rows = rows[:limit]
         last_row = sliced_rows[-1]
