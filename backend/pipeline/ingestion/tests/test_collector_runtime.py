@@ -456,6 +456,58 @@ class TestProcessFeedSideEffectOrdering(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(call_order, ["upload", "bookmark", "publish"])
 
+    async def test_chunk_ingested_slo_includes_stream_interval_lag(
+        self,
+    ) -> None:
+        """stream_interval_lag_sec, when set by the collector, reaches the SLO log."""
+        now = datetime.datetime.now(datetime.UTC)
+        chunk = CapturedChunk(
+            audio_bytes=b"audio",
+            chunk_start_time=now,
+            chunk_end_time=now
+            + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS),
+            stream_interval_lag_sec=5.5,
+        )
+
+        async def _one_chunk(feed, shutdown, _resources):
+            yield chunk
+
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress = mock.AsyncMock(return_value=True)
+        rt._releasing_feeds = set()
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.upload_staged_audio",
+                mock.AsyncMock(return_value="gs://b/p"),
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_audio_chunk",
+                mock.AsyncMock(return_value="message-1"),
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.logger"
+            ) as mock_logger,
+        ):
+            await rt._process_feed(_FEED)
+
+        ingested_calls = [
+            call
+            for call in mock_logger.info.call_args_list
+            if call.args and call.args[0] == "Chunk ingested"
+        ]
+        self.assertEqual(len(ingested_calls), 1)
+        payload = ingested_calls[0].kwargs["extra"]["json_fields"]
+        self.assertEqual(payload["stream_interval_lag_sec"], 5.5)
+
 
 class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
     """Tests for _process_feed fence violation."""

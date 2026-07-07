@@ -61,6 +61,8 @@ STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 _STREAM_PROBE_TIMEOUT_SEC = 10
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
 _CLEANUP_SUBPROCESS_TIMEOUT_SEC = 2.0
+_HEADER_REPAIR_TIMEOUT_SEC = 10.0
+MAX_CONCURRENT_HEADER_REPAIRS = 8
 
 _background_tasks: set[asyncio.Task[None]] = set()
 
@@ -319,6 +321,67 @@ async def _cleanup_subprocess(process: asyncio.subprocess.Process) -> None:
         await process.wait()
 
 
+_HEADER_REPAIR_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_HEADER_REPAIRS)
+
+
+async def _repair_flac_header(flac_path: Path) -> bool:
+    """Repairs a segment's FLAC header in place via a stream-copy remux.
+
+    ffmpeg's segment muxer writes each segment without seeking back to patch
+    STREAMINFO, so segments carry an unknown-length (0) sample count. Reading
+    that header downstream makes libsndfile treat the file as unbounded and
+    attempt to allocate on the order of 2**63 frames. Remuxing with `-c copy`
+    forces ffmpeg to seek back and write a correct header on close, without
+    the cost of decoding and re-encoding audio (unlike a full transcode).
+    """
+    temp_path = flac_path.with_name(f"{flac_path.name}.fixed.flac")
+    process = None
+    success = False
+    try:
+        async with _HEADER_REPAIR_SEMAPHORE:
+            process = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-y",
+                "-nostdin",
+                "-i",
+                str(flac_path),
+                "-c",
+                "copy",
+                str(temp_path),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(
+                process.wait(), timeout=_HEADER_REPAIR_TIMEOUT_SEC
+            )
+        if process.returncode == 0:
+            await asyncio.to_thread(temp_path.replace, flac_path)
+            success = True
+        else:
+            logger.error(
+                "ffmpeg FLAC header repair failed for %s with exit code %s",
+                flac_path,
+                process.returncode,
+            )
+    except TimeoutError:
+        logger.warning(
+            "ffmpeg FLAC header repair timed out for %s after %.1fs",
+            flac_path,
+            _HEADER_REPAIR_TIMEOUT_SEC,
+        )
+    except Exception as e:
+        logger.exception(
+            "Exception repairing FLAC header for %s: %s", flac_path, e
+        )
+    finally:
+        if process is not None:
+            task = asyncio.create_task(_cleanup_subprocess(process))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+        await asyncio.to_thread(temp_path.unlink, missing_ok=True)
+    return success
+
+
 async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
@@ -401,6 +464,11 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
 
         # Anchor the stream timeline to the exact moment ffmpeg starts
         stream_anchor_time = _now_utc()
+        # Tracks receipt_time of the previously yielded segment so lag can be
+        # measured as a per-interval delta rather than accumulated against a
+        # fixed anchor, which would conflate real backlog with ordinary
+        # long-session source-clock drift.
+        previous_receipt_time: datetime.datetime | None = None
 
         try:
             while True:
@@ -434,6 +502,26 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                     # SLO: receipt_time stamp — Icecast segment finalized, bytes available
                     receipt_time = _now_utc()
 
+                    # ffmpeg's segment muxer never seeks back to patch
+                    # STREAMINFO, so the header must be repaired before this
+                    # segment is readable by downstream FLAC decoders.
+                    header_repaired = await _repair_flac_header(
+                        current_segment_flac
+                    )
+                    if not header_repaired:
+                        logger.warning(
+                            "Feed %s (%s): dropping segment %s after failed "
+                            "header repair",
+                            feed_id,
+                            feed_name,
+                            current_segment_flac,
+                        )
+                        await asyncio.to_thread(
+                            current_segment_flac.unlink, missing_ok=True
+                        )
+                        next_index += 1
+                        continue
+
                     segment_bytes = await asyncio.to_thread(
                         current_segment_flac.read_bytes
                     )
@@ -455,12 +543,26 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         if process_done:
                             chunk_end_time = min(chunk_end_time, _now_utc())
 
+                        # Per-interval lag: how much longer this segment took
+                        # to finalize than a healthy interval would. Measured
+                        # against the previous segment's receipt rather than
+                        # a fixed session-start anchor so it reflects fresh
+                        # backlog, not cumulative source-clock drift over a
+                        # long-lived connection.
+                        stream_interval_lag_sec = None
+                        if previous_receipt_time is not None:
+                            stream_interval_lag_sec = (
+                                receipt_time - previous_receipt_time
+                            ).total_seconds() - _CHUNK_DURATION
+                        previous_receipt_time = receipt_time
+
                         yield CapturedChunk(
                             audio_bytes=segment_bytes,
                             chunk_start_time=chunk_start_time,
                             chunk_end_time=chunk_end_time,
                             session_id=session_id,
                             receipt_time=receipt_time,
+                            stream_interval_lag_sec=stream_interval_lag_sec,
                         )
 
                         last_activity_time = time.monotonic()

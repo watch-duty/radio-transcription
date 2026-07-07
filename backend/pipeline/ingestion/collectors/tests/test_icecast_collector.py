@@ -1,11 +1,15 @@
 import asyncio
 import datetime
 import os
+import shutil
+import tempfile
 import unittest
 import uuid
 from pathlib import Path
 from typing import Any, Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import soundfile as sf
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
 from backend.pipeline.ingestion.collectors.icecast import icecast_collector
@@ -286,8 +290,17 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.mock_logger = MagicMock()
 
+        # The real repair is a no-op stream copy on well-formed input;
+        # tests exercise capture behavior, not ffmpeg itself, so mock it as
+        # a pass-through success unless a test overrides the side_effect.
+        self.mock_repair = AsyncMock(return_value=True)
         self.patchers = [
             patch.object(icecast_collector, "logger", self.mock_logger),
+            patch.object(
+                icecast_collector,
+                "_repair_flac_header",
+                self.mock_repair,
+            ),
             patch.dict(os.environ, MOCK_ENV_VARS),
         ]
         for p in self.patchers:
@@ -331,6 +344,87 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(chunks), 2)
         for chunk in chunks:
             self.assertIsInstance(chunk, bytes)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_failed_header_repair_drops_segment(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """A segment whose header repair fails must not be read or yielded."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=42,
+            segments=[b"BAD_SEGMENT", b"GOOD_SEGMENT"],
+            wait_delay=0.1,
+            wait_result=0,
+        )
+        self.mock_repair.side_effect = [False, True]
+
+        feed = _make_feed("test-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+        chunks = await _collect_chunks(gen)
+
+        # Only the segment whose repair succeeded reaches the caller.
+        self.assertEqual(chunks, [b"GOOD_SEGMENT"])
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_stream_interval_lag_measures_gap_past_chunk_duration(
+        self, mock_create_ffmpeg: AsyncMock, mock_now: MagicMock
+    ) -> None:
+        """Lag is measured against the previous segment's receipt, not a
+        fixed session-start anchor, so it reflects fresh backlog rather than
+        cumulative source-clock drift.
+        """
+        anchor = datetime.datetime(2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC)
+        seg0_receipt = anchor + datetime.timedelta(seconds=2)
+        seg1_receipt = seg0_receipt + datetime.timedelta(
+            seconds=CHUNK_DURATION_SECONDS + 5
+        )
+        # Calls in order: anchor, seg0 receipt_time, seg1 receipt_time,
+        # seg1 chunk_end_time clamp (process_done is True by then).
+        mock_now.side_effect = [
+            anchor,
+            seg0_receipt,
+            seg1_receipt,
+            seg1_receipt,
+        ]
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7,
+            segments=[b"seg0", b"seg1"],
+            wait_delay=0.05,
+            wait_result=0,
+        )
+
+        feed = _make_feed("lag-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+        chunks = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(chunks), 2)
+        self.assertIsNone(chunks[0].stream_interval_lag_sec)
+        self.assertAlmostEqual(
+            chunks[1].stream_interval_lag_sec, 5.0, places=3
+        )
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
@@ -1135,53 +1229,24 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0].session_id, results[1].session_id)
         self.assertEqual(results[1].session_id, results[2].session_id)
 
-    @patch(
-        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
-    )
-    @patch(
-        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
-        new_callable=AsyncMock,
-    )
-    async def test_stream_lag_logged(
-        self, mock_create_ffmpeg: MagicMock, mock_now_utc: MagicMock
-    ) -> None:
-        """Test: stream lag exceeding threshold logs a warning but does not raise an error."""
-        mock_create_ffmpeg.side_effect = _make_process_factory(
-            pid=8888,
-            segments=[b"FLAC_DATA_0", b"FLAC_DATA_1"],
-            wait_delay=0.5,
-            wait_result=0,
-        )
-
-        feed = _make_feed("lag-feed", "http://example.com/stream")
-        shutdown_event = asyncio.Event()
-
-        t0 = datetime.datetime(2026, 6, 20, 10, 0, 0, tzinfo=datetime.UTC)
-        mock_now_utc.side_effect = [
-            t0,  # stream_anchor_time
-            t0
-            + datetime.timedelta(seconds=85),  # receipt_time for first segment
-        ]
-
-        gen = icecast_collector.capture_icecast_stream(
-            feed,
-            shutdown_event,
-            url_base="https://mock.example.com/",
-            resources=_default_resources(),
-        )
-
-        chunk = await gen.__anext__()
-
-        self.assertEqual(chunk.audio_bytes, b"FLAC_DATA_0")
-        self.mock_logger.warning.assert_called_once()
-        log_args = self.mock_logger.warning.call_args.args
-        self.assertIn("Stream lag has exceeded threshold", log_args[0])
+    # NOTE: stream lag is no longer reported via a threshold-based warning
+    # log against a fixed session-start anchor (see
+    # test_stream_interval_lag_measures_gap_past_chunk_duration above) —
+    # that approach conflated real backlog with ordinary long-session
+    # source-clock drift. It's now a per-interval value on CapturedChunk
+    # that collector_runtime folds into the chunk_ingested SLO event.
 
 
 class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
     """RCPT-02: Icecast stamps receipt_time at segment finalization."""
 
     @patch.dict(os.environ, MOCK_ENV_VARS)
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast"
+        ".icecast_collector._repair_flac_header",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
     @patch(
         "backend.pipeline.ingestion.collectors.icecast"
         ".icecast_collector._now_utc"
@@ -1195,6 +1260,7 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
         self,
         mock_create: AsyncMock,
         mock_now: MagicMock,
+        mock_repair: AsyncMock,
     ) -> None:
         fixed_time = datetime.datetime(
             2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC
@@ -1223,6 +1289,144 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
 
         self.assertGreaterEqual(len(chunks), 1)
         self.assertEqual(chunks[0].receipt_time, fixed_time)
+
+
+_BAD_STREAMINFO_FLAC = (
+    Path(__file__).parent / "test_data" / "streamed_segment_bad_STREAMINFO.flac"
+)
+_ffmpeg_available = shutil.which("ffmpeg") is not None
+
+
+class TestRepairFlacHeader(unittest.IsolatedAsyncioTestCase):
+    """Guards the contract that no segment leaves ingestion unreadable."""
+
+    @unittest.skipIf(not _ffmpeg_available, "ffmpeg not available")
+    async def test_repair_produces_readable_flac(self) -> None:
+        raw = _BAD_STREAMINFO_FLAC.read_bytes()
+        with tempfile.TemporaryDirectory() as tmp:
+            flac_segment = Path(tmp) / "chunk_000000.flac"
+            flac_segment.write_bytes(raw)
+
+            # The raw muxer output is unreadable by sf.read directly
+            with self.assertRaises(sf.LibsndfileError):
+                sf.read(str(flac_segment))
+
+            success = await icecast_collector._repair_flac_header(
+                flac_segment
+            )
+            self.assertTrue(success)
+
+            info = sf.info(str(flac_segment))
+            samples, sample_rate = sf.read(
+                str(flac_segment), dtype="float32"
+            )
+
+        # The repaired header advertises the true frame count rather than
+        # the unknown-length sentinel, so downstream duration derivation
+        # (len / sample_rate) is correct.
+        self.assertEqual(info.frames, len(samples))
+        self.assertEqual(sample_rate, 16000)
+        self.assertAlmostEqual(len(samples) / sample_rate, 15.0, delta=0.5)
+
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    async def test_repair_timeout_triggers_cleanup(
+        self, mock_create_exec: AsyncMock
+    ) -> None:
+        mock_process = AsyncMock()
+        mock_process.returncode = None
+
+        terminated_event = asyncio.Event()
+
+        def mock_terminate():
+            terminated_event.set()
+
+        mock_process.terminate = mock_terminate
+
+        async def mock_wait():
+            await terminated_event.wait()
+            return 0
+
+        mock_process.wait = mock_wait
+        mock_create_exec.return_value = mock_process
+
+        with patch.object(
+            icecast_collector, "_HEADER_REPAIR_TIMEOUT_SEC", 0.05
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                flac_segment = Path(tmp) / "chunk_000000.flac"
+                flac_segment.write_bytes(b"dummy_data")
+
+                success = await icecast_collector._repair_flac_header(
+                    flac_segment
+                )
+
+                # Give background tasks (cleanup) a tick to run
+                await asyncio.sleep(0.02)
+
+                self.assertTrue(terminated_event.is_set())
+                self.assertFalse(
+                    success,
+                    "a timed-out repair must not report success",
+                )
+
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    async def test_repair_nonzero_exit_reports_failure(
+        self, mock_create_exec: AsyncMock
+    ) -> None:
+        mock_process = AsyncMock()
+        mock_process.returncode = 1
+        mock_process.wait = AsyncMock(return_value=1)
+        mock_create_exec.return_value = mock_process
+
+        with tempfile.TemporaryDirectory() as tmp:
+            flac_segment = Path(tmp) / "chunk_000000.flac"
+            flac_segment.write_bytes(b"dummy_data")
+
+            success = await icecast_collector._repair_flac_header(
+                flac_segment
+            )
+
+            self.assertFalse(success)
+
+    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
+    async def test_repair_cancellation_triggers_cleanup(
+        self, mock_create_exec: AsyncMock
+    ) -> None:
+        mock_process = AsyncMock()
+        mock_process.returncode = None
+
+        terminated_event = asyncio.Event()
+
+        def mock_terminate():
+            terminated_event.set()
+
+        mock_process.terminate = mock_terminate
+
+        async def mock_wait():
+            await terminated_event.wait()
+            return 0
+
+        mock_process.wait = mock_wait
+        mock_create_exec.return_value = mock_process
+
+        with tempfile.TemporaryDirectory() as tmp:
+            flac_segment = Path(tmp) / "chunk_000000.flac"
+            flac_segment.write_bytes(b"dummy_data")
+
+            # Start the task and cancel it immediately
+            task = asyncio.create_task(
+                icecast_collector._repair_flac_header(flac_segment)
+            )
+            await asyncio.sleep(0.01)  # let it start and await wait_for
+            task.cancel()
+
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+
+            # Give background tasks (cleanup) a tick to run
+            await asyncio.sleep(0.02)
+
+            self.assertTrue(terminated_event.is_set())
 
 
 class TestBuildAuthAndUrl(unittest.TestCase):
