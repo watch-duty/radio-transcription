@@ -15,7 +15,8 @@ import { useAuth } from '../../context/AuthContext';
 import { listFeeds } from '../../service/listFeeds';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
-import { type FeedFilters, FeedTable, FeedTagChip } from './FeedTable';
+import { type FeedFilters, FeedTable } from './FeedTable';
+import { FeedTagChip } from './FeedTagChip';
 import { groupTagsByKey } from './tagDisplay';
 
 interface FeedSearchViewProps {

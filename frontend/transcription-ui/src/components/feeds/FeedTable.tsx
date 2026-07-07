@@ -35,7 +35,8 @@ import { type Feed, SourceType } from '@transcription/common';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
-import { type GroupedTag, groupTagsByKey } from './tagDisplay';
+import { FeedTagChip } from './FeedTagChip';
+import { groupTagsByKey } from './tagDisplay';
 
 export interface FeedFilters {
   searchQuery: string;
@@ -135,20 +136,6 @@ function VirtuosoTableRow(
         }),
         ...rest.sx,
       }}
-    />
-  );
-}
-
-export function FeedTagChip({ group }: { group: GroupedTag }) {
-  return (
-    <Chip
-      label={
-        <Typography variant="body2">
-          <b>{group.key}</b>: {group.values.join(', ')}
-        </Typography>
-      }
-      size="small"
-      variant="filled"
     />
   );
 }
