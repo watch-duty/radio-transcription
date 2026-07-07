@@ -429,9 +429,8 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(chunks), 2)
         self.assertIsNone(chunks[0].stream_interval_lag_sec)
-        self.assertAlmostEqual(
-            chunks[1].stream_interval_lag_sec, 5.0, places=3
-        )
+        assert chunks[1].stream_interval_lag_sec is not None
+        self.assertAlmostEqual(chunks[1].stream_interval_lag_sec, 5.0, places=3)
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
@@ -1327,6 +1326,7 @@ class TestEncodePcmSegmentToFlac(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(pcm_segment.exists())
 
         self.assertIsNotNone(flac_bytes)
+        assert flac_bytes is not None
         info = sf.info(io.BytesIO(flac_bytes))
         samples, sample_rate_out = sf.read(
             io.BytesIO(flac_bytes), dtype="int16"
