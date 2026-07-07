@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import os
 import shutil
 import unittest
@@ -12,7 +11,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import asyncpg
 import docker
 import requests as sync_requests
-import soundfile as sf
 from testcontainers.core.container import DockerContainer
 from testcontainers.core.wait_strategies import LogMessageWaitStrategy
 from testcontainers.postgres import PostgresContainer
@@ -45,9 +43,6 @@ _RUNTIME_ACTOR_ID = "service_account:gcp:123456789012345678901"
 
 # Audio constants
 _FLAC_MAGIC = b"fLaC"
-_BAD_STREAMINFO_FLAC = (
-    Path(__file__).parent / "test_data" / "streamed_segment_bad_STREAMINFO.flac"
-)
 _ffmpeg_available = shutil.which("ffmpeg") is not None
 
 
@@ -143,22 +138,8 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
         self.gcs_client = gcs_client.GcsClient()
 
-        async def _mock_transcode(wav_path: Path, flac_path: Path) -> bool:
-            if await asyncio.to_thread(wav_path.exists):
-                data = await asyncio.to_thread(wav_path.read_bytes)
-                await asyncio.to_thread(flac_path.write_bytes, data)
-                return True
-            return False
-
-        self.patcher_transcode = patch(
-            "backend.pipeline.ingestion.collectors.icecast.icecast_collector._transcode_wav_to_flac",
-            AsyncMock(side_effect=_mock_transcode),
-        )
-        self.patcher_transcode.start()
-
     async def asyncTearDown(self) -> None:
         """Close GCS client, remove env var, and close pool."""
-        self.patcher_transcode.stop()
         await self.gcs_client.close()
         os.environ.pop("STORAGE_EMULATOR_HOST", None)
         for key in MOCK_ENV_VARS:
@@ -217,7 +198,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         ) -> AsyncMock:
             segment_dir = Path(segment_pattern).parent
             for index, segment in enumerate(segments):
-                (segment_dir / f"chunk_{index:06d}.wav").write_bytes(segment)
+                (segment_dir / f"chunk_{index:06d}.flac").write_bytes(segment)
 
             mock_proc = AsyncMock()
             mock_proc.pid = 12345
@@ -308,7 +289,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
         # Assert: GCS object content matches yielded segment bytes
         yielded_chunk, gcs_path = chunks_uploaded[0]
-        # gcs_path is "gs://bucket/source_type/feed_id/timestamp_seq.wav"
+        # gcs_path is "gs://bucket/source_type/feed_id/timestamp_seq.flac"
         object_name = gcs_path.replace(f"gs://{_TEST_BUCKET}/", "")
         downloaded = await self._download_gcs_object(object_name)
         self.assertEqual(downloaded, yielded_chunk)
@@ -319,54 +300,6 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["last_processed_filename"], gcs_path)
         self.assertEqual(row["last_bookmark_time"], last_chunk_ts)
         self.assertEqual(row["failure_count"], 0)
-
-    @unittest.skipIf(not _ffmpeg_available, "ffmpeg not available")
-    @patch(
-        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
-        new_callable=AsyncMock,
-    )
-    async def test_uploaded_segment_has_readable_flac_header(
-        self, mock_create_ffmpeg
-    ) -> None:
-        """No segment leaves ingestion with the unreadable muxer header."""
-        self.patcher_transcode.stop()
-        try:
-            feed = await self._lease_feed("flac-header-feed")
-
-            # The muxer emits a segment with a bad STREAMINFO header; the capture
-            # path must repair it before upload.
-            raw = _BAD_STREAMINFO_FLAC.read_bytes()
-            mock_create_ffmpeg.side_effect = self._mock_create_ffmpeg([raw])
-
-            shutdown = asyncio.Event()
-            uploaded_paths = []
-            async for capture_chunk in icecast_collector.capture_icecast_stream(
-                feed,
-                shutdown,
-                url_base="https://mock.example.com/",
-                resources=_default_resources(),
-            ):
-                uploaded_paths.append(
-                    await gcp_helper.upload_staged_audio(
-                        self.gcs_client,
-                        capture_chunk.audio_bytes,
-                        feed,
-                        _TEST_BUCKET,
-                        len(uploaded_paths),
-                    )
-                )
-
-            self.assertEqual(len(uploaded_paths), 1)
-            object_name = uploaded_paths[0].replace(f"gs://{_TEST_BUCKET}/", "")
-            downloaded = await self._download_gcs_object(object_name)
-
-            # The repaired bytes differ from the raw muxer output and are now
-            # decodable by libsndfile (header accuracy is covered by the unit test).
-            self.assertNotEqual(downloaded, raw)
-            samples, _ = sf.read(io.BytesIO(downloaded), dtype="float32")
-            self.assertGreater(len(samples), 0)
-        finally:
-            self.patcher_transcode.start()
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",

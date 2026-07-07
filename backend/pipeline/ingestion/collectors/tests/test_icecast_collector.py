@@ -1,15 +1,11 @@
 import asyncio
 import datetime
 import os
-import shutil
-import tempfile
 import unittest
 import uuid
 from pathlib import Path
 from typing import Any, Self, cast
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import soundfile as sf
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
 from backend.pipeline.ingestion.collectors.icecast import icecast_collector
@@ -122,7 +118,7 @@ def _make_process_factory(
         mock_proc.stderr = _make_stderr_reader(stderr_lines)
 
         for index, segment in enumerate(segments or []):
-            (segment_dir / f"chunk_{index:06d}.wav").write_bytes(segment)
+            (segment_dir / f"chunk_{index:06d}.flac").write_bytes(segment)
 
         async def _wait_impl() -> int:
             if wait_exception is not None:
@@ -229,7 +225,7 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
 
         await icecast_collector._create_ffmpeg_process(
             "http://example.com/stream.mp3",
-            "/tmp/chunk_%06d.wav",  # noqa: S108
+            "/tmp/chunk_%06d.flac",  # noqa: S108
             "Authorization: Basic dGVzdDp0ZXN0\r\n",
         )
 
@@ -252,7 +248,7 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
 
         await icecast_collector._create_ffmpeg_process(
             "http://example.com/stream.mp3",
-            "/tmp/chunk_%06d.wav",  # noqa: S108
+            "/tmp/chunk_%06d.flac",  # noqa: S108
             "Authorization: Basic dGVzdDp0ZXN0\r\n",
         )
 
@@ -271,7 +267,7 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
 
         await icecast_collector._create_ffmpeg_process(
             "http://example.com/stream.mp3",
-            "/tmp/chunk_%06d.wav",  # noqa: S108
+            "/tmp/chunk_%06d.flac",  # noqa: S108
             "Authorization: Basic dGVzdDp0ZXN0\r\n",
         )
 
@@ -290,21 +286,8 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.mock_logger = MagicMock()
 
-        async def _mock_transcode(wav_path: Path, flac_path: Path) -> bool:
-            if await asyncio.to_thread(wav_path.exists):
-                data = await asyncio.to_thread(wav_path.read_bytes)
-                await asyncio.to_thread(flac_path.write_bytes, data)
-                return True
-            return False
-
-        self.mock_transcode = AsyncMock(side_effect=_mock_transcode)
         self.patchers = [
             patch.object(icecast_collector, "logger", self.mock_logger),
-            patch.object(
-                icecast_collector,
-                "_transcode_wav_to_flac",
-                self.mock_transcode,
-            ),
             patch.dict(os.environ, MOCK_ENV_VARS),
         ]
         for p in self.patchers:
@@ -348,49 +331,6 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(chunks), 2)
         for chunk in chunks:
             self.assertIsInstance(chunk, bytes)
-
-    @patch(
-        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
-        new_callable=AsyncMock,
-    )
-    async def test_failed_header_repair_drops_segment(
-        self, mock_create_ffmpeg: AsyncMock
-    ) -> None:
-        """A segment whose header repair fails must not be read or yielded."""
-        mock_create_ffmpeg.side_effect = _make_process_factory(
-            pid=42,
-            segments=[b"BAD_SEGMENT", b"GOOD_SEGMENT"],
-            wait_delay=0.1,
-            wait_result=0,
-        )
-        calls = 0
-
-        async def _custom_transcode(wav_path: Path, flac_path: Path) -> bool:
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                return False
-            if await asyncio.to_thread(wav_path.exists):
-                data = await asyncio.to_thread(wav_path.read_bytes)
-                await asyncio.to_thread(flac_path.write_bytes, data)
-                return True
-            return False
-
-        self.mock_transcode.side_effect = _custom_transcode
-
-        feed = _make_feed("test-feed", "http://example.com/stream")
-        shutdown_event = asyncio.Event()
-
-        gen = icecast_collector.capture_icecast_stream(
-            feed,
-            shutdown_event,
-            url_base="https://mock.example.com/",
-            resources=_resources_with_probe_status(200, reason="OK"),
-        )
-        chunks = await _collect_chunks(gen)
-
-        # Only the segment whose repair succeeded reaches the caller.
-        self.assertEqual(chunks, [b"GOOD_SEGMENT"])
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
@@ -1273,171 +1213,16 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
         feed = _make_feed("test", source_feed_id="sid")
         shutdown = asyncio.Event()
 
-        async def _mock_transcode(wav_path: Path, flac_path: Path) -> bool:
-            if await asyncio.to_thread(wav_path.exists):
-                data = await asyncio.to_thread(wav_path.read_bytes)
-                await asyncio.to_thread(flac_path.write_bytes, data)
-                return True
-            return False
-
-        with patch.object(
-            icecast_collector,
-            "_transcode_wav_to_flac",
-            AsyncMock(side_effect=_mock_transcode),
-        ):
-            gen = icecast_collector.capture_icecast_stream(
-                feed,
-                shutdown,
-                "http://example.com/",
-                resources=_default_resources(),
-            )
-            chunks = await _collect_chunks_with_timestamps(gen)
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown,
+            "http://example.com/",
+            resources=_default_resources(),
+        )
+        chunks = await _collect_chunks_with_timestamps(gen)
 
         self.assertGreaterEqual(len(chunks), 1)
         self.assertEqual(chunks[0].receipt_time, fixed_time)
-
-
-_BAD_STREAMINFO_FLAC = (
-    Path(__file__).parent / "test_data" / "streamed_segment_bad_STREAMINFO.flac"
-)
-_ffmpeg_available = shutil.which("ffmpeg") is not None
-
-
-class TestTranscodeWavToFlac(unittest.IsolatedAsyncioTestCase):
-    """Guards the contract that no segment leaves ingestion unreadable."""
-
-    @unittest.skipIf(not _ffmpeg_available, "ffmpeg not available")
-    async def test_transcode_produces_readable_flac(self) -> None:
-        raw = _BAD_STREAMINFO_FLAC.read_bytes()
-        with tempfile.TemporaryDirectory() as tmp:
-            wav_segment = Path(tmp) / "chunk_000000.wav"
-            # Even if the file has a .wav extension, writing bad FLAC data to it
-            # simulates ffmpeg decoding the unreadable stream data and transcoding it.
-            wav_segment.write_bytes(raw)
-
-            flac_segment = Path(tmp) / "chunk_000000.flac"
-
-            # The source flac data (in wav_segment) is unreadable by sf.read directly
-            with self.assertRaises(sf.LibsndfileError):
-                sf.read(str(wav_segment))
-
-            success = await icecast_collector._transcode_wav_to_flac(
-                wav_segment, flac_segment
-            )
-            self.assertTrue(success)
-
-            info = sf.info(str(flac_segment))
-            samples, sample_rate = sf.read(str(flac_segment), dtype="float32")
-
-        # The transcoded header advertises the true frame count rather than the
-        # unknown-length sentinel, so the duration downstream derives from it
-        # (len / sample_rate) is correct.
-        self.assertEqual(info.frames, len(samples))
-        self.assertEqual(sample_rate, 16000)
-        self.assertAlmostEqual(len(samples) / sample_rate, 15.0, delta=0.5)
-
-    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    async def test_transcode_wav_to_flac_timeout_triggers_cleanup(
-        self, mock_create_exec: AsyncMock
-    ) -> None:
-        mock_process = AsyncMock()
-        mock_process.returncode = None
-
-        terminated_event = asyncio.Event()
-
-        def mock_terminate():
-            terminated_event.set()
-
-        mock_process.terminate = mock_terminate
-
-        async def mock_wait():
-            await terminated_event.wait()
-            return 0
-
-        mock_process.wait = mock_wait
-        mock_create_exec.return_value = mock_process
-
-        with patch.object(icecast_collector, "_FIX_HEADER_TIMEOUT_SEC", 0.05):
-            with tempfile.TemporaryDirectory() as tmp:
-                wav_segment = Path(tmp) / "chunk_000000.wav"
-                wav_segment.write_bytes(b"dummy_data")
-                flac_segment = Path(tmp) / "chunk_000000.flac"
-
-                success = await icecast_collector._transcode_wav_to_flac(
-                    wav_segment, flac_segment
-                )
-
-                # Give background tasks (cleanup) a tick to run
-                await asyncio.sleep(0.02)
-
-                self.assertTrue(terminated_event.is_set())
-                self.assertFalse(
-                    success,
-                    "a timed-out transcode must not report success",
-                )
-
-    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    async def test_transcode_wav_to_flac_nonzero_exit_reports_failure(
-        self, mock_create_exec: AsyncMock
-    ) -> None:
-        mock_process = AsyncMock()
-        mock_process.returncode = 1
-        mock_process.wait = AsyncMock(return_value=1)
-        mock_create_exec.return_value = mock_process
-
-        with tempfile.TemporaryDirectory() as tmp:
-            wav_segment = Path(tmp) / "chunk_000000.wav"
-            wav_segment.write_bytes(b"dummy_data")
-            flac_segment = Path(tmp) / "chunk_000000.flac"
-
-            success = await icecast_collector._transcode_wav_to_flac(
-                wav_segment, flac_segment
-            )
-
-            self.assertFalse(success)
-
-    @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    async def test_transcode_wav_to_flac_cancellation_triggers_cleanup(
-        self, mock_create_exec: AsyncMock
-    ) -> None:
-        mock_process = AsyncMock()
-        mock_process.returncode = None
-
-        terminated_event = asyncio.Event()
-
-        def mock_terminate():
-            terminated_event.set()
-
-        mock_process.terminate = mock_terminate
-
-        async def mock_wait():
-            await terminated_event.wait()
-            return 0
-
-        mock_process.wait = mock_wait
-        mock_create_exec.return_value = mock_process
-
-        with tempfile.TemporaryDirectory() as tmp:
-            wav_segment = Path(tmp) / "chunk_000000.wav"
-            wav_segment.write_bytes(b"dummy_data")
-            flac_segment = Path(tmp) / "chunk_000000.flac"
-
-            # Start the task and cancel it immediately
-            task = asyncio.create_task(
-                icecast_collector._transcode_wav_to_flac(
-                    wav_segment, flac_segment
-                )
-            )
-            await asyncio.sleep(0.01)  # let it start and await wait_for
-            task.cancel()
-
-            with self.assertRaises(asyncio.CancelledError):
-                await task
-
-            # Give background tasks (cleanup) a tick to run
-            await asyncio.sleep(0.02)
-
-            self.assertTrue(terminated_event.is_set())
 
 
 class TestBuildAuthAndUrl(unittest.TestCase):

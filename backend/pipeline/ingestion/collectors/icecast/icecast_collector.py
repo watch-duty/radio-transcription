@@ -59,11 +59,8 @@ POLL_INTERVAL_SEC = 0.25  # Polling interval for segment file checks
 STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
 _STREAM_PROBE_TIMEOUT_SEC = 10
-_MAX_ALLOWED_LAG_SECONDS = 60.0
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
-_FIX_HEADER_TIMEOUT_SEC = 10.0
 _CLEANUP_SUBPROCESS_TIMEOUT_SEC = 2.0
-MAX_CONCURRENT_TRANSCODES = 8
 
 _background_tasks: set[asyncio.Task[None]] = set()
 
@@ -289,7 +286,7 @@ async def _drain_stderr(
         logger.warning("stderr drain failed", exc_info=True)
 
 
-def _segment_path(directory: Path, index: int, ext: str = "wav") -> Path:
+def _segment_path(directory: Path, index: int, ext: str = "flac") -> Path:
     return directory / f"chunk_{index:06d}.{ext}"
 
 
@@ -320,62 +317,6 @@ async def _cleanup_subprocess(process: asyncio.subprocess.Process) -> None:
     with contextlib.suppress(Exception):
         process.kill()
         await process.wait()
-
-
-_TRANSCODE_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_TRANSCODES)
-
-
-async def _transcode_wav_to_flac(wav_path: Path, flac_path: Path) -> bool:
-    """Transcodes a WAV segment to FLAC.
-
-    Writes standard StreamInfo metadata and headers. This runs FLAC encoding
-    exactly once per finalized segment.
-    """
-    process = None
-    success = False
-    try:
-        async with _TRANSCODE_SEMAPHORE:
-            process = await asyncio.create_subprocess_exec(
-                "ffmpeg",
-                "-y",
-                "-nostdin",
-                "-i",
-                str(wav_path),
-                "-acodec",
-                "flac",
-                "-compression_level",
-                FLAC_COMPRESSION_LEVEL,
-                str(flac_path),
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await asyncio.wait_for(
-                process.wait(), timeout=_FIX_HEADER_TIMEOUT_SEC
-            )
-        if process.returncode == 0:
-            success = True
-        else:
-            logger.error(
-                "ffmpeg WAV to FLAC transcode failed for %s with exit code %s",
-                wav_path,
-                process.returncode,
-            )
-    except TimeoutError:
-        logger.warning(
-            "ffmpeg WAV to FLAC transcode timed out for %s after %.1fs",
-            wav_path,
-            _FIX_HEADER_TIMEOUT_SEC,
-        )
-    except Exception as e:
-        logger.exception(
-            "Exception transcoding WAV to FLAC for %s: %s", wav_path, e
-        )
-    finally:
-        if process is not None:
-            task = asyncio.create_task(_cleanup_subprocess(process))
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
-    return success
 
 
 async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
@@ -428,10 +369,10 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
         prefix="icecast_segments_", dir=segment_dir_parent
     ) as tmp_dir:
         segment_dir = Path(tmp_dir)
-        segment_pattern_wav = str(segment_dir / "chunk_%06d.wav")
+        segment_pattern_flac = str(segment_dir / "chunk_%06d.flac")
 
         process = await _create_ffmpeg_process(
-            url, segment_pattern_wav, auth_header
+            url, segment_pattern_flac, auth_header
         )
         if (
             process.stderr is None
@@ -471,19 +412,19 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                     )
                     return
 
-                current_segment_wav = _segment_path(
-                    segment_dir, next_index, "wav"
+                current_segment_flac = _segment_path(
+                    segment_dir, next_index, "flac"
                 )
-                next_segment_wav = _segment_path(
-                    segment_dir, next_index + 1, "wav"
+                next_segment_flac = _segment_path(
+                    segment_dir, next_index + 1, "flac"
                 )
                 process_done = wait_task.done()
 
                 # Run file checks in threadpool to prevent event loop stalls on disk latency
                 current_exists = await asyncio.to_thread(
-                    current_segment_wav.exists
+                    current_segment_flac.exists
                 )
-                next_exists = await asyncio.to_thread(next_segment_wav.exists)
+                next_exists = await asyncio.to_thread(next_segment_flac.exists)
 
                 # Read a segment only once we know ffmpeg finished writing it.
                 # A segment is considered finalized when either:
@@ -493,39 +434,11 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                     # SLO: receipt_time stamp — Icecast segment finalized, bytes available
                     receipt_time = _now_utc()
 
-                    current_segment_flac = _segment_path(
-                        segment_dir, next_index, "flac"
-                    )
-                    # Transcode the WAV segment to FLAC in one step to build
-                    # correct headers
-                    transcode_success = await _transcode_wav_to_flac(
-                        current_segment_wav, current_segment_flac
-                    )
-                    if not transcode_success:
-                        logger.warning(
-                            "Feed %s (%s): dropping segment %s after failed "
-                            "transcode to FLAC",
-                            feed_id,
-                            feed_name,
-                            current_segment_wav,
-                        )
-                        await asyncio.to_thread(
-                            current_segment_wav.unlink, missing_ok=True
-                        )
-                        next_index += 1
-                        continue
-
                     segment_bytes = await asyncio.to_thread(
                         current_segment_flac.read_bytes
                     )
-                    # Clean up both the temporary WAV and FLAC files
-                    await asyncio.gather(
-                        asyncio.to_thread(
-                            current_segment_wav.unlink, missing_ok=True
-                        ),
-                        asyncio.to_thread(
-                            current_segment_flac.unlink, missing_ok=True
-                        ),
+                    await asyncio.to_thread(
+                        current_segment_flac.unlink, missing_ok=True
                     )
 
                     if segment_bytes:
@@ -541,19 +454,6 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         )
                         if process_done:
                             chunk_end_time = min(chunk_end_time, _now_utc())
-
-                        # Guard against cumulative network or system lag by measuring the drift
-                        # between wall-clock receipt time and expected stream time.
-                        lag = (receipt_time - chunk_end_time).total_seconds()
-                        if lag > _MAX_ALLOWED_LAG_SECONDS:
-                            logger.warning(
-                                "Feed %s (%s): Stream lag has exceeded threshold "
-                                "(%.1fs > %.1fs).",
-                                feed_id,
-                                feed_name,
-                                lag,
-                                _MAX_ALLOWED_LAG_SECONDS,
-                            )
 
                         yield CapturedChunk(
                             audio_bytes=segment_bytes,
@@ -625,11 +525,11 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         "\n".join(stderr_tail) if stderr_tail else None
                     )
                     stderr_log_text = stderr_snippet or "(no stderr captured)"
-                    current_segment_wav = _segment_path(
-                        segment_dir, next_index, "wav"
+                    current_segment_flac = _segment_path(
+                        segment_dir, next_index, "flac"
                     )
-                    next_segment_wav = _segment_path(
-                        segment_dir, next_index + 1, "wav"
+                    next_segment_flac = _segment_path(
+                        segment_dir, next_index + 1, "flac"
                     )
                     (
                         current_segment_size,
@@ -637,10 +537,10 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         current_segment_mtime,
                         next_segment_mtime,
                     ) = await asyncio.gather(
-                        asyncio.to_thread(_path_size, current_segment_wav),
-                        asyncio.to_thread(_path_size, next_segment_wav),
-                        asyncio.to_thread(_path_mtime, current_segment_wav),
-                        asyncio.to_thread(_path_mtime, next_segment_wav),
+                        asyncio.to_thread(_path_size, current_segment_flac),
+                        asyncio.to_thread(_path_size, next_segment_flac),
+                        asyncio.to_thread(_path_mtime, current_segment_flac),
+                        asyncio.to_thread(_path_mtime, next_segment_flac),
                     )
                     classification_text = (
                         "\n".join(stderr_http_status_lines)
@@ -713,7 +613,7 @@ async def _create_ffmpeg_process(
 
     Args:
         url: The stream URL to connect to
-        segment_pattern: Segment filename pattern for ffmpeg (should end in .wav)
+        segment_pattern: Segment filename pattern for ffmpeg (should end in .flac)
         auth_header: HTTP Authorization header for the stream, if applicable
 
     Returns:
@@ -772,7 +672,9 @@ async def _create_ffmpeg_process(
             "-af",
             "aresample=async=1:min_hard_comp=0.100:first_pts=0",
             "-acodec",
-            "pcm_s16le",
+            "flac",
+            "-compression_level",
+            FLAC_COMPRESSION_LEVEL,
             "-ar",
             str(SAMPLE_RATE_HZ),
             "-ac",
@@ -782,7 +684,7 @@ async def _create_ffmpeg_process(
             "-segment_time",
             str(_CHUNK_DURATION),
             "-segment_format",
-            "wav",
+            "flac",
             "-reset_timestamps",
             "1",
             "-segment_start_number",
