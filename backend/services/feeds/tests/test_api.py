@@ -1022,6 +1022,19 @@ class TestFeedsAPI(unittest.TestCase):
             order=SortOrder.DESC,
         )
 
+    def test_list_feed_history_invalid_token(self) -> None:
+        feed_id = uuid.uuid4()
+        self.mock_service.list_feed_history.side_effect = ValueError(
+            "Invalid next_token"
+        )
+
+        response = self.client.get(
+            f"/v1/feeds/{feed_id}/history?next_token=badtoken"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Invalid next_token", response.json()["detail"])
+
 
 if __name__ == "__main__":
     unittest.main()

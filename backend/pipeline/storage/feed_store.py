@@ -23,6 +23,7 @@ from backend.pipeline.storage import (
 from backend.pipeline.storage.pagination_utils import (
     SortOrder,
     decode_cursor,
+    decode_int_cursor,
     get_paginated_results,
 )
 
@@ -1136,15 +1137,28 @@ class FeedStore:
         next_token: str | None = None,
         order: SortOrder = SortOrder.DESC,
     ) -> PaginatedFeedAuditEvents:
-        """List audit events for a feed with keyset pagination."""
+        """List audit events for a feed with keyset pagination.
+
+        Args:
+            feed_id: UUID of the feed whose history to list.
+            limit: Maximum number of events to return.
+            next_token: Keyset pagination token for the next page.
+            order: The sort order by occurred_at (ASC or DESC).
+
+        Returns:
+            A PaginatedFeedAuditEvents object containing history events, next_token, and total.
+
+        Raises:
+            ValueError: If limit is less than 1 or if next_token is invalid.
+        """
         if limit < 1:
             msg = "limit must be >= 1"
             raise ValueError(msg)
 
         cursor_ts = None
-        cursor_uid = None
+        cursor_revision = None
         if next_token:
-            cursor_ts, cursor_uid = decode_cursor(next_token)
+            cursor_ts, cursor_revision = decode_int_cursor(next_token)
 
         is_asc = order == SortOrder.ASC or order == "asc"
         query = (
@@ -1157,7 +1171,7 @@ class FeedStore:
             query,
             feed_id,
             cursor_ts,
-            cursor_uid,
+            cursor_revision,
             limit + 1,
         )
         total_task = self._pool.fetchval(
@@ -1168,7 +1182,10 @@ class FeedStore:
         rows, total = await asyncio.gather(rows_task, total_task)
 
         rows, new_next_token = get_paginated_results(
-            rows, limit, "occurred_at", "id"
+            rows,
+            limit,
+            timestamp_key="occurred_at",
+            id_key="feed_revision",
         )
 
         events = [
@@ -1179,12 +1196,8 @@ class FeedStore:
                 actor_id=row["actor_id"],
                 occurred_at=row["occurred_at"],
                 feed_revision=row["feed_revision"],
-                before_values=json.loads(row["before_values"])
-                if isinstance(row["before_values"], str)
-                else row["before_values"],
-                after_values=json.loads(row["after_values"])
-                if isinstance(row["after_values"], str)
-                else row["after_values"],
+                before_values=row["before_values"],
+                after_values=row["after_values"],
             )
             for row in rows
         ]

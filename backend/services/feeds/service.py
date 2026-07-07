@@ -195,6 +195,12 @@ class FeedService:
             uid = uuid.UUID(feed_id)
         except ValueError:
             return None
+
+        # Verify feed exists before retrieving history
+        feed = await self._store.get_feed(uid)
+        if feed is None:
+            return None
+
         store_events = await self._store.list_feed_history_records(
             uid,
             limit=limit,

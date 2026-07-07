@@ -3037,8 +3037,8 @@ class TestFeedStoreListFeedHistoryRecords(unittest.IsolatedAsyncioTestCase):
                         2026, 6, 26, tzinfo=datetime.UTC
                     ),
                     "feed_revision": 2,
-                    "before_values": '{"status": "failing"}',
-                    "after_values": '{"status": "active"}',
+                    "before_values": {"status": "failing"},
+                    "after_values": {"status": "active"},
                 }
             ],
             fetchval_result=1,
@@ -3106,8 +3106,8 @@ class TestFeedStoreListFeedHistoryRecords(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(res.next_token)
         self.assertEqual(res.total, 2)
 
-        # Verify next token matches the first item
-        expected_token = encode_cursor(occurred_at, event_id)
+        # Verify next token matches the first item (uses feed_revision 2 as tie-breaker)
+        expected_token = encode_cursor(occurred_at, 2)
         self.assertEqual(res.next_token, expected_token)
 
     async def test_list_feed_history_records_asc(self) -> None:

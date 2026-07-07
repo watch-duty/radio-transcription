@@ -918,20 +918,32 @@ WHERE ($1::text[] IS NULL OR f.source_type = ANY($1))
 
 
 LIST_FEED_AUDIT_EVENTS_DESC_SQL = """\
-SELECT id, feed_id, action, actor_id, occurred_at, feed_revision, before_values, after_values
+SELECT
+  id, feed_id, action, actor_id, occurred_at, feed_revision,
+  before_values, after_values
 FROM feed_audit_events
 WHERE feed_id = $1
-  AND ($2::timestamptz IS NULL OR occurred_at < $2 OR (occurred_at = $2 AND id < $3))
-ORDER BY occurred_at DESC, id DESC
+  AND (
+    $2::timestamptz IS NULL
+    OR occurred_at < $2
+    OR (occurred_at = $2 AND feed_revision < $3)
+  )
+ORDER BY occurred_at DESC, feed_revision DESC
 LIMIT $4
 """
 
 LIST_FEED_AUDIT_EVENTS_ASC_SQL = """\
-SELECT id, feed_id, action, actor_id, occurred_at, feed_revision, before_values, after_values
+SELECT
+  id, feed_id, action, actor_id, occurred_at, feed_revision,
+  before_values, after_values
 FROM feed_audit_events
 WHERE feed_id = $1
-  AND ($2::timestamptz IS NULL OR occurred_at > $2 OR (occurred_at = $2 AND id > $3))
-ORDER BY occurred_at ASC, id ASC
+  AND (
+    $2::timestamptz IS NULL
+    OR occurred_at > $2
+    OR (occurred_at = $2 AND feed_revision > $3)
+  )
+ORDER BY occurred_at ASC, feed_revision ASC
 LIMIT $4
 """
 

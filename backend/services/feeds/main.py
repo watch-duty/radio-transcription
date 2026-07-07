@@ -144,12 +144,18 @@ async def list_feed_history(
 ) -> ListFeedHistoryResponse:
     """List state history for a specific feed with keyset pagination."""
     service: FeedService = request.app.state.feed_service
-    res = await service.list_feed_history(
-        feed_id=feed_id,
-        limit=limit,
-        next_token=next_token,
-        order=order,
-    )
+    try:
+        res = await service.list_feed_history(
+            feed_id=feed_id,
+            limit=limit,
+            next_token=next_token,
+            order=order,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
     if res is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
