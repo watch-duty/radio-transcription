@@ -62,7 +62,13 @@ _STREAM_PROBE_TIMEOUT_SEC = 10
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
 _CLEANUP_SUBPROCESS_TIMEOUT_SEC = 2.0
 _HEADER_REPAIR_TIMEOUT_SEC = 10.0
-MAX_CONCURRENT_HEADER_REPAIRS = 8
+# Reasoned starting point (idle-machine ffmpeg -c copy latency leaves ample
+# headroom over the ~53/sec arrival rate at 800 feeds/worker; not validated
+# under the production VM's actual demuxer contention). Tune from the
+# stream_interval_lag_sec SLO field rather than guessing further.
+MAX_CONCURRENT_HEADER_REPAIRS = int(
+    os.environ.get("INGESTION_MAX_CONCURRENT_HEADER_REPAIRS", "16")
+)
 
 _background_tasks: set[asyncio.Task[None]] = set()
 
