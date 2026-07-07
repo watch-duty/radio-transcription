@@ -443,6 +443,7 @@ async def _process_finalized_segment(
     Returns:
         A tuple of (CapturedChunk or None if encoding failed, updated previous_receipt_time).
     """
+    # SLO: receipt_time stamp — Icecast segment finalized, bytes available
     receipt_time = _now_utc()
     segment_bytes = await _encode_pcm_segment_to_flac(current_segment_pcm)
     if segment_bytes is None:
