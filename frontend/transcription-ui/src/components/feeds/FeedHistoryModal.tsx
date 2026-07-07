@@ -32,10 +32,18 @@ export function FeedHistoryModal({
 }: FeedHistoryModalProps) {
   const { token } = useAuth();
 
+  const [activeFeed, setActiveFeed] = React.useState<Feed | null>(null);
+
+  React.useEffect(() => {
+    if (feed) {
+      setActiveFeed(feed);
+    }
+  }, [feed]);
+
   const { data, isLoading, error } = useQuery({
-    queryKey: ['listFeedHistory', token, feed?.id],
-    queryFn: () => listFeedHistory(feed!.id, token!),
-    enabled: open && !!token && !!feed?.id,
+    queryKey: ['listFeedHistory', token, activeFeed?.id],
+    queryFn: () => listFeedHistory(activeFeed!.id, token!),
+    enabled: open && !!token && !!activeFeed?.id,
   });
 
   const historyEvents = data?.historyEvents ?? [];
@@ -49,7 +57,7 @@ export function FeedHistoryModal({
       aria-labelledby="feed-history-dialog-title"
     >
       <DialogTitle id="feed-history-dialog-title" sx={{ m: 0, p: 2, pr: 6 }}>
-        {feed ? `Audit Trail: ${feed.name}` : 'Audit Trail'}
+        {activeFeed ? `Audit Trail: ${activeFeed.name}` : 'Audit Trail'}
         <IconButton
           aria-label="close"
           onClick={onClose}
