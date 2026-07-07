@@ -22,10 +22,15 @@ export function handleBackendError(
   error: unknown,
   defaultMessage: string
 ): BackendErrorResponse {
-  if (error instanceof GaxiosError) {
+  if (error instanceof GaxiosError || axios.isAxiosError(error)) {
     const status = error.response?.status || 500;
+    const data = error.response?.data as Record<string, unknown> | undefined;
     const message =
-      error.response?.data?.detail || error.message || defaultMessage;
+      (data && typeof data === 'object' && typeof data.detail === 'string'
+        ? data.detail
+        : '') ||
+      error.message ||
+      defaultMessage;
     console.error(
       JSON.stringify({
         level: 'ERROR',
@@ -36,7 +41,7 @@ export function handleBackendError(
     );
     return {
       status,
-      message: message || defaultMessage,
+      message,
     };
   }
 
