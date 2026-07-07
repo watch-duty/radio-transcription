@@ -91,6 +91,7 @@ resource "google_compute_instance_template" "this" {
       container_image            = var.container_image
       env_file_content           = local.env_file_content
       enable_autohealing         = var.enable_autohealing
+      tmpfs_mounts               = var.tmpfs_mounts
       vm_health_port             = local.vm_health_port
       worker_indices             = local.worker_indices
       vm_health_worker_endpoints = local.vm_health_worker_endpoints

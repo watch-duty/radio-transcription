@@ -103,3 +103,9 @@ variable "enable_autohealing" {
   type        = bool
   default     = false
 }
+
+variable "tmpfs_mounts" {
+  description = "Optional list of tmpfs mounts to pass to the docker container as --tmpfs flags."
+  type        = list(string)
+  default     = []
+}

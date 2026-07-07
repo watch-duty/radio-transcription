@@ -76,7 +76,8 @@ async def emit_quarantine_event(
         return
 
     try:
-        # Cardinality: keep labels bounded; reason is unbounded and would fragment time series.
+        # Cardinality: keep labels bounded; reason is unbounded and would
+        # fragment time series.
         await _client.write_time_series(
             metric_type=METRIC_TYPE_QUARANTINE_EVENTS,
             labels={

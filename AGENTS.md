@@ -17,3 +17,11 @@ local test commands have previously exhausted developer machines.
   `mise run test:e2e`, `mise run test:component`, and
   `docker compose ... integration-tests` unless explicitly approved.
 - Prefer GitHub Actions for full E2E/resource-stack validation.
+
+## Enforce Concurrent Index Creation
+
+To prevent database lock contention and connection pool starvation in production:
+
+- **Always** use `CONCURRENTLY` when creating indexes on high-throughput or write-heavy tables (e.g., `annotations`, `audio_segments`, `feeds`).
+- Example: `CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_name ON table_name ...`
+- Since concurrent index builds cannot run inside transaction blocks, ensure they are not wrapped in `BEGIN ... COMMIT` statements.

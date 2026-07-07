@@ -48,7 +48,8 @@ class GCSAudioUploader:
         except PreconditionFailed:
             uri = f"gs://{bucket_name}/{destination_path}"
             logger.info(
-                "GCS 412 (object already exists) for gs://%s/%s -- treating as success",
+                "GCS 412 (object already exists) for gs://%s/%s -- "
+                "treating as success",
                 bucket_name,
                 destination_path,
             )

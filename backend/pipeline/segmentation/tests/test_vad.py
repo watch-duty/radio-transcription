@@ -243,7 +243,7 @@ class TestVadEngine(unittest.TestCase):
         self._run_integration_test(
             "test_joined.flac",
             [(8.3, 10.7), (12.3, 15.6), (20.3, 23.0), (26.2, 27.0)],
-            baseline_f1=0.895,
+            baseline_f1=0.920,
         )
 
     def test_integration_bcfy_file(self) -> None:
@@ -366,7 +366,7 @@ class TestVadEngine(unittest.TestCase):
             [
                 (4.418, 15.570),
             ],
-            baseline_f1=0.640,
+            baseline_f1=0.703,
             chunk_len_sec=5.0,
         )
 

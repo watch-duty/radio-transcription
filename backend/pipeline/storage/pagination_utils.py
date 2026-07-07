@@ -29,9 +29,22 @@ def decode_cursor(
         raise ValueError(msg)
 
 
-def encode_cursor(ts: datetime.datetime, uid: uuid.UUID) -> str:
-    """Encode a timestamp and UUID into a base64 pagination token."""
-    token_str = f"{ts.isoformat()}|{uid}"
+def decode_int_cursor(
+    next_token: str,
+) -> tuple[datetime.datetime, int]:
+    """Decode a base64 pagination token into a timestamp and integer."""
+    try:
+        decoded = base64.b64decode(next_token).decode("utf-8")
+        ts_str, int_str = decoded.split("|")
+        return datetime.datetime.fromisoformat(ts_str), int(int_str)
+    except Exception as e:
+        msg = f"Invalid next_token: {e}"
+        raise ValueError(msg)
+
+
+def encode_cursor(ts: datetime.datetime, key: uuid.UUID | int) -> str:
+    """Encode a timestamp and a UUID/integer key into a base64 token."""
+    token_str = f"{ts.isoformat()}|{key}"
     return base64.b64encode(token_str.encode("utf-8")).decode("utf-8")
 
 
@@ -41,7 +54,10 @@ def get_paginated_results(
     timestamp_key: str,
     id_key: str,
 ) -> tuple[collections.abc.Sequence[typing.Any], str | None]:
-    """Slice rows exceeding limit and generate a pagination token based on timestamp and ID."""
+    """Slice rows exceeding limit and generate a keyset pagination token.
+
+    The token is generated based on the timestamp and ID.
+    """
     if len(rows) > limit:
         sliced_rows = rows[:limit]
         last_row = sliced_rows[-1]

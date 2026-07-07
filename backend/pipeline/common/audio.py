@@ -156,7 +156,8 @@ def probe_audio_metadata(
                 result = _probe_file(f.name, _input_format_args(input_format))
             except (subprocess.SubprocessError, UnicodeDecodeError) as e:
                 logger.debug(
-                    "ffprobe failed to probe metadata with forced format %s: %s",
+                    "ffprobe failed to probe metadata with forced format "
+                    "%s: %s",
                     input_format,
                     e,
                 )

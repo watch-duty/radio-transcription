@@ -14,6 +14,7 @@ NOTIFICATION_ENDPOINT = os.environ.get("NOTIFICATION_ENDPOINT", "")
 NOTIFICATION_ENDPOINT_API_KEY = os.environ.get(
     "NOTIFICATION_ENDPOINT_API_KEY", ""
 )
+DEFAULT_CONNECTION_POOL_SIZE = 10
 
 
 class RequestHandler:
@@ -29,7 +30,9 @@ class RequestHandler:
             status_forcelist=[500, 502, 503, 504],
             allowed_methods=frozenset(["POST"]),
         )
-        self.http = PoolManager(retries=self.retry_strategy)
+        self.http = PoolManager(
+            maxsize=DEFAULT_CONNECTION_POOL_SIZE, retries=self.retry_strategy
+        )
 
     def send_notification(self, notification: AlertNotification) -> None:
         """
