@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import subprocess
 import tempfile
 from typing import Literal, NamedTuple
 
+import soundfile
+
 from backend.pipeline.ingestion import models
 
 logger = logging.getLogger(__name__)
 
 FFPROBE_TIMEOUT_SEC = 10
+_SF_COUNT_MAX = 9223372036854775807
 type AudioInputFormat = Literal["mp3"]
 
 # Maps ffprobe format_name tokens to AudioMimeType. Keys are lower-cased
@@ -224,18 +228,39 @@ def get_audio_duration(
 
 
 def parse_flac_duration_from_bytes(audio_bytes: bytes) -> float | None:
-    """Parse duration in seconds from STREAMINFO block of FLAC bytes.
+    """Parse duration in seconds from STREAMINFO block of FLAC bytes using soundfile.
 
     This function is deliberately non-raising; it catches any exceptions during
     parsing and returns None to handle malformed stream packets gracefully.
+
+    Args:
+        audio_bytes: Raw FLAC audio bytes.
+
+    Returns:
+        Duration in seconds, or None if parsing fails.
     """
     try:
-        if len(audio_bytes) < 42:
-            return None
-        if audio_bytes[0:4] != b"fLaC":
-            return None
-        block_type = audio_bytes[4] & 0x7F
-        if block_type != 0:
+        f_info = soundfile.info(io.BytesIO(audio_bytes))
+        # Check if duration is a sane, finite positive value and is a FLAC container.
+        # If frames is SF_COUNT_MAX (9223372036854775807), duration will be huge/meaningless.
+        if (
+            f_info.format == "FLAC"
+            and f_info.duration > 0
+            and f_info.frames < _SF_COUNT_MAX
+        ):
+            return f_info.duration
+    except Exception as e:
+        logger.debug(
+            "soundfile failed to parse FLAC duration, falling back to manual parsing: %s",
+            e,
+        )
+
+    try:
+        if (
+            len(audio_bytes) < 42
+            or audio_bytes[0:4] != b"fLaC"
+            or (audio_bytes[4] & 0x7F) != 0
+        ):
             return None
         sample_rate = (
             (audio_bytes[18] << 12)

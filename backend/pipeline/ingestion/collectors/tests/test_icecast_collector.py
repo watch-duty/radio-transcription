@@ -160,6 +160,14 @@ def _make_process_factory(
     return _factory
 
 
+async def _mock_transcode(wav_path: Path, flac_path: Path) -> bool:
+    if await asyncio.to_thread(wav_path.exists):
+        data = await asyncio.to_thread(wav_path.read_bytes)
+        await asyncio.to_thread(flac_path.write_bytes, data)
+        return True
+    return False
+
+
 def _formatted_error_calls(mock_logger: MagicMock) -> str:
     """Render every captured logger.error call into a single newline-joined string.
 
@@ -1300,13 +1308,6 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
         feed = _make_feed("test", source_feed_id="sid")
         shutdown = asyncio.Event()
 
-        async def _mock_transcode(wav_path: Path, flac_path: Path) -> bool:
-            if await asyncio.to_thread(wav_path.exists):
-                data = await asyncio.to_thread(wav_path.read_bytes)
-                await asyncio.to_thread(flac_path.write_bytes, data)
-                return True
-            return False
-
         with patch.object(
             icecast_collector,
             "_transcode_wav_to_flac",
@@ -1476,8 +1477,8 @@ class TestIcecastTimestampAlignment(unittest.IsolatedAsyncioTestCase):
             patch.object(icecast_collector, "logger", self.mock_logger),
             patch.object(
                 icecast_collector,
-                "_fix_flac_header",
-                new_callable=AsyncMock,
+                "_transcode_wav_to_flac",
+                AsyncMock(side_effect=_mock_transcode),
             ),
             patch.dict(os.environ, MOCK_ENV_VARS),
         ]

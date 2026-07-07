@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import io
 import shutil
 import subprocess
 import unittest
 from typing import Self
 from unittest.mock import MagicMock, patch
+
+import soundfile
 
 from backend.pipeline.common import audio as audio_helper
 from backend.pipeline.common.audio import get_audio_duration
@@ -231,24 +234,23 @@ class TestAudioUtils(unittest.TestCase):
         self.assertGreaterEqual(duration_ms, 7200)
         self.assertLessEqual(duration_ms, 7800)
 
-    def test_parse_flac_duration_success(self) -> None:
-        """Test parsing duration from valid FLAC header bytes."""
-        header = bytearray(42)
-        header[0:4] = b"fLaC"
-        header[4] = 0  # STREAMINFO block
-        # Sample rate = 16000 (0x03E80)
-        header[18] = 0x03
-        header[19] = 0xE8
-        header[20] = 0x00
-        # Total samples = 32000 (0x000007D00)
-        header[21] = 0x00
-        header[22] = 0x00
-        header[23] = 0x00
-        header[24] = 0x7D
-        header[25] = 0x00
+    def test_parse_flac_duration_with_soundfile_success(self) -> None:
+        """Test parsing duration using soundfile from a valid FLAC container."""
+        # Test FLAC succeeds
+        buffer_flac = io.BytesIO()
+        soundfile.write(buffer_flac, [0.0] * 8000, 8000, format="FLAC")
+        duration_flac = audio_helper.parse_flac_duration_from_bytes(
+            buffer_flac.getvalue()
+        )
+        self.assertEqual(duration_flac, 1.0)
 
-        duration = audio_helper.parse_flac_duration_from_bytes(bytes(header))
-        self.assertEqual(duration, 2.0)
+        # Test WAV is rejected and returns None
+        buffer_wav = io.BytesIO()
+        soundfile.write(buffer_wav, [0.0] * 8000, 8000, format="WAV")
+        duration_wav = audio_helper.parse_flac_duration_from_bytes(
+            buffer_wav.getvalue()
+        )
+        self.assertIsNone(duration_wav)
 
     def test_parse_flac_duration_too_short(self) -> None:
         """Test duration parsing on bytes that are too short."""
