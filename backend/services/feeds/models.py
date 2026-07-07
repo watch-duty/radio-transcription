@@ -104,7 +104,7 @@ class FeedHistoryEvent(BaseModel):
     action: str
     actor: str
     occurred_at: datetime.datetime
-    feed_revision: int
+    feed_revision_num: int
     before_values: dict
     after_values: dict
 

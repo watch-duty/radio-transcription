@@ -982,7 +982,7 @@ class TestFeedsAPI(unittest.TestCase):
                     occurred_at=datetime.datetime(
                         2026, 6, 26, tzinfo=datetime.UTC
                     ),
-                    feed_revision=2,
+                    feed_revision_num=2,
                     before_values={},
                     after_values={},
                 )

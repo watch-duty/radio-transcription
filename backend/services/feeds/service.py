@@ -215,7 +215,7 @@ class FeedService:
                     action=e["action"],
                     actor=e["actor_id"],
                     occurred_at=e["occurred_at"],
-                    feed_revision=e["feed_revision"],
+                    feed_revision_num=e["feed_revision"],
                     before_values=e["before_values"],
                     after_values=e["after_values"],
                 )
