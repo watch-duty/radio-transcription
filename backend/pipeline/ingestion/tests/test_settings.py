@@ -227,12 +227,15 @@ class TestCollectorSettings(unittest.TestCase):
         with patch.dict("os.environ", _required_env(), clear=True):
             settings = CollectorSettings()
 
-        # ECHO is intentionally absent: Echo feeds aren't VM-leased.
-        self.assertNotIn(SourceType.ECHO, settings.caps)
-        self.assertIn(SourceType.BCFY_FEEDS, settings.caps)
-        self.assertIn(SourceType.BCFY_CALLS, settings.caps)
-        self.assertIn(SourceType.OPENMHZ, settings.caps)
-        self.assertIn(SourceType.FIRE_NOTIFICATIONS, settings.caps)
+        self.assertEqual(
+            set(settings.caps),
+            {
+                SourceType.BCFY_FEEDS,
+                SourceType.BCFY_CALLS,
+                SourceType.OPENMHZ,
+                SourceType.FIRE_NOTIFICATIONS,
+            },
+        )
 
     def test_invalid_missing_required_env_var_raises(self) -> None:
         """Raises ValueError when a required environment variable is missing."""

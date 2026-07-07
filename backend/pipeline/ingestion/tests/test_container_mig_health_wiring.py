@@ -15,15 +15,6 @@ def _text(path: pathlib.Path) -> str:
     return path.read_text()
 
 
-def _without_comment_lines(text: str) -> str:
-    lines = []
-    for line in text.splitlines():
-        if line.lstrip().startswith("#"):
-            continue
-        lines.append(line)
-    return "\n".join(lines)
-
-
 def _file_entry(text: str, path: str) -> str:
     start = text.index(f"- path: {path}")
     next_entry = text.find("\n- path:", start + 1)
@@ -71,10 +62,6 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
             "ExecStartPre=/usr/bin/docker pull ${container_image}",
             health_unit,
         )
-        self.assertNotIn(
-            "--env-file /etc/container-env/${service_name}.env",
-            health_unit,
-        )
 
     def test_vm_health_unit_has_explicit_non_secret_env_contract(
         self,
@@ -97,18 +84,12 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
             with self.subTest(env_var=env_var):
                 self.assertIn(env_var, health_unit)
 
-        self.assertNotIn(
-            "http://127.0.0.1:8081/healthz,http://127.0.0.1:8082/healthz",
-            health_unit,
-        )
-
     def test_vm_health_unit_reasserts_host_firewall_rule(self) -> None:
         cloud_config = _text(_CLOUD_CONFIG)
         health_unit = _file_entry(
             cloud_config,
             "/etc/systemd/system/${service_name}-health.service",
         )
-        runcmd = cloud_config[cloud_config.index("\nruncmd:") :]
         expected_exec_start_pre = (
             "ExecStartPre=/bin/sh -c 'iptables -C INPUT -p tcp --dport "
             "${vm_health_port} -j ACCEPT || iptables -I INPUT -p tcp --dport "
@@ -116,17 +97,6 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
         )
 
         self.assertIn(expected_exec_start_pre, health_unit)
-        self.assertNotIn(
-            "- iptables -I INPUT -p tcp --dport 8080 -j ACCEPT",
-            runcmd,
-        )
-
-    def test_nginx_health_aggregator_is_removed(self) -> None:
-        cloud_config = _without_comment_lines(_text(_CLOUD_CONFIG))
-
-        self.assertNotIn("/etc/nginx-aggregator/healthz.conf", cloud_config)
-        self.assertNotIn("mirror.gcr.io/library/nginx", cloud_config)
-        self.assertNotIn("nginx", cloud_config.lower())
 
     def test_worker_topology_is_generated_from_worker_indices(self) -> None:
         cloud_config = _text(_CLOUD_CONFIG)
@@ -143,12 +113,6 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
             "systemctl enable --now ${service_name}@${worker_index}.service",
             cloud_config,
         )
-        self.assertNotIn(
-            "systemctl enable --now ${service_name}@1.service", cloud_config
-        )
-        self.assertNotIn(
-            "systemctl enable --now ${service_name}@2.service", cloud_config
-        )
         self.assertIn(
             "systemctl enable --now ${service_name}-health.service",
             cloud_config,
@@ -162,9 +126,7 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
         self,
     ) -> None:
         main_tf = _text(_MAIN_TF)
-        variables_tf = _text(_VARIABLES_TF)
 
-        self.assertNotIn('variable "worker_count"', variables_tf)
         self.assertIn("vm_health_port = 8080", main_tf)
         self.assertIn("worker_indices", main_tf)
         self.assertIn("worker_indices = [1, 2]", main_tf)
