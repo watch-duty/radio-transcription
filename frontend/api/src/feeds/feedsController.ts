@@ -99,7 +99,7 @@ interface FeedHistoryEventBackend {
   action: string;
   actor: string;
   occurred_at: string;
-  feed_revision: number;
+  feed_revision_num: number;
   before_values: Record<string, unknown>;
   after_values: Record<string, unknown>;
 }
@@ -113,7 +113,7 @@ function convertFeedHistoryEventBackend(
     action: response.action,
     actor: response.actor,
     occurredAt: Date.parse(response.occurred_at),
-    feedRevision: response.feed_revision,
+    feedRevision: response.feed_revision_num,
     beforeValues: response.before_values,
     afterValues: response.after_values,
   };

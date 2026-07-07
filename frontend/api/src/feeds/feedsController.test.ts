@@ -807,7 +807,7 @@ describe('FeedsController', () => {
         action: 'feed.recovered',
         actor: 'user:google:admin@example.com',
         occurred_at: '2026-06-26T12:34:56.000Z',
-        feed_revision: 2,
+        feed_revision_num: 2,
         before_values: { status: 'failing' },
         after_values: { status: 'active' },
       };
