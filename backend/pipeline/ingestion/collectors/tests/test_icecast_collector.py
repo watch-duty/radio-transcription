@@ -1726,7 +1726,7 @@ class TestIcecastTimestampAlignment(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(results[0].chunk_end_time, t0)
 
-        
+
 class TestBuildAuthAndUrl(unittest.TestCase):
     """Tests for _build_auth_and_url helper in icecast_collector."""
 

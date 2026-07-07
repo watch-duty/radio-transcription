@@ -498,7 +498,7 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                     # Read the raw modification time of the original segment file
                     # before fixing its header, to eliminate polling loop jitter.
                     mtime_raw = await asyncio.to_thread(
-                        _path_mtime, current_segment
+                        _path_mtime, current_segment_wav
                     )
                     if mtime_raw is not None:
                         receipt_time = datetime.datetime.fromtimestamp(
