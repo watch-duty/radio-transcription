@@ -40,20 +40,7 @@ WITH matched_segments AS (
     LIMIT $7
 )
 SELECT
-    ms.id,
-    ms.feed_id,
-    ms.classification,
-    ms.start_timestamp,
-    ms.end_timestamp,
-    ms.missing_prior_context,
-    ms.missing_post_context,
-    ms.source_audio_uris,
-    ms.canonical_audio_uri,
-    ms.start_audio_offset,
-    ms.end_audio_offset,
-    ms.playback_audio_uri,
-    ms.external_audio_segment_id,
-    ms.created_at,
+    ms.*,
     COALESCE(
         (
             SELECT jsonb_agg(
