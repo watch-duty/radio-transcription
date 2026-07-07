@@ -17,6 +17,7 @@ from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.echo.main import (
     SEGMENTED_PUBSUB_TOPIC_PATH,
     _parse_timestamp,
+    handle_notification,
 )
 from backend.pipeline.ingestion.collectors.echo.main import (
     _handle as _handle_impl,
@@ -901,6 +902,92 @@ class TestHandle:
         self._assert_heartbeat_recorded(mock_store, feed["id"])
         mock_store.record_failure.assert_not_called()
         mock_store.record_non_budgeted_failure.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# handle_notification Entrypoint Context Propagation (baggage)
+# ---------------------------------------------------------------------------
+class TestHandleNotification:
+    @pytest.fixture
+    def mock_store(self) -> MagicMock:
+        store = MagicMock(spec=SyncFeedStore)
+        store.resolve_echo_feed.return_value = None
+        return store
+
+    @pytest.fixture
+    def _patch_globals(self, mock_store):
+        mock_publisher = MagicMock()
+        mock_publisher.publish.return_value.result.return_value = "msg-id"
+
+        with (
+            patch(
+                "backend.pipeline.ingestion.collectors.echo.main.feed_store",
+                mock_store,
+            ),
+            patch(
+                "backend.pipeline.ingestion.collectors.echo.main.gcs_client"
+            ) as mock_gcs,
+            patch(
+                "backend.pipeline.ingestion.collectors.echo.main.pubsub_client"
+            ) as mock_pubsub,
+            patch(
+                "backend.pipeline.ingestion.collectors.echo.main.get_audio_duration"
+            ) as mock_get_duration,
+        ):
+            mock_pubsub.get_publisher.return_value = mock_publisher
+            mock_gcs.bucket.return_value.blob.return_value.download_as_bytes.return_value = b"mp3-placeholder"
+            mock_gcs.bucket.return_value.blob.return_value.upload_from_string = MagicMock()
+            mock_get_duration.return_value = 15000
+
+            yield {
+                "store": mock_store,
+                "gcs": mock_gcs,
+                "pubsub": mock_pubsub,
+                "publisher": mock_publisher,
+                "get_duration": mock_get_duration,
+            }
+
+    def _make_event(
+        self, name: str = "fire-ca/20260326/fire_20260326_143022.mp3"
+    ) -> MagicMock:
+        event = MagicMock()
+        event.data = {
+            "name": name,
+            "bucket": "wd-echo-recordings-prod",
+        }
+        return event
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_handle_notification_injects_baggage_attributes(
+        self, mock_store, _patch_globals
+    ) -> None:
+        feed_id = uuid.uuid4()
+        mock_store.resolve_echo_feed.return_value = {
+            "id": feed_id,
+            "name": "Central Fire",
+            "status": FeedStatus.ACTIVE,
+            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+        }
+
+        handle_notification(self._make_event())
+
+        # Verify AudioChunk published
+        pub = _patch_globals["publisher"]
+        pub.publish.assert_called_once()
+        publish_args, call_kwargs = pub.publish.call_args
+        assert publish_args[0] == SEGMENTED_PUBSUB_TOPIC_PATH
+
+        # Verify OpenTelemetry baggage propagates feed_type and ingest_time_ms
+        assert "baggage" in call_kwargs
+        baggage_str = call_kwargs["baggage"]
+        baggage_dict = dict(item.split("=") for item in baggage_str.split(","))
+
+        assert baggage_dict.get("feed_type") == "echo"
+        assert "ingest_time_ms" in baggage_dict
+
+        ingest_time_ms = int(baggage_dict["ingest_time_ms"])
+        now_ms = int(datetime.now(UTC).timestamp() * 1000)
+        assert abs(now_ms - ingest_time_ms) < 10000
 
 
 # ---------------------------------------------------------------------------

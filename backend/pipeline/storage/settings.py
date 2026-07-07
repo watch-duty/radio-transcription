@@ -16,8 +16,8 @@ def _require_env(name: str) -> str:
 
 @dataclass(frozen=True, kw_only=True)
 class AlloyDBSettings:
-    """
-    Configuration for AlloyDB connection and pooling, loaded from environment variables.
+    """Configuration for AlloyDB connection and pooling, loaded from
+    environment variables.
     """
 
     host: str = field(
