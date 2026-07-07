@@ -500,12 +500,10 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                     mtime_raw = await asyncio.to_thread(
                         _path_mtime, current_segment_wav
                     )
-                    if mtime_raw is not None:
-                        receipt_time = datetime.datetime.fromtimestamp(
+                    receipt_time = datetime.datetime.fromtimestamp(
                             mtime_raw, tz=datetime.UTC
-                        )
-                    else:
-                        receipt_time = _now_utc()
+                        ) if mtime_raw is not None
+                        else _now_utc()
 
                     current_segment_flac = _segment_path(
                         segment_dir, next_index, "flac"
