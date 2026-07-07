@@ -174,8 +174,13 @@ jobs:
         uses: jdx/mise-action@v3
       - name: Terraform fmt check
         run: terraform fmt -check -recursive terraform/
-      - name: Terraform validate
+      - name: Terraform validate AlloyDB module
         working-directory: terraform/modules/alloydb
+        run: |
+          terraform init -backend=false
+          terraform validate
+      - name: Terraform validate Container MIG module
+        working-directory: terraform/modules/container_mig
         run: |
           terraform init -backend=false
           terraform validate
