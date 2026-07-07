@@ -499,6 +499,17 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                 # - the next segment exists, or
                 # - ffmpeg has exited.
                 if current_exists and (next_exists or process_done):
+                    # Mark liveness as soon as ffmpeg itself shows forward
+                    # progress (a new segment finalized on disk), not after
+                    # our own header-repair subprocess completes. Repair
+                    # queues behind MAX_CONCURRENT_HEADER_REPAIRS under
+                    # load; gating READ_TIMEOUT_SEC on it would let our own
+                    # internal contention masquerade as a dead stream and
+                    # raise a spurious "Stream capture timed out" failure,
+                    # exactly like the semaphore-starvation false-timeouts
+                    # this pipeline has already been bitten by once.
+                    last_activity_time = time.monotonic()
+
                     # SLO: receipt_time stamp — Icecast segment finalized, bytes available
                     receipt_time = _now_utc()
 
@@ -564,8 +575,6 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                             receipt_time=receipt_time,
                             stream_interval_lag_sec=stream_interval_lag_sec,
                         )
-
-                        last_activity_time = time.monotonic()
                     next_index += 1
                     continue
 
