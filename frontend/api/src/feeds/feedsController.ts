@@ -12,6 +12,7 @@ import {
   convertFeedStatusBackend,
   convertFeedStatusReason,
 } from '@transcription/common';
+import axios from 'axios';
 import {
   Body,
   Controller,
@@ -33,7 +34,7 @@ import {
 import { feedMutationActorHeaders } from './actorHeaders.js';
 
 import { AuthenticatedRequest } from '../authentication.js';
-import { FEEDS_STORE_API_URL } from '../config.js';
+import { ECHO_API_URL, FEEDS_STORE_API_URL } from '../config.js';
 import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
 
 interface BaseFeedBackend {
@@ -192,6 +193,39 @@ function convertFeedUpdate(update: FeedUpdate): FeedUpdateBackend {
 @Tags('Feeds')
 @Response(401, 'Unauthorized')
 export class FeedsController extends Controller {
+  private async verifyEchoDirectoryExists(sourceFeedId: string): Promise<void> {
+    if (!ECHO_API_URL) {
+      console.warn(
+        'ECHO_API_URL is not configured, skipping directory verification'
+      );
+      return;
+    }
+    try {
+      const response = await axios.post(`${ECHO_API_URL}/verify_directory`, {
+        source_feed_id: sourceFeedId,
+      });
+      if (!response.data.exists) {
+        throw new HttpError(
+          400,
+          `No GCS directory found for Echo feed '${sourceFeedId}'`
+        );
+      }
+    } catch (error: unknown) {
+      if (error instanceof HttpError) throw error;
+
+      // Pass through validation errors from the Echo API
+      if (axios.isAxiosError(error) && error.response?.status === 500) {
+        throw new HttpError(
+          500,
+          `Echo API error: ${error.response.data?.detail || error.message}`
+        );
+      }
+      throw new HttpError(
+        500,
+        `Failed to verify Echo directory: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
   @Get('')
   @Security('google_id_token')
   @Response<{ message: string }>(401, 'Unauthorized')
@@ -282,6 +316,13 @@ export class FeedsController extends Controller {
   ): Promise<Feed> {
     if (!request.user?.isAdmin) {
       throw new HttpError(403, 'Forbidden');
+    }
+
+    if (
+      requestBody.sourceType === SourceType.ECHO &&
+      requestBody.sourceFeedId
+    ) {
+      await this.verifyEchoDirectoryExists(requestBody.sourceFeedId);
     }
 
     const actorHeaders = feedMutationActorHeaders(request);

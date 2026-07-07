@@ -1,0 +1,18 @@
+[project]
+name = "echo-api"
+version = "0.0.0"
+requires-python = ">=3.13"
+dependencies = [
+    "functions-framework>=3.4.0",
+    "google-cloud-storage>=2.14.0",
+    "pydantic>=2.0.0",
+    "tenacity>=9.1.4",
+    "radio-transcription-common",
+]
+
+[tool.setuptools]
+packages = []
+
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"

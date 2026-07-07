@@ -5,6 +5,7 @@ requires-python = "==3.13.*"
 [manifest]
 members = [
     "audio-segments-service",
+    "echo-api",
     "evaluation-function",
     "feed-change-webhook",
     "feeds-service",
@@ -686,6 +687,27 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e0/4d/f332313098c1de1b2d2ff91cf2674415cc7cddab2ca1b01ae29774bd5fdf/docstring_parser-0.18.0.tar.gz", hash = "sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015", size = 29341, upload-time = "2026-04-14T04:09:19.867Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/5f/ed01f9a3cdffbd5a008556fc7b2a08ddb1cc6ace7effa7340604b1d16699/docstring_parser-0.18.0-py3-none-any.whl", hash = "sha256:b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b", size = 22484, upload-time = "2026-04-14T04:09:18.638Z" },
+]
+
+[[package]]
+name = "echo-api"
+version = "0.0.0"
+source = { editable = "backend/services/echo" }
+dependencies = [
+    { name = "functions-framework" },
+    { name = "google-cloud-storage" },
+    { name = "pydantic" },
+    { name = "radio-transcription-common" },
+    { name = "tenacity" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "functions-framework", specifier = ">=3.4.0" },
+    { name = "google-cloud-storage", specifier = ">=2.14.0" },
+    { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "radio-transcription-common", editable = "backend/pipeline/common" },
+    { name = "tenacity", specifier = ">=9.1.4" },
 ]
 
 [[package]]
@@ -2860,6 +2882,7 @@ dependencies = [
     { name = "asyncpg" },
     { name = "audio-segments-service" },
     { name = "curl-cffi" },
+    { name = "echo-api" },
     { name = "evaluation-function" },
     { name = "feed-change-webhook" },
     { name = "feeds-service" },
@@ -2911,6 +2934,7 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.29.0" },
     { name = "audio-segments-service", editable = "backend/services/audio_segments" },
     { name = "curl-cffi", specifier = ">=0.9.1" },
+    { name = "echo-api", editable = "backend/services/echo" },
     { name = "evaluation-function", editable = "backend/pipeline/evaluation" },
     { name = "feed-change-webhook", editable = "backend/pipeline/feed_change_webhook" },
     { name = "feeds-service", editable = "backend/services/feeds" },
