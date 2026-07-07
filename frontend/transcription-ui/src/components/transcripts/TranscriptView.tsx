@@ -259,12 +259,10 @@ export function TranscriptView({
     searchQuery: searchQuery,
   });
 
-  const consolidatedSegments = useConsolidatedAudioSegments(
+  const audioSegments = useConsolidatedAudioSegments(
     rawAudioSegments,
     searchedFeed?.sourceType === SourceType.BCFY_FEEDS
   );
-
-  const audioSegments = consolidatedSegments;
 
   // Identity of the current query; a change replaces the list wholesale, so the
   // window and scroll anchor both reset off it.

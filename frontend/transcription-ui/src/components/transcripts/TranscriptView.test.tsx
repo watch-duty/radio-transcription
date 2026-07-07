@@ -172,14 +172,9 @@ vi.mock('../../service/listRules', () => ({
   listRules: vi.fn(),
 }));
 
-vi.mock('../../service/listFeedHistory', () => ({
-  listFeedHistory: vi.fn(),
-}));
-
-const mockAuth = { token: 'fake-token', isAdmin: false };
 // Mock AuthContext
 vi.mock('../../context/AuthContext', () => ({
-  useAuth: () => mockAuth,
+  useAuth: () => ({ token: 'fake-token' }),
 }));
 
 vi.mock('@wavesurfer/react', () => ({

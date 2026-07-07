@@ -1,10 +1,6 @@
 import { useMemo } from 'react';
 
-import {
-  AudioClassification,
-  type AudioSegment,
-  type FeedHistoryEvent,
-} from '@transcription/common';
+import { AudioClassification, type AudioSegment } from '@transcription/common';
 
 import { segmentHasSpeech } from '../utils/annotationUtils';
 
@@ -31,14 +27,6 @@ export interface RenderableAudioSegment extends AudioSegment {
    * into this silence bundle.
    */
   bundledSegmentIds?: string[];
-  /**
-   * Indicates whether this segment represents a virtual system audit event row.
-   */
-  isAuditEvent?: boolean;
-  /**
-   * The audit event payload associated with this virtual segment row.
-   */
-  auditEvent?: FeedHistoryEvent;
 }
 
 export function consolidateAudioSegments(
