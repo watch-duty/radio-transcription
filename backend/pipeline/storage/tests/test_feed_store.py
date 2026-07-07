@@ -3070,6 +3070,36 @@ class TestFeedStoreListFeedHistoryRecords(unittest.IsolatedAsyncioTestCase):
             _FEED_ID,
         )
 
+    async def test_list_feed_history_records_decodes_json(self) -> None:
+        pool = make_mock_pool(
+            fetch_result=[
+                {
+                    "id": uuid.uuid4(),
+                    "feed_id": _FEED_ID,
+                    "action": "feed.recovered",
+                    "actor_id": _FEEDS_SERVICE_ACTOR_ID,
+                    "occurred_at": datetime.datetime(
+                        2026, 6, 26, tzinfo=datetime.UTC
+                    ),
+                    "feed_revision": 2,
+                    "before_values": '{"status": "failing"}',
+                    "after_values": '{"status": "active"}',
+                }
+            ],
+            fetchval_result=1,
+        )
+        store = FeedStore(pool)
+
+        res = await store.list_feed_history_records(_FEED_ID)
+
+        self.assertEqual(len(res.audit_events), 1)
+        self.assertEqual(
+            res.audit_events[0]["before_values"], {"status": "failing"}
+        )
+        self.assertEqual(
+            res.audit_events[0]["after_values"], {"status": "active"}
+        )
+
     async def test_list_feed_history_records_pagination(self) -> None:
         event_id = uuid.uuid4()
         occurred_at = datetime.datetime(2026, 6, 26, tzinfo=datetime.UTC)
