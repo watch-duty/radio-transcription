@@ -1,0 +1,4 @@
+catalog_id,source,source_feed_id,feed_name,priority_tier,state,county,agency_name,service_tags
+sample-bcfy-feed,bcfy_feeds,12345,Example Broadcastify Live Feed,1,CA,Example County,Example Fire Department,fire dispatch
+sample-bcfy-calls,bcfy_calls,12-34,Example Broadcastify Calls Group,1,CA,Example County,Example Fire Department,fire dispatch
+sample-openmhz,openmhz,example,Example OpenMHz System,1,CA,Example County,Example Fire Department,fire dispatch
