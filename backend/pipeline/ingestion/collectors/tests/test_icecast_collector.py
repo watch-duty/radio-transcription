@@ -290,9 +290,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.mock_logger = MagicMock()
 
-        # The real repair is a no-op stream copy on well-formed input;
-        # tests exercise capture behavior, not ffmpeg itself, so mock it as
-        # a pass-through success unless a test overrides the side_effect.
+        # The real repair spawns ffmpeg to re-encode the segment; tests
+        # exercise capture behavior, not ffmpeg itself, so mock it as a
+        # pass-through success unless a test overrides the side_effect.
         self.mock_repair = AsyncMock(return_value=True)
         self.patchers = [
             patch.object(icecast_collector, "logger", self.mock_logger),

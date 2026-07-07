@@ -62,10 +62,13 @@ _STREAM_PROBE_TIMEOUT_SEC = 10
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
 _CLEANUP_SUBPROCESS_TIMEOUT_SEC = 2.0
 _HEADER_REPAIR_TIMEOUT_SEC = 10.0
-# Reasoned starting point (idle-machine ffmpeg -c copy latency leaves ample
-# headroom over the ~53/sec arrival rate at 800 feeds/worker; not validated
-# under the production VM's actual demuxer contention). Tune from the
-# stream_interval_lag_sec SLO field rather than guessing further.
+# _repair_flac_header is a full decode+re-encode (a -c copy remux does not
+# patch STREAMINFO -- verified empirically). A single repair measured ~140ms
+# on an idle sandbox for a 15s clip, uncomfortably close to the ~150ms
+# Little's-Law threshold where 8 slots stop clearing the ~53/sec arrival
+# rate at 800 feeds/worker even before production demuxer contention is
+# factored in. 16 doubles that margin as a reasoned starting point; tune
+# from the stream_interval_lag_sec SLO field rather than guessing further.
 MAX_CONCURRENT_HEADER_REPAIRS = int(
     os.environ.get("INGESTION_MAX_CONCURRENT_HEADER_REPAIRS", "16")
 )
@@ -331,14 +334,20 @@ _HEADER_REPAIR_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_HEADER_REPAIRS)
 
 
 async def _repair_flac_header(flac_path: Path) -> bool:
-    """Repairs a segment's FLAC header in place via a stream-copy remux.
+    """Repairs a segment's FLAC header in place via a full re-encode.
 
     ffmpeg's segment muxer writes each segment without seeking back to patch
     STREAMINFO, so segments carry an unknown-length (0) sample count. Reading
     that header downstream makes libsndfile treat the file as unbounded and
-    attempt to allocate on the order of 2**63 frames. Remuxing with `-c copy`
-    forces ffmpeg to seek back and write a correct header on close, without
-    the cost of decoding and re-encoding audio (unlike a full transcode).
+    attempt to allocate on the order of 2**63 frames.
+
+    A `-c copy` stream-copy remux does NOT fix this: ffmpeg's FLAC muxer only
+    computes and writes total_samples when it actually encodes (verified
+    empirically -- copy left total_samples at 0 even after a full remux to a
+    fresh seekable file). Only a real decode+re-encode makes the encoder
+    compute the true sample count, so this reintroduces the CPU cost this
+    pipeline has otherwise been trying to avoid; there is no cheaper correct
+    option with ffmpeg's flac muxer.
     """
     temp_path = flac_path.with_name(f"{flac_path.name}.fixed.flac")
     process = None
@@ -351,8 +360,10 @@ async def _repair_flac_header(flac_path: Path) -> bool:
                 "-nostdin",
                 "-i",
                 str(flac_path),
-                "-c",
-                "copy",
+                "-acodec",
+                "flac",
+                "-compression_level",
+                FLAC_COMPRESSION_LEVEL,
                 str(temp_path),
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
