@@ -5,6 +5,7 @@ import { VirtuosoMockContext } from 'react-virtuoso';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   cleanup,
   fireEvent,
@@ -15,7 +16,16 @@ import {
 import type { Feed } from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
+import { listFeedHistory } from '../../service/listFeedHistory';
 import { type FeedFilters, FeedTable } from './FeedTable';
+
+vi.mock('../../service/listFeedHistory', () => ({
+  listFeedHistory: vi.fn(),
+}));
+
+vi.mock('../../context/AuthContext', () => ({
+  useAuth: () => ({ token: 'fake-jwt-token-xyz' }),
+}));
 
 const defaultFilters: FeedFilters = {
   searchQuery: '',
@@ -53,14 +63,24 @@ const renderFeedTable = (
     ...props,
   };
 
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+      },
+    },
+  });
+
   return render(
-    <MemoryRouter>
-      <VirtuosoMockContext.Provider
-        value={{ viewportHeight: 1000, itemHeight: 100 }}
-      >
-        <FeedTable {...finalProps} />
-      </VirtuosoMockContext.Provider>
-    </MemoryRouter>
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter>
+        <VirtuosoMockContext.Provider
+          value={{ viewportHeight: 1000, itemHeight: 100 }}
+        >
+          <FeedTable {...finalProps} />
+        </VirtuosoMockContext.Provider>
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 };
 
@@ -230,21 +250,31 @@ describe('FeedTable', () => {
       name: `${feed.name} (updated)`,
     }));
 
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+        },
+      },
+    });
+
     rerender(
-      <MemoryRouter>
-        <VirtuosoMockContext.Provider
-          value={{ viewportHeight: 1000, itemHeight: 100 }}
-        >
-          <FeedTable
-            feeds={refreshedFeeds}
-            isLoading={false}
-            filters={defaultFilters}
-            onFiltersChange={vi.fn()}
-            feedTotal={1}
-            tags={[]}
-          />
-        </VirtuosoMockContext.Provider>
-      </MemoryRouter>
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter>
+          <VirtuosoMockContext.Provider
+            value={{ viewportHeight: 1000, itemHeight: 100 }}
+          >
+            <FeedTable
+              feeds={refreshedFeeds}
+              isLoading={false}
+              filters={defaultFilters}
+              onFiltersChange={vi.fn()}
+              feedTotal={1}
+              tags={[]}
+            />
+          </VirtuosoMockContext.Provider>
+        </MemoryRouter>
+      </QueryClientProvider>
     );
 
     const refreshedScroller = container.querySelector(
@@ -448,5 +478,52 @@ describe('FeedTable', () => {
       statuses: [],
       tags: [],
     });
+  });
+
+  it('does not render visibility eye icon when allowEdit is false', () => {
+    renderFeedTable({ feeds: mockFeeds, isLoading: false, allowEdit: false });
+    expect(screen.queryByLabelText(/View audit trail for/i)).toBeNull();
+  });
+
+  it('renders visibility eye icon and opens history modal on click when allowEdit is true', async () => {
+    const mockHistoryEvents = [
+      {
+        id: 'evt_1',
+        feedId: 'feed-1',
+        action: 'feed.recovered',
+        actor: 'system',
+        occurredAt: Date.parse('2026-07-01T12:00:00Z'),
+        feedRevision: 1,
+        beforeValues: { status: 'failing' },
+        afterValues: { status: 'active' },
+      },
+    ];
+    vi.mocked(listFeedHistory).mockResolvedValue({
+      historyEvents: mockHistoryEvents,
+      total: 1,
+    });
+
+    renderFeedTable({ feeds: mockFeeds, isLoading: false, allowEdit: true });
+
+    const viewAuditBtn = screen.getByLabelText(
+      'View audit trail for Alpha Radio'
+    );
+    expect(viewAuditBtn).toBeInTheDocument();
+
+    fireEvent.click(viewAuditBtn);
+
+    // Verify listFeedHistory is called
+    expect(listFeedHistory).toHaveBeenCalledWith(
+      'feed-1',
+      'fake-jwt-token-xyz'
+    );
+
+    // Verify modal is open and elements are rendered
+    await screen.findByText('Audit Trail: Alpha Radio');
+    expect(
+      await screen.findByText('Wednesday, July 1, 2026')
+    ).toBeInTheDocument();
+    expect(screen.getByText('[System Event]')).toBeInTheDocument();
+    expect(screen.getByText(/Feed recovered successfully/)).toBeInTheDocument();
   });
 });

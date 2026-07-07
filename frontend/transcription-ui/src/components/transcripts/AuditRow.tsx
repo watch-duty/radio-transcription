@@ -10,15 +10,15 @@ import Chip from '@mui/material/Chip';
 import ListItem from '@mui/material/ListItem';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import type { FeedHistoryEvent } from '@transcription/common';
+import type { FeedHistoryEvent, Tag } from '@transcription/common';
 
 export function AuditRow({ auditEvent }: { auditEvent: FeedHistoryEvent }) {
   const theme = useTheme();
   const date = new Date(auditEvent.occurredAt);
 
   const getActionDetails = () => {
-    const beforeStatus = auditEvent.beforeValues?.status;
-    const afterStatus = auditEvent.afterValues?.status;
+    const beforeStatus = auditEvent.beforeValues?.status as string | undefined;
+    const afterStatus = auditEvent.afterValues?.status as string | undefined;
 
     let icon = <UpdateIcon fontSize="small" />;
     let message = '';
@@ -83,8 +83,13 @@ export function AuditRow({ auditEvent }: { auditEvent: FeedHistoryEvent }) {
     }
   };
 
-  const beforeStatus = auditEvent.beforeValues?.status;
-  const afterStatus = auditEvent.afterValues?.status;
+  const beforeStatus = auditEvent.beforeValues?.status as string | undefined;
+  const afterStatus = auditEvent.afterValues?.status as string | undefined;
+
+  const diffChanges =
+    auditEvent.action === 'feed.updated'
+      ? formatDiff(auditEvent.beforeValues, auditEvent.afterValues)
+      : [];
 
   return (
     <ListItem
@@ -131,51 +136,171 @@ export function AuditRow({ auditEvent }: { auditEvent: FeedHistoryEvent }) {
         sx={{
           flexGrow: 1,
           display: 'flex',
-          alignItems: 'center',
-          gap: 1,
-          flexWrap: 'wrap',
+          flexDirection: 'column',
+          alignItems: 'flex-start',
+          gap: 0.5,
         }}
       >
-        <Typography
-          variant="body2"
-          sx={{ fontWeight: 500, color: 'text.secondary' }}
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            flexWrap: 'wrap',
+            width: '100%',
+          }}
         >
-          [System Event]
-        </Typography>
-        <Typography
-          variant="body2"
-          color="text.primary"
-          sx={{ fontStyle: 'italic' }}
-        >
-          {[
-            'feed.reset',
-            'feed.deactivated',
-            'feed.created',
-            'feed.deleted',
-            'feed.updated',
-          ].includes(auditEvent.action)
-            ? `${message} by ${auditEvent.actor}`
-            : message}
-        </Typography>
-        {beforeStatus && afterStatus && beforeStatus !== afterStatus && (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 1 }}>
-            <Chip
-              label={beforeStatus.toUpperCase()}
-              size="small"
-              color={getStatusChipColor(beforeStatus)}
-              variant="outlined"
-            />
-            <Typography variant="caption" color="text.secondary">
-              →
-            </Typography>
-            <Chip
-              label={afterStatus.toUpperCase()}
-              size="small"
-              color={getStatusChipColor(afterStatus)}
-            />
+          <Typography
+            variant="body2"
+            sx={{ fontWeight: 500, color: 'text.secondary' }}
+          >
+            [System Event]
+          </Typography>
+          <Typography
+            variant="body2"
+            color="text.primary"
+            sx={{ fontStyle: 'italic' }}
+          >
+            {[
+              'feed.reset',
+              'feed.deactivated',
+              'feed.created',
+              'feed.deleted',
+              'feed.updated',
+            ].includes(auditEvent.action)
+              ? `${message} by ${auditEvent.actor}`
+              : message}
+          </Typography>
+          {beforeStatus && afterStatus && beforeStatus !== afterStatus && (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, ml: 1 }}>
+              <Chip
+                label={beforeStatus.toUpperCase()}
+                size="small"
+                color={getStatusChipColor(beforeStatus)}
+                variant="outlined"
+              />
+              <Typography variant="caption" color="text.secondary">
+                →
+              </Typography>
+              <Chip
+                label={afterStatus.toUpperCase()}
+                size="small"
+                color={getStatusChipColor(afterStatus)}
+              />
+            </Box>
+          )}
+        </Box>
+        {diffChanges.length > 0 && (
+          <Box
+            sx={{
+              pl: 2,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 0.25,
+            }}
+          >
+            {diffChanges.map((change, idx) => (
+              <Typography key={idx} variant="caption" color="text.secondary">
+                • {change}
+              </Typography>
+            ))}
           </Box>
         )}
       </Box>
     </ListItem>
   );
+}
+
+function getFieldLabel(key: string): string {
+  switch (key) {
+    case 'name':
+      return 'Name';
+    case 'status':
+      return 'Status';
+    case 'substatus':
+      return 'Substatus';
+    case 'sourceFeedId':
+      return 'Source Feed ID';
+    case 'sourceType':
+      return 'Source Type';
+    case 'statusReason':
+      return 'Status Reason';
+    case 'statusReasonDetail':
+      return 'Status Reason Detail';
+    case 'sourceUrl':
+      return 'Source URL';
+    case 'archiveUrl':
+      return 'Archive URL';
+    default:
+      return key
+        .replace(/([A-Z])/g, ' $1')
+        .replace(/^./, (str) => str.toUpperCase());
+  }
+}
+
+function formatDiff(
+  before: Record<string, unknown> = {},
+  after: Record<string, unknown> = {}
+): string[] {
+  const changes: string[] = [];
+  const keys = Array.from(
+    new Set([...Object.keys(before), ...Object.keys(after)])
+  );
+
+  keys.forEach((key) => {
+    // Ignore status since it is highlighted via status chips
+    if (key === 'status') {
+      return;
+    }
+
+    const beforeVal = before[key];
+    const afterVal = after[key];
+
+    // Skip if values are equal
+    if (JSON.stringify(beforeVal) === JSON.stringify(afterVal)) {
+      return;
+    }
+
+    const fieldLabel = getFieldLabel(key);
+
+    if (key === 'tags') {
+      const beforeTags = (beforeVal as Tag[]) || [];
+      const afterTags = (afterVal as Tag[]) || [];
+      const beforeStrSet = new Set(
+        beforeTags.map((t) => `${t.key}=${t.value}`)
+      );
+      const afterStrSet = new Set(afterTags.map((t) => `${t.key}=${t.value}`));
+
+      const added = afterTags
+        .filter((t) => !beforeStrSet.has(`${t.key}=${t.value}`))
+        .map((t) => `"${t.key}=${t.value}"`);
+      const removed = beforeTags
+        .filter((t) => !afterStrSet.has(`${t.key}=${t.value}`))
+        .map((t) => `"${t.key}=${t.value}"`);
+
+      const tagChanges: string[] = [];
+      if (added.length > 0) {
+        tagChanges.push(`added ${added.join(', ')}`);
+      }
+      if (removed.length > 0) {
+        tagChanges.push(`removed ${removed.join(', ')}`);
+      }
+      if (tagChanges.length > 0) {
+        changes.push(`Tags: ${tagChanges.join(' and ')}`);
+      }
+      return;
+    }
+
+    if (beforeVal === undefined || beforeVal === null) {
+      changes.push(`${fieldLabel} set to "${afterVal}"`);
+    } else if (afterVal === undefined || afterVal === null) {
+      changes.push(`${fieldLabel} cleared (was "${beforeVal}")`);
+    } else {
+      changes.push(
+        `${fieldLabel} changed from "${beforeVal}" to "${afterVal}"`
+      );
+    }
+  });
+
+  return changes;
 }

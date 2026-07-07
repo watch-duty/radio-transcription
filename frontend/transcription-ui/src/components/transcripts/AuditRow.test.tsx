@@ -34,7 +34,35 @@ describe('AuditRow', () => {
       actor: 'user:google:admin@example.com',
     };
     render(<AuditRow auditEvent={manualEvent} />);
-
     expect(screen.getByText(/by user:google:admin@example.com/)).toBeTruthy();
+  });
+
+  it('renders diff changes for updated fields like name and tags', () => {
+    const updateEvent: FeedHistoryEvent = {
+      id: 'evt_update',
+      feedId: 'feed_123',
+      action: 'feed.updated',
+      actor: 'user:admin@example.com',
+      occurredAt: Date.parse('2026-06-26T13:00:00Z'),
+      feedRevision: 3,
+      beforeValues: {
+        name: 'Old Name',
+        tags: [{ key: 'county', value: 'Marin' }],
+      },
+      afterValues: {
+        name: 'New Name',
+        tags: [
+          { key: 'county', value: 'Marin' },
+          { key: 'agency', value: 'Fire' },
+        ],
+      },
+    };
+
+    render(<AuditRow auditEvent={updateEvent} />);
+
+    expect(
+      screen.getByText('• Name changed from "Old Name" to "New Name"')
+    ).toBeTruthy();
+    expect(screen.getByText('• Tags: added "agency=Fire"')).toBeTruthy();
   });
 });
