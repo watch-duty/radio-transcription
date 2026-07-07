@@ -158,6 +158,67 @@ def test_load_feed_rows_enforces_per_source_limits(tmp_path: Path) -> None:
     assert rows[0].source_feed_id == "111"
 
 
+def test_load_feed_rows_enforces_total_limit_after_filtering(
+    tmp_path: Path,
+) -> None:
+    csv_path = tmp_path / "feeds.csv"
+    _write_csv(
+        csv_path,
+        [
+            {
+                "catalog_id": "bf-1",
+                "source": "bcfy_feeds",
+                "source_feed_id": "111",
+                "feed_name": "Feed One",
+                "priority_tier": "1",
+                "state": "CA",
+                "county": "A",
+            },
+            {
+                "catalog_id": "echo-1",
+                "source": "echo",
+                "source_feed_id": "ignored",
+                "feed_name": "Echo",
+                "priority_tier": "1",
+                "state": "CA",
+                "county": "A",
+            },
+            {
+                "catalog_id": "bc-1",
+                "source": "bcfy_calls",
+                "source_feed_id": "12-34",
+                "feed_name": "Calls One",
+                "priority_tier": "1",
+                "state": "CA",
+                "county": "A",
+            },
+            {
+                "catalog_id": "om-1",
+                "source": "openmhz",
+                "source_feed_id": "svrcs2:2301",
+                "feed_name": "OpenMHz One",
+                "priority_tier": "1",
+                "state": "CA",
+                "county": "A",
+            },
+        ],
+    )
+
+    rows = load_test_feeds.load_feed_rows(
+        csv_path,
+        source_types={"bcfy_feeds", "bcfy_calls", "openmhz"},
+        limits={},
+        name_prefix="lt-",
+        tag_columns=("catalog_id",),
+        total_limit=2,
+    )
+
+    assert [(r.source_type, r.source_feed_id) for r in rows] == [
+        ("bcfy_feeds", "111"),
+        ("bcfy_calls", "12-34"),
+    ]
+
+
 def test_activation_delta_uses_cumulative_targets() -> None:
     delta = load_test_feeds.activation_delta(
         current={"bcfy_feeds": 41, "bcfy_calls": 55},
@@ -165,6 +226,52 @@ def test_activation_delta_uses_cumulative_targets() -> None:
     )
 
     assert delta == {"bcfy_feeds": 62, "bcfy_calls": 83, "openmhz": 9}
+
+
+def test_allocate_total_by_available_uses_seeded_source_mix() -> None:
+    target = load_test_feeds.allocate_total_by_available(
+        {"bcfy_feeds": 4757, "bcfy_calls": 6335, "openmhz": 381},
+        10_000,
+    )
+
+    assert sum(target.values()) == 10_000
+    assert target == {"bcfy_feeds": 4146, "bcfy_calls": 5522, "openmhz": 332}
+
+
+def test_allocate_total_by_available_keeps_probe_coverage() -> None:
+    target = load_test_feeds.allocate_total_by_available(
+        {"bcfy_feeds": 4757, "bcfy_calls": 6335, "openmhz": 381},
+        12,
+    )
+
+    assert sum(target.values()) == 12
+    assert target == {"bcfy_feeds": 5, "bcfy_calls": 6, "openmhz": 1}
+
+
+def test_allocate_total_by_available_rejects_unseeded_target() -> None:
+    with pytest.raises(ValueError, match="target total"):
+        load_test_feeds.allocate_total_by_available(
+            {"bcfy_feeds": 100},
+            101,
+        )
+
+
+def test_build_catalog_command_uses_included_generator(tmp_path: Path) -> None:
+    output_dir = tmp_path / "catalog"
+
+    command = load_test_feeds.build_catalog_command(
+        output_dir,
+        cache_only=True,
+        skip_echo=True,
+    )
+
+    assert command[-5:] == [
+        "model/data/wildfire_catalog/run_catalog.py",
+        "--output-dir",
+        str(output_dir),
+        "--cache-only",
+        "--skip-echo",
+    ]
 
 
 def test_validate_prefix_rejects_broad_or_wildcard_prefixes() -> None:

@@ -1,0 +1,9 @@
+# API response cache — regenerated on run
+cache/
+
+# Generated catalog artifacts — regenerated on run
+output/
+
+# Python bytecode
+__pycache__/
+*.pyc

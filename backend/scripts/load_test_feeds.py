@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import os
+import subprocess
 import sys
 import uuid
 from collections import defaultdict
@@ -24,6 +25,8 @@ DEFAULT_TAG_COLUMNS = (
     "agency_name",
     "service_tags",
 )
+DEFAULT_CATALOG_OUTPUT_DIR = Path("model/data/wildfire_catalog/output")
+GENERATED_CATALOG_FILENAME = "wildfire_feed_catalog_admin_review.csv"
 
 _INSERT_LOAD_TEST_FEED_SQL = """
 WITH new_feed AS (
@@ -73,6 +76,13 @@ SELECT source_type, COUNT(*) AS n
 FROM feeds
 WHERE name LIKE %s
   AND status <> 'deactivated'::feed_status
+GROUP BY source_type
+"""
+
+_TOTAL_SEEDED_SQL = """
+SELECT source_type, COUNT(*) AS n
+FROM feeds
+WHERE name LIKE %s
 GROUP BY source_type
 """
 
@@ -244,6 +254,81 @@ def activation_delta(
     }
 
 
+def allocate_total_by_available(
+    available: dict[str, int],
+    target_total: int,
+) -> dict[str, int]:
+    if target_total <= 0:
+        msg = "target total must be positive"
+        raise ValueError(msg)
+
+    clean_available = {
+        source_type: count
+        for source_type, count in available.items()
+        if count > 0
+    }
+    available_total = sum(clean_available.values())
+    if target_total > available_total:
+        msg = (
+            f"target total {target_total} exceeds seeded row total "
+            f"{available_total}"
+        )
+        raise ValueError(msg)
+
+    allocated: dict[str, int] = dict.fromkeys(clean_available, 0)
+    residual_available = clean_available.copy()
+    remaining = target_total
+    if target_total >= len(clean_available):
+        for source_type in clean_available:
+            allocated[source_type] = 1
+            residual_available[source_type] -= 1
+            remaining -= 1
+
+    remainders: list[tuple[float, str]] = []
+    residual_total = sum(residual_available.values())
+    residual_target = remaining
+    for source_type, count in sorted(residual_available.items()):
+        if count <= 0:
+            continue
+        exact = residual_target * count / residual_total
+        floor = int(exact)
+        allocated[source_type] += floor
+        remaining -= floor
+        remainders.append((exact - floor, source_type))
+
+    for _fraction, source_type in sorted(remainders, reverse=True):
+        if remaining <= 0:
+            break
+        if allocated[source_type] < clean_available[source_type]:
+            allocated[source_type] += 1
+            remaining -= 1
+
+    return {
+        source_type: count
+        for source_type, count in allocated.items()
+        if count > 0
+    }
+
+
+def build_catalog_command(
+    output_dir: Path,
+    *,
+    cache_only: bool,
+    skip_echo: bool,
+) -> list[str]:
+    command = [
+        sys.executable,
+        "model/data/wildfire_catalog/run_catalog.py",
+        "--output-dir",
+        str(output_dir),
+    ]
+    if cache_only:
+        command.append("--cache-only")
+    if skip_echo:
+        command.append("--skip-echo")
+    return command
+
+
 def _csv_value(row: dict[str, str], *keys: str) -> str:
     for key in keys:
         value = row.get(key)
@@ -290,6 +375,7 @@ def load_feed_rows(
     limits: dict[str, int],
     name_prefix: str,
     tag_columns: tuple[str, ...],
+    total_limit: int | None = None,
 ) -> list[FeedRow]:
     rows: list[FeedRow] = []
     counts: defaultdict[str, int] = defaultdict(int)
@@ -333,6 +419,8 @@ def load_feed_rows(
             )
             seen.add(key)
             counts[source_type] += 1
+            if total_limit is not None and len(rows) >= total_limit:
+                break
 
     return rows
 
@@ -384,13 +472,18 @@ def _connect() -> psycopg.Connection:
 
 
 def import_feeds(args: argparse.Namespace) -> int:
-    source_types = set(args.source_types.split(","))
+    source_types = {
+        item.strip() for item in args.source_types.split(",") if item.strip()
+    }
     unsupported = source_types - LOAD_TEST_SOURCE_TYPES
     if unsupported:
         print(
             f"Unsupported source types: {', '.join(sorted(unsupported))}",
             file=sys.stderr,
         )
+        return 2
+    if not source_types:
+        print("No source types requested.", file=sys.stderr)
         return 2
 
     rows = load_feed_rows(
@@ -399,9 +492,17 @@ def import_feeds(args: argparse.Namespace) -> int:
         limits=parse_source_counts(args.max_per_source),
         name_prefix=args.prefix,
         tag_columns=tuple(c.strip() for c in args.tag_columns.split(",") if c),
+        total_limit=args.target_total,
     )
     if not rows:
         print("No feed rows selected.", file=sys.stderr)
+        return 1
+    if args.target_total is not None and len(rows) < args.target_total:
+        print(
+            f"Selected only {len(rows)} rows; --target-total requested "
+            f"{args.target_total}.",
+            file=sys.stderr,
+        )
         return 1
 
     counts: defaultdict[str, int] = defaultdict(int)
@@ -439,6 +540,38 @@ def import_feeds(args: argparse.Namespace) -> int:
     return 0
 
 
+def seed_catalog(args: argparse.Namespace) -> int:
+    output_dir = Path(args.catalog_output_dir)
+    if not args.skip_catalog_build:
+        command = build_catalog_command(
+            output_dir,
+            cache_only=args.cache_only,
+            skip_echo=True,
+        )
+        print("Building load-test catalog:")
+        print("  " + " ".join(command))
+        try:
+            subprocess.run(command, check=True)
+        except subprocess.CalledProcessError as exc:
+            print(
+                f"Catalog build failed with exit code {exc.returncode}.",
+                file=sys.stderr,
+            )
+            return exc.returncode or 1
+
+    catalog_csv = output_dir / GENERATED_CATALOG_FILENAME
+    if not catalog_csv.exists():
+        print(
+            f"Generated catalog not found: {catalog_csv}. Run without "
+            "--skip-catalog-build or inspect catalog generation logs.",
+            file=sys.stderr,
+        )
+        return 1
+
+    args.csv = str(catalog_csv)
+    return import_feeds(args)
+
+
 def count_feeds(args: argparse.Namespace) -> int:
     with _connect() as conn, conn.cursor() as cur:
         cur.execute(_COUNT_SQL, (_prefix_like(args.prefix),))
@@ -455,13 +588,35 @@ def _current_activeish_counts(
     return dict(cur.fetchall())
 
 
-def activate_feeds(args: argparse.Namespace) -> int:
-    target = parse_source_counts(args.target)
-    if not target:
-        print("No target counts requested.", file=sys.stderr)
-        return 1
+def _total_seeded_counts(
+    cur: psycopg.Cursor,
+    name_prefix: str,
+) -> dict[str, int]:
+    cur.execute(_TOTAL_SEEDED_SQL, (_prefix_like(name_prefix),))
+    return dict(cur.fetchall())
 
+
+def activate_feeds(args: argparse.Namespace) -> int:
     with _connect() as conn, conn.cursor() as cur:
+        if args.target_total is not None:
+            try:
+                target = allocate_total_by_available(
+                    _total_seeded_counts(cur, args.prefix),
+                    args.target_total,
+                )
+            except ValueError as exc:
+                print(str(exc), file=sys.stderr)
+                return 1
+            print("Computed cumulative target from seeded source mix:")
+            for source_type, count in sorted(target.items()):
+                print(f"  {source_type}: {count}")
+        else:
+            target = parse_source_counts(args.target)
+
+        if not target:
+            print("No target counts requested.", file=sys.stderr)
+            return 1
+
         current = _current_activeish_counts(cur, args.prefix)
         delta = activation_delta(current=current, target=target)
         print("Current non-deactivated counts:")
@@ -496,6 +651,53 @@ def activate_feeds(args: argparse.Namespace) -> int:
     return 0
 
 
+def _positive_int(raw: str) -> int:
+    value = int(raw)
+    if value <= 0:
+        msg = "value must be positive"
+        raise argparse.ArgumentTypeError(msg)
+    return value
+
+
+def _positive_optional_int(raw: str) -> int:
+    return _positive_int(raw)
+
+
+def _commit_every(raw: str) -> int:
+    return _positive_int(raw)
+
+
+def _add_import_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--source-types",
+        default="bcfy_feeds,bcfy_calls,openmhz",
+        help="Comma-separated source types to import.",
+    )
+    parser.add_argument(
+        "--max-per-source",
+        default="",
+        help="Optional per-source limits, e.g. bcfy_feeds=1000,openmhz=100.",
+    )
+    parser.add_argument(
+        "--target-total",
+        type=_positive_optional_int,
+        default=None,
+        help="Optional total selected rows cap, preserving catalog order.",
+    )
+    parser.add_argument(
+        "--tag-columns",
+        default=",".join(DEFAULT_TAG_COLUMNS),
+        help="CSV columns to copy into feed_properties.tags.",
+    )
+    parser.add_argument(
+        "--commit-every",
+        type=_commit_every,
+        default=500,
+        help="Commit interval for large imports.",
+    )
+    parser.add_argument("--dry-run", action="store_true")
+
+
 def deactivate_feeds(args: argparse.Namespace) -> int:
     with _connect() as conn, conn.cursor() as cur:
         if args.dry_run:
@@ -520,7 +722,9 @@ def deactivate_feeds(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Import and activate manual ingestion load-test feeds.",
+        description=(
+            "Seed, count, activate, and deactivate ingestion load-test feeds."
+        ),
     )
     parser.add_argument(
         "--prefix",
@@ -542,38 +746,46 @@ def build_parser() -> argparse.ArgumentParser:
         help="Insert CSV feeds as deactivated load-test rows.",
     )
     import_parser.add_argument("--csv", required=True, help="Catalog CSV path.")
-    import_parser.add_argument(
-        "--source-types",
-        default="bcfy_feeds,bcfy_calls,openmhz",
-        help="Comma-separated source types to import.",
-    )
-    import_parser.add_argument(
-        "--max-per-source",
-        default="",
-        help="Optional per-source limits, e.g. bcfy_feeds=1000,openmhz=100.",
-    )
-    import_parser.add_argument(
-        "--tag-columns",
-        default=",".join(DEFAULT_TAG_COLUMNS),
-        help="CSV columns to copy into feed_properties.tags.",
-    )
-    import_parser.add_argument(
-        "--commit-every",
-        type=int,
-        default=500,
-        help="Commit interval for large imports.",
-    )
-    import_parser.add_argument("--dry-run", action="store_true")
+    _add_import_options(import_parser)
     import_parser.set_defaults(func=import_feeds)
+
+    seed_parser = subparsers.add_parser(
+        "seed-catalog",
+        help="Build the wildfire catalog and import its Tier 1+2 rows.",
+    )
+    seed_parser.add_argument(
+        "--catalog-output-dir",
+        default=str(DEFAULT_CATALOG_OUTPUT_DIR),
+        help="Directory where the catalog builder writes generated CSVs.",
+    )
+    seed_parser.add_argument(
+        "--cache-only",
+        action="store_true",
+        help="Use the catalog cache without making API calls.",
+    )
+    seed_parser.add_argument(
+        "--skip-catalog-build",
+        action="store_true",
+        help="Reuse an existing generated catalog CSV in --catalog-output-dir.",
+    )
+    _add_import_options(seed_parser)
+    seed_parser.set_defaults(func=seed_catalog)
 
     activate_parser = subparsers.add_parser(
         "activate",
-        help="Activate up to cumulative per-source target counts.",
+        help="Activate up to cumulative target counts.",
     )
-    activate_parser.add_argument(
-        "--target",
+    activate_targets = activate_parser.add_mutually_exclusive_group(
         required=True,
+    )
+    activate_targets.add_argument(
+        "--target",
         help="Cumulative targets, e.g. bcfy_feeds=41,bcfy_calls=55,openmhz=4.",
+    )
+    activate_targets.add_argument(
+        "--target-total",
+        type=_positive_optional_int,
+        help="Cumulative total target allocated from the seeded source mix.",
     )
     activate_parser.add_argument("--dry-run", action="store_true")
     activate_parser.set_defaults(func=activate_feeds)

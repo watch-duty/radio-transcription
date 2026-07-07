@@ -234,6 +234,9 @@ known-first-party = ["backend", "local_dev"]
   "S113",   # requests.* require timeout=
   "T201",   # `print()` found
 ]
+"model/data/wildfire_catalog/**/*.py" = [
+  "ALL", # Historical one-off catalog crawler used by load-test seeding.
+]
 ".github/scripts/**.py" = [
   "E501",   # Line too long
   "INP001", # Implicit namespaces (no __init__.py needed for standalone scripts)
