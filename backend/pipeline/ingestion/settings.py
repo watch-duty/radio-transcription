@@ -262,6 +262,9 @@ class CollectorSettings:
             os.environ.get("RSS_WATCHDOG_WARMUP_SEC", "60.0"),
         ),
     )
+    segment_temp_dir: str | None = field(
+        default_factory=lambda: os.environ.get("ICECAST_SEGMENT_DIR"),
+    )
 
     def __post_init__(self) -> None:
         # SHUTDOWN-02: validate the inner sub-timeout fits inside the

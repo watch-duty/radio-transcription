@@ -57,7 +57,10 @@ def resolve_topic_path(
 
     topic_path = settings.segmented_pubsub_topic_path
     if not topic_path:
-        msg = f"Segmented Pub/Sub topic path not configured for source type {source_type}"
+        msg = (
+            "Segmented Pub/Sub topic path not configured for source type "
+            f"{source_type}"
+        )
         raise ValueError(msg)
     return topic_path
 

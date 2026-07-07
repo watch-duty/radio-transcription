@@ -27,7 +27,7 @@ from backend.pipeline.common.audio import get_audio_duration
 from backend.pipeline.common.clients.pubsub_client import PubSubClient
 from backend.pipeline.common.gcp_helper import publish_audio_chunk_sync
 from backend.pipeline.common.log_helper import setup_logging
-from backend.pipeline.common.tracing_utils import setup_tracing
+from backend.pipeline.common.tracing_utils import inject_baggage, setup_tracing
 from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.failure_classifiers import (
@@ -54,11 +54,11 @@ if TYPE_CHECKING:
 # in environments where K_SERVICE is set but ADC is unavailable).
 # ---------------------------------------------------------------------------
 STAGING_BUCKET = _require_env("AUDIO_STAGING_BUCKET")
-SEGMENTED_PUBSUB_TOPIC_PATH = _require_env("SEGMENTED_PUBSUB_TOPIC_PATH")
 # Optional: set only on prod to also mirror the source MP3 into the dev
 # recordings bucket so dev's pipeline runs E2E against real prod traffic.
 # Best-effort — failures are logged and do not affect prod ingestion.
 DEV_RECORDINGS_BUCKET = os.environ.get("DEV_RECORDINGS_BUCKET")
+SEGMENTED_PUBSUB_TOPIC_PATH = _require_env("SEGMENTED_PUBSUB_TOPIC_PATH")
 
 setup_logging()
 logger = logging.getLogger(__name__)
@@ -99,20 +99,28 @@ def handle_notification(cloud_event: cloudevent.CloudEvent) -> None:
         use_batch=False,
     )
 
+    ingest_time_ms = str(int(datetime.now(UTC).timestamp() * 1000))
+
     with tracer.start_as_current_span("echo_ingestion"):
-        if gcs_client is None:
-            gcs_client = storage.Client()
-            logger.info(
-                "Echo ingestion initialized (bucket=%s)", STAGING_BUCKET
+        with inject_baggage(
+            {
+                "feed_type": "echo",
+                "ingest_time_ms": ingest_time_ms,
+            }
+        ):
+            if gcs_client is None:
+                gcs_client = storage.Client()
+                logger.info(
+                    "Echo ingestion initialized (bucket=%s)", STAGING_BUCKET
+                )
+            if pubsub_client is None:
+                pubsub_client = PubSubClient()
+            if feed_store is None:
+                feed_store = SyncFeedStore(connect_db)
+            _handle(
+                cloud_event,
+                actor_id=resolve_runtime_service_actor_id(),
             )
-        if pubsub_client is None:
-            pubsub_client = PubSubClient()
-        if feed_store is None:
-            feed_store = SyncFeedStore(connect_db)
-        _handle(
-            cloud_event,
-            actor_id=resolve_runtime_service_actor_id(),
-        )
 
 
 def _handle(  # noqa: PLR0911, PLR0912, PLR0915

@@ -27,7 +27,8 @@ class SourceRuntimeSpec:
         claimable: Whether VM ingestion workers should lease this source type.
         default_cap: Default per-worker lease cap for VM-claimable types.
         url_base_env: Optional env var that overrides the collector URL base.
-        url_base_default: Default collector URL base when no env override exists.
+        url_base_default: Default collector URL base when no env override
+            exists.
     """
 
     source_type: feed_store.SourceType

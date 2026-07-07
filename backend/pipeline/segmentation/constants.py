@@ -88,11 +88,11 @@ VAD_DEFAULT_PAD_SEC: Final = 0.3
 #    changes without needing a breaking state schema migration.
 VAD_DEFAULT_PRIMING_SEC: Final = 6.0
 
-# 2. warmup_sec (VAD_DEFAULT_WARMUP_SEC = 3.0s):
+# 2. warmup_sec (VAD_DEFAULT_WARMUP_SEC = 3.5s):
 #    The active window of the prior_audio_tail that the VAD actually runs on to warm up its denoiser
-#    and RNN states. We use 3.0s (increased from 1.5s) because empirical testing showed the UL-UNAS
-#    denoiser RNN requires up to 3.0s to fully stabilize its internal GRU states and adapt its noise floor.
-VAD_DEFAULT_WARMUP_SEC: Final = 3.0
+#    and RNN states. We use 3.5s because empirical testing showed this value provides the optimal
+#    balance between quiet speech onset sensitivity and preserving VAD F1 accuracy on benchmark static.
+VAD_DEFAULT_WARMUP_SEC: Final = 3.5
 
 # 3. fallback_priming (VAD_DEFAULT_FALLBACK_PRIMING_SEC = 1.0s):
 #    The duration of synthetic comfort noise generated to prime the denoiser at the very start of a

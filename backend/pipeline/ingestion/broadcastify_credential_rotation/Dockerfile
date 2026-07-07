@@ -12,11 +12,13 @@ ENV PYTHONPATH=/app
 
 # 1. Install dependencies
 COPY --from=ghcr.io/astral-sh/uv:0.11.13 /uv /uvx /bin/
-COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml ./
+COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/services/*/pyproject.toml ./
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-workspace && uv pip install grpcio-tools
+    uv sync --frozen --no-dev --no-install-workspace && \
+    uv export --group build --locked -o build-requirements.txt && \
+    uv pip install -r build-requirements.txt
 COPY backend/ ./backend/
 COPY protos/ ./protos
 
