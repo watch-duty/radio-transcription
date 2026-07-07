@@ -38,7 +38,8 @@ class MonitoringClient:
 
         Args:
             metric_type: e.g. ``custom.googleapis.com/feeds/quarantine_events``.
-            labels: metric labels (callers enforce allowlist; cardinality-sensitive).
+            labels: metric labels (callers enforce allowlist;
+                cardinality-sensitive).
             value: int64 GAUGE value.
             resource_type: monitored-resource type. Defaults to ``"global"``.
                 Pass ``"gce_instance"`` for per-VM metrics.

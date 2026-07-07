@@ -104,7 +104,8 @@ class RulesStore:
             if key in {"scope", "conditions"} and db_value is not None:
                 db_value = json.dumps(db_value)
 
-            # Skip metadata for now as it contains immutable fields (created_at/by)
+            # Skip metadata for now as it contains immutable fields
+            # (created_at/by)
             # updated_at is handled automatically.
             if key == "metadata":
                 continue

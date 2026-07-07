@@ -30,7 +30,8 @@ class RuleAnnotation(BaseModel):
     def _unwrap_spans(cls, value: Any) -> Any:
         # The proto wraps the spans in a TextMatchAnnotation message because a
         # `oneof` cannot hold a `repeated` field, so MessageToDict yields
-        # {"spans": [...]}. The API exposes a flat list, so unwrap on the way in.
+        # {"spans": [...]}. The API exposes a flat list, so unwrap on the
+        # way in.
         if isinstance(value, dict) and "spans" in value:
             return value["spans"]
         return value
