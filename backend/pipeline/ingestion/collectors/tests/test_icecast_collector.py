@@ -146,7 +146,7 @@ def _make_process_factory(
         mock_proc.stderr = _make_stderr_reader(stderr_lines)
 
         for index, segment in enumerate(segments or []):
-            (segment_dir / f"chunk_{index:06d}.flac").write_bytes(segment)
+            (segment_dir / f"chunk_{index:06d}.wav").write_bytes(segment)
 
         async def _wait_impl() -> int:
             if wait_exception is not None:
@@ -170,6 +170,14 @@ def _formatted_error_calls(mock_logger: MagicMock) -> str:
     return "\n".join(
         (call.args[0] % call.args[1:]) if len(call.args) > 1 else call.args[0]
         for call in mock_logger.error.call_args_list
+    )
+
+
+def _formatted_warning_calls(mock_logger: MagicMock) -> str:
+    """Render every captured logger.warning call into a single newline-joined string."""
+    return "\n".join(
+        (call.args[0] % call.args[1:]) if len(call.args) > 1 else call.args[0]
+        for call in mock_logger.warning.call_args_list
     )
 
 
@@ -245,7 +253,7 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
 
         await icecast_collector._create_ffmpeg_process(
             "http://example.com/stream.mp3",
-            "/tmp/chunk_%06d.flac",  # noqa: S108
+            "/tmp/chunk_%06d.wav",  # noqa: S108
             "Authorization: Basic dGVzdDp0ZXN0\r\n",
         )
 
@@ -268,7 +276,7 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
 
         await icecast_collector._create_ffmpeg_process(
             "http://example.com/stream.mp3",
-            "/tmp/chunk_%06d.flac",  # noqa: S108
+            "/tmp/chunk_%06d.wav",  # noqa: S108
             "Authorization: Basic dGVzdDp0ZXN0\r\n",
         )
 
@@ -287,7 +295,7 @@ class TestCreateFfmpegProcess(unittest.IsolatedAsyncioTestCase):
 
         await icecast_collector._create_ffmpeg_process(
             "http://example.com/stream.mp3",
-            "/tmp/chunk_%06d.flac",  # noqa: S108
+            "/tmp/chunk_%06d.wav",  # noqa: S108
             "Authorization: Basic dGVzdDp0ZXN0\r\n",
         )
 
@@ -305,13 +313,21 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
 
     def setUp(self) -> None:
         self.mock_logger = MagicMock()
-        self.mock_fix_flac_header = AsyncMock()
+
+        async def _mock_transcode(wav_path: Path, flac_path: Path) -> bool:
+            if await asyncio.to_thread(wav_path.exists):
+                data = await asyncio.to_thread(wav_path.read_bytes)
+                await asyncio.to_thread(flac_path.write_bytes, data)
+                return True
+            return False
+
+        self.mock_transcode = AsyncMock(side_effect=_mock_transcode)
         self.patchers = [
             patch.object(icecast_collector, "logger", self.mock_logger),
             patch.object(
                 icecast_collector,
-                "_fix_flac_header",
-                self.mock_fix_flac_header,
+                "_transcode_wav_to_flac",
+                self.mock_transcode,
             ),
             patch.object(icecast_collector, "_path_mtime", return_value=None),
             patch.dict(os.environ, MOCK_ENV_VARS),
@@ -372,7 +388,20 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             wait_delay=0.1,
             wait_result=0,
         )
-        self.mock_fix_flac_header.side_effect = [False, True]
+        calls = 0
+
+        async def _custom_transcode(wav_path: Path, flac_path: Path) -> bool:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return False
+            if await asyncio.to_thread(wav_path.exists):
+                data = await asyncio.to_thread(wav_path.read_bytes)
+                await asyncio.to_thread(flac_path.write_bytes, data)
+                return True
+            return False
+
+        self.mock_transcode.side_effect = _custom_transcode
 
         feed = _make_feed("test-feed", "http://example.com/stream")
         shutdown_event = asyncio.Event()
@@ -995,7 +1024,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             FeedStatusReason.SOURCE_OFFLINE,
             "HTTP error 404 Not Found",
         )
-        formatted = _formatted_error_calls(self.mock_logger)
+        formatted = _formatted_warning_calls(self.mock_logger)
         self.assertIn("no finalized segment within", formatted)
         self.assertIn("next_index=0", formatted)
         self.assertIn("current_segment_exists=False", formatted)
@@ -1270,10 +1299,18 @@ class TestIcecastReceiptTimeStamp(unittest.IsolatedAsyncioTestCase):
 
         feed = _make_feed("test", source_feed_id="sid")
         shutdown = asyncio.Event()
+
+        async def _mock_transcode(wav_path: Path, flac_path: Path) -> bool:
+            if await asyncio.to_thread(wav_path.exists):
+                data = await asyncio.to_thread(wav_path.read_bytes)
+                await asyncio.to_thread(flac_path.write_bytes, data)
+                return True
+            return False
+
         with patch.object(
             icecast_collector,
-            "_fix_flac_header",
-            new_callable=AsyncMock,
+            "_transcode_wav_to_flac",
+            AsyncMock(side_effect=_mock_transcode),
         ):
             gen = icecast_collector.capture_icecast_stream(
                 feed,
@@ -1293,27 +1330,33 @@ _BAD_STREAMINFO_FLAC = (
 _ffmpeg_available = shutil.which("ffmpeg") is not None
 
 
-class TestFixFlacHeader(unittest.IsolatedAsyncioTestCase):
+class TestTranscodeWavToFlac(unittest.IsolatedAsyncioTestCase):
     """Guards the contract that no segment leaves ingestion unreadable."""
 
     @unittest.skipIf(not _ffmpeg_available, "ffmpeg not available")
-    async def test_repairs_unreadable_segment_muxer_output(self) -> None:
+    async def test_transcode_produces_readable_flac(self) -> None:
         raw = _BAD_STREAMINFO_FLAC.read_bytes()
         with tempfile.TemporaryDirectory() as tmp:
-            segment = Path(tmp) / "chunk_000000.flac"
-            segment.write_bytes(raw)
+            wav_segment = Path(tmp) / "chunk_000000.wav"
+            # Even if the file has a .wav extension, writing bad FLAC data to it
+            # simulates ffmpeg decoding the unreadable stream data and transcoding it.
+            wav_segment.write_bytes(raw)
 
-            # The muxer's STREAMINFO advertises an unknown frame count, so
-            # libsndfile cannot open it until the header is rewritten.
+            flac_segment = Path(tmp) / "chunk_000000.flac"
+
+            # The source flac data (in wav_segment) is unreadable by sf.read directly
             with self.assertRaises(sf.LibsndfileError):
-                sf.read(str(segment))
+                sf.read(str(wav_segment))
 
-            self.assertTrue(await icecast_collector._fix_flac_header(segment))
+            success = await icecast_collector._transcode_wav_to_flac(
+                wav_segment, flac_segment
+            )
+            self.assertTrue(success)
 
-            info = sf.info(str(segment))
-            samples, sample_rate = sf.read(str(segment), dtype="float32")
+            info = sf.info(str(flac_segment))
+            samples, sample_rate = sf.read(str(flac_segment), dtype="float32")
 
-        # The rewritten header advertises the true frame count rather than the
+        # The transcoded header advertises the true frame count rather than the
         # unknown-length sentinel, so the duration downstream derives from it
         # (len / sample_rate) is correct.
         self.assertEqual(info.frames, len(samples))
@@ -1321,7 +1364,7 @@ class TestFixFlacHeader(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(len(samples) / sample_rate, 15.0, delta=0.5)
 
     @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    async def test_fix_flac_header_timeout_triggers_cleanup(
+    async def test_transcode_wav_to_flac_timeout_triggers_cleanup(
         self, mock_create_exec: AsyncMock
     ) -> None:
         mock_process = AsyncMock()
@@ -1343,24 +1386,25 @@ class TestFixFlacHeader(unittest.IsolatedAsyncioTestCase):
 
         with patch.object(icecast_collector, "_FIX_HEADER_TIMEOUT_SEC", 0.05):
             with tempfile.TemporaryDirectory() as tmp:
-                segment = Path(tmp) / "chunk_000000.flac"
-                segment.write_bytes(b"dummy_data")
+                wav_segment = Path(tmp) / "chunk_000000.wav"
+                wav_segment.write_bytes(b"dummy_data")
+                flac_segment = Path(tmp) / "chunk_000000.flac"
 
-                repaired = await icecast_collector._fix_flac_header(segment)
+                success = await icecast_collector._transcode_wav_to_flac(
+                    wav_segment, flac_segment
+                )
 
                 # Give background tasks (cleanup) a tick to run
                 await asyncio.sleep(0.02)
 
                 self.assertTrue(terminated_event.is_set())
                 self.assertFalse(
-                    repaired,
-                    "a timed-out repair must not report success — the "
-                    "caller relies on this to avoid reading the original "
-                    "segment",
+                    success,
+                    "a timed-out transcode must not report success",
                 )
 
     @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    async def test_fix_flac_header_nonzero_exit_reports_failure(
+    async def test_transcode_wav_to_flac_nonzero_exit_reports_failure(
         self, mock_create_exec: AsyncMock
     ) -> None:
         mock_process = AsyncMock()
@@ -1369,15 +1413,18 @@ class TestFixFlacHeader(unittest.IsolatedAsyncioTestCase):
         mock_create_exec.return_value = mock_process
 
         with tempfile.TemporaryDirectory() as tmp:
-            segment = Path(tmp) / "chunk_000000.flac"
-            segment.write_bytes(b"dummy_data")
+            wav_segment = Path(tmp) / "chunk_000000.wav"
+            wav_segment.write_bytes(b"dummy_data")
+            flac_segment = Path(tmp) / "chunk_000000.flac"
 
-            repaired = await icecast_collector._fix_flac_header(segment)
+            success = await icecast_collector._transcode_wav_to_flac(
+                wav_segment, flac_segment
+            )
 
-            self.assertFalse(repaired)
+            self.assertFalse(success)
 
     @patch("asyncio.create_subprocess_exec", new_callable=AsyncMock)
-    async def test_fix_flac_header_cancellation_triggers_cleanup(
+    async def test_transcode_wav_to_flac_cancellation_triggers_cleanup(
         self, mock_create_exec: AsyncMock
     ) -> None:
         mock_process = AsyncMock()
@@ -1398,12 +1445,15 @@ class TestFixFlacHeader(unittest.IsolatedAsyncioTestCase):
         mock_create_exec.return_value = mock_process
 
         with tempfile.TemporaryDirectory() as tmp:
-            segment = Path(tmp) / "chunk_000000.flac"
-            segment.write_bytes(b"dummy_data")
+            wav_segment = Path(tmp) / "chunk_000000.wav"
+            wav_segment.write_bytes(b"dummy_data")
+            flac_segment = Path(tmp) / "chunk_000000.flac"
 
             # Start the task and cancel it immediately
             task = asyncio.create_task(
-                icecast_collector._fix_flac_header(segment)
+                icecast_collector._transcode_wav_to_flac(
+                    wav_segment, flac_segment
+                )
             )
             await asyncio.sleep(0.01)  # let it start and await wait_for
             task.cancel()
@@ -1675,6 +1725,70 @@ class TestIcecastTimestampAlignment(unittest.IsolatedAsyncioTestCase):
             t0 - datetime.timedelta(seconds=CHUNK_DURATION_SECONDS),
         )
         self.assertEqual(results[0].chunk_end_time, t0)
+
+        
+class TestBuildAuthAndUrl(unittest.TestCase):
+    """Tests for _build_auth_and_url helper in icecast_collector."""
+
+    def setUp(self) -> None:
+        self.original_env = os.environ.copy()
+
+    def tearDown(self) -> None:
+        os.environ.clear()
+        os.environ.update(self.original_env)
+
+    def test_xan_token_auth(self) -> None:
+        """When BROADCASTIFY_XAN_TOKEN is set, it is used as a query parameter and basic auth is bypassed."""
+        os.environ["BROADCASTIFY_XAN_TOKEN"] = "mock-xan-token"
+        # Ensure username/password are not set to confirm they aren't used
+        os.environ.pop("BROADCASTIFY_USERNAME", None)
+        os.environ.pop("BROADCASTIFY_PASSWORD", None)
+
+        auth_header, url = icecast_collector._build_auth_and_url(
+            url_base="https://audio.example.com",
+            source_feed_id="12345",
+        )
+
+        self.assertEqual(auth_header, "")
+        self.assertEqual(
+            url,
+            "https://audio.example.com/12345.mp3?burst=0&xan=mock-xan-token",
+        )
+
+    def test_basic_auth_fallback(self) -> None:
+        """When BROADCASTIFY_XAN_TOKEN is not set, it falls back to basic auth using username/password."""
+        os.environ.pop("BROADCASTIFY_XAN_TOKEN", None)
+        os.environ["BROADCASTIFY_USERNAME"] = "test-user"
+        os.environ["BROADCASTIFY_PASSWORD"] = "test-password"
+
+        auth_header, url = icecast_collector._build_auth_and_url(
+            url_base="https://audio.example.com",
+            source_feed_id="12345",
+        )
+
+        # Basic auth header for "test-user:test-password" is:
+        # base64("test-user:test-password") = dGVzdC11c2VyOnRlc3QtcGFzc3dvcmQ=
+        self.assertEqual(
+            auth_header,
+            "Authorization: Basic dGVzdC11c2VyOnRlc3QtcGFzc3dvcmQ=\r\n",
+        )
+        self.assertEqual(
+            url,
+            "https://audio.example.com/12345.mp3?burst=0",
+        )
+
+    def test_basic_auth_missing_credentials(self) -> None:
+        """When token is missing and credentials are also missing, it raises config error."""
+        os.environ.pop("BROADCASTIFY_XAN_TOKEN", None)
+        os.environ.pop("BROADCASTIFY_USERNAME", None)
+        os.environ.pop("BROADCASTIFY_PASSWORD", None)
+
+        with self.assertRaises(Exception) as ctx:
+            icecast_collector._build_auth_and_url(
+                url_base="https://audio.example.com",
+                source_feed_id="12345",
+            )
+        self.assertIn("missing_broadcastify_credentials", str(ctx.exception))
 
 
 if __name__ == "__main__":

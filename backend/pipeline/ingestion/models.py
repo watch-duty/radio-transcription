@@ -82,6 +82,7 @@ if TYPE_CHECKING:
     import asyncio
     import datetime
     from collections.abc import AsyncIterator, Callable
+    from pathlib import Path
 
     from backend.pipeline.storage.feed_store import LeasedFeed
 
@@ -240,6 +241,7 @@ class CaptureResources:
     """
 
     http_session: aiohttp.ClientSession
+    segment_temp_dir: Path | None = None
 
 
 if TYPE_CHECKING:

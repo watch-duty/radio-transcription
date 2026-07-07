@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 
 import aiohttp
 import asyncpg
@@ -76,6 +77,7 @@ _PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
 _PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
 _NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
 _NON_BUDGETED_RETRY_MAX_SEC = 15 * 60
+INGESTION_IO_MAX_WORKERS = 512
 
 
 class _PipelineFailure(Exception):
@@ -219,6 +221,12 @@ class CollectorRuntime:
     async def _main(self) -> None:
         """Top-level async entry: setup, run leasing loop, then shutdown."""
         self._loop = asyncio.get_running_loop()
+        self._loop.set_default_executor(
+            concurrent.futures.ThreadPoolExecutor(
+                max_workers=INGESTION_IO_MAX_WORKERS,
+                thread_name_prefix="ingestion_io",
+            )
+        )
         setup_asyncio_logging(self._loop)
         self._shutdown = asyncio.Event()
         self._lease_lost = asyncio.Event()
@@ -302,8 +310,14 @@ class CollectorRuntime:
                 ),
                 timeout=aiohttp.ClientTimeout(total=30, connect=10),
             )
+            segment_dir = (
+                Path(settings.segment_temp_dir)
+                if settings.segment_temp_dir
+                else None
+            )
             self._capture_resources = CaptureResources(
                 http_session=self._http_session,
+                segment_temp_dir=segment_dir,
             )
 
             # Start /healthz HTTP server. Runs on the same event loop as the
@@ -1038,6 +1052,13 @@ class CollectorRuntime:
             logger.warning(
                 "Feed source payload failure suppressed from quarantine "
                 "budget: feed=%s reason=%s",
+                feed["name"],
+                reason,
+            )
+        elif "Stream capture timed out" in reason:
+            logger.warning(
+                "Feed processing error suppressed from quarantine budget (timeout): "
+                "feed=%s reason=%s",
                 feed["name"],
                 reason,
             )

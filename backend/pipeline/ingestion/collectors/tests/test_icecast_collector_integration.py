@@ -143,16 +143,22 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         os.environ["STORAGE_EMULATOR_HOST"] = self._gcs_url
         self.gcs_client = gcs_client.GcsClient()
 
-        self.mock_fix_flac_header = patch(
-            "backend.pipeline.ingestion.collectors.icecast.icecast_collector._fix_flac_header",
-            new_callable=AsyncMock,
-            return_value=True,
+        async def _mock_transcode(wav_path: Path, flac_path: Path) -> bool:
+            if await asyncio.to_thread(wav_path.exists):
+                data = await asyncio.to_thread(wav_path.read_bytes)
+                await asyncio.to_thread(flac_path.write_bytes, data)
+                return True
+            return False
+
+        self.patcher_transcode = patch(
+            "backend.pipeline.ingestion.collectors.icecast.icecast_collector._transcode_wav_to_flac",
+            AsyncMock(side_effect=_mock_transcode),
         )
-        self.mock_fix_flac_header.start()
+        self.patcher_transcode.start()
 
     async def asyncTearDown(self) -> None:
         """Close GCS client, remove env var, and close pool."""
-        self.mock_fix_flac_header.stop()
+        self.patcher_transcode.stop()
         await self.gcs_client.close()
         os.environ.pop("STORAGE_EMULATOR_HOST", None)
         for key in MOCK_ENV_VARS:
@@ -211,7 +217,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         ) -> AsyncMock:
             segment_dir = Path(segment_pattern).parent
             for index, segment in enumerate(segments):
-                (segment_dir / f"chunk_{index:06d}.flac").write_bytes(segment)
+                (segment_dir / f"chunk_{index:06d}.wav").write_bytes(segment)
 
             mock_proc = AsyncMock()
             mock_proc.pid = 12345
@@ -323,7 +329,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self, mock_create_ffmpeg
     ) -> None:
         """No segment leaves ingestion with the unreadable muxer header."""
-        self.mock_fix_flac_header.stop()
+        self.patcher_transcode.stop()
         try:
             feed = await self._lease_feed("flac-header-feed")
 
@@ -360,7 +366,7 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
             samples, _ = sf.read(io.BytesIO(downloaded), dtype="float32")
             self.assertGreater(len(samples), 0)
         finally:
-            self.mock_fix_flac_header.start()
+            self.patcher_transcode.start()
 
     @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
