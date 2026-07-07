@@ -17,9 +17,6 @@ export function AuditRow({ auditEvent }: { auditEvent: FeedHistoryEvent }) {
   const date = new Date(auditEvent.occurredAt);
 
   const getActionDetails = () => {
-    const beforeStatus = auditEvent.beforeValues?.status as string | undefined;
-    const afterStatus = auditEvent.afterValues?.status as string | undefined;
-
     let icon = <UpdateIcon fontSize="small" />;
     let message = '';
 
@@ -56,12 +53,6 @@ export function AuditRow({ auditEvent }: { auditEvent: FeedHistoryEvent }) {
       default:
         message = 'Feed configuration updated';
         break;
-    }
-
-    if (beforeStatus && afterStatus && beforeStatus !== afterStatus) {
-      const formatStatus = (s: string) =>
-        s.charAt(0).toUpperCase() + s.slice(1);
-      message += ` (status changed from ${formatStatus(beforeStatus)} to ${formatStatus(afterStatus)})`;
     }
 
     return { icon, message };
