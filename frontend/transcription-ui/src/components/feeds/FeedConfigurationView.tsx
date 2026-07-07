@@ -10,7 +10,6 @@ import type {
   FeedCreate,
   FeedUpdate,
   ListFeedsResponse,
-  Tag,
 } from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
@@ -23,6 +22,7 @@ import { resetFeed } from '../../service/resetFeed';
 import { updateFeed } from '../../service/updateFeed';
 import { FeedConfigurationEdit } from './FeedConfigurationEdit';
 import { type FeedFilters, FeedTable } from './FeedTable';
+import { type TagRow, toTagRows } from './tagRows';
 
 interface FeedConfigurationViewProps {
   triggerSnackbar: (message: string) => void;
@@ -43,7 +43,7 @@ export function FeedConfigurationView({
   const [name, setName] = useState('');
   const [sourceType, setSourceType] = useState(SourceType.BCFY_FEEDS);
   const [sourceFeedId, setSourceFeedId] = useState('');
-  const [tags, setTags] = useState<Tag[]>([]);
+  const [tags, setTags] = useState<TagRow[]>([]);
 
   const [filters, setFilters] = useState<FeedFilters>({
     searchQuery: '',
@@ -245,7 +245,7 @@ export function FeedConfigurationView({
     setName(feed.name);
     setSourceType(feed.sourceType);
     setSourceFeedId(feed.sourceFeedId || '');
-    setTags(feed.tags ?? []);
+    setTags(toTagRows(feed.tags ?? []));
     // Smooth scroll operator back to form on small viewports
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
