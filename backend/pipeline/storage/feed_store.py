@@ -1188,17 +1188,30 @@ class FeedStore:
             id_key="feed_revision",
         )
 
-        events = [
-            FeedAuditEvent(
-                id=row["id"],
-                feed_id=row["feed_id"],
-                action=row["action"],
-                actor_id=row["actor_id"],
-                occurred_at=row["occurred_at"],
-                feed_revision=row["feed_revision"],
-                before_values=row["before_values"],
-                after_values=row["after_values"],
+        events = []
+        for row in rows:
+            before_values_raw = row["before_values"]
+            before_values = (
+                json.loads(before_values_raw)
+                if isinstance(before_values_raw, str)
+                else before_values_raw
             )
-            for row in rows
-        ]
+            after_values_raw = row["after_values"]
+            after_values = (
+                json.loads(after_values_raw)
+                if isinstance(after_values_raw, str)
+                else after_values_raw
+            )
+            events.append(
+                FeedAuditEvent(
+                    id=row["id"],
+                    feed_id=row["feed_id"],
+                    action=row["action"],
+                    actor_id=row["actor_id"],
+                    occurred_at=row["occurred_at"],
+                    feed_revision=row["feed_revision"],
+                    before_values=before_values,
+                    after_values=after_values,
+                )
+            )
         return PaginatedFeedAuditEvents(events, new_next_token, total)
