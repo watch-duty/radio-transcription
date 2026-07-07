@@ -264,8 +264,8 @@ function formatDiff(
     const fieldLabel = getFieldLabel(key);
 
     if (key === 'tags') {
-      const beforeTags = (beforeVal as Tag[]) || [];
-      const afterTags = (afterVal as Tag[]) || [];
+      const beforeTags = Array.isArray(beforeVal) ? (beforeVal as Tag[]) : [];
+      const afterTags = Array.isArray(afterVal) ? (afterVal as Tag[]) : [];
       const beforeStrSet = new Set(
         beforeTags.map((t) => `${t.key}=${t.value}`)
       );
