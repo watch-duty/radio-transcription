@@ -51,7 +51,7 @@ ${env_file_content}
     # 8080 via `--network host`, so Google autohealing probes traverse host
     # INPUT. Re-assert this rule idempotently whenever the health service starts
     # so a health-container restart also repairs a flushed host firewall rule.
-    ExecStartPre=/bin/sh -c 'iptables -C INPUT -p tcp --dport 8080 -j ACCEPT || iptables -I INPUT -p tcp --dport 8080 -j ACCEPT'
+    ExecStartPre=/bin/sh -c 'iptables -C INPUT -p tcp --dport ${vm_health_port} -j ACCEPT || iptables -I INPUT -p tcp --dport ${vm_health_port} -j ACCEPT'
     ExecStartPre=/usr/bin/docker pull ${container_image}
     # --network host lets the VM Health container reach worker health ports on
     # the HOST loopback. Pass only explicit non-secret VM_HEALTH_* values; do
@@ -62,7 +62,7 @@ ${env_file_content}
         -e VM_HEALTH_PROBE_TIMEOUT_SEC=2.0 \
         -e VM_HEALTH_PROBE_INTERVAL_SEC=5.0 \
         -e VM_HEALTH_LISTEN_HOST=0.0.0.0 \
-        -e VM_HEALTH_LISTEN_PORT=8080 \
+        -e VM_HEALTH_LISTEN_PORT=${vm_health_port} \
         -e VM_HEALTH_HYSTERESIS_SEC=600.0 \
         ${container_image} python -m backend.pipeline.ingestion.vm_health_agent
     ExecStop=/usr/bin/docker stop -t 10 ${service_name}-health
@@ -89,9 +89,9 @@ ${env_file_content}
     ExecStartPre=/usr/bin/docker-credential-gcr configure-docker --registries ${registry_host}
     ExecStartPre=-/usr/bin/docker rm -f ${service_name}-%i
     ExecStartPre=/usr/bin/docker pull ${container_image}
-    # /bin/sh -c forces arithmetic expansion of $((8080 + %i)). systemd's
+    # /bin/sh -c forces arithmetic expansion of $((${vm_health_port} + %i)). systemd's
     # native ExecStart= does NOT do shell arithmetic — it would pass the
-    # literal string "$((8080 + %i))" to docker and fail at parse time.
+    # literal string "$((... + %i))" to docker and fail at parse time.
     # %i is expanded by systemd BEFORE the line runs, so /bin/sh sees a
     # real integer. WORKER_INDEX=%i is metadata for log labeling only;
     # worker code does not load-bear on it (verified absent from
@@ -114,7 +114,7 @@ ${env_file_content}
         --sysctl net.ipv4.tcp_keepalive_time=60 \
         --sysctl net.ipv4.tcp_keepalive_intvl=10 \
         --sysctl net.ipv4.tcp_keepalive_probes=3 \
-        -p 127.0.0.1:$((8080 + %i)):8080 \
+        -p 127.0.0.1:$((${vm_health_port} + %i)):8080 \
         --env-file /etc/container-env/${service_name}.env \
         -e WORKER_INDEX=%i \
         ${container_image}'

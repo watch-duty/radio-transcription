@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pathlib
+import re
 import unittest
 
 _CLOUD_CONFIG = pathlib.Path(
@@ -21,65 +22,6 @@ def _without_comment_lines(text: str) -> str:
             continue
         lines.append(line)
     return "\n".join(lines)
-
-
-def _without_terraform_comments(text: str) -> str:  # noqa: PLR0912
-    chars = []
-    index = 0
-    in_string = False
-    in_block_comment = False
-    escaped = False
-
-    while index < len(text):
-        char = text[index]
-        next_char = text[index + 1] if index + 1 < len(text) else ""
-
-        if in_block_comment:
-            if char == "*" and next_char == "/":
-                in_block_comment = False
-                index += 2
-            else:
-                if char == "\n":
-                    chars.append(char)
-                index += 1
-            continue
-
-        if in_string:
-            chars.append(char)
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            index += 1
-            continue
-
-        if char == '"':
-            in_string = True
-            chars.append(char)
-            index += 1
-            continue
-
-        if char == "#":
-            while index < len(text) and text[index] != "\n":
-                index += 1
-            continue
-
-        if char == "/" and next_char == "/":
-            while index < len(text) and text[index] != "\n":
-                index += 1
-            continue
-
-        if char == "/" and next_char == "*":
-            in_block_comment = True
-            index += 2
-            continue
-
-        chars.append(char)
-        index += 1
-
-    return "".join(chars)
 
 
 def _file_entry(text: str, path: str) -> str:
@@ -148,7 +90,7 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
             "VM_HEALTH_PROBE_TIMEOUT_SEC=2.0",
             "VM_HEALTH_PROBE_INTERVAL_SEC=5.0",
             "VM_HEALTH_LISTEN_HOST=0.0.0.0",
-            "VM_HEALTH_LISTEN_PORT=8080",
+            "VM_HEALTH_LISTEN_PORT=${vm_health_port}",
             "VM_HEALTH_HYSTERESIS_SEC=600.0",
         )
         for env_var in expected_env:
@@ -168,8 +110,9 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
         )
         runcmd = cloud_config[cloud_config.index("\nruncmd:") :]
         expected_exec_start_pre = (
-            "ExecStartPre=/bin/sh -c 'iptables -C INPUT -p tcp --dport 8080 "
-            "-j ACCEPT || iptables -I INPUT -p tcp --dport 8080 -j ACCEPT'"
+            "ExecStartPre=/bin/sh -c 'iptables -C INPUT -p tcp --dport "
+            "${vm_health_port} -j ACCEPT || iptables -I INPUT -p tcp --dport "
+            "${vm_health_port} -j ACCEPT'"
         )
 
         self.assertIn(expected_exec_start_pre, health_unit)
@@ -189,7 +132,7 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
         cloud_config = _text(_CLOUD_CONFIG)
 
         self.assertIn(
-            "-p 127.0.0.1:$((8080 + %i)):8080",
+            "-p 127.0.0.1:$((${vm_health_port} + %i)):8080",
             cloud_config,
         )
         self.assertIn(
@@ -211,7 +154,7 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
             cloud_config,
         )
         self.assertIn(
-            "iptables -I INPUT -p tcp --dport 8080 -j ACCEPT",
+            "iptables -I INPUT -p tcp --dport ${vm_health_port} -j ACCEPT",
             cloud_config,
         )
 
@@ -222,13 +165,14 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
         variables_tf = _text(_VARIABLES_TF)
 
         self.assertNotIn('variable "worker_count"', variables_tf)
+        self.assertIn("vm_health_port = 8080", main_tf)
         self.assertIn("worker_indices", main_tf)
         self.assertIn("worker_indices = [1, 2]", main_tf)
         self.assertIn("vm_health_worker_endpoints", main_tf)
         self.assertIn("worker_systemd_after_units", main_tf)
 
     def test_gcp_health_thresholds_unchanged(self) -> None:
-        main_tf = _without_terraform_comments(_text(_MAIN_TF))
+        main_tf = _text(_MAIN_TF)
         health_check = _terraform_block(
             main_tf,
             'resource "google_compute_health_check" "this"',
@@ -238,18 +182,18 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
             'dynamic "auto_healing_policies"',
         )
         threshold_patterns = (
-            (health_check, r"check_interval_sec\s+=\s+30\b"),
-            (health_check, r"timeout_sec\s+=\s+10\b"),
-            (health_check, r"healthy_threshold\s+=\s+1\b"),
-            (health_check, r"unhealthy_threshold\s+=\s+3\b"),
-            (health_check, r"port\s+=\s+8080\b"),
-            (health_check, r'request_path\s+=\s+"/healthz"'),
-            (autohealing, r"initial_delay_sec\s+=\s+300\b"),
+            (health_check, r"^\s*check_interval_sec\s+=\s+30\b"),
+            (health_check, r"^\s*timeout_sec\s+=\s+10\b"),
+            (health_check, r"^\s*healthy_threshold\s+=\s+1\b"),
+            (health_check, r"^\s*unhealthy_threshold\s+=\s+3\b"),
+            (health_check, r"^\s*port\s+=\s+local\.vm_health_port\b"),
+            (health_check, r'^\s*request_path\s+=\s+"/healthz"'),
+            (autohealing, r"^\s*initial_delay_sec\s+=\s+300\b"),
         )
 
         for block, pattern in threshold_patterns:
             with self.subTest(pattern=pattern):
-                self.assertRegex(block, pattern)
+                self.assertRegex(block, re.compile(pattern, re.MULTILINE))
 
     def test_enable_autohealing_documents_vm_health_contract(self) -> None:
         variables_tf = _text(_VARIABLES_TF)

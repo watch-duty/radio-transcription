@@ -342,6 +342,27 @@ class TestSleepOrShutdown(unittest.IsolatedAsyncioTestCase):
 class TestStartupPacingHelpers(unittest.TestCase):
     """Tests for startup pacing and poll jitter helper functions."""
 
+    def test_bounded_jitter_skips_zero_max(self) -> None:
+        """Zero jitter max avoids calling random.uniform."""
+        with mock.patch(
+            "backend.pipeline.ingestion.collector_runtime.random.uniform",
+        ) as mock_uniform:
+            delay = collector_runtime._bounded_jitter(0.0)
+
+        mock_uniform.assert_not_called()
+        self.assertEqual(delay, 0.0)
+
+    def test_bounded_jitter_returns_random_delay(self) -> None:
+        """Positive jitter max returns bounded non-cryptographic jitter."""
+        with mock.patch(
+            "backend.pipeline.ingestion.collector_runtime.random.uniform",
+            return_value=1.25,
+        ) as mock_uniform:
+            delay = collector_runtime._bounded_jitter(2.0)
+
+        mock_uniform.assert_called_once_with(0.0, 2.0)
+        self.assertEqual(delay, 1.25)
+
     def test_deterministic_startup_stagger_zero_max(self) -> None:
         """Zero max stagger disables deterministic startup delay."""
         delay = collector_runtime._deterministic_startup_stagger(
@@ -1505,7 +1526,17 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         _mock_feed_store: mock.MagicMock,
     ) -> None:
         """Startup pacing occurs after signal setup and before DB pools."""
-        rt = _make_runtime(startup_stagger_max_sec=0.0, worker_index=1)
+        with mock.patch.object(
+            socket,
+            "gethostname",
+            return_value="worker-host",
+        ):
+            rt = _make_runtime(
+                startup_stagger_max_sec=0.0,
+                lease_admission_cycle_budget=20,
+                max_feeds_per_worker=250,
+                worker_index=1,
+            )
         call_order: list[str] = []
         loop = asyncio.get_running_loop()
 
@@ -1576,9 +1607,15 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(startup_payload["event_type"], "startup_pacing")
         self.assertEqual(startup_payload["worker_id"], str(_WORKER_ID))
         self.assertEqual(startup_payload["worker_index"], 1)
+        self.assertEqual(startup_payload["hostname"], "worker-host")
         self.assertEqual(startup_payload["deterministic_delay_sec"], 0.0)
         self.assertEqual(startup_payload["random_delay_sec"], 0.5)
         self.assertEqual(startup_payload["total_delay_sec"], 0.5)
+        self.assertEqual(startup_payload["startup_stagger_max_sec"], 0.0)
+        self.assertEqual(startup_payload["startup_jitter_max_sec"], 2.0)
+        self.assertEqual(startup_payload["lease_admission_cycle_budget"], 20)
+        self.assertEqual(startup_payload["max_feeds_per_worker"], 250)
+        self.assertIsInstance(startup_payload["process_id"], int)
 
     @mock.patch(
         "backend.pipeline.ingestion.collector_runtime.FeedStore",
@@ -1975,6 +2012,33 @@ class TestLeasingLoopAdmissionBudget(unittest.IsolatedAsyncioTestCase):
         SourceType.FIRE_NOTIFICATIONS: 300,
     }
 
+    def test_recovery_limit_helper_includes_primary_counts(self) -> None:
+        """Recovery helper accounts for primary leases before apportioning."""
+        caps = {
+            SourceType.BCFY_FEEDS: 3,
+            SourceType.BCFY_CALLS: 5,
+            SourceType.OPENMHZ: 5,
+        }
+        held = {
+            SourceType.BCFY_FEEDS: 1,
+            SourceType.BCFY_CALLS: 0,
+            SourceType.OPENMHZ: 0,
+        }
+        primary = [
+            _make_leased_feed(uuid.UUID(int=1), SourceType.BCFY_FEEDS),
+            _make_leased_feed(uuid.UUID(int=2), SourceType.BCFY_FEEDS),
+        ]
+
+        recovery_limits = CollectorRuntime._calculate_recovery_limits(
+            admission_budget=5,
+            caps=caps,
+            held=held,
+            primary=primary,
+        )
+
+        self.assertEqual(recovery_limits[SourceType.BCFY_FEEDS], 0)
+        self.assertEqual(sum(recovery_limits.values()), 3)
+
     async def test_admission_budget_bounds_primary_limits(self) -> None:
         """Primary acquisition is bounded by lease_admission_cycle_budget."""
         rt = _make_runtime(
@@ -2097,6 +2161,43 @@ class TestLeasingLoopAdmissionBudget(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(recovery_limits[SourceType.BCFY_FEEDS], 0)
         self.assertEqual(sum(recovery_limits.values()), 3)
 
+    async def test_zero_recovery_budget_skips_recovery_round_trip(self) -> None:
+        """Recovery is not queried when cap math leaves no recovery capacity."""
+        caps = {SourceType.BCFY_FEEDS: 3}
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            lease_admission_cycle_budget=5,
+            caps=caps,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = {
+            SourceType.BCFY_FEEDS: 1,
+        }
+        primary = [
+            _make_leased_feed(
+                uuid.UUID(int=1),
+                SourceType.BCFY_FEEDS,
+            ),
+            _make_leased_feed(
+                uuid.UUID(int=2),
+                SourceType.BCFY_FEEDS,
+            ),
+        ]
+        rt._store.acquire_feeds_batch.return_value = primary
+
+        with mock.patch.object(
+            rt,
+            "_process_feed",
+            new_callable=mock.AsyncMock,
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        rt._store.acquire_feeds_recovery.assert_not_awaited()
+        self.assertEqual(len(rt._feed_tasks), 2)
+
     async def test_admitted_leases_spawn_tasks_without_local_queue(
         self,
     ) -> None:
@@ -2205,12 +2306,17 @@ class TestLeasingLoopAdmissionTelemetry(unittest.IsolatedAsyncioTestCase):
 
     async def test_normal_cycle_emits_required_schema_and_counts(self) -> None:
         """Primary and recovery acquisitions are reported in one event."""
-        rt = _make_runtime(
-            max_feeds_per_worker=10,
-            lease_admission_cycle_budget=5,
-            worker_index=3,
-            caps=self.CAPS,
-        )
+        with mock.patch.object(
+            socket,
+            "gethostname",
+            return_value="worker-host",
+        ):
+            rt = _make_runtime(
+                max_feeds_per_worker=10,
+                lease_admission_cycle_budget=5,
+                worker_index=3,
+                caps=self.CAPS,
+            )
         rt._shutdown = asyncio.Event()
         rt._store = mock.AsyncMock()
         rt._releasing_feeds = set()
@@ -2231,7 +2337,7 @@ class TestLeasingLoopAdmissionTelemetry(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(
                 socket,
                 "gethostname",
-                return_value="worker-host",
+                side_effect=AssertionError("hostname should be cached"),
             ),
             self.assertLogs(
                 "backend.pipeline.ingestion.collector_runtime",
@@ -2261,11 +2367,16 @@ class TestLeasingLoopAdmissionTelemetry(unittest.IsolatedAsyncioTestCase):
 
     async def test_zero_slack_cycle_emits_zero_acquisition_event(self) -> None:
         """Full workers still emit the raw cycle schema."""
-        rt = _make_runtime(
-            max_feeds_per_worker=1,
-            lease_admission_cycle_budget=5,
-            caps=self.CAPS,
-        )
+        with mock.patch.object(
+            socket,
+            "gethostname",
+            return_value="worker-host",
+        ):
+            rt = _make_runtime(
+                max_feeds_per_worker=1,
+                lease_admission_cycle_budget=5,
+                caps=self.CAPS,
+            )
         rt._shutdown = asyncio.Event()
         rt._store = mock.AsyncMock()
         rt._releasing_feeds = set()
@@ -2277,7 +2388,7 @@ class TestLeasingLoopAdmissionTelemetry(unittest.IsolatedAsyncioTestCase):
                 mock.patch.object(
                     socket,
                     "gethostname",
-                    return_value="worker-host",
+                    side_effect=AssertionError("hostname should be cached"),
                 ),
                 self.assertLogs(
                     "backend.pipeline.ingestion.collector_runtime",
@@ -2309,11 +2420,16 @@ class TestLeasingLoopAdmissionTelemetry(unittest.IsolatedAsyncioTestCase):
 
     async def test_memory_paused_cycle_emits_pause_event(self) -> None:
         """Memory pause emits the same schema before waiting."""
-        rt = _make_runtime(
-            max_feeds_per_worker=10,
-            lease_admission_cycle_budget=5,
-            caps=self.CAPS,
-        )
+        with mock.patch.object(
+            socket,
+            "gethostname",
+            return_value="worker-host",
+        ):
+            rt = _make_runtime(
+                max_feeds_per_worker=10,
+                lease_admission_cycle_budget=5,
+                caps=self.CAPS,
+            )
         rt._shutdown = asyncio.Event()
         rt._store = mock.AsyncMock()
         rt._releasing_feeds = set()
@@ -2327,7 +2443,7 @@ class TestLeasingLoopAdmissionTelemetry(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(
                 socket,
                 "gethostname",
-                return_value="worker-host",
+                side_effect=AssertionError("hostname should be cached"),
             ),
             self.assertLogs(
                 "backend.pipeline.ingestion.collector_runtime",
@@ -2355,11 +2471,16 @@ class TestLeasingLoopAdmissionTelemetry(unittest.IsolatedAsyncioTestCase):
 
     async def test_exception_cycle_emits_error_without_secrets(self) -> None:
         """Acquisition exceptions emit concise class-name evidence."""
-        rt = _make_runtime(
-            max_feeds_per_worker=10,
-            lease_admission_cycle_budget=5,
-            caps=self.CAPS,
-        )
+        with mock.patch.object(
+            socket,
+            "gethostname",
+            return_value="worker-host",
+        ):
+            rt = _make_runtime(
+                max_feeds_per_worker=10,
+                lease_admission_cycle_budget=5,
+                caps=self.CAPS,
+            )
         rt._shutdown = asyncio.Event()
         rt._store = mock.AsyncMock()
         rt._releasing_feeds = set()
@@ -2371,7 +2492,7 @@ class TestLeasingLoopAdmissionTelemetry(unittest.IsolatedAsyncioTestCase):
             mock.patch.object(
                 socket,
                 "gethostname",
-                return_value="worker-host",
+                side_effect=AssertionError("hostname should be cached"),
             ),
             self.assertLogs(
                 "backend.pipeline.ingestion.collector_runtime",

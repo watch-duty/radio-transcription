@@ -10,10 +10,16 @@
 
 locals {
   registry_host  = split("/", var.container_image)[0]
+  vm_health_port = 8080
+  # Current container-MIG topology runs two worker containers per VM. Each
+  # worker exposes container /healthz on host port vm_health_port + index, so
+  # worker 1 is :8081 and worker 2 is :8082. The VM Health agent itself
+  # listens on vm_health_port (:8080). Keep this as an internal local until a
+  # deployment needs a different per-VM worker count.
   worker_indices = [1, 2]
   vm_health_worker_endpoints = join(",", [
     for worker_index in local.worker_indices :
-    "http://127.0.0.1:${8080 + worker_index}/healthz"
+    "http://127.0.0.1:${local.vm_health_port + worker_index}/healthz"
   ])
   worker_systemd_after_units = join(" ", [
     for worker_index in local.worker_indices :
@@ -85,6 +91,7 @@ resource "google_compute_instance_template" "this" {
       container_image            = var.container_image
       env_file_content           = local.env_file_content
       enable_autohealing         = var.enable_autohealing
+      vm_health_port             = local.vm_health_port
       worker_indices             = local.worker_indices
       vm_health_worker_endpoints = local.vm_health_worker_endpoints
       worker_systemd_after_units = local.worker_systemd_after_units
@@ -118,7 +125,7 @@ resource "google_compute_health_check" "this" {
   unhealthy_threshold = 3 # 3 consecutive failures = 90s minimum; up to 120s from problem onset
 
   http_health_check {
-    port         = 8080
+    port         = local.vm_health_port
     request_path = "/healthz"
   }
 }

@@ -77,7 +77,14 @@ _PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
 _PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
 _NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
 _NON_BUDGETED_RETRY_MAX_SEC = 15 * 60
-_UUID_SPACE_SIZE = 1 << 128
+_UUID_INT_RANGE = 1 << 128
+
+
+def _bounded_jitter(max_sec: float) -> float:
+    """Return bounded non-cryptographic scheduling jitter."""
+    if max_sec <= 0.0:
+        return 0.0
+    return random.uniform(0.0, max_sec)  # noqa: S311 -- scheduling jitter
 
 
 def _deterministic_startup_stagger(
@@ -87,7 +94,10 @@ def _deterministic_startup_stagger(
     """Map a worker UUID into a stable delay in ``[0, max_sec)``."""
     if max_sec <= 0.0:
         return 0.0
-    return (worker_id.int / _UUID_SPACE_SIZE) * max_sec
+    # UUIDs are already uniformly distributed over the 128-bit integer range.
+    # Scaling directly keeps the delay stable without depending on a PRNG
+    # algorithm for deterministic scheduling.
+    return (worker_id.int / _UUID_INT_RANGE) * max_sec
 
 
 def _startup_pacing_delay(
@@ -100,12 +110,7 @@ def _startup_pacing_delay(
         worker_id,
         startup_stagger_max_sec,
     )
-    random_delay = 0.0
-    if startup_jitter_max_sec > 0.0:
-        random_delay = random.uniform(  # noqa: S311 -- scheduling jitter
-            0.0,
-            startup_jitter_max_sec,
-        )
+    random_delay = _bounded_jitter(startup_jitter_max_sec)
     return deterministic_delay, random_delay, deterministic_delay + random_delay
 
 
@@ -114,12 +119,7 @@ def _lease_poll_sleep_seconds(
     lease_poll_jitter_max_sec: float,
 ) -> float:
     """Return the lease poll interval plus bounded scheduling jitter."""
-    if lease_poll_jitter_max_sec <= 0.0:
-        return lease_poll_interval_sec
-    return lease_poll_interval_sec + random.uniform(  # noqa: S311
-        0.0,
-        lease_poll_jitter_max_sec,
-    )
+    return lease_poll_interval_sec + _bounded_jitter(lease_poll_jitter_max_sec)
 
 
 class _PipelineFailure(Exception):
@@ -183,6 +183,7 @@ class CollectorRuntime:
             settings = CollectorSettings()
         self._capture_fn = capture_fn
         self._collector_settings = settings
+        self._hostname = socket.gethostname()
         self._runtime_actor_id = (
             runtime_actor_id
             if runtime_actor_id is not None
@@ -296,10 +297,15 @@ class CollectorRuntime:
             "event_type": "startup_pacing",
             "worker_id": str(settings.worker_id),
             "worker_index": settings.worker_index,
-            "hostname": os.uname().nodename,
+            "hostname": self._hostname,
             "deterministic_delay_sec": deterministic_delay,
             "random_delay_sec": random_delay,
             "total_delay_sec": total_startup_delay,
+            "startup_stagger_max_sec": settings.startup_stagger_max_sec,
+            "startup_jitter_max_sec": settings.startup_jitter_max_sec,
+            "lease_admission_cycle_budget": settings.lease_admission_cycle_budget,
+            "max_feeds_per_worker": settings.max_feeds_per_worker,
+            "process_id": os.getpid(),
         }
         logger.info(
             "Startup pacing before pool creation",
@@ -548,40 +554,22 @@ class CollectorRuntime:
                     # reclaiming slack before the next sweep tick.
                     if len(primary) < admission_budget:
                         try:
-                            # Recovery must respect the SAME per-type caps
-                            # the primary path enforced. Without re-running
-                            # the apportion, recovery could push held > cap
-                            # for a type whose primary path returned 0
-                            # (e.g. all unclaimed of that type are
-                            # failing-retryable, not unclaimed). Compute a
-                            # fresh per-type limit dict from `held + primary
-                            # acquired-by-type` and the remaining slack.
-                            primary_by_type: dict[SourceType, int] = (
-                                dict.fromkeys(caps, 0)
+                            recovery_limits = self._calculate_recovery_limits(
+                                admission_budget=admission_budget,
+                                caps=caps,
+                                held=held,
+                                primary=primary,
                             )
-                            for lease in primary:
-                                t = lease["source_type"]
-                                if t in primary_by_type:
-                                    primary_by_type[t] += 1
-                            held_after_primary = {
-                                t: held.get(t, 0) + primary_by_type[t]
-                                for t in caps
-                            }
-                            recovery_remaining_budget = admission_budget - len(
-                                primary
-                            )
-                            recovery_limits = self._calculate_branch_limits(
-                                recovery_remaining_budget,
-                                caps,
-                                held_after_primary,
-                            )
-                            recovery = await self._store.acquire_feeds_recovery(
-                                s.worker_id,
-                                s.abandonment_window_sec,
-                                recovery_limits,
-                            )
-                            recovery_acquired = len(recovery)
-                            leases.extend(recovery)
+                            if sum(recovery_limits.values()) > 0:
+                                recovery = (
+                                    await self._store.acquire_feeds_recovery(
+                                        s.worker_id,
+                                        s.abandonment_window_sec,
+                                        recovery_limits,
+                                    )
+                                )
+                                recovery_acquired = len(recovery)
+                                leases.extend(recovery)
                         except Exception as exc:
                             admission_error = exc.__class__.__name__
                             logger.exception(
@@ -713,7 +701,7 @@ class CollectorRuntime:
             "event_type": "lease_admission_cycle",
             "worker_id": str(self._collector_settings.worker_id),
             "worker_index": self._collector_settings.worker_index,
-            "hostname": socket.gethostname(),
+            "hostname": self._hostname,
             "active_feeds": active_feeds,
             "max_feeds": max_feeds,
             "slack": slack,
@@ -832,6 +820,31 @@ class CollectorRuntime:
             remaining_slack -= limits[t]
             remaining_branches -= 1
         return limits
+
+    @staticmethod
+    def _calculate_recovery_limits(
+        *,
+        admission_budget: int,
+        caps: dict[SourceType, int],
+        held: dict[SourceType, int],
+        primary: list[LeasedFeed],
+    ) -> dict[SourceType, int]:
+        """Return recovery branch limits after accounting for primary leases."""
+        primary_by_type: dict[SourceType, int] = dict.fromkeys(caps, 0)
+        for lease in primary:
+            t = lease["source_type"]
+            if t in primary_by_type:
+                primary_by_type[t] += 1
+
+        held_after_primary = {
+            t: held.get(t, 0) + primary_by_type[t] for t in caps
+        }
+        recovery_remaining_budget = max(0, admission_budget - len(primary))
+        return CollectorRuntime._calculate_branch_limits(
+            recovery_remaining_budget,
+            caps,
+            held_after_primary,
+        )
 
     @staticmethod
     def _consume_orphan_exception(task: asyncio.Task) -> None:
