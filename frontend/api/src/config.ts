@@ -55,7 +55,6 @@ export const PROJECT_ID = projectId;
 export const API_PUBLIC_URL = apiPublicUrl;
 export const GOOGLE_AUTH_CLIENT_ID = googleClientId;
 export const GOOGLE_AUTH_CLIENT_SECRET = googleClientSecret;
-
 export const AUTH_BACKEND = process.env.AUTH_BACKEND || 'google';
 
 export const WORKSPACE_ADMIN_GROUP_EMAIL =
