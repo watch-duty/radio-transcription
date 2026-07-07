@@ -23,6 +23,7 @@ from backend.pipeline.storage import (
 from backend.pipeline.storage.pagination_utils import (
     SortOrder,
     decode_cursor,
+    decode_int_cursor,
     get_paginated_results,
 )
 
@@ -190,6 +191,24 @@ class Feed(TypedDict):
 @dataclass
 class PaginatedFeeds:
     feeds: list[Feed]
+    next_token: str | None
+    total: int
+
+
+class FeedAuditEvent(TypedDict):
+    id: uuid.UUID
+    feed_id: uuid.UUID
+    action: str
+    actor_id: str
+    occurred_at: datetime.datetime
+    feed_revision: int
+    before_values: dict
+    after_values: dict
+
+
+@dataclass
+class PaginatedFeedAuditEvents:
+    audit_events: list[FeedAuditEvent]
     next_token: str | None
     total: int
 
@@ -1109,3 +1128,77 @@ class FeedStore:
             row.get("feed_audit_event")
         )
         return feed
+
+    async def list_feed_history_records(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        limit: int = 100,
+        next_token: str | None = None,
+        order: SortOrder = SortOrder.DESC,
+    ) -> PaginatedFeedAuditEvents:
+        """List audit events for a feed with keyset pagination.
+
+        Args:
+            feed_id: UUID of the feed whose history to list.
+            limit: Maximum number of events to return.
+            next_token: Keyset pagination token for the next page.
+            order: The sort order by occurred_at (ASC or DESC).
+
+        Returns:
+            A PaginatedFeedAuditEvents object containing history events, next_token, and total.
+
+        Raises:
+            ValueError: If limit is less than 1 or if next_token is invalid.
+        """
+        if limit < 1:
+            msg = "limit must be >= 1"
+            raise ValueError(msg)
+
+        cursor_ts = None
+        cursor_revision = None
+        if next_token:
+            cursor_ts, cursor_revision = decode_int_cursor(next_token)
+
+        is_asc = order == SortOrder.ASC or order == "asc"
+        query = (
+            feed_queries.LIST_FEED_AUDIT_EVENTS_ASC_SQL
+            if is_asc
+            else feed_queries.LIST_FEED_AUDIT_EVENTS_DESC_SQL
+        )
+
+        rows_task = self._pool.fetch(
+            query,
+            feed_id,
+            cursor_ts,
+            cursor_revision,
+            limit + 1,
+        )
+        total_task = self._pool.fetchval(
+            feed_queries.COUNT_FEED_AUDIT_EVENTS_SQL,
+            feed_id,
+        )
+
+        rows, total = await asyncio.gather(rows_task, total_task)
+
+        rows, new_next_token = get_paginated_results(
+            rows,
+            limit,
+            timestamp_key="occurred_at",
+            id_key="feed_revision",
+        )
+
+        events = [
+            FeedAuditEvent(
+                id=row["id"],
+                feed_id=row["feed_id"],
+                action=row["action"],
+                actor_id=row["actor_id"],
+                occurred_at=row["occurred_at"],
+                feed_revision=row["feed_revision"],
+                before_values=row["before_values"],
+                after_values=row["after_values"],
+            )
+            for row in rows
+        ]
+        return PaginatedFeedAuditEvents(events, new_next_token, total)
