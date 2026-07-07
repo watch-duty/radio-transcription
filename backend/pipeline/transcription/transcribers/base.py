@@ -18,14 +18,15 @@ class Transcriber(abc.ABC):
         """
 
     @abc.abstractmethod
-    def transcribe(
+    async def transcribe(
         self,
         *,
         audio_data: bytes | None = None,
         uri: str | None = None,
         duration_ms: int,
     ) -> str | None:
-        """Transcribes the audio payload either via raw bytes or a GCS URI reference and returns the text transcript.
+        """Transcribes the audio payload either via raw bytes or a GCS URI
+        reference and returns the text transcript.
 
         Args:
             audio_data: The raw audio payload bytes.
@@ -35,3 +36,7 @@ class Transcriber(abc.ABC):
         Returns:
             The transcribed text, or None if unintelligible or empty.
         """
+
+    async def close(self) -> None:
+        """Optional cleanup hook for closing client connections."""
+        return

@@ -1,17 +1,17 @@
 {
-  "name": "Transcription Pipeline Template",
-  "description": "Flex Template for the Audio Transcription Pipeline (Dataflow).",
+  "name": "Audio Segmentation Pipeline Template",
+  "description": "Flex Template for the Audio Segmentation & Stitching Pipeline (Dataflow).",
   "parameters": [
     {
       "name": "input_subscription",
       "label": "Input Subscription",
-      "helpText": "Full path of the Pub/Sub ordered subscription for audio feeds (e.g. projects/your-project/subscriptions/audio-sub).",
+      "helpText": "Full path of the Pub/Sub ordered subscription for raw continuous audio feeds (e.g. projects/your-project/subscriptions/continuous-audio-sub).",
       "isOptional": false
     },
     {
       "name": "output_topic",
       "label": "Output Topic",
-      "helpText": "Full path of the Pub/Sub topic to publish transcribed text to.",
+      "helpText": "Full path of the Pub/Sub topic to publish segmented audio metadata to.",
       "isOptional": false
     },
     {
@@ -42,6 +42,30 @@
       "name": "out_of_order_timeout_ms",
       "label": "Out Of Order Timeout (MS)",
       "helpText": "Milliseconds to wait for missing chunks before accepting a logical gap for audio feeds. Default: 60000ms.",
+      "isOptional": true
+    },
+    {
+      "name": "stale_timeout_ms",
+      "label": "Stale Timeout (MS)",
+      "helpText": "Milliseconds before an incomplete transmission is flushed.",
+      "isOptional": true
+    },
+    {
+      "name": "id_label",
+      "label": "ID Label",
+      "helpText": "Pub/Sub attribute to use for strictly exactly-once deduplication. Default: gcs_uri.",
+      "isOptional": true
+    },
+    {
+      "name": "vad_config",
+      "label": "VAD Config",
+      "helpText": "JSON string of VAD-specific configuration.",
+      "isOptional": true
+    },
+    {
+      "name": "significant_gap_ms",
+      "label": "Significant Gap (MS)",
+      "helpText": "Silence gap required to flush a transmission.",
       "isOptional": true
     }
   ]

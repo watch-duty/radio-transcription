@@ -17,9 +17,11 @@ dependencies = [
     "opentelemetry-exporter-gcp-trace>=1.12.0",
     "opentelemetry-exporter-gcp-monitoring>=1.6.0",
     "aiohttp>=3.14.1",
+    "httpx>=0.28.1",
     "redis>=7.3.0",
     "pydantic>=2.10.6",
     "protobuf>=5.29.6",
+    "tenacity>=9.1.4",
 ]
 
 [tool.setuptools]

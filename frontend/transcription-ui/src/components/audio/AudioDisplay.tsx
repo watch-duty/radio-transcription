@@ -1,36 +1,107 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
-import type { Howl } from 'howler';
-import type WaveSurfer from 'wavesurfer.js';
-
-import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
-import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
 import Box from '@mui/material/Box';
-import IconButton from '@mui/material/IconButton';
 import Paper from '@mui/material/Paper';
 import Typography from '@mui/material/Typography';
 import { type Theme, useTheme } from '@mui/material/styles';
 import { type AudioSegment } from '@transcription/common';
-import WavesurferPlayer from '@wavesurfer/react';
 
-import { findEvaluationAnnotationData } from '../../utils/annotationUtils';
-import { getAudioUrl } from '../../utils/audioUtils';
-import { MAX_WINDOW_DURATION_MS } from '../../utils/timeUtils';
+import type { PlaybackController } from '../../audio/WebAudioPlayer';
+import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
+import {
+  findEvaluationAnnotationData,
+  findWaveformAnnotationData,
+  segmentHasSpeech,
+} from '../../utils/annotationUtils';
+import { type PlaybackState } from '../../utils/playbackUtils';
 import { CustomAlertIcon } from '../common/AlertIcon';
+import TimelinePlayhead from './TimelinePlayhead';
+import { computePlayhead } from './computePlayhead';
 
 interface AudioDisplayProps {
-  audioSegments: AudioSegment[];
+  audioSegments: RenderableAudioSegment[];
+  // Unconsolidated segments, so the playhead can anchor on the raw clip playing.
+  rawAudioSegments: AudioSegment[];
   currentlyPlayingSegmentId: string | null;
   highlightedSegmentId: string | null;
   onClipClick: (segmentId: string) => void;
-  userDuration?: string | null;
+  // Visible window, owned by useAudioTimelineWindow; null follows the live edge.
+  windowEndTime: number | null;
+  windowDurationMs: number;
   isAudioPlaying: boolean;
-  onTogglePlayPause: () => void;
-  currentTimeSeconds?: number;
-  currentAudioRef?: React.RefObject<Howl | null>;
+  playbackState: PlaybackState;
+  currentAudioRef?: React.RefObject<PlaybackController | null>;
+  seekTrigger?: number;
 }
 
-const PLAYING_CURSOR_WIDTH_PX = 1;
+const WAVEFORM_MIN_AMPLITUDE = 0.0083; // silent buckets show a ~0.5px hairline at the 60px track height
+
+// preserveAspectRatio="none" stretches the viewBox (one unit per peak) to fill
+// the clip box at any width.
+const Waveform = React.memo(function Waveform({
+  peaks,
+  color,
+}: {
+  peaks: number[][];
+  color: string;
+}) {
+  const channel = peaks[0] ?? [];
+  const bars = channel
+    .map((value, i) => {
+      const amp = Math.max(
+        WAVEFORM_MIN_AMPLITUDE,
+        Math.min(1, Math.abs(value))
+      );
+      const top = (1 - amp) / 2;
+      return `M${i} ${top}h1v${amp}h-1Z`;
+    })
+    .join('');
+
+  return (
+    <Box
+      component="svg"
+      data-testid="waveform"
+      viewBox={`0 0 ${channel.length || 1} 1`}
+      preserveAspectRatio="none"
+      sx={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
+    >
+      <path d={bars} fill={color} />
+    </Box>
+  );
+});
+
+// Shown when a clip has no WAVEFORM annotation: a solid block when speech was
+// detected (audio is present, the waveform is just unavailable) vs a thin line
+// otherwise, so the two never read as the same flat "silence".
+const WaveformPlaceholder = ({ isSpeech }: { isSpeech: boolean }) =>
+  isSpeech ? (
+    <Box
+      data-testid="waveform-missing-block"
+      sx={{
+        position: 'absolute',
+        top: '20%',
+        bottom: '20%',
+        left: 0,
+        right: 0,
+        bgcolor: 'text.secondary',
+        opacity: 0.25,
+      }}
+    />
+  ) : (
+    <Box
+      data-testid="waveform-silence-line"
+      sx={{
+        position: 'absolute',
+        top: '50%',
+        left: 0,
+        right: 0,
+        height: '2px',
+        transform: 'translateY(-50%)',
+        bgcolor: 'text.secondary',
+        opacity: 0.35,
+      }}
+    />
+  );
 
 const formatTime = (timestamp: number) => {
   const date = new Date(timestamp);
@@ -44,53 +115,57 @@ const formatTime = (timestamp: number) => {
 interface TimelineClipProps {
   clip: {
     id: string;
-    url: string;
     left: number;
     width: number;
     isAudioPlaying: boolean;
     isHighlighted: boolean;
     hasAlert: boolean;
+    // From the segment's WAVEFORM annotation; absent on older segments
+    // (pre-rollout) or if waveform computation was skipped.
+    peaks?: number[][];
+    duration?: number;
+    isSpeech?: boolean;
+    isOutageBundle?: boolean;
   };
   onClipClick: (segmentId: string) => void;
   isDarkTheme: boolean;
   theme: Theme;
-  currentTimeSeconds?: number;
 }
 
 const TimelineClip = React.memo(
-  ({
-    clip,
-    onClipClick,
-    isDarkTheme,
-    theme,
-    currentTimeSeconds,
-  }: TimelineClipProps) => {
-    const wsRef = useRef<WaveSurfer | null>(null);
+  ({ clip, onClipClick, isDarkTheme, theme }: TimelineClipProps) => {
+    const renderWaveform = !!clip.peaks?.[0]?.length;
 
-    // Sync options dynamically (like cursor color/width) without destroying wavesurfer
-    useEffect(() => {
-      if (wsRef.current) {
-        wsRef.current.setOptions({
-          cursorColor: clip.isAudioPlaying
-            ? theme.palette.error.main
-            : 'transparent',
-          cursorWidth: clip.isAudioPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
-        });
-      }
-    }, [clip.isAudioPlaying, theme.palette.error.main]);
-
-    // Sync playback progress (seek)
-    useEffect(() => {
-      if (
-        clip.isAudioPlaying &&
-        wsRef.current &&
-        currentTimeSeconds !== undefined
-      ) {
-        wsRef.current.setTime(currentTimeSeconds);
-      } else if (!clip.isAudioPlaying && wsRef.current) {
-        wsRef.current.setTime(0);
-      }
-    }, [clip.isAudioPlaying, currentTimeSeconds]);
+    if (clip.isOutageBundle) {
+      return (
+        <Box
+          sx={{
+            position: 'absolute',
+            left: `${clip.left}%`,
+            width: `${clip.width}%`,
+            height: '100%',
+            background: isDarkTheme
+              ? 'rgba(0, 0, 0, 0.25)'
+              : 'rgba(0, 0, 0, 0.06)',
+            borderLeft: isDarkTheme
+              ? '1px solid rgba(255, 255, 255, 0.05)'
+              : '1px solid rgba(0, 0, 0, 0.05)',
+            borderRight: isDarkTheme
+              ? '1px solid rgba(255, 255, 255, 0.05)'
+              : '1px solid rgba(0, 0, 0, 0.05)',
+            animation: 'outagePulse 2.5s ease-in-out infinite',
+            '@keyframes outagePulse': {
+              '0%, 100%': {
+                opacity: 0.4,
+              },
+              '50%': {
+                opacity: 0.85,
+              },
+            },
+          }}
+        />
+      );
+    }
 
     return (
       <Box
@@ -117,12 +192,6 @@ const TimelineClip = React.memo(
                   ? 'rgba(255, 255, 255, 0.03)'
                   : 'rgba(0, 0, 0, 0.03)',
           },
-          /* Wavesurfer cursor subpixel anti-aliasing / shimmering optimizations */
-          '& div::part(cursor)': {
-            willChange: 'left',
-            transform: 'translateZ(0)',
-            backfaceVisibility: 'hidden',
-          },
         }}
       >
         {clip.hasAlert && (
@@ -141,32 +210,11 @@ const TimelineClip = React.memo(
             }}
           />
         )}
-        <WavesurferPlayer
-          url={clip.url}
-          waveColor={theme.palette.text.secondary}
-          progressColor={theme.palette.text.primary}
-          cursorColor="transparent"
-          cursorWidth={0}
-          barWidth={0.5}
-          barGap={0.5}
-          height={60}
-          interact={false}
-          onReady={(ws) => {
-            wsRef.current = ws;
-            ws.setOptions({
-              cursorColor: clip.isAudioPlaying
-                ? theme.palette.error.main
-                : 'transparent',
-              cursorWidth: clip.isAudioPlaying ? PLAYING_CURSOR_WIDTH_PX : 0,
-            });
-            if (clip.isAudioPlaying && currentTimeSeconds !== undefined) {
-              ws.setTime(currentTimeSeconds);
-            }
-          }}
-          onDestroy={() => {
-            wsRef.current = null;
-          }}
-        />
+        {renderWaveform && clip.peaks ? (
+          <Waveform peaks={clip.peaks} color={theme.palette.text.secondary} />
+        ) : (
+          <WaveformPlaceholder isSpeech={!!clip.isSpeech} />
+        )}
       </Box>
     );
   },
@@ -175,50 +223,33 @@ const TimelineClip = React.memo(
     // unless the props actually change.
     return (
       prevProps.clip.id === nextProps.clip.id &&
-      prevProps.clip.url === nextProps.clip.url &&
       prevProps.clip.left === nextProps.clip.left &&
       prevProps.clip.width === nextProps.clip.width &&
       prevProps.clip.isAudioPlaying === nextProps.clip.isAudioPlaying &&
       prevProps.clip.isHighlighted === nextProps.clip.isHighlighted &&
       prevProps.clip.hasAlert === nextProps.clip.hasAlert &&
+      prevProps.clip.peaks === nextProps.clip.peaks &&
+      prevProps.clip.duration === nextProps.clip.duration &&
+      prevProps.clip.isSpeech === nextProps.clip.isSpeech &&
+      prevProps.clip.isOutageBundle === nextProps.clip.isOutageBundle &&
       prevProps.isDarkTheme === nextProps.isDarkTheme &&
-      prevProps.theme === nextProps.theme &&
-      prevProps.currentTimeSeconds === nextProps.currentTimeSeconds
+      prevProps.theme === nextProps.theme
     );
   }
 );
 
-/**
- * Determines whether the timeline window was aligned to the previous live head.
- *
- * If it was aligned to the head (or if there is no previous state/window bounds),
- * the viewport should automatically advance forward to show newly arriving segments.
- * If the user has scrolled back in time, we should keep the viewport anchored at their scroll position.
- */
-function isViewportAlignedToHead(
-  windowEndTime: number | null,
-  prevFirstTranscriptEndTimestamp: string | null,
-  isInitialLoad: boolean
-): boolean {
-  if (isInitialLoad || !windowEndTime || !prevFirstTranscriptEndTimestamp) {
-    return true;
-  }
-  const prevHeadTime = new Date(prevFirstTranscriptEndTimestamp).getTime();
-  const timeDifferenceMs = Math.abs(windowEndTime - prevHeadTime);
-  // Allow a 1-second tolerance for floating point rounding in time conversions
-  return timeDifferenceMs < 1000;
-}
-
 export function AudioDisplay({
   audioSegments,
+  rawAudioSegments,
   currentlyPlayingSegmentId,
   highlightedSegmentId,
   onClipClick,
-  userDuration,
+  windowEndTime,
+  windowDurationMs,
   isAudioPlaying,
-  onTogglePlayPause,
-  currentTimeSeconds,
+  playbackState,
   currentAudioRef,
+  seekTrigger,
 }: AudioDisplayProps) {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';
@@ -229,7 +260,6 @@ export function AudioDisplay({
   // Poll current playback progress when audio is playing
   useEffect(() => {
     if (
-      currentTimeSeconds !== undefined ||
       !isAudioPlaying ||
       !currentlyPlayingSegmentId ||
       !currentAudioRef?.current
@@ -241,11 +271,7 @@ export function AudioDisplay({
 
     const updateProgress = () => {
       if (currentAudioRef.current) {
-        const seek = currentAudioRef.current.seek();
-        // seek could be the Howl instance if audio isn't yet loaded, so we should guard against that.
-        if (typeof seek === 'number') {
-          setLocalCurrentTimeSeconds(seek);
-        }
+        setLocalCurrentTimeSeconds(currentAudioRef.current.getCurrentTime());
       }
       animationFrameId = requestAnimationFrame(updateProgress);
     };
@@ -255,110 +281,23 @@ export function AudioDisplay({
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [
-    isAudioPlaying,
-    currentlyPlayingSegmentId,
-    currentAudioRef,
-    currentTimeSeconds,
-  ]);
+  }, [isAudioPlaying, currentlyPlayingSegmentId, currentAudioRef]);
 
-  const [windowEndTime, setWindowEndTime] = useState<number | null>(null);
+  // Sync progress instantly on discrete seek events (e.g. skip buttons when paused)
+  useEffect(() => {
+    if (currentAudioRef?.current) {
+      setLocalCurrentTimeSeconds(currentAudioRef.current.getCurrentTime());
+    }
+  }, [seekTrigger, currentAudioRef]);
 
-  const [prevFirstAudioSegmentId, setPrevFirstAudioSegmentId] = useState<
-    string | null
-  >(null);
-  const [
-    prevFirstAudioSegmentEndTimestamp,
-    setPrevFirstAudioSegmentEndTimestamp,
-  ] = useState<string | null>(null);
-  const [prevPlayingId, setPrevPlayingId] = useState<string | null>(null);
-  const [prevHighlightedId, setPrevHighlightedId] = useState<string | null>(
-    null
+  // Reset the playback position when the playing segment changes, so the
+  // playhead starts at the new clip instead of flashing the previous offset.
+  const [prevPlayingId, setPrevPlayingId] = useState<string | null>(
+    currentlyPlayingSegmentId
   );
-  const [prevUserDuration, setPrevUserDuration] = useState<string | null>(
-    userDuration ?? null
-  );
-
-  const windowDurationMs = useMemo(() => {
-    if (!userDuration) return MAX_WINDOW_DURATION_MS;
-    const parsed = parseFloat(userDuration);
-    if (isNaN(parsed) || parsed <= 0) return MAX_WINDOW_DURATION_MS;
-    const userMs = parsed * 2 * 60 * 1000;
-    return Math.min(MAX_WINDOW_DURATION_MS, userMs);
-  }, [userDuration]);
-
-  const firstAudioSegment = audioSegments[0];
-  const firstAudioSegmentId = firstAudioSegment?.id || null;
-  const firstAudioSegmentEndTimestamp = firstAudioSegment?.endTimestamp || null;
-
-  // Check if a new segment has been added to the top of the feed
-  const isNewFirstAudioSegment =
-    firstAudioSegmentId !== prevFirstAudioSegmentId;
-
-  // Check if the current top audio segment has been extended (e.g. an ongoing silence bundle).
-  // When a silence bundle is extended, its ID remains the same but its end timestamp advances.
-  const isFirstAudioSegmentExtended =
-    firstAudioSegmentEndTimestamp !== prevFirstAudioSegmentEndTimestamp;
-
-  const shouldUpdateWindow =
-    isNewFirstAudioSegment || isFirstAudioSegmentExtended;
-
-  if (shouldUpdateWindow) {
-    const wasAlignedToHead = isViewportAlignedToHead(
-      windowEndTime,
-      prevFirstAudioSegmentEndTimestamp,
-      !prevFirstAudioSegmentId
-    );
-
-    setPrevFirstAudioSegmentId(firstAudioSegmentId);
-    setPrevFirstAudioSegmentEndTimestamp(firstAudioSegmentEndTimestamp);
-
-    if (wasAlignedToHead) {
-      setWindowEndTime(
-        firstAudioSegmentEndTimestamp
-          ? new Date(firstAudioSegmentEndTimestamp).getTime()
-          : null
-      );
-    }
-    setPrevPlayingId(null); // Force re-check of bounds
-  }
-
-  const playingId = currentlyPlayingSegmentId || null;
-
-  // Shift windowEndTime when playing or highlighted transcript goes out of bounds
-  if (
-    playingId !== prevPlayingId ||
-    highlightedSegmentId !== prevHighlightedId ||
-    (userDuration ?? null) !== prevUserDuration
-  ) {
-    if (playingId !== prevPlayingId) {
-      setLocalCurrentTimeSeconds(0);
-    }
-    setPrevPlayingId(playingId);
-    setPrevHighlightedId(highlightedSegmentId);
-    setPrevUserDuration(userDuration ?? null);
-
-    const targetId = highlightedSegmentId || playingId;
-    if (targetId) {
-      const targetAudioSegment = audioSegments.find((t) => t.id === targetId);
-      if (targetAudioSegment) {
-        const tStart = new Date(targetAudioSegment.startTimestamp).getTime();
-        const tEnd = new Date(targetAudioSegment.endTimestamp).getTime();
-
-        const newestEnd = firstAudioSegment
-          ? new Date(firstAudioSegment.endTimestamp).getTime()
-          : 0;
-
-        const currentEndTime = windowEndTime || newestEnd;
-        const currentStartTime = currentEndTime - windowDurationMs;
-
-        if (tStart < currentStartTime || tEnd > currentEndTime) {
-          const preferredEndTime = tStart + windowDurationMs / 2;
-          const newEndTime = Math.min(preferredEndTime, newestEnd);
-          setWindowEndTime(newEndTime);
-        }
-      }
-    }
+  if (currentlyPlayingSegmentId !== prevPlayingId) {
+    setPrevPlayingId(currentlyPlayingSegmentId);
+    setLocalCurrentTimeSeconds(0);
   }
 
   // Calculates the visible time window bounds and processes audio segments into positioned clips for the waveform display.
@@ -395,20 +334,23 @@ export function AudioDisplay({
         const left = ((visibleStart - startTime) / windowDuration) * 100;
         const width = ((visibleEnd - visibleStart) / windowDuration) * 100;
 
-        const url = t.playbackAudioUri ? getAudioUrl(t.playbackAudioUri) : '';
+        const waveform = findWaveformAnnotationData(t.annotations);
 
         const evaluationAnnotation = findEvaluationAnnotationData(
           t.annotations
         );
         return {
           id: t.id,
-          url,
           left,
           width,
           isAudioPlaying: t.id === currentlyPlayingSegmentId,
           isHighlighted: t.id === highlightedSegmentId,
           hasAlert:
             !!evaluationAnnotation && evaluationAnnotation.decisions.length > 0,
+          peaks: waveform?.peaks,
+          duration: waveform?.durationSeconds,
+          isSpeech: segmentHasSpeech(t),
+          isOutageBundle: !!t.isOutageBundle,
         };
       });
 
@@ -421,23 +363,20 @@ export function AudioDisplay({
     windowDurationMs,
   ]);
 
+  const playhead = computePlayhead({
+    audioSegments,
+    rawAudioSegments,
+    currentlyPlayingSegmentId,
+    state: playbackState,
+    localCurrentTimeSeconds,
+    startTime,
+    windowDurationMs: windowDuration,
+  });
+
   return (
     <Box
       sx={{ display: 'flex', alignItems: 'flex-start', width: '100%', mb: 1 }}
     >
-      <Box
-        sx={{ display: 'flex', mr: 1, alignItems: 'center', height: '60px' }}
-      >
-        <IconButton
-          onClick={onTogglePlayPause}
-          size="small"
-          color="primary"
-          aria-label={isAudioPlaying ? 'pause' : 'play'}
-          disabled={audioSegments.length === 0}
-        >
-          {isAudioPlaying ? <PauseIcon /> : <PlayArrowIcon />}
-        </IconButton>
-      </Box>
       <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
         <Paper
           variant="outlined"
@@ -455,17 +394,15 @@ export function AudioDisplay({
               onClipClick={onClipClick}
               isDarkTheme={isDarkTheme}
               theme={theme}
-              currentTimeSeconds={
-                clip.isAudioPlaying
-                  ? currentTimeSeconds !== undefined
-                    ? currentTimeSeconds
-                    : currentAudioRef
-                      ? localCurrentTimeSeconds
-                      : undefined
-                  : undefined
-              }
             />
           ))}
+          {playhead.show && (
+            <TimelinePlayhead
+              state={playhead.state}
+              leftOffsetPct={playhead.leftOffsetPct}
+              label={playhead.label}
+            />
+          )}
           {audioSegments.length === 0 && (
             <Box
               sx={{

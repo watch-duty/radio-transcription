@@ -16,8 +16,9 @@ COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv export --package transcription-function --no-dev --locked --no-emit-project -o requirements.txt && \
+    uv export --group build --locked -o build-requirements.txt && \
     uv pip install --system -r requirements.txt && \
-    uv pip install --system grpcio-tools
+    uv pip install --system -r build-requirements.txt
 
 COPY backend/ ./backend/
 COPY protos/ ./protos
@@ -27,7 +28,4 @@ RUN mkdir -p ./backend/pipeline/schema_types
 RUN touch ./backend/pipeline/schema_types/__init__.py
 RUN python -m grpc_tools.protoc -I=protos --python_out=backend/pipeline/schema_types protos/*.proto
 
-CMD ["functions-framework", \
-     "--source=backend/pipeline/transcription/main.py", \
-     "--target=transcribe_claim_check", \
-     "--signature-type=cloudevent"]
+CMD ["uvicorn", "backend.pipeline.transcription.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import datetime  # noqa: TC003
-import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Annotated
 
@@ -29,8 +28,6 @@ from .service import AudioSegmentService
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
-
-logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -68,6 +65,15 @@ async def list_audio_segments(
     order: SortOrder = SortOrder.DESC,
     *,
     is_alert: bool | None = None,
+    text_query: Annotated[
+        str | None,
+        Query(
+            description=(
+                "Search query to filter audio segments by transcript text "
+                "(case-insensitive substring match)"
+            )
+        ),
+    ] = None,
 ) -> ListAudioSegmentsResponse:
     """List audio segments with their annotations and pagination."""
     service: AudioSegmentService = request.app.state.audio_segment_service
@@ -80,6 +86,7 @@ async def list_audio_segments(
             end_time=end_time,
             order=order,
             is_alert=is_alert,
+            text_query=text_query,
         )
     except ValueError as e:
         raise HTTPException(

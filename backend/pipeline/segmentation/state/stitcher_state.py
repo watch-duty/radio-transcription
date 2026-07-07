@@ -1,13 +1,14 @@
 """A framework-agnostic state machine isolating sequential audio transmission boundary logic."""
 
 import logging
+from collections.abc import Callable
 
 from apache_beam.metrics import Metrics
 
-from backend.pipeline.common.constants import MS_PER_SECOND
 from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 from backend.pipeline.segmentation.constants import (
     DEFAULT_VAD_POST_ROLL_MS,
+    UPSTREAM_GAP_DRIFT_TOLERANCE_MS,
 )
 from backend.pipeline.segmentation.datatypes import (
     AppendBufferAction,
@@ -55,9 +56,11 @@ class AudioStitchingStateMachine:
         actions: list[StateMachineAction] = []
 
         # 1. Detect if we skipped over a chunk (upstream gap)
+        # We allow a small tolerance to absorb minor ffmpeg frame-alignment drift
         is_upstream_gap = (
             ctx.expected_next_chunk_start_ms is not None
-            and chunk_data.start_ms > ctx.expected_next_chunk_start_ms
+            and chunk_data.start_ms
+            > ctx.expected_next_chunk_start_ms + UPSTREAM_GAP_DRIFT_TOLERANCE_MS
         )
 
         if is_upstream_gap:
@@ -175,6 +178,7 @@ class AudioStitchingStateMachine:
             reason=reason,
             feed_id=ctx.feed_id,
             contributing_audio_uris=ctx.contributing_audio_uris.copy(),
+            contributing_chunks=list(ctx.contributing_chunks),
             time_range=TimeRange(
                 start_ms=ctx.buffer_start_time_ms,
                 end_ms=padded_end_time_ms,
@@ -215,7 +219,6 @@ class AudioStitchingStateMachine:
             feed_id=ctx.feed_id,
             current_gcs_uri=ctx.current_gcs_uri,
             session_id=ctx.session_id,
-            contributing_audio_uris=[],
             file_start_ms=chunk_data.start_ms,
             missing_prior_context=True,
             last_segment_end_time_ms=None,
@@ -271,6 +274,7 @@ class AudioStitchingStateMachine:
                             time_range=action.time_range,
                             speech_time_range=action.speech_time_range,
                             contributing_audio_uris=action.contributing_audio_uris,
+                            contributing_chunks=action.contributing_chunks,
                             missing_prior_context=action.missing_prior_context,
                             missing_post_context=action.missing_post_context,
                             start_audio_offset_ms=action.start_audio_offset_ms,
@@ -298,7 +302,7 @@ class AudioStitchingStateMachine:
         """
         ctx.transmission_start_time_ms = None
         ctx.buffer_start_time_ms = None
-        ctx.contributing_audio_uris.clear()
+        ctx.contributing_chunks.clear()
         ctx.start_audio_offset_ms = None
         ctx.buffer_duration_ms = 0
         ctx.speech_segments.clear()
@@ -335,17 +339,15 @@ class AudioStitchingStateMachine:
     ) -> list[StateMachineAction]:
         """Handles silent chunk processing when a speech transmission is active."""
         actions: list[StateMachineAction] = []
+        chunk_end_ms = file_start_ms + chunk_duration
         is_significant_gap = (
             ctx.last_segment_end_time_ms is not None
-            and ((file_start_ms) - ctx.last_segment_end_time_ms)
+            and (chunk_end_ms - ctx.last_segment_end_time_ms)
             >= self.config.significant_gap_ms
         )
         is_max_duration_exceeded = (
             ctx.transmission_start_time_ms is not None
-            and (
-                (file_start_ms + chunk_duration)
-                - ctx.transmission_start_time_ms
-            )
+            and (chunk_end_ms - ctx.transmission_start_time_ms)
             >= self.config.max_transmission_duration_ms
         )
 
@@ -393,7 +395,7 @@ class AudioStitchingStateMachine:
                 ctx.transmission_start_time_ms = file_start_ms + append_end
                 ctx.buffer_start_time_ms = file_start_ms + append_end
                 ctx.start_audio_offset_ms = 0
-                ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+                ctx.add_contributing_chunk(ctx.current_gcs_uri, file_start_ms)
                 actions.append(
                     AppendBufferAction(
                         audio_buffer=chunk_data.audio[
@@ -409,8 +411,7 @@ class AudioStitchingStateMachine:
             actions.append(ScheduleStaleTimerAction(deadline_ms=0))
             return actions
 
-        if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
-            ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+        ctx.add_contributing_chunk(ctx.current_gcs_uri, file_start_ms)
 
         if ctx.last_segment_end_time_ms is not None:
             target_post_roll_end = (
@@ -478,8 +479,7 @@ class AudioStitchingStateMachine:
             ctx.start_audio_offset_ms = 0
             ctx.buffer_duration_ms = 0
 
-        if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
-            ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+        ctx.add_contributing_chunk(ctx.current_gcs_uri, file_start_ms)
 
         # Append the whole chunk!
         actions.append(AppendBufferAction(audio_buffer=chunk_data.audio))
@@ -598,8 +598,7 @@ class AudioStitchingStateMachine:
         ctx.last_segment_end_time_ms = (
             chunk_data.start_ms + first_speech_start_rel_ms
         )
-        if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
-            ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+        ctx.add_contributing_chunk(ctx.current_gcs_uri, chunk_data.start_ms)
 
         actions.append(
             self._flush_current_transmission(
@@ -657,8 +656,7 @@ class AudioStitchingStateMachine:
         ctx.buffer_start_time_ms = file_start_ms + silence_start_rel_ms
         ctx.start_audio_offset_ms = silence_start_rel_ms
         ctx.buffer_duration_ms = silence_duration_ms
-        if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
-            ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+        ctx.add_contributing_chunk(ctx.current_gcs_uri, file_start_ms)
 
         actions.append(AppendBufferAction(audio_buffer=silence_samples))
         ctx.last_segment_end_time_ms = file_start_ms + speech_start_rel_ms
@@ -738,8 +736,7 @@ class AudioStitchingStateMachine:
             actions.append(AppendBufferAction(audio_buffer=speech_samples))
             ctx.buffer_duration_ms += global_end_ms - global_start_ms
 
-        if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
-            ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+        ctx.add_contributing_chunk(ctx.current_gcs_uri, file_start_ms)
         ctx.last_segment_end_time_ms = file_start_ms + global_end_ms
         ctx.speech_segments.append(
             TimeRange(
@@ -786,8 +783,7 @@ class AudioStitchingStateMachine:
             )
             ctx.start_audio_offset_ms = current_file_cursor_ms
             ctx.buffer_duration_ms = 0
-            if ctx.current_gcs_uri not in ctx.contributing_audio_uris:
-                ctx.contributing_audio_uris.append(ctx.current_gcs_uri)
+            ctx.add_contributing_chunk(ctx.current_gcs_uri, chunk_data.start_ms)
 
         actions.append(AppendBufferAction(audio_buffer=silence_samples))
         ctx.buffer_duration_ms += silence_duration_ms
@@ -795,6 +791,114 @@ class AudioStitchingStateMachine:
             chunk_data.start_ms + chunk_data.duration_ms
         )
         return actions
+
+    def _process_silence(
+        self,
+        chunk_data: AudioChunkData,
+        ctx: StitcherContext,
+        current_file_cursor_ms: int,
+        silence_end_rel_ms: int,
+        samples_per_ms: int,
+        actions: list[StateMachineAction],
+        on_significant_gap: Callable[[int], list[StateMachineAction]],
+    ) -> bool:
+        """Evaluates a silence gap, either executing the significant gap
+        callback or appending the sub-threshold pause to the active speech
+        transmission.
+
+        Returns:
+            True if the silence gap was processed, False otherwise.
+        """
+        if (
+            self.config.isolate_segmented_chunks
+            or silence_end_rel_ms <= current_file_cursor_ms
+            or ctx.last_segment_end_time_ms is None
+        ):
+            return False
+
+        silence_start_rel_ms = max(
+            current_file_cursor_ms,
+            ctx.last_segment_end_time_ms - chunk_data.start_ms,
+        )
+
+        if silence_start_rel_ms < silence_end_rel_ms:
+            silence_gap_end_abs_ms = chunk_data.start_ms + silence_end_rel_ms
+            silence_gap_ms = (
+                silence_gap_end_abs_ms - ctx.last_segment_end_time_ms
+            )
+
+            if silence_gap_ms >= self.config.significant_gap_ms:
+                new_actions = on_significant_gap(silence_start_rel_ms)
+                actions.extend(new_actions)
+            else:
+                # Append sub-threshold pause to the active transmission
+                silence_samples = chunk_data.audio[
+                    silence_start_rel_ms * samples_per_ms : silence_end_rel_ms
+                    * samples_per_ms
+                ]
+                if len(silence_samples) > 0:
+                    actions.append(
+                        AppendBufferAction(audio_buffer=silence_samples)
+                    )
+                    ctx.buffer_duration_ms += (
+                        silence_end_rel_ms - silence_start_rel_ms
+                    )
+            return True
+
+        return False
+
+    def _handle_intra_chunk_silence(
+        self,
+        chunk_data: AudioChunkData,
+        ctx: StitcherContext,
+        current_file_cursor_ms: int,
+        speech_start_rel_ms: int,
+        samples_per_ms: int,
+        actions: list[StateMachineAction],
+    ) -> int:
+        """Handles silence interval between consecutive speech utterances
+        within a chunk, either flushing a significant gap or appending
+        a short pause.
+        """
+        was_processed = self._process_silence(
+            chunk_data,
+            ctx,
+            current_file_cursor_ms,
+            speech_start_rel_ms,
+            samples_per_ms,
+            actions,
+            lambda silence_start: self._capture_intra_chunk_silence(
+                chunk_data,
+                ctx,
+                current_file_cursor_ms,
+                speech_start_rel_ms,
+                samples_per_ms,
+            ),
+        )
+        return speech_start_rel_ms if was_processed else current_file_cursor_ms
+
+    def _handle_trailing_silence(
+        self,
+        chunk_data: AudioChunkData,
+        ctx: StitcherContext,
+        current_file_cursor_ms: int,
+        samples_per_ms: int,
+        actions: list[StateMachineAction],
+    ) -> None:
+        """Handles trailing silence at the end of a chunk, either flushing
+        a significant gap or appending a short pause.
+        """
+        self._process_silence(
+            chunk_data,
+            ctx,
+            current_file_cursor_ms,
+            chunk_data.duration_ms,
+            samples_per_ms,
+            actions,
+            lambda silence_start: self._capture_trailing_chunk_silence(
+                chunk_data, ctx, silence_start, samples_per_ms
+            ),
+        )
 
     def _process_speech_segments(
         self, chunk_data: AudioChunkData, ctx: StitcherContext
@@ -827,19 +931,14 @@ class AudioStitchingStateMachine:
         for segment in processed_segments:
             speech_start_rel_ms = segment.start_ms
 
-            if (
-                not self.config.isolate_segmented_chunks
-                and speech_start_rel_ms > current_file_cursor_ms
-                and ctx.last_segment_end_time_ms is not None
-            ):
-                new_actions = self._capture_intra_chunk_silence(
-                    chunk_data,
-                    ctx,
-                    current_file_cursor_ms,
-                    speech_start_rel_ms,
-                    samples_per_ms,
-                )
-                actions.extend(new_actions)
+            current_file_cursor_ms = self._handle_intra_chunk_silence(
+                chunk_data,
+                ctx,
+                current_file_cursor_ms,
+                speech_start_rel_ms,
+                samples_per_ms,
+                actions,
+            )
 
             new_actions = self._process_single_speech_utterance(
                 chunk_data, ctx, segment, current_file_cursor_ms, samples_per_ms
@@ -848,15 +947,9 @@ class AudioStitchingStateMachine:
             current_file_cursor_ms = max(current_file_cursor_ms, segment.end_ms)
 
         # 2. Capture trailing non-speech audio at the end of the file ONLY if we have an active established stream
-        if (
-            not self.config.isolate_segmented_chunks
-            and current_file_cursor_ms < chunk_data.duration_ms
-            and ctx.last_segment_end_time_ms is not None
-        ):
-            new_actions = self._capture_trailing_chunk_silence(
-                chunk_data, ctx, current_file_cursor_ms, samples_per_ms
-            )
-            actions.extend(new_actions)
+        self._handle_trailing_silence(
+            chunk_data, ctx, current_file_cursor_ms, samples_per_ms, actions
+        )
 
         actions.append(UpdateStateAction())
         if ctx.last_segment_end_time_ms is not None:
@@ -870,59 +963,3 @@ class AudioStitchingStateMachine:
             ScheduleStaleTimerAction(deadline_ms=expected_stale_deadline_ms)
         )
         return actions
-
-    def _append_speech_audio_to_buffer(
-        self,
-        chunk_data: AudioChunkData,
-        ctx: StitcherContext,
-        file_start_ms: int,
-        global_start_ms: int,
-        global_end_ms: int,
-        audio_append_cursor_ms: int | None,
-        actions: list[StateMachineAction],
-    ) -> int | None:
-        """Calculates speech boundaries and appends clean, boundary-clamped padded audio to buffer."""
-        if ctx.transmission_start_time_ms is None:
-            is_natural_gap = (
-                ctx.last_segment_end_time_ms is not None
-                and (file_start_ms + global_start_ms)
-                > ctx.last_segment_end_time_ms
-            )
-            if ctx.missing_prior_context and is_natural_gap:
-                ctx.missing_prior_context = False
-
-            ctx.transmission_start_time_ms = file_start_ms + global_start_ms
-
-            # Pristine canonical slice starting exactly at the VAD onset boundary
-            append_start = max(0, global_start_ms)
-            ctx.start_audio_offset_ms = 0
-            ctx.buffer_start_time_ms = file_start_ms + append_start
-        else:
-            append_start = (
-                audio_append_cursor_ms
-                if audio_append_cursor_ms is not None
-                else 0
-            )
-
-        append_end = min(
-            (
-                len(chunk_data.audio)
-                // (chunk_data.sample_rate // MS_PER_SECOND)
-            ),
-            global_end_ms,
-        )
-
-        if append_end > append_start:
-            current_audio = chunk_data.audio[
-                append_start
-                * (chunk_data.sample_rate // MS_PER_SECOND) : append_end
-                * (chunk_data.sample_rate // MS_PER_SECOND)
-            ]
-            appended_audio = current_audio
-            buffer_added_duration = append_end - append_start
-
-            actions.append(AppendBufferAction(audio_buffer=appended_audio))
-            audio_append_cursor_ms = append_end
-            ctx.buffer_duration_ms += buffer_added_duration
-
-        return audio_append_cursor_ms

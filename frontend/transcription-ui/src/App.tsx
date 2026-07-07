@@ -18,9 +18,11 @@ import { ApiError } from '@transcription/common';
 import AppContainer from './components/AppContainer';
 import Login from './components/Login';
 import LoginModal from './components/common/LoginModal';
+import { RequireAdmin } from './components/common/RequireAdmin';
 import FeedConfigurationView from './components/feeds/FeedConfigurationView';
 import FeedSearchView from './components/feeds/FeedSearchView';
 import RuleConfigurationView from './components/rules/RuleConfigurationView';
+import DemoOutageView from './components/transcripts/DemoOutageView';
 import TranscriptView from './components/transcripts/TranscriptView';
 import { useAuth } from './context/AuthContext';
 
@@ -163,7 +165,7 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      {!token ? (
+      {!token && window.location.pathname !== '/demo-outage' ? (
         <Login />
       ) : (
         <AppContainer>
@@ -235,26 +237,27 @@ function App() {
             <Route
               path="/feeds"
               element={
-                <>
+                <RequireAdmin>
                   <title>Feeds - Radio Transcription</title>
                   <FeedConfigurationView
                     triggerSnackbar={triggerSnackbar}
                     onError={handleError}
                   />
-                </>
+                </RequireAdmin>
               }
             />
             <Route
               path="/docs"
               element={
-                <>
+                <RequireAdmin>
                   <title>API Docs - Radio Transcription</title>
                   <Suspense fallback={<div>Loading documentation...</div>}>
                     <DocsView />
                   </Suspense>
-                </>
+                </RequireAdmin>
               }
             />
+            <Route path="/demo-outage" element={<DemoOutageView />} />
             <Route path="/login" element={<Login />} />
           </Routes>
         </AppContainer>

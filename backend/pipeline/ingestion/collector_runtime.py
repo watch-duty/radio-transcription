@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
+from pathlib import Path
 
 import aiohttp
 import asyncpg
@@ -18,6 +19,9 @@ from google.api_core import exceptions as google_exceptions
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.common import gcp_helper, tracing_utils
+from backend.pipeline.common.actor_identity import (
+    resolve_runtime_service_actor_id,
+)
 from backend.pipeline.common.clients import gcs_client, pubsub_client
 from backend.pipeline.common.log_helper import setup_asyncio_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
@@ -25,8 +29,8 @@ from backend.pipeline.ingestion import (
     failure_policy,
     health_server,
     memory_watchdog,
-    quarantine_reason,
     quarantine_telemetry,
+    status_reason_detail,
 )
 from backend.pipeline.ingestion.failure_classifiers import pubsub
 from backend.pipeline.ingestion.health_server import HealthState
@@ -54,6 +58,7 @@ from backend.pipeline.storage.feed_store import (
     FeedStore,
     HeartbeatResult,
     LeasedFeed,
+    SourceObservationResult,
     SourceType,
 )
 
@@ -72,6 +77,7 @@ _PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
 _PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
 _NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
 _NON_BUDGETED_RETRY_MAX_SEC = 15 * 60
+INGESTION_IO_MAX_WORKERS = 512
 
 
 class _PipelineFailure(Exception):
@@ -118,6 +124,8 @@ class CollectorRuntime:
     Args:
         capture_fn: Async generator factory ``(feed, shutdown_event) -> AsyncIterator[CaptureEvent]``.
         settings: Runtime configuration. Defaults to ``CollectorSettings()``.
+        runtime_actor_id: Optional producer-owned audit actor. Defaults to the
+            configured runtime service actor.
 
     """
 
@@ -125,6 +133,7 @@ class CollectorRuntime:
         self,
         capture_fn: CaptureFn,
         settings: CollectorSettings | None = None,
+        runtime_actor_id: str | None = None,
     ) -> None:
         if settings is None:
             from backend.pipeline.ingestion.settings import CollectorSettings  # noqa: I001, PLC0415
@@ -132,6 +141,11 @@ class CollectorRuntime:
             settings = CollectorSettings()
         self._capture_fn = capture_fn
         self._collector_settings = settings
+        self._runtime_actor_id = (
+            runtime_actor_id
+            if runtime_actor_id is not None
+            else resolve_runtime_service_actor_id()
+        )
         # threading.Event (not asyncio.Event) — the heartbeat OS thread
         # and memory watchdog thread can't use asyncio primitives; they need a
         # shared thread-safe stop signal.
@@ -207,6 +221,12 @@ class CollectorRuntime:
     async def _main(self) -> None:
         """Top-level async entry: setup, run leasing loop, then shutdown."""
         self._loop = asyncio.get_running_loop()
+        self._loop.set_default_executor(
+            concurrent.futures.ThreadPoolExecutor(
+                max_workers=INGESTION_IO_MAX_WORKERS,
+                thread_name_prefix="ingestion_io",
+            )
+        )
         setup_asyncio_logging(self._loop)
         self._shutdown = asyncio.Event()
         self._lease_lost = asyncio.Event()
@@ -290,8 +310,14 @@ class CollectorRuntime:
                 ),
                 timeout=aiohttp.ClientTimeout(total=30, connect=10),
             )
+            segment_dir = (
+                Path(settings.segment_temp_dir)
+                if settings.segment_temp_dir
+                else None
+            )
             self._capture_resources = CaptureResources(
                 http_session=self._http_session,
+                segment_temp_dir=segment_dir,
             )
 
             # Start /healthz HTTP server. Runs on the same event loop as the
@@ -768,6 +794,21 @@ class CollectorRuntime:
                 status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
             ) from exc
 
+        async def _update_progress() -> bool:
+            return await self._store.update_feed_progress(
+                feed["id"],
+                worker_id=worker_id,
+                new_gcs_path=gcs_uri,
+                fencing_token=fencing_token,
+                # bcfy_calls supplies the API `ts` resume cursor;
+                # stream collectors leave it None -> end_ts fallback.
+                last_bookmark_time=(
+                    captured_chunk.resume_position
+                    or captured_chunk.chunk_end_time
+                ),
+                actor_id=self._runtime_actor_id,
+            )
+
         duration_ms = int(
             (
                 captured_chunk.chunk_end_time - captured_chunk.chunk_start_time
@@ -776,14 +817,7 @@ class CollectorRuntime:
         )
         try:
             ok = await retry_with_lease_check(
-                self._store.update_feed_progress,
-                feed["id"],
-                worker_id,
-                gcs_uri,
-                fencing_token,
-                # bcfy_calls supplies the API `ts` resume cursor;
-                # stream collectors leave it None -> end_ts fallback.
-                captured_chunk.resume_position or captured_chunk.chunk_end_time,
+                _update_progress,
                 lease_lost=self._lease_lost,
                 shutdown=self._shutdown,
                 max_retries=settings.bookmark_max_retries,
@@ -945,6 +979,7 @@ class CollectorRuntime:
                 worker_id,
                 fencing_token,
                 self._collector_settings.feed_failure_threshold,
+                actor_id=self._runtime_actor_id,
                 reason=reason,
                 status_reason=status_reason,
             )
@@ -1013,6 +1048,20 @@ class CollectorRuntime:
                 feed["name"],
                 reason,
             )
+        elif status_reason is FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID:
+            logger.warning(
+                "Feed source payload failure suppressed from quarantine "
+                "budget: feed=%s reason=%s",
+                feed["name"],
+                reason,
+            )
+        elif "Stream capture timed out" in reason:
+            logger.warning(
+                "Feed processing error suppressed from quarantine budget (timeout): "
+                "feed=%s reason=%s",
+                feed["name"],
+                reason,
+            )
         else:
             logger.exception(
                 "Feed processing error suppressed from quarantine budget: "
@@ -1031,6 +1080,8 @@ class CollectorRuntime:
                 fencing_token,
                 retry_after=retry_after,
                 status_reason=status_reason,
+                actor_id=self._runtime_actor_id,
+                reason=reason,
             )
         except Exception:
             # 60s abandonment window is the safety net if this fails.
@@ -1077,13 +1128,18 @@ class CollectorRuntime:
         ):
             return True
 
-        try:
-            result = await retry_with_lease_check(
-                self._store.record_source_observation,
+        async def _record_observation() -> SourceObservationResult:
+            return await self._store.record_source_observation(
                 feed["id"],
                 worker_id,
                 fencing_token,
                 observation.resume_position,
+                actor_id=self._runtime_actor_id,
+            )
+
+        try:
+            result = await retry_with_lease_check(
+                _record_observation,
                 lease_lost=self._lease_lost,
                 shutdown=self._shutdown,
                 max_retries=self._collector_settings.bookmark_max_retries,
@@ -1228,7 +1284,10 @@ class CollectorRuntime:
                     )
                 )
                 with tracing_utils.with_baggage_and_span(
-                    {"ingest_time_ms": ingest_time_ms},
+                    {
+                        "ingest_time_ms": ingest_time_ms,
+                        "feed_type": str(feed["source_type"]),
+                    },
                     "process_captured_chunk",
                     __name__,
                 ):
@@ -1349,7 +1408,7 @@ class CollectorRuntime:
             # Transitional catch-all for bugs or untyped collector failures.
             # Source-specific attribution belongs in collectors that raise
             # FeedFailure; the runtime only records the explicit fallback.
-            reason = quarantine_reason.exception_text(e)
+            reason = status_reason_detail.exception_text(e)
             status_reason = FeedStatusReason.SYSTEM_UNEXPECTED_ERROR
             action = failure_policy.classify_failure_policy(status_reason)
             if (

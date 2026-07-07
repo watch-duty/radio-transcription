@@ -16,6 +16,8 @@ import { listFeeds } from '../../service/listFeeds';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { type FeedFilters, FeedTable } from './FeedTable';
+import { FeedTagChip } from './FeedTagChip';
+import { groupTagsByKey } from './tagDisplay';
 
 interface FeedSearchViewProps {
   title: string;
@@ -117,9 +119,9 @@ function CondensedFeedSearchResults({
                 <FeedStatusIndicator
                   status={option.status}
                   substatus={option.substatus}
-                  lastHeartbeat={option.lastHeartbeat}
+                  lastSpeechSegmentTimestamp={option.lastSpeechSegmentTimestamp}
                   statusReason={option.statusReason}
-                  quarantineReason={option.quarantineReason}
+                  statusReasonDetail={option.statusReasonDetail}
                 />
               </Box>
               <Box
@@ -138,16 +140,10 @@ function CondensedFeedSearchResults({
                 />
                 {option.tags && option.tags.length > 0 && (
                   <>
-                    {option.tags.map((tag, i) => (
-                      <Chip
-                        key={`feed-${option.id}-tag-${i}`}
-                        label={
-                          <Typography variant="body2">
-                            <b>{tag.key}</b>: {tag.value}
-                          </Typography>
-                        }
-                        size="small"
-                        variant="filled"
+                    {groupTagsByKey(option.tags).map((group) => (
+                      <FeedTagChip
+                        key={`feed-${option.id}-tag-${group.key}`}
+                        group={group}
                       />
                     ))}
                   </>

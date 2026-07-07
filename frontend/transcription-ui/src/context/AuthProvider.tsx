@@ -6,6 +6,7 @@ import Box from '@mui/material/Box';
 import CircularProgress from '@mui/material/CircularProgress';
 import Typography from '@mui/material/Typography';
 
+import { useUserInfo } from '../hooks/useUserInfo';
 import { authSession } from '../service/authSession';
 import { AuthContext } from './AuthContext';
 
@@ -15,8 +16,23 @@ const MAX_REFRESH_ATTEMPTS = 10; // Max attempts to refresh token
 
 export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   const [token, setToken] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [isCheckingSession, setIsCheckingSession] = useState(true);
   const isRefreshingRef = useRef(false);
+
+  const {
+    data: userInfo,
+    isLoading: isUserInfoLoading,
+    isError: isUserInfoError,
+  } = useUserInfo(token);
+
+  useEffect(() => {
+    if (userInfo) {
+      setIsAdmin(userInfo.isAdmin);
+    } else if (isUserInfoError || !token) {
+      setIsAdmin(false);
+    }
+  }, [userInfo, isUserInfoError, token]);
 
   /**
    * Effect which checks the user's session.
@@ -30,7 +46,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       } catch (error) {
         console.error('Session check failed:', error);
       } finally {
-        setLoading(false);
+        setIsCheckingSession(false);
       }
     };
 
@@ -55,8 +71,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
         if (isExpiredOrSoon) {
           isRefreshingRef.current = true;
-          const newToken = await authSession();
-          setToken(newToken);
+          try {
+            const newToken = await authSession();
+            setToken(newToken);
+          } catch (error) {
+            setToken(null);
+            throw error;
+          }
         }
       } catch (error) {
         console.error(
@@ -89,10 +110,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           refreshed = true;
         } catch (error) {
           console.error('Refresh token failed:', error);
-          // Wait before trying again.
-          await new Promise((resolve) =>
-            setTimeout(resolve, REFRESH_TOKEN_FAILURE_DELAY)
-          );
+          if (attempts >= MAX_REFRESH_ATTEMPTS) {
+            setToken(null);
+          } else {
+            // Wait before trying again.
+            await new Promise((resolve) =>
+              setTimeout(resolve, REFRESH_TOKEN_FAILURE_DELAY)
+            );
+          }
         }
       }
     }, REFRESH_TOKEN_INTERVAL);
@@ -107,7 +132,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     };
   }, [token]);
 
-  if (loading) {
+  if (isCheckingSession) {
     return (
       <Box
         sx={{
@@ -126,7 +151,16 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }
 
   return (
-    <AuthContext.Provider value={{ token, setToken }}>
+    <AuthContext.Provider
+      value={{
+        token,
+        setToken,
+        isAdmin,
+        setIsAdmin,
+        isLoading: isUserInfoLoading,
+        isError: isUserInfoError,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

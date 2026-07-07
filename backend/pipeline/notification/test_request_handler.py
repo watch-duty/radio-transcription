@@ -12,7 +12,10 @@ with mock.patch.dict(
         "NOTIFICATION_ENDPOINT_API_KEY": "test-key-123",
     },
 ):
-    from backend.pipeline.notification.request_handler import RequestHandler
+    from backend.pipeline.notification.request_handler import (
+        DEFAULT_CONNECTION_POOL_SIZE,
+        RequestHandler,
+    )
 from backend.pipeline.schema_types.alert_notification_pb2 import (
     AlertNotification,
 )
@@ -36,7 +39,8 @@ class TestRequestHandler(TestCase):
         self.handler.send_notification(notification)
 
         mock_pool_manager.assert_called_once_with(
-            retries=self.handler.retry_strategy
+            maxsize=DEFAULT_CONNECTION_POOL_SIZE,
+            retries=self.handler.retry_strategy,
         )
         mock_http.request.assert_called_once_with(
             "POST",

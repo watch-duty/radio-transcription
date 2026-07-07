@@ -29,7 +29,8 @@ try:
     StorageClientHolder.client = storage.Client()
 except Exception as e:
     logger.warning(
-        f"Could not initialize default storage client: {e}. Will retry or fail on request."
+        "Could not initialize default storage client: "
+        f"{e}. Will retry or fail on request."
     )
 
 
@@ -39,7 +40,10 @@ def download_blob(uri: str, local_path: str) -> None:
 
     parsed_uri = urlparse(uri)
     if parsed_uri.scheme != "gs":
-        msg = f"Unsupported URI scheme: {parsed_uri.scheme}. Only gs:// is supported."
+        msg = (
+            f"Unsupported URI scheme: {parsed_uri.scheme}. "
+            "Only gs:// is supported."
+        )
         raise ValueError(msg)
 
     bucket_name = parsed_uri.netloc
@@ -59,7 +63,8 @@ async def transcribe(
     ] = None,
 ) -> dict[str, Any]:
     logger.info(
-        f"Received transcription request. File: {file.filename if file else None}, URI: {uri}"
+        "Received transcription request. "
+        f"File: {file.filename if file else None}, URI: {uri}"
     )
 
     if not file and not uri:

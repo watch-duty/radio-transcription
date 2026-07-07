@@ -1,11 +1,13 @@
 """Unit tests for the audio transcription plugins."""
 
 import unittest
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import requests
-from google.api_core.retry import Retry
+from google.api_core.retry_async import AsyncRetry
+from google.genai import types
 
+from backend.pipeline.common import constants
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers.chirp import (
     CHIRP_UNINTELLIGIBLE_MARKER,
@@ -17,11 +19,11 @@ from backend.pipeline.transcription.transcribers.factory import get_transcriber
 BYTES_PER_SECOND_16KHZ_MONO = 16000 * 2
 
 
-class TestTranscribers(unittest.TestCase):
-    def test_google_chirp_transcriber_success(self) -> None:
+class TestTranscribers(unittest.IsolatedAsyncioTestCase):
+    async def test_google_chirp_transcriber_success(self) -> None:
         """Verifies that the GoogleChirpTranscriber interacts via the SpeechClient accurately rendering raw byte audio variants into basic text transcripts."""
         with patch(
-            "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
+            "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
         ) as mock_speech_client_cls:
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
@@ -33,7 +35,9 @@ class TestTranscribers(unittest.TestCase):
                 MagicMock(transcript="Hello world from Chirp")
             ]
             mock_response.results = [mock_result]
-            mock_client_instance.recognize.return_value = mock_response
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
 
             transcriber = get_transcriber(
                 TranscriberType.GOOGLE_CHIRP_V3,
@@ -44,7 +48,7 @@ class TestTranscribers(unittest.TestCase):
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
 
-            transcript = transcriber.transcribe(
+            transcript = await transcriber.transcribe(
                 audio_data=dummy_audio,
                 duration_ms=2500,
             )
@@ -52,10 +56,10 @@ class TestTranscribers(unittest.TestCase):
             self.assertEqual(transcript, "Hello world from Chirp")
             mock_client_instance.recognize.assert_called_once()
 
-    def test_google_chirp_transcriber_background(self) -> None:
+    async def test_google_chirp_transcriber_background(self) -> None:
         """Verifies that the system safely propagates [UNINTELLIGIBLE] generic filler outputs downstream."""
         with patch(
-            "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
+            "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
         ) as mock_speech_client_cls:
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
@@ -66,7 +70,9 @@ class TestTranscribers(unittest.TestCase):
                 MagicMock(transcript=CHIRP_UNINTELLIGIBLE_MARKER)
             ]
             mock_response.results = [mock_result]
-            mock_client_instance.recognize.return_value = mock_response
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
 
             transcriber = GoogleChirpV3Transcriber(
                 "test-project",
@@ -76,16 +82,16 @@ class TestTranscribers(unittest.TestCase):
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
 
-            transcript = transcriber.transcribe(
+            transcript = await transcriber.transcribe(
                 audio_data=dummy_audio, duration_ms=2500
             )
 
             self.assertEqual(transcript, CHIRP_UNINTELLIGIBLE_MARKER)
 
-    def test_google_chirp_transcriber_passes_retry_policy(self) -> None:
+    async def test_google_chirp_transcriber_passes_retry_policy(self) -> None:
         """Verifies that the GoogleChirpV3Transcriber passes a native Retry policy to the SpeechClient."""
         with patch(
-            "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
+            "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
         ) as mock_speech_client_cls:
             mock_client_instance = MagicMock()
             mock_speech_client_cls.return_value = mock_client_instance
@@ -94,7 +100,9 @@ class TestTranscribers(unittest.TestCase):
             mock_result = MagicMock()
             mock_result.alternatives = [MagicMock(transcript="Success")]
             mock_response.results = [mock_result]
-            mock_client_instance.recognize.return_value = mock_response
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
 
             transcriber = GoogleChirpV3Transcriber(
                 "test-project",
@@ -103,20 +111,64 @@ class TestTranscribers(unittest.TestCase):
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
-            transcriber.transcribe(audio_data=dummy_audio, duration_ms=2500)
+            await transcriber.transcribe(
+                audio_data=dummy_audio, duration_ms=2500
+            )
 
             mock_client_instance.recognize.assert_called_once()
             _, kwargs = mock_client_instance.recognize.call_args
             self.assertIn("retry", kwargs)
-            self.assertIsInstance(kwargs["retry"], Retry)
+            self.assertIsInstance(kwargs["retry"], AsyncRetry)
 
-    def test_google_chirp_transcriber_no_phrase_hints_omits_adaptation(
+    async def test_google_chirp_transcriber_custom_retry_policy(self) -> None:
+        """Verifies that custom retry settings in ChirpConfig are propagated to AsyncRetry."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
+        ) as mock_speech_client_cls:
+            mock_client_instance = MagicMock()
+            mock_speech_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_result = MagicMock()
+            mock_result.alternatives = [MagicMock(transcript="Success")]
+            mock_response.results = [mock_result]
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
+
+            config = ChirpConfig(
+                phrase_hints=[],
+                custom_prompt=None,
+                retry_initial_delay=1.5,
+                retry_max_delay=45.0,
+                retry_multiplier=1.8,
+                retry_deadline=150.0,
+            )
+            transcriber = GoogleChirpV3Transcriber("test-project", config)
+            transcriber.setup()
+
+            dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
+            await transcriber.transcribe(
+                audio_data=dummy_audio, duration_ms=2500
+            )
+
+            mock_client_instance.recognize.assert_called_once()
+            _, kwargs = mock_client_instance.recognize.call_args
+            self.assertIn("retry", kwargs)
+            retry_policy = kwargs["retry"]
+            self.assertIsInstance(retry_policy, AsyncRetry)
+            self.assertEqual(retry_policy._initial, 1.5)
+            self.assertEqual(retry_policy._maximum, 45.0)
+            self.assertEqual(retry_policy._multiplier, 1.8)
+            self.assertEqual(retry_policy._timeout, 150.0)
+
+    async def test_google_chirp_transcriber_no_phrase_hints_omits_adaptation(
         self,
     ) -> None:
         """Verifies that adaptation=None is passed to RecognitionConfig when no phrase hints file is configured."""
         with (
             patch(
-                "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
+                "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
             ) as mock_speech_client_cls,
             patch(
                 "backend.pipeline.transcription.transcribers.chirp.cloud_speech"
@@ -131,7 +183,9 @@ class TestTranscribers(unittest.TestCase):
                 MagicMock(transcript="All units respond")
             ]
             mock_response.results = [mock_result]
-            mock_client_instance.recognize.return_value = mock_response
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
 
             transcriber = GoogleChirpV3Transcriber(
                 "test-project",
@@ -140,12 +194,16 @@ class TestTranscribers(unittest.TestCase):
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
-            transcriber.transcribe(audio_data=dummy_audio, duration_ms=2500)
+            await transcriber.transcribe(
+                audio_data=dummy_audio, duration_ms=2500
+            )
 
             _, kwargs = mock_cs.RecognitionConfig.call_args
             self.assertIsNone(kwargs.get("adaptation"))
 
-    def test_google_chirp_transcriber_phrase_hints_adaptation(self) -> None:
+    async def test_google_chirp_transcriber_phrase_hints_adaptation(
+        self,
+    ) -> None:
         """Verifies that configured phrase hints are used directly to build SpeechAdaptation."""
         config = ChirpConfig(
             phrase_hints=["Code 3", "10-4"],
@@ -154,7 +212,7 @@ class TestTranscribers(unittest.TestCase):
 
         with (
             patch(
-                "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
+                "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
             ) as mock_speech_client_cls,
             patch(
                 "backend.pipeline.transcription.transcribers.chirp.cloud_speech"
@@ -167,13 +225,17 @@ class TestTranscribers(unittest.TestCase):
             mock_result = MagicMock()
             mock_result.alternatives = [MagicMock(transcript="Code 3")]
             mock_response.results = [mock_result]
-            mock_client_instance.recognize.return_value = mock_response
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
 
             transcriber = GoogleChirpV3Transcriber("test-project", config)
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
-            transcriber.transcribe(audio_data=dummy_audio, duration_ms=2500)
+            await transcriber.transcribe(
+                audio_data=dummy_audio, duration_ms=2500
+            )
 
             expected_phrase_calls = [
                 call(value="Code 3"),
@@ -185,11 +247,11 @@ class TestTranscribers(unittest.TestCase):
             )
             mock_cs.SpeechAdaptation.assert_called_once()
 
-    def test_google_chirp_transcriber_denoiser_config(self) -> None:
+    async def test_google_chirp_transcriber_denoiser_config(self) -> None:
         """Verifies that denoiser_config is passed to RecognitionConfig."""
         with (
             patch(
-                "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
+                "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
             ) as mock_speech_client_cls,
             patch(
                 "backend.pipeline.transcription.transcribers.chirp.cloud_speech"
@@ -202,7 +264,9 @@ class TestTranscribers(unittest.TestCase):
             mock_result = MagicMock()
             mock_result.alternatives = [MagicMock(transcript="Success")]
             mock_response.results = [mock_result]
-            mock_client_instance.recognize.return_value = mock_response
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
 
             config = ChirpConfig(
                 phrase_hints=[],
@@ -213,17 +277,19 @@ class TestTranscribers(unittest.TestCase):
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
-            transcriber.transcribe(audio_data=dummy_audio, duration_ms=2500)
+            await transcriber.transcribe(
+                audio_data=dummy_audio, duration_ms=2500
+            )
 
             _, kwargs = mock_cs.RecognitionConfig.call_args
             self.assertIn("denoiser_config", kwargs)
             mock_cs.DenoiserConfig.assert_called_once_with(denoise_audio=True)
 
-    def test_google_chirp_transcriber_custom_prompt(self) -> None:
+    async def test_google_chirp_transcriber_custom_prompt(self) -> None:
         """Verifies that custom_prompt is passed to RecognitionFeatures."""
         with (
             patch(
-                "backend.pipeline.transcription.transcribers.chirp.SpeechClient"
+                "backend.pipeline.transcription.transcribers.chirp.SpeechAsyncClient"
             ) as mock_speech_client_cls,
             patch(
                 "backend.pipeline.transcription.transcribers.chirp.cloud_speech"
@@ -236,7 +302,9 @@ class TestTranscribers(unittest.TestCase):
             mock_result = MagicMock()
             mock_result.alternatives = [MagicMock(transcript="Success")]
             mock_response.results = [mock_result]
-            mock_client_instance.recognize.return_value = mock_response
+            mock_client_instance.recognize = AsyncMock(
+                return_value=mock_response
+            )
 
             config = ChirpConfig(
                 phrase_hints=[],
@@ -246,7 +314,9 @@ class TestTranscribers(unittest.TestCase):
             transcriber.setup()
 
             dummy_audio = b"\x00" * int(BYTES_PER_SECOND_16KHZ_MONO * 2.5)
-            transcriber.transcribe(audio_data=dummy_audio, duration_ms=2500)
+            await transcriber.transcribe(
+                audio_data=dummy_audio, duration_ms=2500
+            )
 
             mock_cs.RecognitionFeatures.assert_called_once()
             _, features_kwargs = mock_cs.RecognitionFeatures.call_args
@@ -256,8 +326,8 @@ class TestTranscribers(unittest.TestCase):
             )
 
 
-class TestMockTranscriber(unittest.TestCase):
-    def test_mock_transcriber_default(self) -> None:
+class TestMockTranscriber(unittest.IsolatedAsyncioTestCase):
+    async def test_mock_transcriber_default(self) -> None:
         """Verifies the MockTranscriber returns the default static transcript when no sequence is set."""
         transcriber = get_transcriber(
             TranscriberType.MOCK,
@@ -266,12 +336,12 @@ class TestMockTranscriber(unittest.TestCase):
         )
         transcriber.setup()
 
-        res = transcriber.transcribe(audio_data=b"\x00", duration_ms=1000)
+        res = await transcriber.transcribe(audio_data=b"\x00", duration_ms=1000)
         self.assertEqual(
             res, "This is a mock transcription of the radio transmission."
         )
 
-    def test_mock_transcriber_sequence(self) -> None:
+    async def test_mock_transcriber_sequence(self) -> None:
         """Verifies the MockTranscriber rotates through configured transcripts."""
         config_json = '{"transcripts": ["First Call", "Second Call"]}'
         transcriber = get_transcriber(
@@ -281,16 +351,22 @@ class TestMockTranscriber(unittest.TestCase):
         )
         transcriber.setup()
 
-        res1 = transcriber.transcribe(audio_data=b"\x00", duration_ms=1000)
-        res2 = transcriber.transcribe(audio_data=b"\x00", duration_ms=1000)
-        res3 = transcriber.transcribe(audio_data=b"\x00", duration_ms=1000)
+        res1 = await transcriber.transcribe(
+            audio_data=b"\x00", duration_ms=1000
+        )
+        res2 = await transcriber.transcribe(
+            audio_data=b"\x00", duration_ms=1000
+        )
+        res3 = await transcriber.transcribe(
+            audio_data=b"\x00", duration_ms=1000
+        )
 
         self.assertEqual(res1, "First Call")
         self.assertEqual(res2, "Second Call")
         self.assertEqual(res3, "First Call")
 
 
-class TestLocalApiTranscriber(unittest.TestCase):
+class TestLocalApiTranscriber(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         self.env_patcher = patch.dict(
             "os.environ",
@@ -313,7 +389,7 @@ class TestLocalApiTranscriber(unittest.TestCase):
     @patch(
         "backend.pipeline.transcription.transcribers.local_api.requests.post"
     )
-    def test_local_api_transcriber_success_uri(
+    async def test_local_api_transcriber_success_uri(
         self, mock_post: MagicMock
     ) -> None:
         mock_resp = MagicMock()
@@ -328,7 +404,7 @@ class TestLocalApiTranscriber(unittest.TestCase):
         )
         transcriber.setup()
 
-        res = transcriber.transcribe(
+        res = await transcriber.transcribe(
             uri="gs://bucket/audio.flac", duration_ms=1000
         )
         self.assertEqual(res, "Hello from local API")
@@ -341,7 +417,7 @@ class TestLocalApiTranscriber(unittest.TestCase):
     @patch(
         "backend.pipeline.transcription.transcribers.local_api.requests.post"
     )
-    def test_local_api_transcriber_success_bytes(
+    async def test_local_api_transcriber_success_bytes(
         self, mock_post: MagicMock
     ) -> None:
         mock_resp = MagicMock()
@@ -356,7 +432,9 @@ class TestLocalApiTranscriber(unittest.TestCase):
         )
         transcriber.setup()
 
-        res = transcriber.transcribe(audio_data=b"dummybytes", duration_ms=1000)
+        res = await transcriber.transcribe(
+            audio_data=b"dummybytes", duration_ms=1000
+        )
         self.assertEqual(res, "Spoken words")
         mock_post.assert_called_once_with(
             "http://local-whisper:8095/transcribe",
@@ -367,7 +445,7 @@ class TestLocalApiTranscriber(unittest.TestCase):
     @patch(
         "backend.pipeline.transcription.transcribers.local_api.requests.post"
     )
-    def test_local_api_transcriber_empty_text_returns_none(
+    async def test_local_api_transcriber_empty_text_returns_none(
         self, mock_post: MagicMock
     ) -> None:
         mock_resp = MagicMock()
@@ -382,13 +460,15 @@ class TestLocalApiTranscriber(unittest.TestCase):
         )
         transcriber.setup()
 
-        res = transcriber.transcribe(audio_data=b"dummybytes", duration_ms=1000)
+        res = await transcriber.transcribe(
+            audio_data=b"dummybytes", duration_ms=1000
+        )
         self.assertIsNone(res)
 
     @patch(
         "backend.pipeline.transcription.transcribers.local_api.requests.post"
     )
-    def test_local_api_transcriber_http_error_propagates(
+    async def test_local_api_transcriber_http_error_propagates(
         self, mock_post: MagicMock
     ) -> None:
         mock_resp = MagicMock()
@@ -407,12 +487,14 @@ class TestLocalApiTranscriber(unittest.TestCase):
         transcriber.setup()
 
         with self.assertRaises(requests.exceptions.HTTPError):
-            transcriber.transcribe(audio_data=b"dummybytes", duration_ms=1000)
+            await transcriber.transcribe(
+                audio_data=b"dummybytes", duration_ms=1000
+            )
 
     @patch(
         "backend.pipeline.transcription.transcribers.local_api.requests.post"
     )
-    def test_local_api_transcriber_invalid_json_propagates(
+    async def test_local_api_transcriber_invalid_json_propagates(
         self, mock_post: MagicMock
     ) -> None:
         mock_resp = MagicMock()
@@ -428,12 +510,14 @@ class TestLocalApiTranscriber(unittest.TestCase):
         transcriber.setup()
 
         with self.assertRaises(ValueError):
-            transcriber.transcribe(audio_data=b"dummybytes", duration_ms=1000)
+            await transcriber.transcribe(
+                audio_data=b"dummybytes", duration_ms=1000
+            )
 
     @patch(
         "backend.pipeline.transcription.transcribers.local_api.requests.post"
     )
-    def test_local_api_transcriber_timeout_propagates(
+    async def test_local_api_transcriber_timeout_propagates(
         self, mock_post: MagicMock
     ) -> None:
         mock_post.side_effect = requests.exceptions.Timeout("Request timed out")
@@ -446,7 +530,9 @@ class TestLocalApiTranscriber(unittest.TestCase):
         transcriber.setup()
 
         with self.assertRaises(requests.exceptions.Timeout):
-            transcriber.transcribe(audio_data=b"dummybytes", duration_ms=1000)
+            await transcriber.transcribe(
+                audio_data=b"dummybytes", duration_ms=1000
+            )
 
     @patch.dict("os.environ", {"LOCAL_ASR_API_URL": ""})
     def test_local_api_transcriber_setup_missing_url_raises(self) -> None:
@@ -461,6 +547,286 @@ class TestLocalApiTranscriber(unittest.TestCase):
             "LOCAL_ASR_API_URL environment variable is not set",
             str(ctx.exception),
         )
+
+
+class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
+    async def test_gemini_transcriber_success_bytes(self) -> None:
+        """Verifies that the Gemini transcriber transcribes from raw bytes."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            # Mock generate_content response
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = types.FinishReason.STOP
+            mock_candidate.content.parts = [MagicMock(text="Hello from Gemini")]
+            mock_response.candidates = [mock_candidate]
+            mock_response.text = "Hello from Gemini"
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1", "prompt": "Test Prompt"}',
+            )
+            transcriber.setup()
+
+            dummy_audio = b"\x00" * 100
+
+            transcript = await transcriber.transcribe(
+                audio_data=dummy_audio,
+                duration_ms=2500,
+            )
+
+            self.assertEqual(transcript, "Hello from Gemini")
+            mock_client_instance.aio.models.generate_content.assert_called_once()
+            _, kwargs = (
+                mock_client_instance.aio.models.generate_content.call_args
+            )
+            self.assertEqual(kwargs["model"], "gemini-3.1-flash-lite")
+
+            config = kwargs["config"]
+            self.assertEqual(config.system_instruction, "Test Prompt")
+
+            # Verify thinking config is disabled
+            self.assertIsNotNone(config.thinking_config)
+            self.assertEqual(config.thinking_config.thinking_budget, 0)
+
+            # Verify all 6 safety settings are BLOCK_NONE
+            self.assertIsNotNone(config.safety_settings)
+            self.assertEqual(len(config.safety_settings), 6)
+            for setting in config.safety_settings:
+                self.assertEqual(
+                    setting.threshold, types.HarmBlockThreshold.BLOCK_NONE
+                )
+
+            # Verify the exact categories are present
+            categories = {
+                setting.category for setting in config.safety_settings
+            }
+            expected_categories = {
+                types.HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+                types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+                types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+                types.HarmCategory.HARM_CATEGORY_HARASSMENT,
+                types.HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
+                types.HarmCategory.HARM_CATEGORY_JAILBREAK,
+            }
+            self.assertEqual(categories, expected_categories)
+
+    async def test_gemini_transcriber_unintelligible(self) -> None:
+        """Verifies that [UNINTELLIGIBLE] response maps to "[UNINTELLIGIBLE]"."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = types.FinishReason.STOP
+            mock_candidate.content.parts = [MagicMock(text="[UNINTELLIGIBLE]")]
+            mock_response.candidates = [mock_candidate]
+            mock_response.text = "[UNINTELLIGIBLE]"
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            transcript = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
+            )
+
+            self.assertEqual(transcript, "[UNINTELLIGIBLE]")
+
+    async def test_gemini_transcriber_recitation_fallback(self) -> None:
+        """Verifies that RECITATION finish reason maps to [UNINTELLIGIBLE] fallback."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+
+            # Mock finish_reason as an object with a .name attribute
+            mock_finish_reason = MagicMock()
+            mock_finish_reason.name = "RECITATION"
+            mock_candidate.finish_reason = mock_finish_reason
+
+            mock_candidate.content.parts = []
+            mock_response.candidates = [mock_candidate]
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            transcript = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
+            )
+
+            self.assertEqual(transcript, constants.UNINTELLIGIBLE_MARKER)
+
+    async def test_gemini_transcriber_empty_response_stop(self) -> None:
+        """Verifies that STOP finish reason with no content returns None and logs at INFO level."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = types.FinishReason.STOP
+            mock_candidate.content = None
+            mock_response.candidates = [mock_candidate]
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            with self.assertLogs(
+                "backend.pipeline.transcription.transcribers.gemini",
+                level="INFO",
+            ) as log_capture:
+                transcript = await transcriber.transcribe(
+                    audio_data=b"\x00" * 100,
+                    duration_ms=1000,
+                )
+
+            self.assertIsNone(transcript)
+            # Verify it logged at INFO level
+            info_logs = [
+                record
+                for record in log_capture.records
+                if record.levelname == "INFO"
+                and "Gemini returned empty content (finish reason: STOP)."
+                in record.getMessage()
+            ]
+            self.assertEqual(len(info_logs), 1)
+
+    async def test_gemini_transcriber_empty_response_other_reason(self) -> None:
+        """Verifies that other finish reasons (e.g. MAX_TOKENS) with no content return None and log at WARNING level."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = types.FinishReason.MAX_TOKENS
+            mock_candidate.content = None
+            mock_response.candidates = [mock_candidate]
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            with self.assertLogs(
+                "backend.pipeline.transcription.transcribers.gemini",
+                level="WARNING",
+            ) as log_capture:
+                transcript = await transcriber.transcribe(
+                    audio_data=b"\x00" * 100,
+                    duration_ms=1000,
+                )
+
+            self.assertIsNone(transcript)
+            # Verify it logged at WARNING level
+            warning_logs = [
+                record
+                for record in log_capture.records
+                if record.levelname == "WARNING"
+                and "Gemini response candidate had no content or parts"
+                in record.getMessage()
+            ]
+            self.assertEqual(len(warning_logs), 1)
+
+    def test_gemini_transcriber_setup(self) -> None:
+        """Verifies that the Gemini transcriber initializes the GenAI client with correct options."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-test"}',
+            )
+            transcriber.setup()
+
+            mock_client_cls.assert_called_once()
+            _, kwargs = mock_client_cls.call_args
+            self.assertTrue(kwargs.get("vertexai"))
+            self.assertEqual(kwargs.get("project"), "test-project")
+            self.assertEqual(kwargs.get("location"), "us-test")
+
+            # Verify retry options are explicitly set to 5 attempts and timeout is default
+            http_options = kwargs.get("http_options")
+            self.assertIsNotNone(http_options)
+            self.assertEqual(http_options.timeout, 120000)
+            self.assertIsNotNone(http_options.retry_options)
+            self.assertEqual(http_options.retry_options.attempts, 5)
+
+    def test_gemini_transcriber_setup_custom_retry(self) -> None:
+        """Verifies that the Gemini transcriber initializes the GenAI client with custom retry options."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-test", "retry_attempts": 8, "retry_initial_delay": 2.5, "retry_max_delay": 90.0, "retry_multiplier": 3.0, "client_timeout_ms": 120000}',
+            )
+            transcriber.setup()
+
+            mock_client_cls.assert_called_once()
+            _, kwargs = mock_client_cls.call_args
+            http_options = kwargs.get("http_options")
+            self.assertIsNotNone(http_options)
+            self.assertEqual(http_options.timeout, 120000)
+            self.assertIsNotNone(http_options.retry_options)
+            self.assertEqual(http_options.retry_options.attempts, 8)
+            self.assertEqual(http_options.retry_options.initial_delay, 2.5)
+            self.assertEqual(http_options.retry_options.max_delay, 90.0)
+            self.assertEqual(http_options.retry_options.exp_base, 3.0)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,10 @@
 import unittest
 from unittest.mock import MagicMock, patch
 
+from backend.pipeline.common.evaluation.annotations import (
+    RuleAnnotation,
+    TextMatchSpan,
+)
 from backend.pipeline.evaluation import service
 from backend.pipeline.schema_types import (
     EvaluationErrorType,
@@ -117,6 +121,69 @@ class TestEvaluationService(unittest.TestCase):
         self.assertEqual(result_proto.start_audio_offset.nanos, 0)
         self.assertEqual(result_proto.end_audio_offset.seconds, 0)
         self.assertEqual(result_proto.end_audio_offset.nanos, 0)
+
+    def test_rule_annotations_packed_into_proto(self) -> None:
+        """Per-rule annotations from the evaluator land in the proto payload."""
+        self.mock_evaluator.evaluate.return_value = {
+            "is_flagged": True,
+            "triggered_rules": ["r1"],
+            "rule_annotations": {
+                "r1": RuleAnnotation(
+                    text_match=[
+                        TextMatchSpan(start=11, end=15, matched_text="fire")
+                    ],
+                )
+            },
+            "errors": [],
+        }
+
+        result_proto = self.service.evaluate(self.transcribed_audio)
+
+        assert result_proto is not None
+        self.assertEqual(len(result_proto.rule_annotations), 1)
+        self.assertIn("r1", result_proto.rule_annotations)
+        annotation = result_proto.rule_annotations["r1"]
+        self.assertEqual(annotation.WhichOneof("annotation"), "text_match")
+        self.assertEqual(len(annotation.text_match.spans), 1)
+        span = annotation.text_match.spans[0]
+        self.assertEqual(span.start, 11)
+        self.assertEqual(span.end, 15)
+        self.assertEqual(span.matched_text, "fire")
+
+    @patch("backend.pipeline.evaluation.service.baggage")
+    @patch("backend.pipeline.evaluation.service.pipeline_metrics_logger")
+    def test_record_e2e_latency(
+        self, mock_logger: MagicMock, mock_baggage: MagicMock
+    ) -> None:
+        """Tests that e2e latency and feed_type are correctly extracted and logged."""
+        self.mock_evaluator.evaluate.return_value = {
+            "is_flagged": False,
+            "triggered_rules": [],
+        }
+
+        # Mock baggage values
+        def get_baggage_mock(key: str) -> str | None:
+            if key == "ingest_time_ms":
+                return "1000"
+            if key == "feed_type":
+                return "openmhz"
+            return None
+
+        mock_baggage.get_baggage.side_effect = get_baggage_mock
+
+        # Call evaluate
+        result_proto = self.service.evaluate(self.transcribed_audio)
+
+        self.assertIsNotNone(result_proto)
+        # Check that pipeline_metrics_logger.info was called with feed_type and latency
+        mock_logger.info.assert_called_once()
+        log_msg, kwargs = mock_logger.info.call_args
+        self.assertIn("feed_type: openmhz", log_msg[0])
+        json_fields = kwargs["extra"]["json_fields"]
+        self.assertEqual(json_fields["event_type"], "e2e_latency")
+        self.assertEqual(json_fields["feed_id"], "1234")
+        self.assertEqual(json_fields["feed_type"], "openmhz")
+        self.assertIsInstance(json_fields["latency_ms"], int)
 
 
 if __name__ == "__main__":

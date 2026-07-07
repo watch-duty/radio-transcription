@@ -6,6 +6,10 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field
 
+from backend.pipeline.common.evaluation.annotations import (  # noqa: TC001
+    RuleAnnotation,
+)
+
 
 class AudioClassification(StrEnum):
     """Enum for audio segment classification."""
@@ -20,6 +24,7 @@ class AnnotationType(StrEnum):
 
     TRANSCRIPT = "TRANSCRIPT"
     EVALUATION = "EVALUATION"
+    WAVEFORM = "WAVEFORM"
 
 
 class TranscriptAnnotationData(BaseModel):
@@ -34,6 +39,14 @@ class EvaluationAnnotationData(BaseModel):
 
     decisions: list[str]
     errors: list[str]
+    rule_annotations: dict[str, RuleAnnotation] = Field(default_factory=dict)
+
+
+class WaveformAnnotationData(BaseModel):
+    """Data for a waveform annotation."""
+
+    peaks: list[list[float]]
+    duration_seconds: float = Field(gt=0)
 
 
 class TranscriptAnnotation(BaseModel):
@@ -54,8 +67,17 @@ class EvaluationAnnotation(BaseModel):
     created_at: datetime
 
 
+class WaveformAnnotation(BaseModel):
+    """Annotation carrying waveform peaks."""
+
+    audio_segment_id: str
+    type: Literal[AnnotationType.WAVEFORM] = AnnotationType.WAVEFORM
+    data: WaveformAnnotationData
+    created_at: datetime
+
+
 Annotation = Annotated[
-    Union[TranscriptAnnotation, EvaluationAnnotation],
+    Union[TranscriptAnnotation, EvaluationAnnotation, WaveformAnnotation],
     Field(discriminator="type"),
 ]
 
@@ -74,8 +96,19 @@ class EvaluationAnnotationCreate(BaseModel):
     data: EvaluationAnnotationData
 
 
+class WaveformAnnotationCreate(BaseModel):
+    """Model for creating a waveform annotation."""
+
+    type: Literal[AnnotationType.WAVEFORM] = AnnotationType.WAVEFORM
+    data: WaveformAnnotationData
+
+
 AnnotationCreate = Annotated[
-    Union[TranscriptAnnotationCreate, EvaluationAnnotationCreate],
+    Union[
+        TranscriptAnnotationCreate,
+        EvaluationAnnotationCreate,
+        WaveformAnnotationCreate,
+    ],
     Field(discriminator="type"),
 ]
 

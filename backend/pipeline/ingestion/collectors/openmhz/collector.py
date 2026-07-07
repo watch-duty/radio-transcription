@@ -97,7 +97,7 @@ def _transport_failure_from_exception(exc: Exception) -> FeedFailure | None:
 
 
 def _exception_chain_text(exc: BaseException) -> str:
-    """Return exception text plus causes for bounded quarantine diagnostics."""
+    """Return exception text plus causes for bounded status reason details."""
     parts: list[str] = []
     seen: set[int] = set()
     current: BaseException | None = exc

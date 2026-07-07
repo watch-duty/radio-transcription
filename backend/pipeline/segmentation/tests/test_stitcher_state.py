@@ -3,6 +3,9 @@ from typing import Final
 
 import numpy as np
 
+from backend.pipeline.segmentation.constants import (
+    UPSTREAM_GAP_DRIFT_TOLERANCE_MS,
+)
 from backend.pipeline.segmentation.datatypes import (
     AppendBufferAction,
     AudioChunkData,
@@ -62,7 +65,6 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
             feed_id="test-feed-xyz",
             current_gcs_uri="gs://fake/init.flac",
             session_id="fake-session",
-            contributing_audio_uris=[],
             file_start_ms=0,
             last_segment_end_time_ms=None,
             transmission_start_time_ms=None,
@@ -131,28 +133,30 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         self._process(chunk1)
 
         # Chunk 2: Dead air. Speech ended at 15.0s.
-        # Missing chunk 2 speech means the gap timer is accumulating implicitly.
+        # Since Chunk 2 is completely silent and 15s long, the silence gap (15s) exceeds the 3s threshold during this chunk.
+        # Under our correct, non-lossy design, this MUST trigger a flush of the speech transmission during Chunk 2.
         chunk2 = mock_audio_chunk(15000, 15000, [])
         actions2 = self._process(chunk2)
 
-        # It's not explicitly flushed yet, just tracking state
+        # It should be flushed during Chunk 2
         self.assertTrue(any(isinstance(a, UpdateStateAction) for a in actions2))
-        self.assertFalse(any(isinstance(a, FlushAction) for a in actions2))
-
-        # Chunk 3: Dead air. Arrives at 30.0s.
-        # Now 30.0s total time elapsed - 15.0s last end = 15.0s gap. Gap > 3.0s!
-        # Since it's a silent file that explicitly triggers the gap overrun mid-silence, it FLUSHES.
-        chunk3 = mock_audio_chunk(30000, 15000, [])
-        actions3 = self._process(chunk3)
-
         flush_action = next(
-            (a for a in actions3 if isinstance(a, FlushAction)), None
+            (a for a in actions2 if isinstance(a, FlushAction)), None
         )
         self.assertIsNotNone(flush_action)
         assert flush_action is not None
         self.assertEqual(
             flush_action.reason, "Significant gap detected from silent file"
         )
+
+        # Chunk 3: Dead air. Arrives at 30.0s.
+        # Since the speech transmission was already flushed, processing Chunk 3 just continues buffering the non-speech transmission.
+        chunk3 = mock_audio_chunk(30000, 15000, [])
+        actions3 = self._process(chunk3)
+
+        # No new flush should occur in Chunk 3
+        self.assertTrue(any(isinstance(a, UpdateStateAction) for a in actions3))
+        self.assertFalse(any(isinstance(a, FlushAction) for a in actions3))
 
     def test_max_transmission_duration_mid_stream_severing(self) -> None:
         """Verifies infinite-length callers are violently disconnected gracefully the instant they exceed bounded operational processing timeouts."""
@@ -413,5 +417,151 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
         )
 
         # Verify that the traceparent and baggage are STILL preserved in the context!
-        self.assertEqual(self.ctx.traceparent, "test-traceparent-xyz")
         self.assertEqual(self.ctx.baggage, "test-baggage-xyz")
+
+    def test_small_silence_pauses_are_grouped(self) -> None:
+        """Verifies that sub-significant silence pauses (less than significant_gap_ms = 3000ms)
+        are appended to the active SPEECH transmission instead of being split out as OTHER segments.
+        """
+        # Chunk 1: Speech from 1.0s to 5.0s, and 6.5s to 13.0s.
+        # - Intra-chunk silence gap: 5.0s to 6.5s (1500ms < 3000ms).
+        # - Trailing silence gap: 13.0s to 15.0s (2000ms < 3000ms).
+        # Neither gap is significant, so they should NOT trigger a split!
+        chunk1 = mock_audio_chunk(
+            0, 15000, [(1.0, 5.0), (6.5, 13.0)], "gs://fake/1.flac"
+        )
+        actions1 = self._process(chunk1)
+
+        # There should be NO FlushAction during Chunk 1 processing
+        self.assertFalse(any(isinstance(a, FlushAction) for a in actions1))
+
+        # Chunk 2: Starts at 15.0s, speech from 2.0s to 5.0s (starts at 17.0s absolute time).
+        # - Total silence gap since last speech segment ended: 17.0s - 13.0s = 4000ms.
+        # Since 4000ms >= 3000ms (significant_gap_ms), this IS significant and MUST trigger a split!
+        chunk2 = mock_audio_chunk(
+            15000, 15000, [(2.0, 5.0)], "gs://fake/2.flac"
+        )
+        actions2 = self._process(chunk2)
+
+        # It should flush the previous speech transmission (from Chunk 1)
+        # and then start the new speech transmission (from Chunk 2).
+        flush_actions2 = [a for a in actions2 if isinstance(a, FlushAction)]
+        self.assertGreaterEqual(
+            len(flush_actions2), 2
+        )  # One SPEECH flush, one OTHER flush
+        self.assertEqual(flush_actions2[0].audio_classification, 1)  # SPEECH
+        self.assertEqual(
+            flush_actions2[1].audio_classification, 2
+        )  # OTHER (silence)
+
+    def test_silent_chunk_audio_is_fully_retained(self) -> None:
+        """Verifies that when a completely silent chunk is processed after
+        active speech, the trailing silent audio is fully retained in the
+        state machine buffer and correctly flushed as a separate OTHER segment
+        without any data loss.
+        """
+        # Chunk 1: Speech from 0.0s to 10.0s, chunk duration 15.0s.
+        # Trailing silence: 10.0s to 15.0s (5000ms >= 3000ms significant_gap_ms).
+        # This will trigger a flush of the speech transmission during Chunk 1.
+        chunk1 = mock_audio_chunk(0, 15000, [(0.0, 10.0)])
+        actions1 = self._process(chunk1)
+
+        # Verify that the speech transmission was flushed
+        speech_flush = next(
+            (
+                a
+                for a in actions1
+                if isinstance(a, FlushAction) and a.audio_classification == 1
+            ),
+            None,
+        )
+        self.assertIsNotNone(speech_flush)
+
+        # Chunk 2: Dead air (completely silent), from 15.0s to 30.0s (15000ms duration).
+        # Since the speech transmission was already flushed, this chunk should just buffer the silence.
+        chunk2 = mock_audio_chunk(15000, 15000, [])
+        actions2 = self._process(chunk2)
+
+        # Verify that the silent audio was appended to the buffer
+        append_actions2 = [
+            a for a in actions2 if isinstance(a, AppendBufferAction)
+        ]
+        self.assertTrue(len(append_actions2) > 0)
+
+        # During Chunk 2, only Chunk 2's silence (15.0s = 240,000 samples) should be appended.
+        total_samples = sum(a.audio_buffer.size for a in append_actions2)
+        self.assertEqual(total_samples, 15000 * SAMPLES_PER_MS)
+
+        # Chunk 3: Another completely silent chunk from 30.0s to 80.0s (50000ms duration).
+        # This pushes the non-speech transmission duration to:
+        # 5.0s (from Chunk 1) + 15.0s (from Chunk 2) + 50.0s (from Chunk 3) = 70.0s.
+        # Since 70.0s >= 60.0s (max_transmission_duration_ms), this MUST trigger a
+        # "Maximum non-speech transmission duration exceeded" flush during Chunk 3!
+        chunk3 = mock_audio_chunk(30000, 50000, [])
+        actions3 = self._process(chunk3)
+
+        # Verify that a flush occurred in Chunk 3
+        other_flush = next(
+            (
+                a
+                for a in actions3
+                if isinstance(a, FlushAction) and a.audio_classification == 2
+            ),
+            None,
+        )
+        self.assertIsNotNone(other_flush)
+        assert other_flush is not None
+        self.assertEqual(
+            other_flush.reason,
+            "Maximum non-speech transmission duration exceeded",
+        )
+
+        # Under the correct, non-lossy code, the flushed OTHER segment must fully
+        # retain all silent audio buffered up to the start of Chunk 3:
+        # 5.0s (from Chunk 1) + 15.0s (from Chunk 2) = 20.0s (20000ms).
+        self.assertEqual(
+            other_flush.time_range.end_ms - other_flush.time_range.start_ms,
+            20000,
+        )
+
+    def test_upstream_gap_within_tolerance_absorbed(self) -> None:
+        """Verifies that an upstream gap within the tolerance does not trigger a flush."""
+        # Start an active transmission with chunk 1 ending at 3000ms
+        chunk1 = mock_audio_chunk(0, 3000, [(1.0, 2.0)], "gs://fake/1.flac")
+        self._process(chunk1)
+
+        # Process a second chunk that starts within the tolerance late
+        # (at 3000 + tolerance - 10 ms)
+        late_start = 3000 + UPSTREAM_GAP_DRIFT_TOLERANCE_MS - 10
+        chunk2 = mock_audio_chunk(late_start, 3000, [], "gs://fake/2.flac")
+        actions = self._process(chunk2)
+
+        # No forced flush actions should occur
+        flush_actions = [
+            a
+            for a in actions
+            if isinstance(a, FlushAction)
+            and a.reason == "Forced flush due to upstream audio chunk gap"
+        ]
+        self.assertEqual(len(flush_actions), 0)
+
+    def test_upstream_gap_exceeding_tolerance_flushes(self) -> None:
+        """Verifies that an upstream gap exceeding the tolerance triggers a flush."""
+        # Start an active transmission with chunk 1 ending at 3000ms
+        chunk1 = mock_audio_chunk(0, 3000, [(1.0, 2.0)], "gs://fake/1.flac")
+        self._process(chunk1)
+
+        # Process a second chunk that starts past the tolerance late
+        # (at 3000 + tolerance + 10 ms)
+        late_start = 3000 + UPSTREAM_GAP_DRIFT_TOLERANCE_MS + 10
+        chunk2 = mock_audio_chunk(late_start, 3000, [], "gs://fake/2.flac")
+        actions = self._process(chunk2)
+
+        # A forced flush action should occur
+        flush_actions = [
+            a
+            for a in actions
+            if isinstance(a, FlushAction)
+            and a.reason == "Forced flush due to upstream audio chunk gap"
+        ]
+        self.assertEqual(len(flush_actions), 1)

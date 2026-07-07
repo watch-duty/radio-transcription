@@ -85,8 +85,8 @@ class Feed(FeedBase):
     source_feed_id: str
     status: FeedStatus
     last_heartbeat: datetime.datetime | None
-    quarantine_reason: str | None = None
     status_reason: FeedStatusReason | None = None
+    status_reason_detail: str | None = None
     last_speech_segment_timestamp: datetime.datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -94,5 +94,24 @@ class Feed(FeedBase):
 
 class ListFeedsResponse(BaseModel):
     feeds: list[Feed]
+    next_token: str | None = None
+    total: int
+
+
+class FeedHistoryEvent(BaseModel):
+    id: uuid.UUID
+    feed_id: uuid.UUID
+    action: str
+    actor: str
+    occurred_at: datetime.datetime
+    feed_revision_num: int
+    before_values: dict
+    after_values: dict
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ListFeedHistoryResponse(BaseModel):
+    history_events: list[FeedHistoryEvent]
     next_token: str | None = None
     total: int

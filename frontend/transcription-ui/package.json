@@ -28,16 +28,16 @@
     "@transcription/common": "link:../common",
     "@wavesurfer/react": "^1.0.12",
     "date-fns": "^4.1.0",
-    "howler": "^2.2.4",
     "jose": "^6.2.3",
     "material-symbols": "^0.44.4",
     "pluralize": "^8.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "react-router": "^7.15.0",
+    "react-router": "^7.15.1",
     "react-virtuoso": "^4.18.5",
     "relative-time-format": "^1.1.12",
     "swagger-ui-react": "^5.32.3",
+    "ua-parser-js": "^2.0.10",
     "wavesurfer.js": "^7.12.6"
   },
   "devDependencies": {
@@ -49,7 +49,6 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@trivago/prettier-plugin-sort-imports": "^6.0.2",
-    "@types/howler": "^2.2.12",
     "@types/node": "^24.10.1",
     "@types/pluralize": "^0.0.33",
     "@types/react": "^19.2.7",
@@ -68,7 +67,7 @@
     "prettier": "^3.8.1",
     "typescript": "^6.0.2",
     "typescript-eslint": "^8.58.1",
-    "vite": "^8.0.16",
+    "vite": "^8.1.0",
     "vitest": "^4.1.4"
   }
 }

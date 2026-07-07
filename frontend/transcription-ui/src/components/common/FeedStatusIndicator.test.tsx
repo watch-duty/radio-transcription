@@ -48,9 +48,9 @@ describe('FeedStatusIndicator', () => {
     expect(screen.getByText('unknown_status')).toBeTruthy();
   });
 
-  it('displays substatus tooltip on hover', async () => {
-    render(<FeedStatusIndicator status="active" substatus="active" />);
-    const statusText = screen.getByText('Active');
+  it('displays substatus tooltip when substatus differs from visible status', async () => {
+    render(<FeedStatusIndicator status="inactive" substatus="active" />);
+    const statusText = screen.getByText('Inactive');
     fireEvent.mouseOver(statusText);
     await waitFor(() => {
       expect(screen.getByText('Active')).toBeTruthy();
@@ -87,12 +87,12 @@ describe('FeedStatusIndicator', () => {
     });
   });
 
-  it('displays quarantineReason in tooltip on hover', async () => {
+  it('displays statusReasonDetail in tooltip on hover', async () => {
     render(
       <FeedStatusIndicator
         status="error"
         substatus="quarantined"
-        quarantineReason="corrupted audio files"
+        statusReasonDetail="corrupted audio files"
       />
     );
     const statusText = screen.getByText('Error');
@@ -104,7 +104,19 @@ describe('FeedStatusIndicator', () => {
     });
   });
 
-  it('displays lastHeartbeat relative time string', () => {
+  it('does not display lastHeartbeat relative time string if not provided', () => {
+    const fixedNow = new Date('2026-06-09T13:00:00Z');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(fixedNow);
+    try {
+      render(<FeedStatusIndicator status="active" />);
+      expect(screen.queryByText(/heartbeat|updated/i)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('displays lastHeartbeat relative time string if provided', () => {
     const fixedNow = new Date('2026-06-09T13:00:00Z');
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(fixedNow);
@@ -112,14 +124,34 @@ describe('FeedStatusIndicator', () => {
       render(
         <FeedStatusIndicator
           status="active"
-          lastHeartbeat={new Date(
-            fixedNow.getTime() - 10 * 60 * 1000
-          ).toISOString()}
+          lastHeartbeat={fixedNow.getTime() - 10 * 60 * 1000}
         />
       );
-      expect(screen.getByText('Last updated: 10 minutes ago')).toBeTruthy();
+      expect(screen.getByText('Last heartbeat: 10 minutes ago')).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('displays lastSpeechSegmentTimestamp relative time string', () => {
+    const fixedNow = new Date('2026-06-09T13:00:00Z');
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(fixedNow);
+    try {
+      render(
+        <FeedStatusIndicator
+          status="active"
+          lastSpeechSegmentTimestamp={fixedNow.getTime() - 10 * 60 * 1000}
+        />
+      );
+      expect(screen.getByText('Last activity: 10 minutes ago')).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('displays Last activity: N/A if lastSpeechSegmentTimestamp is not provided', () => {
+    render(<FeedStatusIndicator status="active" />);
+    expect(screen.getByText('Last activity: N/A')).toBeTruthy();
   });
 });

@@ -1,7 +1,8 @@
-import { Fragment } from 'react';
+import { useState } from 'react';
 
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import LinkIcon from '@mui/icons-material/Link';
+import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import ListItem from '@mui/material/ListItem';
@@ -10,14 +11,17 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import { type TranscriptAnnotationData } from '@transcription/common';
 
+import { useAuth } from '../../context/AuthContext';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
 import {
   findEvaluationAnnotationData,
   findTranscriptAnnotationData,
 } from '../../utils/annotationUtils';
 import { formatDuration } from '../../utils/timeUtils';
-import AudioPlayer from '../audio/AudioPlayer';
+import TranscriptPlayControl from '../audio/TranscriptPlayControl';
 import AlertTooltip from './AlertTooltip';
+import HighlightedTranscript from './HighlightedTranscript';
+import { SegmentInfoPopover } from './SegmentInfoPopover';
 
 interface TranscriptRowProps {
   audioSegment: RenderableAudioSegment;
@@ -53,13 +57,22 @@ export function TranscriptRow({
   isTopAudioSegmentRow = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
+  const { isAdmin } = useAuth();
+
+  const [isHovered, setIsHovered] = useState(false);
+
   const currentDate = new Date(audioSegment.startTimestamp);
 
   const isSilence = !!audioSegment.isSilenceBundle;
+  const isOutage = !!audioSegment.isOutageBundle;
 
   function renderTranscriptionText(
     transcriptAnnotation: TranscriptAnnotationData | null
   ): string {
+    if (isOutage) {
+      return '[Audio unavailable]';
+    }
+
     if (isSilence) {
       return '[No speech detected]';
     }
@@ -82,8 +95,8 @@ export function TranscriptRow({
   const hasErrors = transcriptAnnotation
     ? transcriptAnnotation.errors.length > 0
     : false;
-  const isWaiting = !isSilence && !transcriptAnnotation;
-  const isPlaceholder = isSilence || isWaiting || hasErrors;
+  const isWaiting = !isSilence && !isOutage && !transcriptAnnotation;
+  const isPlaceholder = isSilence || isWaiting || hasErrors || isOutage;
 
   const evaluationAnnotation = findEvaluationAnnotationData(
     audioSegment.annotations
@@ -99,6 +112,10 @@ export function TranscriptRow({
   const isOngoingSilence = isSilence && isTopAudioSegmentRow;
 
   const getBorderColor = () => {
+    if (isOutage) {
+      // Muted, darker grey than silence to indicate interruption
+      return theme.palette.grey[400];
+    }
     if (isSilence) {
       return theme.palette.grey[200];
     }
@@ -109,7 +126,10 @@ export function TranscriptRow({
   };
 
   return (
-    <Fragment>
+    <Box
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
       {showHeader && (
         <ListItem
           sx={{
@@ -155,8 +175,8 @@ export function TranscriptRow({
           scrollMarginTop: theme.spacing(5),
           cursor: 'pointer',
           borderLeft: `5px solid ${getBorderColor()}`,
-          pt: isSilence ? '0px !important' : undefined,
-          pb: isSilence ? '0px !important' : undefined,
+          pt: isSilence || isOutage ? '0px !important' : undefined,
+          pb: isSilence || isOutage ? '0px !important' : undefined,
           '&:hover': {
             bgcolor: isHighlighted ? 'action.selected' : 'action.hover',
           },
@@ -205,7 +225,7 @@ export function TranscriptRow({
               color="text.secondary"
               sx={{
                 opacity: 0.8,
-                fontStyle: isSilence ? 'italic' : 'normal',
+                fontStyle: isSilence || isOutage ? 'italic' : 'normal',
               }}
             >
               {formatDuration(
@@ -216,38 +236,92 @@ export function TranscriptRow({
             </Typography>
           )}
         </Box>
-        <AudioPlayer
-          audioUri={audioSegment.playbackAudioUri ?? ''}
-          segmentId={audioSegment.id}
-          onToggleAudio={onToggleAudio}
-          isAudioPlaying={isAudioPlaying}
-          currentlyPlayingSegmentId={
-            isCurrentlyPlaying ? audioSegment.id : currentlyPlayingSegmentId
-          }
-        />
-        <Typography
-          variant={isSilence ? 'caption' : 'body1'}
-          color={
-            hasErrors
-              ? 'error.main'
-              : isPlaceholder
-                ? 'text.secondary'
-                : 'text.primary'
-          }
+        <Box
           sx={{
-            flexGrow: 1,
-            whiteSpace: 'pre-wrap',
-            transition: 'filter 0.3s ease, opacity 0.3s ease',
-            filter: redactTranscripts ? 'blur(6px)' : 'none',
-            opacity: redactTranscripts ? 0.6 : 1,
-            fontStyle:
-              isSilence || isWaiting || hasErrors ? 'italic' : 'normal',
+            width: theme.spacing(5),
+            height: theme.spacing(5),
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            flexShrink: 0,
           }}
         >
-          {renderTranscriptionText(transcriptAnnotation)}
-        </Typography>
+          {!isOutage && (
+            <TranscriptPlayControl
+              audioUri={audioSegment.playbackAudioUri ?? ''}
+              segmentId={audioSegment.id}
+              onToggleAudio={onToggleAudio}
+              isAudioPlaying={isAudioPlaying}
+              currentlyPlayingSegmentId={
+                isCurrentlyPlaying ? audioSegment.id : currentlyPlayingSegmentId
+              }
+              hideButton={!isHovered}
+            />
+          )}
+        </Box>
+        <Box
+          sx={{
+            flexGrow: 1,
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 1,
+          }}
+        >
+          <Typography
+            variant={isPlaceholder ? 'caption' : 'body1'}
+            color={
+              hasErrors
+                ? 'error'
+                : isPlaceholder
+                  ? 'text.secondary'
+                  : 'text.primary'
+            }
+            sx={{
+              flexGrow: 1,
+              whiteSpace: 'pre-wrap',
+              transition: 'filter 0.3s ease, opacity 0.3s ease',
+              filter: redactTranscripts ? 'blur(6px)' : 'none',
+              opacity: redactTranscripts ? 0.6 : 1,
+              fontStyle:
+                isSilence || isWaiting || hasErrors || isOutage
+                  ? 'italic'
+                  : 'normal',
+            }}
+          >
+            {isPlaceholder ? (
+              renderTranscriptionText(transcriptAnnotation)
+            ) : (
+              <HighlightedTranscript
+                text={transcriptAnnotation?.text ?? ''}
+                ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
+              />
+            )}
+          </Typography>
+          {!isSilence &&
+            !isOutage &&
+            (audioSegment.missingPriorContext ||
+              audioSegment.missingPostContext) && (
+              <Tooltip
+                title={`Transcription may be degraded: missing ${[
+                  audioSegment.missingPriorContext && 'prior',
+                  audioSegment.missingPostContext && 'post',
+                ]
+                  .filter(Boolean)
+                  .join(' and ')} audio context.`}
+              >
+                <WarningAmberIcon
+                  color="warning"
+                  fontSize="small"
+                  sx={{
+                    flexShrink: 0,
+                    mt: 0.25, // Align slightly down to match text baseline
+                  }}
+                />
+              </Tooltip>
+            )}
+        </Box>
         <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
-          {!isSilence && (
+          {!isSilence && !isOutage && (
             <Tooltip title="Copy transcript">
               <span>
                 <IconButton
@@ -294,9 +368,15 @@ export function TranscriptRow({
               <LinkIcon fontSize="small" />
             </IconButton>
           </Tooltip>
+          {isAdmin && (
+            <SegmentInfoPopover
+              audioSegment={audioSegment}
+              triggerSnackbar={triggerSnackbar}
+            />
+          )}
         </Box>
       </ListItem>
-    </Fragment>
+    </Box>
   );
 }
 

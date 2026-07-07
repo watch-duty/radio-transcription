@@ -32,7 +32,9 @@ export async function listFeedsPage(
     }
   }
   if (params?.tags && params.tags.length > 0) {
-    queryParams.append('tags', JSON.stringify(params.tags));
+    for (const tag of params.tags) {
+      queryParams.append('tags', JSON.stringify(tag));
+    }
   }
 
   const url = queryParams.toString()

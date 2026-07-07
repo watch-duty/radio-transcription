@@ -5,6 +5,7 @@ import DeleteIcon from '@mui/icons-material/Delete';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import TagIcon from '@mui/icons-material/Tag';
+import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Card from '@mui/material/Card';
@@ -34,15 +35,60 @@ import type {
 import { SourceType } from '@transcription/common';
 
 import { toSourceTypeString } from '../../utils/textUtils';
-import { validateFeedSourceId } from '../../utils/validationUtils';
+import {
+  type TagKeyLimit,
+  isValidTimezone,
+  tagAddError,
+  validateFeedSourceId,
+  validateTags,
+} from '../../utils/validationUtils';
 import {
   ConfirmationDialog,
   type ConfirmationDialogProps,
 } from '../common/ConfirmationDialog';
+import { type TagRow, nextTagRowId } from './tagRows';
 
 const ALL_SOURCE_TYPES = Object.values(SourceType).map((value) => {
   return { value, label: toSourceTypeString(value) };
 });
+
+const SYSTEM_TIMEZONE = 'system/timezone';
+
+const ALL_TIMEZONES = Array.from(
+  // Some older browsers might not support UTC in this list.
+  new Set([...Intl.supportedValuesOf('timeZone'), 'UTC'])
+).sort((a, b) => {
+  if (a === 'UTC') return -1;
+  if (b === 'UTC') return 1;
+
+  const aIsAmerica = a.startsWith('America/');
+  const bIsAmerica = b.startsWith('America/');
+  if (aIsAmerica && !bIsAmerica) return -1;
+  if (!aIsAmerica && bIsAmerica) return 1;
+
+  return a.localeCompare(b);
+});
+
+// Keys default to multi-value + free-text (e.g. `region` for multi-county
+// feeds); only exceptions need an entry here. `options` also renders a dropdown.
+interface TagKeyConfig extends TagKeyLimit {
+  valueLabel?: string; // dropdown label (defaults to "Value")
+}
+
+const TAG_KEY_CONFIG: Record<string, TagKeyConfig> = {
+  // system/timezone is currently only recognized by the Fire Notifications collector.
+  [SYSTEM_TIMEZONE]: {
+    maxValues: 1,
+    options: ALL_TIMEZONES,
+    // Accept any IANA zone (incl. aliases like US/Pacific) the dropdown omits, so
+    // editing a feed whose timezone was set outside this UI doesn't block saving.
+    validate: isValidTimezone,
+    valueLabel: 'Timezone',
+  },
+};
+
+const tagKeyConfig = (key: string): TagKeyConfig | undefined =>
+  TAG_KEY_CONFIG[key.trim()];
 
 export const DialogType = {
   Delete: 'delete',
@@ -93,13 +139,13 @@ interface FeedConfigurationEditProps {
   feedName: string;
   feedSourceType: SourceType;
   feedSourceId: string;
-  feedTags: Tag[];
+  feedTags: TagRow[];
   feedStatus?: FeedStatus;
   feedSubstatus?: BackendFeedStatus;
   setFeedName: (name: string) => void;
   setFeedSourceType: (sourceType: SourceType) => void;
   setFeedSourceId: (sourceFeedId: string) => void;
-  setFeedTags: (tags: Tag[]) => void;
+  setFeedTags: (tags: TagRow[]) => void;
   onCreateFeed: (payload: FeedCreate) => Promise<void>;
   onUpdateFeed: (payload: FeedUpdate) => Promise<void>;
   /** Callback triggered to hard delete the feed. If undefined, "Delete feed" is hidden from the actions menu. */
@@ -186,7 +232,15 @@ export function FeedConfigurationEdit({
   };
 
   const handleKeyChange = (val: string) => {
+    const trimmedVal = val.trim();
     setNewTagKey(val);
+
+    // Clear the value when switching to an enum key whose current value isn't allowed.
+    const allowedOptions = tagKeyConfig(trimmedVal)?.options;
+    if (allowedOptions && !allowedOptions.includes(newTagValue)) {
+      setNewTagValue('');
+    }
+
     setValidationErrors((prev) => {
       if (!prev.tags) return prev;
       const copy = { ...prev };
@@ -235,16 +289,18 @@ export function FeedConfigurationEdit({
       return;
     }
 
-    // Prevent duplicate keys in tags list
-    if (feedTags.some((t) => t.key === key)) {
-      setValidationErrors((prev) => ({
-        ...prev,
-        tags: `A tag with key "${key}" already exists.`,
-      }));
+    const addError = tagAddError(
+      feedTags,
+      key,
+      value,
+      tagKeyConfig(key)?.maxValues
+    );
+    if (addError) {
+      setValidationErrors((prev) => ({ ...prev, tags: addError }));
       return;
     }
 
-    setFeedTags([...feedTags, { key, value }]);
+    setFeedTags([...feedTags, { id: nextTagRowId(), key, value }]);
     setNewTagKey('');
     setNewTagValue('');
     setValidationErrors((prev) => {
@@ -254,18 +310,30 @@ export function FeedConfigurationEdit({
     });
   };
 
-  const handleRemoveTag = (keyToRemove: string) => {
-    setFeedTags(feedTags.filter((tag) => tag.key !== keyToRemove));
+  const handleRemoveTag = (idToRemove: string) => {
+    setFeedTags(feedTags.filter((tag) => tag.id !== idToRemove));
   };
 
   const handleUpdateTag = (
-    index: number,
+    id: string,
     field: 'key' | 'value',
     newValue: string
   ) => {
-    const copy = [...feedTags];
-    copy[index] = { ...copy[index], [field]: newValue };
-    setFeedTags(copy);
+    const updated = feedTags.map((tag) => {
+      if (tag.id !== id) return tag;
+      const next = { ...tag, [field]: newValue };
+
+      // Clear the value when switching to an enum key whose current value isn't allowed.
+      if (field === 'key') {
+        const allowedOptions = tagKeyConfig(newValue)?.options;
+        if (allowedOptions && !allowedOptions.includes(next.value)) {
+          next.value = '';
+        }
+      }
+      return next;
+    });
+
+    setFeedTags(updated);
     setValidationErrors((prev) => {
       const copy = { ...prev };
       delete copy.tags;
@@ -289,39 +357,13 @@ export function FeedConfigurationEdit({
       errors.sourceFeedId = sourceIdError;
     }
 
-    // First check the in-progress tag inputs
-    const trimmedNewKey = inProgressTag.key.trim();
-    const trimmedNewValue = inProgressTag.value.trim();
-
-    const combinedTags = [...tagsToValidate];
-
-    // If there is something in the in-progress tag fields, validate it.
-    if (trimmedNewKey && trimmedNewValue) {
-      if (tagsToValidate.some((t) => t.key === trimmedNewKey)) {
-        errors.tags = `A tag with key "${trimmedNewKey}" already exists.`;
-      } else {
-        combinedTags.push({ key: trimmedNewKey, value: trimmedNewValue });
-      }
-    } else if (trimmedNewKey || trimmedNewValue) {
-      errors.tags = 'Both key and value must be populated to add a tag.';
-    }
-
-    // Verify tags data integrity across the combined set
-    const duplicateKeys = combinedTags.filter(
-      (tag, idx) => combinedTags.findIndex((t) => t.key === tag.key) !== idx
+    const tagError = validateTags(
+      tagsToValidate,
+      inProgressTag,
+      TAG_KEY_CONFIG
     );
-    if (duplicateKeys.length > 0) {
-      errors.tags = `Duplicate tag keys discovered: ${duplicateKeys
-        .map((d) => d.key)
-        .join(', ')}. Keys must be unique.`;
-    }
-
-    const blankTags = combinedTags.some(
-      (tag) => !tag.key.trim() || !tag.value.trim()
-    );
-    if (blankTags) {
-      errors.tags =
-        'Tag key and value inputs cannot be blank. Discard empty tag rows using the delete button.';
+    if (tagError) {
+      errors.tags = tagError;
     }
 
     return errors;
@@ -340,17 +382,27 @@ export function FeedConfigurationEdit({
 
     setValidationErrors({});
 
-    // Build the final tags array to submit. If there was a valid in-progress tag, include it.
+    // Build the final rows to submit. If there was a valid in-progress tag, include it.
     const trimmedNewKey = newTagKey.trim();
     const trimmedNewValue = newTagValue.trim();
-    const finalTags = [...feedTags];
+    const finalRows = [...feedTags];
     if (trimmedNewKey && trimmedNewValue) {
-      finalTags.push({ key: trimmedNewKey, value: trimmedNewValue });
+      finalRows.push({
+        id: nextTagRowId(),
+        key: trimmedNewKey,
+        value: trimmedNewValue,
+      });
       // Update state so the UI reflects the added tag and clears the inputs
-      setFeedTags(finalTags);
+      setFeedTags(finalRows);
       setNewTagKey('');
       setNewTagValue('');
     }
+
+    // Strip the client-side row id before sending to the API.
+    const finalTags: Tag[] = finalRows.map(({ key, value }) => ({
+      key,
+      value,
+    }));
 
     try {
       if (isEditing) {
@@ -375,6 +427,12 @@ export function FeedConfigurationEdit({
   };
 
   const dialogConfig = activeDialog ? DIALOG_CONFIG[activeDialog] : null;
+  const newTagConfig = tagKeyConfig(newTagKey);
+  const newTagValueLabel = newTagConfig?.valueLabel ?? 'Value';
+  const tagRows = feedTags.map((tag, index) => {
+    const config = tagKeyConfig(tag.key);
+    return { tag, index, config, valueLabel: config?.valueLabel ?? 'Value' };
+  });
 
   return (
     <Card
@@ -432,7 +490,7 @@ export function FeedConfigurationEdit({
 
             <Grid container spacing={2}>
               <Grid size={{ xs: 12, sm: 6 }}>
-                <FormControl fullWidth disabled={!!isEditing || isSubmitting}>
+                <FormControl disabled={!!isEditing || isSubmitting}>
                   <InputLabel id="source-type-select-label">
                     Source Type
                   </InputLabel>
@@ -517,6 +575,10 @@ export function FeedConfigurationEdit({
                 Tags (e.g. county, agency, state) allow for better
                 searchability, grouping, and routing of notifications.
               </Typography>
+              <Alert severity="info" sx={{ mb: 2 }}>
+                The system/timezone tag can be used to correct the timestamps.
+                This is only supported in Fire Notification feeds.
+              </Alert>
 
               <Stack
                 direction="row"
@@ -531,18 +593,42 @@ export function FeedConfigurationEdit({
                   onChange={(e) => handleKeyChange(e.target.value)}
                   error={!!validationErrors.tags}
                   disabled={isSubmitting}
-                  sx={{ flexGrow: 1 }}
+                  sx={{ flex: 1 }}
                 />
-                <TextField
-                  size="small"
-                  label="Value"
-                  placeholder="Ventura"
-                  value={newTagValue}
-                  onChange={(e) => handleValueChange(e.target.value)}
-                  error={!!validationErrors.tags}
-                  disabled={isSubmitting}
-                  sx={{ flexGrow: 1 }}
-                />
+                {newTagConfig?.options ? (
+                  <FormControl size="small" sx={{ flex: 1 }}>
+                    <InputLabel id="enum-tag-label">
+                      {newTagValueLabel}
+                    </InputLabel>
+                    <Select
+                      labelId="enum-tag-label"
+                      id="enum-tag-dropdown"
+                      value={newTagValue}
+                      label={newTagValueLabel}
+                      onChange={(e) => handleValueChange(e.target.value)}
+                      error={!!validationErrors.tags}
+                      disabled={isSubmitting}
+                      fullWidth
+                    >
+                      {newTagConfig.options.map((option) => (
+                        <MenuItem key={option} value={option}>
+                          {option}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                ) : (
+                  <TextField
+                    size="small"
+                    label="Value"
+                    placeholder="Ventura"
+                    value={newTagValue}
+                    onChange={(e) => handleValueChange(e.target.value)}
+                    error={!!validationErrors.tags}
+                    disabled={isSubmitting}
+                    sx={{ flex: 1 }}
+                  />
+                )}
                 <Button
                   variant="outlined"
                   onClick={handleAddTag}
@@ -589,9 +675,9 @@ export function FeedConfigurationEdit({
                     No tags added.
                   </Typography>
                 ) : (
-                  feedTags.map((tag, index) => (
+                  tagRows.map(({ tag, index, config, valueLabel }) => (
                     <Stack
-                      key={index}
+                      key={tag.id}
                       direction="row"
                       spacing={1.5}
                       sx={{ alignItems: 'center' }}
@@ -600,28 +686,54 @@ export function FeedConfigurationEdit({
                         size="small"
                         label="Key"
                         value={tag.key}
-                        onChange={(e) =>
-                          handleUpdateTag(index, 'key', e.target.value)
-                        }
+                        onChange={(e) => {
+                          const newKey = e.target.value;
+                          handleUpdateTag(tag.id, 'key', newKey);
+                        }}
                         disabled={isSubmitting}
-                        sx={{ flexGrow: 1 }}
+                        sx={{ flex: 1 }}
                       />
-                      <TextField
-                        size="small"
-                        label="Value"
-                        value={tag.value}
-                        onChange={(e) =>
-                          handleUpdateTag(index, 'value', e.target.value)
-                        }
-                        disabled={isSubmitting}
-                        sx={{ flexGrow: 1 }}
-                      />
+                      {config?.options ? (
+                        <FormControl size="small" sx={{ flex: 1 }}>
+                          <InputLabel id={`enum-tag-label-${tag.id}`}>
+                            {valueLabel}
+                          </InputLabel>
+                          <Select
+                            labelId={`enum-tag-label-${tag.id}`}
+                            id={`enum-tag-dropdown-${tag.id}`}
+                            value={tag.value}
+                            label={valueLabel}
+                            onChange={(e) =>
+                              handleUpdateTag(tag.id, 'value', e.target.value)
+                            }
+                            disabled={isSubmitting}
+                            fullWidth
+                          >
+                            {config.options.map((option) => (
+                              <MenuItem key={option} value={option}>
+                                {option}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      ) : (
+                        <TextField
+                          size="small"
+                          label="Value"
+                          value={tag.value}
+                          onChange={(e) =>
+                            handleUpdateTag(tag.id, 'value', e.target.value)
+                          }
+                          disabled={isSubmitting}
+                          sx={{ flex: 1 }}
+                        />
+                      )}
                       <IconButton
                         size="small"
-                        onClick={() => handleRemoveTag(tag.key)}
+                        onClick={() => handleRemoveTag(tag.id)}
                         disabled={isSubmitting}
                         color="error"
-                        aria-label={`Remove tag ${tag.key}`}
+                        aria-label={`Remove tag ${index + 1}: ${tag.key}=${tag.value}`}
                       >
                         <DeleteIcon fontSize="small" />
                       </IconButton>

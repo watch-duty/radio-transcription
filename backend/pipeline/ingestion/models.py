@@ -82,6 +82,7 @@ if TYPE_CHECKING:
     import asyncio
     import datetime
     from collections.abc import AsyncIterator, Callable
+    from pathlib import Path
 
     from backend.pipeline.storage.feed_store import LeasedFeed
 
@@ -119,8 +120,8 @@ class FeedFailure(Exception):
     """Feed-level collector failure classified at the collector boundary.
 
     ``status_reason`` is the bounded operator grouping key. ``reason`` is the
-    diagnostic text preserved for logs and quarantine_reason so users and
-    engineers can debug the threshold-crossing failure episode.
+    diagnostic text preserved for logs and status reason detail so users and
+    engineers can debug the current failure episode.
     """
 
     status_reason: FeedStatusReason
@@ -240,6 +241,7 @@ class CaptureResources:
     """
 
     http_session: aiohttp.ClientSession
+    segment_temp_dir: Path | None = None
 
 
 if TYPE_CHECKING:

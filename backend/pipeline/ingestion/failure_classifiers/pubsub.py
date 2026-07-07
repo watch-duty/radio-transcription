@@ -1,10 +1,13 @@
-"""Render Pub/Sub publish failure evidence for pipeline quarantine reasons."""
+"""Render Pub/Sub publish failure evidence for pipeline status reason
+
+details.
+"""
 
 from __future__ import annotations
 
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
-from backend.pipeline.ingestion import quarantine_reason
+from backend.pipeline.ingestion import status_reason_detail
 
 
 def publish_failure_reason(exc: Exception) -> str:
@@ -12,7 +15,7 @@ def publish_failure_reason(exc: Exception) -> str:
     if isinstance(exc, pubsub_exceptions.PublishToPausedOrderingKeyException):
         return (
             "Pub/Sub publish paused for ordering key: "
-            f"{quarantine_reason.exception_text(exc)}"
+            f"{status_reason_detail.exception_text(exc)}"
         )
 
     text = str(exc)
@@ -23,4 +26,4 @@ def publish_failure_reason(exc: Exception) -> str:
         parts.append(text)
         return "; ".join(parts)
 
-    return f"Pub/Sub publish failed: {quarantine_reason.exception_text(exc)}"
+    return f"Pub/Sub publish failed: {status_reason_detail.exception_text(exc)}"

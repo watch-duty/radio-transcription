@@ -11,20 +11,29 @@ import {
 } from '@transcription/common';
 
 import { type RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
+import { createMockRenderableAudioSegment } from '../../test/mockDataUtils';
 import TranscriptRow from './TranscriptRow';
 
-// Mocking AudioPlayer to verify it's being called with the correct props.
+// Mocking TranscriptPlayControl to verify it's being called with the correct props.
 // We do not need to test the actual audio player functionality here
-// as that is tested separately in AudioPlayer.test.tsx
-vi.mock('../audio/AudioPlayer', () => ({
+// as that is tested separately in TranscriptPlayControl.test.tsx
+vi.mock('../audio/TranscriptPlayControl', () => ({
   default: (props: { audioUri: string; segmentId: string }) => (
     <div
       data-testid={`audio-player-${props.segmentId}`}
       data-audio-uri={props.audioUri}
     >
-      AudioPlayer Mock
+      TranscriptPlayControl Mock
     </div>
   ),
+}));
+
+let mockIsAdmin = false;
+
+vi.mock('../../context/AuthContext', () => ({
+  useAuth: vi.fn(() => ({
+    isAdmin: mockIsAdmin,
+  })),
 }));
 
 const mockAudioSegment: AudioSegment = {
@@ -69,6 +78,7 @@ describe('TranscriptRow', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockIsAdmin = false;
     Object.assign(navigator, {
       clipboard: {
         writeText: vi.fn().mockImplementation(() => Promise.resolve()),
@@ -103,6 +113,168 @@ describe('TranscriptRow', () => {
     expect(screen.getByText('5 sec')).toBeTruthy();
     // The date should NOT be rendered
     expect(screen.queryByText(/Monday/i)).toBeNull();
+  });
+
+  it('renders warning icon when missingPriorContext is true', () => {
+    const segment = createMockRenderableAudioSegment({
+      id: 'seg-prior-warning',
+      missingPriorContext: true,
+      missingPostContext: false,
+    });
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={segment}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByTestId('WarningAmberIcon')).toBeTruthy();
+  });
+
+  it('renders warning icon when missingPostContext is true', () => {
+    const segment = createMockRenderableAudioSegment({
+      id: 'seg-post-warning',
+      missingPriorContext: false,
+      missingPostContext: true,
+    });
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={segment}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByTestId('WarningAmberIcon')).toBeTruthy();
+  });
+
+  it('does not render warning icon when both context flags are false', () => {
+    const segment = createMockRenderableAudioSegment({
+      id: 'seg-no-warning',
+      missingPriorContext: false,
+      missingPostContext: false,
+    });
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={segment}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByTestId('WarningAmberIcon')).toBeNull();
+  });
+
+  it('does not render warning icon on outage segments even if flags are true', () => {
+    const segment = createMockRenderableAudioSegment({
+      id: 'outage-warning',
+      isOutageBundle: true,
+      missingPriorContext: true,
+      missingPostContext: true,
+    });
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={segment}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.queryByTestId('WarningAmberIcon')).toBeNull();
+  });
+
+  it('highlights matched spans from the evaluation annotation', () => {
+    const highlightedSegment: AudioSegment = {
+      ...mockAudioSegment,
+      annotations: [
+        {
+          type: AnnotationType.TRANSCRIPT,
+          createdAt: '2026-04-15T16:00:00Z',
+          data: { text: 'This is a test transcription', errors: [] },
+        },
+        {
+          type: AnnotationType.EVALUATION,
+          createdAt: '2026-04-15T16:00:00Z',
+          data: {
+            decisions: ['rule-1'],
+            errors: [],
+            ruleAnnotations: {
+              'rule-1': {
+                textMatch: [
+                  { startIndex: 10, endIndex: 14, matchedText: 'test' },
+                ],
+              },
+            },
+          },
+        },
+      ],
+    };
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={highlightedSegment}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    // The matched substring renders in its own highlighted element.
+    expect(screen.getByText('test')).toBeTruthy();
   });
 
   it('renders Day Header accurately when showHeader is true', () => {
@@ -336,5 +508,92 @@ describe('TranscriptRow', () => {
     expect(screen.getByText('[No speech detected]')).toBeTruthy();
     expect(screen.queryByText('10 sec')).toBeNull();
     expect(screen.queryByText(/16:00/)).toBeNull();
+  });
+
+  it('does not render segment info button for non-admins', () => {
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={mockAudioSegment}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(
+      screen.queryByLabelText('view segment info')
+    ).not.toBeInTheDocument();
+  });
+
+  it('renders segment info button for admins', () => {
+    mockIsAdmin = true;
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={mockAudioSegment}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByLabelText('view segment info')).toBeInTheDocument();
+  });
+
+  it('renders transcription failure correctly with placeholder text and disabled copy', () => {
+    const mockFailedTranscript: AudioSegment = {
+      ...mockAudioSegment,
+      annotations: [
+        {
+          type: AnnotationType.TRANSCRIPT,
+          createdAt: '2026-04-15T16:00:00Z',
+          data: {
+            text: '',
+            errors: ['some API error'],
+          },
+        },
+      ],
+    };
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={mockFailedTranscript}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByText('[Transcription failed]')).toBeTruthy();
+
+    const copyButton = screen.getByLabelText('copy transcript');
+    expect((copyButton as HTMLButtonElement).disabled).toBe(true);
   });
 });

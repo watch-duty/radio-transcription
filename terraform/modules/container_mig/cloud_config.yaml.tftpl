@@ -154,6 +154,9 @@ ${env_file_content}
         --sysctl net.ipv4.tcp_keepalive_time=60 \
         --sysctl net.ipv4.tcp_keepalive_intvl=10 \
         --sysctl net.ipv4.tcp_keepalive_probes=3 \
+%{ for mount in tmpfs_mounts ~}
+        --tmpfs ${mount} \
+%{ endfor ~}
         -p 127.0.0.1:$((8080 + %i)):8080 \
         --env-file /etc/container-env/${service_name}.env \
         -e WORKER_INDEX=%i \

@@ -6,6 +6,19 @@ export const MAX_WINDOW_DURATION_MS = 15 * 60 * 1000; // 15 minutes
 RelativeTimeFormat.addLocale(en);
 const rtf = new RelativeTimeFormat('en');
 
+// 24-hour HH:MM (optionally :SS), locale-independent, for the timeline playhead.
+export function formatClockTime(
+  timestamp: number,
+  includeSeconds = false
+): string {
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    ...(includeSeconds && { second: '2-digit' }),
+    hour12: false,
+  });
+}
+
 export function getRelativeTimeString(
   dateValue?: string | Date | number,
   capAtMinute = true
@@ -52,6 +65,9 @@ export function getRelativeTimeString(
 }
 
 export function formatDuration(seconds: number): string {
+  if (seconds < 1) {
+    return '<1 sec';
+  }
   const roundedSeconds = Math.round(seconds);
   if (roundedSeconds < 60) {
     return `${roundedSeconds} sec`;

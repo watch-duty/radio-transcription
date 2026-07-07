@@ -2,15 +2,38 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import UTC, datetime
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from backend.pipeline.storage import quarantine_reason
+from backend.pipeline.storage import status_reason_detail, sync_feed_queries
 from backend.pipeline.storage.feed_store import FeedStatus, FeedStatusReason
 from backend.pipeline.storage.sync_feed_store import SyncFeedStore
+
+_ECHO_ACTOR_ID = "service_account:gcp:109876543210987654321"
+_MISSING_ACTOR_ID = cast("str", None)
+
+
+def _feed_audit_event(
+    feed_id: uuid.UUID,
+    action: str = "feed.recovered",
+) -> dict[str, object]:
+    return {
+        "event_type": "radio_transcription.feed_change_notification",
+        "schema_version": 1,
+        "event_id": uuid.UUID("cccccccc-dddd-eeee-ffff-000000000000"),
+        "action": action,
+        "occurred_at": datetime(2026, 6, 26, tzinfo=UTC),
+        "actor_id": _ECHO_ACTOR_ID,
+        "feed_id": feed_id,
+        "feed_revision": 2,
+        "before_values": {"status": "active"},
+        "after_values": {"status": "unclaimed"},
+    }
 
 
 def _make_store(
@@ -62,8 +85,6 @@ class TestResolveEchoFeed:
         }
         conn.execute.assert_called_once()
         sql, params = conn.execute.call_args[0]
-        assert "f.failure_count" not in sql
-        assert "failure_count" not in sql
         assert "AND fp.source_type = 'echo'" in sql
         assert "AND f.source_type = 'echo'" in sql
         assert params == ("fire-ca",)
@@ -95,16 +116,50 @@ class TestRecordHeartbeat:
         conn = _make_mock_conn()
         store = _make_store(conn)
         feed_id = uuid.uuid4()
+        payload = _feed_audit_event(feed_id)
+        conn.execute.return_value.fetchone.return_value = {
+            "feed_audit_event": payload,
+        }
 
-        store.record_heartbeat(feed_id)
+        with patch(
+            "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            store.record_heartbeat(feed_id, actor_id=_ECHO_ACTOR_ID)
 
         conn.execute.assert_called_once()
+        conn.execute.return_value.fetchone.assert_called_once_with()
         sql, params = conn.execute.call_args[0]
         assert (
             "status NOT IN ('quarantined'::feed_status, "
             "'deactivated'::feed_status)"
         ) in sql
-        assert params == (feed_id,)
+        assert params == (feed_id, _ECHO_ACTOR_ID)
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            payload
+        )
+
+    def test_heartbeat_no_row_does_not_emit_notification(self) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+
+        with patch(
+            "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            store.record_heartbeat(uuid.uuid4(), actor_id=_ECHO_ACTOR_ID)
+
+        conn.execute.return_value.fetchone.assert_called_once_with()
+        notifications.emit_feed_change_notification.assert_not_called()
+
+    def test_rejects_missing_actor_id(self) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+
+        with pytest.raises(ValueError, match="actor_id is required"):
+            store.record_heartbeat(uuid.uuid4(), actor_id=_MISSING_ACTOR_ID)
+
+        conn.execute.assert_not_called()
 
 
 class TestRecordFailure:
@@ -117,29 +172,41 @@ class TestRecordFailure:
             max_backoff_sec=600,
         )
         feed_id = uuid.uuid4()
+        payload = _feed_audit_event(feed_id, "feed.failure_reported")
+        conn.execute.return_value.fetchone.return_value = {
+            "feed_audit_event": payload,
+        }
 
-        store.record_failure(
-            feed_id,
-            reason="echo_pubsub_publish_failed",
-            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
-        )
+        with patch(
+            "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            store.record_failure(
+                feed_id,
+                actor_id=_ECHO_ACTOR_ID,
+                reason="echo_pubsub_publish_failed",
+                status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            )
 
         conn.execute.assert_called_once()
+        conn.execute.return_value.fetchone.assert_called_once_with()
         sql, params = conn.execute.call_args[0]
         assert (
             "status NOT IN ('quarantined'::feed_status, "
             "'deactivated'::feed_status)"
         ) in sql
         assert params == (
+            feed_id,
+            "system_pipeline_error",
             5,
             5,
             600,
             15,
-            5,
             "echo_pubsub_publish_failed",
-            "system_pipeline_error",
-            "system_pipeline_error",
-            feed_id,
+            _ECHO_ACTOR_ID,
+        )
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            payload
         )
 
     def test_uses_custom_thresholds(self) -> None:
@@ -154,21 +221,21 @@ class TestRecordFailure:
 
         store.record_failure(
             feed_id,
+            actor_id=_ECHO_ACTOR_ID,
             reason="echo_heartbeat_write_failed",
             status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
         )
 
         params = conn.execute.call_args[0][1]
         assert params == (
+            feed_id,
+            "system_pipeline_error",
             10,
             10,
             1200,
             30,
-            10,
             "echo_heartbeat_write_failed",
-            "system_pipeline_error",
-            "system_pipeline_error",
-            feed_id,
+            _ECHO_ACTOR_ID,
         )
 
     def test_record_failure_allows_omitted_status_reason_for_compatibility(
@@ -178,45 +245,108 @@ class TestRecordFailure:
         store = _make_store(conn)
         feed_id = uuid.uuid4()
 
-        store.record_failure(feed_id, reason="raw")
+        store.record_failure(
+            feed_id,
+            actor_id=_ECHO_ACTOR_ID,
+            reason="raw",
+        )
 
         assert conn.execute.call_args[0][1] == (
+            feed_id,
+            None,
             5,
             5,
             600,
             15,
-            5,
             "raw",
-            None,
-            None,
-            feed_id,
+            _ECHO_ACTOR_ID,
         )
 
-    def test_caps_quarantine_reason_at_persistence_boundary(self) -> None:
+    def test_caps_status_reason_detail_at_persistence_boundary(self) -> None:
         conn = _make_mock_conn()
         store = _make_store(conn)
         feed_id = uuid.uuid4()
-        long_reason = "x" * (quarantine_reason.MAX_QUARANTINE_REASON_LENGTH + 1)
+        long_reason = "x" * (
+            status_reason_detail.MAX_STATUS_REASON_DETAIL_LENGTH + 1
+        )
 
-        store.record_failure(feed_id, reason=long_reason)
+        store.record_failure(
+            feed_id,
+            actor_id=_ECHO_ACTOR_ID,
+            reason=long_reason,
+        )
 
-        reason_arg = conn.execute.call_args[0][1][5]
-        assert len(reason_arg) == quarantine_reason.MAX_QUARANTINE_REASON_LENGTH
+        reason_arg = conn.execute.call_args[0][1][6]
+        assert (
+            len(reason_arg)
+            == status_reason_detail.MAX_STATUS_REASON_DETAIL_LENGTH
+        )
         assert reason_arg.endswith("[truncated]")
 
-    def test_always_logs_failure(self) -> None:
+    def test_failure_null_payload_calls_helper_noop_boundary(self) -> None:
         conn = _make_mock_conn()
         store = _make_store(conn)
         feed_id = uuid.uuid4()
+        conn.execute.return_value.fetchone.return_value = {
+            "feed_audit_event": None,
+        }
 
         with patch(
-            "backend.pipeline.storage.sync_feed_store.logger"
-        ) as mock_logger:
-            store.record_failure(feed_id)
+            "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            store.record_failure(
+                feed_id,
+                actor_id=_ECHO_ACTOR_ID,
+                reason="echo_recording_download_failed",
+                status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            )
 
-        mock_logger.warning.assert_called_once()
-        extra = mock_logger.warning.call_args[1]["extra"]
-        assert extra["feed_id"] == str(feed_id)
+        conn.execute.return_value.fetchone.assert_called_once_with()
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            None
+        )
+
+    def test_duplicate_failure_summary_log_is_not_emitted(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+        feed_id = uuid.uuid4()
+        conn.execute.return_value.fetchone.return_value = {
+            "feed_audit_event": _feed_audit_event(
+                feed_id, "feed.failure_reported"
+            ),
+        }
+
+        with (
+            patch(
+                "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
+                create=True,
+            ),
+            caplog.at_level(
+                logging.INFO,
+                logger="backend.pipeline.storage.sync_feed_store",
+            ),
+        ):
+            store.record_failure(
+                feed_id,
+                actor_id=_ECHO_ACTOR_ID,
+                reason="echo_recording_download_failed",
+                status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            )
+
+        assert "Feed failure recorded" not in caplog.messages
+
+    def test_rejects_missing_actor_id(self) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+
+        with pytest.raises(ValueError, match="actor_id is required"):
+            store.record_failure(uuid.uuid4(), actor_id=_MISSING_ACTOR_ID)
+
+        conn.execute.assert_not_called()
 
 
 class TestRecordNonBudgetedFailure:
@@ -224,45 +354,123 @@ class TestRecordNonBudgetedFailure:
         conn = _make_mock_conn()
         store = _make_store(conn)
         feed_id = uuid.uuid4()
+        payload = _feed_audit_event(feed_id, "feed.failure_reported")
+        conn.execute.return_value.fetchone.return_value = {
+            "feed_audit_event": payload,
+        }
 
-        store.record_non_budgeted_failure(
-            feed_id,
-            status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
-        )
+        with patch(
+            "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
+            store.record_non_budgeted_failure(
+                feed_id,
+                actor_id=_ECHO_ACTOR_ID,
+                status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            )
 
         conn.execute.assert_called_once()
+        conn.execute.return_value.fetchone.assert_called_once_with()
         sql, params = conn.execute.call_args[0]
         assert "failure_count = 0" in sql
         assert "retry_after = NULL" in sql
         assert "status_reason_updated_at = CASE" in sql
-        assert "WHEN status_reason IS DISTINCT FROM %s THEN NOW()" in sql
+        assert (
+            "WHEN feeds.status_reason IS DISTINCT FROM "
+            "status_reason_input.status_reason THEN NOW()"
+        ) in sql
         assert (
             "status NOT IN ('quarantined'::feed_status, "
             "'deactivated'::feed_status)"
         ) in sql
-        assert "quarantine_reason" not in sql
         assert params == (
-            "system_pipeline_error",
-            "system_pipeline_error",
             feed_id,
+            "system_pipeline_error",
+            None,
+            _ECHO_ACTOR_ID,
+        )
+        notifications.emit_feed_change_notification.assert_called_once_with(
+            payload
         )
 
-    def test_logs_non_budgeted_failure(self) -> None:
+    def test_non_budgeted_no_row_does_not_emit_notification(self) -> None:
         conn = _make_mock_conn()
         store = _make_store(conn)
-        feed_id = uuid.uuid4()
 
         with patch(
-            "backend.pipeline.storage.sync_feed_store.logger"
-        ) as mock_logger:
+            "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
+            create=True,
+        ) as notifications:
             store.record_non_budgeted_failure(
-                feed_id,
+                uuid.uuid4(),
+                actor_id=_ECHO_ACTOR_ID,
                 status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
             )
 
-        mock_logger.info.assert_called_once()
-        extra = mock_logger.info.call_args[1]["extra"]
-        assert extra == {
-            "feed_id": str(feed_id),
-            "status_reason": "system_collector_error",
+        conn.execute.return_value.fetchone.assert_called_once_with()
+        notifications.emit_feed_change_notification.assert_not_called()
+
+    def test_duplicate_non_budgeted_summary_log_is_not_emitted(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+        feed_id = uuid.uuid4()
+        conn.execute.return_value.fetchone.return_value = {
+            "feed_audit_event": _feed_audit_event(
+                feed_id, "feed.failure_reported"
+            ),
         }
+
+        with (
+            patch(
+                "backend.pipeline.storage.sync_feed_store.feed_change_notifications",
+                create=True,
+            ),
+            caplog.at_level(
+                logging.INFO,
+                logger="backend.pipeline.storage.sync_feed_store",
+            ),
+        ):
+            store.record_non_budgeted_failure(
+                feed_id,
+                actor_id=_ECHO_ACTOR_ID,
+                status_reason=FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            )
+
+        assert "Non-budgeted feed failure recorded" not in caplog.messages
+
+    def test_rejects_missing_actor_id(self) -> None:
+        conn = _make_mock_conn()
+        store = _make_store(conn)
+
+        with pytest.raises(ValueError, match="actor_id is required"):
+            store.record_non_budgeted_failure(
+                uuid.uuid4(),
+                actor_id=_MISSING_ACTOR_ID,
+                status_reason=FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+            )
+
+        conn.execute.assert_not_called()
+
+
+class TestSyncAuditSql:
+    def test_runtime_audit_insert_is_embedded_in_lifecycle_sql(self) -> None:
+        for sql in (
+            sync_feed_queries.HEARTBEAT_SQL,
+            sync_feed_queries.RECORD_FAILURE_SQL,
+            sync_feed_queries.RECORD_NON_BUDGETED_FAILURE_SQL,
+        ):
+            assert "INSERT INTO feed_audit_events" in sql
+            assert "feed_revision" in sql
+            assert "before_values" in sql
+            assert "after_values" in sql
+
+    def test_runtime_audit_actions_are_selected_in_sql(self) -> None:
+        assert "THEN 'feed.recovered'" in sync_feed_queries.HEARTBEAT_SQL
+        assert (
+            "THEN 'feed.failure_reported'"
+            in sync_feed_queries.RECORD_FAILURE_SQL
+        )
+        assert "THEN 'feed.quarantined'" in sync_feed_queries.RECORD_FAILURE_SQL

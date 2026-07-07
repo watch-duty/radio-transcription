@@ -128,6 +128,26 @@ class CoderVerificationTest(unittest.TestCase):
         self.assertEqual(decoded.gcs_uri, "gs://bucket/chunk.flac")
         self.assertEqual(decoded.duration_ms, 1000)
 
+    def test_buffered_chunk_coder(self) -> None:
+        """Verifies BufferedChunk binary encoding and decoding."""
+        coder = coders.BufferedChunkCoder()
+        chunk = datatypes.BufferedChunk(
+            timestamp_ms=1000,
+            gcs_uri="gs://bucket/chunk.flac",
+            traceparent="traceparent-id",
+            baggage="baggage-data",
+        )
+
+        encoded = coder.encode(chunk)
+        self.assertTrue(coder.is_deterministic())
+
+        decoded = coder.decode(encoded)
+        self.assertIsInstance(decoded, datatypes.BufferedChunk)
+        self.assertEqual(decoded.timestamp_ms, 1000)
+        self.assertEqual(decoded.gcs_uri, "gs://bucket/chunk.flac")
+        self.assertEqual(decoded.traceparent, "traceparent-id")
+        self.assertEqual(decoded.baggage, "baggage-data")
+
     def test_coder_registration(self) -> None:
         """Verifies that all domain models including TransmissionContext are correctly registered."""
         coders.register_custom_coders()
@@ -150,6 +170,10 @@ class CoderVerificationTest(unittest.TestCase):
         self.assertIsInstance(
             beam.coders.registry.get_coder(datatypes.TransmissionContext),
             coders.TransmissionContextCoder,
+        )
+        self.assertIsInstance(
+            beam.coders.registry.get_coder(datatypes.BufferedChunk),
+            coders.BufferedChunkCoder,
         )
 
     def test_coder_equality_and_hashing(self) -> None:
@@ -177,6 +201,9 @@ class CoderVerificationTest(unittest.TestCase):
         )
         self.assertEqual(
             coders.ChunkMetadataCoder().to_type_hint(), datatypes.ChunkMetadata
+        )
+        self.assertEqual(
+            coders.BufferedChunkCoder().to_type_hint(), datatypes.BufferedChunk
         )
 
     def test_corrupted_protobuf_deserialization_handling(self) -> None:

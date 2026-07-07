@@ -12,6 +12,8 @@ from backend.pipeline.storage.tests.connection_util import make_mock_pool
 from backend.services.audio_segments.models import (
     AnnotationType,
     AudioClassification,
+    EvaluationAnnotationData,
+    WaveformAnnotationData,
 )
 
 
@@ -97,8 +99,75 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.audio_segment_id, str(_SEGMENT_ID))
         self.assertEqual(result.type, "EVALUATION")
         self.assertEqual(
-            result.data.model_dump(), {"decisions": ["rule-1"], "errors": []}
+            result.data.model_dump(),
+            {"decisions": ["rule-1"], "errors": [], "rule_annotations": {}},
         )
+
+    async def test_add_waveform_annotation_success(self) -> None:
+        waveform_data = {
+            "peaks": [[0.0, 0.5, 0.25, 1.0]],
+            "duration_seconds": 4.0,
+        }
+        waveform_row = {
+            "audio_segment_id": _SEGMENT_ID,
+            "type": "WAVEFORM",
+            "data": waveform_data,
+            "created_at": datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            "updated_at": datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+        }
+        self.pool.fetchrow.return_value = waveform_row
+
+        result = await self.store.add_annotation(
+            str(_SEGMENT_ID),
+            AnnotationType.WAVEFORM,
+            waveform_data,
+        )
+
+        self.assertEqual(result.type, "WAVEFORM")
+        data = result.data
+        assert isinstance(data, WaveformAnnotationData)
+        self.assertEqual(data.peaks, [[0.0, 0.5, 0.25, 1.0]])
+        self.assertEqual(data.duration_seconds, 4.0)
+
+    async def test_add_evaluation_annotation_with_rule_annotations(
+        self,
+    ) -> None:
+        eval_data = {
+            "decisions": ["rule-1"],
+            "errors": [],
+            "rule_annotations": {
+                "rule-1": {
+                    "text_match": [
+                        {"start": 0, "end": 4, "matched_text": "fire"}
+                    ]
+                }
+            },
+        }
+        eval_row = {
+            "audio_segment_id": _SEGMENT_ID,
+            "type": "EVALUATION",
+            "data": eval_data,
+            "created_at": datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            "updated_at": datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+        }
+        self.pool.fetchrow.return_value = eval_row
+
+        result = await self.store.add_annotation(
+            str(_SEGMENT_ID),
+            AnnotationType.EVALUATION,
+            eval_data,
+        )
+
+        data = result.data
+        assert isinstance(data, EvaluationAnnotationData)
+        self.assertIn("rule-1", data.rule_annotations)
+        text_match = data.rule_annotations["rule-1"].text_match
+        assert text_match is not None
+        spans = text_match
+        self.assertEqual(len(spans), 1)
+        self.assertEqual(spans[0].start, 0)
+        self.assertEqual(spans[0].end, 4)
+        self.assertEqual(spans[0].matched_text, "fire")
 
     async def test_add_annotation_invalid_uuid(self) -> None:
         with self.assertRaises(ValueError) as cm:
@@ -231,6 +300,7 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             None,
             None,
             101,
+            None,
         )
 
     async def test_list_audio_segments_with_feed_id(self) -> None:
@@ -246,12 +316,29 @@ class TestAudioSegmentStore(unittest.IsolatedAsyncioTestCase):
             None,
             None,
             101,
+            None,
         )
 
     async def test_list_audio_segments_invalid_feed_id(self) -> None:
         with self.assertRaises(ValueError) as cm:
             await self.store.list_audio_segments(["invalid-uuid"])
         self.assertIn("Invalid feed_id UUID in list", str(cm.exception))
+
+    async def test_list_audio_segments_with_query(self) -> None:
+        result = await self.store.list_audio_segments(text_query="search term")
+
+        self.assertEqual(len(result.segments), 1)
+        self.pool.fetch.assert_called_once_with(
+            audio_segment_queries.LIST_AUDIO_SEGMENTS_DESC_SQL,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            101,
+            "search term",
+        )
 
 
 if __name__ == "__main__":

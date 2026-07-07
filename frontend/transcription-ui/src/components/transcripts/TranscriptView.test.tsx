@@ -3,8 +3,16 @@ import type { ReactElement } from 'react';
 import { MemoryRouter } from 'react-router';
 import { VirtuosoMockContext } from 'react-virtuoso';
 
-import { Howl } from 'howler';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
 import {
   act,
@@ -30,6 +38,41 @@ import { listRules } from '../../service/listRules';
 import { renderWithQueryClient } from '../../test/testUtils';
 import TranscriptView from './TranscriptView';
 
+// The VirtuosoMockContext renders every item, which makes Virtuoso fire
+// endReached on mount and never fire atTopStateChange (its scroll state machine
+// is inert in jsdom). Both make pagination triggers non-deterministic. We wrap
+// the real GroupedVirtuoso to capture these callbacks and withhold them from the
+// real component, so tests drive scroll-to-top / scroll-to-bottom explicitly.
+const virtuosoCallbacks = vi.hoisted(() => ({
+  atTopStateChange: undefined as ((atTop: boolean) => void) | undefined,
+  endReached: undefined as ((index: number) => void) | undefined,
+  // Latest firstItemIndex prop, so tests can assert scroll anchoring on prepend.
+  firstItemIndex: undefined as number | undefined,
+}));
+
+vi.mock('react-virtuoso', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('react-virtuoso')>();
+  return {
+    ...actual,
+    GroupedVirtuoso: ({
+      atTopStateChange,
+      endReached,
+      ...props
+    }: Record<string, unknown> & {
+      atTopStateChange?: (atTop: boolean) => void;
+      endReached?: (index: number) => void;
+      firstItemIndex?: number;
+    }) => {
+      virtuosoCallbacks.atTopStateChange = atTopStateChange;
+      virtuosoCallbacks.endReached = endReached;
+      virtuosoCallbacks.firstItemIndex = props.firstItemIndex as
+        | number
+        | undefined;
+      return <actual.GroupedVirtuoso {...props} />;
+    },
+  };
+});
+
 const renderTranscriptView = (
   ui: ReactElement,
   options: { initialEntries?: string[] } = {}
@@ -45,6 +88,25 @@ const renderTranscriptView = (
     </MemoryRouter>
   );
 };
+
+// Simulates the user scrolling away from the top of the virtualized list and
+// back, which is what triggers loading newer segments via atTopStateChange.
+function scrollAwayAndBackToTop() {
+  if (!virtuosoCallbacks.atTopStateChange) {
+    throw new Error('atTopStateChange callback not captured');
+  }
+  act(() => virtuosoCallbacks.atTopStateChange!(false));
+  act(() => virtuosoCallbacks.atTopStateChange!(true));
+}
+
+// Simulates the user scrolling to the bottom of the list, which triggers
+// loading older segments via endReached.
+function scrollToBottom() {
+  if (!virtuosoCallbacks.endReached) {
+    throw new Error('endReached callback not captured');
+  }
+  act(() => virtuosoCallbacks.endReached!(0));
+}
 
 function makeMockAudioSegment(
   id: string,
@@ -119,6 +181,53 @@ vi.mock('@wavesurfer/react', () => ({
   default: () => <div data-testid="wavesurfer-player" />,
 }));
 
+const audioEngineMock = vi.hoisted(() => ({
+  playSpy: vi.fn(),
+  lastSrc: null as string | null,
+  lastSeekTime: null as number | null,
+  currentTime: 0,
+  lastCallbacks: null as {
+    onPlay?: () => void;
+    onPause?: () => void;
+    onEnd?: () => void;
+    onError?: () => void;
+  } | null,
+}));
+
+vi.mock('../../audio/WebAudioPlayer', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../audio/WebAudioPlayer')>()),
+  createAudioContext: () => ({ close: () => Promise.resolve() }),
+  WebAudioPlayer: class {
+    resume() {}
+    setVolumeDb() {}
+    setPan() {}
+    setSpeed() {}
+    stop() {}
+    dispose() {}
+    load(
+      src: string,
+      callbacks: NonNullable<typeof audioEngineMock.lastCallbacks>
+    ) {
+      audioEngineMock.lastSrc = src;
+      audioEngineMock.lastCallbacks = callbacks;
+      return {
+        play: () => {
+          audioEngineMock.playSpy();
+          callbacks.onPlay?.();
+        },
+        pause: () => callbacks.onPause?.(),
+        stop: () => {},
+        getCurrentTime: () => audioEngineMock.currentTime,
+        setCurrentTime: (time: number) => {
+          audioEngineMock.lastSeekTime = time;
+        },
+        unload: () => {},
+        off: () => {},
+      };
+    }
+  },
+}));
+
 describe('TranscriptView', () => {
   const mockHandleError = vi.fn();
 
@@ -134,10 +243,24 @@ describe('TranscriptView', () => {
     ),
   ];
 
+  // JSDOM implements no scroll methods; react-virtuoso calls scrollBy from an
+  // rAF on prepend, which otherwise throws an unhandled "not a function" error.
+  beforeAll(() => {
+    HTMLElement.prototype.scrollBy = () => {};
+    HTMLElement.prototype.scrollTo = () => {};
+    HTMLElement.prototype.scrollIntoView = () => {};
+  });
+
+  afterAll(() => {
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollBy');
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollTo');
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+  });
+
   beforeEach(() => {
     vi.resetAllMocks();
     mockHandleError.mockClear();
-    // Default mock for listTranscripts to prevent errors on mount
+    // Default mock for listAudioSegments to prevent errors on mount
     vi.mocked(listAudioSegments).mockResolvedValue({
       segments: [],
       nextToken: undefined,
@@ -162,7 +285,7 @@ describe('TranscriptView', () => {
       sourceType: SourceType.BCFY_FEEDS,
       status: 'active' as FeedStatus,
       substatus: 'active' as BackendFeedStatus,
-      lastHeartbeat: '2026-04-10T12:00:00Z',
+      lastSpeechSegmentTimestamp: Date.parse('2026-04-10T12:00:00Z'),
     });
     // Default mock for listRules
     vi.mocked(listRules).mockResolvedValue([]);
@@ -454,10 +577,8 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
 
-    const loadMoreButton = screen.getByRole('button', {
-      name: /Load older transcripts/i,
-    });
-    fireEvent.click(loadMoreButton);
+    // Infinite scroll: scrolling to the bottom triggers loading older
+    scrollToBottom();
 
     await waitFor(() => {
       expect(listAudioSegments).toHaveBeenCalledTimes(2);
@@ -469,6 +590,7 @@ describe('TranscriptView', () => {
         undefined,
         undefined,
         'desc',
+        undefined,
         undefined
       );
     });
@@ -507,10 +629,8 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
 
-    const loadNewerButton = screen.getByRole('button', {
-      name: /Load newer transcripts/i,
-    });
-    fireEvent.click(loadNewerButton);
+    // Infinite scroll: scrolling away from the top and back triggers loading newer
+    scrollAwayAndBackToTop();
 
     await waitFor(() => {
       expect(listAudioSegments).toHaveBeenCalledTimes(2);
@@ -522,8 +642,74 @@ describe('TranscriptView', () => {
         undefined,
         undefined,
         'asc',
+        undefined,
         undefined
       );
+    });
+  });
+
+  it('lowers firstItemIndex by the prepended count when newer segments load (scroll anchoring)', async () => {
+    const testTimestamp = new Date('2026-04-10T12:00:00Z').getTime();
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+    const newerAudioSegments = [
+      makeMockAudioSegment(
+        'n1',
+        'feed123',
+        '2026-04-10T12:05:00Z',
+        '2026-04-10T12:05:05Z',
+        'Newer 1',
+        'gs:://foo.m4a',
+        []
+      ),
+      makeMockAudioSegment(
+        'n2',
+        'feed123',
+        '2026-04-10T12:06:00Z',
+        '2026-04-10T12:06:05Z',
+        'Newer 2',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+
+    vi.mocked(listAudioSegments)
+      .mockResolvedValueOnce({
+        segments: initialAudioSegments,
+        nextToken: 'next-token-newer',
+      })
+      .mockResolvedValueOnce({
+        segments: newerAudioSegments,
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: [`/?feedId=feed123&timestamp=${testTimestamp}`] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+    const before = virtuosoCallbacks.firstItemIndex ?? 0;
+
+    // Date-mode viewing-back, so anchoring is active: scrolling back to top loads
+    // the two newer segments, which prepend above the prior head.
+    scrollAwayAndBackToTop();
+
+    // Anchoring lowers firstItemIndex by 2 so the prior view stays put (the new
+    // items sit above the viewport rather than scrolling it).
+    await waitFor(() => {
+      expect(virtuosoCallbacks.firstItemIndex).toBe(before - 2);
     });
   });
 
@@ -598,10 +784,8 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 2 (Alert only)')).toBeTruthy();
     });
 
-    const loadNewerButton = screen.getByRole('button', {
-      name: /Load newer transcripts/i,
-    });
-    fireEvent.click(loadNewerButton);
+    // Infinite scroll: scrolling away from the top and back triggers loading newer
+    scrollAwayAndBackToTop();
 
     await waitFor(() => {
       expect(listAudioSegments).toHaveBeenCalledTimes(3);
@@ -613,7 +797,8 @@ describe('TranscriptView', () => {
         undefined,
         undefined,
         'asc',
-        true
+        true,
+        undefined
       );
     });
   });
@@ -669,6 +854,7 @@ describe('TranscriptView', () => {
     await waitFor(() => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
+    const anchorBefore = virtuosoCallbacks.firstItemIndex;
 
     // Advance time by 15 seconds
     vi.advanceTimersByTime(15000);
@@ -677,6 +863,10 @@ describe('TranscriptView', () => {
       expect(listAudioSegments).toHaveBeenCalledTimes(2);
       expect(screen.getByText('Newer Transcript')).toBeTruthy();
     });
+
+    // Following the live edge (at top, unfiltered): a poll prepend must NOT
+    // anchor — the new item surfaces at the top rather than pinning the view.
+    expect(virtuosoCallbacks.firstItemIndex).toBe(anchorBefore);
 
     vi.useRealTimers();
   });
@@ -777,7 +967,8 @@ describe('TranscriptView', () => {
       sourceType: SourceType.BCFY_FEEDS,
       status: 'active' as FeedStatus,
       substatus: 'active' as BackendFeedStatus,
-      lastHeartbeat: new Date(fixedNow.getTime() - 5 * 60 * 1000).toISOString(),
+      lastHeartbeat: fixedNow.getTime() - 10 * 60 * 1000,
+      lastSpeechSegmentTimestamp: fixedNow.getTime() - 5 * 60 * 1000,
     };
     vi.mocked(getFeed).mockResolvedValue(mockFeed);
     vi.mocked(listAudioSegments).mockResolvedValue({
@@ -798,7 +989,8 @@ describe('TranscriptView', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Active')).toBeTruthy();
-      expect(screen.getByText('Last updated: 5 minutes ago')).toBeTruthy();
+      expect(screen.queryByText(/heartbeat|updated/i)).toBeNull();
+      expect(screen.getByText('Last activity: 5 minutes ago')).toBeTruthy();
     });
 
     vi.useRealTimers();
@@ -807,7 +999,7 @@ describe('TranscriptView', () => {
   it('automatically plays newly received audio when Always play latest audio checkbox is checked', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
-    const playSpy = vi.spyOn(Howl.prototype, 'play');
+    const playSpy = audioEngineMock.playSpy;
 
     const initialAudioSegments = [
       makeMockAudioSegment(
@@ -865,8 +1057,13 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Newer Transcript 1')).toBeTruthy();
     });
 
-    // Verify that audio was automatically played since "Always play latest audio" is checked by default
-    expect(playSpy).toHaveBeenCalled();
+    // Simulate Transcript 1 ending naturally
+    act(() => {
+      audioEngineMock.lastCallbacks?.onEnd?.();
+    });
+
+    // Verify that the new segment was automatically played
+    expect(playSpy).toHaveBeenCalledTimes(2);
 
     vi.useRealTimers();
   });
@@ -874,7 +1071,7 @@ describe('TranscriptView', () => {
   it('does not automatically play newly received audio when Always play latest audio checkbox is unchecked', async () => {
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
 
-    const playSpy = vi.spyOn(Howl.prototype, 'play');
+    const playSpy = audioEngineMock.playSpy;
 
     const initialAudioSegments = [
       makeMockAudioSegment(
@@ -930,8 +1127,284 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Newer Transcript 1')).toBeTruthy();
     });
 
-    // Verify that audio was NOT automatically played when disabled
-    expect(playSpy).not.toHaveBeenCalled();
+    // Verify that audio was NOT automatically played when disabled (so it was only called once on mount)
+    expect(playSpy).toHaveBeenCalledTimes(1);
+
+    vi.useRealTimers();
+  });
+
+  it('should transition playback intent to paused and not play new audio when track ends with playLatestAudio unchecked', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+    const playSpy = audioEngineMock.playSpy;
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+    const newerAudioSegments = [
+      makeMockAudioSegment(
+        '2',
+        'feed123',
+        '2026-04-10T12:05:00Z',
+        '2026-04-10T12:05:05Z',
+        'Newer Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+
+    vi.mocked(listAudioSegments)
+      .mockResolvedValueOnce({
+        segments: initialAudioSegments,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        segments: newerAudioSegments,
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    // Since play is on by default and playLatestAudio is true, it starts playing automatically!
+    expect(playSpy).toHaveBeenCalledTimes(1);
+
+    // The global button shows "pause" (since we are in play mode)
+    expect(screen.getAllByLabelText('pause')[0]).toBeInTheDocument();
+
+    // Now, uncheck "Always play latest audio"
+    const autoplayCheckbox = screen.getByLabelText(/Always play latest audio/i);
+    fireEvent.click(autoplayCheckbox);
+
+    // Now, let's simulate the audio ending naturally
+    act(() => {
+      audioEngineMock.lastCallbacks?.onEnd?.();
+    });
+
+    // Since playLatestAudio is unchecked and we reached the end of the track,
+    // the global control button should change to "play" (indicating paused mode)
+    await waitFor(() => {
+      expect(screen.getAllByLabelText('play')[0]).toBeInTheDocument();
+    });
+
+    // Advance time by 15 seconds to trigger background polling and get the new segment
+    vi.advanceTimersByTime(15000);
+
+    await waitFor(() => {
+      expect(screen.getByText('Newer Transcript 1')).toBeTruthy();
+    });
+
+    // Verify that the new segment was NOT automatically played
+    expect(playSpy).toHaveBeenCalledTimes(1); // Still only called once (for Transcript 1)
+
+    vi.useRealTimers();
+  });
+
+  it('should resume from where left off when global play is pressed after being paused mid-way', async () => {
+    const playSpy = audioEngineMock.playSpy;
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments: initialAudioSegments,
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    // Since play is on by default, it starts playing automatically!
+    expect(playSpy).toHaveBeenCalledTimes(1);
+
+    // The global button shows "pause"
+    const pauseButton = screen.getAllByLabelText('pause')[0];
+    // Click pause to pause it mid-way
+    fireEvent.click(pauseButton);
+
+    // Verify it is paused (the global button shows "play")
+    const playBtnAgain = screen.getAllByLabelText('play')[0];
+
+    // Click play again to resume
+    fireEvent.click(playBtnAgain);
+
+    // It should have called play again on the same segment
+    expect(playSpy).toHaveBeenCalledTimes(2);
+
+    // Since it was paused mid-way, the audio source should not have changed
+    expect(audioEngineMock.lastSrc).toContain('gs:://foo.m4a');
+  });
+
+  it('should play next segment after the finished one when global play is pressed with playLatestAudio unchecked', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+    const playSpy = audioEngineMock.playSpy;
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+    const newerAudioSegments = [
+      makeMockAudioSegment(
+        '2',
+        'feed123',
+        '2026-04-10T12:05:00Z',
+        '2026-04-10T12:05:05Z',
+        'Newer Transcript 1',
+        'gs:://newer.m4a',
+        []
+      ),
+    ];
+
+    vi.mocked(listAudioSegments)
+      .mockResolvedValueOnce({
+        segments: initialAudioSegments,
+        nextToken: undefined,
+      })
+      .mockResolvedValueOnce({
+        segments: newerAudioSegments,
+        nextToken: undefined,
+      });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    // Play is on by default, so it starts playing automatically
+    expect(playSpy).toHaveBeenCalledTimes(1);
+    expect(audioEngineMock.lastSrc).toContain('gs:://foo.m4a');
+
+    // Uncheck "Always play latest audio"
+    const autoplayCheckbox = screen.getByLabelText(/Always play latest audio/i);
+    fireEvent.click(autoplayCheckbox);
+
+    // Simulate natural end of Transcript 1
+    act(() => {
+      audioEngineMock.lastCallbacks?.onEnd?.();
+    });
+
+    // Global button should now show "play" (paused/ended mode)
+    await waitFor(() => {
+      expect(screen.getAllByLabelText('play')[0]).toBeInTheDocument();
+    });
+
+    // Advance time by 15 seconds to fetch the new segment
+    vi.advanceTimersByTime(15000);
+
+    await waitFor(() => {
+      expect(screen.getByText('Newer Transcript 1')).toBeTruthy();
+    });
+
+    // Since playLatestAudio is unchecked, it should NOT have played the new segment automatically
+    expect(playSpy).toHaveBeenCalledTimes(1);
+
+    // Click play again
+    fireEvent.click(screen.getAllByLabelText('play')[0]);
+
+    // It should now play "Newer Transcript 1" (which is the next segment after the finished one)
+    expect(playSpy).toHaveBeenCalledTimes(2);
+    expect(audioEngineMock.lastSrc).toContain('gs:://newer.m4a');
+
+    vi.useRealTimers();
+  });
+
+  it('should stop playing when advancing past the end of the last segment, and rewind from the end back into the segment', async () => {
+    const mockSegment = makeMockAudioSegment(
+      '1',
+      'feed123',
+      '2026-04-10T12:00:00Z',
+      '2026-04-10T12:00:10Z',
+      'Transcript 1',
+      'gs:://foo.m4a'
+    );
+
+    vi.mocked(listAudioSegments).mockResolvedValueOnce({
+      segments: [mockSegment],
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Transcript 1')).toBeTruthy();
+    });
+
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+
+    // Play starts automatically
+    expect(audioEngineMock.lastSrc).toContain('gs:://foo.m4a');
+
+    // We mock getCurrentTime to return 8 seconds (near the end)
+    audioEngineMock.currentTime = 8;
+
+    // Click "Advance 5 seconds" button. It will overshoot the 10-second duration.
+    // 8 + 5 = 13 > 10.
+    // This should seek to 10 (the end) and since it is playing, it will trigger natural track end.
+    const advanceButton = screen.getByLabelText('advance 5 seconds');
+    fireEvent.click(advanceButton);
+
+    // It should seek to 10
+    expect(audioEngineMock.lastSeekTime).toBe(10);
+
+    // Simulate natural end of Transcript 1 due to seeking to the end
+    act(() => {
+      audioEngineMock.lastCallbacks?.onEnd?.();
+    });
+
+    // It should now stop playing and set playbackIntent to paused (which shows the play icon)
+    await waitFor(() => {
+      expect(screen.getAllByLabelText('play')[0]).toBeInTheDocument();
+    });
+
+    // Now, clicking "Rewind 5 seconds" while stopped/unloaded at the end
+    // should recognize the baseline currentTime is 10, targetTime is 5.
+    // So it should reload Transcript 1 and seek to 5.
+    const rewindButton = screen.getByLabelText('rewind 5 seconds');
+    fireEvent.click(rewindButton);
+
+    expect(audioEngineMock.lastSrc).toContain('gs:://foo.m4a');
+    expect(audioEngineMock.lastSeekTime).toBe(5);
 
     vi.useRealTimers();
   });
@@ -957,6 +1430,7 @@ describe('TranscriptView', () => {
         undefined,
         undefined,
         'desc',
+        undefined,
         undefined
       );
     });
@@ -988,7 +1462,8 @@ describe('TranscriptView', () => {
         undefined,
         undefined,
         'desc',
-        true
+        true,
+        undefined
       );
     });
   });
@@ -1054,7 +1529,8 @@ describe('TranscriptView', () => {
         undefined,
         undefined,
         'desc',
-        true
+        true,
+        undefined
       );
     });
   });
@@ -1103,35 +1579,67 @@ describe('TranscriptView', () => {
         undefined,
         undefined,
         'desc',
+        undefined,
         undefined
       );
     });
   });
 
+  it('applies the search query filter when entered in the search bar', async () => {
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments: [],
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => {
+      expect(listAudioSegments).toHaveBeenCalledWith(
+        'feed123',
+        expect.any(String),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'desc',
+        undefined,
+        undefined
+      );
+    });
+
+    // Open the filter menu popover
+    const filterButton = screen.getByRole('button', { name: 'filter' });
+    fireEvent.click(filterButton);
+
+    // Enter a search query in the search input
+    const searchInput = screen.getByPlaceholderText(/Search transcripts.../i);
+    fireEvent.change(searchInput, { target: { value: 'dispatch' } });
+
+    // Click the "Apply" button to apply changes
+    const applyButton = screen.getByRole('button', { name: 'Apply' });
+    fireEvent.click(applyButton);
+
+    // React query should refetch transcripts using the text query filter
+    await waitFor(() => {
+      expect(listAudioSegments).toHaveBeenLastCalledWith(
+        'feed123',
+        expect.any(String),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'desc',
+        undefined,
+        'dispatch'
+      );
+    });
+  });
+
   it('advances playback to the next silence segment inside a silence bundle when the current one finishes', async () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let lastHowlOptions: any = null;
-
-    const initSpy = vi
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .spyOn(Howl.prototype as any, 'init')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .mockImplementation(function (this: any, o: any) {
-        lastHowlOptions = o;
-        this._sounds = [];
-        return this;
-      });
-
-    const playSpy = vi
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .spyOn(Howl.prototype as any, 'play')
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .mockImplementation(function (this: any) {
-        if (lastHowlOptions?.onplay) {
-          lastHowlOptions.onplay();
-        }
-        return this;
-      });
+    const playSpy = audioEngineMock.playSpy;
 
     const mockSilence1 = {
       id: 'silence-1',
@@ -1175,23 +1683,16 @@ describe('TranscriptView', () => {
       expect(screen.getByText('[No speech detected]')).toBeTruthy();
     });
 
-    const playButton = screen.getAllByLabelText('play')[1];
-    fireEvent.click(playButton);
-
-    expect(initSpy).toHaveBeenCalled();
-    expect(lastHowlOptions.src).toEqual([
-      expect.stringContaining('silence-1.m4a'),
-    ]);
+    // It should have started playing automatically because play is on by default
+    expect(audioEngineMock.lastSrc).toContain('silence-1.m4a');
     expect(playSpy).toHaveBeenCalled();
 
     act(() => {
-      lastHowlOptions.onend();
+      audioEngineMock.lastCallbacks?.onEnd?.();
     });
 
     await waitFor(() => {
-      expect(lastHowlOptions.src).toEqual([
-        expect.stringContaining('silence-2.m4a'),
-      ]);
+      expect(audioEngineMock.lastSrc).toContain('silence-2.m4a');
     });
   });
 
@@ -1285,6 +1786,187 @@ describe('TranscriptView', () => {
       // Newer segment (starts 12:00:05) should be at the top, despite ending earlier (12:00:08 vs 12:00:10)
       expect(result[0].id).toBe('speech-newer-short');
       expect(result[1].id).toBe('speech-older-long');
+    });
+
+    it('does not consolidate UNSPECIFIED segments if they have a transcript', () => {
+      const speech1: AudioSegment = {
+        id: 'speech-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:00Z',
+        endTimestamp: '2026-04-10T12:00:05Z',
+        createdAt: '2026-04-10T12:00:00Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const unspecifiedWithTranscript: AudioSegment = {
+        id: 'unspecified-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.UNSPECIFIED,
+        startTimestamp: '2026-04-10T12:00:05Z',
+        endTimestamp: '2026-04-10T12:00:10Z',
+        createdAt: '2026-04-10T12:00:05Z',
+        annotations: [
+          {
+            type: AnnotationType.TRANSCRIPT,
+            data: {
+              text: 'Hello world',
+              errors: [],
+            },
+            createdAt: '2026-04-10T12:00:05Z',
+          },
+        ],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const result = consolidateAudioSegments([
+        speech1,
+        unspecifiedWithTranscript,
+      ]);
+      expect(result).toHaveLength(2);
+      // Neither should be a silence bundle
+      expect(result[0].isSilenceBundle).toBeUndefined();
+      expect(result[1].isSilenceBundle).toBeUndefined();
+    });
+
+    it('injects outage segment for continuous feed when there is a gap > 10ms and missing context flags are true', () => {
+      const segment1: AudioSegment = {
+        id: 'seg-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:00.000Z',
+        endTimestamp: '2026-04-10T12:00:05.000Z',
+        createdAt: '2026-04-10T12:00:00.000Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: true,
+        sourceAudioUris: [],
+      };
+
+      const segment2: AudioSegment = {
+        id: 'seg-2',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:05.020Z', // 20ms gap
+        endTimestamp: '2026-04-10T12:00:10.000Z',
+        createdAt: '2026-04-10T12:00:05.000Z',
+        annotations: [],
+        missingPriorContext: true,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const result = consolidateAudioSegments([segment1, segment2], true);
+      expect(result).toHaveLength(3);
+      expect(result[0].id).toBe('seg-2');
+      expect(result[1].isOutageBundle).toBe(true);
+      expect(result[1].startTimestamp).toBe(segment1.endTimestamp);
+      expect(result[1].endTimestamp).toBe(segment2.startTimestamp);
+      expect(result[2].id).toBe('seg-1');
+    });
+
+    it('does NOT inject outage segment if missing context flags are false, even if gap > 10ms', () => {
+      const segment1: AudioSegment = {
+        id: 'seg-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:00.000Z',
+        endTimestamp: '2026-04-10T12:00:05.000Z',
+        createdAt: '2026-04-10T12:00:00.000Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const segment2: AudioSegment = {
+        id: 'seg-2',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:05.020Z', // 20ms gap
+        endTimestamp: '2026-04-10T12:00:10.000Z',
+        createdAt: '2026-04-10T12:00:05.000Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const result = consolidateAudioSegments([segment1, segment2], true);
+      expect(result).toHaveLength(2);
+      expect(result[0].id).toBe('seg-2');
+      expect(result[1].id).toBe('seg-1');
+    });
+
+    it('does NOT inject outage segment for non-continuous feed, even if there is a gap and missing context flags are true', () => {
+      const segment1: AudioSegment = {
+        id: 'seg-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:00.000Z',
+        endTimestamp: '2026-04-10T12:00:05.000Z',
+        createdAt: '2026-04-10T12:00:00.000Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: true,
+        sourceAudioUris: [],
+      };
+
+      const segment2: AudioSegment = {
+        id: 'seg-2',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:05.020Z', // 20ms gap
+        endTimestamp: '2026-04-10T12:00:10.000Z',
+        createdAt: '2026-04-10T12:00:05.000Z',
+        annotations: [],
+        missingPriorContext: true,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const result = consolidateAudioSegments([segment1, segment2], false);
+      expect(result).toHaveLength(2);
+      expect(result[0].id).toBe('seg-2');
+      expect(result[1].id).toBe('seg-1');
+    });
+
+    it('does NOT inject outage segment if the gap is <= 10ms, even if missing context flags are true', () => {
+      const segment1: AudioSegment = {
+        id: 'seg-1',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:00.000Z',
+        endTimestamp: '2026-04-10T12:00:05.000Z',
+        createdAt: '2026-04-10T12:00:00.000Z',
+        annotations: [],
+        missingPriorContext: false,
+        missingPostContext: true,
+        sourceAudioUris: [],
+      };
+
+      const segment2: AudioSegment = {
+        id: 'seg-2',
+        feedId: 'feed-123',
+        classification: AudioClassification.SPEECH,
+        startTimestamp: '2026-04-10T12:00:05.005Z', // 5ms gap
+        endTimestamp: '2026-04-10T12:00:10.000Z',
+        createdAt: '2026-04-10T12:00:05.000Z',
+        annotations: [],
+        missingPriorContext: true,
+        missingPostContext: false,
+        sourceAudioUris: [],
+      };
+
+      const result = consolidateAudioSegments([segment1, segment2], true);
+      expect(result).toHaveLength(2);
+      expect(result[0].id).toBe('seg-2');
+      expect(result[1].id).toBe('seg-1');
     });
   });
 });

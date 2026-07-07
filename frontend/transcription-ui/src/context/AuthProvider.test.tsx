@@ -2,6 +2,7 @@
 import { decodeJwt } from 'jose';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render, screen } from '@testing-library/react';
 
 import { authSession } from '../service/authSession';
@@ -16,9 +17,29 @@ vi.mock('../service/authSession', () => ({
   authSession: vi.fn(),
 }));
 
+vi.mock('../service/getUserInfo', () => ({
+  getUserInfo: vi
+    .fn()
+    .mockResolvedValue({ email: 'test@email.org', isAdmin: false }),
+}));
+
 const TestConsumer = () => {
   const { token } = useAuth();
   return <div data-testid="token-display">{token || 'no-token'}</div>;
+};
+
+const renderWithQueryClient = (ui: React.ReactElement) => {
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        gcTime: 0,
+      },
+    },
+  });
+  return render(
+    <QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>
+  );
 };
 
 describe('AuthProvider', () => {
@@ -37,7 +58,7 @@ describe('AuthProvider', () => {
   it('fetches session on mount and provides the token', async () => {
     vi.mocked(authSession).mockResolvedValueOnce('fake-jwt-123');
 
-    render(
+    renderWithQueryClient(
       <AuthProvider>
         <TestConsumer />
       </AuthProvider>
@@ -63,7 +84,7 @@ describe('AuthProvider', () => {
       exp: (Date.now() + 30 * 60 * 1000) / 1000,
     }); // Expires in 30 minutes
 
-    render(
+    renderWithQueryClient(
       <AuthProvider>
         <TestConsumer />
       </AuthProvider>
@@ -96,7 +117,7 @@ describe('AuthProvider', () => {
     });
     vi.mocked(authSession).mockResolvedValueOnce('new-refreshed-jwt');
 
-    render(
+    renderWithQueryClient(
       <AuthProvider>
         <TestConsumer />
       </AuthProvider>
@@ -140,7 +161,7 @@ describe('AuthProvider', () => {
       'new-refreshed-jwt-from-focus'
     );
 
-    render(
+    renderWithQueryClient(
       <AuthProvider>
         <TestConsumer />
       </AuthProvider>

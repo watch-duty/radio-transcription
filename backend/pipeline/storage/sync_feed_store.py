@@ -9,16 +9,14 @@ with ``concurrency=1`` behind pgBouncer).
 
 from __future__ import annotations
 
-import logging
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, LiteralString, TypedDict, cast
 
 from backend.pipeline.storage import (
+    feed_change_notifications,
     feed_lifecycle,
     feed_store,
     sync_feed_queries,
 )
-
-logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     import datetime
@@ -26,6 +24,13 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     import psycopg
+
+
+def _require_actor_id(actor_id: str | None) -> str:
+    if actor_id is None:
+        msg = "actor_id is required for audited feed lifecycle writes"
+        raise ValueError(msg)
+    return actor_id
 
 
 class ResolvedEchoFeed(TypedDict):
@@ -95,19 +100,32 @@ class SyncFeedStore:
     # Generic lifecycle operations
     # ------------------------------------------------------------------
 
-    def record_heartbeat(self, feed_id: uuid.UUID) -> None:
+    def record_heartbeat(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        actor_id: str,
+    ) -> None:
         """Record a successful processing heartbeat.
 
         Marks status as ``active``, and resets ``failure_count`` if the
         feed was previously in a failing state.
         """
         with self._connect_db() as conn:
-            conn.execute(sync_feed_queries.HEARTBEAT_SQL, (feed_id,))
+            row = conn.execute(
+                cast("LiteralString", sync_feed_queries.HEARTBEAT_SQL),
+                (feed_id, _require_actor_id(actor_id)),
+            ).fetchone()
+        if row is not None:
+            feed_change_notifications.emit_feed_change_notification(
+                row.get("feed_audit_event")
+            )
 
     def record_failure(
         self,
         feed_id: uuid.UUID,
         *,
+        actor_id: str,
         reason: str | None = None,
         status_reason: feed_store.FeedStatusReason | None = None,
     ) -> None:
@@ -121,52 +139,57 @@ class SyncFeedStore:
         status_reason_value = feed_lifecycle.status_reason_storage_value(
             status_reason
         )
-        stored_reason = feed_lifecycle.quarantine_reason_storage_value(reason)
+        status_reason_detail = (
+            feed_lifecycle.status_reason_detail_storage_value(reason)
+        )
+        params = (
+            feed_id,
+            status_reason_value,
+            self._failure_threshold,
+            self._failure_threshold,
+            self._max_backoff_sec,
+            self._base_backoff_sec,
+            status_reason_detail,
+            _require_actor_id(actor_id),
+        )
         with self._connect_db() as conn:
-            conn.execute(
-                sync_feed_queries.RECORD_FAILURE_SQL,
-                (
-                    self._failure_threshold,
-                    self._failure_threshold,
-                    self._max_backoff_sec,
-                    self._base_backoff_sec,
-                    self._failure_threshold,
-                    stored_reason,
-                    status_reason_value,
-                    status_reason_value,
-                    feed_id,
-                ),
-            )
-            logger.warning(
-                "Feed failure recorded",
-                extra={"feed_id": str(feed_id)},
+            row = conn.execute(
+                cast("LiteralString", sync_feed_queries.RECORD_FAILURE_SQL),
+                params,
+            ).fetchone()
+        if row is not None:
+            feed_change_notifications.emit_feed_change_notification(
+                row.get("feed_audit_event")
             )
 
     def record_non_budgeted_failure(
         self,
         feed_id: uuid.UUID,
         *,
+        actor_id: str,
         status_reason: feed_store.FeedStatusReason,
+        reason: str | None = None,
     ) -> None:
         """Record a visible failure without consuming quarantine budget.
 
         Echo receives source object notifications, so this sync path clears
-        ``retry_after`` instead of scheduling DB-based retry. It also leaves
-        ``quarantine_reason`` untouched because no quarantine threshold crossed.
+        ``retry_after`` instead of scheduling DB-based retry.
         """
+        params = (
+            feed_id,
+            status_reason.value,
+            feed_lifecycle.status_reason_detail_storage_value(reason),
+            _require_actor_id(actor_id),
+        )
         with self._connect_db() as conn:
-            conn.execute(
-                sync_feed_queries.RECORD_NON_BUDGETED_FAILURE_SQL,
-                (
-                    status_reason.value,
-                    status_reason.value,
-                    feed_id,
+            row = conn.execute(
+                cast(
+                    "LiteralString",
+                    sync_feed_queries.RECORD_NON_BUDGETED_FAILURE_SQL,
                 ),
-            )
-            logger.info(
-                "Non-budgeted feed failure recorded",
-                extra={
-                    "feed_id": str(feed_id),
-                    "status_reason": status_reason.value,
-                },
+                params,
+            ).fetchone()
+        if row is not None:
+            feed_change_notifications.emit_feed_change_notification(
+                row.get("feed_audit_event")
             )

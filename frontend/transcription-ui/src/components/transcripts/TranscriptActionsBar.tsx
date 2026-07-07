@@ -1,16 +1,22 @@
 import React, { useState } from 'react';
 
+import ClearIcon from '@mui/icons-material/Clear';
+import SearchIcon from '@mui/icons-material/Search';
 import FilterIcon from '@mui/icons-material/Tune';
 import { FormControl, InputLabel } from '@mui/material';
 import Badge from '@mui/material/Badge';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
+import Divider from '@mui/material/Divider';
 import FormControlLabel from '@mui/material/FormControlLabel';
+import IconButton from '@mui/material/IconButton';
+import InputAdornment from '@mui/material/InputAdornment';
 import MenuItem from '@mui/material/MenuItem';
 import Popover from '@mui/material/Popover';
 import Select from '@mui/material/Select';
 import Switch from '@mui/material/Switch';
+import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
 import { useTheme } from '@mui/material/styles';
 
@@ -27,6 +33,8 @@ export interface TranscriptActionsBarProps {
   alertFilter: AlertFilter;
   setAlertFilter: (alertFilter: AlertFilter) => void;
   onClickViewLatest: () => void;
+  searchQuery?: string;
+  setSearchQuery?: (query: string) => void;
 }
 
 const APPLIED_FILTER_BG_COLOR = '#bbdefb';
@@ -41,6 +49,8 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   alertFilter,
   setAlertFilter,
   onClickViewLatest,
+  searchQuery = '',
+  setSearchQuery = () => {},
 }) => {
   const theme = useTheme();
   const isDarkTheme = theme.palette.mode === 'dark';
@@ -49,34 +59,53 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
     null
   );
   const [localDateTime, setLocalDateTime] = useState<Date | null>(dateTime);
-  const [localAlertFilter, setLocalAlertFilter] = useState<AlertFilter>('all');
+  const [localAlertFilter, setLocalAlertFilter] =
+    useState<AlertFilter>(alertFilter);
+  const [localSearchQuery, setLocalSearchQuery] = useState<string>(searchQuery);
 
-  React.useEffect(() => {
+  const [prevDateTime, setPrevDateTime] = useState<Date | null>(dateTime);
+  const [prevAlertFilter, setPrevAlertFilter] =
+    useState<AlertFilter>(alertFilter);
+  const [prevSearchQuery, setPrevSearchQuery] = useState<string>(searchQuery);
+
+  if (dateTime !== prevDateTime) {
+    setPrevDateTime(dateTime);
     setLocalDateTime(dateTime);
+  }
+  if (alertFilter !== prevAlertFilter) {
+    setPrevAlertFilter(alertFilter);
     setLocalAlertFilter(alertFilter);
-  }, [dateTime, alertFilter]);
+  }
+  if (searchQuery !== prevSearchQuery) {
+    setPrevSearchQuery(searchQuery);
+    setLocalSearchQuery(searchQuery);
+  }
 
   const handleFilterOpen = (event: React.MouseEvent<HTMLElement>) => {
     setFilterAnchorEl(event.currentTarget);
     setLocalDateTime(dateTime);
     setLocalAlertFilter(alertFilter);
+    setLocalSearchQuery(searchQuery);
   };
 
   const handleFilterClose = () => {
     setFilterAnchorEl(null);
     setLocalDateTime(dateTime);
     setLocalAlertFilter(alertFilter);
+    setLocalSearchQuery(searchQuery);
   };
 
   const handleFilterApply = () => {
     setDateTime(localDateTime);
     setAlertFilter(localAlertFilter);
+    setSearchQuery(localSearchQuery);
     setFilterAnchorEl(null);
   };
 
   const handleFilterClear = () => {
     setLocalDateTime(null);
     setLocalAlertFilter('all');
+    setLocalSearchQuery('');
   };
 
   const handleDeleteDateTime = () => {
@@ -87,11 +116,18 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
     setAlertFilter('all');
   };
 
+  const handleDeleteSearchQuery = () => {
+    setSearchQuery('');
+  };
+
   let badgeContent = 0;
   if (dateTime) {
     badgeContent++;
   }
   if (alertFilter === 'alerts') {
+    badgeContent++;
+  }
+  if (searchQuery) {
     badgeContent++;
   }
 
@@ -101,6 +137,10 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         display: 'flex',
         justifyContent: 'space-between',
         mb: 0.5,
+        // Lift the bar (and its overflowing speaker badges) above the list's
+        // sticky headers (zIndex 1) so they aren't clipped behind them.
+        position: 'relative',
+        zIndex: 2,
       }}
     >
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -152,6 +192,34 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
           sx={{ zIndex: 1300 }}
         >
           <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <TextField
+              size="small"
+              placeholder="Search transcripts..."
+              value={localSearchQuery}
+              onChange={(e) => setLocalSearchQuery(e.target.value)}
+              slotProps={{
+                input: {
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon fontSize="small" />
+                    </InputAdornment>
+                  ),
+                  endAdornment: localSearchQuery ? (
+                    <InputAdornment position="end">
+                      <IconButton
+                        data-testid="clear-search-button"
+                        size="small"
+                        onClick={() => setLocalSearchQuery('')}
+                        edge="end"
+                      >
+                        <ClearIcon fontSize="small" />
+                      </IconButton>
+                    </InputAdornment>
+                  ) : null,
+                },
+              }}
+              sx={{ width: 220 }}
+            />
             <DateTimePicker
               label="Date/time"
               dateTime={localDateTime}
@@ -173,6 +241,9 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                 <MenuItem value="alerts">Alerts only</MenuItem>
               </Select>
             </FormControl>
+
+            <Divider />
+
             <Box
               sx={{
                 display: 'flex',
@@ -180,11 +251,21 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                 alignItems: 'center',
               }}
             >
-              <Button size="small" onClick={handleFilterClear}>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={handleFilterClear}
+                sx={{ textTransform: 'none' }}
+              >
                 Clear
               </Button>
               <Box sx={{ display: 'flex', gap: 1 }}>
-                <Button size="small" onClick={handleFilterClose}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={handleFilterClose}
+                  sx={{ textTransform: 'none' }}
+                >
                   Cancel
                 </Button>
                 <Button
@@ -192,6 +273,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
                   variant="contained"
                   color="primary"
                   onClick={handleFilterApply}
+                  sx={{ textTransform: 'none' }}
                 >
                   Apply
                 </Button>
@@ -249,6 +331,22 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
             variant="filled"
             size="small"
             onDelete={handleDeleteAlertFilter}
+          />
+        )}
+        {searchQuery && (
+          <Chip
+            sx={{
+              backgroundColor: APPLIED_FILTER_BG_COLOR,
+              color: 'black',
+            }}
+            label={
+              <Box>
+                <b>Search:</b> {searchQuery}
+              </Box>
+            }
+            variant="filled"
+            size="small"
+            onDelete={handleDeleteSearchQuery}
           />
         )}
       </Box>

@@ -108,6 +108,104 @@ describe('listAudioSegments', () => {
     });
   });
 
+  it('should convert evaluation annotation rule_annotations to camelCase', async () => {
+    const mockBackendResponse = {
+      segments: [
+        {
+          id: 'segment-1',
+          feed_id: 'feed-1',
+          classification: 'SPEECH',
+          start_timestamp: '2026-01-01T10:00:00Z',
+          end_timestamp: '2026-01-01T10:01:00Z',
+          missing_prior_context: false,
+          missing_post_context: false,
+          source_audio_uris: ['gs://bucket/audio.ogg'],
+          canonical_audio_uri: null,
+          start_audio_offset: null,
+          end_audio_offset: null,
+          playback_audio_uri: null,
+          external_audio_segment_id: null,
+          created_at: '2026-01-01T10:02:00Z',
+          annotations: [
+            {
+              audio_segment_id: 'segment-1',
+              type: 'EVALUATION',
+              created_at: '2026-01-01T10:03:00Z',
+              data: {
+                decisions: ['rule-1'],
+                errors: [],
+                rule_annotations: {
+                  'rule-1': {
+                    text_match: [{ start: 5, end: 9, matched_text: 'fire' }],
+                  },
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
+
+    const controller = new AudioController();
+    const result = await controller.listAudioSegments('test', { limit: 100 });
+
+    expect(result.segments[0].annotations[0].data).toEqual({
+      decisions: ['rule-1'],
+      errors: [],
+      ruleAnnotations: {
+        'rule-1': {
+          textMatch: [{ startIndex: 5, endIndex: 9, matchedText: 'fire' }],
+        },
+      },
+    });
+  });
+
+  it('should convert waveform annotation duration_seconds to camelCase', async () => {
+    const mockBackendResponse = {
+      segments: [
+        {
+          id: 'segment-1',
+          feed_id: 'feed-1',
+          classification: 'SPEECH',
+          start_timestamp: '2026-01-01T10:00:00Z',
+          end_timestamp: '2026-01-01T10:01:00Z',
+          missing_prior_context: false,
+          missing_post_context: false,
+          source_audio_uris: ['gs://bucket/audio.ogg'],
+          canonical_audio_uri: null,
+          start_audio_offset: null,
+          end_audio_offset: null,
+          playback_audio_uri: null,
+          external_audio_segment_id: null,
+          created_at: '2026-01-01T10:02:00Z',
+          annotations: [
+            {
+              audio_segment_id: 'segment-1',
+              type: 'WAVEFORM',
+              created_at: '2026-01-01T10:03:00Z',
+              data: {
+                peaks: [[0.1, 0.5, 0.25]],
+                duration_seconds: 1.5,
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
+
+    const controller = new AudioController();
+    const result = await controller.listAudioSegments('test', { limit: 100 });
+
+    expect(result.segments[0].annotations[0].data).toEqual({
+      peaks: [[0.1, 0.5, 0.25]],
+      durationSeconds: 1.5,
+    });
+  });
+
   it('should forward is_alert parameter if true', async () => {
     const mockBackendResponse = { segments: [] };
     mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
@@ -170,6 +268,22 @@ describe('listAudioSegments', () => {
 
     expect(mockRequest).toHaveBeenCalledWith({
       url: 'http://audio-segments.example.com?feed_ids=test&limit=50&next_token=next-page-token&start_time=2026-01-01T10%3A00%3A00Z&end_time=2026-01-01T11%3A00%3A00Z&order=asc',
+      method: 'GET',
+    });
+  });
+
+  it('should forward query parameter if provided', async () => {
+    const mockBackendResponse = { segments: [] };
+    mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
+
+    const controller = new AudioController();
+    await controller.listAudioSegments('test', {
+      limit: 100,
+      textQuery: 'search term',
+    });
+
+    expect(mockRequest).toHaveBeenCalledWith({
+      url: 'http://audio-segments.example.com?feed_ids=test&limit=100&text_query=search+term',
       method: 'GET',
     });
   });
