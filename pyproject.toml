@@ -16,7 +16,6 @@ dependencies = [
     "audio-segments-service",
     "feeds-service",
     "rules-service",
-    "echo-api",
     "normalization-pipeline",
     "segmentation-pipeline",
     "transcription-function",
@@ -321,7 +320,6 @@ members = [
     "backend/services/audio_segments",
     "backend/services/feeds",
     "backend/services/rules",
-    "backend/services/echo",
 ]
 
 [tool.uv.sources]
@@ -329,7 +327,6 @@ radio-transcription-common = { workspace = true }
 audio-segments-service = { workspace = true }
 feeds-service = { workspace = true }
 rules-service = { workspace = true }
-echo-api = { workspace = true }
 normalization-pipeline = { workspace = true }
 segmentation-pipeline = { workspace = true }
 transcription-function = { workspace = true }

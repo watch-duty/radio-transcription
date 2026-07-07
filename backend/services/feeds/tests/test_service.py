@@ -6,7 +6,12 @@ import uuid
 from unittest import mock
 
 from backend.pipeline.storage.feed_store import FeedStatus, SourceType
-from backend.services.feeds.models import BcfyFeedsCreate, FeedUpdate, Tag
+from backend.services.feeds.models import (
+    BcfyFeedsCreate,
+    EchoCreate,
+    FeedUpdate,
+    Tag,
+)
 from backend.services.feeds.service import FeedService
 
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -197,3 +202,84 @@ class TestFeedServiceAuditActor(unittest.IsolatedAsyncioTestCase):
         store.deactivate_feed.assert_not_awaited()
         store.delete_feed.assert_not_awaited()
         store.reset_feed.assert_not_awaited()
+
+
+class TestFeedServiceCreateEcho(unittest.IsolatedAsyncioTestCase):
+    """Tests for FeedService.create_feed with ECHO source type GCS verification."""
+
+    def setUp(self) -> None:
+        self.store = mock.AsyncMock()
+        self.mock_echo_client = mock.AsyncMock()
+        self.service = FeedService(
+            self.store, echo_client=self.mock_echo_client
+        )
+
+    async def test_create_feed_echo_gcs_directory_exists(self) -> None:
+        self.store.create_feed.return_value = _store_feed(
+            source_type=SourceType.ECHO,
+            source_feed_id="feed-123_abc",
+        )
+
+        self.mock_echo_client.is_configured = True
+        self.mock_echo_client.verify_directory_exists.return_value = True
+
+        feed_in = EchoCreate(
+            name="Test Echo Feed",
+            source_type=SourceType.ECHO,
+            source_feed_id="feed-123_abc",
+        )
+
+        result = await self.service.create_feed(
+            feed_in, actor_id=_ADMIN_ACTOR_ID
+        )
+
+        self.assertEqual(result.source_feed_id, "feed-123_abc")
+        self.mock_echo_client.verify_directory_exists.assert_awaited_once_with(
+            "feed-123_abc"
+        )
+        self.store.create_feed.assert_awaited_once()
+
+    async def test_create_feed_echo_gcs_directory_not_exists(self) -> None:
+        self.mock_echo_client.is_configured = True
+        self.mock_echo_client.verify_directory_exists.return_value = False
+
+        feed_in = EchoCreate(
+            name="Test Echo Feed",
+            source_type=SourceType.ECHO,
+            source_feed_id="feed-123_abc",
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            await self.service.create_feed(feed_in, actor_id=_ADMIN_ACTOR_ID)
+
+        self.assertIn(
+            "No GCS directory found for Echo feed", str(ctx.exception)
+        )
+        self.mock_echo_client.verify_directory_exists.assert_awaited_once_with(
+            "feed-123_abc"
+        )
+        self.store.create_feed.assert_not_awaited()
+
+    async def test_create_feed_echo_bucket_env_not_configured_skips_gcs(
+        self,
+    ) -> None:
+        self.store.create_feed.return_value = _store_feed(
+            source_type=SourceType.ECHO,
+            source_feed_id="feed-123_abc",
+        )
+
+        self.mock_echo_client.is_configured = False
+
+        feed_in = EchoCreate(
+            name="Test Echo Feed",
+            source_type=SourceType.ECHO,
+            source_feed_id="feed-123_abc",
+        )
+
+        result = await self.service.create_feed(
+            feed_in, actor_id=_ADMIN_ACTOR_ID
+        )
+
+        self.assertEqual(result.source_feed_id, "feed-123_abc")
+        self.mock_echo_client.verify_directory_exists.assert_not_called()
+        self.store.create_feed.assert_awaited_once()

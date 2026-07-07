@@ -4,6 +4,7 @@ import logging
 import uuid
 from typing import TYPE_CHECKING
 
+from backend.pipeline.storage.feed_store import SourceType
 from backend.pipeline.storage.pagination_utils import SortOrder
 
 from .models import (
@@ -19,8 +20,9 @@ if TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import (
         FeedStatus,
         FeedStore,
-        SourceType,
     )
+
+    from .echo_client import EchoClient
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +33,42 @@ class FeedService:
     Handles interaction with the data from the FeedStore.
     """
 
-    def __init__(self, store: FeedStore) -> None:
+    def __init__(
+        self, store: FeedStore, echo_client: EchoClient | None = None
+    ) -> None:
         self._store = store
+        self._echo_client = echo_client
+
+    async def _validate_feed_creation(self, feed_in: FeedCreate) -> None:
+        """Performs validations before creating a feed."""
+        if feed_in.source_type == SourceType.ECHO:
+            if not feed_in.source_feed_id:
+                msg = "source_feed_id is required for ECHO feeds"
+                raise ValueError(msg)
+
+            if not self._echo_client:
+                msg = "Echo client is not configured"
+                raise ValueError(msg)
+
+            if self._echo_client.is_configured:
+                exists = await self._echo_client.verify_directory_exists(
+                    feed_in.source_feed_id
+                )
+                if not exists:
+                    msg = (
+                        f"No GCS directory found for Echo feed "
+                        f"'{feed_in.source_feed_id}'"
+                    )
+                    raise ValueError(msg)
+            else:
+                logger.warning(
+                    "Echo recordings bucket is not configured. "
+                    "Skipping directory verification."
+                )
 
     async def create_feed(self, feed_in: FeedCreate, *, actor_id: str) -> Feed:
         """Creates a new feed."""
+        await self._validate_feed_creation(feed_in)
         store_feed = await self._store.create_feed(
             name=feed_in.name,
             source_type=feed_in.source_type,

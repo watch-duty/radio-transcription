@@ -270,26 +270,6 @@ services:
       - pipeline-network
 
 
-  echo-api:
-    image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/echo-api:${TAG:-latest}
-    build:
-      context: .
-      dockerfile: backend/services/echo/Dockerfile
-    ports:
-      - "127.0.0.1:8092:8092"
-    env_file:
-      - path: ./local_dev/LOCAL.env
-      - path: .env
-        required: false
-    command: ["functions-framework", "--source=backend/services/echo/main.py", "--target=verify_directory", "--signature-type=http", "--port=8092"]
-    healthcheck:
-      test: ["CMD", "python", "-c", "import socket; s = socket.socket(); s.connect(('localhost', 8092))"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - pipeline-network
-
   feeds-api:
     image: ${REGISTRY:-ghcr.io/watch-duty/radio-transcription}/feeds-api:${TAG:-latest}
     build:
@@ -381,13 +361,11 @@ services:
       - AUDIO_SEGMENTS_API_URL=http://audio-segments-api:8091/v1/audio_segments
       - FEEDS_STORE_API_URL=http://feeds-api:8089/v1/feeds
       - RULES_API_URL=http://rules-management:8086/v1/rules
-      - ECHO_API_URL=http://echo-api:8092/v1/echo
     networks:
       - pipeline-network
     depends_on:
       - rules-management
       - audio-segments-api
-      - echo-api
 
   # ----------- Integration Tests ----------
   integration-tests:
@@ -400,8 +378,6 @@ services:
       rules-management:
         condition: service_healthy
       feeds-api:
-        condition: service_healthy
-      echo-api:
         condition: service_healthy
       audio-segments-api:
         condition: service_healthy
