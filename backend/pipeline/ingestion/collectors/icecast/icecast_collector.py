@@ -63,6 +63,7 @@ _MAX_ALLOWED_LAG_SECONDS = 60.0
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
 _FIX_HEADER_TIMEOUT_SEC = 10.0
 _CLEANUP_SUBPROCESS_TIMEOUT_SEC = 2.0
+MAX_CONCURRENT_TRANSCODES = 8
 
 _background_tasks: set[asyncio.Task[None]] = set()
 
@@ -321,6 +322,9 @@ async def _cleanup_subprocess(process: asyncio.subprocess.Process) -> None:
         await process.wait()
 
 
+_TRANSCODE_SEMAPHORE = asyncio.Semaphore(MAX_CONCURRENT_TRANSCODES)
+
+
 async def _transcode_wav_to_flac(wav_path: Path, flac_path: Path) -> bool:
     """Transcodes a WAV segment to FLAC.
 
@@ -330,21 +334,24 @@ async def _transcode_wav_to_flac(wav_path: Path, flac_path: Path) -> bool:
     process = None
     success = False
     try:
-        process = await asyncio.create_subprocess_exec(
-            "ffmpeg",
-            "-y",
-            "-nostdin",
-            "-i",
-            str(wav_path),
-            "-acodec",
-            "flac",
-            "-compression_level",
-            FLAC_COMPRESSION_LEVEL,
-            str(flac_path),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        await asyncio.wait_for(process.wait(), timeout=_FIX_HEADER_TIMEOUT_SEC)
+        async with _TRANSCODE_SEMAPHORE:
+            process = await asyncio.create_subprocess_exec(
+                "ffmpeg",
+                "-y",
+                "-nostdin",
+                "-i",
+                str(wav_path),
+                "-acodec",
+                "flac",
+                "-compression_level",
+                FLAC_COMPRESSION_LEVEL,
+                str(flac_path),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(
+                process.wait(), timeout=_FIX_HEADER_TIMEOUT_SEC
+            )
         if process.returncode == 0:
             success = True
         else:
@@ -571,13 +578,6 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         stderr_log_text = (
                             stderr_snippet or "(no stderr captured)"
                         )
-                        logger.error(
-                            "Feed %s (%s) ffmpeg exited with code %d; stderr tail:\n%s",
-                            feed_id,
-                            feed_name,
-                            exit_code,
-                            stderr_log_text,
-                        )
                         classification_text = (
                             "\n".join(stderr_http_status_lines)
                             if stderr_http_status_lines
@@ -592,6 +592,25 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                             classification_text=classification_text,
                             stderr_snippet=stderr_snippet,
                         )
+                        if (
+                            failure.status_reason.owner == "source"
+                            or "Stream capture timed out" in failure.reason
+                        ):
+                            logger.warning(
+                                "Feed %s (%s) ffmpeg exited with code %d; stderr tail:\n%s",
+                                feed_id,
+                                feed_name,
+                                exit_code,
+                                stderr_log_text,
+                            )
+                        else:
+                            logger.error(
+                                "Feed %s (%s) ffmpeg exited with code %d; stderr tail:\n%s",
+                                feed_id,
+                                feed_name,
+                                exit_code,
+                                stderr_log_text,
+                            )
                         raise failure
                     logger.info(
                         "Feed %s (%s): ffmpeg exited normally",
@@ -623,14 +642,30 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         asyncio.to_thread(_path_mtime, current_segment_wav),
                         asyncio.to_thread(_path_mtime, next_segment_wav),
                     )
-                    logger.error(
+                    classification_text = (
+                        "\n".join(stderr_http_status_lines)
+                        if stderr_http_status_lines
+                        else stderr_snippet or ""
+                    )
+                    failure = await _build_stream_capture_failure(
+                        resources,
+                        url,
+                        auth_header,
+                        exit_code=process.returncode,
+                        timed_out=True,
+                        classification_text=classification_text,
+                        stderr_snippet=stderr_snippet,
+                    )
+                    log_msg = (
                         "Feed %s (%s) no finalized segment within %ss; "
                         "next_index=%s current_segment_exists=%s "
                         "next_segment_exists=%s current_segment_size=%s "
                         "next_segment_size=%s current_segment_mtime=%s "
                         "next_segment_mtime=%s last_activity_age_sec=%.3f "
                         "read_timeout_sec=%s ffmpeg_pid=%s "
-                        "ffmpeg_returncode=%s; stderr tail:\n%s",
+                        "ffmpeg_returncode=%s; stderr tail:\n%s"
+                    )
+                    log_args = (
                         feed_id,
                         feed_name,
                         READ_TIMEOUT_SEC,
@@ -647,20 +682,13 @@ async def capture_icecast_stream(  # noqa: PLR0915, PLR0912
                         process.returncode,
                         stderr_log_text,
                     )
-                    classification_text = (
-                        "\n".join(stderr_http_status_lines)
-                        if stderr_http_status_lines
-                        else stderr_snippet or ""
-                    )
-                    failure = await _build_stream_capture_failure(
-                        resources,
-                        url,
-                        auth_header,
-                        exit_code=process.returncode,
-                        timed_out=True,
-                        classification_text=classification_text,
-                        stderr_snippet=stderr_snippet,
-                    )
+                    if (
+                        failure.status_reason.owner == "source"
+                        or "Stream capture timed out" in failure.reason
+                    ):
+                        logger.warning(log_msg, *log_args)
+                    else:
+                        logger.error(log_msg, *log_args)
                     raise failure
 
                 await asyncio.sleep(POLL_INTERVAL_SEC)
