@@ -10,9 +10,6 @@ import httpx
 import pytest
 from google.cloud import storage
 
-import httpx
-import pytest
-
 from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
 
 
@@ -126,7 +123,9 @@ async def test_create_echo_feed_success(
     gcs_client: storage.Client,
 ) -> None:
     """Test that creating an Echo feed succeeds if the GCS directory exists."""
-    bucket_name = os.environ.get("ECHO_RECORDINGS_BUCKET", "echo-recordings-test")
+    bucket_name = os.environ.get(
+        "ECHO_RECORDINGS_BUCKET", "echo-recordings-test"
+    )
     bucket = gcs_client.bucket(bucket_name)
 
     feed_id = str(uuid.uuid4())
@@ -144,7 +143,7 @@ async def test_create_echo_feed_success(
 
     resp = await proxy_client.post("/feeds", json=payload)
     assert resp.status_code == 201, resp.text
-    
+
     data = resp.json()
     assert data["sourceType"] == "echo"
     assert data["sourceFeedId"] == source_feed_id
