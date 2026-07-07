@@ -6,6 +6,7 @@ import ipaddress
 import logging
 import math
 import os
+import signal
 import time
 import urllib.parse
 from dataclasses import asdict, dataclass, field
@@ -18,7 +19,7 @@ from backend.pipeline.common.log_helper import setup_logging
 from backend.pipeline.common.tracing_utils import setup_tracing
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -387,12 +388,41 @@ async def start(
 
 
 async def _serve_forever(settings: VMHealthSettings) -> None:
-    state = VMHealthState()
-    runner = await start(settings, state)
+    shutdown = asyncio.Event()
+    remove_signal_handlers = _install_shutdown_signal_handlers(shutdown)
     try:
-        await asyncio.Event().wait()
+        state = VMHealthState()
+        runner = await start(settings, state)
+        try:
+            await shutdown.wait()
+        finally:
+            await runner.cleanup()
     finally:
-        await runner.cleanup()
+        remove_signal_handlers()
+
+
+def _install_shutdown_signal_handlers(
+    shutdown: asyncio.Event,
+) -> Callable[[], None]:
+    loop = asyncio.get_running_loop()
+    registered: list[signal.Signals] = []
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, shutdown.set)
+        except (NotImplementedError, RuntimeError):
+            logger.debug(
+                "VM Health shutdown signal handlers unavailable",
+                exc_info=True,
+            )
+            break
+        registered.append(sig)
+
+    def remove_signal_handlers() -> None:
+        for sig in registered:
+            with contextlib.suppress(NotImplementedError, RuntimeError):
+                loop.remove_signal_handler(sig)
+
+    return remove_signal_handlers
 
 
 def main() -> None:

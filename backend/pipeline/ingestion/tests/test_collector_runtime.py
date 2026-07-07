@@ -451,6 +451,26 @@ class TestStartupPacingHelpers(unittest.TestCase):
         mock_uniform.assert_not_called()
         self.assertEqual(sleep_seconds, 5.0)
 
+    def test_advance_heartbeat_tick_keeps_moderate_catchup(self) -> None:
+        """Small drift still allows one immediate catch-up heartbeat."""
+        next_tick = collector_runtime._advance_heartbeat_tick(
+            next_tick=100.0,
+            interval=15.0,
+            now=116.0,
+        )
+
+        self.assertEqual(next_tick, 115.0)
+
+    def test_advance_heartbeat_tick_resets_large_drift(self) -> None:
+        """Large drift resets the ticker instead of spinning catch-up loops."""
+        next_tick = collector_runtime._advance_heartbeat_tick(
+            next_tick=100.0,
+            interval=15.0,
+            now=131.0,
+        )
+
+        self.assertEqual(next_tick, 146.0)
+
 
 class TestReapCompletedTasks(unittest.IsolatedAsyncioTestCase):
     """Tests for _reap_completed_tasks."""

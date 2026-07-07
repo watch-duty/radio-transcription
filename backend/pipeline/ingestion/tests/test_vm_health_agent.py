@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import signal
 import unittest
 from typing import cast
 from unittest import mock
@@ -413,6 +414,74 @@ class VMHealthHandlerTests(AioHTTPTestCase):
                 "status_code": 503,
                 "error": "ClientError",
             },
+        )
+
+
+class VMHealthServeForeverTests(unittest.IsolatedAsyncioTestCase):
+    async def test_serve_forever_cleans_up_after_shutdown_signal(self) -> None:
+        settings = vm_health_agent.VMHealthSettings(
+            worker_endpoints=("http://127.0.0.1:8081/healthz",),
+        )
+        runner = mock.AsyncMock()
+        shutdown_event: asyncio.Event | None = None
+        remove_handlers = mock.Mock()
+
+        def install_handlers(shutdown: asyncio.Event) -> mock.Mock:
+            nonlocal shutdown_event
+            shutdown_event = shutdown
+            return remove_handlers
+
+        async def fake_start(
+            _settings: vm_health_agent.VMHealthSettings,
+            _state: vm_health_agent.VMHealthState,
+        ) -> mock.AsyncMock:
+            return runner
+
+        with (
+            mock.patch.object(vm_health_agent, "start", side_effect=fake_start),
+            mock.patch.object(
+                vm_health_agent,
+                "_install_shutdown_signal_handlers",
+                side_effect=install_handlers,
+            ),
+        ):
+            task = asyncio.create_task(vm_health_agent._serve_forever(settings))
+            await asyncio.sleep(0)
+            assert shutdown_event is not None
+            shutdown_event.set()
+            await task
+
+        runner.cleanup.assert_awaited_once_with()
+        remove_handlers.assert_called_once_with()
+
+    async def test_shutdown_signal_handlers_register_term_and_int(
+        self,
+    ) -> None:
+        loop = asyncio.get_running_loop()
+        shutdown = asyncio.Event()
+
+        with (
+            mock.patch.object(loop, "add_signal_handler") as add_handler,
+            mock.patch.object(loop, "remove_signal_handler") as remove_handler,
+        ):
+            remove_handlers = vm_health_agent._install_shutdown_signal_handlers(
+                shutdown
+            )
+            registered = {
+                call.args[0]: call.args[1]
+                for call in add_handler.call_args_list
+            }
+            registered[signal.SIGTERM]()
+            remove_handlers()
+
+        self.assertTrue(shutdown.is_set())
+        self.assertEqual(
+            set(registered),
+            {signal.SIGTERM, signal.SIGINT},
+        )
+        self.assertEqual(
+            [call.args[0] for call in remove_handler.call_args_list],
+            [signal.SIGTERM, signal.SIGINT],
         )
 
 

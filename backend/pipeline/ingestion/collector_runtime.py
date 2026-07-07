@@ -124,6 +124,18 @@ def _lease_poll_sleep_seconds(
     return lease_poll_interval_sec + _bounded_jitter(lease_poll_jitter_max_sec)
 
 
+def _advance_heartbeat_tick(
+    *,
+    next_tick: float,
+    interval: float,
+    now: float,
+) -> float:
+    advanced = next_tick + interval
+    if now - advanced > interval:
+        return now + interval
+    return advanced
+
+
 class _PipelineFailure(Exception):
     """Post-capture runtime side-effect failure with a stable stage tag."""
 
@@ -1699,9 +1711,13 @@ class CollectorRuntime:
                 # and heartbeat diagnostics remain authoritative.
                 logger.exception("Heartbeat renewal error")
 
-            # Advance ticker. If cycle took longer than one interval, the next
-            # sleep_time clamps to 0 — fires immediately to catch up.
-            next_tick += interval
+            # Allow one immediate catch-up tick, but reset large drift so a
+            # slow recovery window cannot spin heartbeat DB writes.
+            next_tick = _advance_heartbeat_tick(
+                next_tick=next_tick,
+                interval=interval,
+                now=time.monotonic(),
+            )
 
     async def _heartbeat_cycle(self) -> None:
         """
