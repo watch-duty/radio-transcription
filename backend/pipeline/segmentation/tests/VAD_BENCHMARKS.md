@@ -12,26 +12,25 @@ In radio transcription, **we prioritize Recall (capturing all speech) over Preci
 
 ## F1, Precision, and Recall Benchmarks
 
-All metrics below are evaluated under the official production configuration: **`pad_sec = 0.0`** (for pure accuracy tracking) and **`priming_sec = 3.5`** (using the last 3.5s of the 6.0s extracted tail for warmup).
+All metrics below are evaluated under the official production configuration: **`pad_sec = 0.0`** (for pure accuracy tracking) and **`priming_sec = 6.0`** (matching the default 6.0s lookback priming in streaming mode).
 
 | Audio File | F1 | Precision | Recall | Description / Justification |
 | :--- | :---: | :---: | :---: | :--- |
-| **`test_stress.flac`** | **0.925** | `1.000` | `0.861` | Quiet dispatcher segments starting immediately at `t=0.4s`. |
-| **`test_joined.flac`** | **0.920** | `0.902` | `0.888` | Multi-dispatch joined segments. |
-| **`test_bcfy.flac`** | **0.850** | `0.923` | `0.787` | Broadcastify dispatch containing whispers and dropouts. |
-| **`test_dispatch_amador.flac`** | **0.906** | `0.916` | `0.896` | Amador continuous dispatcher stream. |
-| **`test_dispatch_sku.flac`** | **0.890** | `0.832` | `0.956` | SKU dispatch with heavy background static interference. |
-| **`test_middlebury_quiet_segments.mp3`** | **0.865** | `0.981` | `0.773` | Quiet segments from Middlebury dataset. |
+| **`test_stress.flac`** | **0.932** | `1.000` | `0.873` | Quiet dispatcher segments starting immediately at `t=0.4s`. |
+| **`test_joined.flac`** | **0.912** | `0.861` | `0.968` | Multi-dispatch joined segments. |
+| **`test_bcfy.flac`** | **0.851** | `0.924` | `0.789` | Broadcastify dispatch containing whispers and dropouts. |
+| **`test_dispatch_amador.flac`** | **0.921** | `0.894` | `0.950` | Amador continuous dispatcher stream. |
+| **`test_dispatch_sku.flac`** | **0.892** | `0.821` | `0.976` | SKU dispatch with heavy background static interference. |
+| **`test_middlebury_quiet_segments.mp3`** | **0.889** | `0.982` | `0.812` | Quiet segments from Middlebury dataset. |
 | **`test_middlebury_quiet_spiky.mp3`** | **0.713** | `0.564` | `0.969` | Quiet EMS speech. Low precision due to conservative 3s chunk padding. |
-| **`test_quiet_speech_loud_transient.mp3`** | **0.669** | `0.564` | `0.822` | Quiet speech followed by a loud transient click. |
+| **`test_quiet_speech_loud_transient.mp3`** | **0.751** | `0.607` | `0.983` | Quiet speech followed by a loud transient click. |
 | **`test_only_static_middlebury.mp3`** | **1.000** | `1.000` | `1.000` | Pure static noise (100% rejected, no false positives). |
 | **`test_subaudible_flickering.flac`** | **1.000** | `1.000` | `1.000` | 72Hz electrical flickering interference (100% rejected). |
-| **`test_vad_deafening_dispatcher_ems.flac`** | **0.494** | `1.000` | `0.328` | Loud dispatcher followed by quiet EMS (3s real noise warmup). Captures dispatcher and parts of both EMS segments. |
-| **`test_vad_deafening_static_preamble.flac`** | **0.703** | `0.996` | `0.471` | Quiet speech preceded by 1.4s of static (3s real noise warmup). Captures the majority of the speech. |
-| **`test_cajon_pass_trailing.flac`** | **0.650** | `0.485` | `1.000` | Trailing scanner speech preceded by open-squelch static (Cajon Pass feed). Captures 100% of speech at onset 0.25. |
+| **`test_vad_deafening_dispatcher_ems.flac`** | **0.590** | `1.000` | `0.419` | Loud dispatcher followed by quiet EMS (3s real noise warmup). Captures dispatcher and parts of both EMS segments. |
+| **`test_vad_deafening_static_preamble.flac`** | **0.703** | `0.997` | `0.543` | Quiet speech preceded by 1.4s of static (3s real noise warmup). Captures the majority of the speech. |
+| **`test_cajon_pass_trailing.flac`** | **0.047** | `0.843` | `0.024` | Quiet, muffled scanner speech preceded by open-squelch static (Cajon Pass feed). |
 
 *Note: For static-only files, an empty detection matching empty ground truth yields a perfect `1.000` across all metrics.*
-*Note on Onset Sensitivity Optimization: `VAD_DEFAULT_THRESHOLD_ONSET` was lowered from `0.35` to `0.25` to resolve trailing speech suppression across streaming boundaries on Broadcastify scanner traffic.*
 
 ---
 

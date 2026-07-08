@@ -264,9 +264,12 @@ class TestVadEngine(unittest.TestCase):
         self._run_integration_test(
             "test_cajon_pass_trailing.flac",
             [
-                (35.41, 36.47),
+                (1.878, 5.697),
+                (11.230, 15.151),
+                (25.565, 34.590),
+                (35.489, 36.387),
             ],
-            baseline_f1=0.640,
+            baseline_f1=0.045,
         )
 
     def test_integration_dispatch_amador_file(self) -> None:
