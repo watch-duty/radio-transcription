@@ -49,7 +49,7 @@ WINDMILL_TIMER_MIN_ADVANCE_SECS: Final = 0.001
 GCS_DOWNLOAD_TIMEOUT_SEC: Final = 30
 DEFAULT_STALE_TIMEOUT_MS: Final = 75000
 DEFAULT_MAX_TRANSMISSION_DURATION_MS: Final = 59000
-DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS: Final = 60000
+DEFAULT_CONTINUOUS_OUT_OF_ORDER_TIMEOUT_MS: Final = 30000
 DEFAULT_SEGMENTED_OUT_OF_ORDER_TIMEOUT_MS: Final = 10000
 DEFAULT_BACKFILL_LATENESS_THRESHOLD_MS: Final = 300000
 OVERLAPPING_TRANSMISSION_TOLERANCE_MS: Final = 100
@@ -58,7 +58,7 @@ UPSTREAM_GAP_DRIFT_TOLERANCE_MS: Final = 50
 
 GCS_CONNECTION_POOL_SIZE: Final = 100
 GCS_CONNECTION_MAX_RETRIES: Final = 3
-SHARED_DOWNLOAD_POOL_SIZE: Final = 20
+SHARED_DOWNLOAD_POOL_SIZE: Final = 100
 
 # Structured watermark and FSM recovery configurations
 DEFAULT_VAD_POST_ROLL_MS: Final = 500
@@ -72,7 +72,7 @@ VAD_DEFAULT_BLEND_RATIO: Final = 0.80
 VAD_DEFAULT_BOOST_FREQ_HZ: Final = 2500.0
 VAD_DEFAULT_BOOST_GAIN_DB: Final = 10.0
 VAD_DEFAULT_PEAK_FILTER_Q: Final = 1.0
-VAD_DEFAULT_THRESHOLD_ONSET: Final = 0.35
+VAD_DEFAULT_THRESHOLD_ONSET: Final = 0.25
 # Raised to 0.20 to close trailing silent segments faster
 VAD_DEFAULT_THRESHOLD_OFFSET: Final = 0.20
 VAD_DEFAULT_MIN_SPEECH_DURATION_MS: Final = 200
@@ -86,7 +86,7 @@ VAD_DEFAULT_PAD_SEC: Final = 0.3
 #    persistent state (Dataflow/Windmill) to pass to the next chunk. We store a larger buffer (6.0s)
 #    in the state so that we can adjust the active warmup window (below) in the future via config
 #    changes without needing a breaking state schema migration.
-VAD_DEFAULT_PRIMING_SEC: Final = 6.0
+VAD_DEFAULT_PRIMING_SEC: Final = 3.5
 
 # 2. warmup_sec (VAD_DEFAULT_WARMUP_SEC = 3.5s):
 #    The active window of the prior_audio_tail that the VAD actually runs on to warm up its denoiser

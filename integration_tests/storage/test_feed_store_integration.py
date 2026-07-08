@@ -2832,3 +2832,39 @@ async def test_reset_feed_active_feed_raises_conflict_without_audit(
     assert row["audit_revision"] == 0
     audit_rows = await _fetch_audit_events(db_pool, feed_id)
     assert audit_rows == []
+
+
+# -- Tests: list_feed_history_records ---------------------------------
+
+
+async def test_list_feed_history_records_decodes_jsonb(
+    db_pool: asyncpg.Pool,
+    store: FeedStore,
+) -> None:
+    """list_feed_history_records returns decoded JSONB fields (dicts)."""
+    feed_id = await _insert_feed(
+        db_pool,
+        "History JSONB Decodes Feed",
+        status="unclaimed",
+    )
+
+    # Trigger some event that writes to feed_audit_events.
+    # Deactivating the feed should create an event.
+    success = await store.deactivate_feed(feed_id, actor_id=_TEST_ACTOR_ID)
+    assert success is True
+
+    # Retrieve the audit events using the store method.
+    result = await store.list_feed_history_records(feed_id)
+
+    assert len(result.audit_events) == 1
+    event = result.audit_events[0]
+    assert event["action"] == "feed.deactivated"
+    assert event["actor_id"] == _TEST_ACTOR_ID
+
+    # These must be dicts, not raw strings
+    assert isinstance(event["before_values"], dict)
+    assert isinstance(event["after_values"], dict)
+
+    # And check content
+    assert event["before_values"]["status"] == "unclaimed"
+    assert event["after_values"]["status"] == "deactivated"
