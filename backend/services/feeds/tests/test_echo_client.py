@@ -38,29 +38,17 @@ class TestEchoClient(unittest.IsolatedAsyncioTestCase):
         self.mock_storage_client.bucket.assert_called_once_with("test-bucket")
         self.assertEqual(self.mock_storage_client.list_blobs.call_count, 1)
 
-    async def test_verify_directory_exists_by_exact_marker(self) -> None:
-        mock_bucket = mock.MagicMock()
-        self.mock_storage_client.bucket.return_value = mock_bucket
-        # first list_blobs returns empty, second returns exact blob
-        self.mock_storage_client.list_blobs.side_effect = [[], ["dummy-blob"]]
-
-        client = EchoClient(self.mock_storage_client, bucket_name="test-bucket")
-        result = await client.verify_directory_exists("my-feed")
-
-        self.assertTrue(result)
-        self.assertEqual(self.mock_storage_client.list_blobs.call_count, 2)
-
     async def test_verify_directory_not_exists(self) -> None:
         mock_bucket = mock.MagicMock()
         self.mock_storage_client.bucket.return_value = mock_bucket
-        # both return empty
-        self.mock_storage_client.list_blobs.side_effect = [[], []]
+        # list_blobs returns empty
+        self.mock_storage_client.list_blobs.return_value = []
 
         client = EchoClient(self.mock_storage_client, bucket_name="test-bucket")
         result = await client.verify_directory_exists("my-feed")
 
         self.assertFalse(result)
-        self.assertEqual(self.mock_storage_client.list_blobs.call_count, 2)
+        self.assertEqual(self.mock_storage_client.list_blobs.call_count, 1)
 
     async def test_verify_directory_raises_if_not_configured(self) -> None:
         with mock.patch.dict("os.environ", {}, clear=True):

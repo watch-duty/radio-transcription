@@ -46,25 +46,22 @@ class FeedService:
                 msg = "source_feed_id is required for ECHO feeds"
                 raise ValueError(msg)
 
-            if not self._echo_client:
-                msg = "Echo client is not configured"
-                raise ValueError(msg)
-
-            if self._echo_client.is_configured:
-                exists = await self._echo_client.verify_directory_exists(
-                    feed_in.source_feed_id
-                )
-                if not exists:
-                    msg = (
-                        f"No GCS directory found for Echo feed "
-                        f"'{feed_in.source_feed_id}'"
-                    )
-                    raise ValueError(msg)
-            else:
+            if not self._echo_client or not self._echo_client.is_configured:
                 logger.warning(
-                    "Echo recordings bucket is not configured. "
+                    "Echo client or recordings bucket is not configured. "
                     "Skipping directory verification."
                 )
+                return
+
+            exists = await self._echo_client.verify_directory_exists(
+                feed_in.source_feed_id
+            )
+            if not exists:
+                msg = (
+                    f"No GCS directory found for Echo feed "
+                    f"'{feed_in.source_feed_id}'"
+                )
+                raise ValueError(msg)
 
     async def create_feed(self, feed_in: FeedCreate, *, actor_id: str) -> Feed:
         """Creates a new feed."""

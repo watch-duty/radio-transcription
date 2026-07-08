@@ -50,15 +50,6 @@ class EchoClient:
         if blobs:
             return True
 
-        # Fallback to check exact match marker
-        exact_blob = list(
-            self._client.list_blobs(
-                bucket, prefix=source_feed_id, max_results=1
-            )
-        )
-        if exact_blob:
-            return True
-
         return False
 
     async def verify_directory_exists(self, source_feed_id: str) -> bool:

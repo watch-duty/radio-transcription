@@ -260,7 +260,7 @@ class TestFeedServiceCreateEcho(unittest.IsolatedAsyncioTestCase):
         )
         self.store.create_feed.assert_not_awaited()
 
-    async def test_create_feed_echo_bucket_env_not_configured_skips_gcs(
+    async def test_create_feed_echo_client_unconfigured_skips(
         self,
     ) -> None:
         self.store.create_feed.return_value = _store_feed(
@@ -282,4 +282,28 @@ class TestFeedServiceCreateEcho(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result.source_feed_id, "feed-123_abc")
         self.mock_echo_client.verify_directory_exists.assert_not_called()
+        self.store.create_feed.assert_awaited_once()
+
+    async def test_create_feed_echo_client_none_skips(
+        self,
+    ) -> None:
+        self.store.create_feed.return_value = _store_feed(
+            source_type=SourceType.ECHO,
+            source_feed_id="feed-123_abc",
+        )
+
+        # Reinitialize service with None echo_client
+        self.service = FeedService(self.store, echo_client=None)
+
+        feed_in = EchoCreate(
+            name="Test Echo Feed",
+            source_type=SourceType.ECHO,
+            source_feed_id="feed-123_abc",
+        )
+
+        result = await self.service.create_feed(
+            feed_in, actor_id=_ADMIN_ACTOR_ID
+        )
+
+        self.assertEqual(result.source_feed_id, "feed-123_abc")
         self.store.create_feed.assert_awaited_once()
