@@ -1148,6 +1148,10 @@ class CollectorRuntime:
             )
             if raw_latency_sec < 0:
                 chunk_ingested_payload["latency_clamped"] = True
+        if captured_chunk.stream_interval_lag_sec is not None:
+            chunk_ingested_payload["stream_interval_lag_sec"] = round(
+                captured_chunk.stream_interval_lag_sec, 2
+            )
         logger.info(
             "Chunk ingested",
             extra={"json_fields": chunk_ingested_payload},
