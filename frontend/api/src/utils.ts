@@ -24,11 +24,9 @@ export function handleBackendError(
 ): BackendErrorResponse {
   if (error instanceof GaxiosError || axios.isAxiosError(error)) {
     const status = error.response?.status || 500;
-    const data = error.response?.data as Record<string, unknown> | undefined;
+    const data = error.response?.data;
     const message =
-      (data && typeof data === 'object' && typeof data.detail === 'string'
-        ? data.detail
-        : '') ||
+      (typeof data?.detail === 'string' ? data.detail : '') ||
       error.message ||
       defaultMessage;
     console.error(
