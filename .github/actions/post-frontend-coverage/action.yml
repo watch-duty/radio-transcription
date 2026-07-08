@@ -46,7 +46,13 @@ runs:
               const codeBlock = '```';
               let summary = 'No coverage report found';
               if (fs.existsSync(reportFile)) {
-                summary = `### Coverage Report (${healthText})\n\n${codeBlock}\n${fs.readFileSync(reportFile, 'utf8')}\n${codeBlock}`;
+                let content = fs.readFileSync(reportFile, 'utf8');
+                const maxContentLen = 64000;
+                if (content.length > maxContentLen) {
+                  const half = Math.floor(maxContentLen / 2);
+                  content = content.slice(0, half) + '\n\n... [coverage report truncated due to GitHub API size limits] ...\n\n' + content.slice(-half);
+                }
+                summary = `### Coverage Report (${healthText})\n\n${codeBlock}\n${content}\n${codeBlock}`;
               }
               
               await github.rest.checks.create({

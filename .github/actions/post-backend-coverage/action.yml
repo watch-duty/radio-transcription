@@ -40,6 +40,12 @@ runs:
                 healthText = 'Warning (<80%)';
               }
 
+              const maxContentLen = 64000;
+              if (content.length > maxContentLen) {
+                const half = Math.floor(maxContentLen / 2);
+                content = content.slice(0, half) + '\n\n... [coverage report truncated due to GitHub API size limits] ...\n\n' + content.slice(-half);
+              }
+
               const codeBlock = '```';
               await github.rest.checks.create({
                 owner: context.repo.owner,
