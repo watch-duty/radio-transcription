@@ -1,32 +1,5 @@
 import type { Tag } from '@transcription/common';
 
-export function getFieldLabel(key: string): string {
-  switch (key) {
-    case 'name':
-      return 'Name';
-    case 'status':
-      return 'Status';
-    case 'substatus':
-      return 'Substatus';
-    case 'sourceFeedId':
-      return 'Source Feed ID';
-    case 'sourceType':
-      return 'Source Type';
-    case 'statusReason':
-      return 'Status Reason';
-    case 'statusReasonDetail':
-      return 'Status Reason Detail';
-    case 'sourceUrl':
-      return 'Source URL';
-    case 'archiveUrl':
-      return 'Archive URL';
-    default:
-      return key
-        .replace(/([A-Z])/g, ' $1')
-        .replace(/^./, (str) => str.toUpperCase());
-  }
-}
-
 export function formatDiff(
   before: Record<string, unknown> = {},
   after: Record<string, unknown> = {}
@@ -49,8 +22,6 @@ export function formatDiff(
     if (JSON.stringify(beforeVal) === JSON.stringify(afterVal)) {
       return;
     }
-
-    const fieldLabel = getFieldLabel(key);
 
     if (key === 'tags') {
       const beforeTags = Array.isArray(beforeVal) ? (beforeVal as Tag[]) : [];
@@ -81,13 +52,11 @@ export function formatDiff(
     }
 
     if (beforeVal === undefined || beforeVal === null) {
-      changes.push(`${fieldLabel} set to "${afterVal}"`);
+      changes.push(`${key} set to "${afterVal}"`);
     } else if (afterVal === undefined || afterVal === null) {
-      changes.push(`${fieldLabel} cleared (was "${beforeVal}")`);
+      changes.push(`${key} cleared (was "${beforeVal}")`);
     } else {
-      changes.push(
-        `${fieldLabel} changed from "${beforeVal}" to "${afterVal}"`
-      );
+      changes.push(`${key} changed from "${beforeVal}" to "${afterVal}"`);
     }
   });
 

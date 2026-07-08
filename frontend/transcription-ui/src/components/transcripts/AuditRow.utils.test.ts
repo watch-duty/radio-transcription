@@ -1,31 +1,9 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 
-import {
-  formatDiff,
-  getEffectiveStatus,
-  getFieldLabel,
-} from './AuditRow.utils';
+import { formatDiff, getEffectiveStatus } from './AuditRow.utils';
 
 describe('AuditRow utils', () => {
-  describe('getFieldLabel', () => {
-    it('returns custom display names for known fields', () => {
-      expect(getFieldLabel('name')).toBe('Name');
-      expect(getFieldLabel('status')).toBe('Status');
-      expect(getFieldLabel('substatus')).toBe('Substatus');
-      expect(getFieldLabel('sourceFeedId')).toBe('Source Feed ID');
-      expect(getFieldLabel('sourceType')).toBe('Source Type');
-      expect(getFieldLabel('statusReason')).toBe('Status Reason');
-      expect(getFieldLabel('statusReasonDetail')).toBe('Status Reason Detail');
-      expect(getFieldLabel('sourceUrl')).toBe('Source URL');
-      expect(getFieldLabel('archiveUrl')).toBe('Archive URL');
-    });
-
-    it('falls back to capitalized spaced words for unknown fields', () => {
-      expect(getFieldLabel('someCustomProperty')).toBe('Some Custom Property');
-    });
-  });
-
   describe('getEffectiveStatus', () => {
     it('returns undefined if values is undefined', () => {
       expect(getEffectiveStatus(undefined)).toBeUndefined();
