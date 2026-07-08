@@ -9,11 +9,17 @@ const MAX_PRELOAD_PAGES = 30;
 
 // Per-query preload progress. pagesFetched bounds each direction; cappedWarned
 // keeps the cap warning to once per side per query (not once per render).
+// lastBoundary is the segment id a fetch last kicked off from, so a re-render
+// (or a page that didn't extend the range) doesn't re-fetch it — only a moved
+// edge pages again. Keyed on id, not timestamp: co-timed segments (silence
+// bundles share a start) would otherwise read as an unmoved edge.
 type PreloadProgress = {
   olderPages: number;
   newerPages: number;
   olderCappedWarned: boolean;
   newerCappedWarned: boolean;
+  lastOlderBoundary: string | null;
+  lastNewerBoundary: string | null;
 };
 
 const INITIAL_PRELOAD_PROGRESS: PreloadProgress = {
@@ -21,6 +27,8 @@ const INITIAL_PRELOAD_PROGRESS: PreloadProgress = {
   newerPages: 0,
   olderCappedWarned: false,
   newerCappedWarned: false,
+  lastOlderBoundary: null,
+  lastNewerBoundary: null,
 };
 
 interface UseAudioWindowPreloadOptions {
@@ -95,12 +103,17 @@ export function useAudioWindowPreload({
         : (liveEdgeMs as number) - windowMs;
     const winEndMs = anchorMs != null ? anchorMs + windowMs / 2 : null;
 
-    const oldestMs = new Date(
-      segments[segments.length - 1].startTimestamp
-    ).getTime();
-    if (oldestMs > winStartMs && hasOlder && !isFetchingOlder) {
+    const oldest = segments[segments.length - 1];
+    const oldestMs = new Date(oldest.startTimestamp).getTime();
+    if (
+      oldestMs > winStartMs &&
+      hasOlder &&
+      !isFetchingOlder &&
+      oldest.id !== progressRef.current.lastOlderBoundary
+    ) {
       if (progressRef.current.olderPages < MAX_PRELOAD_PAGES) {
         progressRef.current.olderPages += 1;
+        progressRef.current.lastOlderBoundary = oldest.id;
         fetchOlder();
         return;
       }
@@ -108,15 +121,18 @@ export function useAudioWindowPreload({
     }
 
     // Date mode also fills toward the future side of the centered window.
-    const newestMs = new Date(segments[0].startTimestamp).getTime();
+    const newest = segments[0];
+    const newestMs = new Date(newest.startTimestamp).getTime();
     if (
       winEndMs != null &&
       newestMs < winEndMs &&
       hasNewer &&
-      !isFetchingNewer
+      !isFetchingNewer &&
+      newest.id !== progressRef.current.lastNewerBoundary
     ) {
       if (progressRef.current.newerPages < MAX_PRELOAD_PAGES) {
         progressRef.current.newerPages += 1;
+        progressRef.current.lastNewerBoundary = newest.id;
         fetchNewer();
         return;
       }
