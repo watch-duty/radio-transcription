@@ -130,6 +130,13 @@ def _advance_heartbeat_tick(
     interval: float,
     now: float,
 ) -> float:
+    """Advance the heartbeat ticker without creating catch-up write storms.
+
+    One immediate catch-up tick is useful after a moderately slow cycle because
+    it preserves the intended long-term heartbeat cadence. If the loop is more
+    than one interval behind, reset from ``now`` so recovery does not spin
+    back-to-back heartbeat DB writes while trying to replay missed ticks.
+    """
     advanced = next_tick + interval
     if now - advanced > interval:
         return now + interval
@@ -493,6 +500,9 @@ class CollectorRuntime:
             if self._memory_watchdog.is_paused():
                 s = self._collector_settings
                 active_feeds = len(self._feed_tasks)
+                # Keep raw slack for telemetry: it can go negative if this
+                # worker is temporarily over target. Only the admission budget
+                # is clamped because it is the control input for DB claims.
                 total_slack = s.max_feeds_per_worker - active_feeds
                 admission_budget = min(
                     max(0, total_slack),
@@ -523,6 +533,10 @@ class CollectorRuntime:
             # no other worker can steal leases either.
             s = self._collector_settings
             active_feeds = len(self._feed_tasks)
+            # Keep raw slack for telemetry: it can go negative if this worker
+            # is temporarily over target. The acquisition path below runs only
+            # when slack is positive; admission_budget is the bounded number of
+            # new leases this cycle may ask AlloyDB to claim.
             total_slack = s.max_feeds_per_worker - active_feeds
             admission_budget = 0
             primary_acquired = 0
