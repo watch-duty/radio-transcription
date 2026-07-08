@@ -264,8 +264,9 @@ export function TranscriptView({
     searchedFeed?.sourceType === SourceType.BCFY_FEEDS
   );
 
-  // Identity of the current query; a change replaces the list wholesale, so the
-  // window and scroll anchor both reset off it.
+  // View-intent key: a deliberate context switch resets the window and scroll
+  // anchor. Omits token/preloadWindowMs so a silent token refresh doesn't snap a
+  // scrolled-back user to the live edge.
   const audioWindowResetKey = `${searchedFeedId}|${searchedTimestamp?.getTime() ?? ''}|${alertFilter}|${searchQuery}`;
 
   // Single source of truth for the audio timeline's visible window.
