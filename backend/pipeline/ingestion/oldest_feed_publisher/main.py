@@ -130,7 +130,9 @@ async def _get_pool() -> asyncpg.Pool:
 
 
 async def _publish(value: int) -> None:
-    """Write a single INT64 GAUGE datapoint via the existing MonitoringClient."""
+    """Write a single INT64 GAUGE datapoint via the existing
+    MonitoringClient.
+    """
     client = _get_monitoring_client()
     await client.write_time_series(
         metric_type=METRIC_TYPE,

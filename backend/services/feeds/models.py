@@ -96,3 +96,22 @@ class ListFeedsResponse(BaseModel):
     feeds: list[Feed]
     next_token: str | None = None
     total: int
+
+
+class FeedHistoryEvent(BaseModel):
+    id: uuid.UUID
+    feed_id: uuid.UUID
+    action: str
+    actor: str
+    occurred_at: datetime.datetime
+    feed_revision_num: int
+    before_values: dict
+    after_values: dict
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ListFeedHistoryResponse(BaseModel):
+    history_events: list[FeedHistoryEvent]
+    next_token: str | None = None
+    total: int

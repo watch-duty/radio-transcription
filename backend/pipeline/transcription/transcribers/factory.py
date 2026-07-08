@@ -1,6 +1,7 @@
 """Pluggable Transcription API factory.
 
-Exposes get_transcriber using standard statically-typed imports from sibling modules.
+Exposes get_transcriber using standard statically-typed imports from sibling
+modules.
 """
 
 from backend.pipeline.transcription.enums import TranscriberType

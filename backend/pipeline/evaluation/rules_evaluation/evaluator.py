@@ -151,7 +151,8 @@ class BaseTextEvaluator(ABC):
         else:
             return None
 
-        # Span order is unspecified; consumers that need ordering sort themselves.
+        # Span order is unspecified; consumers that need ordering sort
+        # themselves.
         spans = [
             TextMatchSpan(
                 start=m.start(),

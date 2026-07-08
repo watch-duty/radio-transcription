@@ -1,5 +1,5 @@
 import { SourceType } from '@transcription/common';
-import type { RuleConditions, RuleCreate } from '@transcription/common';
+import type { RuleConditions, RuleCreate, Tag } from '@transcription/common';
 
 /**
  * Validates whether a given string is a valid timezone.
@@ -197,4 +197,109 @@ export function buildRulePayload(
     scope: scopePayload,
     conditions: conditionsPayload,
   };
+}
+
+/**
+ * The per-key policy the tag validators need. Callers define a superset (with
+ * UI-only fields like display labels) and should `extends TagKeyLimit` so the
+ * shared field names can't silently drift.
+ */
+export interface TagKeyLimit {
+  maxValues?: number; // max times the key may appear (omit → unlimited)
+  options?: readonly string[]; // values offered in the dropdown (omit → free-text)
+  // Custom value check; takes precedence over `options` membership. Lets a key
+  // accept more than the dropdown offers (e.g. non-canonical timezone aliases).
+  validate?: (value: string) => boolean;
+}
+
+type TagKeyLimits = Record<string, TagKeyLimit>;
+
+function maxValuesMessage(key: string, maxValues: number): string {
+  return `The key "${key}" allows at most ${maxValues} value${maxValues === 1 ? '' : 's'}.`;
+}
+
+/**
+ * Counts how many tags share a key. Keys are trimmed so the count stays
+ * consistent with the (trimmed) config lookup used to resolve limits.
+ */
+export function countTagsWithKey(tags: Tag[], key: string): number {
+  const trimmedKey = key.trim();
+  return tags.filter((t) => t.key.trim() === trimmedKey).length;
+}
+
+/**
+ * Returns an error message if a `{ key, value }` tag cannot be added to `tags` —
+ * because it would exceed the key's `maxValues` limit, or exactly duplicates an
+ * existing tag — or null if it can be added. A key may repeat with different
+ * values; only an exact repeat is rejected. Inputs are trimmed before comparison.
+ */
+export function tagAddError(
+  tags: Tag[],
+  key: string,
+  value: string,
+  maxValues?: number
+): string | null {
+  const trimmedKey = key.trim();
+  const trimmedValue = value.trim();
+  if (maxValues != null && countTagsWithKey(tags, trimmedKey) >= maxValues) {
+    return maxValuesMessage(trimmedKey, maxValues);
+  }
+  if (tags.some((t) => t.key === trimmedKey && t.value === trimmedValue)) {
+    return `The tag "${trimmedKey}=${trimmedValue}" already exists.`;
+  }
+  return null;
+}
+
+/**
+ * Validates a feed's tags, folding in any in-progress tag from the input row.
+ * Returns a single error message string, or null when valid.
+ */
+export function validateTags(
+  tags: Tag[],
+  inProgressTag: { key: string; value: string },
+  keyConfig: TagKeyLimits
+): string | null {
+  const configFor = (key: string) => keyConfig[key.trim()];
+  const combined = [...tags];
+
+  const trimmedKey = inProgressTag.key.trim();
+  const trimmedValue = inProgressTag.value.trim();
+  if (trimmedKey && trimmedValue) {
+    const addError = tagAddError(
+      tags,
+      trimmedKey,
+      trimmedValue,
+      configFor(trimmedKey)?.maxValues
+    );
+    if (addError) return addError;
+    combined.push({ key: trimmedKey, value: trimmedValue });
+  } else if (trimmedKey || trimmedValue) {
+    return 'Both key and value must be populated to add a tag.';
+  }
+
+  for (const tag of combined) {
+    const config = configFor(tag.key);
+    if (!config) continue;
+    const value = tag.value.trim();
+    const valid = config.validate
+      ? config.validate(value)
+      : !config.options || config.options.includes(value);
+    if (!valid) {
+      return `Invalid value for "${tag.key.trim()}". Please select a valid option from the list.`;
+    }
+  }
+
+  const overLimitKey = [...new Set(combined.map((t) => t.key))].find((key) => {
+    const limit = configFor(key)?.maxValues;
+    return limit != null && countTagsWithKey(combined, key) > limit;
+  });
+  if (overLimitKey) {
+    return maxValuesMessage(overLimitKey, configFor(overLimitKey)!.maxValues!);
+  }
+
+  if (combined.some((tag) => !tag.key.trim() || !tag.value.trim())) {
+    return 'Tag key and value inputs cannot be blank. Discard empty tag rows using the delete button.';
+  }
+
+  return null;
 }

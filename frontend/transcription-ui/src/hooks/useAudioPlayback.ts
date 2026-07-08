@@ -173,6 +173,10 @@ export function useAudioPlayback({
     currentAudio.current = null;
     setCurrentlyPlayingSegmentId(null);
     currentlyPlayingSegmentIdRef.current = null;
+    // stop() tears down the listeners, so the engine's async `pause` event never
+    // reaches onPause — own the transition here so playback state clears.
+    setIsAudioPlaying(false);
+    isAudioPlayingRef.current = false;
   }, []);
 
   return {

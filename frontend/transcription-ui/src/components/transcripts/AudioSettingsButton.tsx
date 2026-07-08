@@ -75,6 +75,9 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
   const VolumeIcon = isMuted ? VolumeOffIcon : VolumeUpIcon;
   const volumeIconScale = volumeIconScaleFor(volumeDb);
 
+  // Pan and speed each surface a badge; the border only shows to anchor them.
+  const hasBadge = Boolean(panLabel) || speedActive;
+
   const activeSummary = [
     volumeActive ? volumeLabel : null,
     panLabel ? `Pan ${panLabel}` : null,
@@ -119,7 +122,7 @@ export const AudioSettingsButton: React.FC<AudioSettingsButtonProps> = ({
               aria-label="audio controls"
               disabled={disableControls}
               onClick={(e) => setAudioAnchorEl(e.currentTarget)}
-              sx={{ border: 1, borderColor: 'divider' }}
+              sx={{ border: hasBadge ? 1 : 0, borderColor: 'divider' }}
             >
               <VolumeIcon
                 fontSize="small"

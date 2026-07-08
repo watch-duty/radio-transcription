@@ -15,7 +15,8 @@ RULE_COLUMNS_SQL = """\
 """
 
 CREATE_RULE_SQL = (
-    "INSERT INTO rules (rule_name, description, is_active, scope, conditions, created_by)\n"
+    "INSERT INTO rules "
+    "(rule_name, description, is_active, scope, conditions, created_by)\n"
     "VALUES ($1, $2, $3, $4, $5, $6)\n"
     "RETURNING\n"
 ) + RULE_COLUMNS_SQL

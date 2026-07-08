@@ -8,9 +8,10 @@ class CacheProvider(ABC):
 
     @abstractmethod
     def set_if_not_exists(self, key: str, value: str, ttl: int) -> bool:
-        """
-        Sets the key/value pair in the cache for the TTL (seconds), given that the key does not already exist.
-        Returns True if the key does not exist, or False if does.
+        """Sets the key/value pair in the cache for the TTL (seconds).
+
+        Only sets if the key does not already exist. Returns True if
+        successful, False otherwise.
         """
 
     @abstractmethod

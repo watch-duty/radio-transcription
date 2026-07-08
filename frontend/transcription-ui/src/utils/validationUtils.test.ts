@@ -4,10 +4,17 @@ import { type RuleCreate, SourceType } from '@transcription/common';
 
 import {
   buildRulePayload,
+  countTagsWithKey,
   isValidTimezone,
+  tagAddError,
   validateFeedSourceId,
   validateRule,
+  validateTags,
 } from './validationUtils';
+
+const TAG_CONFIG = {
+  'system/timezone': { maxValues: 1, options: ['UTC', 'America/Los_Angeles'] },
+};
 
 describe('validationUtils', () => {
   describe('validateFeedSourceId', () => {
@@ -395,6 +402,122 @@ describe('buildRulePayload', () => {
         expect(isValidTimezone('')).toBe(false);
         expect(isValidTimezone('America/New_Yorkish')).toBe(false);
       });
+    });
+  });
+
+  describe('countTagsWithKey', () => {
+    it('counts only tags matching the key', () => {
+      const tags = [
+        { key: 'region', value: 'a' },
+        { key: 'region', value: 'b' },
+        { key: 'county', value: 'c' },
+      ];
+      expect(countTagsWithKey(tags, 'region')).toBe(2);
+      expect(countTagsWithKey(tags, 'county')).toBe(1);
+      expect(countTagsWithKey(tags, 'missing')).toBe(0);
+    });
+
+    it('trims keys on both sides so whitespace variants count together', () => {
+      const tags = [
+        { key: 'system/timezone', value: 'UTC' },
+        { key: 'system/timezone ', value: 'America/Los_Angeles' },
+      ];
+      expect(countTagsWithKey(tags, 'system/timezone')).toBe(2);
+    });
+  });
+
+  describe('tagAddError', () => {
+    it('allows an unlimited key to repeat with different values', () => {
+      const tags = [{ key: 'region', value: 'sonoma-CA_US' }];
+      expect(tagAddError(tags, 'region', 'elbert-CO_US')).toBeNull();
+    });
+
+    it('rejects an exact key+value duplicate', () => {
+      const tags = [{ key: 'region', value: 'sonoma-CA_US' }];
+      expect(tagAddError(tags, 'region', 'sonoma-CA_US')).toBe(
+        'The tag "region=sonoma-CA_US" already exists.'
+      );
+    });
+
+    it('rejects exceeding a key maxValues limit', () => {
+      const tags = [{ key: 'system/timezone', value: 'UTC' }];
+      expect(
+        tagAddError(tags, 'system/timezone', 'America/Los_Angeles', 1)
+      ).toBe('The key "system/timezone" allows at most 1 value.');
+    });
+
+    it('pluralizes the limit message for higher caps', () => {
+      const tags = [
+        { key: 'region', value: 'a' },
+        { key: 'region', value: 'b' },
+      ];
+      expect(tagAddError(tags, 'region', 'c', 2)).toBe(
+        'The key "region" allows at most 2 values.'
+      );
+    });
+  });
+
+  describe('validateTags', () => {
+    const empty = { key: '', value: '' };
+
+    it('returns null for valid multi-value tags', () => {
+      const tags = [
+        { key: 'region', value: 'sonoma-CA_US' },
+        { key: 'region', value: 'elbert-CO_US' },
+      ];
+      expect(validateTags(tags, empty, TAG_CONFIG)).toBeNull();
+    });
+
+    it('folds in and rejects an in-progress duplicate', () => {
+      const tags = [{ key: 'region', value: 'sonoma-CA_US' }];
+      expect(
+        validateTags(tags, { key: 'region', value: 'sonoma-CA_US' }, TAG_CONFIG)
+      ).toBe('The tag "region=sonoma-CA_US" already exists.');
+    });
+
+    it('errors when only one of key/value is filled', () => {
+      expect(validateTags([], { key: 'region', value: '' }, TAG_CONFIG)).toBe(
+        'Both key and value must be populated to add a tag.'
+      );
+    });
+
+    it('rejects an out-of-range enum value', () => {
+      const tags = [{ key: 'system/timezone', value: 'Mars/Phobos' }];
+      expect(validateTags(tags, empty, TAG_CONFIG)).toBe(
+        'Invalid value for "system/timezone". Please select a valid option from the list.'
+      );
+    });
+
+    it('accepts a value via a custom validate() even if not in options', () => {
+      const config = {
+        'system/timezone': {
+          maxValues: 1,
+          options: ['UTC'],
+          validate: (v: string) => v === 'US/Pacific' || v === 'UTC',
+        },
+      };
+      const tags = [{ key: 'system/timezone', value: 'US/Pacific' }];
+      expect(validateTags(tags, empty, config)).toBeNull();
+    });
+
+    it('flags a pre-existing set that exceeds a key limit', () => {
+      const tags = [
+        { key: 'system/timezone', value: 'UTC' },
+        { key: 'system/timezone', value: 'America/Los_Angeles' },
+      ];
+      expect(validateTags(tags, empty, TAG_CONFIG)).toBe(
+        'The key "system/timezone" allows at most 1 value.'
+      );
+    });
+
+    it('enforces the limit even when a key has stray whitespace', () => {
+      const tags = [
+        { key: 'system/timezone', value: 'UTC' },
+        { key: 'system/timezone ', value: 'America/Los_Angeles' },
+      ];
+      expect(validateTags(tags, empty, TAG_CONFIG)).toContain(
+        'at most 1 value'
+      );
     });
   });
 });

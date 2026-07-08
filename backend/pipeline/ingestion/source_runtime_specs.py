@@ -7,6 +7,7 @@ import enum
 import os
 from types import MappingProxyType
 
+from backend.pipeline.ingestion import constants
 from backend.pipeline.storage import feed_store
 
 
@@ -27,7 +28,8 @@ class SourceRuntimeSpec:
         claimable: Whether VM ingestion workers should lease this source type.
         default_cap: Default per-worker lease cap for VM-claimable types.
         url_base_env: Optional env var that overrides the collector URL base.
-        url_base_default: Default collector URL base when no env override exists.
+        url_base_default: Default collector URL base when no env override
+            exists.
     """
 
     source_type: feed_store.SourceType
@@ -46,7 +48,7 @@ SOURCE_RUNTIME_SPECS = MappingProxyType(
             claimable=True,
             default_cap=240,
             url_base_env="BCFY_FEEDS_URL_BASE",
-            url_base_default="https://partner.broadcastify.com/",
+            url_base_default=constants.BCFY_FEEDS_PARTNER_URL_BASE,
         ),
         feed_store.SourceType.BCFY_CALLS: SourceRuntimeSpec(
             source_type=feed_store.SourceType.BCFY_CALLS,
@@ -54,7 +56,7 @@ SOURCE_RUNTIME_SPECS = MappingProxyType(
             claimable=True,
             default_cap=600,
             url_base_env="BCFY_CALLS_URL_BASE",
-            url_base_default="https://api.bcfy.io/calls/v1/live/",
+            url_base_default=constants.BCFY_CALLS_URL_BASE,
         ),
         feed_store.SourceType.ECHO: SourceRuntimeSpec(
             source_type=feed_store.SourceType.ECHO,
@@ -66,7 +68,7 @@ SOURCE_RUNTIME_SPECS = MappingProxyType(
             topic_kind=TopicKind.SEGMENTED,
             claimable=True,
             default_cap=900,
-            url_base_default="https://api.openmhz.com/",
+            url_base_default=constants.OPENMHZ_URL_BASE,
         ),
         feed_store.SourceType.FIRE_NOTIFICATIONS: SourceRuntimeSpec(
             source_type=feed_store.SourceType.FIRE_NOTIFICATIONS,

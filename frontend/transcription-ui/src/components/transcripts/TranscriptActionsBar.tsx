@@ -26,6 +26,9 @@ import { DateTimePicker } from '../common/DateTimePicker';
 export interface TranscriptActionsBarProps {
   hasNewerAudioSegments: boolean;
   searchedTimestamp: Date | null;
+  // True when the window is at the newest loaded audio. Keeps "Jump to live"
+  // actionable after scrubbing back, even with no newer segments left to load.
+  isLatestTimeWindow?: boolean;
   redactTranscripts: boolean;
   setRedactTranscripts: (redact: boolean) => void;
   dateTime: Date | null;
@@ -42,6 +45,7 @@ const DEFAULT_FILTER_BG_COLOR = '#f9bf90';
 
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   hasNewerAudioSegments,
+  isLatestTimeWindow = true,
   redactTranscripts,
   setRedactTranscripts,
   dateTime,
@@ -148,7 +152,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
           variant="contained"
           sx={{ textTransform: 'none', gap: 1 }}
           onClick={onClickViewLatest}
-          disabled={!hasNewerAudioSegments}
+          disabled={!hasNewerAudioSegments && isLatestTimeWindow && !dateTime}
         >
           Jump to live
         </Button>

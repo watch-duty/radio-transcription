@@ -181,6 +181,49 @@ use different service accounts when actor attribution should remain meaningful.
 A feed currently owned by one worker through a fencing token. A leased feed can
 carry stale failure state from a previous failed processing episode.
 
+### Lease Admission
+
+The per-worker runtime policy that bounds newly claimed leases before feed
+tasks are created. In `collector_runtime.py`, each lease-loop cycle computes a
+primary-plus-recovery admission budget from live slack and
+`lease_admission_cycle_budget`, defaulting to 20 newly admitted feeds per
+cycle. Startup, deploy restart, autoheal restart, normal refill, and recovery
+all use this same acquisition path.
+
+Lease Admission is pre-claim backpressure, not a local waiting queue. Primary
+acquisition remains first; recovery acquisition runs only when primary
+underfills the cycle budget and uses the remaining budget after primary leases
+are counted. Under continuous primary backlog, recovery rows can therefore be
+delayed. That primary-first residual risk is intentional for v1 and remains a
+future tuning concern.
+
+Each lease cycle emits raw structured `lease_admission_cycle` telemetry so
+incident review can see active feeds, slack, admission budget, primary
+acquisitions, recovery acquisitions, memory pause state, worker identity, and
+concise error state without inferring a hard-coded admission state enum.
+
+### Worker Health
+
+The worker process `/healthz` signal. Worker Health lives on the worker's main
+async runtime path and remains tied to event-loop liveness plus heartbeat
+freshness. Its healthy response shape is the worker-local status, active feed
+count, and last heartbeat age. Worker Health is intentionally strict: a stalled
+worker may report unhealthy even when the VM should not yet be autohealed.
+
+### VM Health
+
+The VM-level same-image health agent served on host port 8080. VM Health probes
+all configured local worker `/healthz` endpoints by HTTP status code only and
+does not inspect Docker, systemd, SSH, worker process state, or worker response
+bodies. It returns unhealthy for the MIG health check only after every
+configured worker is continuously unhealthy in the same probe stream for 600
+seconds, and resets immediately when any worker is healthy.
+
+VM Health owns VM autohealing hysteresis. Worker Health owns worker liveness
+truth. Keeping those signals separate prevents short worker overload from
+becoming immediate VM replacement while preserving a meaningful worker stall
+signal.
+
 ### Captured Chunk
 
 An audio payload emitted by a collector for runtime upload, publish, and

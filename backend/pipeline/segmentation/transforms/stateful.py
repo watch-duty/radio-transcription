@@ -90,6 +90,7 @@ per-chunk processing or external I/O latency increases significantly in the
 future, this value should be reduced accordingly.
 """
 
+import concurrent.futures
 import logging as std_logging
 import time
 from collections.abc import Iterable, Iterator
@@ -118,6 +119,7 @@ from backend.pipeline.segmentation import datatypes, log_helper
 from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.constants import (
     MAX_CHUNKS_PER_WINDMILL_BUNDLE,
+    SHARED_DOWNLOAD_POOL_SIZE,
     WINDMILL_TIMER_MIN_ADVANCE_SECS,
 )
 from backend.pipeline.segmentation.state import sequence_buffer
@@ -603,6 +605,7 @@ class OrderedStitchAudioFn(beam.DoFn):
        300-second bundle lease evictions ("poison pills") while ensuring perfectly smooth downstream side-input join checkpointing.
     """
 
+    SHARED_THREADPOOL_HANDLE = Shared()
     processed_in_bundle: int
 
     # --- State Specs ---
@@ -707,6 +710,16 @@ class OrderedStitchAudioFn(beam.DoFn):
         )
         self.engine.processor.vad = shared_vad
         self.engine.processor.gcs_client = shared_gcs
+
+        def _create_executor() -> concurrent.futures.ThreadPoolExecutor:
+            return concurrent.futures.ThreadPoolExecutor(
+                max_workers=SHARED_DOWNLOAD_POOL_SIZE
+            )
+
+        self._executor = self.SHARED_THREADPOOL_HANDLE.acquire(
+            _create_executor, tag="shared_download_thread_pool"
+        )
+        self.engine.executor = self._executor
         self.engine.setup()
 
     def start_bundle(self) -> None:
@@ -1048,6 +1061,9 @@ class OrderedStitchAudioFn(beam.DoFn):
         active_feed_metadata = curr_context.feed_metadata
         active_traceparent = curr_context.traceparent
         active_baggage = curr_context.baggage
+        task_logger = _get_task_logger(
+            feed_id, active_session_id, "ordered-stitcher"
+        )
 
         results = []
         with tracing_utils.with_tracer_context(
@@ -1135,6 +1151,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                     )
 
                     previous_expected_ts = new_expected
+                    prefetched_futures = self.engine.prefetch_audio_futures(
+                        elements_to_emit, task_logger
+                    )
 
                     for chunk in elements_to_emit:
                         curr_context = (
@@ -1160,6 +1179,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 timer_manager=timer_manager,
                                 previous_expected_ts=previous_expected_ts,
                                 is_backfill=is_backfill,
+                                prefetched_futures=prefetched_futures,
                             )
                         )
                         results.extend(outputs)
@@ -1213,6 +1233,9 @@ class OrderedStitchAudioFn(beam.DoFn):
         active_feed_metadata = curr_context.feed_metadata
         active_traceparent = curr_context.traceparent
         active_baggage = curr_context.baggage
+        task_logger = _get_task_logger(
+            feed_id, active_session_id, "ordered-stitcher"
+        )
 
         results = []
         with tracing_utils.with_tracer_context(
@@ -1278,6 +1301,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                 # Assume backfill under backlog
                 is_backfill = True
                 previous_expected_ts = curr_context.expected_next_chunk_start_ms
+                prefetched_futures = self.engine.prefetch_audio_futures(
+                    elements_to_emit, task_logger
+                )
 
                 for chunk in elements_to_emit:
                     # Fetch current state context
@@ -1304,6 +1330,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                             timer_manager=timer_manager,
                             previous_expected_ts=previous_expected_ts,
                             is_backfill=is_backfill,
+                            prefetched_futures=prefetched_futures,
                         )
                     )
                     results.extend(outputs)
