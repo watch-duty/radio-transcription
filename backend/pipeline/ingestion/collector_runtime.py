@@ -5,6 +5,7 @@ import logging
 import os
 import random
 import signal
+import socket
 import threading
 import time
 import uuid
@@ -78,6 +79,68 @@ _PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
 _NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
 _NON_BUDGETED_RETRY_MAX_SEC = 15 * 60
 INGESTION_IO_MAX_WORKERS = 512
+_UUID_INT_RANGE = 1 << 128
+
+
+def _bounded_jitter(max_sec: float) -> float:
+    """Return bounded non-cryptographic scheduling jitter."""
+    if max_sec <= 0.0:
+        return 0.0
+    return random.uniform(0.0, max_sec)  # noqa: S311 -- scheduling jitter
+
+
+def _deterministic_startup_stagger(
+    worker_id: uuid.UUID,
+    max_sec: float,
+) -> float:
+    """Map a worker UUID into a stable delay in ``[0, max_sec)``."""
+    if max_sec <= 0.0:
+        return 0.0
+    # UUIDs are already uniformly distributed over the 128-bit integer range.
+    # Scaling directly keeps the delay stable without depending on a PRNG
+    # algorithm for deterministic scheduling.
+    return (worker_id.int / _UUID_INT_RANGE) * max_sec
+
+
+def _startup_pacing_delay(
+    worker_id: uuid.UUID,
+    startup_stagger_max_sec: float,
+    startup_jitter_max_sec: float,
+) -> tuple[float, float, float]:
+    """Return deterministic, random, and total startup pacing delays."""
+    deterministic_delay = _deterministic_startup_stagger(
+        worker_id,
+        startup_stagger_max_sec,
+    )
+    random_delay = _bounded_jitter(startup_jitter_max_sec)
+    return deterministic_delay, random_delay, deterministic_delay + random_delay
+
+
+def _lease_poll_sleep_seconds(
+    lease_poll_interval_sec: float,
+    lease_poll_jitter_max_sec: float,
+) -> float:
+    """Return the lease poll interval plus bounded scheduling jitter."""
+    return lease_poll_interval_sec + _bounded_jitter(lease_poll_jitter_max_sec)
+
+
+def _advance_heartbeat_tick(
+    *,
+    next_tick: float,
+    interval: float,
+    now: float,
+) -> float:
+    """Advance the heartbeat ticker without creating catch-up write storms.
+
+    One immediate catch-up tick is useful after a moderately slow cycle because
+    it preserves the intended long-term heartbeat cadence. If the loop is more
+    than one interval behind, reset from ``now`` so recovery does not spin
+    back-to-back heartbeat DB writes while trying to replay missed ticks.
+    """
+    advanced = next_tick + interval
+    if now - advanced > interval:
+        return now + interval
+    return advanced
 
 
 class _PipelineFailure(Exception):
@@ -141,6 +204,7 @@ class CollectorRuntime:
             settings = CollectorSettings()
         self._capture_fn = capture_fn
         self._collector_settings = settings
+        self._hostname = socket.gethostname()
         self._runtime_actor_id = (
             runtime_actor_id
             if runtime_actor_id is not None
@@ -247,6 +311,54 @@ class CollectorRuntime:
             self._loop.add_signal_handler(sig, _on_signal, sig)
 
         settings = self._collector_settings
+        (
+            deterministic_delay,
+            random_delay,
+            total_startup_delay,
+        ) = _startup_pacing_delay(
+            settings.worker_id,
+            settings.startup_stagger_max_sec,
+            settings.startup_jitter_max_sec,
+        )
+        startup_pacing_fields: dict[str, object] = {
+            "event_type": "startup_pacing",
+            "worker_id": str(settings.worker_id),
+            "worker_index": settings.worker_index,
+            "hostname": self._hostname,
+            "deterministic_delay_sec": deterministic_delay,
+            "random_delay_sec": random_delay,
+            "total_delay_sec": total_startup_delay,
+            "startup_stagger_max_sec": settings.startup_stagger_max_sec,
+            "startup_jitter_max_sec": settings.startup_jitter_max_sec,
+            "lease_admission_cycle_budget": settings.lease_admission_cycle_budget,
+            "max_feeds_per_worker": settings.max_feeds_per_worker,
+            "process_id": os.getpid(),
+        }
+        logger.info(
+            "Startup pacing before pool creation",
+            extra={"json_fields": startup_pacing_fields},
+        )
+        if await self._sleep_or_shutdown(total_startup_delay):
+            logger.info(
+                "Startup pacing interrupted by shutdown",
+                extra={
+                    "json_fields": {
+                        **startup_pacing_fields,
+                        "event_type": "startup_pacing_interrupted",
+                    },
+                },
+            )
+            return
+        logger.info(
+            "Startup pacing complete",
+            extra={
+                "json_fields": {
+                    **startup_pacing_fields,
+                    "event_type": "startup_pacing_complete",
+                },
+            },
+        )
+
         # command_timeout: bounds query execution on established connections.
         # timeout (connect): bounds TCP handshake — without it, a VPC subnet
         # silently dropping packets hangs connect() for 2+ min (Linux TCP
@@ -354,7 +466,7 @@ class CollectorRuntime:
 
     # -- Leasing ----------------------------------------------------------
 
-    async def _leasing_loop(self) -> None:  # noqa: PLR0912
+    async def _leasing_loop(self) -> None:  # noqa: PLR0912, PLR0915
         """
         Continuously lease feeds in batches and spawn processing tasks.
 
@@ -386,6 +498,26 @@ class CollectorRuntime:
             self._reap_completed_tasks()
 
             if self._memory_watchdog.is_paused():
+                s = self._collector_settings
+                active_feeds = len(self._feed_tasks)
+                # Keep raw slack for telemetry: it can go negative if this
+                # worker is temporarily over target. Only the admission budget
+                # is clamped because it is the control input for DB claims.
+                total_slack = s.max_feeds_per_worker - active_feeds
+                admission_budget = min(
+                    max(0, total_slack),
+                    s.lease_admission_cycle_budget,
+                )
+                self._emit_lease_admission_cycle(
+                    active_feeds=active_feeds,
+                    max_feeds=s.max_feeds_per_worker,
+                    slack=total_slack,
+                    admission_budget=admission_budget,
+                    primary_acquired=0,
+                    recovery_acquired=0,
+                    memory_paused=True,
+                    error=None,
+                )
                 if await self._sleep_or_shutdown(
                     self._collector_settings.rss_watchdog_poll_interval_sec,
                 ):
@@ -399,14 +531,24 @@ class CollectorRuntime:
             # worker survives — mass os._exit(1) across the MIG would cause
             # a thundering herd cold-start on recovery. Since the DB is down,
             # no other worker can steal leases either.
+            s = self._collector_settings
+            active_feeds = len(self._feed_tasks)
+            # Keep raw slack for telemetry: it can go negative if this worker
+            # is temporarily over target. The acquisition path below runs only
+            # when slack is positive; admission_budget is the bounded number of
+            # new leases this cycle may ask AlloyDB to claim.
+            total_slack = s.max_feeds_per_worker - active_feeds
+            admission_budget = 0
+            primary_acquired = 0
+            recovery_acquired = 0
+            admission_error: str | None = None
             try:
-                total_slack = (
-                    self._collector_settings.max_feeds_per_worker
-                    - len(self._feed_tasks)
-                )
                 if total_slack > 0:
-                    s = self._collector_settings
                     caps = s.caps
+                    admission_budget = min(
+                        total_slack,
+                        s.lease_admission_cycle_budget,
+                    )
                     # Pull the authoritative per-type held count from the
                     # DB before apportioning. See FeedStore.count_held_by_type
                     # for rationale: the previous in-memory counter leaked
@@ -421,14 +563,16 @@ class CollectorRuntime:
                     # so the allocation math is unit-testable without the
                     # surrounding asyncio loop.
                     limits = self._calculate_branch_limits(
-                        total_slack,
+                        admission_budget,
                         caps,
                         held,
                     )
                     logger.info(
                         "Attempting to acquire feeds "
-                        "(slack=%d, caps=%s, held=%s, limits=%s, total_ask=%d)",
+                        "(slack=%d, admission_budget=%d, caps=%s, "
+                        "held=%s, limits=%s, total_ask=%d)",
                         total_slack,
+                        admission_budget,
                         {t.value: v for t, v in caps.items()},
                         {t.value: v for t, v in held.items()},
                         {t.value: v for t, v in limits.items()},
@@ -438,6 +582,7 @@ class CollectorRuntime:
                         s.worker_id,
                         limits,
                     )
+                    primary_acquired = len(primary)
                     leases: list[LeasedFeed] = list(primary)
                     # When the primary per-type CTE underfills (caps bound
                     # the ask below remaining slack, or there simply aren't
@@ -447,36 +592,42 @@ class CollectorRuntime:
                     # active-abandoned rows at 30 s cadence, but this path
                     # still earns its keep for failing-retryable and for
                     # reclaiming slack before the next sweep tick.
-                    if len(primary) < total_slack:
-                        # Recovery must respect the SAME per-type caps
-                        # the primary path enforced. Without re-running
-                        # the apportion, recovery could push held > cap
-                        # for a type whose primary path returned 0
-                        # (e.g. all unclaimed of that type are
-                        # failing-retryable, not unclaimed). Compute a
-                        # fresh per-type limit dict from `held + primary
-                        # acquired-by-type` and the remaining slack.
-                        primary_by_type: dict[SourceType, int] = dict.fromkeys(
-                            caps, 0
-                        )
-                        for lease in primary:
-                            t = lease["source_type"]
-                            if t in primary_by_type:
-                                primary_by_type[t] += 1
-                        held_after_primary = {
-                            t: held.get(t, 0) + primary_by_type[t] for t in caps
-                        }
-                        recovery_limits = self._calculate_branch_limits(
-                            total_slack - len(primary),
-                            caps,
-                            held_after_primary,
-                        )
-                        recovery = await self._store.acquire_feeds_recovery(
-                            s.worker_id,
-                            s.abandonment_window_sec,
-                            recovery_limits,
-                        )
-                        leases.extend(recovery)
+                    if len(primary) < admission_budget:
+                        try:
+                            recovery_limits = self._calculate_recovery_limits(
+                                admission_budget=admission_budget,
+                                caps=caps,
+                                held=held,
+                                primary=primary,
+                            )
+                            if sum(recovery_limits.values()) > 0:
+                                recovery = (
+                                    await self._store.acquire_feeds_recovery(
+                                        s.worker_id,
+                                        s.abandonment_window_sec,
+                                        recovery_limits,
+                                    )
+                                )
+                                recovery_acquired = len(recovery)
+                                leases.extend(recovery)
+                        except Exception as exc:
+                            admission_error = exc.__class__.__name__
+                            logger.exception(
+                                "Recovery lease acquisition failed after "
+                                "primary acquisition; admitting primary "
+                                "leases only"
+                            )
+
+                    self._emit_lease_admission_cycle(
+                        active_feeds=active_feeds,
+                        max_feeds=s.max_feeds_per_worker,
+                        slack=total_slack,
+                        admission_budget=admission_budget,
+                        primary_acquired=primary_acquired,
+                        recovery_acquired=recovery_acquired,
+                        memory_paused=False,
+                        error=admission_error,
+                    )
 
                     for lease in leases:
                         existing = self._feed_tasks.get(lease["id"])
@@ -539,16 +690,69 @@ class CollectorRuntime:
                             len(self._feed_tasks),
                             self._collector_settings.max_feeds_per_worker,
                         )
-            except Exception:
+                else:
+                    self._emit_lease_admission_cycle(
+                        active_feeds=active_feeds,
+                        max_feeds=s.max_feeds_per_worker,
+                        slack=total_slack,
+                        admission_budget=0,
+                        primary_acquired=0,
+                        recovery_acquired=0,
+                        memory_paused=False,
+                        error=None,
+                    )
+            except Exception as exc:
+                self._emit_lease_admission_cycle(
+                    active_feeds=active_feeds,
+                    max_feeds=s.max_feeds_per_worker,
+                    slack=total_slack,
+                    admission_budget=admission_budget,
+                    primary_acquired=primary_acquired,
+                    recovery_acquired=recovery_acquired,
+                    memory_paused=False,
+                    error=exc.__class__.__name__,
+                )
                 logger.exception(
                     "Lease acquisition failed -- will retry in %.1fs",
                     self._collector_settings.lease_poll_interval_sec,
                 )
 
-            if await self._sleep_or_shutdown(
+            poll_sleep_sec = _lease_poll_sleep_seconds(
                 self._collector_settings.lease_poll_interval_sec,
-            ):
+                self._collector_settings.lease_poll_jitter_max_sec,
+            )
+            if await self._sleep_or_shutdown(poll_sleep_sec):
                 return
+
+    def _emit_lease_admission_cycle(
+        self,
+        *,
+        active_feeds: int,
+        max_feeds: int,
+        slack: int,
+        admission_budget: int,
+        primary_acquired: int,
+        recovery_acquired: int,
+        memory_paused: bool,
+        error: str | None,
+    ) -> None:
+        """Emit raw per-cycle lease admission telemetry."""
+        payload: dict[str, object] = {
+            "event_type": "lease_admission_cycle",
+            "worker_id": str(self._collector_settings.worker_id),
+            "worker_index": self._collector_settings.worker_index,
+            "hostname": self._hostname,
+            "active_feeds": active_feeds,
+            "max_feeds": max_feeds,
+            "slack": slack,
+            "admission_budget": admission_budget,
+            "primary_acquired": primary_acquired,
+            "recovery_acquired": recovery_acquired,
+            "total_acquired": primary_acquired + recovery_acquired,
+            "memory_paused": memory_paused,
+            "error": error,
+        }
+        logger.info("Lease admission cycle", extra={"json_fields": payload})
 
     def _reap_completed_tasks(self) -> None:
         """Remove completed tasks and consume their exceptions.
@@ -656,6 +860,31 @@ class CollectorRuntime:
             remaining_slack -= limits[t]
             remaining_branches -= 1
         return limits
+
+    @staticmethod
+    def _calculate_recovery_limits(
+        *,
+        admission_budget: int,
+        caps: dict[SourceType, int],
+        held: dict[SourceType, int],
+        primary: list[LeasedFeed],
+    ) -> dict[SourceType, int]:
+        """Return recovery branch limits after accounting for primary leases."""
+        primary_by_type: dict[SourceType, int] = dict.fromkeys(caps, 0)
+        for lease in primary:
+            t = lease["source_type"]
+            if t in primary_by_type:
+                primary_by_type[t] += 1
+
+        held_after_primary = {
+            t: held.get(t, 0) + primary_by_type[t] for t in caps
+        }
+        recovery_remaining_budget = max(0, admission_budget - len(primary))
+        return CollectorRuntime._calculate_branch_limits(
+            recovery_remaining_budget,
+            caps,
+            held_after_primary,
+        )
 
     @staticmethod
     def _consume_orphan_exception(task: asyncio.Task) -> None:
@@ -1500,9 +1729,13 @@ class CollectorRuntime:
                 # and heartbeat diagnostics remain authoritative.
                 logger.exception("Heartbeat renewal error")
 
-            # Advance ticker. If cycle took longer than one interval, the next
-            # sleep_time clamps to 0 — fires immediately to catch up.
-            next_tick += interval
+            # Allow one immediate catch-up tick, but reset large drift so a
+            # slow recovery window cannot spin heartbeat DB writes.
+            next_tick = _advance_heartbeat_tick(
+                next_tick=next_tick,
+                interval=interval,
+                now=time.monotonic(),
+            )
 
     async def _heartbeat_cycle(self) -> None:
         """
