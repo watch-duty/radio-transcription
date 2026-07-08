@@ -31,7 +31,7 @@ from backend.pipeline.storage.feed_store import (
     HeartbeatResult,
     SourceType,
 )
-from backend.pipeline.storage.pagination_utils import encode_cursor
+from backend.pipeline.storage.pagination_utils import SortOrder, encode_cursor
 from backend.pipeline.storage.tests.connection_util import make_mock_pool
 
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -3022,6 +3022,113 @@ class TestResetFeed(unittest.IsolatedAsyncioTestCase):
             await store.reset_feed(_FEED_ID, actor_id=_MISSING_ACTOR_ID)
 
         pool.acquire.assert_not_called()
+
+
+class TestFeedStoreListFeedHistoryRecords(unittest.IsolatedAsyncioTestCase):
+    async def test_list_feed_history_records_default(self) -> None:
+        pool = make_mock_pool(
+            fetch_result=[
+                {
+                    "id": uuid.uuid4(),
+                    "feed_id": _FEED_ID,
+                    "action": "feed.recovered",
+                    "actor_id": _FEEDS_SERVICE_ACTOR_ID,
+                    "occurred_at": datetime.datetime(
+                        2026, 6, 26, tzinfo=datetime.UTC
+                    ),
+                    "feed_revision": 2,
+                    "before_values": '{"status": "failing"}',
+                    "after_values": '{"status": "active"}',
+                }
+            ],
+            fetchval_result=1,
+        )
+        store = FeedStore(pool)
+
+        res = await store.list_feed_history_records(_FEED_ID)
+
+        self.assertEqual(len(res.audit_events), 1)
+        self.assertEqual(res.total, 1)
+        self.assertIsNone(res.next_token)
+        self.assertEqual(res.audit_events[0]["action"], "feed.recovered")
+        self.assertEqual(
+            res.audit_events[0]["before_values"], {"status": "failing"}
+        )
+        self.assertEqual(
+            res.audit_events[0]["after_values"], {"status": "active"}
+        )
+
+        pool.fetch.assert_awaited_once_with(
+            feed_queries.LIST_FEED_AUDIT_EVENTS_DESC_SQL,
+            _FEED_ID,
+            None,
+            None,
+            101,
+        )
+        pool.fetchval.assert_awaited_once_with(
+            feed_queries.COUNT_FEED_AUDIT_EVENTS_SQL,
+            _FEED_ID,
+        )
+
+    async def test_list_feed_history_records_pagination(self) -> None:
+        event_id = uuid.uuid4()
+        occurred_at = datetime.datetime(2026, 6, 26, tzinfo=datetime.UTC)
+        pool = make_mock_pool(
+            fetch_result=[
+                {
+                    "id": event_id,
+                    "feed_id": _FEED_ID,
+                    "action": "feed.recovered",
+                    "actor_id": _FEEDS_SERVICE_ACTOR_ID,
+                    "occurred_at": occurred_at,
+                    "feed_revision": 2,
+                    "before_values": "{}",
+                    "after_values": "{}",
+                },
+                {
+                    "id": uuid.uuid4(),
+                    "feed_id": _FEED_ID,
+                    "action": "feed.created",
+                    "actor_id": _FEEDS_SERVICE_ACTOR_ID,
+                    "occurred_at": occurred_at - datetime.timedelta(days=1),
+                    "feed_revision": 1,
+                    "before_values": "{}",
+                    "after_values": "{}",
+                },
+            ],
+            fetchval_result=2,
+        )
+        store = FeedStore(pool)
+
+        res = await store.list_feed_history_records(_FEED_ID, limit=1)
+
+        self.assertEqual(len(res.audit_events), 1)
+        self.assertIsNotNone(res.next_token)
+        self.assertEqual(res.total, 2)
+
+        # Verify next token matches the first item (uses feed_revision 2 as tie-breaker)
+        expected_token = encode_cursor(occurred_at, 2)
+        self.assertEqual(res.next_token, expected_token)
+
+    async def test_list_feed_history_records_asc(self) -> None:
+        pool = make_mock_pool(
+            fetch_result=[],
+            fetchval_result=0,
+        )
+        store = FeedStore(pool)
+
+        await store.list_feed_history_records(
+            _FEED_ID,
+            order=SortOrder.ASC,
+        )
+
+        pool.fetch.assert_awaited_once_with(
+            feed_queries.LIST_FEED_AUDIT_EVENTS_ASC_SQL,
+            _FEED_ID,
+            None,
+            None,
+            101,
+        )
 
 
 if __name__ == "__main__":

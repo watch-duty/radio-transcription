@@ -6,6 +6,7 @@ from collections.abc import Callable
 from apache_beam.metrics import Metrics
 
 from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
+from backend.pipeline.segmentation import utils as trans_utils
 from backend.pipeline.segmentation.constants import (
     DEFAULT_VAD_POST_ROLL_MS,
     UPSTREAM_GAP_DRIFT_TOLERANCE_MS,
@@ -174,6 +175,7 @@ class AudioStitchingStateMachine:
         )
         end_ms = clamp_to_start(end_ms, "end_ms")
 
+        is_speech = trans_utils.is_speech_classification(audio_classification)
         return FlushAction(
             reason=reason,
             feed_id=ctx.feed_id,
@@ -187,8 +189,10 @@ class AudioStitchingStateMachine:
                 start_ms=ctx.transmission_start_time_ms,
                 end_ms=end_ms,
             ),
-            missing_prior_context=ctx.missing_prior_context,
-            missing_post_context=missing_post_context,
+            missing_prior_context=ctx.missing_prior_context
+            if is_speech
+            else False,
+            missing_post_context=missing_post_context if is_speech else False,
             start_audio_offset_ms=max(0, ctx.start_audio_offset_ms or 0),
             end_audio_offset_ms=max(
                 0,
@@ -466,11 +470,11 @@ class AudioStitchingStateMachine:
                 self._flush_current_transmission(
                     "Maximum non-speech transmission duration exceeded",
                     ctx,
-                    missing_post_context=True,
+                    missing_post_context=False,
                     audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_OTHER,
                 )
             )
-            ctx.missing_prior_context = True
+            ctx.missing_prior_context = False
             self._reset_transmission_context(ctx)
 
         if ctx.transmission_start_time_ms is None:
