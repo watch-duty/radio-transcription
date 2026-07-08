@@ -317,6 +317,11 @@ jobs:
             -e PUBSUB_EMULATOR_HOST=localhost:8085 \
             ingestion-smoke-test \
             python -c "import backend.pipeline.ingestion.main"
+      - name: Verify VM Health agent import
+        run: |
+          docker run --rm \
+            ingestion-smoke-test \
+            python -c "import backend.pipeline.ingestion.vm_health_agent"
       - name: Verify ingestion settings instantiation
         run: |
           docker run --rm \
