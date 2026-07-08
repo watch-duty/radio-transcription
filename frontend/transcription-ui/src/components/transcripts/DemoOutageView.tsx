@@ -135,6 +135,10 @@ export function DemoOutageView() {
           onClipClick={(id) => setHighlightedId(id)}
           windowEndTime={null}
           windowDurationMs={15 * 60 * 1000}
+          histogramMarks={[]}
+          rangeStartMs={null}
+          maxEnd={null}
+          onCenterWindow={() => {}}
           isAudioPlaying={false}
           playbackState="listening"
         />

@@ -6,7 +6,6 @@ avoiding the overhead of multi-VAD abstractions.
 
 import math
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import onnxruntime as ort
@@ -150,7 +149,7 @@ class VoiceActivityDetector:
         self.dither_rms = dither_rms
 
         self.silero_path = Path(models_dir) / "silero_vad.onnx"
-        self.ulunas_path = Path(models_dir) / "ulunas_stream_simple.onnx"
+        self.ulunas_path = Path(models_dir) / "ulunas_stft_sequence.onnx"
 
         # Eagerly initialize ONNX sessions
         opts = ort.SessionOptions()
@@ -176,9 +175,17 @@ class VoiceActivityDetector:
             sess_options=opts,
             providers=["CPUExecutionProvider"],
         )
+        # The sequence ONNX model defines a single input tensor ('stft_in') and
+        # a single output tensor ('stft_out') for the STFT spectrogram features.
+        self.ulunas_input_name = self.ulunas_session.get_inputs()[0].name
+        self.ulunas_output_name = self.ulunas_session.get_outputs()[0].name
         logger.info("Silero & UL-UNAS ONNX sessions successfully initialized.")
 
-        # Warm up Numba compiler to eliminate first-run latency spikes on Dataflow workers
+        self._warmup_numba()
+        self._initialize_dsp_filters()
+
+    def _warmup_numba(self) -> None:
+        """Warms up the Numba compiler to eliminate first-run latency spikes on Dataflow workers."""
         try:
             logger.info("Warming up Numba compiler...")
             dummy_wave = np.zeros(
@@ -196,8 +203,6 @@ class VoiceActivityDetector:
             logger.info("Numba compiler successfully warmed up.")
         except Exception as e:
             logger.warning("Failed to warm up Numba compiler: %s", e)
-
-        self._initialize_dsp_filters()
 
     def _initialize_dsp_filters(self) -> None:
         """Initializes the shared Pedalboard DSP filter instances."""
@@ -244,41 +249,22 @@ class VoiceActivityDetector:
             msg = "UL-UNAS session not initialized."
             raise RuntimeError(msg)
 
-        inputs = self.ulunas_session.get_inputs()
-        outputs = self.ulunas_session.get_outputs()
-        audio_input_name = inputs[0].name
-
-        states = {}
-        for inp in inputs[1:]:
-            shape = [s if isinstance(s, int) else 1 for s in inp.shape]
-            states[inp.name] = np.zeros(shape, dtype=np.float32)
+        # Short-circuiting on zero samples avoids unnecessary NumPy STFT padding/striding overhead
+        # and is mathematically equivalent to falling through zero STFT frames.
+        if len(audio_array) == 0:
+            return audio_array
 
         bp_audio_batched = np.expand_dims(audio_array, axis=0)
         stft_features = custom_numpy_stft(
             bp_audio_batched, n_fft=n_fft, hop_length=hop_length
         )
 
-        num_frames = stft_features.shape[2]
-        out_stft = np.zeros_like(stft_features)
-
-        # Pre-allocate and reuse the input dictionary to avoid heavy object allocation overhead in Python loop
-        ort_inputs: dict[str, Any] = dict(states)
-
-        # Thread safety: `states` and `ort_inputs` are call-local; each caller
-        # maintains its own recurrent denoiser state (UL-UNAS hidden tensors).
-        # ulunas_session.run() is thread-safe — the ONNX graph is immutable after
-        # construction and no mutable state lives on the session object itself.
-        # No lock is needed even though the session is shared across threads via
-        # Beam's Shared() handle.
-        for i in range(num_frames):
-            ort_inputs[audio_input_name] = stft_features[:, :, i : i + 1, :]
-            ort_outs = self.ulunas_session.run(None, ort_inputs)
-            out_stft[:, :, i : i + 1, :] = ort_outs[0]
-            for j in range(1, len(outputs)):
-                name = inputs[j].name
-                val = ort_outs[j]
-                states[name] = val
-                ort_inputs[name] = val
+        ort_inputs = {self.ulunas_input_name: stft_features.astype(np.float32)}
+        # Explicitly request the denoised STFT output tensor by name and unpack the single result
+        [out_stft_raw] = self.ulunas_session.run(
+            [self.ulunas_output_name], ort_inputs
+        )
+        out_stft = np.asarray(out_stft_raw, dtype=np.float32)
 
         return custom_numpy_istft(
             out_stft,

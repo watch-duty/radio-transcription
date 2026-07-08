@@ -39,6 +39,8 @@ export interface AudioTimelineWindow {
   // not claim real-time currency — there may be newer audio not yet fetched.
   isLatestTimeWindow: boolean;
   jumpToLive: () => void;
+  // Move the window so its center sits at the given time, clamped to the live edge.
+  centerWindowOn: (centerMs: number) => void;
 }
 
 interface UseAudioTimelineWindowParams {
@@ -73,13 +75,11 @@ export function useAudioTimelineWindow({
     resetKey: string;
     firstId: string | null;
     firstEnd: string | null;
-    playingId: string | null;
     highlightedId: string | null;
   }>({
     resetKey,
     firstId: null,
     firstEnd: null,
-    playingId: null,
     highlightedId: null,
   });
 
@@ -101,9 +101,9 @@ export function useAudioTimelineWindow({
   const headChanged =
     firstId !== null &&
     (firstId !== prev.firstId || firstEnd !== prev.firstEnd);
-  const selectionChanged =
-    currentlyPlayingSegmentId !== prev.playingId ||
-    highlightedSegmentId !== prev.highlightedId;
+  // Highlight-driven (playback also sets the highlight), so stopping playback
+  // alone doesn't read as a new selection and yank the window.
+  const selectionChanged = highlightedSegmentId !== prev.highlightedId;
 
   // A wholesale list replacement (feed / timestamp / filter switch) returns to
   // the live edge, even if the user had scrubbed back in the previous list.
@@ -113,7 +113,6 @@ export function useAudioTimelineWindow({
       resetKey,
       firstId: nextFirstId,
       firstEnd: nextFirstEnd,
-      playingId: currentlyPlayingSegmentId,
       highlightedId: highlightedSegmentId,
     });
   } else if (headChanged || selectionChanged) {
@@ -130,9 +129,13 @@ export function useAudioTimelineWindow({
       nextEnd = liveEnd;
     }
 
-    const targetId = highlightedSegmentId || currentlyPlayingSegmentId;
-    if (targetId) {
-      const target = audioSegments.find((t) => t.id === targetId);
+    // Recenter only on a selection change — not on head polls — so navigating
+    // the window away from the selected clip (e.g. a mini-map click) isn't undone.
+    if (selectionChanged) {
+      const targetId = highlightedSegmentId || currentlyPlayingSegmentId;
+      const target = targetId
+        ? audioSegments.find((t) => t.id === targetId)
+        : undefined;
       if (target) {
         const tStart = new Date(target.startTimestamp).getTime();
         const tEnd = new Date(target.endTimestamp).getTime();
@@ -153,7 +156,6 @@ export function useAudioTimelineWindow({
       resetKey,
       firstId: nextFirstId,
       firstEnd: nextFirstEnd,
-      playingId: currentlyPlayingSegmentId,
       highlightedId: highlightedSegmentId,
     });
   }
@@ -162,5 +164,19 @@ export function useAudioTimelineWindow({
     setWindowEndTime(null);
   }, []);
 
-  return { windowEndTime, windowDurationMs, isLatestTimeWindow, jumpToLive };
+  const centerWindowOn = useCallback(
+    (centerMs: number) => {
+      const target = centerMs + windowDurationMs / 2;
+      setWindowEndTime(liveEnd != null ? Math.min(target, liveEnd) : target);
+    },
+    [windowDurationMs, liveEnd]
+  );
+
+  return {
+    windowEndTime,
+    windowDurationMs,
+    isLatestTimeWindow,
+    jumpToLive,
+    centerWindowOn,
+  };
 }
