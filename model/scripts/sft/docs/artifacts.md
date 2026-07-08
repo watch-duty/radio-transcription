@@ -40,6 +40,10 @@ Batch and online eval backends write different provider-output artifacts:
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/online_predictions.jsonl`
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/online_predictions.meta.json`
 
+The online predictions JSONL is an attempt cache. It can include successful
+prediction rows and the latest errored attempt rows. Successful rows are reused
+on resume; errored rows are retried.
+
 The stable report inspection points are:
 
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/wer_summary.json`
@@ -58,7 +62,9 @@ gs://BUCKET/inference_manifests/INFERENCE_DATASET_SLUG/MODEL_FAMILY_SLUG/ROUND_I
 ```
 
 The normalized manifest preserves the eval source rows and adds prediction
-fields for rows that received provider predictions. It is a durable artifact,
+fields for rows that received successful provider predictions. Missing provider
+outputs and unresolved online errors omit prediction fields and are scored as
+empty hypotheses in eval reports. The normalized manifest is a durable artifact,
 not a local experiment output.
 
 ## Local Cache Or Mirror

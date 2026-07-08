@@ -148,7 +148,9 @@ different model or eval set.
 Batch eval runs write `evals/LABEL/input.jsonl`, `evals/LABEL/output/`, and
 `evals/LABEL/batch_predictions.meta.json`. Online endpoint eval runs write
 `evals/LABEL/online_predictions.jsonl` and
-`evals/LABEL/online_predictions.meta.json`.
+`evals/LABEL/online_predictions.meta.json`. Successful online rows are reused
+on resume. Errored rows are preserved for diagnosis but retried on the next
+run.
 
 Eval also writes normalized inference manifests under the shared
 `inference_manifests/` GCS tree and uploads `evals/wer_summary.json` and
@@ -173,8 +175,10 @@ substitutions, total reference words, missing prediction count, and artifact
 URIs.
 
 Missing provider predictions are scored as empty hypotheses and stay in the
-WER/CER denominator. Missing rows are reported in `missing_prediction_count` and
-do not count toward `empty_or_unintelligible_rate`.
+WER/CER denominator. They are reported in `missing_prediction_count` and count
+toward `empty_or_unintelligible_rate` because the scored hypothesis is empty.
+Online endpoint failures that remain unresolved after retries are also reported
+in metadata `online_error_count`.
 
 ## 6. Masked And Unmasked Eval Runs
 
