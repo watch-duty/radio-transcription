@@ -231,19 +231,19 @@ vi.mock('../../audio/WebAudioPlayer', async (importOriginal) => ({
   },
 }));
 
-// Drive the date filter without MUI's segmented picker inputs (unusable under
-// JSDOM): when open, render an "apply" button that accepts a fixed date.
+// MUI's segmented picker inputs are unusable under JSDOM; mock the shared field
+// with a button that writes a fixed draft, then Apply (in the popover) commits it.
 const DATE_FILTER_PICK = new Date('2026-04-10T09:00:00Z');
-vi.mock('@mui/x-date-pickers/DesktopDateTimePicker', () => ({
-  DesktopDateTimePicker: (props: {
-    open: boolean;
-    onAccept: (value: Date | null) => void;
-  }) =>
-    props.open ? (
-      <button onClick={() => props.onAccept(DATE_FILTER_PICK)}>
-        picker-apply
-      </button>
-    ) : null,
+vi.mock('../common/DateTimePicker', () => ({
+  DateTimePicker: ({
+    setDateTime,
+  }: {
+    setDateTime: (value: Date | null) => void;
+  }) => (
+    <button onClick={() => setDateTime(DATE_FILTER_PICK)}>
+      picker-set-date
+    </button>
+  ),
 }));
 
 describe('TranscriptView', () => {
@@ -1764,7 +1764,8 @@ describe('TranscriptView', () => {
 
     // Open the calendar and apply a date — same as a mini-map navigation.
     fireEvent.click(screen.getByRole('button', { name: /filter by date/i }));
-    fireEvent.click(await screen.findByText('picker-apply'));
+    fireEvent.click(await screen.findByText('picker-set-date'));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
     // Parked: Jump to live re-enables (a date filter is now active) and playback
     // was stopped, not re-grabbed onto the refetched list.
@@ -1808,7 +1809,8 @@ describe('TranscriptView', () => {
     );
 
     fireEvent.click(screen.getByRole('button', { name: /filter by date/i }));
-    fireEvent.click(await screen.findByText('picker-apply'));
+    fireEvent.click(await screen.findByText('picker-set-date'));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
     await waitFor(() =>
       expect(

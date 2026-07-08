@@ -5,30 +5,22 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { TranscriptActionsBar } from './TranscriptActionsBar';
 
-// MUI's desktop picker can't be driven through its segmented inputs under JSDOM,
-// so mock it as a minimal harness that surfaces the onAccept wiring: an "apply"
-// button accepts a fixed date, a "clear" button accepts null (Clear → live).
+// MUI's picker can't be driven through its segmented inputs under JSDOM; mock the
+// shared field with buttons that write a valid / invalid draft. The popover commits.
 const PICKED_DATE = new Date('2026-05-14T12:00:00.000Z');
-vi.mock('@mui/x-date-pickers/DesktopDateTimePicker', () => ({
-  DesktopDateTimePicker: (props: {
-    open: boolean;
-    onAccept: (value: Date | null) => void;
-  }) =>
-    props.open ? (
-      <div data-testid="mock-picker">
-        <button onClick={() => props.onAccept(PICKED_DATE)}>
-          picker-apply
-        </button>
-        <button onClick={() => props.onAccept(null)}>picker-clear</button>
-      </div>
-    ) : null,
-}));
-vi.mock('@mui/x-date-pickers/LocalizationProvider', () => ({
-  LocalizationProvider: ({ children }: { children: React.ReactNode }) =>
-    children,
-}));
-vi.mock('@mui/x-date-pickers/AdapterDateFns', () => ({
-  AdapterDateFns: class {},
+vi.mock('../common/DateTimePicker', () => ({
+  DateTimePicker: ({
+    setDateTime,
+  }: {
+    setDateTime: (value: Date | null) => void;
+  }) => (
+    <>
+      <button onClick={() => setDateTime(PICKED_DATE)}>set-draft-date</button>
+      <button onClick={() => setDateTime(new Date('nope'))}>
+        set-invalid-date
+      </button>
+    </>
+  ),
 }));
 
 const baseProps = {
@@ -95,19 +87,22 @@ describe('TranscriptActionsBar', () => {
     expect(setAlertFilter).toHaveBeenCalledWith('alerts');
   });
 
-  it('opens the date picker from the calendar button and applies the pick', () => {
+  it('opens the date popover, commits the draft only on Apply', () => {
     const setDateTime = vi.fn();
     render(<TranscriptActionsBar {...baseProps} setDateTime={setDateTime} />);
-    expect(screen.queryByTestId('mock-picker')).toBeNull();
+    expect(screen.queryByText('set-draft-date')).toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: /filter by date/i }));
-    expect(screen.getByTestId('mock-picker')).toBeTruthy();
+    fireEvent.click(screen.getByText('set-draft-date'));
 
-    fireEvent.click(screen.getByText('picker-apply'));
+    // Editing the draft alone doesn't apply — only Apply commits it.
+    expect(setDateTime).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
     expect(setDateTime).toHaveBeenCalledWith(PICKED_DATE);
   });
 
-  it('clearing the picker sets the date filter to null (returns to live)', () => {
+  it('Clear sets the date filter to null (returns to live)', () => {
     const setDateTime = vi.fn();
     render(
       <TranscriptActionsBar
@@ -117,8 +112,48 @@ describe('TranscriptActionsBar', () => {
       />
     );
     fireEvent.click(screen.getByRole('button', { name: /filter by date/i }));
-    fireEvent.click(screen.getByText('picker-clear'));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
     expect(setDateTime).toHaveBeenCalledWith(null);
+  });
+
+  it('Cancel closes the date popover without committing the draft', () => {
+    const setDateTime = vi.fn();
+    render(<TranscriptActionsBar {...baseProps} setDateTime={setDateTime} />);
+    fireEvent.click(screen.getByRole('button', { name: /filter by date/i }));
+    fireEvent.click(screen.getByText('set-draft-date'));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(setDateTime).not.toHaveBeenCalled();
+  });
+
+  it('Apply does not commit an invalid (partially typed) date', () => {
+    const setDateTime = vi.fn();
+    render(<TranscriptActionsBar {...baseProps} setDateTime={setDateTime} />);
+    fireEvent.click(screen.getByRole('button', { name: /filter by date/i }));
+    fireEvent.click(screen.getByText('set-invalid-date'));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(setDateTime).not.toHaveBeenCalled();
+  });
+
+  it('Apply is a no-op when the date is unchanged (no parent side effects)', () => {
+    const setDateTime = vi.fn();
+    render(
+      <TranscriptActionsBar
+        {...baseProps}
+        dateTime={PICKED_DATE}
+        setDateTime={setDateTime}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: /filter by date/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(setDateTime).not.toHaveBeenCalled();
+  });
+
+  it('Clear is a no-op when no date filter is set', () => {
+    const setDateTime = vi.fn();
+    render(<TranscriptActionsBar {...baseProps} setDateTime={setDateTime} />);
+    fireEvent.click(screen.getByRole('button', { name: /filter by date/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    expect(setDateTime).not.toHaveBeenCalled();
   });
 
   it('opens the search popover, applies the query on Apply, and clears it', () => {
@@ -169,5 +204,30 @@ describe('TranscriptActionsBar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'search' }));
     fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
     expect(mockSetSearchQuery).toHaveBeenLastCalledWith('');
+  });
+
+  it('applies the query on Enter', () => {
+    const mockSetSearchQuery = vi.fn();
+    render(
+      <TranscriptActionsBar
+        disableJumpToLive={false}
+        redactTranscripts={false}
+        setRedactTranscripts={vi.fn()}
+        dateTime={null}
+        setDateTime={vi.fn()}
+        alertFilter="all"
+        setAlertFilter={vi.fn()}
+        onClickViewLatest={vi.fn()}
+        searchQuery=""
+        setSearchQuery={mockSetSearchQuery}
+      />
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'search' }));
+    const searchInput = screen.getByPlaceholderText(/Search transcripts/i);
+    fireEvent.change(searchInput, { target: { value: 'fire' } });
+    fireEvent.keyDown(searchInput, { key: 'Enter' });
+
+    expect(mockSetSearchQuery).toHaveBeenCalledWith('fire');
   });
 });

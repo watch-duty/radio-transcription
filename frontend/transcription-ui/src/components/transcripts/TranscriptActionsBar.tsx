@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React from 'react';
 
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
 import SearchIcon from '@mui/icons-material/Search';
@@ -14,11 +14,10 @@ import Select from '@mui/material/Select';
 import Switch from '@mui/material/Switch';
 import TextField from '@mui/material/TextField';
 import Tooltip from '@mui/material/Tooltip';
-import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
-import { DesktopDateTimePicker } from '@mui/x-date-pickers/DesktopDateTimePicker';
-import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 
 import type { AlertFilter } from '../../hooks/useAudioSegments';
+import { useDraftPopover } from '../../hooks/useDraftPopover';
+import { DateTimePicker } from '../common/DateTimePicker';
 
 export interface TranscriptActionsBarProps {
   // True when the view is already fully live, so "Jump to live" has nothing to
@@ -35,14 +34,91 @@ export interface TranscriptActionsBarProps {
   setSearchQuery?: (query: string) => void;
 }
 
-// The calendar icon is the picker's trigger, so it needs no text-input field.
-const HiddenPickerField = () => null;
-
 // Shared height, radius, and font so the live control, calendar button, filter
 // dropdown, and redact toggle read as one toolbar.
 const CONTROL_HEIGHT = 32;
 const CONTROL_RADIUS = 1;
 const CONTROL_FONT_SIZE = '0.8125rem';
+const FOOTER_BUTTON_SX = { textTransform: 'none' } as const;
+
+// Filled rounded-rect for an active filter button — reads as "on" and cues it's clearable.
+const ACTIVE_FILTER_SX = {
+  borderRadius: 1,
+  bgcolor: 'primary.main',
+  color: 'primary.contrastText',
+  '&:hover': { bgcolor: 'primary.dark' },
+} as const;
+
+interface DraftFilterPopoverProps {
+  anchorEl: HTMLElement | null;
+  onCancel: () => void;
+  onClear: () => void;
+  onApply: () => void;
+  // Focus the first input once the open transition finishes (autoFocus alone is
+  // unreliable inside the portalled, transitioning popover).
+  autoFocusInput?: boolean;
+  children: React.ReactNode;
+}
+
+// Shared chrome for the search and date filter popovers.
+function DraftFilterPopover({
+  anchorEl,
+  onCancel,
+  onClear,
+  onApply,
+  autoFocusInput,
+  children,
+}: DraftFilterPopoverProps) {
+  return (
+    <Popover
+      open={Boolean(anchorEl)}
+      anchorEl={anchorEl}
+      onClose={onCancel}
+      // Don't restore focus to the trigger, or its active fill shows a focus ring.
+      disableRestoreFocus
+      anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
+      transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+      slotProps={
+        autoFocusInput
+          ? {
+              transition: {
+                onEntered: (node: HTMLElement) =>
+                  node.querySelector<HTMLElement>('input, textarea')?.focus(),
+              },
+            }
+          : undefined
+      }
+    >
+      <Box
+        sx={{
+          p: 2,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 1.5,
+          width: 280,
+        }}
+      >
+        {children}
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
+          <Button size="small" onClick={onClear} sx={FOOTER_BUTTON_SX}>
+            Clear
+          </Button>
+          <Button size="small" onClick={onCancel} sx={FOOTER_BUTTON_SX}>
+            Cancel
+          </Button>
+          <Button
+            size="small"
+            variant="contained"
+            onClick={onApply}
+            sx={FOOTER_BUTTON_SX}
+          >
+            Apply
+          </Button>
+        </Box>
+      </Box>
+    </Popover>
+  );
+}
 
 export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   disableJumpToLive,
@@ -56,39 +132,20 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
   searchQuery = '',
   setSearchQuery = () => {},
 }) => {
-  const [pickerOpen, setPickerOpen] = useState(false);
-  // The picker's draft selection, so "Clear" can hide when nothing is picked.
-  const [pickerValue, setPickerValue] = useState<Date | null>(dateTime);
-  const calendarButtonRef = useRef<HTMLButtonElement>(null);
-
-  // Search lives in a popover; the draft only commits to searchQuery on Apply.
-  const [searchAnchorEl, setSearchAnchorEl] = useState<HTMLElement | null>(
+  const dateFilter = useDraftPopover<Date | null>(
+    dateTime,
+    (value) => {
+      // Ignore a partially-typed (invalid) date, and skip a no-op commit so the
+      // parent's navigation side effects don't fire when nothing changed.
+      if (value && Number.isNaN(value.getTime())) return;
+      if ((value?.getTime() ?? null) !== (dateTime?.getTime() ?? null)) {
+        setDateTime(value);
+      }
+    },
     null
   );
-  const [localSearchQuery, setLocalSearchQuery] = useState(searchQuery);
-  const [prevSearchQuery, setPrevSearchQuery] = useState(searchQuery);
-  if (searchQuery !== prevSearchQuery) {
-    setPrevSearchQuery(searchQuery);
-    setLocalSearchQuery(searchQuery);
-  }
 
-  const handleSearchOpen = (event: React.MouseEvent<HTMLElement>) => {
-    setSearchAnchorEl(event.currentTarget);
-    setLocalSearchQuery(searchQuery);
-  };
-  const handleSearchClose = () => {
-    setSearchAnchorEl(null);
-    setLocalSearchQuery(searchQuery);
-  };
-  const handleSearchApply = () => {
-    setSearchQuery(localSearchQuery);
-    setSearchAnchorEl(null);
-  };
-  const handleSearchClear = () => {
-    setLocalSearchQuery('');
-    setSearchQuery('');
-    setSearchAnchorEl(null);
-  };
+  const searchFilter = useDraftPopover<string>(searchQuery, setSearchQuery, '');
 
   return (
     <Box
@@ -121,53 +178,33 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
 
         <Tooltip title="Filter by date and time">
           <IconButton
-            ref={calendarButtonRef}
             aria-label="filter by date"
             size="small"
-            onClick={() => {
-              setPickerValue(dateTime);
-              setPickerOpen(true);
+            onClick={dateFilter.open}
+            sx={{
+              width: CONTROL_HEIGHT,
+              height: CONTROL_HEIGHT,
+              ...(dateTime && ACTIVE_FILTER_SX),
             }}
-            color={dateTime ? 'primary' : 'default'}
-            sx={{ width: CONTROL_HEIGHT, height: CONTROL_HEIGHT }}
           >
             <CalendarMonthIcon />
           </IconButton>
         </Tooltip>
-        <LocalizationProvider dateAdapter={AdapterDateFns}>
-          <DesktopDateTimePicker
-            open={pickerOpen}
-            value={pickerValue}
-            ampm={false}
-            onChange={(value) => setPickerValue(value)}
-            onClose={() => setPickerOpen(false)}
-            // Accept applies the pick (Clear removes the filter → live).
-            onAccept={(value) => setDateTime(value)}
-            localeText={{ okButtonLabel: 'Apply' }}
-            slots={{ field: HiddenPickerField }}
-            slotProps={{
-              // Open below the icon but shift up to stay fully on screen (the
-              // icon sits low), rather than forcing a fixed side.
-              popper: {
-                // Non-null: the calendar button is always mounted (it's the trigger).
-                anchorEl: () => calendarButtonRef.current!,
-                placement: 'bottom-start',
-                modifiers: [
-                  {
-                    name: 'preventOverflow',
-                    options: { altAxis: true, padding: 8 },
-                  },
-                ],
-              },
-              // Only offer Clear when there's a selection to clear.
-              actionBar: {
-                actions: pickerValue
-                  ? ['clear', 'cancel', 'accept']
-                  : ['cancel', 'accept'],
-              },
-            }}
+        <DraftFilterPopover
+          anchorEl={dateFilter.anchorEl}
+          onCancel={dateFilter.cancel}
+          onClear={dateFilter.clear}
+          onApply={dateFilter.apply}
+        >
+          {/* Popover owns Clear/Cancel/Apply, so the picker shows only OK. */}
+          <DateTimePicker
+            label="Date/time"
+            dateTime={dateFilter.draft}
+            setDateTime={dateFilter.setDraft}
+            actions={['accept']}
+            width="100%"
           />
-        </LocalizationProvider>
+        </DraftFilterPopover>
       </Box>
 
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -175,67 +212,42 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
           <IconButton
             aria-label="search"
             size="small"
-            onClick={handleSearchOpen}
-            color={searchQuery ? 'primary' : 'default'}
-            sx={{ width: CONTROL_HEIGHT, height: CONTROL_HEIGHT }}
+            onClick={searchFilter.open}
+            sx={{
+              width: CONTROL_HEIGHT,
+              height: CONTROL_HEIGHT,
+              ...(searchQuery && ACTIVE_FILTER_SX),
+            }}
           >
             <SearchIcon />
           </IconButton>
         </Tooltip>
-        <Popover
-          open={Boolean(searchAnchorEl)}
-          anchorEl={searchAnchorEl}
-          onClose={handleSearchClose}
-          anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
-          transformOrigin={{ vertical: 'top', horizontal: 'left' }}
+        <DraftFilterPopover
+          anchorEl={searchFilter.anchorEl}
+          onCancel={searchFilter.cancel}
+          onClear={searchFilter.clear}
+          onApply={searchFilter.apply}
+          autoFocusInput
         >
-          <Box
-            sx={{
-              p: 2,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 1.5,
-              width: 280,
+          <TextField
+            size="small"
+            placeholder="Search transcripts…"
+            value={searchFilter.draft}
+            onChange={(e) => searchFilter.setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') searchFilter.apply();
             }}
-          >
-            <TextField
-              autoFocus
-              size="small"
-              placeholder="Search transcripts…"
-              value={localSearchQuery}
-              onChange={(e) => setLocalSearchQuery(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSearchApply();
-              }}
-              slotProps={{
-                input: {
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <SearchIcon fontSize="small" />
-                    </InputAdornment>
-                  ),
-                },
-              }}
-            />
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1 }}>
-              <Button
-                size="small"
-                onClick={handleSearchClear}
-                sx={{ textTransform: 'none' }}
-              >
-                Clear
-              </Button>
-              <Button
-                size="small"
-                variant="contained"
-                onClick={handleSearchApply}
-                sx={{ textTransform: 'none' }}
-              >
-                Apply
-              </Button>
-            </Box>
-          </Box>
-        </Popover>
+            slotProps={{
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" />
+                  </InputAdornment>
+                ),
+              },
+            }}
+          />
+        </DraftFilterPopover>
         <FormControl size="small" sx={{ minWidth: 120 }}>
           <Select
             value={alertFilter}
