@@ -129,7 +129,11 @@ def get_pipeline(
             ),
             stitch_config=stitch_config,
         )
-    ).with_resource_hints(min_ram="8GB").with_outputs(
+        # In Dataflow Prime right-sizing, vCPU allocation is dynamically coupled to memory sizing ratios
+        # (~1 vCPU per 4 GB RAM on standard VM shapes). Requesting min_ram="16GB" acts as an empirical proxy
+        # to discourage Prime from scheduling the recurrent VAD denoiser loop on memory-constrained 1-2 vCPU default pods.
+        # Note: Because Prime uses Auto VM Selection, exact vCPU allocation and VM family (standard vs highmem) are opaque.
+    ).with_resource_hints(min_ram="16GB").with_outputs(
         DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
     )
 
