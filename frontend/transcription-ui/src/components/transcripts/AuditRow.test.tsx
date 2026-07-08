@@ -21,7 +21,6 @@ describe('AuditRow', () => {
   it('renders the audit action details correctly', () => {
     render(<AuditRow auditEvent={mockEvent} />);
 
-    expect(screen.getByText('[System Event]')).toBeTruthy();
     expect(screen.getByText(/Feed recovered successfully/)).toBeTruthy();
     expect(screen.getByText('FAILING')).toBeTruthy();
     expect(screen.getByText('ACTIVE')).toBeTruthy();

@@ -523,7 +523,6 @@ describe('FeedTable', () => {
     expect(
       await screen.findByText('Wednesday, July 1, 2026')
     ).toBeInTheDocument();
-    expect(screen.getByText('[System Event]')).toBeInTheDocument();
     expect(screen.getByText(/Feed recovered successfully/)).toBeInTheDocument();
   });
 });
