@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 
-import { formatDiff, getEffectiveStatus } from './AuditRow.utils';
+import type { FeedHistoryEvent } from '@transcription/common';
+
+import {
+  formatDiff,
+  getEffectiveStatus,
+  groupEventsByDate,
+} from './AuditRow.utils';
 
 describe('AuditRow utils', () => {
   describe('getEffectiveStatus', () => {
@@ -101,6 +107,73 @@ describe('AuditRow utils', () => {
       expect(diff).toContain(
         'Tags: added "agency=Fire" and removed "agency=Police"'
       );
+    });
+  });
+
+  describe('groupEventsByDate', () => {
+    it('groups events occurring on the same date together', () => {
+      const mockEvents: FeedHistoryEvent[] = [
+        {
+          id: '1',
+          feedId: 'f1',
+          action: 'feed.created',
+          actor: 'admin',
+          occurredAt: Date.parse('2026-06-26T12:00:00Z'),
+          feedRevision: 1,
+          beforeValues: {},
+          afterValues: {},
+        },
+        {
+          id: '2',
+          feedId: 'f1',
+          action: 'feed.updated',
+          actor: 'admin',
+          occurredAt: Date.parse('2026-06-26T14:30:00Z'),
+          feedRevision: 2,
+          beforeValues: {},
+          afterValues: {},
+        },
+        {
+          id: '3',
+          feedId: 'f1',
+          action: 'feed.reset',
+          actor: 'admin',
+          occurredAt: Date.parse('2026-06-27T09:00:00Z'),
+          feedRevision: 3,
+          beforeValues: {},
+          afterValues: {},
+        },
+      ];
+
+      const grouped = groupEventsByDate(mockEvents);
+
+      expect(grouped).toHaveLength(2);
+      expect(grouped[0].dateStr).toBe(
+        new Date('2026-06-26T12:00:00Z').toLocaleDateString([], {
+          weekday: 'long',
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric',
+        })
+      );
+      expect(grouped[0].events).toHaveLength(2);
+      expect(grouped[0].events[0].id).toBe('1');
+      expect(grouped[0].events[1].id).toBe('2');
+
+      expect(grouped[1].dateStr).toBe(
+        new Date('2026-06-27T09:00:00Z').toLocaleDateString([], {
+          weekday: 'long',
+          month: 'long',
+          day: 'numeric',
+          year: 'numeric',
+        })
+      );
+      expect(grouped[1].events).toHaveLength(1);
+      expect(grouped[1].events[0].id).toBe('3');
+    });
+
+    it('returns empty array when given empty list', () => {
+      expect(groupEventsByDate([])).toEqual([]);
     });
   });
 });

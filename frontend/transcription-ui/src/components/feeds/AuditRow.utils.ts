@@ -1,4 +1,4 @@
-import type { Tag } from '@transcription/common';
+import type { FeedHistoryEvent, Tag } from '@transcription/common';
 
 export function formatDiff(
   before: Record<string, unknown> = {},
@@ -84,4 +84,32 @@ export function getEffectiveStatus(
       (typeof statusReason === 'string' && statusReason !== ''));
 
   return hasActiveFailure ? 'failing' : status;
+}
+
+export interface DateGroupedEvents {
+  dateStr: string;
+  events: FeedHistoryEvent[];
+}
+
+export function groupEventsByDate(
+  events: FeedHistoryEvent[]
+): DateGroupedEvents[] {
+  const groups: DateGroupedEvents[] = [];
+  let currentGroup: DateGroupedEvents | null = null;
+
+  events.forEach((event) => {
+    const dateStr = new Date(event.occurredAt).toLocaleDateString([], {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+    });
+    if (!currentGroup || currentGroup.dateStr !== dateStr) {
+      currentGroup = { dateStr, events: [] };
+      groups.push(currentGroup);
+    }
+    currentGroup.events.push(event);
+  });
+
+  return groups;
 }

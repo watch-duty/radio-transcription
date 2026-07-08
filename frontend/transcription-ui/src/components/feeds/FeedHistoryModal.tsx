@@ -18,6 +18,7 @@ import type { Feed } from '@transcription/common';
 import { useAuth } from '../../context/AuthContext';
 import { listFeedHistory } from '../../service/listFeedHistory';
 import { AuditRow } from './AuditRow';
+import { groupEventsByDate } from './AuditRow.utils';
 
 interface FeedHistoryModalProps {
   feed: Feed | null;
@@ -111,38 +112,22 @@ export function FeedHistoryModal({
                 py: 0,
               }}
             >
-              {(() => {
-                const elements: React.ReactNode[] = [];
-                let lastDateStr = '';
-                historyEvents.forEach((event) => {
-                  const dateStr = new Date(event.occurredAt).toLocaleDateString(
-                    [],
-                    {
-                      weekday: 'long',
-                      month: 'long',
-                      day: 'numeric',
-                      year: 'numeric',
-                    }
-                  );
-                  if (dateStr !== lastDateStr) {
-                    lastDateStr = dateStr;
-                    elements.push(
-                      <ListSubheader
-                        key={`subheader-${dateStr}`}
-                        sx={{
-                          bgcolor: 'background.paper',
-                          fontWeight: 'bold',
-                          lineHeight: '36px',
-                        }}
-                      >
-                        {dateStr}
-                      </ListSubheader>
-                    );
-                  }
-                  elements.push(<AuditRow key={event.id} auditEvent={event} />);
-                });
-                return elements;
-              })()}
+              {groupEventsByDate(historyEvents).map((group) => (
+                <React.Fragment key={group.dateStr}>
+                  <ListSubheader
+                    sx={{
+                      bgcolor: 'background.paper',
+                      fontWeight: 'bold',
+                      lineHeight: '36px',
+                    }}
+                  >
+                    {group.dateStr}
+                  </ListSubheader>
+                  {group.events.map((event) => (
+                    <AuditRow key={event.id} auditEvent={event} />
+                  ))}
+                </React.Fragment>
+              ))}
             </List>
             {hasNextPage && (
               <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
