@@ -15,10 +15,14 @@ straightforward, light-speed unit testing capabilities.
 import logging as std_logging
 from collections.abc import Callable, Iterator
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import concurrent.futures
 
 from apache_beam.metrics import Metrics
 from google.cloud import storage
+from opentelemetry import context as otel_context
 
 from backend.pipeline.common import constants as common_constants
 from backend.pipeline.common.log_helper import get_task_logger
@@ -27,6 +31,10 @@ from backend.pipeline.segmentation import datatypes, log_helper
 from backend.pipeline.segmentation import utils as trans_utils
 from backend.pipeline.segmentation.audio import processor as audio_processor
 from backend.pipeline.segmentation.audio import vad
+from backend.pipeline.segmentation.datatypes import (
+    AudioFutureMap,
+    AudioSignal,
+)
 from backend.pipeline.segmentation.state import stitcher_state
 
 # WARNING: Do NOT remove or bypass setup_logging().
@@ -107,10 +115,55 @@ class StitcherEngine:
             vad_factory=vad_factory,
             gcs_factory=gcs_factory,
         )
+        self.executor: concurrent.futures.ThreadPoolExecutor | None = None
 
     def setup(self) -> None:
         """Initializes the processor ONNXRuntime inference sessions and Numba compilation."""
         self.processor.setup()
+
+    def prefetch_audio_futures(
+        self,
+        chunks: list[datatypes.BufferedChunk],
+        task_logger: Any,
+    ) -> AudioFutureMap | None:
+        """Submits GCS download and decoding tasks to the shared background thread pool for all chunks in the bundle."""
+        if not self.executor or len(chunks) <= 1:
+            return None
+
+        parent_context = otel_context.get_current()
+
+        def _fetch_one(uri: str, trace_attrs: dict[str, str]) -> AudioSignal:
+            token = otel_context.attach(parent_context)
+            try:
+                task_logger.debug(
+                    f"[Prefetch] Background fetch starting for {uri}"
+                )
+                res = self.processor.fetch_and_decode_audio(uri, trace_attrs)
+                task_logger.debug(
+                    f"[Prefetch] Background fetch completed for {uri}"
+                )
+            except Exception as e:
+                task_logger.warning(
+                    f"[Prefetch] Failed background fetch for {uri}: {e}"
+                )
+                raise
+            else:
+                return res
+            finally:
+                otel_context.detach(token)
+
+        futures: AudioFutureMap = {}
+        for chunk in chunks:
+            if chunk.gcs_uri not in futures:
+                trace_attrs: dict[str, str] = {}
+                if chunk.traceparent:
+                    trace_attrs["traceparent"] = chunk.traceparent
+                if chunk.baggage:
+                    trace_attrs["baggage"] = str(chunk.baggage)
+                futures[chunk.gcs_uri] = self.executor.submit(
+                    _fetch_one, chunk.gcs_uri, trace_attrs
+                )
+        return futures
 
     def process_ordering_chunk(
         self,
@@ -124,6 +177,7 @@ class StitcherEngine:
         *,
         is_backfill: bool,
         clear_buffer: bool = False,
+        prefetched_futures: AudioFutureMap | None = None,
     ) -> tuple[
         list[tuple[str, datatypes.FlushRequest] | tuple[str, dict[str, Any]]],
         int,
@@ -140,6 +194,7 @@ class StitcherEngine:
             previous_expected_ts: The expected next sequence timestamp baseline.
             is_backfill: True if the chunk falls behind the real-time watermark.
             clear_buffer: If True, ignore existing state and treat the buffer as empty.
+            prefetched_futures: Optional mapping of GCS URI to background download futures.
 
         Returns:
             A tuple of:
@@ -169,6 +224,7 @@ class StitcherEngine:
                 task_logger=task_logger,
                 is_backfill=is_backfill,
                 clear_buffer=clear_buffer,
+                prefetched_futures=prefetched_futures,
             )
         )
 
@@ -397,6 +453,7 @@ class StitcherEngine:
         *,
         is_backfill: bool,
         clear_buffer: bool = False,
+        prefetched_futures: AudioFutureMap | None = None,
     ) -> tuple[
         list[tuple[str, datatypes.FlushRequest] | tuple[str, dict[str, Any]]],
         datatypes.TransmissionContext,
@@ -416,6 +473,7 @@ class StitcherEngine:
             task_logger: Contextual logger instance.
             is_backfill: True if the chunk falls behind the real-time watermark.
             clear_buffer: If True, ignore existing state and treat the buffer as empty.
+            prefetched_futures: Optional mapping of GCS URI to background download futures.
 
         Returns:
             A tuple of:
@@ -460,6 +518,20 @@ class StitcherEngine:
                     # watermark contiguous gap, clear prior tail primordial state
                     curr_context = replace(curr_context, prior_audio_tail=None)
 
+                prefetched_audio = None
+                if (
+                    prefetched_futures is not None
+                    and chunk.gcs_uri in prefetched_futures
+                ):
+                    try:
+                        prefetched_audio = prefetched_futures[
+                            chunk.gcs_uri
+                        ].result()
+                    except Exception as e:
+                        task_logger.warning(
+                            f"[Prefetch Fallback] Background fetch failed for {chunk.gcs_uri}: {e}. Retrying synchronously."
+                        )
+
                 # 1. Download audio and run speech detection
                 task_logger.debug(
                     f"[Download] Downloading audio for {chunk.gcs_uri}"
@@ -468,6 +540,7 @@ class StitcherEngine:
                     chunk.gcs_uri,
                     chunk.timestamp_ms,
                     prior_audio=curr_context.prior_audio_tail,
+                    prefetched_audio=prefetched_audio,
                 )
                 self._record_chunk_evaluation_metrics(chunk_data)
                 task_logger.debug(
