@@ -86,7 +86,8 @@ def effective_prior_status_sql(before_alias: str) -> str:
     return f"""(
             CASE
                 WHEN {before_alias}.status = 'active'::feed_status
-                 AND ({before_alias}.failure_count > 0 OR {before_alias}.status_reason IS NOT NULL)
+                 AND ({before_alias}.failure_count > 0
+                      OR {before_alias}.status_reason IS NOT NULL)
                 THEN 'failing'::feed_status
                 ELSE {before_alias}.status
             END
@@ -101,7 +102,9 @@ def recovery_audit_action_cte(
     """Return audit_action CTE for abnormal-to-normal recovery events."""
     return f"""audit_action AS (
     SELECT CASE
-        WHEN {effective_prior_status_sql(before_alias)}::text IN ('failing', 'quarantined')
+        WHEN {effective_prior_status_sql(before_alias)}::text IN (
+            'failing', 'quarantined'
+        )
         AND {after_alias}.status::text NOT IN ('failing', 'quarantined')
         AND {after_alias}.status_reason IS NULL
         AND {after_alias}.failure_count = 0
@@ -129,7 +132,8 @@ def failure_audit_action_cte(
         WHEN {after_alias}.status::text = 'failing'
          AND (
             {effective_prior_status}::text <> 'failing'
-            OR {before_alias}.status_reason IS DISTINCT FROM {after_alias}.status_reason
+            OR {before_alias}.status_reason
+            IS DISTINCT FROM {after_alias}.status_reason
          )
         THEN 'feed.failure_reported'
         ELSE NULL
