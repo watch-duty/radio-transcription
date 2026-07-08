@@ -17,7 +17,7 @@ import type { Feed } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import { listFeedHistory } from '../../service/listFeedHistory';
-import { AuditRow } from '../transcripts/AuditRow';
+import { AuditRow } from './AuditRow';
 
 interface FeedHistoryModalProps {
   feed: Feed | null;

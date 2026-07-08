@@ -71,17 +71,17 @@ describe('AuditRow utils', () => {
 
     it('formats string changes correctly', () => {
       const diff = formatDiff({ name: 'Alpha' }, { name: 'Beta' });
-      expect(diff).toContain('Name changed from "Alpha" to "Beta"');
+      expect(diff).toContain('name changed from "Alpha" to "Beta"');
     });
 
     it('formats additions correctly', () => {
       const diff = formatDiff({}, { name: 'Alpha' });
-      expect(diff).toContain('Name set to "Alpha"');
+      expect(diff).toContain('name set to "Alpha"');
     });
 
     it('formats clearances correctly', () => {
       const diff = formatDiff({ name: 'Alpha' }, {});
-      expect(diff).toContain('Name cleared (was "Alpha")');
+      expect(diff).toContain('name cleared (was "Alpha")');
     });
 
     it('formats tag changes (added and removed)', () => {

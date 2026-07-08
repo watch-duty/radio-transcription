@@ -60,7 +60,7 @@ describe('AuditRow', () => {
     render(<AuditRow auditEvent={updateEvent} />);
 
     expect(
-      screen.getByText('• Name changed from "Old Name" to "New Name"')
+      screen.getByText('• name changed from "Old Name" to "New Name"')
     ).toBeTruthy();
     expect(screen.getByText('• Tags: added "agency=Fire"')).toBeTruthy();
   });
