@@ -13,6 +13,7 @@ import numpy as np
 import soundfile as sf
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
+from backend.pipeline.ingestion import constants
 from backend.pipeline.ingestion.collectors.icecast import icecast_collector
 from backend.pipeline.ingestion.collectors.tests.conftest import (
     _default_resources,
@@ -1422,7 +1423,7 @@ class TestBuildAuthAndUrl(unittest.TestCase):
         os.environ["BROADCASTIFY_PASSWORD"] = "test-password"
 
         auth_header, url = icecast_collector._build_auth_and_url(
-            url_base="https://partner.broadcastify.com/",
+            url_base=constants.BCFY_FEEDS_PARTNER_URL_BASE,
             source_feed_id="12345",
         )
 
@@ -1432,8 +1433,32 @@ class TestBuildAuthAndUrl(unittest.TestCase):
         )
         self.assertEqual(
             url,
-            "https://audio.broadcastify.com/12345.mp3?burst=0",
+            f"{constants.BCFY_FEEDS_PUBLIC_URL_BASE}12345.mp3?burst=0",
         )
+
+    def test_basic_auth_fallback_uses_env_var_override(self) -> None:
+        """Verify basic auth fallback uses BCFY_FEEDS_PUBLIC_URL_BASE override."""
+        os.environ.pop("BROADCASTIFY_XAN_TOKEN", None)
+        os.environ["BROADCASTIFY_USERNAME"] = "test-user"
+        os.environ["BROADCASTIFY_PASSWORD"] = "test-password"
+        os.environ["BCFY_FEEDS_PUBLIC_URL_BASE"] = (
+            "https://custom-public.example.com/"
+        )
+        try:
+            auth_header, url = icecast_collector._build_auth_and_url(
+                url_base=constants.BCFY_FEEDS_PARTNER_URL_BASE,
+                source_feed_id="12345",
+            )
+            self.assertEqual(
+                auth_header,
+                "Authorization: Basic dGVzdC11c2VyOnRlc3QtcGFzc3dvcmQ=\r\n",
+            )
+            self.assertEqual(
+                url,
+                "https://custom-public.example.com/12345.mp3?burst=0",
+            )
+        finally:
+            os.environ.pop("BCFY_FEEDS_PUBLIC_URL_BASE", None)
 
     def test_basic_auth_missing_credentials(self) -> None:
         """When token is missing and credentials are also missing, it raises config error."""

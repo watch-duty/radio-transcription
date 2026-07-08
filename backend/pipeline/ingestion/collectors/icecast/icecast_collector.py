@@ -26,7 +26,7 @@ from backend.pipeline.common.constants import (
     NUM_AUDIO_CHANNELS,
     SAMPLE_RATE_HZ,
 )
-from backend.pipeline.ingestion import status_reason_detail
+from backend.pipeline.ingestion import constants, status_reason_detail
 from backend.pipeline.ingestion.collectors.failure_classification import (
     collector_failure,
     missing_source_feed_id_failure,
@@ -106,9 +106,14 @@ def _build_auth_and_url(url_base: str, source_feed_id: str) -> tuple[str, str]:
         return "", url
 
     # Basic Auth (non-XAN) requests must go to the public Icecast relay endpoint
+    public_url_base = os.getenv(
+        "BCFY_FEEDS_PUBLIC_URL_BASE",
+        constants.BCFY_FEEDS_PUBLIC_URL_BASE,
+    )
     basic_auth_url_base = (
-        "https://audio.broadcastify.com/"
-        if url_base.strip() == "https://partner.broadcastify.com/"
+        public_url_base
+        if url_base.strip().rstrip("/")
+        == constants.BCFY_FEEDS_PARTNER_URL_BASE.rstrip("/")
         else url_base
     )
     normalized_url_base = (
