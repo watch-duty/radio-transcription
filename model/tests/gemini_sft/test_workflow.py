@@ -1658,7 +1658,7 @@ class TestEvaluateRun(unittest.TestCase):
 
         self.assertEqual(rc, 0)
         self.assertEqual(base_target["missing_prediction_count"], 1)
-        self.assertEqual(base_target["empty_or_unintelligible_rate"], 50.0)
+        self.assertEqual(base_target["empty_or_unintelligible_rate"], 100.0)
         self.assertIn("total_reference_words", base_target)
         self.assertIsInstance(base_target["insertions"], int)
         self.assertIsInstance(base_target["deletions"], int)
@@ -2302,6 +2302,84 @@ max_retries = 1
         download_manifest.assert_called_once()
         run_online.assert_awaited_once()
         batch.assert_not_called()
+
+    def test_online_unresolved_error_scores_as_missing_empty_hypothesis(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            _seed_source_manifests(storage)
+            cfg_path = _write_config_file(
+                tmp,
+                eval_label="checkpoint_6",
+                eval_model="projects/p/locations/us/endpoints/123",
+            )
+            run_cfg = load_run_config(cfg_path)
+            config = run_cfg.to_record_dict()
+            storage.put(run_cfg.paths.config_uri, json.dumps(config))
+            online_preds = _online_prediction_map(
+                {"gs://audio/eval.flac": "eval transcript"},
+                run_gcs_prefix=run_cfg.paths.gcs_prefix,
+                label="checkpoint_6",
+                error_count=1,
+            )
+            args = argparse.Namespace(config=str(cfg_path))
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module.storage, "Client", return_value=storage
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "download_jsonl_manifest",
+                    return_value=[
+                        _row(
+                            "gs://audio/eval.flac",
+                            "eval transcript",
+                            example_id="eval-1",
+                        ),
+                        _row(
+                            "gs://audio/error.flac",
+                            "missing transcript",
+                            example_id="eval-2",
+                        ),
+                    ],
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "run_online_target_inference",
+                    unittest.mock.AsyncMock(return_value=online_preds),
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "results"
+                ),
+                _patched_eval_scoring(),
+            ):
+                rc = evaluate_module.evaluate(args)
+
+            metrics = json.loads(
+                (tmp / "results" / "round-a" / "wer_summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            target = metrics["target"]
+            manifest_rows = [
+                json.loads(line)
+                for line in storage.get(
+                    target["artifacts"]["normalized_manifest_uri"]
+                ).splitlines()
+            ]
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(target["missing_prediction_count"], 1)
+        self.assertEqual(target["metadata"]["online_error_count"], 1)
+        self.assertEqual(target["empty_or_unintelligible_rate"], 50.0)
+        self.assertEqual(
+            manifest_rows[0]["pred_text_gemini_3_1_flash_lite"],
+            "eval transcript",
+        )
+        self.assertNotIn("pred_text_gemini_3_1_flash_lite", manifest_rows[1])
 
     def test_batch_infer_fails_when_vertex_writes_no_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:

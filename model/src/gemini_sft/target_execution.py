@@ -50,6 +50,7 @@ ONLINE_LOG_EVERY = 100
 @dataclass(frozen=True)
 class OnlineResumeState:
     rows_by_audio_uri: dict[str, dict[str, Any]]
+    attempt_rows_by_audio_uri: dict[str, dict[str, Any]]
     error_count: int
     request_identity_hash: str
 
@@ -153,7 +154,12 @@ def load_existing_online_predictions(
     if not blob_exists(storage_client, predictions_uri):
         local_predictions_path.unlink(missing_ok=True)
         local_metadata_path.unlink(missing_ok=True)
-        return OnlineResumeState({}, 0, request_identity_hash(request_identity))
+        return OnlineResumeState(
+            {},
+            {},
+            0,
+            request_identity_hash(request_identity),
+        )
     if not blob_exists(storage_client, metadata_uri):
         msg = (
             "online prediction metadata missing for existing predictions: "
@@ -168,8 +174,9 @@ def load_existing_online_predictions(
     rows = _load_prediction_rows(local_predictions_path)
     _validate_existing_rows(rows, existing_identity)
     return OnlineResumeState(
+        _successful_prediction_rows(rows),
         rows,
-        sum(1 for row in rows.values() if row.get("error")),
+        _online_error_count(rows),
         request_identity_hash(existing_identity),
     )
 
@@ -233,12 +240,13 @@ async def run_online_target_inference(
         request_identity=identity,
     )
     completed = dict(resume.rows_by_audio_uri)
+    attempt_rows = dict(resume.attempt_rows_by_audio_uri)
     missing_audio_uris = [
         audio_uri for audio_uri in audio_uri_list if audio_uri not in completed
     ]
     if not missing_audio_uris:
         return _prediction_map(
-            completed,
+            attempt_rows,
             predictions_uri=predictions_uri,
             metadata_uri=metadata_uri,
             request_identity_hash=request_identity_hash(identity),
@@ -267,7 +275,7 @@ async def run_online_target_inference(
     progress = {
         "done": len(completed),
         "since_sync": 0,
-        "errors": sum(1 for row in completed.values() if row.get("error")),
+        "errors": _online_error_count(attempt_rows),
     }
     max_attempts = max(1, max_retries)
 
@@ -296,27 +304,26 @@ async def run_online_target_inference(
             "target_label": target_label,
             "model": target_model,
         }
-        upload_rows: list[dict[str, Any]] | None = None
         async with lock:
-            completed[audio_uri] = out_row
-            _append_prediction(local_predictions_path, out_row)
-            progress["done"] += 1
-            progress["since_sync"] += 1
-            if error:
-                progress["errors"] += 1
-            if progress["since_sync"] >= ONLINE_SYNC_EVERY:
-                progress["since_sync"] = 0
-                upload_rows = list(completed.values())
-            if progress["done"] == len(audio_uri_list) or (
-                progress["done"] % ONLINE_LOG_EVERY == 0
-            ):
-                LOGGER.info(
-                    "target=%s progress=%s/%s errors=%s",
-                    target_label,
-                    progress["done"],
-                    len(audio_uri_list),
-                    progress["errors"],
-                )
+            upload_rows, should_log = _record_online_attempt(
+                completed=completed,
+                attempt_rows=attempt_rows,
+                audio_uri=audio_uri,
+                row=out_row,
+                local_predictions_path=local_predictions_path,
+                progress=progress,
+                total_count=len(audio_uri_list),
+            )
+            log_done = progress["done"]
+            log_errors = progress["errors"]
+        if should_log:
+            LOGGER.info(
+                "target=%s progress=%s/%s errors=%s",
+                target_label,
+                log_done,
+                len(audio_uri_list),
+                log_errors,
+            )
         if upload_rows is not None:
             await _upload_periodic_prediction_snapshot(
                 storage_client=storage_client,
@@ -333,11 +340,11 @@ async def run_online_target_inference(
     )
     await _upload_text_async(
         storage_client,
-        _prediction_rows_jsonl(completed.values()),
+        _prediction_rows_jsonl(attempt_rows.values()),
         predictions_uri,
     )
     return _prediction_map(
-        completed,
+        attempt_rows,
         predictions_uri=predictions_uri,
         metadata_uri=metadata_uri,
         request_identity_hash=request_identity_hash(identity),
@@ -396,6 +403,53 @@ def _load_prediction_rows(path: Path) -> dict[str, dict[str, Any]]:
     return rows
 
 
+def _successful_prediction_rows(
+    rows: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    return {
+        audio_uri: row
+        for audio_uri, row in rows.items()
+        if not row.get("error")
+    }
+
+
+def _online_error_count(rows: dict[str, dict[str, Any]]) -> int:
+    return sum(1 for row in rows.values() if row.get("error"))
+
+
+def _record_online_attempt(
+    *,
+    completed: dict[str, dict[str, Any]],
+    attempt_rows: dict[str, dict[str, Any]],
+    audio_uri: str,
+    row: dict[str, Any],
+    local_predictions_path: Path,
+    progress: dict[str, int],
+    total_count: int,
+) -> tuple[list[dict[str, Any]] | None, bool]:
+    previous_error = bool(attempt_rows.get(audio_uri, {}).get("error"))
+    attempt_rows[audio_uri] = row
+    if row.get("error"):
+        completed.pop(audio_uri, None)
+    else:
+        completed[audio_uri] = row
+    _append_prediction(local_predictions_path, row)
+    progress["done"] += 1
+    progress["since_sync"] += 1
+    if previous_error and not row.get("error"):
+        progress["errors"] -= 1
+    elif not previous_error and row.get("error"):
+        progress["errors"] += 1
+    upload_rows = None
+    if progress["since_sync"] >= ONLINE_SYNC_EVERY:
+        progress["since_sync"] = 0
+        upload_rows = list(attempt_rows.values())
+    should_log = progress["done"] == total_count or (
+        progress["done"] % ONLINE_LOG_EVERY == 0
+    )
+    return upload_rows, should_log
+
+
 def _append_prediction(path: Path, row: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
@@ -442,11 +496,11 @@ def _prediction_map(
     return OnlinePredictionMap(
         {
             audio_uri: str(row.get("pred_text") or "")
-            for audio_uri, row in rows.items()
+            for audio_uri, row in _successful_prediction_rows(rows).items()
         },
         online_predictions_uri=predictions_uri,
         metadata_uri=metadata_uri,
-        error_count=sum(1 for row in rows.values() if row.get("error")),
+        error_count=_online_error_count(rows),
         request_identity_hash=request_identity_hash,
     )
 

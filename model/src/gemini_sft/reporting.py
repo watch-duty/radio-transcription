@@ -111,10 +111,7 @@ def build_target_metrics(
         wer=float(wer_result["wer"]),
         cer=float(cer_result["cer"]),
         keyword_accuracy=_overall_keyword_accuracy(keyword_rows),
-        empty_or_unintelligible_rate=empty_or_unintelligible_rate(
-            hyps,
-            missing_prediction_count=missing_prediction_count,
-        ),
+        empty_or_unintelligible_rate=empty_or_unintelligible_rate(hyps),
         insertions=int(wer_result["insertions"]),
         deletions=int(wer_result["deletions"]),
         substitutions=int(wer_result["substitutions"]),

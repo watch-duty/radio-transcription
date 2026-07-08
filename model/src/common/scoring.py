@@ -300,18 +300,12 @@ def _split_empty_references_for_cer(
     return valid_refs, valid_hyps, empty_ref_insertions
 
 
-def empty_or_unintelligible_rate(
-    hypotheses: list[str],
-    *,
-    missing_prediction_count: int = 0,
-) -> float:
+def empty_or_unintelligible_rate(hypotheses: list[str]) -> float:
     """Percentage of hypotheses that are empty or the [UNINTELLIGIBLE] token.
 
     Args:
-        hypotheses: List of model-predicted transcript strings.
-        missing_prediction_count: Number of missing provider rows represented
-            as empty-string fallbacks. These stay in the denominator but are
-            not counted as explicit empty model responses.
+        hypotheses: List of scored hypothesis strings. Missing provider rows
+            are represented as empty-string hypotheses before scoring.
 
     Returns:
         Float between 0.0 and 100.0 (percentage of flagged hypotheses).
@@ -323,8 +317,7 @@ def empty_or_unintelligible_rate(
         for h in hypotheses
         if not h.strip() or h.strip() == "[UNINTELLIGIBLE]"
     )
-    explicit_flagged = max(0, flagged - missing_prediction_count)
-    return round(100 * explicit_flagged / len(hypotheses), 2)
+    return round(100 * flagged / len(hypotheses), 2)
 
 
 def duration_bucket_wer(

@@ -63,7 +63,7 @@ class TestReportingContract(unittest.TestCase):
         ):
             self.assertIn(key, row)
         self.assertEqual(row["missing_prediction_count"], 1)
-        self.assertEqual(row["empty_or_unintelligible_rate"], 0.0)
+        self.assertEqual(row["empty_or_unintelligible_rate"], 50.0)
         self.assertEqual(
             row["artifacts"]["normalized_manifest_uri"],
             "gs://bucket/normalized.jsonl",
@@ -95,7 +95,7 @@ class TestReportingContract(unittest.TestCase):
 
         self.assertEqual(target.total_reference_words, expected_total)
 
-    def test_empty_or_unintelligible_metric_counts_explicit_predictions_only(
+    def test_empty_or_unintelligible_metric_counts_scored_empty_hypotheses(
         self,
     ) -> None:
         target = build_target_metrics(
@@ -108,7 +108,7 @@ class TestReportingContract(unittest.TestCase):
             missing_prediction_count=1,
         )
 
-        self.assertEqual(target.empty_or_unintelligible_rate, 66.67)
+        self.assertEqual(target.empty_or_unintelligible_rate, 100.0)
 
     def test_markdown_and_console_share_target_header(self) -> None:
         report = EvalReport(

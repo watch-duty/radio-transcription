@@ -195,7 +195,7 @@ class TestOnlinePredictionResume(unittest.TestCase):
             request_identity=identity,
         )
 
-    def test_exact_resume_returns_completed_rows_and_error_count(self) -> None:
+    def test_exact_resume_returns_successful_rows_and_error_count(self) -> None:
         identity = _identity()
         self.storage.put(
             self.predictions_uri,
@@ -208,9 +208,7 @@ class TestOnlinePredictionResume(unittest.TestCase):
 
         state = self._load(identity)
 
-        self.assertEqual(
-            set(state.rows_by_audio_uri), set(identity["audio_uris"])
-        )
+        self.assertEqual(set(state.rows_by_audio_uri), {"gs://audio/1.flac"})
         self.assertEqual(state.error_count, 1)
 
     def test_prediction_without_metadata_fails_before_paid_calls(self) -> None:
@@ -757,6 +755,136 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                 "gs://audio/1.flac": "one",
                 "gs://audio/2.flac": "two",
             },
+        )
+
+    @unittest.mock.patch("gemini_sft.target_execution.types")
+    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    def test_resume_retries_cached_error_rows(
+        self, mock_genai, mock_types
+    ) -> None:
+        identity = _identity()
+        predictions_uri = online_prediction_uri(
+            "gs://bucket/run", "checkpoint_6"
+        )
+        metadata_uri = online_prediction_metadata_uri(
+            "gs://bucket/run", "checkpoint_6"
+        )
+        self.storage.put(
+            predictions_uri,
+            (
+                '{"audio_filepath":"gs://audio/1.flac","pred_text":"one","error":null}\n'
+                '{"audio_filepath":"gs://audio/2.flac","pred_text":"","error":"TimeoutError: timed out"}\n'
+            ),
+        )
+        self.storage.put(metadata_uri, _metadata(identity))
+
+        class Response:
+            text = "two retried"
+
+        calls = []
+
+        async def generate_content(**kwargs):
+            calls.append(
+                kwargs["contents"][-1]["parts"][-1]["fileData"]["fileUri"]
+            )
+            return Response()
+
+        mock_client = unittest.mock.MagicMock()
+        mock_client.aio.models.generate_content = generate_content
+        mock_genai.Client.return_value = mock_client
+        mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
+
+        result = asyncio.run(
+            run_online_target_inference(
+                storage_client=self.storage,
+                run_gcs_prefix="gs://bucket/run",
+                project="project",
+                default_location="us-central1",
+                target_label="checkpoint_6",
+                target_model="projects/p/locations/us-central1/endpoints/123",
+                audio_uris=["gs://audio/1.flac", "gs://audio/2.flac"],
+                histories=[[], []],
+                system_prompt="system",
+                user_prompt="user",
+                prior_context_count=8,
+                prior_context_mode="text_turns",
+                eval_manifest_uri="gs://data/eval.jsonl",
+                local_dir=self.local_dir,
+                concurrency=2,
+                max_retries=1,
+            )
+        )
+
+        self.assertEqual(calls, ["gs://audio/2.flac"])
+        self.assertEqual(
+            dict(result),
+            {
+                "gs://audio/1.flac": "one",
+                "gs://audio/2.flac": "two retried",
+            },
+        )
+        self.assertEqual(result.error_count, 0)
+
+    @unittest.mock.patch("gemini_sft.target_execution.types")
+    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    def test_unresolved_online_errors_are_not_predictions(
+        self, mock_genai, mock_types
+    ) -> None:
+        class Response:
+            text = "one"
+
+        async def generate_content(**kwargs):
+            audio_uri = kwargs["contents"][-1]["parts"][-1]["fileData"][
+                "fileUri"
+            ]
+            if audio_uri.endswith("2.flac"):
+                msg = "temporary outage"
+                raise RuntimeError(msg)
+            return Response()
+
+        mock_client = unittest.mock.MagicMock()
+        mock_client.aio.models.generate_content = generate_content
+        mock_genai.Client.return_value = mock_client
+        mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
+
+        result = asyncio.run(
+            run_online_target_inference(
+                storage_client=self.storage,
+                run_gcs_prefix="gs://bucket/run",
+                project="project",
+                default_location="us-central1",
+                target_label="checkpoint_6",
+                target_model="projects/p/locations/us-central1/endpoints/123",
+                audio_uris=["gs://audio/1.flac", "gs://audio/2.flac"],
+                histories=[[], []],
+                system_prompt="system",
+                user_prompt="user",
+                prior_context_count=8,
+                prior_context_mode="text_turns",
+                eval_manifest_uri="gs://data/eval.jsonl",
+                local_dir=self.local_dir,
+                concurrency=2,
+                max_retries=1,
+            )
+        )
+
+        self.assertEqual(dict(result), {"gs://audio/1.flac": "one"})
+        self.assertEqual(result.error_count, 1)
+        raw_rows = [
+            json.loads(line)
+            for line in self.storage.get(
+                result.online_predictions_uri
+            ).splitlines()
+        ]
+        self.assertEqual(
+            {row["audio_filepath"] for row in raw_rows},
+            set(_identity()["audio_uris"]),
+        )
+        self.assertTrue(
+            any(
+                row["audio_filepath"].endswith("2.flac") and row["error"]
+                for row in raw_rows
+            )
         )
 
 

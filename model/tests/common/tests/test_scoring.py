@@ -225,6 +225,12 @@ class TestEmptyOrUnintelligibleRate(unittest.TestCase):
             66.67,
         )
 
+    def test_missing_prediction_fallback_counts_as_empty_output(self) -> None:
+        self.assertEqual(
+            empty_or_unintelligible_rate(["engine 41", ""]),
+            50.0,
+        )
+
 
 class TestKeywordMetrics(unittest.TestCase):
     def test_absent_keyword_omitted(self) -> None:
