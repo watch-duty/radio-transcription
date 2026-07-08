@@ -175,9 +175,17 @@ class VoiceActivityDetector:
             sess_options=opts,
             providers=["CPUExecutionProvider"],
         )
+        # The sequence ONNX model defines a single input tensor ('stft_in') and
+        # a single output tensor ('stft_out') for the STFT spectrogram features.
+        self.ulunas_input_name = self.ulunas_session.get_inputs()[0].name
+        self.ulunas_output_name = self.ulunas_session.get_outputs()[0].name
         logger.info("Silero & UL-UNAS ONNX sessions successfully initialized.")
 
-        # Warm up Numba compiler to eliminate first-run latency spikes on Dataflow workers
+        self._warmup_numba()
+        self._initialize_dsp_filters()
+
+    def _warmup_numba(self) -> None:
+        """Warms up the Numba compiler to eliminate first-run latency spikes on Dataflow workers."""
         try:
             logger.info("Warming up Numba compiler...")
             dummy_wave = np.zeros(
@@ -195,8 +203,6 @@ class VoiceActivityDetector:
             logger.info("Numba compiler successfully warmed up.")
         except Exception as e:
             logger.warning("Failed to warm up Numba compiler: %s", e)
-
-        self._initialize_dsp_filters()
 
     def _initialize_dsp_filters(self) -> None:
         """Initializes the shared Pedalboard DSP filter instances."""
@@ -253,10 +259,12 @@ class VoiceActivityDetector:
             bp_audio_batched, n_fft=n_fft, hop_length=hop_length
         )
 
-        audio_input_name = self.ulunas_session.get_inputs()[0].name
-        ort_inputs = {audio_input_name: stft_features.astype(np.float32)}
-        ort_outs = self.ulunas_session.run(None, ort_inputs)
-        out_stft = np.asarray(ort_outs[0], dtype=np.float32)
+        ort_inputs = {self.ulunas_input_name: stft_features.astype(np.float32)}
+        # Explicitly request the denoised STFT output tensor by name and unpack the single result
+        [out_stft_raw] = self.ulunas_session.run(
+            [self.ulunas_output_name], ort_inputs
+        )
+        out_stft = np.asarray(out_stft_raw, dtype=np.float32)
 
         return custom_numpy_istft(
             out_stft,
