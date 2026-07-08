@@ -57,7 +57,7 @@ describe('FeedStatusIndicator', () => {
     });
   });
 
-  it('displays substatus and statusReason in tooltip on hover', async () => {
+  it('displays substatus and statusReason in tooltip on hover with prepend for error', async () => {
     render(
       <FeedStatusIndicator
         status="error"
@@ -68,11 +68,15 @@ describe('FeedStatusIndicator', () => {
     const statusText = screen.getByText('Error');
     fireEvent.mouseOver(statusText);
     await waitFor(() => {
-      expect(screen.getByText('Failing (Source Offline)')).toBeTruthy();
+      expect(
+        screen.getByText(
+          /Feed error, retrying…[\s\S]*Failing \(Source Offline\)/
+        )
+      ).toBeTruthy();
     });
   });
 
-  it('displays custom substatus and reason in tooltip on hover', async () => {
+  it('displays custom substatus and reason in tooltip on hover with prepend for error', async () => {
     render(
       <FeedStatusIndicator
         status="error"
@@ -83,11 +87,15 @@ describe('FeedStatusIndicator', () => {
     const statusText = screen.getByText('Error');
     fireEvent.mouseOver(statusText);
     await waitFor(() => {
-      expect(screen.getByText('custom_substatus (custom_reason)')).toBeTruthy();
+      expect(
+        screen.getByText(
+          /Feed error, retrying…[\s\S]*custom_substatus \(custom_reason\)/
+        )
+      ).toBeTruthy();
     });
   });
 
-  it('displays statusReasonDetail in tooltip on hover', async () => {
+  it('displays statusReasonDetail in tooltip on hover with prepend for quarantined', async () => {
     render(
       <FeedStatusIndicator
         status="error"
@@ -99,8 +107,19 @@ describe('FeedStatusIndicator', () => {
     fireEvent.mouseOver(statusText);
     await waitFor(() => {
       expect(
-        screen.getByText('Quarantined: corrupted audio files')
+        screen.getByText(
+          /Feed quarantined due to error, maximum number of retries exceeded\.[\s\S]*Quarantined: corrupted audio files/
+        )
       ).toBeTruthy();
+    });
+  });
+
+  it('displays manually deactivated message for inactive deactivated feed', async () => {
+    render(<FeedStatusIndicator status="inactive" substatus="deactivated" />);
+    const statusText = screen.getByText('Inactive');
+    fireEvent.mouseOver(statusText);
+    await waitFor(() => {
+      expect(screen.getByText('Feed manually deactivated')).toBeTruthy();
     });
   });
 

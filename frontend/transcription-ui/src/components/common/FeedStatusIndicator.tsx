@@ -55,14 +55,20 @@ function formatStatusReason(statusReason: BackendFeedStatusReason): string {
  * Formats substatus, statusReason, and statusReasonDetail into a human-readable tooltip text.
  */
 function formatSubstatusTooltipText({
+  status,
   substatus,
   statusReason,
   statusReasonDetail,
 }: {
+  status?: FeedStatus;
   substatus?: BackendFeedStatus;
   statusReason?: BackendFeedStatusReason;
   statusReasonDetail?: string;
 }): string {
+  if (status === 'inactive' && substatus === 'deactivated') {
+    return 'Feed manually deactivated';
+  }
+
   const parts: string[] = [];
 
   if (substatus) {
@@ -80,7 +86,17 @@ function formatSubstatusTooltipText({
     parts.push(statusReasonDetail);
   }
 
-  return parts.join(': ');
+  const baseText = parts.join(': ');
+
+  if (substatus === 'quarantined') {
+    return `Feed quarantined due to error, maximum number of retries exceeded.\n${baseText}`;
+  }
+
+  if (status === 'error' || substatus === 'failing') {
+    return `Feed error, retrying… \n${baseText}`;
+  }
+
+  return baseText;
 }
 
 export function FeedStatusIndicator({
@@ -108,6 +124,7 @@ export function FeedStatusIndicator({
   };
 
   const substatusText = formatSubstatusTooltipText({
+    status,
     substatus,
     statusReason,
     statusReasonDetail,
