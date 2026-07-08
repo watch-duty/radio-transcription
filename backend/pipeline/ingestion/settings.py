@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import uuid
 from dataclasses import dataclass, field
@@ -74,6 +75,33 @@ class CollectorSettings:
     lease_poll_interval_sec: float = field(
         default_factory=lambda: float(
             os.environ.get("LEASE_POLL_INTERVAL_SEC", "5.0"),
+        ),
+    )
+    lease_admission_cycle_budget: int = field(
+        default_factory=lambda: int(
+            os.environ.get("LEASE_ADMISSION_CYCLE_BUDGET", "20"),
+        ),
+    )
+    startup_stagger_max_sec: float = field(
+        default_factory=lambda: float(
+            os.environ.get("STARTUP_STAGGER_MAX_SEC", "60.0"),
+        ),
+    )
+    startup_jitter_max_sec: float = field(
+        default_factory=lambda: float(
+            os.environ.get("STARTUP_JITTER_MAX_SEC", "2.0"),
+        ),
+    )
+    lease_poll_jitter_max_sec: float = field(
+        default_factory=lambda: float(
+            os.environ.get("LEASE_POLL_JITTER_MAX_SEC", "1.0"),
+        ),
+    )
+    worker_index: int | None = field(
+        default_factory=lambda: (
+            int(os.environ["WORKER_INDEX"])
+            if "WORKER_INDEX" in os.environ
+            else None
         ),
     )
     heartbeat_interval_sec: float = field(
@@ -267,6 +295,25 @@ class CollectorSettings:
     )
 
     def __post_init__(self) -> None:
+        if self.lease_admission_cycle_budget <= 0:
+            msg = (
+                "lease_admission_cycle_budget "
+                f"({self.lease_admission_cycle_budget}) must be greater "
+                "than zero."
+            )
+            raise ValueError(msg)
+        non_negative_delays = (
+            ("startup_stagger_max_sec", self.startup_stagger_max_sec),
+            ("startup_jitter_max_sec", self.startup_jitter_max_sec),
+            ("lease_poll_jitter_max_sec", self.lease_poll_jitter_max_sec),
+        )
+        for field_name, value in non_negative_delays:
+            if not math.isfinite(value) or value < 0:
+                msg = (
+                    f"{field_name} ({value}s) must be finite and non-negative."
+                )
+                raise ValueError(msg)
+
         # SHUTDOWN-02: validate the inner sub-timeout fits inside the
         # outer graceful budget with the hardcoded 2s settle window.
         # Triggers at construction time (immediate, clear error) so an
