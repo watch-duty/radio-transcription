@@ -515,7 +515,9 @@ describe('FeedTable', () => {
     // Verify listFeedHistory is called
     expect(listFeedHistory).toHaveBeenCalledWith(
       'feed-1',
-      'fake-jwt-token-xyz'
+      'fake-jwt-token-xyz',
+      50,
+      undefined
     );
 
     // Verify modal is open and elements are rendered

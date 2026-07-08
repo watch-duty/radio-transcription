@@ -12,7 +12,7 @@ import IconButton from '@mui/material/IconButton';
 import List from '@mui/material/List';
 import ListSubheader from '@mui/material/ListSubheader';
 import Typography from '@mui/material/Typography';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import type { Feed } from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
@@ -40,13 +40,23 @@ export function FeedHistoryModal({
     }
   }, [feed]);
 
-  const { data, isLoading, error } = useQuery({
+  const {
+    data,
+    isLoading,
+    error,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
     queryKey: ['listFeedHistory', token, activeFeed?.id],
-    queryFn: () => listFeedHistory(activeFeed!.id, token!),
+    queryFn: ({ pageParam }) =>
+      listFeedHistory(activeFeed!.id, token!, 50, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (lastPage) => lastPage.nextToken,
     enabled: open && !!token && !!activeFeed?.id,
   });
 
-  const historyEvents = data?.historyEvents ?? [];
+  const historyEvents = data?.pages.flatMap((page) => page.historyEvents) ?? [];
 
   return (
     <Dialog
@@ -89,47 +99,64 @@ export function FeedHistoryModal({
             </Typography>
           </Box>
         ) : (
-          <List
+          <Box
             sx={{
-              width: '100%',
-              py: 0,
               maxHeight: '60vh',
               overflowY: 'auto',
             }}
           >
-            {(() => {
-              const elements: React.ReactNode[] = [];
-              let lastDateStr = '';
-              historyEvents.forEach((event) => {
-                const dateStr = new Date(event.occurredAt).toLocaleDateString(
-                  [],
-                  {
-                    weekday: 'long',
-                    month: 'long',
-                    day: 'numeric',
-                    year: 'numeric',
-                  }
-                );
-                if (dateStr !== lastDateStr) {
-                  lastDateStr = dateStr;
-                  elements.push(
-                    <ListSubheader
-                      key={`subheader-${dateStr}`}
-                      sx={{
-                        bgcolor: 'background.paper',
-                        fontWeight: 'bold',
-                        lineHeight: '36px',
-                      }}
-                    >
-                      {dateStr}
-                    </ListSubheader>
+            <List
+              sx={{
+                width: '100%',
+                py: 0,
+              }}
+            >
+              {(() => {
+                const elements: React.ReactNode[] = [];
+                let lastDateStr = '';
+                historyEvents.forEach((event) => {
+                  const dateStr = new Date(event.occurredAt).toLocaleDateString(
+                    [],
+                    {
+                      weekday: 'long',
+                      month: 'long',
+                      day: 'numeric',
+                      year: 'numeric',
+                    }
                   );
-                }
-                elements.push(<AuditRow key={event.id} auditEvent={event} />);
-              });
-              return elements;
-            })()}
-          </List>
+                  if (dateStr !== lastDateStr) {
+                    lastDateStr = dateStr;
+                    elements.push(
+                      <ListSubheader
+                        key={`subheader-${dateStr}`}
+                        sx={{
+                          bgcolor: 'background.paper',
+                          fontWeight: 'bold',
+                          lineHeight: '36px',
+                        }}
+                      >
+                        {dateStr}
+                      </ListSubheader>
+                    );
+                  }
+                  elements.push(<AuditRow key={event.id} auditEvent={event} />);
+                });
+                return elements;
+              })()}
+            </List>
+            {hasNextPage && (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+                <Button
+                  onClick={() => fetchNextPage()}
+                  disabled={isFetchingNextPage}
+                  variant="outlined"
+                  size="small"
+                >
+                  {isFetchingNextPage ? 'Loading more...' : 'Load More'}
+                </Button>
+              </Box>
+            )}
+          </Box>
         )}
       </DialogContent>
       <DialogActions sx={{ p: 2 }}>

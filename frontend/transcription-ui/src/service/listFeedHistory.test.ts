@@ -40,7 +40,7 @@ describe('listFeedHistory', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining('/api/v1/feeds/feed-123/history?limit=200'),
+      expect.stringContaining('/api/v1/feeds/feed-123/history'),
       expect.objectContaining({
         headers: {
           Authorization: 'Bearer tokenXYZ',
@@ -48,6 +48,31 @@ describe('listFeedHistory', () => {
       })
     );
     expect(response).toEqual(mockData);
+  });
+
+  it('should fetch feed history with limit and nextToken', async () => {
+    const mockData = {
+      historyEvents: [],
+      total: 0,
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      text: async () => JSON.stringify(mockData),
+      headers: {
+        get: (key: string) =>
+          key === 'content-type' ? 'application/json' : null,
+      },
+    });
+
+    await listFeedHistory('feed-123', 'tokenXYZ', 50, 'token123');
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining(
+        '/api/v1/feeds/feed-123/history?limit=50&nextToken=token123'
+      ),
+      expect.any(Object)
+    );
   });
 
   it('should throw error if response not ok', async () => {
