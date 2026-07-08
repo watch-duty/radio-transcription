@@ -126,6 +126,7 @@ class VMHealthSettingsTests(unittest.TestCase):
             ("VM_HEALTH_PROBE_INTERVAL_SEC", "0.99"),
             ("VM_HEALTH_PROBE_INTERVAL_SEC", "60.01"),
             ("VM_HEALTH_PROBE_INTERVAL_SEC", "nan"),
+            ("VM_HEALTH_LISTEN_PORT", "not-an-int"),
             ("VM_HEALTH_LISTEN_PORT", "0"),
             ("VM_HEALTH_LISTEN_PORT", "65536"),
             ("VM_HEALTH_HYSTERESIS_SEC", "0"),
@@ -138,6 +139,15 @@ class VMHealthSettingsTests(unittest.TestCase):
                 with mock.patch.dict(os.environ, {name: value}, clear=True):
                     with self.assertRaises(ValueError):
                         vm_health_agent.VMHealthSettings()
+
+    def test_invalid_listen_port_names_env_var_in_error(self) -> None:
+        with mock.patch.dict(
+            os.environ,
+            {"VM_HEALTH_LISTEN_PORT": "not-an-int"},
+            clear=True,
+        ):
+            with self.assertRaisesRegex(ValueError, "VM_HEALTH_LISTEN_PORT"):
+                vm_health_agent.VMHealthSettings()
 
     def test_rejects_probe_timeout_at_or_above_probe_interval(self) -> None:
         cases = (

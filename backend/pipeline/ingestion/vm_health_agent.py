@@ -69,9 +69,14 @@ def _float_from_env(name: str, default: float) -> float:
 
 
 def _listen_port_from_env() -> int:
-    return int(
-        os.environ.get("VM_HEALTH_LISTEN_PORT", str(_DEFAULT_LISTEN_PORT))
-    )
+    raw = os.environ.get("VM_HEALTH_LISTEN_PORT")
+    if raw is None:
+        return _DEFAULT_LISTEN_PORT
+    try:
+        return int(raw)
+    except ValueError as exc:
+        msg = f"VM_HEALTH_LISTEN_PORT ({raw!r}) must be an integer."
+        raise ValueError(msg) from exc
 
 
 def _validate_float_range(
