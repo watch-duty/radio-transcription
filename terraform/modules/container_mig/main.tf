@@ -41,7 +41,7 @@ data "google_compute_zones" "available" {
 # -----------------------------------------------------------------------------
 
 resource "google_compute_instance_template" "this" {
-  # name_prefix generates unique names (e.g. "icecast-collector-prod-abc123")
+  # name_prefix generates unique names (e.g. "ingestion-collector-prod-abc123")
   # required for create_before_destroy lifecycle
   name_prefix  = "${var.name_prefix}-"
   project      = var.project_id
