@@ -89,12 +89,18 @@ class SegmentationAudioProcessor:
     def fetch_and_decode_audio(
         self, gcs_path: str, trace_attrs: dict[str, str] | None = None
     ) -> AudioSignal:
-        """Downloads audio bytes from GCS and decodes them to an AudioSignal."""
-        with tracing_utils.with_tracer_context(
-            trace_attrs or {},
-            "fetch_and_decode_audio",
-            "backend.pipeline.segmentation.audio.processor",
-        ):
+        """Downloads audio bytes from GCS and decodes them to an AudioSignal.
+
+        Args:
+            gcs_path: The Google Cloud Storage URI (e.g., 'gs://bucket/object').
+            trace_attrs: Optional dictionary of trace attributes (e.g., traceparent).
+                Retained for backwards compatibility with legacy callers.
+
+        Returns:
+            An AudioSignal object containing the decoded PCM samples and sample rate.
+        """
+        tracer = tracing_utils.get_tracer(__name__)
+        with tracer.start_as_current_span("fetch_and_decode_audio"):
             with self.fetcher.download_audio_to_memory(gcs_path) as in_mem_file:
                 in_mem_file.seek(0)
                 samples, sr = self._decode_audio_in_memory(in_mem_file)
