@@ -2,6 +2,7 @@
 
 from backend.pipeline.common import utils as common_utils
 from backend.pipeline.schema_types import streaming_state as bp_state
+from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
 
 
 def generate_segment_id(
@@ -17,3 +18,8 @@ def generate_segment_id(
 def get_duration_ms(time_range: bp_state.TimeRangeProto) -> int:
     """Stateless helper to calculate duration of a time range in milliseconds."""
     return time_range.end_ms - time_range.start_ms
+
+
+def is_speech_classification(audio_classification: int) -> bool:
+    """Returns True if the audio classification represents speech."""
+    return audio_classification == SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH

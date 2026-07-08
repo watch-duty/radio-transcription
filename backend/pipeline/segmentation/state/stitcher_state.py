@@ -6,6 +6,7 @@ from collections.abc import Callable
 from apache_beam.metrics import Metrics
 
 from backend.pipeline.schema_types.segmented_audio_pb2 import SegmentedAudio
+from backend.pipeline.segmentation import utils as trans_utils
 from backend.pipeline.segmentation.constants import (
     DEFAULT_VAD_POST_ROLL_MS,
     UPSTREAM_GAP_DRIFT_TOLERANCE_MS,
@@ -174,9 +175,7 @@ class AudioStitchingStateMachine:
         )
         end_ms = clamp_to_start(end_ms, "end_ms")
 
-        is_speech = (
-            audio_classification == SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH
-        )
+        is_speech = trans_utils.is_speech_classification(audio_classification)
         return FlushAction(
             reason=reason,
             feed_id=ctx.feed_id,
