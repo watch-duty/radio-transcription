@@ -4,9 +4,10 @@ import asyncio
 import dataclasses
 import datetime
 import logging
+import socket
 import unittest
 import uuid
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest import mock
 
 import aiohttp
@@ -15,7 +16,11 @@ from google.api_core import exceptions as google_exceptions
 from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
-from backend.pipeline.ingestion import failure_policy, memory_watchdog
+from backend.pipeline.ingestion import (
+    collector_runtime,
+    failure_policy,
+    memory_watchdog,
+)
 from backend.pipeline.ingestion.collector_runtime import (
     CollectorRuntime,
     _PipelineFailure,
@@ -37,6 +42,9 @@ from backend.pipeline.storage.feed_store import (
     SourceType,
 )
 from backend.pipeline.storage.settings import AlloyDBSettings
+
+if TYPE_CHECKING:
+    import signal
 
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -76,10 +84,50 @@ _FEED = LeasedFeed(
     source_feed_id="123",
 )
 
+
+def _make_leased_feed(
+    feed_id: uuid.UUID,
+    source_type: SourceType = SourceType.BCFY_FEEDS,
+) -> LeasedFeed:
+    """Build a leased feed with a stable id and source type."""
+    return LeasedFeed(
+        id=feed_id,
+        name=f"Test Feed {feed_id}",
+        source_type=source_type,
+        last_processed_filename=None,
+        last_bookmark_time=None,
+        fencing_token=1,
+        failure_count=0,
+        status_reason=None,
+        source_feed_id=str(feed_id),
+    )
+
+
 _PUBLISH_SESSION_ID_ARG_INDEX = 5
 _PUBLISH_START_TIMESTAMP_ARG_INDEX = 6
 _PUBLISH_SOURCE_TYPE_ARG_INDEX = 8
 _PUBLISH_EXTERNAL_AUDIO_ID_ARG_INDEX = 9
+_LEASE_ADMISSION_EVENT_TYPE = "lease_admission_cycle"
+_LEASE_ADMISSION_FIELDS = {
+    "event_type",
+    "worker_id",
+    "worker_index",
+    "hostname",
+    "active_feeds",
+    "max_feeds",
+    "slack",
+    "admission_budget",
+    "primary_acquired",
+    "recovery_acquired",
+    "total_acquired",
+    "memory_paused",
+    "error",
+}
+_LEASE_ADMISSION_STATE_FIELDS = {
+    "state",
+    "status",
+    "admission_state",
+}
 
 
 class TestFeedFailureContract(unittest.TestCase):
@@ -167,7 +215,12 @@ def _make_settings(**overrides) -> mock.MagicMock:
     defaults = {
         "worker_id": _WORKER_ID,
         "max_feeds_per_worker": 250,
+        "lease_admission_cycle_budget": 20,
         "lease_poll_interval_sec": 5.0,
+        "startup_stagger_max_sec": 60.0,
+        "startup_jitter_max_sec": 2.0,
+        "lease_poll_jitter_max_sec": 1.0,
+        "worker_index": None,
         "heartbeat_interval_sec": 15.0,
         "heartbeat_stall_timeout_sec": 45.0,
         "graceful_shutdown_timeout_sec": 10.0,
@@ -246,6 +299,27 @@ def _make_runtime(**settings_overrides) -> CollectorRuntime:
     return rt
 
 
+def _lease_admission_payloads(
+    records: list[logging.LogRecord],
+) -> list[dict[str, Any]]:
+    """Return structured lease-admission payloads from captured logs."""
+    return [
+        cast("dict[str, Any]", record.__dict__["json_fields"])
+        for record in records
+        if getattr(record, "json_fields", {}).get("event_type")
+        == _LEASE_ADMISSION_EVENT_TYPE
+    ]
+
+
+def _assert_lease_admission_schema(
+    test_case: unittest.TestCase,
+    payload: dict[str, Any],
+) -> None:
+    """Assert the raw lease-admission telemetry schema is exact."""
+    test_case.assertEqual(set(payload), _LEASE_ADMISSION_FIELDS)
+    test_case.assertFalse(_LEASE_ADMISSION_STATE_FIELDS & set(payload))
+
+
 class TestSleepOrShutdown(unittest.IsolatedAsyncioTestCase):
     """Tests for _sleep_or_shutdown."""
 
@@ -263,6 +337,139 @@ class TestSleepOrShutdown(unittest.IsolatedAsyncioTestCase):
         rt._shutdown.set()
         result = await rt._sleep_or_shutdown(10.0)
         self.assertTrue(result)
+
+
+class TestStartupPacingHelpers(unittest.TestCase):
+    """Tests for startup pacing and poll jitter helper functions."""
+
+    def test_bounded_jitter_skips_zero_max(self) -> None:
+        """Zero jitter max avoids calling random.uniform."""
+        with mock.patch(
+            "backend.pipeline.ingestion.collector_runtime.random.uniform",
+        ) as mock_uniform:
+            delay = collector_runtime._bounded_jitter(0.0)
+
+        mock_uniform.assert_not_called()
+        self.assertEqual(delay, 0.0)
+
+    def test_bounded_jitter_returns_random_delay(self) -> None:
+        """Positive jitter max returns bounded non-cryptographic jitter."""
+        with mock.patch(
+            "backend.pipeline.ingestion.collector_runtime.random.uniform",
+            return_value=1.25,
+        ) as mock_uniform:
+            delay = collector_runtime._bounded_jitter(2.0)
+
+        mock_uniform.assert_called_once_with(0.0, 2.0)
+        self.assertEqual(delay, 1.25)
+
+    def test_deterministic_startup_stagger_zero_max(self) -> None:
+        """Zero max stagger disables deterministic startup delay."""
+        delay = collector_runtime._deterministic_startup_stagger(
+            _WORKER_ID,
+            0.0,
+        )
+
+        self.assertEqual(delay, 0.0)
+
+    def test_deterministic_startup_stagger_stable_and_bounded(self) -> None:
+        """Worker UUID maps to a stable delay inside [0, max_sec)."""
+        worker_id = uuid.UUID(int=1 << 127)
+
+        first = collector_runtime._deterministic_startup_stagger(
+            worker_id,
+            60.0,
+        )
+        second = collector_runtime._deterministic_startup_stagger(
+            worker_id,
+            60.0,
+        )
+
+        self.assertEqual(first, second)
+        self.assertGreaterEqual(first, 0.0)
+        self.assertLess(first, 60.0)
+        self.assertEqual(first, 30.0)
+
+    def test_startup_pacing_delay_adds_random_jitter(self) -> None:
+        """Startup pacing reports deterministic, random, and total delay."""
+        with mock.patch(
+            "backend.pipeline.ingestion.collector_runtime.random.uniform",
+            return_value=1.25,
+        ) as mock_uniform:
+            deterministic, random_delay, total = (
+                collector_runtime._startup_pacing_delay(
+                    _WORKER_ID,
+                    60.0,
+                    2.0,
+                )
+            )
+
+        mock_uniform.assert_called_once_with(0.0, 2.0)
+        self.assertEqual(random_delay, 1.25)
+        self.assertEqual(total, deterministic + random_delay)
+
+    def test_startup_pacing_delay_skips_zero_jitter(self) -> None:
+        """Zero jitter max avoids calling random.uniform."""
+        with mock.patch(
+            "backend.pipeline.ingestion.collector_runtime.random.uniform",
+        ) as mock_uniform:
+            _deterministic, random_delay, _total = (
+                collector_runtime._startup_pacing_delay(
+                    _WORKER_ID,
+                    60.0,
+                    0.0,
+                )
+            )
+
+        mock_uniform.assert_not_called()
+        self.assertEqual(random_delay, 0.0)
+
+    def test_lease_poll_sleep_seconds_adds_jitter(self) -> None:
+        """Lease poll sleep includes bounded non-cryptographic jitter."""
+        with mock.patch(
+            "backend.pipeline.ingestion.collector_runtime.random.uniform",
+            return_value=0.75,
+        ) as mock_uniform:
+            sleep_seconds = collector_runtime._lease_poll_sleep_seconds(
+                5.0,
+                1.0,
+            )
+
+        mock_uniform.assert_called_once_with(0.0, 1.0)
+        self.assertEqual(sleep_seconds, 5.75)
+
+    def test_lease_poll_sleep_seconds_skips_zero_jitter(self) -> None:
+        """Zero poll jitter max keeps the fixed poll interval."""
+        with mock.patch(
+            "backend.pipeline.ingestion.collector_runtime.random.uniform",
+        ) as mock_uniform:
+            sleep_seconds = collector_runtime._lease_poll_sleep_seconds(
+                5.0,
+                0.0,
+            )
+
+        mock_uniform.assert_not_called()
+        self.assertEqual(sleep_seconds, 5.0)
+
+    def test_advance_heartbeat_tick_keeps_moderate_catchup(self) -> None:
+        """Small drift still allows one immediate catch-up heartbeat."""
+        next_tick = collector_runtime._advance_heartbeat_tick(
+            next_tick=100.0,
+            interval=15.0,
+            now=116.0,
+        )
+
+        self.assertEqual(next_tick, 115.0)
+
+    def test_advance_heartbeat_tick_resets_large_drift(self) -> None:
+        """Large drift resets the ticker instead of spinning catch-up loops."""
+        next_tick = collector_runtime._advance_heartbeat_tick(
+            next_tick=100.0,
+            interval=15.0,
+            now=131.0,
+        )
+
+        self.assertEqual(next_tick, 146.0)
 
 
 class TestReapCompletedTasks(unittest.IsolatedAsyncioTestCase):
@@ -366,16 +573,17 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         self.assertIsNot(rt._feed_tasks[_FEED_ID], old_task)
 
     async def test_total_slack_bounded_across_branches(self) -> None:
-        """Sum of per-branch LIMITs must not exceed total_slack (cold start).
+        """Sum of per-branch LIMITs must not exceed admission budget.
 
         Regression: without the round-robin apportion, three branches each
-        get `min(cap, total_slack)`, so at max_feeds_per_worker=250 the
-        query could legitimately return 250 + 250 + 250 = 740 feeds and
+        got `min(cap, slack_or_budget)`, so a cold-start worker could
+        legitimately return many more rows than the intended budget and
         blow past the worker budget. The apportion must guarantee
-        sum(limits) <= total_slack.
+        sum(limits) <= the configured admission budget.
         """
         rt = _make_runtime(
             max_feeds_per_worker=250,
+            lease_admission_cycle_budget=20,
             caps={
                 SourceType.BCFY_FEEDS: 240,
                 SourceType.BCFY_CALLS: 600,
@@ -400,11 +608,39 @@ class TestLeasingLoopOrphanedTask(unittest.IsolatedAsyncioTestCase):
         # per-type LIMIT dict.
         call = rt._store.acquire_feeds_batch.await_args_list[0]
         limits_dict = call[0][1]
-        self.assertEqual(sum(limits_dict.values()), 250)  # exactly total_slack
+        self.assertEqual(sum(limits_dict.values()), 20)
         self.assertTrue(
             all(v >= 0 for v in limits_dict.values()),
             "no branch should receive a negative LIMIT",
         )
+
+    async def test_lease_loop_sleep_uses_poll_jitter(self) -> None:
+        """Normal lease-loop wait uses jitter and remains interruptible."""
+        rt = _make_runtime(
+            max_feeds_per_worker=0,
+            lease_poll_interval_sec=5.0,
+            lease_poll_jitter_max_sec=1.0,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.random.uniform",
+                return_value=0.75,
+            ) as mock_uniform,
+            mock.patch.object(
+                rt,
+                "_sleep_or_shutdown",
+                new_callable=mock.AsyncMock,
+                return_value=True,
+            ) as mock_sleep_or_shutdown,
+        ):
+            await rt._leasing_loop()
+
+        mock_uniform.assert_called_once_with(0.0, 1.0)
+        mock_sleep_or_shutdown.assert_awaited_once_with(5.75)
 
 
 class TestProcessFeedSideEffectOrdering(unittest.IsolatedAsyncioTestCase):
@@ -1304,6 +1540,156 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collector_runtime.create_pool_with_retry",
         new_callable=mock.AsyncMock,
     )
+    async def test_startup_pacing_runs_before_pool_creation(
+        self,
+        mock_create_pool_with_retry: mock.AsyncMock,
+        _mock_feed_store: mock.MagicMock,
+    ) -> None:
+        """Startup pacing occurs after signal setup and before DB pools."""
+        with mock.patch.object(
+            socket,
+            "gethostname",
+            return_value="worker-host",
+        ):
+            rt = _make_runtime(
+                startup_stagger_max_sec=0.0,
+                lease_admission_cycle_budget=20,
+                max_feeds_per_worker=250,
+                worker_index=1,
+            )
+        call_order: list[str] = []
+        loop = asyncio.get_running_loop()
+
+        async def _sleep_or_shutdown(seconds: float) -> bool:
+            self.assertIsNotNone(rt._shutdown)
+            self.assertEqual(seconds, 0.5)
+            call_order.append("startup_sleep")
+            return False
+
+        async def _create_pool(_settings: AlloyDBSettings) -> mock.Mock:
+            call_order.append("pool")
+            return mock.Mock()
+
+        def _add_signal_handler(
+            _sig: signal.Signals,
+            _callback: Any,
+            *_args: Any,
+        ) -> None:
+            call_order.append("signal")
+
+        with (
+            mock.patch.object(
+                loop,
+                "add_signal_handler",
+                side_effect=_add_signal_handler,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.random.uniform",
+                return_value=0.5,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.aiohttp.TCPConnector"
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.aiohttp.ClientSession"
+            ),
+            mock.patch.object(
+                rt,
+                "_sleep_or_shutdown",
+                side_effect=_sleep_or_shutdown,
+            ),
+            mock.patch.object(rt, "_leasing_loop", new_callable=mock.AsyncMock),
+            mock.patch.object(
+                rt, "_shutdown_sequence", new_callable=mock.AsyncMock
+            ),
+            mock.patch("threading.Thread"),
+            mock.patch.object(rt._memory_watchdog, "start"),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.health_server.start",
+                new_callable=mock.AsyncMock,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry.configure"
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.logger",
+            ) as mock_logger,
+        ):
+            mock_create_pool_with_retry.side_effect = _create_pool
+
+            await rt._main()
+
+        self.assertEqual(call_order[:3], ["signal", "signal", "startup_sleep"])
+        self.assertIn("pool", call_order)
+        startup_payload = mock_logger.info.call_args_list[0].kwargs["extra"][
+            "json_fields"
+        ]
+        self.assertEqual(startup_payload["event_type"], "startup_pacing")
+        self.assertEqual(startup_payload["worker_id"], str(_WORKER_ID))
+        self.assertEqual(startup_payload["worker_index"], 1)
+        self.assertEqual(startup_payload["hostname"], "worker-host")
+        self.assertEqual(startup_payload["deterministic_delay_sec"], 0.0)
+        self.assertEqual(startup_payload["random_delay_sec"], 0.5)
+        self.assertEqual(startup_payload["total_delay_sec"], 0.5)
+        self.assertEqual(startup_payload["startup_stagger_max_sec"], 0.0)
+        self.assertEqual(startup_payload["startup_jitter_max_sec"], 2.0)
+        self.assertEqual(startup_payload["lease_admission_cycle_budget"], 20)
+        self.assertEqual(startup_payload["max_feeds_per_worker"], 250)
+        self.assertIsInstance(startup_payload["process_id"], int)
+
+    @mock.patch(
+        "backend.pipeline.ingestion.collector_runtime.FeedStore",
+    )
+    @mock.patch(
+        "backend.pipeline.ingestion.collector_runtime.create_pool_with_retry",
+        new_callable=mock.AsyncMock,
+    )
+    async def test_startup_pacing_shutdown_opens_no_pools(
+        self,
+        mock_create_pool_with_retry: mock.AsyncMock,
+        mock_feed_store: mock.MagicMock,
+    ) -> None:
+        """Shutdown during startup pacing returns before pool creation."""
+        rt = _make_runtime(startup_stagger_max_sec=0.0)
+
+        with (
+            mock.patch.object(
+                rt,
+                "_sleep_or_shutdown",
+                new_callable=mock.AsyncMock,
+                return_value=True,
+            ) as mock_sleep,
+            mock.patch.object(
+                rt, "_shutdown_sequence", new_callable=mock.AsyncMock
+            ) as mock_shutdown_sequence,
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.random.uniform",
+                return_value=0.25,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.logger",
+            ) as mock_logger,
+        ):
+            await rt._main()
+
+        mock_sleep.assert_awaited_once_with(0.25)
+        mock_create_pool_with_retry.assert_not_awaited()
+        mock_feed_store.assert_not_called()
+        mock_shutdown_sequence.assert_not_awaited()
+        event_types = [
+            call.kwargs["extra"]["json_fields"]["event_type"]
+            for call in mock_logger.info.call_args_list
+            if "extra" in call.kwargs
+        ]
+        self.assertIn("startup_pacing_interrupted", event_types)
+
+    @mock.patch(
+        "backend.pipeline.ingestion.collector_runtime.FeedStore",
+    )
+    @mock.patch(
+        "backend.pipeline.ingestion.collector_runtime.create_pool_with_retry",
+        new_callable=mock.AsyncMock,
+    )
     async def test_heartbeat_pool_uses_create_pool_helper(
         self,
         mock_create_pool_with_retry: mock.AsyncMock,
@@ -1592,6 +1978,7 @@ class TestLeasingLoopHeldCounts(unittest.IsolatedAsyncioTestCase):
         """count_held_by_type is awaited and its result feeds branch limits."""
         rt = _make_runtime(
             max_feeds_per_worker=250,
+            lease_admission_cycle_budget=20,
             caps={
                 SourceType.BCFY_FEEDS: 240,
                 SourceType.BCFY_CALLS: 600,
@@ -1627,12 +2014,524 @@ class TestLeasingLoopHeldCounts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call[0][0], _WORKER_ID)
 
         # The acquire call's per-type limits dict must reflect the
-        # DB-derived held: bcfy_feeds=0 (capped), other two share
-        # total_slack=250.
+        # DB-derived held: bcfy_feeds=0 (capped), other types share
+        # the admission budget.
         acquire_call = rt._store.acquire_feeds_batch.await_args_list[0]
         limits_dict = acquire_call[0][1]
         self.assertEqual(limits_dict[SourceType.BCFY_FEEDS], 0)
-        self.assertEqual(sum(limits_dict.values()), 250)
+        self.assertEqual(sum(limits_dict.values()), 20)
+
+
+class TestLeasingLoopAdmissionBudget(unittest.IsolatedAsyncioTestCase):
+    """Lease admission budget applies across primary and recovery paths."""
+
+    CAPS = {
+        SourceType.BCFY_FEEDS: 240,
+        SourceType.BCFY_CALLS: 600,
+        SourceType.OPENMHZ: 900,
+        SourceType.FIRE_NOTIFICATIONS: 300,
+    }
+
+    def test_recovery_limit_helper_includes_primary_counts(self) -> None:
+        """Recovery helper accounts for primary leases before apportioning."""
+        caps = {
+            SourceType.BCFY_FEEDS: 3,
+            SourceType.BCFY_CALLS: 5,
+            SourceType.OPENMHZ: 5,
+        }
+        held = {
+            SourceType.BCFY_FEEDS: 1,
+            SourceType.BCFY_CALLS: 0,
+            SourceType.OPENMHZ: 0,
+        }
+        primary = [
+            _make_leased_feed(uuid.UUID(int=1), SourceType.BCFY_FEEDS),
+            _make_leased_feed(uuid.UUID(int=2), SourceType.BCFY_FEEDS),
+        ]
+
+        recovery_limits = CollectorRuntime._calculate_recovery_limits(
+            admission_budget=5,
+            caps=caps,
+            held=held,
+            primary=primary,
+        )
+
+        self.assertEqual(recovery_limits[SourceType.BCFY_FEEDS], 0)
+        self.assertEqual(sum(recovery_limits.values()), 3)
+
+    async def test_admission_budget_bounds_primary_limits(self) -> None:
+        """Primary acquisition is bounded by lease_admission_cycle_budget."""
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            lease_admission_cycle_budget=20,
+            caps=self.CAPS,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(
+            self.CAPS,
+            0,
+        )
+        rt._store.acquire_feeds_batch.return_value = []
+
+        rt._shutdown.set()
+        await rt._leasing_loop()
+
+        call = rt._store.acquire_feeds_batch.await_args_list[0]
+        limits = call.args[1]
+        self.assertEqual(sum(limits.values()), 20)
+
+    async def test_recovery_skipped_when_primary_fills_budget(self) -> None:
+        """Recovery is not called when primary fills the cycle budget."""
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            lease_admission_cycle_budget=20,
+            caps=self.CAPS,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(
+            self.CAPS,
+            0,
+        )
+        primary = [_make_leased_feed(uuid.UUID(int=i + 1)) for i in range(20)]
+        rt._store.acquire_feeds_batch.return_value = primary
+
+        with mock.patch.object(
+            rt, "_process_feed", new_callable=mock.AsyncMock
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        rt._store.acquire_feeds_recovery.assert_not_awaited()
+
+    async def test_recovery_uses_remaining_admission_budget(self) -> None:
+        """Recovery asks only for budget left after primary acquisition."""
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            lease_admission_cycle_budget=5,
+            caps=self.CAPS,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(
+            self.CAPS,
+            0,
+        )
+        rt._store.acquire_feeds_batch.return_value = [
+            _make_leased_feed(uuid.UUID(int=1)),
+            _make_leased_feed(uuid.UUID(int=2)),
+            _make_leased_feed(uuid.UUID(int=3)),
+        ]
+        rt._store.acquire_feeds_recovery.return_value = []
+
+        with mock.patch.object(
+            rt, "_process_feed", new_callable=mock.AsyncMock
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        call = rt._store.acquire_feeds_recovery.await_args_list[0]
+        recovery_limits = call.args[2]
+        self.assertEqual(sum(recovery_limits.values()), 2)
+
+    async def test_recovery_limits_include_primary_counts(self) -> None:
+        """Recovery cap math includes DB-held counts plus primary leases."""
+        caps = {
+            SourceType.BCFY_FEEDS: 3,
+            SourceType.BCFY_CALLS: 5,
+            SourceType.OPENMHZ: 5,
+        }
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            lease_admission_cycle_budget=5,
+            caps=caps,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = {
+            SourceType.BCFY_FEEDS: 1,
+            SourceType.BCFY_CALLS: 0,
+            SourceType.OPENMHZ: 0,
+        }
+        rt._store.acquire_feeds_batch.return_value = [
+            _make_leased_feed(
+                uuid.UUID(int=1),
+                SourceType.BCFY_FEEDS,
+            ),
+            _make_leased_feed(
+                uuid.UUID(int=2),
+                SourceType.BCFY_FEEDS,
+            ),
+        ]
+        rt._store.acquire_feeds_recovery.return_value = []
+
+        with mock.patch.object(
+            rt, "_process_feed", new_callable=mock.AsyncMock
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        call = rt._store.acquire_feeds_recovery.await_args_list[0]
+        recovery_limits = call.args[2]
+        self.assertEqual(recovery_limits[SourceType.BCFY_FEEDS], 0)
+        self.assertEqual(sum(recovery_limits.values()), 3)
+
+    async def test_zero_recovery_budget_skips_recovery_round_trip(self) -> None:
+        """Recovery is not queried when cap math leaves no recovery capacity."""
+        caps = {SourceType.BCFY_FEEDS: 3}
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            lease_admission_cycle_budget=5,
+            caps=caps,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = {
+            SourceType.BCFY_FEEDS: 1,
+        }
+        primary = [
+            _make_leased_feed(
+                uuid.UUID(int=1),
+                SourceType.BCFY_FEEDS,
+            ),
+            _make_leased_feed(
+                uuid.UUID(int=2),
+                SourceType.BCFY_FEEDS,
+            ),
+        ]
+        rt._store.acquire_feeds_batch.return_value = primary
+
+        with mock.patch.object(
+            rt,
+            "_process_feed",
+            new_callable=mock.AsyncMock,
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        rt._store.acquire_feeds_recovery.assert_not_awaited()
+        self.assertEqual(len(rt._feed_tasks), 2)
+
+    async def test_admitted_leases_spawn_tasks_without_local_queue(
+        self,
+    ) -> None:
+        """Only leases returned in this cycle become immediate feed tasks."""
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            lease_admission_cycle_budget=5,
+            caps=self.CAPS,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(
+            self.CAPS,
+            0,
+        )
+        primary = [
+            _make_leased_feed(uuid.UUID(int=1)),
+            _make_leased_feed(uuid.UUID(int=2)),
+            _make_leased_feed(uuid.UUID(int=3)),
+        ]
+        recovery = [
+            _make_leased_feed(uuid.UUID(int=4)),
+            _make_leased_feed(uuid.UUID(int=5)),
+        ]
+        rt._store.acquire_feeds_batch.return_value = primary
+        rt._store.acquire_feeds_recovery.return_value = recovery
+
+        with mock.patch.object(
+            rt, "_process_feed", new_callable=mock.AsyncMock
+        ) as mock_process_feed:
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        self.assertEqual(len(rt._feed_tasks), 5)
+        self.assertCountEqual(
+            rt._feed_tasks,
+            [lease["id"] for lease in primary + recovery],
+        )
+        self.assertEqual(mock_process_feed.call_count, 5)
+
+    async def test_primary_leases_spawn_when_recovery_acquisition_fails(
+        self,
+    ) -> None:
+        """Primary leases are not stranded if recovery acquisition fails."""
+        rt = _make_runtime(
+            max_feeds_per_worker=250,
+            lease_admission_cycle_budget=5,
+            caps=self.CAPS,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(
+            self.CAPS,
+            0,
+        )
+        primary = [
+            _make_leased_feed(uuid.UUID(int=1)),
+            _make_leased_feed(uuid.UUID(int=2)),
+        ]
+        rt._store.acquire_feeds_batch.return_value = primary
+        rt._store.acquire_feeds_recovery.side_effect = RuntimeError(
+            "recovery unavailable",
+        )
+
+        with (
+            mock.patch.object(
+                rt, "_process_feed", new_callable=mock.AsyncMock
+            ) as mock_process_feed,
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        await asyncio.gather(*rt._feed_tasks.values(), return_exceptions=True)
+        self.assertEqual(len(rt._feed_tasks), 2)
+        self.assertCountEqual(
+            rt._feed_tasks, [lease["id"] for lease in primary]
+        )
+        self.assertEqual(mock_process_feed.call_count, 2)
+        payloads = _lease_admission_payloads(cm.records)
+        self.assertEqual(len(payloads), 1)
+        payload = payloads[0]
+        self.assertEqual(payload["primary_acquired"], 2)
+        self.assertEqual(payload["recovery_acquired"], 0)
+        self.assertEqual(payload["total_acquired"], 2)
+        self.assertEqual(payload["error"], "RuntimeError")
+
+
+class TestLeasingLoopAdmissionTelemetry(unittest.IsolatedAsyncioTestCase):
+    """Lease-loop cycles emit raw structured admission telemetry."""
+
+    CAPS = {
+        SourceType.BCFY_FEEDS: 240,
+        SourceType.BCFY_CALLS: 600,
+        SourceType.OPENMHZ: 900,
+        SourceType.FIRE_NOTIFICATIONS: 300,
+    }
+
+    async def test_normal_cycle_emits_required_schema_and_counts(self) -> None:
+        """Primary and recovery acquisitions are reported in one event."""
+        with mock.patch.object(
+            socket,
+            "gethostname",
+            return_value="worker-host",
+        ):
+            rt = _make_runtime(
+                max_feeds_per_worker=10,
+                lease_admission_cycle_budget=5,
+                worker_index=3,
+                caps=self.CAPS,
+            )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.return_value = dict.fromkeys(
+            self.CAPS,
+            0,
+        )
+        primary = [
+            _make_leased_feed(uuid.UUID(int=1)),
+            _make_leased_feed(uuid.UUID(int=2), SourceType.OPENMHZ),
+        ]
+        recovery = [_make_leased_feed(uuid.UUID(int=3))]
+        rt._store.acquire_feeds_batch.return_value = primary
+        rt._store.acquire_feeds_recovery.return_value = recovery
+
+        with (
+            mock.patch.object(rt, "_process_feed", new_callable=mock.AsyncMock),
+            mock.patch.object(
+                socket,
+                "gethostname",
+                side_effect=AssertionError("hostname should be cached"),
+            ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        await asyncio.gather(*rt._feed_tasks.values(), return_exceptions=True)
+        payloads = _lease_admission_payloads(cm.records)
+        self.assertEqual(len(payloads), 1)
+        payload = payloads[0]
+        _assert_lease_admission_schema(self, payload)
+        self.assertEqual(payload["worker_id"], str(_WORKER_ID))
+        self.assertEqual(payload["worker_index"], 3)
+        self.assertEqual(payload["hostname"], "worker-host")
+        self.assertEqual(payload["active_feeds"], 0)
+        self.assertEqual(payload["max_feeds"], 10)
+        self.assertEqual(payload["slack"], 10)
+        self.assertEqual(payload["admission_budget"], 5)
+        self.assertEqual(payload["primary_acquired"], 2)
+        self.assertEqual(payload["recovery_acquired"], 1)
+        self.assertEqual(payload["total_acquired"], 3)
+        self.assertFalse(payload["memory_paused"])
+        self.assertIsNone(payload["error"])
+
+    async def test_zero_slack_cycle_emits_zero_acquisition_event(self) -> None:
+        """Full workers still emit the raw cycle schema."""
+        with mock.patch.object(
+            socket,
+            "gethostname",
+            return_value="worker-host",
+        ):
+            rt = _make_runtime(
+                max_feeds_per_worker=1,
+                lease_admission_cycle_budget=5,
+                caps=self.CAPS,
+            )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        active_task = asyncio.create_task(asyncio.sleep(60))
+        rt._feed_tasks[_FEED_ID] = active_task
+
+        try:
+            with (
+                mock.patch.object(
+                    socket,
+                    "gethostname",
+                    side_effect=AssertionError("hostname should be cached"),
+                ),
+                self.assertLogs(
+                    "backend.pipeline.ingestion.collector_runtime",
+                    level=logging.INFO,
+                ) as cm,
+            ):
+                rt._shutdown.set()
+                await rt._leasing_loop()
+        finally:
+            active_task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await active_task
+
+        payloads = _lease_admission_payloads(cm.records)
+        self.assertEqual(len(payloads), 1)
+        payload = payloads[0]
+        _assert_lease_admission_schema(self, payload)
+        self.assertEqual(payload["active_feeds"], 1)
+        self.assertEqual(payload["max_feeds"], 1)
+        self.assertEqual(payload["slack"], 0)
+        self.assertEqual(payload["admission_budget"], 0)
+        self.assertEqual(payload["primary_acquired"], 0)
+        self.assertEqual(payload["recovery_acquired"], 0)
+        self.assertEqual(payload["total_acquired"], 0)
+        self.assertFalse(payload["memory_paused"])
+        self.assertIsNone(payload["error"])
+        rt._store.count_held_by_type.assert_not_awaited()
+        rt._store.acquire_feeds_batch.assert_not_awaited()
+
+    async def test_memory_paused_cycle_emits_pause_event(self) -> None:
+        """Memory pause emits the same schema before waiting."""
+        with mock.patch.object(
+            socket,
+            "gethostname",
+            return_value="worker-host",
+        ):
+            rt = _make_runtime(
+                max_feeds_per_worker=10,
+                lease_admission_cycle_budget=5,
+                caps=self.CAPS,
+            )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+
+        with (
+            mock.patch.object(
+                rt._memory_watchdog,
+                "is_paused",
+                return_value=True,
+            ),
+            mock.patch.object(
+                socket,
+                "gethostname",
+                side_effect=AssertionError("hostname should be cached"),
+            ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        payloads = _lease_admission_payloads(cm.records)
+        self.assertEqual(len(payloads), 1)
+        payload = payloads[0]
+        _assert_lease_admission_schema(self, payload)
+        self.assertEqual(payload["active_feeds"], 0)
+        self.assertEqual(payload["max_feeds"], 10)
+        self.assertEqual(payload["slack"], 10)
+        self.assertEqual(payload["admission_budget"], 5)
+        self.assertEqual(payload["primary_acquired"], 0)
+        self.assertEqual(payload["recovery_acquired"], 0)
+        self.assertEqual(payload["total_acquired"], 0)
+        self.assertTrue(payload["memory_paused"])
+        self.assertIsNone(payload["error"])
+        rt._store.count_held_by_type.assert_not_awaited()
+        rt._store.acquire_feeds_batch.assert_not_awaited()
+
+    async def test_exception_cycle_emits_error_without_secrets(self) -> None:
+        """Acquisition exceptions emit concise class-name evidence."""
+        with mock.patch.object(
+            socket,
+            "gethostname",
+            return_value="worker-host",
+        ):
+            rt = _make_runtime(
+                max_feeds_per_worker=10,
+                lease_admission_cycle_budget=5,
+                caps=self.CAPS,
+            )
+        rt._shutdown = asyncio.Event()
+        rt._store = mock.AsyncMock()
+        rt._releasing_feeds = set()
+        rt._store.count_held_by_type.side_effect = RuntimeError(
+            "connection string hidden"
+        )
+
+        with (
+            mock.patch.object(
+                socket,
+                "gethostname",
+                side_effect=AssertionError("hostname should be cached"),
+            ),
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.INFO,
+            ) as cm,
+        ):
+            rt._shutdown.set()
+            await rt._leasing_loop()
+
+        payloads = _lease_admission_payloads(cm.records)
+        self.assertEqual(len(payloads), 1)
+        payload = payloads[0]
+        _assert_lease_admission_schema(self, payload)
+        self.assertEqual(payload["active_feeds"], 0)
+        self.assertEqual(payload["max_feeds"], 10)
+        self.assertEqual(payload["slack"], 10)
+        self.assertEqual(payload["admission_budget"], 5)
+        self.assertEqual(payload["primary_acquired"], 0)
+        self.assertEqual(payload["recovery_acquired"], 0)
+        self.assertEqual(payload["total_acquired"], 0)
+        self.assertFalse(payload["memory_paused"])
+        self.assertEqual(payload["error"], "RuntimeError")
 
 
 class TestSigtermRelease(unittest.IsolatedAsyncioTestCase):
