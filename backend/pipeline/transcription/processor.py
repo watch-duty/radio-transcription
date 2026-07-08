@@ -9,6 +9,7 @@ import base64
 import logging
 from typing import Any
 
+import aiohttp
 import grpc
 import httpx
 import requests
@@ -336,6 +337,7 @@ def _is_transient_exception(e: Exception) -> bool:
             | requests.exceptions.ConnectionError()
             | httpx.RequestError()
             | httpx.TimeoutException()
+            | aiohttp.ClientError()
         ):
             return True
 

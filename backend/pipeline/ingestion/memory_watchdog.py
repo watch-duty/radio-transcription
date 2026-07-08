@@ -68,7 +68,9 @@ class MemoryWatchdog:
         loop: asyncio.AbstractEventLoop,
         shutdown_event: asyncio.Event,
     ) -> None:
-        """Start the watchdog thread, or disable it if no cgroup limit exists."""
+        """Start the watchdog thread, or disable it if no cgroup limit
+        exists.
+        """
         if self._started:
             msg = "Memory watchdog cannot be started more than once"
             raise RuntimeError(msg)

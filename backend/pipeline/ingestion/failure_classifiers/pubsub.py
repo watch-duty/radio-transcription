@@ -1,4 +1,7 @@
-"""Render Pub/Sub publish failure evidence for pipeline status reason details."""
+"""Render Pub/Sub publish failure evidence for pipeline status reason
+
+details.
+"""
 
 from __future__ import annotations
 

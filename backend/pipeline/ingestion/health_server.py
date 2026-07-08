@@ -71,7 +71,8 @@ async def _healthz(request: web.Request) -> web.Response:
             },
         )
 
-    # Gate 1: Heartbeat dispatch freshness. Threshold = 2x heartbeat_interval_sec.
+    # Gate 1: Heartbeat dispatch freshness. Threshold = 2x
+    # heartbeat_interval_sec.
     # Stamped at the start of each cycle (not on DB success), so this gate
     # fails only when the event loop stops dispatching the cycle at all —
     # not when the DB is transiently unreachable. Event-loop wedges are
