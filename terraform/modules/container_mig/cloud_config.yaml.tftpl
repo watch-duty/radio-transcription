@@ -56,6 +56,16 @@ ${env_file_content}
     # --network host lets the VM Health container reach worker health ports on
     # the HOST loopback. Pass only explicit non-secret VM_HEALTH_* values; do
     # not mount or pass the broad worker env file into this container.
+    #
+    # VM Health timing contract:
+    # - 2s worker probe timeout: local loopback /healthz should be fast, and a
+    #   wedged worker must not stall the VM Health probe loop.
+    # - 5s probe interval: sample worker state faster than GCP's 30s health
+    #   check cadence.
+    # - 600s continuous all-workers-down hysteresis: only mark the VM unhealthy
+    #   after every configured worker is down for 10 minutes.
+    # The health agent is stateless and only needs to close its aiohttp session,
+    # so its stop budget can stay short; worker units keep the long drain budget.
     ExecStart=/usr/bin/docker run --rm --name ${service_name}-health \
         --network host \
         -e VM_HEALTH_WORKER_ENDPOINTS=${vm_health_worker_endpoints} \

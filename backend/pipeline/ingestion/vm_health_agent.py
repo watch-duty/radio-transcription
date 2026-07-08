@@ -27,6 +27,22 @@ _DEFAULT_WORKER_ENDPOINTS = (
     "http://127.0.0.1:8081/healthz",
     "http://127.0.0.1:8082/healthz",
 )
+_DEFAULT_PROBE_TIMEOUT_SEC = 2.0
+_DEFAULT_PROBE_INTERVAL_SEC = 5.0
+_DEFAULT_LISTEN_PORT = 8080
+_DEFAULT_HYSTERESIS_SEC = 600.0
+
+_MIN_PROBE_TIMEOUT_SEC = 0.1
+_MAX_PROBE_TIMEOUT_SEC = 10.0
+_MIN_PROBE_INTERVAL_SEC = 1.0
+_MAX_PROBE_INTERVAL_SEC = 60.0
+_MIN_HYSTERESIS_SEC = 60.0
+_MAX_HYSTERESIS_SEC = 3600.0
+
+# Fail closed when the VM Health agent itself stops completing probes for
+# three expected cycles. This is monitor self-health, not worker health, so it
+# intentionally bypasses the worker-down hysteresis.
+_PROBE_STALE_MISSED_CYCLES = 3.0
 
 
 def _worker_endpoints_from_env() -> tuple[str, ...]:
@@ -34,15 +50,43 @@ def _worker_endpoints_from_env() -> tuple[str, ...]:
         "VM_HEALTH_WORKER_ENDPOINTS",
         ",".join(_DEFAULT_WORKER_ENDPOINTS),
     )
-    return tuple(endpoint.strip() for endpoint in raw.split(",") if endpoint)
+    return tuple(
+        stripped
+        for endpoint in raw.split(",")
+        if (stripped := endpoint.strip())
+    )
 
 
-def _positive_float_from_env(name: str, default: str) -> float:
-    return float(os.environ.get(name, default))
+def _float_from_env(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError as exc:
+        msg = f"{name} ({raw!r}) must be a float."
+        raise ValueError(msg) from exc
 
 
 def _listen_port_from_env() -> int:
-    return int(os.environ.get("VM_HEALTH_LISTEN_PORT", "8080"))
+    return int(
+        os.environ.get("VM_HEALTH_LISTEN_PORT", str(_DEFAULT_LISTEN_PORT))
+    )
+
+
+def _validate_float_range(
+    name: str,
+    value: float,
+    *,
+    min_value: float,
+    max_value: float,
+) -> None:
+    if not math.isfinite(value) or value < min_value or value > max_value:
+        msg = (
+            f"{name} ({value}s) must be finite and between "
+            f"{min_value}s and {max_value}s."
+        )
+        raise ValueError(msg)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -53,15 +97,15 @@ class VMHealthSettings:
         default_factory=_worker_endpoints_from_env,
     )
     probe_timeout_sec: float = field(
-        default_factory=lambda: _positive_float_from_env(
+        default_factory=lambda: _float_from_env(
             "VM_HEALTH_PROBE_TIMEOUT_SEC",
-            "2.0",
+            _DEFAULT_PROBE_TIMEOUT_SEC,
         ),
     )
     probe_interval_sec: float = field(
-        default_factory=lambda: _positive_float_from_env(
+        default_factory=lambda: _float_from_env(
             "VM_HEALTH_PROBE_INTERVAL_SEC",
-            "5.0",
+            _DEFAULT_PROBE_INTERVAL_SEC,
         ),
     )
     listen_host: str = field(
@@ -72,22 +116,47 @@ class VMHealthSettings:
     )
     listen_port: int = field(default_factory=_listen_port_from_env)
     hysteresis_sec: float = field(
-        default_factory=lambda: _positive_float_from_env(
+        default_factory=lambda: _float_from_env(
             "VM_HEALTH_HYSTERESIS_SEC",
-            "600.0",
+            _DEFAULT_HYSTERESIS_SEC,
         ),
     )
 
     def __post_init__(self) -> None:
-        numeric_values = (
-            ("probe_timeout_sec", self.probe_timeout_sec),
-            ("probe_interval_sec", self.probe_interval_sec),
-            ("hysteresis_sec", self.hysteresis_sec),
+        float_ranges = (
+            (
+                "probe_timeout_sec",
+                self.probe_timeout_sec,
+                _MIN_PROBE_TIMEOUT_SEC,
+                _MAX_PROBE_TIMEOUT_SEC,
+            ),
+            (
+                "probe_interval_sec",
+                self.probe_interval_sec,
+                _MIN_PROBE_INTERVAL_SEC,
+                _MAX_PROBE_INTERVAL_SEC,
+            ),
+            (
+                "hysteresis_sec",
+                self.hysteresis_sec,
+                _MIN_HYSTERESIS_SEC,
+                _MAX_HYSTERESIS_SEC,
+            ),
         )
-        for name, value in numeric_values:
-            if not math.isfinite(value) or value <= 0:
-                msg = f"{name} ({value}) must be finite and greater than zero."
-                raise ValueError(msg)
+        for name, value, min_value, max_value in float_ranges:
+            _validate_float_range(
+                name,
+                value,
+                min_value=min_value,
+                max_value=max_value,
+            )
+
+        if self.probe_timeout_sec >= self.probe_interval_sec:
+            msg = (
+                f"probe_timeout_sec ({self.probe_timeout_sec}s) must be less "
+                f"than probe_interval_sec ({self.probe_interval_sec}s)."
+            )
+            raise ValueError(msg)
 
         if self.listen_port <= 0 or self.listen_port > 65535:
             msg = (
@@ -114,6 +183,11 @@ class VMHealthSettings:
                 "worker_endpoints must not reference the VM Health listen_port."
             )
             raise ValueError(msg)
+
+    @property
+    def probe_stale_after_sec(self) -> float:
+        """Return the monitor self-health deadline for missed probe cycles."""
+        return self.probe_interval_sec * _PROBE_STALE_MISSED_CYCLES
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -352,7 +426,7 @@ async def _healthz(request: web.Request) -> web.Response:
     decision = state.current_decision(
         now=time.monotonic(),
         hysteresis_sec=settings.hysteresis_sec,
-        probe_stale_after_sec=settings.probe_interval_sec * 3.0,
+        probe_stale_after_sec=settings.probe_stale_after_sec,
     )
     return web.json_response(
         {

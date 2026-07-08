@@ -84,6 +84,24 @@ class ContainerMigHealthWiringTests(unittest.TestCase):
             with self.subTest(env_var=env_var):
                 self.assertIn(env_var, health_unit)
 
+    def test_vm_health_unit_documents_timing_contract(self) -> None:
+        cloud_config = _text(_CLOUD_CONFIG)
+        health_unit = _file_entry(
+            cloud_config,
+            "/etc/systemd/system/${service_name}-health.service",
+        )
+
+        expected_fragments = (
+            "VM Health timing contract",
+            "2s worker probe timeout",
+            "5s probe interval",
+            "600s continuous all-workers-down hysteresis",
+            "stateless and only needs to close its aiohttp session",
+        )
+        for fragment in expected_fragments:
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, health_unit)
+
     def test_vm_health_unit_reasserts_host_firewall_rule(self) -> None:
         cloud_config = _text(_CLOUD_CONFIG)
         health_unit = _file_entry(

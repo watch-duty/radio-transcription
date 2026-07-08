@@ -5,7 +5,6 @@ import os
 import signal
 import time
 import unittest
-from typing import cast
 from unittest import mock
 
 import aiohttp
@@ -67,7 +66,7 @@ class VMHealthSettingsTests(unittest.TestCase):
             "VM_HEALTH_PROBE_INTERVAL_SEC": "7.5",
             "VM_HEALTH_LISTEN_HOST": "127.0.0.1",
             "VM_HEALTH_LISTEN_PORT": "9090",
-            "VM_HEALTH_HYSTERESIS_SEC": "30.0",
+            "VM_HEALTH_HYSTERESIS_SEC": "120.0",
         }
         with mock.patch.dict(os.environ, env, clear=True):
             settings = vm_health_agent.VMHealthSettings()
@@ -84,24 +83,85 @@ class VMHealthSettingsTests(unittest.TestCase):
         self.assertEqual(settings.probe_interval_sec, 7.5)
         self.assertEqual(settings.listen_host, "127.0.0.1")
         self.assertEqual(settings.listen_port, 9090)
-        self.assertEqual(settings.hysteresis_sec, 30.0)
+        self.assertEqual(settings.hysteresis_sec, 120.0)
+
+    def test_timing_boundary_values_are_valid(self) -> None:
+        cases = (
+            {
+                "VM_HEALTH_PROBE_TIMEOUT_SEC": "0.1",
+                "VM_HEALTH_PROBE_INTERVAL_SEC": "1.0",
+                "VM_HEALTH_HYSTERESIS_SEC": "60.0",
+            },
+            {
+                "VM_HEALTH_PROBE_TIMEOUT_SEC": "10.0",
+                "VM_HEALTH_PROBE_INTERVAL_SEC": "60.0",
+                "VM_HEALTH_HYSTERESIS_SEC": "3600.0",
+            },
+        )
+        for env in cases:
+            with self.subTest(env=env):
+                with mock.patch.dict(os.environ, env, clear=True):
+                    settings = vm_health_agent.VMHealthSettings()
+
+                self.assertEqual(
+                    settings.probe_timeout_sec,
+                    float(env["VM_HEALTH_PROBE_TIMEOUT_SEC"]),
+                )
+                self.assertEqual(
+                    settings.probe_interval_sec,
+                    float(env["VM_HEALTH_PROBE_INTERVAL_SEC"]),
+                )
+                self.assertEqual(
+                    settings.hysteresis_sec,
+                    float(env["VM_HEALTH_HYSTERESIS_SEC"]),
+                )
 
     def test_rejects_invalid_numeric_settings(self) -> None:
         cases = (
             ("VM_HEALTH_PROBE_TIMEOUT_SEC", "0"),
+            ("VM_HEALTH_PROBE_TIMEOUT_SEC", "0.09"),
+            ("VM_HEALTH_PROBE_TIMEOUT_SEC", "10.01"),
             ("VM_HEALTH_PROBE_TIMEOUT_SEC", "inf"),
             ("VM_HEALTH_PROBE_INTERVAL_SEC", "-1"),
+            ("VM_HEALTH_PROBE_INTERVAL_SEC", "0.99"),
+            ("VM_HEALTH_PROBE_INTERVAL_SEC", "60.01"),
             ("VM_HEALTH_PROBE_INTERVAL_SEC", "nan"),
             ("VM_HEALTH_LISTEN_PORT", "0"),
             ("VM_HEALTH_LISTEN_PORT", "65536"),
             ("VM_HEALTH_HYSTERESIS_SEC", "0"),
             ("VM_HEALTH_HYSTERESIS_SEC", "-10"),
+            ("VM_HEALTH_HYSTERESIS_SEC", "59.99"),
+            ("VM_HEALTH_HYSTERESIS_SEC", "3600.01"),
         )
         for name, value in cases:
             with self.subTest(name=name, value=value):
                 with mock.patch.dict(os.environ, {name: value}, clear=True):
                     with self.assertRaises(ValueError):
                         vm_health_agent.VMHealthSettings()
+
+    def test_rejects_probe_timeout_at_or_above_probe_interval(self) -> None:
+        cases = (
+            {
+                "VM_HEALTH_PROBE_TIMEOUT_SEC": "5.0",
+                "VM_HEALTH_PROBE_INTERVAL_SEC": "5.0",
+            },
+            {
+                "VM_HEALTH_PROBE_TIMEOUT_SEC": "6.0",
+                "VM_HEALTH_PROBE_INTERVAL_SEC": "5.0",
+            },
+        )
+        for env in cases:
+            with self.subTest(env=env):
+                with mock.patch.dict(os.environ, env, clear=True):
+                    with self.assertRaises(ValueError):
+                        vm_health_agent.VMHealthSettings()
+
+    def test_probe_stale_after_sec_is_three_missed_probe_cycles(self) -> None:
+        settings = vm_health_agent.VMHealthSettings(
+            probe_interval_sec=7.5,
+        )
+
+        self.assertEqual(settings.probe_stale_after_sec, 22.5)
 
     def test_accepts_one_or_more_distinct_local_worker_endpoints(self) -> None:
         cases = (
@@ -117,6 +177,14 @@ class VMHealthSettingsTests(unittest.TestCase):
                     "http://127.0.0.1:8081/healthz",
                     "http://127.0.0.1:8082/healthz",
                     "http://127.0.0.1:8083/healthz",
+                ),
+            ),
+            (
+                " http://127.0.0.1:8081/healthz, ,"
+                " http://127.0.0.1:8082/healthz ",
+                (
+                    "http://127.0.0.1:8081/healthz",
+                    "http://127.0.0.1:8082/healthz",
                 ),
             ),
         )
@@ -233,11 +301,8 @@ class WorkerProbeTests(AioHTTPTestCase):
         self.assertIsNotNone(client_error.error)
 
     async def test_unexpected_probe_exception_is_unhealthy_result(self) -> None:
-        class BrokenSession:
-            def get(self, *args: object, **kwargs: object) -> object:
-                raise RuntimeError
-
-        session = cast("aiohttp.ClientSession", BrokenSession())
+        session = mock.MagicMock(spec=aiohttp.ClientSession)
+        session.get.side_effect = RuntimeError
         result = await vm_health_agent.probe_worker(
             session,
             "http://127.0.0.1:8081/healthz",
@@ -446,7 +511,10 @@ class VMHealthHandlerTests(AioHTTPTestCase):
         self.assertEqual(body["all_workers_unhealthy_for_sec"], 0.0)
         self.assertEqual(body["hysteresis_sec"], 600.0)
         self.assertFalse(body["probe_stale"])
-        self.assertEqual(body["probe_stale_after_sec"], 180.0)
+        self.assertEqual(
+            body["probe_stale_after_sec"],
+            self.settings.probe_stale_after_sec,
+        )
         self.assertLess(
             body["last_probe_completed_ago_sec"],
             body["probe_stale_after_sec"],
@@ -479,7 +547,7 @@ class VMHealthHandlerTests(AioHTTPTestCase):
 
     async def test_stale_probe_loop_returns_503(self) -> None:
         self.state.last_probe_completed_at = (
-            time.monotonic() - (self.settings.probe_interval_sec * 3.0) - 1.0
+            time.monotonic() - self.settings.probe_stale_after_sec - 1.0
         )
 
         status, body = await self._get_healthz()
@@ -487,7 +555,10 @@ class VMHealthHandlerTests(AioHTTPTestCase):
         self.assertEqual(status, 503)
         self.assertEqual(body["status"], "unhealthy")
         self.assertTrue(body["probe_stale"])
-        self.assertGreater(body["last_probe_completed_ago_sec"], 180.0)
+        self.assertGreater(
+            body["last_probe_completed_ago_sec"],
+            self.settings.probe_stale_after_sec,
+        )
 
 
 class VMHealthServeForeverTests(unittest.IsolatedAsyncioTestCase):
