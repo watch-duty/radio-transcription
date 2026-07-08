@@ -174,6 +174,9 @@ class AudioStitchingStateMachine:
         )
         end_ms = clamp_to_start(end_ms, "end_ms")
 
+        is_speech = (
+            audio_classification == SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH
+        )
         return FlushAction(
             reason=reason,
             feed_id=ctx.feed_id,
@@ -187,8 +190,10 @@ class AudioStitchingStateMachine:
                 start_ms=ctx.transmission_start_time_ms,
                 end_ms=end_ms,
             ),
-            missing_prior_context=ctx.missing_prior_context,
-            missing_post_context=missing_post_context,
+            missing_prior_context=ctx.missing_prior_context
+            if is_speech
+            else False,
+            missing_post_context=missing_post_context if is_speech else False,
             start_audio_offset_ms=max(0, ctx.start_audio_offset_ms or 0),
             end_audio_offset_ms=max(
                 0,
@@ -466,11 +471,11 @@ class AudioStitchingStateMachine:
                 self._flush_current_transmission(
                     "Maximum non-speech transmission duration exceeded",
                     ctx,
-                    missing_post_context=True,
+                    missing_post_context=False,
                     audio_classification=SegmentedAudio.AUDIO_CLASSIFICATION_OTHER,
                 )
             )
-            ctx.missing_prior_context = True
+            ctx.missing_prior_context = False
             self._reset_transmission_context(ctx)
 
         if ctx.transmission_start_time_ms is None:
