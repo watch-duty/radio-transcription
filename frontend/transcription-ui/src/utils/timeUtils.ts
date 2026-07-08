@@ -36,6 +36,14 @@ export function formatClockTime(
   });
 }
 
+// Short month/day, e.g. "Jun 26" — the timeline overview's day-boundary labels.
+export function formatMonthDay(timestamp: number): string {
+  return new Date(timestamp).toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
+  });
+}
+
 export function getRelativeTimeString(
   dateValue?: string | Date | number,
   capAtMinute = true
