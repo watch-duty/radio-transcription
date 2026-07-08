@@ -12,7 +12,6 @@ describe('AudioControl', () => {
   const mockOnFastForward = vi.fn();
   const mockOnFastRewind = vi.fn();
   const mockOnSkipTime = vi.fn();
-  const mockTogglePlayLatestAudio = vi.fn();
 
   const defaultProps = {
     isAudioPlaying: false,
@@ -22,8 +21,6 @@ describe('AudioControl', () => {
     onFastForward: mockOnFastForward,
     onFastRewind: mockOnFastRewind,
     onSkipTime: mockOnSkipTime,
-    playLatestAudio: true,
-    togglePlayLatestAudio: mockTogglePlayLatestAudio,
   };
 
   beforeEach(() => {
@@ -34,7 +31,7 @@ describe('AudioControl', () => {
     cleanup();
   });
 
-  it('renders all buttons and the checkbox with correct aria-labels', () => {
+  it('renders all buttons with correct aria-labels', () => {
     render(<AudioControl {...defaultProps} />);
 
     expect(
@@ -48,9 +45,16 @@ describe('AudioControl', () => {
     expect(
       screen.getByLabelText('advance to next detected speech')
     ).toBeTruthy();
-    expect(
-      screen.getByRole('checkbox', { name: 'Always play latest audio' })
-    ).toBeTruthy();
+  });
+
+  it('renders the settings button slot next to the transport buttons', () => {
+    render(
+      <AudioControl
+        {...defaultProps}
+        settingsButton={<button>audio settings</button>}
+      />
+    );
+    expect(screen.getByRole('button', { name: 'audio settings' })).toBeTruthy();
   });
 
   it('shows pause icon when isAudioPlaying is true', () => {
@@ -103,15 +107,6 @@ describe('AudioControl', () => {
     expect(mockOnFastForward).toHaveBeenCalledTimes(1);
   });
 
-  it('triggers callback when checkbox is toggled', () => {
-    render(<AudioControl {...defaultProps} />);
-    const checkbox = screen.getByRole('checkbox', {
-      name: 'Always play latest audio',
-    });
-    fireEvent.click(checkbox);
-    expect(mockTogglePlayLatestAudio).toHaveBeenCalledWith(false);
-  });
-
   it('disables all buttons when disableControls is true', () => {
     render(<AudioControl {...defaultProps} disableControls={true} />);
 
@@ -125,13 +120,6 @@ describe('AudioControl', () => {
     expect(screen.getByLabelText('advance to next segment')).toBeDisabled();
     expect(
       screen.getByLabelText('advance to next detected speech')
-    ).toBeDisabled();
-  });
-
-  it('disables the checkbox when disableCheckbox is true', () => {
-    render(<AudioControl {...defaultProps} disableCheckbox={true} />);
-    expect(
-      screen.getByRole('checkbox', { name: 'Always play latest audio' })
     ).toBeDisabled();
   });
 });
