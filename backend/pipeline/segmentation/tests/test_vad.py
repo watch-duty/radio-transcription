@@ -259,6 +259,16 @@ class TestVadEngine(unittest.TestCase):
             baseline_f1=0.850,
         )
 
+    def test_integration_cajon_pass_trailing_file(self) -> None:
+        """Integration test to verify VAD performance on test_cajon_pass_trailing.flac (trailing scanner speech)."""
+        self._run_integration_test(
+            "test_cajon_pass_trailing.flac",
+            [
+                (35.41, 36.47),
+            ],
+            baseline_f1=0.640,
+        )
+
     def test_integration_dispatch_amador_file(self) -> None:
         """Integration test to verify VAD performance on test_dispatch_amador.flac (continuous dispatch)."""
         self._run_integration_test(

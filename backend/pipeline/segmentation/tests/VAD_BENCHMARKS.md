@@ -28,8 +28,10 @@ All metrics below are evaluated under the official production configuration: **`
 | **`test_subaudible_flickering.flac`** | **1.000** | `1.000` | `1.000` | 72Hz electrical flickering interference (100% rejected). |
 | **`test_vad_deafening_dispatcher_ems.flac`** | **0.494** | `1.000` | `0.328` | Loud dispatcher followed by quiet EMS (3s real noise warmup). Captures dispatcher and parts of both EMS segments. |
 | **`test_vad_deafening_static_preamble.flac`** | **0.703** | `0.996` | `0.471` | Quiet speech preceded by 1.4s of static (3s real noise warmup). Captures the majority of the speech. |
+| **`test_cajon_pass_trailing.flac`** | **0.650** | `0.485` | `1.000` | Trailing scanner speech preceded by open-squelch static (Cajon Pass feed). Captures 100% of speech at onset 0.25. |
 
 *Note: For static-only files, an empty detection matching empty ground truth yields a perfect `1.000` across all metrics.*
+*Note on Onset Sensitivity Optimization: `VAD_DEFAULT_THRESHOLD_ONSET` was lowered from `0.35` to `0.25` to resolve trailing speech suppression across streaming boundaries on Broadcastify scanner traffic.*
 
 ---
 
