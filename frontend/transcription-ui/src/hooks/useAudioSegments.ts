@@ -9,6 +9,7 @@ import {
 import type { AudioSegment } from '@transcription/common';
 
 import { listAudioSegments } from '../service/listAudioSegments';
+import { useAudioWindowPreload } from './useAudioWindowPreload';
 
 export type ListAudioSegmentsPage = {
   nextToken?: string;
@@ -31,6 +32,10 @@ const POLLING_LOOKBACK_BUFFER_MS = 90 * 1000;
 // How often the live "newer segments" poll runs while at the head of the stream.
 const POLL_INTERVAL_MS = 10000;
 
+// Page size when preloadWindowMs is set, to cover the 24h window in fewer
+// round-trips. Plain scroll keeps the server default (100) to avoid over-fetching.
+const AUDIO_SEGMENTS_PAGE_LIMIT = 500;
+
 interface UseAudioSegmentsOptions {
   token: string | null;
   searchedFeedId: string | null;
@@ -45,6 +50,10 @@ interface UseAudioSegmentsOptions {
   // cache, so the view can run UI side effects (snackbar, autoplay, unread).
   onNewSegments?: (segments: AudioSegment[]) => void;
   searchQuery?: string;
+  // When set, eagerly preload this span into the list in
+  // AUDIO_SEGMENTS_PAGE_LIMIT batches (direction per useAudioWindowPreload).
+  // Unset: server-default page size (100), no preload — the list pages on scroll.
+  preloadWindowMs?: number;
 }
 
 export function useAudioSegments({
@@ -56,6 +65,7 @@ export function useAudioSegments({
   pollingEnabled,
   onNewSegments,
   searchQuery,
+  preloadWindowMs,
 }: UseAudioSegmentsOptions) {
   const queryClient = useQueryClient();
 
@@ -67,8 +77,16 @@ export function useAudioSegments({
       searchedTimestamp,
       alertFilter,
       searchQuery,
+      preloadWindowMs,
     ],
-    [token, searchedFeedId, searchedTimestamp, alertFilter, searchQuery]
+    [
+      token,
+      searchedFeedId,
+      searchedTimestamp,
+      alertFilter,
+      searchQuery,
+      preloadWindowMs,
+    ]
   );
 
   const {
@@ -91,7 +109,8 @@ export function useAudioSegments({
       const pageParamTyped = pageParam as ListAudioSegmentsPage | undefined;
       const order =
         pageParamTyped?.order ?? (searchedTimestamp ? 'asc' : 'desc');
-      const limit = undefined;
+      // Larger pages only when preloading the window; otherwise the server default.
+      const limit = preloadWindowMs ? AUDIO_SEGMENTS_PAGE_LIMIT : undefined;
 
       const originalTimestampMs =
         !pageParamTyped?.nextToken && searchedTimestamp
@@ -171,6 +190,24 @@ export function useAudioSegments({
   }, [listAudioSegmentsResponse]);
 
   const newestTimestamp = rawAudioSegments[0]?.startTimestamp;
+
+  // Drives the preload off this query's own pagination, so preloaded segments
+  // land in the same list the view renders. Inert unless preloadWindowMs is set.
+  useAudioWindowPreload({
+    enabled: isAudioSegmentsSuccess,
+    windowMs: preloadWindowMs,
+    anchorTimestamp: searchedTimestamp,
+    segments: rawAudioSegments,
+    hasOlder: hasOlderAudioSegments,
+    hasNewer: hasNewerAudioSegments,
+    isFetchingOlder: isFetchingOlderAudioSegments,
+    isFetchingNewer: isFetchingNewerAudioSegments,
+    fetchOlder: fetchNextPage,
+    fetchNewer: fetchPreviousPage,
+    // Mirror the queryKey identity so the page counters reset whenever the query
+    // refetches a fresh first page; a stale key would under-preload the new one.
+    resetKey: `${token}|${searchedFeedId}|${searchedTimestamp?.getTime() ?? ''}|${alertFilter}|${searchQuery}|${preloadWindowMs ?? ''}`,
+  });
 
   const pollNewerAudioSegments = useCallback(async (): Promise<
     AudioSegment[]

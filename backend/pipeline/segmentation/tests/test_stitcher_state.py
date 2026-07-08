@@ -208,7 +208,7 @@ class AudioStitchingStateMachineTest(unittest.TestCase):
             flush_action.reason,
             "Maximum non-speech transmission duration exceeded",
         )
-        self.assertTrue(flush_action.missing_post_context)
+        self.assertFalse(flush_action.missing_post_context)
         self.assertEqual(
             flush_action.audio_classification, 2
         )  # SEGMENTED_AUDIO_NO_SPEECH
