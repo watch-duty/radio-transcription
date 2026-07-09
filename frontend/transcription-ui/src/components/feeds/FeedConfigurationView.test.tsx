@@ -1145,4 +1145,99 @@ describe('FeedConfigurationView', () => {
       );
     });
   });
+
+  it('orchestrates update, deactivate, and reset when timezone tag changes on an active feed', async () => {
+    const mockUpdatedFeed = {
+      ...mockFeeds[0],
+      tags: [{ key: 'system/timezone', value: 'America/New_York' }],
+    };
+    vi.mocked(updateFeed).mockResolvedValue(mockUpdatedFeed);
+    vi.mocked(deactivateFeed).mockResolvedValue(undefined);
+    vi.mocked(resetFeed).mockResolvedValue(mockUpdatedFeed);
+
+    renderView();
+
+    // Start editing feed-1 (which is active)
+    await waitFor(() => {
+      expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
+    });
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Marin Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const editFormCard = screen.getByTestId('feed-config-card');
+
+    // Add system/timezone tag
+    const tagKeyInput = within(editFormCard).getAllByLabelText('Key')[0];
+    const addTagBtn = within(editFormCard).getByRole('button', {
+      name: 'Add Tag',
+    });
+
+    fireEvent.change(tagKeyInput, { target: { value: 'system/timezone' } });
+
+    const timezoneSelect = within(editFormCard).getByRole('combobox', {
+      name: /Timezone/i,
+    });
+    fireEvent.mouseDown(timezoneSelect);
+
+    const option = await screen.findByRole('option', {
+      name: 'America/New_York',
+    });
+    fireEvent.click(option);
+
+    fireEvent.click(addTagBtn);
+
+    // Stub setTimeout just before submitting to accelerate the orchestration wait loop
+    const originalSetTimeout = global.setTimeout;
+    vi.stubGlobal('setTimeout', (fn: () => void, delay?: number) => {
+      if (delay === 1000) {
+        return originalSetTimeout(fn, 0);
+      }
+      return originalSetTimeout(fn, delay);
+    });
+
+    // Save changes
+    const submitBtn = within(editFormCard).getByRole('button', {
+      name: /Save changes/i,
+    });
+    fireEvent.click(submitBtn);
+
+    // Assert no errors were thrown during orchestration (helps debug if it did)
+    expect(mockOnError).not.toHaveBeenCalled();
+
+    // Verify all calls happened (since setTimeout resolves immediately in microtask)
+    await waitFor(
+      () => {
+        expect(updateFeed).toHaveBeenCalledWith(
+          'feed-1',
+          {
+            name: 'Marin Fire Dispatch',
+            tags: [
+              { key: 'county', value: 'Marin' },
+              { key: 'system/timezone', value: 'America/New_York' },
+            ],
+          },
+          'fake-jwt-token-xyz'
+        );
+        expect(deactivateFeed).toHaveBeenCalledWith(
+          'feed-1',
+          'fake-jwt-token-xyz'
+        );
+        expect(resetFeed).toHaveBeenCalledWith('feed-1', 'fake-jwt-token-xyz');
+      },
+      { timeout: 2000 }
+    );
+
+    // Restore original setTimeout before verifying the post-submit view updates
+    vi.unstubAllGlobals();
+
+    // Verification of success state
+    await waitFor(() => {
+      expect(mockTriggerSnackbar).toHaveBeenCalledWith(
+        'Feed "Marin Fire Dispatch" updated and restarted successfully!'
+      );
+      expect(screen.getByText('Register New Feed')).toBeInTheDocument();
+    });
+  });
 });

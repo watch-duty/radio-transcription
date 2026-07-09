@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import AppRegistrationIcon from '@mui/icons-material/AppRegistration';
+import Backdrop from '@mui/material/Backdrop';
 import Box from '@mui/material/Box';
+import CircularProgress from '@mui/material/CircularProgress';
 import Grid from '@mui/material/Grid';
 import Typography from '@mui/material/Typography';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -10,6 +12,7 @@ import type {
   FeedCreate,
   FeedUpdate,
   ListFeedsResponse,
+  Tag,
 } from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
@@ -31,6 +34,15 @@ interface FeedConfigurationViewProps {
 
 const QUERY_DEBOUNCE_TIME_MS = 300;
 
+function hasTimezoneChanged(
+  originalTags: Tag[] | undefined,
+  newTags: Tag[] | undefined
+): boolean {
+  const origTz = originalTags?.find((t) => t.key === 'system/timezone')?.value;
+  const newTz = newTags?.find((t) => t.key === 'system/timezone')?.value;
+  return origTz !== newTz;
+}
+
 export function FeedConfigurationView({
   triggerSnackbar,
   onError,
@@ -44,6 +56,9 @@ export function FeedConfigurationView({
   const [sourceType, setSourceType] = useState(SourceType.BCFY_FEEDS);
   const [sourceFeedId, setSourceFeedId] = useState('');
   const [tags, setTags] = useState<TagRow[]>([]);
+  const [orchestrationStatus, setOrchestrationStatus] = useState<string | null>(
+    null
+  );
 
   const [filters, setFilters] = useState<FeedFilters>({
     searchQuery: '',
@@ -236,7 +251,43 @@ export function FeedConfigurationView({
   };
 
   const handleUpdateFeed = async (feedId: string, payload: FeedUpdate) => {
-    await updateMutation.mutateAsync({ feedId, updatePayload: payload });
+    const originalFeed = feeds.find((f) => f.id === feedId);
+    const tzChanged = hasTimezoneChanged(originalFeed?.tags, payload.tags);
+    const isRunning =
+      originalFeed?.substatus === 'active' ||
+      originalFeed?.substatus === 'failing';
+
+    if (tzChanged && isRunning) {
+      try {
+        setOrchestrationStatus('Updating feed configuration...');
+        await updateFeed(feedId, payload, token!);
+
+        setOrchestrationStatus('Stopping active ingestion...');
+        await deactivateFeed(feedId, token!);
+
+        for (let i = 20; i > 0; i--) {
+          setOrchestrationStatus(
+            `Waiting for worker to release lease safely (${i}s)...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+
+        setOrchestrationStatus('Restarting feed...');
+        await resetFeed(feedId, token!);
+
+        triggerSnackbar(
+          `Feed "${payload.name}" updated and restarted successfully!`
+        );
+      } catch (error) {
+        onError(error as Error, 'Orchestrated Feed Restart');
+      } finally {
+        setOrchestrationStatus(null);
+        setIsEditing(false);
+        resetFormAndRefresh();
+      }
+    } else {
+      await updateMutation.mutateAsync({ feedId, updatePayload: payload });
+    }
   };
 
   const handleStartEdit = (feed: Feed) => {
@@ -260,7 +311,8 @@ export function FeedConfigurationView({
     updateMutation.isPending ||
     deleteMutation.isPending ||
     deactivateMutation.isPending ||
-    resetMutation.isPending;
+    resetMutation.isPending ||
+    orchestrationStatus !== null;
 
   const currentEditingFeed = feeds.find((f) => f.id === id);
 
@@ -367,6 +419,20 @@ export function FeedConfigurationView({
           />
         </Grid>
       </Grid>
+      <Backdrop
+        sx={{
+          color: '#fff',
+          zIndex: (theme) => theme.zIndex.drawer + 1,
+          flexDirection: 'column',
+          gap: 2,
+        }}
+        open={orchestrationStatus !== null}
+      >
+        <CircularProgress color="inherit" />
+        <Typography variant="h6" component="div">
+          {orchestrationStatus}
+        </Typography>
+      </Backdrop>
     </Box>
   );
 }
