@@ -308,7 +308,11 @@ def _validate_dataset(
         return
     for key in CANONICAL_DATASET_KEYS:
         field = f"dataset.{key}"
-        if key in dataset and not _stripped_string(dataset[key]):
+        if (
+            key in dataset
+            and dataset[key] is not None
+            and not _stripped_string(dataset[key])
+        ):
             _add_invalid_metadata(
                 issues,
                 row_index,
@@ -333,8 +337,10 @@ def _validate_source_audio(
             "source_audio must be an object",
         )
         return
-    if "audio_filepath" in source_audio and not _stripped_string(
-        source_audio["audio_filepath"]
+    if (
+        "audio_filepath" in source_audio
+        and source_audio["audio_filepath"] is not None
+        and not _stripped_string(source_audio["audio_filepath"])
     ):
         _add_invalid_metadata(
             issues,
@@ -342,8 +348,12 @@ def _validate_source_audio(
             "source_audio.audio_filepath",
             "source_audio.audio_filepath must be a non-empty string",
         )
-    if "offset" in source_audio and (
-        not _is_number(source_audio["offset"]) or source_audio["offset"] < 0
+    if (
+        "offset" in source_audio
+        and source_audio["offset"] is not None
+        and (
+            not _is_number(source_audio["offset"]) or source_audio["offset"] < 0
+        )
     ):
         _add_invalid_metadata(
             issues,
@@ -351,9 +361,13 @@ def _validate_source_audio(
             "source_audio.offset",
             "source_audio.offset must be numeric and non-negative",
         )
-    if "duration" in source_audio and (
-        not _is_number(source_audio["duration"])
-        or source_audio["duration"] <= 0
+    if (
+        "duration" in source_audio
+        and source_audio["duration"] is not None
+        and (
+            not _is_number(source_audio["duration"])
+            or source_audio["duration"] <= 0
+        )
     ):
         _add_invalid_metadata(
             issues,
@@ -577,7 +591,11 @@ def _optional_dataset(
     dataset = row.get("dataset")
     if not isinstance(dataset, dict):
         return None
-    dataset_row: dict[str, Any] = dict(dataset)
+    dataset_row = {
+        key: value
+        for key, value in dataset.items()
+        if key not in CANONICAL_DATASET_KEYS or value is not None
+    }
     for key in CANONICAL_DATASET_KEYS:
         value = _optional_manifest_string(
             dataset, key, row_index=row_index, prefix="dataset."
@@ -595,7 +613,12 @@ def _optional_source_audio(
     source_audio = row.get("source_audio")
     if not isinstance(source_audio, dict):
         return None
-    source_audio_row: dict[str, Any] = dict(source_audio)
+    canonical_source_audio_keys = {"audio_filepath", "offset", "duration"}
+    source_audio_row = {
+        key: value
+        for key, value in source_audio.items()
+        if key not in canonical_source_audio_keys or value is not None
+    }
     audio_filepath = _optional_manifest_string(
         source_audio,
         "audio_filepath",
@@ -605,7 +628,7 @@ def _optional_source_audio(
     if audio_filepath is not None:
         source_audio_row["audio_filepath"] = audio_filepath
     for field in ("offset", "duration"):
-        if field in source_audio:
+        if field in source_audio and source_audio[field] is not None:
             source_audio_row[field] = float(source_audio[field])
     return source_audio_row or None
 

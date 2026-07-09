@@ -256,7 +256,20 @@ class TestCanonicalManifestValidation(unittest.TestCase):
 
     def test_explicit_null_optional_metadata_is_absent(self) -> None:
         issues = validate_canonical_manifest(
-            [_canonical_row(split=None, dataset=None, source_audio=None)],
+            [
+                _canonical_row(
+                    split=None,
+                    dataset={
+                        "name": None,
+                        "family": None,
+                    },
+                    source_audio={
+                        "audio_filepath": None,
+                        "offset": None,
+                        "duration": None,
+                    },
+                )
+            ],
             expected_split="train",
         )
 
@@ -880,6 +893,49 @@ class TestRowsFromManifestStrict(unittest.TestCase):
                 _canonical_row(
                     dataset={"custom_dataset_key": "echo"},
                     source_audio={"sample_rate_hz": 44100},
+                )
+            ]
+        )
+
+        self.assertEqual(rows[0].dataset, {"custom_dataset_key": "echo"})
+        self.assertEqual(rows[0].source_audio, {"sample_rate_hz": 44100})
+
+    def test_known_null_optional_metadata_is_absent_in_rows(self) -> None:
+        rows = rows_from_manifest(
+            [
+                _canonical_row(
+                    split=None,
+                    dataset={"name": None, "family": None},
+                    source_audio={
+                        "audio_filepath": None,
+                        "offset": None,
+                        "duration": None,
+                    },
+                )
+            ]
+        )
+
+        self.assertIsNone(rows[0].split)
+        self.assertIsNone(rows[0].dataset)
+        self.assertIsNone(rows[0].source_audio)
+
+    def test_unknown_metadata_is_preserved_with_known_null_fields(
+        self,
+    ) -> None:
+        rows = rows_from_manifest(
+            [
+                _canonical_row(
+                    dataset={
+                        "name": None,
+                        "family": None,
+                        "custom_dataset_key": "echo",
+                    },
+                    source_audio={
+                        "audio_filepath": None,
+                        "offset": None,
+                        "duration": None,
+                        "sample_rate_hz": 44100,
+                    },
                 )
             ]
         )
