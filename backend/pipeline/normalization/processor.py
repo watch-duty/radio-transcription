@@ -61,6 +61,7 @@ class DLQPublishError(RuntimeError):
 @dataclass(frozen=True)
 class AudioDerivativeUris:
     """URIs for the transcoded audio files uploaded to GCS."""
+
     canonical_audio_uri: str
     playback_audio_uri: str
     transcription_audio_uri: str
@@ -161,7 +162,6 @@ class NormalizationEventProcessor:
                     segment_id=segment_id,
                     audio_classification=segmented_audio.audio_classification,
                 )
-
 
                 # 4. Persist audio segment metadata record to AlloyDB database
                 self._persist_segment(
@@ -271,13 +271,17 @@ class NormalizationEventProcessor:
                 )
                 ephemeral_upload_bypassed = True
             else:
-                mono_flac_bytes = self.audio_processor.downmix_to_mono(flac_bytes)
-                mono_flac_path = (
-                    f"ephemeral/transcription/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
+                mono_flac_bytes = self.audio_processor.downmix_to_mono(
+                    flac_bytes
                 )
+                mono_flac_path = f"ephemeral/transcription/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
 
         def _upload_and_log(
-            data: bytes, path: str, content_type: str, log_name: str, ctx: context.Context
+            data: bytes,
+            path: str,
+            content_type: str,
+            log_name: str,
+            ctx: context.Context,
         ) -> str:
             token = context.attach(ctx)
             try:
@@ -296,10 +300,20 @@ class NormalizationEventProcessor:
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             canonical_future = executor.submit(
-                _upload_and_log, flac_bytes, flac_path, "audio/flac", "stitched audio", current_ctx
+                _upload_and_log,
+                flac_bytes,
+                flac_path,
+                "audio/flac",
+                "stitched audio",
+                current_ctx,
             )
             playback_future = executor.submit(
-                _upload_and_log, m4a_bytes, m4a_path, "audio/mp4", "playback audio", current_ctx
+                _upload_and_log,
+                m4a_bytes,
+                m4a_path,
+                "audio/mp4",
+                "playback audio",
+                current_ctx,
             )
 
             ephemeral_upload_future = None
