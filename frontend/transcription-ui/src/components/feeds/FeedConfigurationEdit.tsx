@@ -576,9 +576,19 @@ export function FeedConfigurationEdit({
                 searchability, grouping, and routing of notifications.
               </Typography>
               <Alert severity="info" sx={{ mb: 2 }}>
-                The system/timezone tag can be used to correct the timestamps.
+                The "system/timezone" tag can be used to correct the timestamps.
                 This is only supported in Fire Notification feeds.
               </Alert>
+              {isEditing &&
+                (newTagKey.trim() === SYSTEM_TIMEZONE ||
+                  feedTags.some(
+                    (tag) => tag.key.trim() === SYSTEM_TIMEZONE
+                  )) && (
+                  <Alert severity="warning" sx={{ mb: 2 }}>
+                    Updating timezone requires a manual deactivate and reset in
+                    order to take effect.
+                  </Alert>
+                )}
 
               <Stack
                 direction="row"
