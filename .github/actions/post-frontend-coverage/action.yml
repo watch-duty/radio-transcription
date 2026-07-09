@@ -47,12 +47,14 @@ runs:
               let summary = 'No coverage report found';
               if (fs.existsSync(reportFile)) {
                 let content = fs.readFileSync(reportFile, 'utf8');
-                const maxContentLen = 64000;
-                if (content.length > maxContentLen) {
-                  const half = Math.floor(maxContentLen / 2);
-                  content = content.slice(0, half) + '\n\n... [coverage report truncated due to GitHub API size limits] ...\n\n' + content.slice(-half);
-                }
-                summary = `### Coverage Report (${healthText})\n\n${codeBlock}\n${content}\n${codeBlock}`;
+
+                // Truncate content to stay safely under GitHub's 65,535 character limit
+                const maxLen = 64000;
+                const truncatedContent = content.length > maxLen
+                  ? content.slice(0, maxLen) + '\n... [Report truncated due to GitHub API size limits]'
+                  : content;
+
+                summary = `### Coverage Report (${healthText})\n\n${codeBlock}\n${truncatedContent}\n${codeBlock}`;
               }
               
               await github.rest.checks.create({
