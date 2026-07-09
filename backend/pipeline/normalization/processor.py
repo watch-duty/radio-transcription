@@ -2,12 +2,14 @@
 
 import base64
 import datetime
+import io
 import json
 import logging
 import os
 import traceback
 import urllib.parse
 
+import soundfile as sf
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1, storage
 
@@ -168,9 +170,16 @@ class NormalizationEventProcessor:
                     segmented_audio.audio_classification
                     == SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH
                 ):
-                    mono_flac_bytes = (
-                        self.audio_processor.transcode_to_mono_flac(flac_bytes)
-                    )
+                    with io.BytesIO(flac_bytes) as flac_io:
+                        info = sf.info(flac_io)
+                        
+                    if info.channels > 1:
+                        mono_flac_bytes = (
+                            self.audio_processor.transcode_to_mono_flac(flac_bytes)
+                        )
+                    else:
+                        mono_flac_bytes = flac_bytes
+
                     mono_flac_path = f"ephemeral/transcription/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
                     transcription_audio_uri = self.audio_uploader.upload_bytes(
                         data=mono_flac_bytes,
@@ -258,8 +267,9 @@ class NormalizationEventProcessor:
             m4a_bytes = raw_audio_bytes
             flac_bytes = self.audio_processor.transcode_to_flac(m4a_bytes)
         else:
-            flac_bytes = self.audio_processor.transcode_to_flac(raw_audio_bytes)
-            m4a_bytes = self.audio_processor.transcode_to_m4a(raw_audio_bytes)
+            flac_bytes, m4a_bytes = self.audio_processor.transcode_derivatives(
+                raw_audio_bytes
+            )
         return flac_bytes, m4a_bytes
 
     def _download_raw_audio(self, raw_audio_uri: str) -> bytes:
