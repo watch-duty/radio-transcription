@@ -119,6 +119,7 @@ describe('FeedConfigurationView', () => {
 
   afterEach(() => {
     cleanup();
+    vi.unstubAllGlobals();
   });
 
   const renderView = () => {
