@@ -176,7 +176,9 @@ class NormalizationEventProcessor:
                             "Audio is already mono. Bypassing ephemeral transcription upload."
                         )
                     else:
-                        mono_flac_bytes = self.audio_processor.downmix_to_mono(flac_bytes)
+                        mono_flac_bytes = self.audio_processor.downmix_to_mono(
+                            flac_bytes
+                        )
                         mono_flac_path = f"ephemeral/transcription/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
                         transcription_audio_uri = (
                             self.audio_uploader.upload_bytes(

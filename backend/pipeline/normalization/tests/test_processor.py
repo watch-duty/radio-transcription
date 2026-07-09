@@ -149,9 +149,7 @@ class NormalizationEventProcessorTest(unittest.TestCase):
             b"fake-flac-data"
         )
 
-        mock_processor.is_mono.assert_called_once_with(
-            b"fake-flac-data"
-        )
+        mock_processor.is_mono.assert_called_once_with(b"fake-flac-data")
         mock_processor.downmix_to_mono.assert_not_called()
 
         # Verify uploader was called with correct bytes
@@ -279,9 +277,7 @@ class NormalizationEventProcessorTest(unittest.TestCase):
         )
 
         # Verify audio processor was called to transcode FLAC to mono FLAC
-        mock_processor.is_mono.assert_called_once_with(
-            b"fake-flac-data"
-        )
+        mock_processor.is_mono.assert_called_once_with(b"fake-flac-data")
         mock_processor.downmix_to_mono.assert_called_once_with(
             b"fake-flac-data"
         )
@@ -413,9 +409,7 @@ class NormalizationEventProcessorTest(unittest.TestCase):
         )
 
         # Verify audio processor was called to transcode FLAC to mono FLAC
-        mock_processor.is_mono.assert_called_once_with(
-            b"fake-flac-data"
-        )
+        mock_processor.is_mono.assert_called_once_with(b"fake-flac-data")
         mock_processor.downmix_to_mono.assert_called_once_with(
             b"fake-flac-data"
         )
