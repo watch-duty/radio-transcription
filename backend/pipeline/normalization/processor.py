@@ -1,15 +1,18 @@
 """Serverless Cloud Event event processor for the Normalization Cloud Function."""
 
 import base64
+import concurrent.futures
 import datetime
 import json
 import logging
 import os
 import traceback
 import urllib.parse
+from dataclasses import dataclass
 
 from cloudevents.http.event import CloudEvent
 from google.cloud import pubsub_v1, storage
+from opentelemetry import context
 
 from backend.pipeline.common.clients.audio_segments_client import (
     AudioSegmentsClient,
@@ -55,6 +58,14 @@ class DLQPublishError(RuntimeError):
         )
 
 
+@dataclass(frozen=True)
+class AudioDerivativeUris:
+    """URIs for the transcoded audio files uploaded to GCS."""
+    canonical_audio_uri: str
+    playback_audio_uri: str
+    transcription_audio_uri: str
+
+
 class NormalizationEventProcessor:
     """Coordinates GCS downloading, VAD-preserving bandpass normalization, and derivative uploads.
 
@@ -89,7 +100,7 @@ class NormalizationEventProcessor:
             gcs_client=self.gcs_client,
         )
 
-    def process_event(self, cloud_event: CloudEvent) -> None:  # noqa: PLR0915
+    def process_event(self, cloud_event: CloudEvent) -> None:
         """Main entrypoint triggered on Pub/Sub claim message push delivery."""
         record_pipeline_stage("normalization", "start")
         try:
@@ -142,71 +153,30 @@ class NormalizationEventProcessor:
                     tz=datetime.UTC,
                 )
 
-                flac_path = (
-                    f"lossless/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
-                )
-                m4a_path = f"playback/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.m4a"
-
-                canonical_audio_uri = self.audio_uploader.upload_bytes(
-                    data=flac_bytes,
-                    bucket_name=self.canonical_audio_bucket,
-                    destination_path=flac_path,
-                    content_type="audio/flac",
-                )
-                logger.info(
-                    "Uploaded stitched audio to %s", canonical_audio_uri
+                uris = self._upload_audio_derivatives(
+                    flac_bytes=flac_bytes,
+                    m4a_bytes=m4a_bytes,
+                    feed_id=feed_id,
+                    dt=dt,
+                    segment_id=segment_id,
+                    audio_classification=segmented_audio.audio_classification,
                 )
 
-                playback_audio_uri = self.audio_uploader.upload_bytes(
-                    data=m4a_bytes,
-                    bucket_name=self.canonical_audio_bucket,
-                    destination_path=m4a_path,
-                    content_type="audio/mp4",
-                )
-                logger.info("Uploaded playback audio to %s", playback_audio_uri)
-
-                transcription_audio_uri = ""
-                if (
-                    segmented_audio.audio_classification
-                    == SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH
-                ):
-                    if self.audio_processor.is_mono(flac_bytes):
-                        transcription_audio_uri = canonical_audio_uri
-                        logger.info(
-                            "Audio is already mono. Bypassing ephemeral transcription upload."
-                        )
-                    else:
-                        mono_flac_bytes = self.audio_processor.downmix_to_mono(
-                            flac_bytes
-                        )
-                        mono_flac_path = f"ephemeral/transcription/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
-                        transcription_audio_uri = (
-                            self.audio_uploader.upload_bytes(
-                                data=mono_flac_bytes,
-                                bucket_name=self.canonical_audio_bucket,
-                                destination_path=mono_flac_path,
-                                content_type="audio/flac",
-                            )
-                        )
-                        logger.info(
-                            "Uploaded ephemeral transcription audio to %s",
-                            transcription_audio_uri,
-                        )
 
                 # 4. Persist audio segment metadata record to AlloyDB database
                 self._persist_segment(
                     segmented_audio=segmented_audio,
                     dt=dt,
-                    canonical_audio_uri=canonical_audio_uri,
-                    playback_audio_uri=playback_audio_uri,
+                    canonical_audio_uri=uris.canonical_audio_uri,
+                    playback_audio_uri=uris.playback_audio_uri,
                 )
 
                 # 5. Publish final NormalizedAudio claim-check downstream
                 self._publish_downstream(
                     segmented_audio=segmented_audio,
-                    canonical_audio_uri=canonical_audio_uri,
-                    playback_audio_uri=playback_audio_uri,
-                    transcription_audio_uri=transcription_audio_uri,
+                    canonical_audio_uri=uris.canonical_audio_uri,
+                    playback_audio_uri=uris.playback_audio_uri,
+                    transcription_audio_uri=uris.transcription_audio_uri,
                 )
 
                 # 6. Attach the timeline waveform (best-effort; never blocks the above)
@@ -276,6 +246,87 @@ class NormalizationEventProcessor:
                 m4a_bytes=raw_audio_bytes,
             )
         return self.audio_processor.transcode_derivatives(raw_audio_bytes)
+
+    def _upload_audio_derivatives(
+        self,
+        flac_bytes: bytes,
+        m4a_bytes: bytes,
+        feed_id: str,
+        dt: datetime.datetime,
+        segment_id: str,
+        audio_classification: int,
+    ) -> AudioDerivativeUris:
+        """Uploads canonical, playback, and optionally transcription audio concurrently to GCS."""
+        flac_path = f"lossless/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
+        m4a_path = f"playback/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.m4a"
+
+        mono_flac_bytes: bytes | None = None
+        mono_flac_path: str | None = None
+        ephemeral_upload_bypassed = False
+
+        if audio_classification == SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH:
+            if self.audio_processor.is_mono(flac_bytes):
+                logger.info(
+                    "Audio is already mono. Bypassing ephemeral transcription upload."
+                )
+                ephemeral_upload_bypassed = True
+            else:
+                mono_flac_bytes = self.audio_processor.downmix_to_mono(flac_bytes)
+                mono_flac_path = (
+                    f"ephemeral/transcription/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
+                )
+
+        def _upload_and_log(
+            data: bytes, path: str, content_type: str, log_name: str, ctx: context.Context
+        ) -> str:
+            token = context.attach(ctx)
+            try:
+                uri = self.audio_uploader.upload_bytes(
+                    data=data,
+                    bucket_name=self.canonical_audio_bucket,
+                    destination_path=path,
+                    content_type=content_type,
+                )
+                logger.info("Uploaded %s to %s", log_name, uri)
+                return uri
+            finally:
+                context.detach(token)
+
+        current_ctx = context.get_current()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            canonical_future = executor.submit(
+                _upload_and_log, flac_bytes, flac_path, "audio/flac", "stitched audio", current_ctx
+            )
+            playback_future = executor.submit(
+                _upload_and_log, m4a_bytes, m4a_path, "audio/mp4", "playback audio", current_ctx
+            )
+
+            ephemeral_upload_future = None
+            if mono_flac_path and mono_flac_bytes:
+                ephemeral_upload_future = executor.submit(
+                    _upload_and_log,
+                    mono_flac_bytes,
+                    mono_flac_path,
+                    "audio/flac",
+                    "ephemeral transcription audio",
+                    current_ctx,
+                )
+
+            canonical_audio_uri = canonical_future.result()
+            playback_audio_uri = playback_future.result()
+
+            transcription_audio_uri = ""
+            if ephemeral_upload_future:
+                transcription_audio_uri = ephemeral_upload_future.result()
+            elif ephemeral_upload_bypassed:
+                transcription_audio_uri = canonical_audio_uri
+
+        return AudioDerivativeUris(
+            canonical_audio_uri=canonical_audio_uri,
+            playback_audio_uri=playback_audio_uri,
+            transcription_audio_uri=transcription_audio_uri,
+        )
 
     def _download_raw_audio(self, raw_audio_uri: str) -> bytes:
         """Downloads raw audio bytes from GCS staging."""
