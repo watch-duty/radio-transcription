@@ -33,6 +33,7 @@ interface FeedConfigurationViewProps {
 }
 
 const QUERY_DEBOUNCE_TIME_MS = 300;
+const LEASE_RELEASE_WAIT_TIMEOUT_SECONDS = 20;
 
 function hasTimezoneChanged(
   originalTags: Tag[] | undefined,
@@ -265,7 +266,7 @@ export function FeedConfigurationView({
         setOrchestrationStatus('Stopping active ingestion...');
         await deactivateFeed(feedId, token!);
 
-        for (let i = 20; i > 0; i--) {
+        for (let i = LEASE_RELEASE_WAIT_TIMEOUT_SECONDS; i > 0; i--) {
           setOrchestrationStatus(
             `Waiting for worker to release lease safely (${i}s)...`
           );
