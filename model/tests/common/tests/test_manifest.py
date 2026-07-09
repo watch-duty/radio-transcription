@@ -524,6 +524,20 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
         with self.assertRaises(ValueError):
             merge_predictions_to_manifest(gt, preds, "m")
 
+    def test_prediction_null_or_blank_audio_filepath_raises(self) -> None:
+        gt = [{"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "g"}]
+        for audio_filepath in (None, " "):
+            with self.subTest(audio_filepath=audio_filepath):
+                preds = [
+                    {
+                        "audio_filepath": audio_filepath,
+                        "offset": 1.0,
+                        "text": "p",
+                    }
+                ]
+                with self.assertRaisesRegex(ValueError, "audio_filepath"):
+                    merge_predictions_to_manifest(gt, preds, "m")
+
     def test_prediction_missing_offset_raises(self) -> None:
         """A prediction without `offset` fails loud, not silently defaults to 0.0."""
         gt = [{"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "g"}]
@@ -546,6 +560,13 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
         gt = [{"offset": 1.0}]  # no 'audio_filepath' key
         with self.assertRaises(ValueError):
             merge_predictions_to_manifest(gt, [], "gemini")
+
+    def test_ground_truth_null_or_blank_audio_filepath_raises(self) -> None:
+        for audio_filepath in (None, " "):
+            with self.subTest(audio_filepath=audio_filepath):
+                gt = [{"audio_filepath": audio_filepath, "offset": 1.0}]
+                with self.assertRaisesRegex(ValueError, "audio_filepath"):
+                    merge_predictions_to_manifest(gt, [], "gemini")
 
     def test_does_not_return_empty_list_on_error(self) -> None:
         """Verify the old silent-failure path (return []) is gone."""
@@ -593,6 +614,26 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
         result = merge_predictions_to_manifest(gt, preds, "whisper")
 
         self.assertEqual(result[0]["pred_text_whisper"], "predicted")
+
+    def test_audio_filepath_match_strips_whitespace(self) -> None:
+        gt = [
+            {
+                "audio_filepath": " gs://b/a.flac ",
+                "offset": 1.0,
+                "text": "gold",
+            }
+        ]
+        preds = [
+            {
+                "audio_filepath": "gs://b/a.flac ",
+                "offset": 1.0,
+                "text": "prediction",
+            }
+        ]
+
+        result = merge_predictions_to_manifest(gt, preds, "m")
+
+        self.assertEqual(result[0]["pred_text_m"], "prediction")
 
     def test_prediction_without_identity_matches_exact_uri_and_offset(
         self,
@@ -660,7 +701,7 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
 
         The naive ``str(None)`` is the four-letter word "None", which would
         otherwise score as a real-looking prediction token against the ground
-        truth. Mirror load_manifest's None-to-empty coercion.
+        truth.
         """
         gt = [
             {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "gold"}

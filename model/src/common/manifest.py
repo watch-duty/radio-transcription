@@ -772,7 +772,11 @@ def _prediction_index(
 ) -> dict[str, list[_PredictionCandidate]]:
     pred_index: dict[str, list[_PredictionCandidate]] = {}
     for i, pred in enumerate(predictions):
-        audio_fp = str(_required_key(pred, "audio_filepath", "prediction"))
+        audio_fp = _required_stripped_string(
+            pred,
+            "audio_filepath",
+            "prediction",
+        )
         p_offset = _required_float(pred, "offset", "prediction")
         raw_text = pred.get("text")
         p_text = "" if raw_text is None else str(raw_text)
@@ -793,8 +797,10 @@ def _ground_truth_index(
 ) -> dict[str, list[_GroundTruthCandidate]]:
     gt_by_file: dict[str, list[_GroundTruthCandidate]] = {}
     for i, gt_row in enumerate(ground_truth):
-        audio_fp = str(
-            _required_key(gt_row, "audio_filepath", "ground truth row")
+        audio_fp = _required_stripped_string(
+            gt_row,
+            "audio_filepath",
+            "ground truth row",
         )
         gt_by_file.setdefault(audio_fp, []).append(
             _GroundTruthCandidate(
@@ -820,6 +826,19 @@ def _required_key(row: dict[str, Any], key: str, row_kind: str) -> Any:
     if key in row:
         return row[key]
     msg = f"{row_kind} missing required '{key}': {row!r}"
+    raise ValueError(msg)
+
+
+def _required_stripped_string(
+    row: dict[str, Any],
+    key: str,
+    row_kind: str,
+) -> str:
+    value = _required_key(row, key, row_kind)
+    stripped = _stripped_string(value)
+    if stripped is not None:
+        return stripped
+    msg = f"{row_kind} missing or blank '{key}': {row!r}"
     raise ValueError(msg)
 
 
