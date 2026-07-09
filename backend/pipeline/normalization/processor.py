@@ -170,15 +170,13 @@ class NormalizationEventProcessor:
                     segmented_audio.audio_classification
                     == SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH
                 ):
-                    mono_flac_bytes = self.audio_processor.ensure_mono_flac(
-                        flac_bytes
-                    )
-                    if mono_flac_bytes is flac_bytes:
+                    if self.audio_processor.is_mono(flac_bytes):
                         transcription_audio_uri = canonical_audio_uri
                         logger.info(
                             "Audio is already mono. Bypassing ephemeral transcription upload."
                         )
                     else:
+                        mono_flac_bytes = self.audio_processor.downmix_to_mono(flac_bytes)
                         mono_flac_path = f"ephemeral/transcription/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
                         transcription_audio_uri = (
                             self.audio_uploader.upload_bytes(

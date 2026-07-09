@@ -65,7 +65,7 @@ class AudioProcessor:
                     pass
 
     def _execute_ffmpeg(
-        self, cmd: list[str], input_bytes: bytes, err_msg: str
+        self, cmd: list[str], input_bytes: bytes, op_label: str, err_msg: str
     ) -> None:
         """Helper to execute ffmpeg subprocess with timeout and safety checks."""
         process = subprocess.run(
@@ -77,7 +77,7 @@ class AudioProcessor:
         )
         if process.returncode != 0:
             logger.error(
-                f"ffmpeg error during transcode: {process.stderr.decode(errors='replace')}"
+                f"ffmpeg error during {op_label}: {process.stderr.decode(errors='replace')}"
             )
             raise RuntimeError(err_msg)
 
@@ -98,19 +98,19 @@ class AudioProcessor:
                     temp_filename,
                 ],
                 input_bytes,
+                "FLAC transcode",
                 "Failed to transcode to FLAC via ffmpeg",
             )
             with open(temp_filename, "rb") as f:
                 return f.read()
 
-    def ensure_mono_flac(self, input_bytes: bytes) -> bytes:
-        """Transcodes input audio bytes to a 1D mono downmixed FLAC if it is not already mono."""
+    def is_mono(self, input_bytes: bytes) -> bool:
+        """Returns True if the given FLAC bytes represent a mono audio track."""
         with io.BytesIO(input_bytes) as flac_io:
-            info = sf.info(flac_io)
+            return sf.info(flac_io).channels <= 1
 
-        if info.channels <= 1:
-            return input_bytes
-
+    def downmix_to_mono(self, input_bytes: bytes) -> bytes:
+        """Always downmixes to mono FLAC via ffmpeg. Caller should check is_mono() first."""
         with self._temp_files(".flac") as temp_filename_raw:
             temp_filename = typing.cast("str", temp_filename_raw)
             self._execute_ffmpeg(
@@ -128,6 +128,7 @@ class AudioProcessor:
                     temp_filename,
                 ],
                 input_bytes,
+                "mono FLAC transcode",
                 "Failed to transcode to mono FLAC via ffmpeg",
             )
             with open(temp_filename, "rb") as f:
@@ -154,6 +155,7 @@ class AudioProcessor:
                     temp_filename,
                 ],
                 input_bytes,
+                "M4A transcode",
                 "Failed to transcode to M4A via ffmpeg",
             )
             with open(temp_filename, "rb") as f:
@@ -186,6 +188,7 @@ class AudioProcessor:
                     m4a_name,
                 ],
                 input_bytes,
+                "derivatives transcode",
                 "Failed to transcode audio derivatives via ffmpeg",
             )
 
