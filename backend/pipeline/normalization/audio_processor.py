@@ -5,10 +5,16 @@ into streaming playback M4A and lossless FLAC derivatives using standard ffmpeg.
 It performs ZERO acoustic or volume preprocessing.
 """
 
+import contextlib
+import io
 import logging
 import subprocess
 import tempfile
+from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
+
+import soundfile as sf
 
 logger = logging.getLogger(__name__)
 
@@ -18,8 +24,13 @@ M4A_BITRATE = "32k"
 DEFAULT_FFMPEG_TIMEOUT_SEC = 30
 
 
-import contextlib
-from typing import Iterator
+@dataclass(frozen=True)
+class TranscodeResult:
+    """Strongly typed container for ffmpeg audio derivatives."""
+
+    flac_bytes: bytes
+    m4a_bytes: bytes
+
 
 class AudioProcessor:
     """Stateless audio processor performing zero-preprocessing ffmpeg transcodes."""
@@ -36,9 +47,11 @@ class AudioProcessor:
         paths = []
         try:
             for suffix in suffixes:
-                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+                with tempfile.NamedTemporaryFile(
+                    suffix=suffix, delete=False
+                ) as f:
                     paths.append(f.name)
-            
+
             if len(paths) == 1:
                 yield paths[0]
             else:
@@ -74,9 +87,12 @@ class AudioProcessor:
                 [
                     "ffmpeg",
                     "-y",
-                    "-i", "pipe:0",
-                    "-f", "flac",
-                    "-compression_level", FLAC_COMPRESSION_LEVEL,
+                    "-i",
+                    "pipe:0",
+                    "-f",
+                    "flac",
+                    "-compression_level",
+                    FLAC_COMPRESSION_LEVEL,
                     temp_filename,
                 ],
                 input_bytes,
@@ -85,17 +101,27 @@ class AudioProcessor:
             with open(temp_filename, "rb") as f:
                 return f.read()
 
-    def transcode_to_mono_flac(self, input_bytes: bytes) -> bytes:
-        """Transcodes input audio bytes to a 1D mono downmixed FLAC using ffmpeg."""
+    def ensure_mono_flac(self, input_bytes: bytes) -> bytes:
+        """Transcodes input audio bytes to a 1D mono downmixed FLAC if it is not already mono."""
+        with io.BytesIO(input_bytes) as flac_io:
+            info = sf.info(flac_io)
+
+        if info.channels <= 1:
+            return input_bytes
+
         with self._temp_files(".flac") as temp_filename:
             self._execute_ffmpeg(
                 [
                     "ffmpeg",
                     "-y",
-                    "-i", "pipe:0",
-                    "-ac", "1",
-                    "-f", "flac",
-                    "-compression_level", FLAC_COMPRESSION_LEVEL,
+                    "-i",
+                    "pipe:0",
+                    "-ac",
+                    "1",
+                    "-f",
+                    "flac",
+                    "-compression_level",
+                    FLAC_COMPRESSION_LEVEL,
                     temp_filename,
                 ],
                 input_bytes,
@@ -111,11 +137,16 @@ class AudioProcessor:
                 [
                     "ffmpeg",
                     "-y",
-                    "-i", "pipe:0",
-                    "-f", "ipod",
-                    "-c:a", "aac",
-                    "-b:a", M4A_BITRATE,
-                    "-movflags", "+faststart",
+                    "-i",
+                    "pipe:0",
+                    "-f",
+                    "ipod",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    M4A_BITRATE,
+                    "-movflags",
+                    "+faststart",
                     temp_filename,
                 ],
                 input_bytes,
@@ -124,30 +155,37 @@ class AudioProcessor:
             with open(temp_filename, "rb") as f:
                 return f.read()
 
-    def transcode_derivatives(self, input_bytes: bytes) -> tuple[bytes, bytes]:
+    def transcode_derivatives(self, input_bytes: bytes) -> TranscodeResult:
         """Transcodes input audio bytes to FLAC and M4A simultaneously."""
         with self._temp_files(".flac", ".m4a") as (flac_name, m4a_name):
             self._execute_ffmpeg(
                 [
                     "ffmpeg",
                     "-y",
-                    "-i", "pipe:0",
-                    "-f", "flac",
-                    "-compression_level", FLAC_COMPRESSION_LEVEL,
+                    "-i",
+                    "pipe:0",
+                    "-f",
+                    "flac",
+                    "-compression_level",
+                    FLAC_COMPRESSION_LEVEL,
                     flac_name,
-                    "-f", "ipod",
-                    "-c:a", "aac",
-                    "-b:a", M4A_BITRATE,
-                    "-movflags", "+faststart",
+                    "-f",
+                    "ipod",
+                    "-c:a",
+                    "aac",
+                    "-b:a",
+                    M4A_BITRATE,
+                    "-movflags",
+                    "+faststart",
                     m4a_name,
                 ],
                 input_bytes,
                 "Failed to transcode audio derivatives via ffmpeg",
             )
-            
+
             with open(flac_name, "rb") as f:
                 flac_bytes = f.read()
             with open(m4a_name, "rb") as f:
                 m4a_bytes = f.read()
 
-            return flac_bytes, m4a_bytes
+            return TranscodeResult(flac_bytes=flac_bytes, m4a_bytes=m4a_bytes)
