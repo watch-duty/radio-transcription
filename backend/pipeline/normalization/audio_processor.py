@@ -10,7 +10,6 @@ import io
 import logging
 import subprocess
 import tempfile
-import typing
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,7 +42,7 @@ class AudioProcessor:
         """No-op setup for compatibility."""
 
     @contextlib.contextmanager
-    def _temp_files(self, *suffixes: str) -> Iterator[str | list[str]]:
+    def _temp_files(self, *suffixes: str) -> Iterator[list[str]]:
         """Context manager to safely create and cleanup temporary files."""
         paths = []
         try:
@@ -53,16 +52,10 @@ class AudioProcessor:
                 ) as f:
                     paths.append(f.name)
 
-            if len(paths) == 1:
-                yield paths[0]
-            else:
-                yield paths
+            yield paths
         finally:
             for path in paths:
-                try:
-                    Path(path).unlink()
-                except OSError:
-                    pass
+                Path(path).unlink(missing_ok=True)
 
     def _execute_ffmpeg(
         self, cmd: list[str], input_bytes: bytes, op_label: str, err_msg: str
@@ -83,8 +76,7 @@ class AudioProcessor:
 
     def transcode_to_flac(self, input_bytes: bytes) -> bytes:
         """Transcodes input audio bytes of any format to lossless FLAC using ffmpeg."""
-        with self._temp_files(".flac") as temp_filename_raw:
-            temp_filename = typing.cast("str", temp_filename_raw)
+        with self._temp_files(".flac") as (temp_filename,):
             self._execute_ffmpeg(
                 [
                     "ffmpeg",
@@ -111,8 +103,7 @@ class AudioProcessor:
 
     def downmix_to_mono(self, input_bytes: bytes) -> bytes:
         """Always downmixes to mono FLAC via ffmpeg. Caller should check is_mono() first."""
-        with self._temp_files(".flac") as temp_filename_raw:
-            temp_filename = typing.cast("str", temp_filename_raw)
+        with self._temp_files(".flac") as (temp_filename,):
             self._execute_ffmpeg(
                 [
                     "ffmpeg",
@@ -136,8 +127,7 @@ class AudioProcessor:
 
     def transcode_to_m4a(self, input_bytes: bytes) -> bytes:
         """Transcodes input audio bytes of any format to M4A (AAC) using ffmpeg."""
-        with self._temp_files(".m4a") as temp_filename_raw:
-            temp_filename = typing.cast("str", temp_filename_raw)
+        with self._temp_files(".m4a") as (temp_filename,):
             self._execute_ffmpeg(
                 [
                     "ffmpeg",
@@ -163,9 +153,7 @@ class AudioProcessor:
 
     def transcode_derivatives(self, input_bytes: bytes) -> TranscodeResult:
         """Transcodes input audio bytes to FLAC and M4A simultaneously."""
-        with self._temp_files(".flac", ".m4a") as names_raw:
-            names = typing.cast("list[str]", names_raw)
-            flac_name, m4a_name = names
+        with self._temp_files(".flac", ".m4a") as (flac_name, m4a_name):
             self._execute_ffmpeg(
                 [
                     "ffmpeg",
