@@ -73,7 +73,8 @@ def _get_download_pool_size() -> int:
         return 16
 
     try:
-        core_count = len(os.sched_getaffinity(0))  # type: ignore[attr-defined]
+        sched_getaffinity = getattr(os, "sched_getaffinity")
+        core_count = len(sched_getaffinity(0))
     except (AttributeError, NotImplementedError):
         core_count = os.cpu_count() or 4
 

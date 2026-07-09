@@ -83,6 +83,7 @@ class AudioProcessor:
     def transcode_to_flac(self, input_bytes: bytes) -> bytes:
         """Transcodes input audio bytes of any format to lossless FLAC using ffmpeg."""
         with self._temp_files(".flac") as temp_filename:
+            assert isinstance(temp_filename, str)
             self._execute_ffmpeg(
                 [
                     "ffmpeg",
@@ -110,6 +111,7 @@ class AudioProcessor:
             return input_bytes
 
         with self._temp_files(".flac") as temp_filename:
+            assert isinstance(temp_filename, str)
             self._execute_ffmpeg(
                 [
                     "ffmpeg",
@@ -133,6 +135,7 @@ class AudioProcessor:
     def transcode_to_m4a(self, input_bytes: bytes) -> bytes:
         """Transcodes input audio bytes of any format to M4A (AAC) using ffmpeg."""
         with self._temp_files(".m4a") as temp_filename:
+            assert isinstance(temp_filename, str)
             self._execute_ffmpeg(
                 [
                     "ffmpeg",
@@ -157,7 +160,9 @@ class AudioProcessor:
 
     def transcode_derivatives(self, input_bytes: bytes) -> TranscodeResult:
         """Transcodes input audio bytes to FLAC and M4A simultaneously."""
-        with self._temp_files(".flac", ".m4a") as (flac_name, m4a_name):
+        with self._temp_files(".flac", ".m4a") as names:
+            assert isinstance(names, list)
+            flac_name, m4a_name = names
             self._execute_ffmpeg(
                 [
                     "ffmpeg",
