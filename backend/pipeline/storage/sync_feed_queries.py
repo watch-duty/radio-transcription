@@ -38,20 +38,25 @@ WITH before_row AS (
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     WHERE f.id = %s
-      AND f.status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
+      AND f.status NOT IN (
+          'quarantined'::feed_status, 'deactivated'::feed_status
+      )
     FOR UPDATE
 ),
 updated AS (
     UPDATE feeds
     SET last_heartbeat = NOW(),
         audit_revision = CASE
-            WHEN feeds.failure_count <> 0 OR feeds.status_reason IS NOT NULL THEN feeds.audit_revision + 1
+            WHEN feeds.failure_count <> 0 OR feeds.status_reason IS NOT NULL
+                THEN feeds.audit_revision + 1
             ELSE feeds.audit_revision
         END,
-        failure_count = CASE WHEN feeds.failure_count > 0 THEN 0 ELSE feeds.failure_count END,
+        failure_count = CASE
+            WHEN feeds.failure_count > 0 THEN 0 ELSE feeds.failure_count END,
         status = 'active'::feed_status,
         status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL
+            WHEN feeds.status_reason IS NOT NULL
+                 OR feeds.status_reason_detail IS NOT NULL
                 THEN NOW()
             ELSE feeds.status_reason_updated_at
         END,
@@ -103,7 +108,9 @@ WITH before_row AS (
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     WHERE f.id = %s
-      AND f.status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
+      AND f.status NOT IN (
+          'quarantined'::feed_status, 'deactivated'::feed_status
+      )
     FOR UPDATE
 ),
 {_STATUS_REASON_INPUT_CTE_SQL},
@@ -118,13 +125,18 @@ updated AS (
         retry_after = CASE WHEN feeds.failure_count + 1 < %s
                            THEN NOW() + LEAST(
                                 %s * INTERVAL '1 second',
-                                %s * INTERVAL '1 second' * POWER(2, feeds.failure_count)
+                                %s * INTERVAL '1 second'
+                                * POWER(2, feeds.failure_count)
                            ) + (RANDOM() * INTERVAL '10 seconds')
                            ELSE NULL END,
-        status_reason = COALESCE(status_reason_input.status_reason, 'system_unexpected_error'),
+        status_reason = COALESCE(
+            status_reason_input.status_reason, 'system_unexpected_error'
+        ),
         status_reason_detail = %s,
         status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS DISTINCT FROM COALESCE(status_reason_input.status_reason, 'system_unexpected_error')
+            WHEN feeds.status_reason IS DISTINCT FROM COALESCE(
+                status_reason_input.status_reason, 'system_unexpected_error'
+            )
                 THEN NOW()
             ELSE feeds.status_reason_updated_at
         END
@@ -169,7 +181,9 @@ WITH before_row AS (
     FROM feeds f
     JOIN feed_properties fp ON fp.feed_id = f.id
     WHERE f.id = %s
-      AND f.status NOT IN ('quarantined'::feed_status, 'deactivated'::feed_status)
+      AND f.status NOT IN (
+          'quarantined'::feed_status, 'deactivated'::feed_status
+      )
     FOR UPDATE
 ),
 {_STATUS_REASON_INPUT_CTE_SQL},
@@ -183,7 +197,9 @@ updated AS (
         status_reason = status_reason_input.status_reason,
         status_reason_detail = %s,
         status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS DISTINCT FROM status_reason_input.status_reason THEN NOW()
+            WHEN feeds.status_reason IS DISTINCT FROM (
+                status_reason_input.status_reason
+            ) THEN NOW()
             ELSE feeds.status_reason_updated_at
         END
     FROM before_row
