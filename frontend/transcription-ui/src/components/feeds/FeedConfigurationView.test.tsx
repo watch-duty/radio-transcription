@@ -119,7 +119,7 @@ describe('FeedConfigurationView', () => {
 
   afterEach(() => {
     cleanup();
-    vi.unstubAllGlobals();
+    vi.useRealTimers();
   });
 
   const renderView = () => {
@@ -1189,14 +1189,7 @@ describe('FeedConfigurationView', () => {
 
     fireEvent.click(addTagBtn);
 
-    // Stub setTimeout just before submitting to accelerate the orchestration wait loop
-    const originalSetTimeout = global.setTimeout;
-    vi.stubGlobal('setTimeout', (fn: () => void, delay?: number) => {
-      if (delay === 1000) {
-        return originalSetTimeout(fn, 0);
-      }
-      return originalSetTimeout(fn, delay);
-    });
+    vi.useFakeTimers();
 
     // Save changes
     const submitBtn = within(editFormCard).getByRole('button', {
@@ -1204,10 +1197,15 @@ describe('FeedConfigurationView', () => {
     });
     fireEvent.click(submitBtn);
 
+    // Advance fake timers by 20 seconds to cover the lease release wait loop
+    await vi.advanceTimersByTimeAsync(20000);
+
+    vi.useRealTimers();
+
     // Assert no errors were thrown during orchestration (helps debug if it did)
     expect(mockOnError).not.toHaveBeenCalled();
 
-    // Verify all calls happened (since setTimeout resolves immediately in microtask)
+    // Verify all calls happened
     await waitFor(
       () => {
         expect(updateFeed).toHaveBeenCalledWith(
@@ -1229,9 +1227,6 @@ describe('FeedConfigurationView', () => {
       },
       { timeout: 2000 }
     );
-
-    // Restore original setTimeout before verifying the post-submit view updates
-    vi.unstubAllGlobals();
 
     // Verification of success state
     await waitFor(() => {
