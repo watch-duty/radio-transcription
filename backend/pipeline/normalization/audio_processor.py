@@ -10,6 +10,7 @@ import io
 import logging
 import subprocess
 import tempfile
+import typing
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -82,8 +83,8 @@ class AudioProcessor:
 
     def transcode_to_flac(self, input_bytes: bytes) -> bytes:
         """Transcodes input audio bytes of any format to lossless FLAC using ffmpeg."""
-        with self._temp_files(".flac") as temp_filename:
-            assert isinstance(temp_filename, str)
+        with self._temp_files(".flac") as temp_filename_raw:
+            temp_filename = typing.cast("str", temp_filename_raw)
             self._execute_ffmpeg(
                 [
                     "ffmpeg",
@@ -110,8 +111,8 @@ class AudioProcessor:
         if info.channels <= 1:
             return input_bytes
 
-        with self._temp_files(".flac") as temp_filename:
-            assert isinstance(temp_filename, str)
+        with self._temp_files(".flac") as temp_filename_raw:
+            temp_filename = typing.cast("str", temp_filename_raw)
             self._execute_ffmpeg(
                 [
                     "ffmpeg",
@@ -134,8 +135,8 @@ class AudioProcessor:
 
     def transcode_to_m4a(self, input_bytes: bytes) -> bytes:
         """Transcodes input audio bytes of any format to M4A (AAC) using ffmpeg."""
-        with self._temp_files(".m4a") as temp_filename:
-            assert isinstance(temp_filename, str)
+        with self._temp_files(".m4a") as temp_filename_raw:
+            temp_filename = typing.cast("str", temp_filename_raw)
             self._execute_ffmpeg(
                 [
                     "ffmpeg",
@@ -160,8 +161,8 @@ class AudioProcessor:
 
     def transcode_derivatives(self, input_bytes: bytes) -> TranscodeResult:
         """Transcodes input audio bytes to FLAC and M4A simultaneously."""
-        with self._temp_files(".flac", ".m4a") as names:
-            assert isinstance(names, list)
+        with self._temp_files(".flac", ".m4a") as names_raw:
+            names = typing.cast("list[str]", names_raw)
             flac_name, m4a_name = names
             self._execute_ffmpeg(
                 [

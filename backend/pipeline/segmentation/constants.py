@@ -1,9 +1,6 @@
 """Constants for the segmentation Apache Beam streaming pipeline."""
 
-import os
 from typing import Final
-
-from backend.pipeline.common.env import is_gcp_env
 
 DEAD_LETTER_QUEUE_TAG: Final = "segmentation_dlq"
 MAIN_TAG: Final = "main"
@@ -59,31 +56,9 @@ OVERLAPPING_TRANSMISSION_TOLERANCE_MS: Final = 100
 DEFAULT_FLOAT_TOLERANCE_MS: Final = 500
 UPSTREAM_GAP_DRIFT_TOLERANCE_MS: Final = 50
 
-
-def _get_download_pool_size() -> int:
-    """Dynamically determine thread pool size based on container CPU core count or env override."""
-    env_val = os.getenv("SEGMENTATION_DOWNLOAD_POOL_SIZE")
-    if env_val:
-        try:
-            return max(1, int(env_val))
-        except ValueError:
-            pass
-
-    if not is_gcp_env():
-        return 16
-
-    try:
-        sched_getaffinity = getattr(os, "sched_getaffinity")
-        core_count = len(sched_getaffinity(0))
-    except (AttributeError, NotImplementedError):
-        core_count = os.cpu_count() or 4
-
-    return max(4, min(32, core_count * 4))
-
-
-SHARED_DOWNLOAD_POOL_SIZE: Final = _get_download_pool_size()
-GCS_CONNECTION_POOL_SIZE: Final = SHARED_DOWNLOAD_POOL_SIZE + 4
+GCS_CONNECTION_POOL_SIZE: Final = 100
 GCS_CONNECTION_MAX_RETRIES: Final = 3
+SHARED_DOWNLOAD_POOL_SIZE: Final = 100
 
 # Structured watermark and FSM recovery configurations
 DEFAULT_VAD_POST_ROLL_MS: Final = 500
