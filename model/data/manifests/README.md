@@ -11,7 +11,7 @@ Each JSONL row must include these contract fields:
 
 - `audio_filepath`: stripped, model-ready `gs://...flac` clip URI.
 - `text`: non-empty transcript text for the segment.
-- `offset`: numeric segment offset.
+- `offset`: numeric, non-negative segment offset.
 - `duration`: numeric segment duration; must be positive.
 - `example_id`: logical example identifier.
 - `segment_id`: logical segment identifier.
@@ -27,12 +27,14 @@ Strict validation accepts these optional metadata fields:
 - `dataset.name`: dataset name, such as `echo`.
 - `dataset.family`: dataset family, such as `radio`.
 - `source_audio.audio_filepath`: source audio locator.
-- `source_audio.offset`: numeric segment offset in the source audio.
+- `source_audio.offset`: numeric, non-negative segment offset in the source
+  audio.
 - `source_audio.duration`: numeric source segment duration; must be positive.
 
 Unknown row-level fields, unknown keys inside optional metadata blocks, and
 prediction-enriched fields such as `pred_text_*` are tolerated by strict
-validation.
+validation. Conversion to `CanonicalRow` preserves unknown keys inside
+`dataset` and `source_audio` while normalizing the known contract keys.
 
 ## JSONL Example
 

@@ -54,8 +54,8 @@ class CanonicalRow:
     duration: float
     text: str
     split: str | None = None
-    dataset: dict[str, str] | None = None
-    source_audio: dict[str, str | float] | None = None
+    dataset: dict[str, Any] | None = None
+    source_audio: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -268,7 +268,7 @@ def _validate_metadata(
     expected_split: str | None,
     issues: list[CanonicalManifestIssue],
 ) -> None:
-    if "split" in row:
+    if "split" in row and row["split"] is not None:
         split = _stripped_string(row["split"])
         if not split:
             _add_invalid_metadata(
@@ -573,11 +573,11 @@ def _optional_dataset(
     row: dict[str, Any],
     *,
     row_index: int,
-) -> dict[str, str] | None:
+) -> dict[str, Any] | None:
     dataset = row.get("dataset")
     if not isinstance(dataset, dict):
         return None
-    dataset_row: dict[str, str] = {}
+    dataset_row: dict[str, Any] = dict(dataset)
     for key in CANONICAL_DATASET_KEYS:
         value = _optional_manifest_string(
             dataset, key, row_index=row_index, prefix="dataset."
@@ -591,11 +591,11 @@ def _optional_source_audio(
     row: dict[str, Any],
     *,
     row_index: int,
-) -> dict[str, str | float] | None:
+) -> dict[str, Any] | None:
     source_audio = row.get("source_audio")
     if not isinstance(source_audio, dict):
         return None
-    source_audio_row: dict[str, str | float] = {}
+    source_audio_row: dict[str, Any] = dict(source_audio)
     audio_filepath = _optional_manifest_string(
         source_audio,
         "audio_filepath",
@@ -628,7 +628,7 @@ def load_manifest(path: str) -> list[dict[str, Any]]:
     manifest_path = Path(path)
     if not manifest_path.exists():
         raise FileNotFoundError(path)
-    with manifest_path.open(encoding="utf-8") as f:
+    with manifest_path.open(encoding="utf-8-sig") as f:
         first_non_whitespace = ""
         while True:
             char = f.read(1)
@@ -655,7 +655,7 @@ def load_manifest(path: str) -> list[dict[str, Any]]:
 
         data: list[dict[str, Any]] = []
         for i, obj_str in enumerate(f, start=1):
-            if not obj_str.strip():
+            if not obj_str or obj_str.isspace():
                 continue
             try:
                 obj = json.loads(obj_str)

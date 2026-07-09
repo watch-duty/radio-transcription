@@ -254,6 +254,14 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                     expected_field,
                 )
 
+    def test_explicit_null_optional_metadata_is_absent(self) -> None:
+        issues = validate_canonical_manifest(
+            [_canonical_row(split=None, dataset=None, source_audio=None)],
+            expected_split="train",
+        )
+
+        self.assertEqual(issues, [])
+
     def test_unknown_prediction_and_removed_fields_are_tolerated(
         self,
     ) -> None:
@@ -836,6 +844,49 @@ class TestRowsFromManifestStrict(unittest.TestCase):
             "gs://bucket/source/example.mp3",
         )
 
+    def test_optional_metadata_unknown_keys_are_preserved(self) -> None:
+        rows = rows_from_manifest(
+            [
+                _canonical_row(
+                    dataset={
+                        "name": " echo ",
+                        "family": " radio ",
+                        "custom": {"priority": 1},
+                    },
+                    source_audio={
+                        "audio_filepath": " gs://bucket/source/example.mp3 ",
+                        "offset": 1,
+                        "duration": 2,
+                        "sample_rate_hz": 44100,
+                    },
+                )
+            ]
+        )
+
+        self.assertEqual(rows[0].dataset["name"], "echo")
+        self.assertEqual(rows[0].dataset["family"], "radio")
+        self.assertEqual(rows[0].dataset["custom"], {"priority": 1})
+        self.assertEqual(
+            rows[0].source_audio["audio_filepath"],
+            "gs://bucket/source/example.mp3",
+        )
+        self.assertEqual(rows[0].source_audio["offset"], 1.0)
+        self.assertEqual(rows[0].source_audio["duration"], 2.0)
+        self.assertEqual(rows[0].source_audio["sample_rate_hz"], 44100)
+
+    def test_unknown_only_optional_metadata_is_preserved(self) -> None:
+        rows = rows_from_manifest(
+            [
+                _canonical_row(
+                    dataset={"custom_dataset_key": "echo"},
+                    source_audio={"sample_rate_hz": 44100},
+                )
+            ]
+        )
+
+        self.assertEqual(rows[0].dataset, {"custom_dataset_key": "echo"})
+        self.assertEqual(rows[0].source_audio, {"sample_rate_hz": 44100})
+
     def test_core_row_maps_optional_fields_to_none(self) -> None:
         row = _canonical_row()
         row.pop("split")
@@ -987,6 +1038,20 @@ class TestLoadManifestBoundaries(unittest.TestCase):
         try:
             with os.fdopen(fd, "w") as f:
                 json.dump([{"audio_filepath": "local/audio.mp3"}], f)
+            rows = load_manifest(path)
+        finally:
+            Path(path).unlink()
+
+        self.assertEqual(rows, [{"audio_filepath": "local/audio.mp3"}])
+
+    def test_json_array_with_utf8_bom_is_loaded(self) -> None:
+        fd, path = tempfile.mkstemp(suffix=".json")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(
+                    "\ufeff"
+                    + json.dumps([{"audio_filepath": "local/audio.mp3"}])
+                )
             rows = load_manifest(path)
         finally:
             Path(path).unlink()
