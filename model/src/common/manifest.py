@@ -844,11 +844,18 @@ def _required_stripped_string(
 
 def _required_float(row: dict[str, Any], key: str, row_kind: str) -> float:
     value = _required_key(row, key, row_kind)
+    if isinstance(value, bool):
+        msg = f"{row_kind} has non-numeric '{key}': {row!r}"
+        raise ValueError(msg)  # noqa: TRY004
     try:
-        return float(value)
+        parsed = float(value)
     except (TypeError, ValueError) as exc:
         msg = f"{row_kind} has non-numeric '{key}': {row!r}"
         raise ValueError(msg) from exc
+    if not math.isfinite(parsed):
+        msg = f"{row_kind} has non-finite '{key}': {row!r}"
+        raise ValueError(msg)
+    return parsed
 
 
 def _merge_file_predictions(
