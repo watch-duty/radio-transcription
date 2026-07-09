@@ -33,33 +33,17 @@ def _row(
 ) -> dict[str, Any]:
     if example_id is None:
         example_id = uri.rsplit("/", maxsplit=1)[-1].removesuffix(".flac")
-    if split is None:
-        split = _infer_split(uri)
-    return {
+    row = {
         "audio_filepath": uri,
         "text": text,
         "offset": offset,
         "duration": duration,
         "example_id": example_id,
         "segment_id": segment_id,
-        "split": split,
-        "lang": "en",
-        "dataset": {"name": "echo", "family": "radio"},
-        "source_audio": {
-            "audio_filepath": f"gs://source/audio/{example_id}.mp3",
-            "offset": offset,
-            "duration": duration,
-        },
     }
-
-
-def _infer_split(uri: str) -> str:
-    leaf = uri.rsplit("/", maxsplit=1)[-1]
-    if "validation" in leaf:
-        return "validation"
-    if "eval" in leaf:
-        return "eval"
-    return "train"
+    if split is not None:
+        row["split"] = split
+    return row
 
 
 def _config_text(round_id: str = "round-a") -> str:
@@ -135,24 +119,15 @@ def _seed_source_manifests(
 ) -> None:
     storage.put(
         "gs://source/manifests/train.jsonl",
-        _manifest([_row(train_uri, "train transcript", 4.0, split="train")]),
+        _manifest([_row(train_uri, "train transcript", 4.0)]),
     )
     storage.put(
         "gs://source/manifests/validation.jsonl",
-        _manifest(
-            [
-                _row(
-                    validation_uri,
-                    "validation transcript",
-                    5.0,
-                    split="validation",
-                )
-            ]
-        ),
+        _manifest([_row(validation_uri, "validation transcript", 5.0)]),
     )
     storage.put(
         "gs://source/manifests/eval.jsonl",
-        _manifest([_row(eval_uri, "eval transcript", 6.0, split="eval")]),
+        _manifest([_row(eval_uri, "eval transcript", 6.0)]),
     )
     storage.put(train_uri, "audio")
     storage.put(validation_uri, "audio")
@@ -376,7 +351,6 @@ class TestPrepareRun(unittest.TestCase):
                             6.0,
                             example_id="eval-audio",
                             segment_id="001",
-                            split="eval",
                         ),
                         _row(
                             "gs://audio/eval-identity.flac",

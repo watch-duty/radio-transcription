@@ -27,31 +27,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CANONICAL_TOP_LEVEL_KEYS: Final = frozenset(
-    {
-        "audio_filepath",
-        "text",
-        "offset",
-        "duration",
-        "example_id",
-        "segment_id",
-        "split",
-        "lang",
-        "dataset",
-        "source_audio",
-    }
-)
 CANONICAL_DATASET_KEYS: Final = frozenset({"name", "family"})
-CANONICAL_SOURCE_AUDIO_KEYS: Final = frozenset(
-    {"audio_filepath", "offset", "duration"}
-)
-CANONICAL_STRING_FIELDS: Final = (
+CANONICAL_REQUIRED_STRING_FIELDS: Final = (
     "audio_filepath",
     "text",
     "example_id",
     "segment_id",
-    "split",
-    "lang",
 )
 
 
@@ -69,10 +50,9 @@ class CanonicalRow:
     offset: float
     duration: float
     text: str
-    split: str
-    lang: str
-    dataset: dict[str, str]
-    source_audio: dict[str, str | float]
+    split: str | None = None
+    dataset: dict[str, str] | None = None
+    source_audio: dict[str, str | float] | None = None
 
 
 @dataclass(frozen=True)
@@ -135,9 +115,9 @@ def validate_canonical_manifest(
 ) -> list[CanonicalManifestIssue]:
     """Strictly validate Canonical Manifest rows.
 
-    This is the single strict semantic validation path. Canonical manifests use
-    the exact schema represented by ``CANONICAL_TOP_LEVEL_KEYS``; prediction
-    fields belong only to derived inference artifacts.
+    This is the single strict semantic validation path for required core
+    fields and optional metadata semantics. Unknown row-level fields,
+    prediction fields, and unknown keys inside metadata objects are tolerated.
     """
     issues: list[CanonicalManifestIssue] = []
     if not rows:
@@ -152,13 +132,6 @@ def validate_canonical_manifest(
     seen_audio_filepaths: dict[str, int] = {}
 
     for row_index, row in enumerate(rows):
-        _validate_exact_keys(
-            row,
-            CANONICAL_TOP_LEVEL_KEYS,
-            row_index,
-            issues,
-            prefix="",
-        )
         _validate_required_fields(row, row_index, issues)
         _validate_metadata(row, row_index, expected_split, issues)
 
@@ -223,7 +196,7 @@ def _validate_required_fields(
     row_index: int,
     issues: list[CanonicalManifestIssue],
 ) -> None:
-    for field in CANONICAL_STRING_FIELDS:
+    for field in CANONICAL_REQUIRED_STRING_FIELDS:
         if field not in row:
             _add_issue(
                 issues,
@@ -294,15 +267,23 @@ def _validate_metadata(
     expected_split: str | None,
     issues: list[CanonicalManifestIssue],
 ) -> None:
-    split = _stripped_string(row.get("split"))
-    if split and expected_split is not None and split != expected_split:
-        _add_issue(
-            issues,
-            "split_mismatch",
-            f"split {split!r} does not match {expected_split!r}",
-            row_index=row_index,
-            field="split",
-        )
+    if "split" in row:
+        split = _stripped_string(row["split"])
+        if not split:
+            _add_invalid_metadata(
+                issues,
+                row_index,
+                "split",
+                "split must be a non-empty string",
+            )
+        elif expected_split is not None and split != expected_split:
+            _add_issue(
+                issues,
+                "split_mismatch",
+                f"split {split!r} does not match {expected_split!r}",
+                row_index=row_index,
+                field="split",
+            )
 
     _validate_dataset(row, row_index, issues)
     _validate_source_audio(row, row_index, issues)
@@ -314,13 +295,6 @@ def _validate_dataset(
     issues: list[CanonicalManifestIssue],
 ) -> None:
     if "dataset" not in row or row["dataset"] is None:
-        _add_issue(
-            issues,
-            "missing_required",
-            "dataset is required",
-            row_index=row_index,
-            field="dataset",
-        )
         return
     dataset = row["dataset"]
     if not isinstance(dataset, dict):
@@ -331,24 +305,9 @@ def _validate_dataset(
             "dataset must be an object",
         )
         return
-    _validate_exact_keys(
-        dataset,
-        CANONICAL_DATASET_KEYS,
-        row_index,
-        issues,
-        prefix="dataset.",
-    )
     for key in CANONICAL_DATASET_KEYS:
         field = f"dataset.{key}"
-        if key not in dataset:
-            _add_issue(
-                issues,
-                "missing_required",
-                f"{field} is required",
-                row_index=row_index,
-                field=field,
-            )
-        elif not _stripped_string(dataset[key]):
+        if key in dataset and not _stripped_string(dataset[key]):
             _add_invalid_metadata(
                 issues,
                 row_index,
@@ -363,13 +322,6 @@ def _validate_source_audio(
     issues: list[CanonicalManifestIssue],
 ) -> None:
     if "source_audio" not in row or row["source_audio"] is None:
-        _add_issue(
-            issues,
-            "missing_required",
-            "source_audio is required",
-            row_index=row_index,
-            field="source_audio",
-        )
         return
     source_audio = row["source_audio"]
     if not isinstance(source_audio, dict):
@@ -380,52 +332,25 @@ def _validate_source_audio(
             "source_audio must be an object",
         )
         return
-    _validate_exact_keys(
-        source_audio,
-        CANONICAL_SOURCE_AUDIO_KEYS,
-        row_index,
-        issues,
-        prefix="source_audio.",
-    )
-    if "audio_filepath" not in source_audio:
-        _add_issue(
-            issues,
-            "missing_required",
-            "source_audio.audio_filepath is required",
-            row_index=row_index,
-            field="source_audio.audio_filepath",
-        )
-    elif not _stripped_string(source_audio["audio_filepath"]):
+    if "audio_filepath" in source_audio and not _stripped_string(
+        source_audio["audio_filepath"]
+    ):
         _add_invalid_metadata(
             issues,
             row_index,
             "source_audio.audio_filepath",
             "source_audio.audio_filepath must be a non-empty string",
         )
-    if "offset" not in source_audio:
-        _add_issue(
-            issues,
-            "missing_required",
-            "source_audio.offset is required",
-            row_index=row_index,
-            field="source_audio.offset",
-        )
-    elif not _is_number(source_audio["offset"]) or source_audio["offset"] < 0:
+    if "offset" in source_audio and (
+        not _is_number(source_audio["offset"]) or source_audio["offset"] < 0
+    ):
         _add_invalid_metadata(
             issues,
             row_index,
             "source_audio.offset",
             "source_audio.offset must be numeric and non-negative",
         )
-    if "duration" not in source_audio:
-        _add_issue(
-            issues,
-            "missing_required",
-            "source_audio.duration is required",
-            row_index=row_index,
-            field="source_audio.duration",
-        )
-    elif (
+    if "duration" in source_audio and (
         not _is_number(source_audio["duration"])
         or source_audio["duration"] <= 0
     ):
@@ -434,25 +359,6 @@ def _validate_source_audio(
             row_index,
             "source_audio.duration",
             "source_audio.duration must be numeric and greater than zero",
-        )
-
-
-def _validate_exact_keys(
-    row: dict[str, Any],
-    allowed_keys: frozenset[str],
-    row_index: int,
-    issues: list[CanonicalManifestIssue],
-    *,
-    prefix: str,
-) -> None:
-    for key in sorted(set(row) - allowed_keys):
-        field = f"{prefix}{key}"
-        _add_issue(
-            issues,
-            "unexpected_field",
-            f"{field} is not part of the canonical manifest contract",
-            row_index=row_index,
-            field=field,
         )
 
 
@@ -519,7 +425,7 @@ def _format_issue(issue: CanonicalManifestIssue) -> str:
 
 
 def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
-    """Convert exact canonical manifest dicts to typed CanonicalRow instances.
+    """Convert canonical manifest dicts to typed CanonicalRow instances.
 
     Args:
         manifest: List of canonical manifest dicts, as returned by
@@ -546,30 +452,9 @@ def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
         segment_id = _required_manifest_string(
             entry, "segment_id", row_index=i
         )
-        split = _required_manifest_string(entry, "split", row_index=i)
-        lang = _required_manifest_string(entry, "lang", row_index=i)
-        dataset = entry["dataset"]
-        source_audio = entry["source_audio"]
+        split = _optional_manifest_string(entry, "split", row_index=i)
         offset = float(entry["offset"])
         duration = float(entry["duration"])
-        dataset_row = {
-            "name": _required_manifest_string(
-                dataset, "name", row_index=i, prefix="dataset."
-            ),
-            "family": _required_manifest_string(
-                dataset, "family", row_index=i, prefix="dataset."
-            ),
-        }
-        source_audio_row: dict[str, str | float] = {
-            "audio_filepath": _required_manifest_string(
-                source_audio,
-                "audio_filepath",
-                row_index=i,
-                prefix="source_audio.",
-            ),
-            "offset": float(source_audio["offset"]),
-            "duration": float(source_audio["duration"]),
-        }
         rows.append(
             CanonicalRow(
                 audio_filepath=audio_filepath,
@@ -579,9 +464,8 @@ def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
                 duration=duration,
                 text=text,
                 split=split,
-                lang=lang,
-                dataset=dataset_row,
-                source_audio=source_audio_row,
+                dataset=_optional_dataset(entry, row_index=i),
+                source_audio=_optional_source_audio(entry, row_index=i),
             )
         )
     return rows
@@ -600,6 +484,63 @@ def _required_manifest_string(
         msg = f"manifest row {row_index} missing or blank {prefix}{field}"
         raise ValueError(msg)
     return stripped
+
+
+def _optional_manifest_string(
+    row: dict[str, Any],
+    field: str,
+    *,
+    row_index: int,
+    prefix: str = "",
+) -> str | None:
+    if field not in row or row[field] is None:
+        return None
+    stripped = _stripped_string(row[field])
+    if not stripped:
+        msg = f"manifest row {row_index} has blank {prefix}{field}"
+        raise ValueError(msg)
+    return stripped
+
+
+def _optional_dataset(
+    row: dict[str, Any],
+    *,
+    row_index: int,
+) -> dict[str, str] | None:
+    dataset = row.get("dataset")
+    if not isinstance(dataset, dict):
+        return None
+    dataset_row: dict[str, str] = {}
+    for key in CANONICAL_DATASET_KEYS:
+        value = _optional_manifest_string(
+            dataset, key, row_index=row_index, prefix="dataset."
+        )
+        if value is not None:
+            dataset_row[key] = value
+    return dataset_row or None
+
+
+def _optional_source_audio(
+    row: dict[str, Any],
+    *,
+    row_index: int,
+) -> dict[str, str | float] | None:
+    source_audio = row.get("source_audio")
+    if not isinstance(source_audio, dict):
+        return None
+    source_audio_row: dict[str, str | float] = {}
+    audio_filepath = _optional_manifest_string(
+        source_audio,
+        "audio_filepath",
+        row_index=row_index,
+        prefix="source_audio.",
+    )
+    if audio_filepath is not None:
+        source_audio_row["audio_filepath"] = audio_filepath
+    for field in ("offset", "duration"):
+        if field in source_audio:
+            source_audio_row[field] = float(source_audio[field])
+    return source_audio_row or None
 
 
 def load_manifest(path: str) -> list[dict[str, Any]]:

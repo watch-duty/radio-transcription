@@ -16,8 +16,6 @@ from typing import TYPE_CHECKING, Any, Final
 
 from google.cloud.storage.retry import DEFAULT_RETRY
 
-from common.manifest import require_canonical_manifest
-
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
@@ -136,7 +134,7 @@ def build_inference_manifest_rows(
     Args:
         model_family_slug: Model-family slug used in the target prediction
             field name.
-        source_rows: Strict canonical evaluated source manifest rows.
+        source_rows: Raw evaluated source manifest rows.
         predictions_by_audio_uri: Mapping of audio URI to prediction text.
         audio_uri_field: Source-row field containing the audio URI.
 
@@ -146,11 +144,11 @@ def build_inference_manifest_rows(
         ``pred_text_<model_family_slug>`` field.
 
     Raises:
-        ValueError: If source rows are not strict canonical rows, if
-            predictions contain unknown audio URIs, or if path components are
-            invalid.
+        ValueError: If an audio URI or reference text is missing, if source
+            rows contain duplicate audio URIs, if predictions contain unknown
+            audio URIs, or if source rows already contain prediction fields for
+            other models.
     """
-    require_canonical_manifest(source_rows)
     model_slug = _validate_safe_segment(model_family_slug, "model_family_slug")
     target_field = f"{PREDICTION_FIELD_PREFIX}{model_slug}"
     output_rows: list[dict[str, Any]] = []
@@ -210,7 +208,7 @@ def upload_inference_manifest(
         model_family_slug: Single safe model-family segment.
         run_id: Single safe run ID segment.
         artifact_label: Single safe artifact label without ``.jsonl``.
-        source_rows: Strict canonical evaluated source manifest rows.
+        source_rows: Raw evaluated source manifest rows.
         predictions_by_audio_uri: Mapping of audio URI to prediction text.
 
     Returns:

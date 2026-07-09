@@ -14,7 +14,6 @@ from typing import Any
 from google.cloud import storage
 
 from common.gcs_utils import download_to_scratch
-from common.manifest import require_canonical_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +56,8 @@ def run_inference_pipeline(
     Args:
         model: The loaded model instance. Model-agnostic — delegates inference and
             decoding to the provided callables (NeMo SALM, Whisper, etc.).
-        manifest_data: Strict canonical manifest rows. The row-level
-            ``audio_filepath`` value must point to the cut audio segment in GCS.
+        manifest_data: List of manifest entries. Assumes 'audio_filepath' points to a
+            GCS URI for an already-segmented audio file.
         prompt_fn: Callable(entry, local_path) -> prompt structure.
         inference_fn: Callable(model, prompts) -> list of raw outputs.
         decode_fn: Callable(output, model) -> str (transcription).
@@ -75,7 +74,6 @@ def run_inference_pipeline(
         ``pred_text_{selected_model}`` key.
     """
     _require_torch()
-    require_canonical_manifest(manifest_data)
 
     if limit:
         manifest_data = manifest_data[:limit]

@@ -34,7 +34,6 @@ def _canonical_row(**overrides: object) -> dict[str, object]:
         "example_id": "example",
         "segment_id": "001",
         "split": "train",
-        "lang": "en",
         "dataset": {"name": "echo", "family": "radio"},
         "source_audio": {
             "audio_filepath": "gs://bucket/source/example.mp3",
@@ -62,10 +61,22 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             f"Missing {code}/{field} in {issues!r}",
         )
 
-    def test_valid_exact_row_returns_no_issues(self) -> None:
+    def test_valid_row_with_optional_metadata_returns_no_issues(self) -> None:
         row = _canonical_row(
             audio_filepath="gs://bucket/audio/example.FLAC",
         )
+
+        issues = validate_canonical_manifest([row], expected_split="train")
+
+        self.assertEqual(issues, [])
+
+    def test_valid_core_row_without_optional_metadata_returns_no_issues(
+        self,
+    ) -> None:
+        row = _canonical_row()
+        row.pop("split")
+        row.pop("dataset")
+        row.pop("source_audio")
 
         issues = validate_canonical_manifest([row], expected_split="train")
 
@@ -93,10 +104,6 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             ("blank example_id", "example_id", " ", "blank_required"),
             ("missing segment_id", "segment_id", None, "missing_required"),
             ("blank segment_id", "segment_id", " ", "blank_required"),
-            ("missing split", "split", None, "missing_required"),
-            ("blank split", "split", " ", "blank_required"),
-            ("missing lang", "lang", None, "missing_required"),
-            ("blank lang", "lang", " ", "blank_required"),
             ("missing offset", "offset", None, "missing_required"),
             ("negative offset", "offset", -1, "invalid_offset"),
             ("non-numeric offset", "offset", "start", "invalid_offset"),
@@ -179,19 +186,14 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             "example_id,segment_id",
         )
 
-    def test_required_nested_metadata_failures_report_code_and_field(self) -> None:
+    def test_optional_metadata_failures_report_code_and_field(self) -> None:
         cases = [
+            ("blank split", {"split": " "}, "invalid_metadata", "split"),
             (
                 "split mismatch",
                 {"split": "eval"},
                 "split_mismatch",
                 "split",
-            ),
-            (
-                "missing dataset",
-                {"dataset": None},
-                "missing_required",
-                "dataset",
             ),
             (
                 "malformed dataset",
@@ -204,18 +206,6 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 {"dataset": {"name": " ", "family": "radio"}},
                 "invalid_metadata",
                 "dataset.name",
-            ),
-            (
-                "missing dataset family",
-                {"dataset": {"name": "echo"}},
-                "missing_required",
-                "dataset.family",
-            ),
-            (
-                "missing source_audio",
-                {"source_audio": None},
-                "missing_required",
-                "source_audio",
             ),
             (
                 "malformed source_audio",
@@ -236,14 +226,15 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 "source_audio.audio_filepath",
             ),
             (
-                "missing source audio offset",
+                "invalid source audio offset",
                 {
                     "source_audio": {
                         "audio_filepath": "gs://bucket/source/example.mp3",
+                        "offset": "bad",
                         "duration": 1.0,
                     }
                 },
-                "missing_required",
+                "invalid_metadata",
                 "source_audio.offset",
             ),
         ]
@@ -261,7 +252,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                     expected_field,
                 )
 
-    def test_unknown_prediction_and_removed_fields_are_invalid(
+    def test_unknown_prediction_and_removed_fields_are_tolerated(
         self,
     ) -> None:
         for field in (
@@ -272,14 +263,15 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             "original_audio_uri",
             "source_group",
             "dataset_name",
+            "lang",
         ):
             with self.subTest(field=field):
                 issues = validate_canonical_manifest(
                     [_canonical_row(**{field: "not canonical"})]
                 )
-                self.assertHasIssue(issues, "unexpected_field", field)
+                self.assertEqual(issues, [])
 
-    def test_unknown_nested_fields_are_invalid(self) -> None:
+    def test_unknown_nested_fields_are_tolerated(self) -> None:
         dataset_issues = validate_canonical_manifest(
             [
                 _canonical_row(
@@ -291,9 +283,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 )
             ]
         )
-        self.assertHasIssue(
-            dataset_issues, "unexpected_field", "dataset.extra"
-        )
+        self.assertEqual(dataset_issues, [])
 
         source_issues = validate_canonical_manifest(
             [
@@ -307,9 +297,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 )
             ]
         )
-        self.assertHasIssue(
-            source_issues, "unexpected_field", "source_audio.extra"
-        )
+        self.assertEqual(source_issues, [])
 
     def test_invalid_rows_return_structured_issues(self) -> None:
         rows = [
@@ -319,7 +307,6 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 offset=True,
                 duration=0,
                 split="eval",
-                lang="",
                 dataset={"name": " ", "family": 42},
                 source_audio={
                     "audio_filepath": "",
@@ -335,7 +322,6 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 "example_id": "example",
                 "segment_id": "001",
                 "split": "train",
-                "lang": "en",
                 "dataset": {"name": "echo", "family": "radio"},
                 "source_audio": {
                     "audio_filepath": "gs://bucket/source/other.mp3",
@@ -468,14 +454,6 @@ class TestCanonicalRowIdentity(unittest.TestCase):
                 offset=0.0,
                 duration=1.0,
                 text="hello",
-                split="train",
-                lang="en",
-                dataset={"name": "echo", "family": "radio"},
-                source_audio={
-                    "audio_filepath": "gs://bucket/source/example.mp3",
-                    "offset": 0.0,
-                    "duration": 1.0,
-                },
             )
         )
 
@@ -839,9 +817,9 @@ class TestLoadManifestFailLoud(unittest.TestCase):
 
 
 class TestRowsFromManifestStrict(unittest.TestCase):
-    """rows_from_manifest only converts exact canonical rows."""
+    """rows_from_manifest converts valid canonical rows without deriving core fields."""
 
-    def test_exact_row_maps_all_fields(self) -> None:
+    def test_row_maps_core_and_optional_fields(self) -> None:
         rows = rows_from_manifest([_canonical_row()])
 
         self.assertEqual(len(rows), 1)
@@ -850,12 +828,23 @@ class TestRowsFromManifestStrict(unittest.TestCase):
         self.assertEqual(rows[0].example_id, "example")
         self.assertEqual(rows[0].segment_id, "001")
         self.assertEqual(rows[0].split, "train")
-        self.assertEqual(rows[0].lang, "en")
         self.assertEqual(rows[0].dataset["name"], "echo")
         self.assertEqual(
             rows[0].source_audio["audio_filepath"],
             "gs://bucket/source/example.mp3",
         )
+
+    def test_core_row_maps_optional_fields_to_none(self) -> None:
+        row = _canonical_row()
+        row.pop("split")
+        row.pop("dataset")
+        row.pop("source_audio")
+
+        rows = rows_from_manifest([row])
+
+        self.assertIsNone(rows[0].split)
+        self.assertIsNone(rows[0].dataset)
+        self.assertIsNone(rows[0].source_audio)
 
     def test_partial_row_does_not_derive_or_default(self) -> None:
         with self.assertRaisesRegex(ValueError, "Canonical Manifest"):
@@ -887,7 +876,7 @@ class TestScoreableManifestEntry(unittest.TestCase):
                 {"audio_filepath": "gs://b/a.flac", "text": "hello"}
             )
         )
-        self.assertFalse(
+        self.assertTrue(
             is_scoreable_manifest_entry(
                 {**_canonical_row(), "unexpected": "not scoreable"}
             )
@@ -926,7 +915,6 @@ class TestRowsFromManifestRequiredFields(unittest.TestCase):
                     example_id=" example ",
                     segment_id=" 001 ",
                     split=" train ",
-                    lang=" en ",
                     dataset={"name": " echo ", "family": " radio "},
                     source_audio={
                         "audio_filepath": " gs://bucket/source/example.mp3 ",
