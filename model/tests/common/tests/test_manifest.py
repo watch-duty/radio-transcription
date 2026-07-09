@@ -122,7 +122,9 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 else:
                     row[field] = value
 
-                issues = validate_canonical_manifest([row], expected_split="train")
+                issues = validate_canonical_manifest(
+                    [row], expected_split="train"
+                )
 
                 self.assertHasIssue(issues, expected_code, field)
 
@@ -817,7 +819,7 @@ class TestLoadManifestFailLoud(unittest.TestCase):
 
 
 class TestRowsFromManifestStrict(unittest.TestCase):
-    """rows_from_manifest converts valid canonical rows without deriving core fields."""
+    """rows_from_manifest converts valid rows and fills conversion defaults."""
 
     def test_row_maps_core_and_optional_fields(self) -> None:
         rows = rows_from_manifest([_canonical_row()])
@@ -846,15 +848,31 @@ class TestRowsFromManifestStrict(unittest.TestCase):
         self.assertIsNone(rows[0].dataset)
         self.assertIsNone(rows[0].source_audio)
 
-    def test_partial_row_does_not_derive_or_default(self) -> None:
-        with self.assertRaisesRegex(ValueError, "Canonical Manifest"):
+    def test_missing_identity_and_offset_are_derived_or_defaulted(
+        self,
+    ) -> None:
+        rows = rows_from_manifest(
+            [
+                {
+                    "audio_filepath": "gs://b/a.flac",
+                    "text": "hello",
+                    "duration": 2.0,
+                }
+            ]
+        )
+
+        self.assertEqual(rows[0].example_id, "a")
+        self.assertEqual(rows[0].segment_id, "001")
+        self.assertEqual(rows[0].offset, 0.0)
+        self.assertEqual(rows[0].duration, 2.0)
+
+    def test_missing_duration_still_fails(self) -> None:
+        with self.assertRaisesRegex(ValueError, "duration"):
             rows_from_manifest(
                 [
                     {
                         "audio_filepath": "gs://b/a.flac",
                         "text": "hello",
-                        "offset": None,
-                        "duration": None,
                     }
                 ]
             )
@@ -921,6 +939,16 @@ class TestRowsFromManifestRequiredFields(unittest.TestCase):
     def test_blank_text_raises_with_row_context(self) -> None:
         with self.assertRaisesRegex(ValueError, "text"):
             rows_from_manifest([_canonical_row(text="  ")])
+
+    def test_non_string_text_raises_type_error_with_row_context(self) -> None:
+        with self.assertRaisesRegex(ValueError, "text must be a string"):
+            rows_from_manifest([_canonical_row(text=123)])
+
+    def test_blank_identity_fields_are_not_derived(self) -> None:
+        with self.assertRaisesRegex(ValueError, "example_id"):
+            rows_from_manifest([_canonical_row(example_id="  ")])
+        with self.assertRaisesRegex(ValueError, "segment_id"):
+            rows_from_manifest([_canonical_row(segment_id="  ")])
 
     def test_required_string_values_are_stripped(self) -> None:
         rows = rows_from_manifest(

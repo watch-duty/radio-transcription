@@ -27,7 +27,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CANONICAL_DATASET_KEYS: Final = frozenset({"name", "family"})
+CANONICAL_DATASET_KEYS: Final = (
+    "name",
+    "family",
+)
 CANONICAL_REQUIRED_STRING_FIELDS: Final = (
     "audio_filepath",
     "text",
@@ -423,7 +426,13 @@ def _format_issue(issue: CanonicalManifestIssue) -> str:
 
 
 def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
-    """Convert canonical manifest dicts to typed CanonicalRow instances.
+    """Convert manifest dicts to typed CanonicalRow instances.
+
+    This is a compatibility conversion boundary for raw manifest rows:
+    ``example_id`` falls back to the audio filename stem, ``segment_id`` falls
+    back to ``"001"``, and a missing ``offset`` falls back to ``0.0``. The
+    normalized rows are still validated against the canonical contract before
+    conversion.
 
     Args:
         manifest: List of canonical manifest dicts, as returned by
@@ -435,21 +444,21 @@ def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
     Raises:
         ValueError: If the manifest violates the canonical contract.
     """
-    require_canonical_manifest(manifest)
+    normalized_manifest = [
+        _normalize_manifest_entry(entry, row_index=i)
+        for i, entry in enumerate(manifest)
+    ]
+    require_canonical_manifest(normalized_manifest)
     rows: list[CanonicalRow] = []
-    for i, entry in enumerate(manifest):
+    for i, entry in enumerate(normalized_manifest):
         audio_filepath = _required_manifest_string(
             entry,
             "audio_filepath",
             row_index=i,
         )
         text = _required_manifest_string(entry, "text", row_index=i)
-        example_id = _required_manifest_string(
-            entry, "example_id", row_index=i
-        )
-        segment_id = _required_manifest_string(
-            entry, "segment_id", row_index=i
-        )
+        example_id = _required_manifest_string(entry, "example_id", row_index=i)
+        segment_id = _required_manifest_string(entry, "segment_id", row_index=i)
         split = _optional_manifest_string(entry, "split", row_index=i)
         offset = float(entry["offset"])
         duration = float(entry["duration"])
@@ -469,6 +478,50 @@ def rows_from_manifest(manifest: list[dict[str, Any]]) -> list[CanonicalRow]:
     return rows
 
 
+def _normalize_manifest_entry(
+    entry: dict[str, Any],
+    *,
+    row_index: int,
+) -> dict[str, Any]:
+    audio_filepath = _required_manifest_string(
+        entry,
+        "audio_filepath",
+        row_index=row_index,
+    )
+    text = _required_manifest_string(entry, "text", row_index=row_index)
+
+    normalized = dict(entry)
+    normalized["audio_filepath"] = audio_filepath
+    normalized["text"] = text
+    normalized["example_id"] = _optional_identity_string(
+        entry,
+        "example_id",
+        default=Path(audio_filepath).stem,
+        row_index=row_index,
+    )
+    normalized["segment_id"] = _optional_identity_string(
+        entry,
+        "segment_id",
+        default="001",
+        row_index=row_index,
+    )
+    if "offset" not in normalized or normalized["offset"] is None:
+        normalized["offset"] = 0.0
+    return normalized
+
+
+def _optional_identity_string(
+    row: dict[str, Any],
+    field: str,
+    *,
+    default: str,
+    row_index: int,
+) -> str:
+    if field not in row or row[field] is None:
+        return default
+    return _required_manifest_string(row, field, row_index=row_index)
+
+
 def _required_manifest_string(
     row: dict[str, Any],
     field: str,
@@ -477,7 +530,16 @@ def _required_manifest_string(
     prefix: str = "",
 ) -> str:
     value = row.get(field)
-    stripped = _stripped_string(value)
+    if value is None:
+        msg = f"manifest row {row_index} missing or blank {prefix}{field}"
+        raise ValueError(msg)
+    if not isinstance(value, str):
+        msg = (
+            f"manifest row {row_index} field {prefix}{field} must be a "
+            f"string, got {type(value).__name__}"
+        )
+        raise ValueError(msg)  # noqa: TRY004
+    stripped = value.strip()
     if not stripped:
         msg = f"manifest row {row_index} missing or blank {prefix}{field}"
         raise ValueError(msg)
@@ -493,7 +555,14 @@ def _optional_manifest_string(
 ) -> str | None:
     if field not in row or row[field] is None:
         return None
-    stripped = _stripped_string(row[field])
+    value = row[field]
+    if not isinstance(value, str):
+        msg = (
+            f"manifest row {row_index} field {prefix}{field} must be a "
+            f"string, got {type(value).__name__}"
+        )
+        raise ValueError(msg)  # noqa: TRY004
+    stripped = value.strip()
     if not stripped:
         msg = f"manifest row {row_index} has blank {prefix}{field}"
         raise ValueError(msg)
@@ -559,35 +628,44 @@ def load_manifest(path: str) -> list[dict[str, Any]]:
     manifest_path = Path(path)
     if not manifest_path.exists():
         raise FileNotFoundError(path)
-    content = manifest_path.read_text(encoding="utf-8").strip()
-    if not content:
-        return []
-    if content.startswith("["):
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError as e:
-            msg = f"Failed to parse JSON array in {path}: {e}"
-            raise ValueError(msg) from e
-        if not isinstance(data, list) or not all(
-            isinstance(row, dict) for row in data
-        ):
-            msg = f"Expected a JSON array of objects in {path!r}"
-            raise ValueError(msg)
-        return data
+    with manifest_path.open(encoding="utf-8") as f:
+        first_non_whitespace = ""
+        while True:
+            char = f.read(1)
+            if not char:
+                return []
+            if not char.isspace():
+                first_non_whitespace = char
+                break
 
-    data: list[dict[str, Any]] = []
-    for i, obj_str in enumerate(content.splitlines(), start=1):
-        if not obj_str.strip():
-            continue
-        try:
-            obj = json.loads(obj_str)
-        except json.JSONDecodeError as exc:
-            msg = f"Malformed JSON at line {i} in {path}"
-            raise ValueError(msg) from exc
-        if not isinstance(obj, dict):
-            msg = f"Expected JSON object at line {i} in {path}"
-            raise ValueError(msg)  # noqa: TRY004
-        data.append(obj)
+        f.seek(0)
+        if first_non_whitespace == "[":
+            content = f.read().strip()
+            try:
+                data = json.loads(content)
+            except json.JSONDecodeError as e:
+                msg = f"Failed to parse JSON array in {path}: {e}"
+                raise ValueError(msg) from e
+            if not isinstance(data, list) or not all(
+                isinstance(row, dict) for row in data
+            ):
+                msg = f"Expected a JSON array of objects in {path!r}"
+                raise ValueError(msg)
+            return data
+
+        data: list[dict[str, Any]] = []
+        for i, obj_str in enumerate(f, start=1):
+            if not obj_str.strip():
+                continue
+            try:
+                obj = json.loads(obj_str)
+            except json.JSONDecodeError as exc:
+                msg = f"Malformed JSON at line {i} in {path}"
+                raise ValueError(msg) from exc
+            if not isinstance(obj, dict):
+                msg = f"Expected JSON object at line {i} in {path}"
+                raise ValueError(msg)  # noqa: TRY004
+            data.append(obj)
     return data
 
 
