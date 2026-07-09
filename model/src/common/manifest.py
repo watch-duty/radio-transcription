@@ -72,13 +72,11 @@ class DatasetAdapter(Protocol):
 
 
 def is_scoreable_manifest_entry(entry: Mapping[str, Any]) -> bool:
-    """Return whether a canonical or prediction-enriched row can be scored."""
-    source_row = {
-        key: value
-        for key, value in dict(entry).items()
-        if not key.startswith("pred_text_")
-    }
-    return not validate_canonical_manifest([source_row])
+    """Return whether a row has the reference fields needed for scoring."""
+    return bool(
+        _stripped_string(entry.get("audio_filepath"))
+        and _stripped_string(entry.get("text"))
+    )
 
 
 def canonical_row_identity(

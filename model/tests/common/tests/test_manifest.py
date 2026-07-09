@@ -861,7 +861,7 @@ class TestRowsFromManifestStrict(unittest.TestCase):
 
 
 class TestScoreableManifestEntry(unittest.TestCase):
-    def test_requires_canonical_source_fields(self) -> None:
+    def test_requires_audio_filepath_and_non_blank_text(self) -> None:
         self.assertTrue(is_scoreable_manifest_entry(_canonical_row()))
         self.assertTrue(
             is_scoreable_manifest_entry(
@@ -871,7 +871,7 @@ class TestScoreableManifestEntry(unittest.TestCase):
                 }
             )
         )
-        self.assertFalse(
+        self.assertTrue(
             is_scoreable_manifest_entry(
                 {"audio_filepath": "gs://b/a.flac", "text": "hello"}
             )
@@ -881,6 +881,22 @@ class TestScoreableManifestEntry(unittest.TestCase):
                 {**_canonical_row(), "unexpected": "not scoreable"}
             )
         )
+        self.assertFalse(
+            is_scoreable_manifest_entry(
+                {"audio_filepath": "gs://b/a.flac", "text": ""}
+            )
+        )
+        self.assertFalse(
+            is_scoreable_manifest_entry(
+                {"audio_filepath": "gs://b/a.flac", "text": "   "}
+            )
+        )
+        self.assertFalse(
+            is_scoreable_manifest_entry(
+                {"audio_filepath": "gs://b/a.flac", "text": None}
+            )
+        )
+        self.assertFalse(is_scoreable_manifest_entry({"text": "hello"}))
 
 
 class TestRowsFromManifestRequiredFields(unittest.TestCase):
