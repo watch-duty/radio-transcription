@@ -7,8 +7,8 @@ each inference output implies.
 
 A source/canonical manifest is the row-per-segment input dataset. It contains
 the canonical fields documented in `../manifests/README.md`, including
-`audio_filepath`, `text`, `offset`, `duration`, row identity, and optional
-`split`, `dataset`, and `source_audio` metadata.
+`audio_filepath`, `text`, `offset`, `duration`, `example_id`, `segment_id`,
+and optional `split`, `dataset`, and `source_audio` metadata.
 
 A normalized inference manifest is the scorer-ready output for one model family
 and one run. It preserves the source/canonical manifest rows, requires reference

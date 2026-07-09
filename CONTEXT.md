@@ -56,10 +56,10 @@ when present, `dataset.name`, `dataset.family`,
 `source_audio.duration` are validated.
 
 Strict `audio_filepath` values are model-ready `gs://...flac` clip URIs, and
-`(example_id, segment_id)` is the logical row identity, unique within one
-manifest. Strict validation tolerates unknown row-level fields, unknown keys
-inside optional metadata objects, and prediction-enriched fields such as
-`pred_text_*`. See `model/data/manifests/README.md` for the detailed contract.
+`(example_id, segment_id)` must be unique within one manifest. Strict
+validation tolerates unknown row-level fields, unknown keys inside optional
+metadata objects, and prediction-enriched fields such as `pred_text_*`. See
+`model/data/manifests/README.md` for the detailed contract.
 
 ### Train, Validation, And Eval Splits
 

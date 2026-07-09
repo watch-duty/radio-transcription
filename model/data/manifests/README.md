@@ -16,9 +16,8 @@ Each JSONL row must include these contract fields:
 - `example_id`: logical example identifier.
 - `segment_id`: logical segment identifier.
 
-`(example_id, segment_id)` is the logical row identity and must be unique
-within one manifest. Strict validation also rejects duplicate
-`audio_filepath` values within one manifest.
+`(example_id, segment_id)` must be unique within one manifest. Strict
+validation also rejects duplicate `audio_filepath` values within one manifest.
 
 ## Optional Metadata
 
