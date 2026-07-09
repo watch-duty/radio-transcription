@@ -86,6 +86,10 @@ describe('AudioDisplay', () => {
         playbackState="listening"
         windowEndTime={null}
         windowDurationMs={15 * 60 * 1000}
+        histogramMarks={[]}
+        rangeStartMs={null}
+        maxEnd={null}
+        onCenterWindow={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -114,6 +118,10 @@ describe('AudioDisplay', () => {
         playbackState="listening"
         windowEndTime={null}
         windowDurationMs={15 * 60 * 1000}
+        histogramMarks={[]}
+        rangeStartMs={null}
+        maxEnd={null}
+        onCenterWindow={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -148,6 +156,10 @@ describe('AudioDisplay', () => {
         playbackState="listening"
         windowEndTime={null}
         windowDurationMs={15 * 60 * 1000}
+        histogramMarks={[]}
+        rangeStartMs={null}
+        maxEnd={null}
+        onCenterWindow={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -188,6 +200,10 @@ describe('AudioDisplay', () => {
         playbackState="listening"
         windowEndTime={null}
         windowDurationMs={15 * 60 * 1000}
+        histogramMarks={[]}
+        rangeStartMs={null}
+        maxEnd={null}
+        onCenterWindow={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -206,6 +222,10 @@ describe('AudioDisplay', () => {
         playbackState="listening"
         windowEndTime={null}
         windowDurationMs={15 * 60 * 1000}
+        histogramMarks={[]}
+        rangeStartMs={null}
+        maxEnd={null}
+        onCenterWindow={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -240,6 +260,10 @@ describe('AudioDisplay', () => {
         playbackState="listening"
         windowEndTime={null}
         windowDurationMs={15 * 60 * 1000}
+        histogramMarks={[]}
+        rangeStartMs={null}
+        maxEnd={null}
+        onCenterWindow={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -270,6 +294,10 @@ describe('AudioDisplay', () => {
         playbackState="listening"
         windowEndTime={null}
         windowDurationMs={15 * 60 * 1000}
+        histogramMarks={[]}
+        rangeStartMs={null}
+        maxEnd={null}
+        onCenterWindow={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -305,6 +333,10 @@ describe('AudioDisplay', () => {
         playbackState="listening"
         windowEndTime={null}
         windowDurationMs={15 * 60 * 1000}
+        histogramMarks={[]}
+        rangeStartMs={null}
+        maxEnd={null}
+        onCenterWindow={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -338,6 +370,10 @@ describe('AudioDisplay', () => {
         playbackState="listening"
         windowEndTime={null}
         windowDurationMs={15 * 60 * 1000}
+        histogramMarks={[]}
+        rangeStartMs={null}
+        maxEnd={null}
+        onCenterWindow={vi.fn()}
         highlightedSegmentId={null}
       />
     );
@@ -376,6 +412,10 @@ describe('AudioDisplay', () => {
         playbackState="playing"
         windowEndTime={null}
         windowDurationMs={15 * 60 * 1000}
+        histogramMarks={[]}
+        rangeStartMs={null}
+        maxEnd={null}
+        onCenterWindow={vi.fn()}
         highlightedSegmentId={null}
         currentAudioRef={currentAudioRef}
       />
