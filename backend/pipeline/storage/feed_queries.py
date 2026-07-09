@@ -39,12 +39,14 @@ updated AS (
     SET last_processed_filename = $1,
         last_bookmark_time = COALESCE($5, feeds.last_bookmark_time),
         audit_revision = CASE
-            WHEN feeds.failure_count <> 0 OR feeds.status_reason IS NOT NULL THEN feeds.audit_revision + 1
+            WHEN feeds.failure_count <> 0 OR feeds.status_reason IS NOT NULL
+                THEN feeds.audit_revision + 1
             ELSE feeds.audit_revision
         END,
         failure_count = 0,
         status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL THEN NOW()
+            WHEN feeds.status_reason IS NOT NULL
+                 OR feeds.status_reason_detail IS NOT NULL THEN NOW()
             ELSE feeds.status_reason_updated_at
         END,
         status_reason_detail = NULL,
@@ -95,11 +97,13 @@ do_update AS (
     SET failure_count = 0,
         last_bookmark_time = GREATEST(feeds.last_bookmark_time, $4),
         audit_revision = CASE
-            WHEN feeds.failure_count <> 0 OR feeds.status_reason IS NOT NULL THEN feeds.audit_revision + 1
+            WHEN feeds.failure_count <> 0 OR feeds.status_reason IS NOT NULL
+                THEN feeds.audit_revision + 1
             ELSE feeds.audit_revision
         END,
         status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL THEN NOW()
+            WHEN feeds.status_reason IS NOT NULL
+                 OR feeds.status_reason_detail IS NOT NULL THEN NOW()
             ELSE feeds.status_reason_updated_at
         END,
         status_reason_detail = NULL,
@@ -112,7 +116,8 @@ do_update AS (
     RETURNING feeds.*, feeds.audit_revision AS feed_revision
 ),
 after_row AS (
-    SELECT do_update.*, fp.source_feed_id, COALESCE(fp.tags, '[]'::jsonb) AS tags
+    SELECT do_update.*, fp.source_feed_id,
+           COALESCE(fp.tags, '[]'::jsonb) AS tags
     FROM do_update
     JOIN feed_properties fp ON fp.feed_id = do_update.id
 ),
@@ -304,7 +309,8 @@ def _build_claim_query(
         f"    FROM {combined_cte_name}\n"
         f"    WHERE feeds.id = {combined_cte_name}.id\n"
         "    RETURNING feeds.id, feeds.name, feeds.source_type,\n"
-        "              feeds.last_processed_filename, feeds.last_bookmark_time,\n"
+        "              feeds.last_processed_filename,\n"
+        "              feeds.last_bookmark_time,\n"
         "              feeds.fencing_token, feeds.failure_count,\n"
         "              feeds.status_reason\n"
         ")\n"
@@ -340,7 +346,8 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
         branches.append(
             f"    {cte_name} AS MATERIALIZED (\n"
             f"        SELECT id FROM feeds\n"
-            f"        WHERE source_type = '{t.value}' AND status = 'unclaimed'::feed_status\n"
+            f"        WHERE source_type = '{t.value}'\n"
+            f"          AND status = 'unclaimed'::feed_status\n"
             f"        ORDER BY id\n"
             f"        LIMIT ${limit_param}\n"
             f"        FOR NO KEY UPDATE SKIP LOCKED\n"
@@ -383,9 +390,9 @@ def build_acquire_feeds_batch_sql(claim_types: Sequence[SourceType]) -> str:
 # If either volume spikes (pg_cron paused, failure storm), this query
 # becomes an expensive seq/sort path.
 #
-# TODO(recovery-path-index): if recovery-path P99 exceeds 50 ms at  # noqa: TD003
-# production load OR the pg_cron sweep is paused for extended windows,
-# add migration:
+# TODO(recovery-path-index): if recovery-path P99 exceeds  # noqa: TD003
+# 50 ms at production load OR the pg_cron sweep is paused for extended
+# windows, add migration:
 #
 #   CREATE INDEX CONCURRENTLY idx_feeds_recovery
 #       ON feeds (retry_after, id)
@@ -426,8 +433,11 @@ def build_acquire_feeds_recovery_sql(claim_types: Sequence[SourceType]) -> str:
             f"        SELECT id FROM feeds\n"
             f"        WHERE source_type = '{t.value}'\n"
             f"          AND (\n"
-            f"              (status = 'failing'::feed_status AND (retry_after IS NULL OR retry_after <= NOW()))\n"
-            f"              OR (status = 'active'::feed_status AND last_heartbeat < NOW() - $2::interval)\n"
+            f"              (status = 'failing'::feed_status\n"
+            f"               AND (retry_after IS NULL\n"
+            f"                    OR retry_after <= NOW()))\n"
+            f"              OR (status = 'active'::feed_status\n"
+            f"                  AND last_heartbeat < NOW() - $2::interval)\n"
             f"          )\n"
             f"        ORDER BY retry_after ASC NULLS LAST, id\n"
             f"        LIMIT ${limit_param}\n"
@@ -461,15 +471,20 @@ updated AS (
         audit_revision = feeds.audit_revision + 1,
         failure_count = feeds.failure_count + 1,
         worker_id = NULL,
-        retry_after = CASE WHEN feeds.failure_count + 1 < $3
-                           THEN NOW() + LEAST($5 * INTERVAL '1 second',
-                                $6 * INTERVAL '1 second' * POWER(2, feeds.failure_count))
-                                + (RANDOM() * INTERVAL '10 seconds')
-                           ELSE NULL END,
+        retry_after = CASE
+            WHEN feeds.failure_count + 1 < $3
+            THEN NOW() + LEAST(
+                $5 * INTERVAL '1 second',
+                $6 * INTERVAL '1 second' * POWER(2, feeds.failure_count)
+            ) + (RANDOM() * INTERVAL '10 seconds')
+            ELSE NULL
+        END,
         status_reason = COALESCE($7, 'system_unexpected_error'),
         status_reason_detail = $8,
         status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS DISTINCT FROM COALESCE($7, 'system_unexpected_error')
+            WHEN feeds.status_reason IS DISTINCT FROM COALESCE(
+                $7, 'system_unexpected_error'
+            )
                 THEN NOW()
             ELSE feeds.status_reason_updated_at
         END
@@ -633,7 +648,8 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        ) AS last_speech_segment_timestamp
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
-WHERE ($1::timestamptz IS NULL OR f.created_at < $1 OR (f.created_at = $1 AND f.id < $2))
+WHERE ($1::timestamptz IS NULL OR f.created_at < $1
+       OR (f.created_at = $1 AND f.id < $2))
   AND ($3::text[] IS NULL OR f.source_type = ANY($3))
   AND ($4::text[] IS NULL OR f.status::text = ANY($4))
   AND ($5::jsonb IS NULL OR fp.tags @> $5::jsonb)
@@ -658,7 +674,8 @@ SELECT f.id, f.name, f.source_type, f.status, f.status_reason,
        ) AS last_speech_segment_timestamp
 FROM feeds f
 JOIN feed_properties fp ON f.id = fp.feed_id
-WHERE ($1::timestamptz IS NULL OR f.created_at > $1 OR (f.created_at = $1 AND f.id > $2))
+WHERE ($1::timestamptz IS NULL OR f.created_at > $1
+       OR (f.created_at = $1 AND f.id > $2))
   AND ($3::text[] IS NULL OR f.source_type = ANY($3))
   AND ($4::text[] IS NULL OR f.status::text = ANY($4))
   AND ($5::jsonb IS NULL OR fp.tags @> $5::jsonb)
@@ -699,7 +716,10 @@ after_row AS (
         feed_revision_sql="after_row.feed_revision",
         before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
         after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
-        from_sql="FROM before_row\n    JOIN after_row ON after_row.id = before_row.id",
+        from_sql=(
+            "FROM before_row\n"
+            "    JOIN after_row ON after_row.id = before_row.id"
+        ),
         returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
@@ -788,7 +808,8 @@ updated AS (
         last_heartbeat = NOW(),
         audit_revision = feeds.audit_revision + 1,
         status_reason_updated_at = CASE
-            WHEN feeds.status_reason IS NOT NULL OR feeds.status_reason_detail IS NOT NULL THEN NOW()
+            WHEN feeds.status_reason IS NOT NULL
+                 OR feeds.status_reason_detail IS NOT NULL THEN NOW()
             ELSE feeds.status_reason_updated_at
         END,
         status_reason = NULL
@@ -817,7 +838,10 @@ after_row AS (
         feed_revision_sql="after_row.feed_revision",
         before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
         after_values_sql=_AUDIT_AFTER_SNAPSHOT_SQL,
-        from_sql="FROM before_row\n    JOIN after_row ON after_row.id = before_row.id",
+        from_sql=(
+            "FROM before_row\n"
+            "    JOIN after_row ON after_row.id = before_row.id"
+        ),
         returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
@@ -888,7 +912,10 @@ result_row AS (
         feed_revision_sql="updated_row.feed_revision",
         before_values_sql=_AUDIT_BEFORE_SNAPSHOT_SQL,
         after_values_sql=feed_audit_sql.audit_snapshot_sql("updated_row"),
-        from_sql="FROM before_row\n    JOIN updated_row ON updated_row.id = before_row.id",
+        from_sql=(
+            "FROM before_row\n"
+            "    JOIN updated_row ON updated_row.id = before_row.id"
+        ),
         returning_sql=_AUDIT_EVENT_RETURNING_SQL,
     )
 }
