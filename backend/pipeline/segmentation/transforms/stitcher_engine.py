@@ -126,19 +126,27 @@ class StitcherEngine:
         chunks: list[datatypes.BufferedChunk],
         task_logger: Any,
     ) -> AudioFutureMap | None:
-        """Submits GCS download and decoding tasks to the shared background thread pool for all chunks in the bundle."""
+        """Submits GCS download and decoding tasks to the shared background thread pool for all chunks in the bundle.
+
+        Args:
+            chunks: List of buffered audio chunks to be processed in the current bundle.
+            task_logger: Contextual logger instance for recording task execution details.
+
+        Returns:
+            A mapping of GCS URI to future AudioSignal results, or None if pre-fetching is bypassed.
+        """
         if not self.executor or len(chunks) <= 1:
             return None
 
         parent_context = otel_context.get_current()
 
-        def _fetch_one(uri: str, trace_attrs: dict[str, str]) -> AudioSignal:
+        def _fetch_one(uri: str) -> AudioSignal:
             token = otel_context.attach(parent_context)
             try:
                 task_logger.debug(
                     f"[Prefetch] Background fetch starting for {uri}"
                 )
-                res = self.processor.fetch_and_decode_audio(uri, trace_attrs)
+                res = self.processor.fetch_and_decode_audio(uri)
                 task_logger.debug(
                     f"[Prefetch] Background fetch completed for {uri}"
                 )
@@ -155,13 +163,8 @@ class StitcherEngine:
         futures: AudioFutureMap = {}
         for chunk in chunks:
             if chunk.gcs_uri not in futures:
-                trace_attrs: dict[str, str] = {}
-                if chunk.traceparent:
-                    trace_attrs["traceparent"] = chunk.traceparent
-                if chunk.baggage:
-                    trace_attrs["baggage"] = str(chunk.baggage)
                 futures[chunk.gcs_uri] = self.executor.submit(
-                    _fetch_one, chunk.gcs_uri, trace_attrs
+                    _fetch_one, chunk.gcs_uri
                 )
         return futures
 
@@ -491,7 +494,7 @@ class StitcherEngine:
             trace_attrs["traceparent"] = chunk.traceparent
         baggage_val = chunk.baggage
         if baggage_val:
-            trace_attrs["baggage"] = str(baggage_val)
+            trace_attrs["baggage"] = baggage_val
 
         if curr_context.session_id is None:
             msg = "Session ID cannot be None in _process_single_stitch_chunk"
