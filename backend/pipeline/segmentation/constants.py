@@ -3,6 +3,8 @@
 import os
 from typing import Final
 
+from backend.pipeline.common.env import is_gcp_env
+
 DEAD_LETTER_QUEUE_TAG: Final = "segmentation_dlq"
 MAIN_TAG: Final = "main"
 
@@ -66,6 +68,9 @@ def _get_download_pool_size() -> int:
             return max(1, int(env_val))
         except ValueError:
             pass
+
+    if not is_gcp_env():
+        return 16
 
     try:
         core_count = len(os.sched_getaffinity(0))  # type: ignore[attr-defined]
