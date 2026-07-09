@@ -3,7 +3,7 @@
 Covers:
   - merge_predictions_to_manifest: fail-loud (re-raise) on unexpected error
   - merge_predictions_to_manifest: happy-path offset-tolerant merge
-  - load_manifest: [] on missing input; non-string text fields coerced
+  - load_manifest: fail-loud JSON/JSONL parsing
 """
 
 import json
@@ -33,6 +33,14 @@ def _canonical_row(**overrides: object) -> dict[str, object]:
         "duration": 1.25,
         "example_id": "example",
         "segment_id": "001",
+        "split": "train",
+        "lang": "en",
+        "dataset": {"name": "echo", "family": "radio"},
+        "source_audio": {
+            "audio_filepath": "gs://bucket/source/example.mp3",
+            "offset": 12.5,
+            "duration": 1.25,
+        },
     }
     row.update(overrides)
     return row
@@ -54,28 +62,9 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             f"Missing {code}/{field} in {issues!r}",
         )
 
-    def test_valid_row_with_optional_metadata_returns_no_issues(self) -> None:
+    def test_valid_exact_row_returns_no_issues(self) -> None:
         row = _canonical_row(
             audio_filepath="gs://bucket/audio/example.FLAC",
-            split="train",
-            lang="en",
-            dataset={
-                "name": "watch-duty",
-                "family": "radio",
-                "extra": {"ignored": True},
-            },
-            source_audio={
-                "audio_filepath": "raw/source.wav",
-                "offset": 0,
-                "duration": 12.5,
-                "extra": "ignored",
-            },
-            audio_processing={
-                "masked_categories": ["pii", "address"],
-                "extra": "ignored",
-            },
-            pred_text_gemini="prediction fields are tolerated",
-            unknown_row_key={"ignored": True},
         )
 
         issues = validate_canonical_manifest([row], expected_split="train")
@@ -104,7 +93,12 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             ("blank example_id", "example_id", " ", "blank_required"),
             ("missing segment_id", "segment_id", None, "missing_required"),
             ("blank segment_id", "segment_id", " ", "blank_required"),
+            ("missing split", "split", None, "missing_required"),
+            ("blank split", "split", " ", "blank_required"),
+            ("missing lang", "lang", None, "missing_required"),
+            ("blank lang", "lang", " ", "blank_required"),
             ("missing offset", "offset", None, "missing_required"),
+            ("negative offset", "offset", -1, "invalid_offset"),
             ("non-numeric offset", "offset", "start", "invalid_offset"),
             ("bool offset", "offset", True, "invalid_offset"),
             ("missing duration", "duration", None, "missing_required"),
@@ -121,7 +115,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 else:
                     row[field] = value
 
-                issues = validate_canonical_manifest([row])
+                issues = validate_canonical_manifest([row], expected_split="train")
 
                 self.assertHasIssue(issues, expected_code, field)
 
@@ -185,21 +179,43 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             "example_id,segment_id",
         )
 
-    def test_optional_metadata_failures_report_code_and_field(self) -> None:
+    def test_required_nested_metadata_failures_report_code_and_field(self) -> None:
         cases = [
-            ("blank split", {"split": " "}, "invalid_metadata", "split"),
             (
                 "split mismatch",
                 {"split": "eval"},
                 "split_mismatch",
                 "split",
             ),
-            ("blank lang", {"lang": " "}, "invalid_metadata", "lang"),
+            (
+                "missing dataset",
+                {"dataset": None},
+                "missing_required",
+                "dataset",
+            ),
             (
                 "malformed dataset",
                 {"dataset": []},
                 "invalid_metadata",
                 "dataset",
+            ),
+            (
+                "blank dataset name",
+                {"dataset": {"name": " ", "family": "radio"}},
+                "invalid_metadata",
+                "dataset.name",
+            ),
+            (
+                "missing dataset family",
+                {"dataset": {"name": "echo"}},
+                "missing_required",
+                "dataset.family",
+            ),
+            (
+                "missing source_audio",
+                {"source_audio": None},
+                "missing_required",
+                "source_audio",
             ),
             (
                 "malformed source_audio",
@@ -208,10 +224,27 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 "source_audio",
             ),
             (
-                "malformed audio_processing",
-                {"audio_processing": []},
+                "blank source audio filepath",
+                {
+                    "source_audio": {
+                        "audio_filepath": " ",
+                        "offset": 0,
+                        "duration": 1.0,
+                    }
+                },
                 "invalid_metadata",
-                "audio_processing",
+                "source_audio.audio_filepath",
+            ),
+            (
+                "missing source audio offset",
+                {
+                    "source_audio": {
+                        "audio_filepath": "gs://bucket/source/example.mp3",
+                        "duration": 1.0,
+                    }
+                },
+                "missing_required",
+                "source_audio.offset",
             ),
         ]
 
@@ -228,17 +261,55 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                     expected_field,
                 )
 
-    def test_unknown_and_prediction_enriched_fields_are_ignored(
+    def test_unknown_prediction_and_removed_fields_are_invalid(
         self,
     ) -> None:
-        row = _canonical_row(
-            pred_text_whisper="already scored",
-            unknown_future_field={"ignored": True},
+        for field in (
+            "pred_text_whisper",
+            "unknown_future_field",
+            "audio_processing",
+            "sequence",
+            "original_audio_uri",
+            "source_group",
+            "dataset_name",
+        ):
+            with self.subTest(field=field):
+                issues = validate_canonical_manifest(
+                    [_canonical_row(**{field: "not canonical"})]
+                )
+                self.assertHasIssue(issues, "unexpected_field", field)
+
+    def test_unknown_nested_fields_are_invalid(self) -> None:
+        dataset_issues = validate_canonical_manifest(
+            [
+                _canonical_row(
+                    dataset={
+                        "name": "echo",
+                        "family": "radio",
+                        "extra": "not canonical",
+                    }
+                )
+            ]
+        )
+        self.assertHasIssue(
+            dataset_issues, "unexpected_field", "dataset.extra"
         )
 
-        issues = validate_canonical_manifest([row])
-
-        self.assertEqual(issues, [])
+        source_issues = validate_canonical_manifest(
+            [
+                _canonical_row(
+                    source_audio={
+                        "audio_filepath": "gs://bucket/source/example.mp3",
+                        "offset": 0,
+                        "duration": 1.0,
+                        "extra": "not canonical",
+                    }
+                )
+            ]
+        )
+        self.assertHasIssue(
+            source_issues, "unexpected_field", "source_audio.extra"
+        )
 
     def test_invalid_rows_return_structured_issues(self) -> None:
         rows = [
@@ -263,6 +334,14 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 "duration": 1.0,
                 "example_id": "example",
                 "segment_id": "001",
+                "split": "train",
+                "lang": "en",
+                "dataset": {"name": "echo", "family": "radio"},
+                "source_audio": {
+                    "audio_filepath": "gs://bucket/source/other.mp3",
+                    "offset": 0,
+                    "duration": 1.0,
+                },
             },
             _canonical_row(audio_filepath="gs://bucket/audio/other.flac"),
         ]
@@ -389,6 +468,14 @@ class TestCanonicalRowIdentity(unittest.TestCase):
                 offset=0.0,
                 duration=1.0,
                 text="hello",
+                split="train",
+                lang="en",
+                dataset={"name": "echo", "family": "radio"},
+                source_audio={
+                    "audio_filepath": "gs://bucket/source/example.mp3",
+                    "offset": 0.0,
+                    "duration": 1.0,
+                },
             )
         )
 
@@ -730,20 +817,14 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
         self.assertIs(result, gt)
 
 
-class TestLoadManifestEmptyReturns(unittest.TestCase):
-    """load_manifest still returns [] for bad inputs — these paths are intentional."""
+class TestLoadManifestFailLoud(unittest.TestCase):
+    """load_manifest parses JSON/JSONL without compatibility coercion."""
 
-    def test_missing_file_returns_empty(self) -> None:
-        result = load_manifest("./nonexistent_manifest.jsonl")
+    def test_missing_file_raises(self) -> None:
+        with self.assertRaises(FileNotFoundError):
+            load_manifest("./nonexistent_manifest.jsonl")
 
-        self.assertEqual(result, [])
-
-
-class TestLoadManifestMalformedRows(unittest.TestCase):
-    """load_manifest tolerates rows whose `text` field is not a string."""
-
-    def test_non_string_text_is_coerced(self) -> None:
-        """A row with a non-string `text` is str()-cast, not crashed."""
+    def test_non_string_text_is_not_coerced(self) -> None:
         fd, path = tempfile.mkstemp(suffix=".jsonl")
         try:
             with os.fdopen(fd, "w") as f:
@@ -754,136 +835,122 @@ class TestLoadManifestMalformedRows(unittest.TestCase):
         finally:
             Path(path).unlink()
 
-        self.assertEqual(rows[0]["text"], "123")
-
-    def test_falsy_non_string_text_is_coerced(self) -> None:
-        """Falsy non-string text (0, False, None) is coerced to a string."""
-        rows_in = [
-            {"audio_filepath": "gs://b/a.flac", "text": 0},
-            {"audio_filepath": "gs://b/b.flac", "text": False},
-            {"audio_filepath": "gs://b/c.flac", "text": None},
-        ]
-        fd, path = tempfile.mkstemp(suffix=".jsonl")
-        try:
-            with os.fdopen(fd, "w") as f:
-                f.write("\n".join(json.dumps(row) for row in rows_in))
-            rows = load_manifest(path)
-        finally:
-            Path(path).unlink()
-
-        # 0 / False are str()-cast; a null text becomes "" (absent transcript).
-        self.assertEqual([r["text"] for r in rows], ["0", "False", ""])
-        for row in rows:
-            self.assertIsInstance(row["text"], str)
+        self.assertEqual(rows[0]["text"], 123)
 
 
-class TestRowsFromManifestNullSafe(unittest.TestCase):
-    """rows_from_manifest tolerates explicit null offset/duration (no TypeError)."""
+class TestRowsFromManifestStrict(unittest.TestCase):
+    """rows_from_manifest only converts exact canonical rows."""
 
-    def test_explicit_null_offset_duration_default_to_zero(self) -> None:
-        rows = rows_from_manifest(
-            [
-                {
-                    "audio_filepath": "gs://b/a.flac",
-                    "text": "hello",
-                    "offset": None,
-                    "duration": None,
-                }
-            ]
-        )
+    def test_exact_row_maps_all_fields(self) -> None:
+        rows = rows_from_manifest([_canonical_row()])
+
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0].offset, 0.0)
-        self.assertEqual(rows[0].duration, 0.0)
-        self.assertEqual(rows[0].example_id, "a")
+        self.assertEqual(rows[0].duration, 1.25)
+        self.assertEqual(rows[0].example_id, "example")
         self.assertEqual(rows[0].segment_id, "001")
+        self.assertEqual(rows[0].split, "train")
+        self.assertEqual(rows[0].lang, "en")
+        self.assertEqual(rows[0].dataset["name"], "echo")
+        self.assertEqual(
+            rows[0].source_audio["audio_filepath"],
+            "gs://bucket/source/example.mp3",
+        )
+
+    def test_partial_row_does_not_derive_or_default(self) -> None:
+        with self.assertRaisesRegex(ValueError, "Canonical Manifest"):
+            rows_from_manifest(
+                [
+                    {
+                        "audio_filepath": "gs://b/a.flac",
+                        "text": "hello",
+                        "offset": None,
+                        "duration": None,
+                    }
+                ]
+            )
 
 
 class TestScoreableManifestEntry(unittest.TestCase):
-    def test_requires_audio_filepath_and_non_blank_text(self) -> None:
+    def test_requires_canonical_source_fields(self) -> None:
+        self.assertTrue(is_scoreable_manifest_entry(_canonical_row()))
         self.assertTrue(
+            is_scoreable_manifest_entry(
+                {
+                    **_canonical_row(),
+                    "pred_text_gemini": "derived prediction",
+                }
+            )
+        )
+        self.assertFalse(
             is_scoreable_manifest_entry(
                 {"audio_filepath": "gs://b/a.flac", "text": "hello"}
             )
         )
         self.assertFalse(
             is_scoreable_manifest_entry(
-                {"audio_filepath": "gs://b/a.flac", "text": ""}
+                {**_canonical_row(), "unexpected": "not scoreable"}
             )
         )
-        self.assertFalse(
-            is_scoreable_manifest_entry(
-                {"audio_filepath": "gs://b/a.flac", "text": "   "}
-            )
-        )
-        self.assertFalse(
-            is_scoreable_manifest_entry(
-                {"audio_filepath": "gs://b/a.flac", "text": None}
-            )
-        )
-        self.assertFalse(is_scoreable_manifest_entry({"text": "hello"}))
 
 
 class TestRowsFromManifestRequiredFields(unittest.TestCase):
-    """rows_from_manifest fails loudly for required compatibility fields."""
+    """rows_from_manifest fails loudly for strict canonical fields."""
 
     def test_missing_audio_filepath_raises_with_row_context(self) -> None:
-        with self.assertRaisesRegex(ValueError, "row 0.*audio_filepath"):
-            rows_from_manifest([{"text": "hello"}])
+        row = _canonical_row()
+        row.pop("audio_filepath")
+        with self.assertRaisesRegex(ValueError, "audio_filepath"):
+            rows_from_manifest([row])
 
     def test_blank_audio_filepath_raises_with_row_context(self) -> None:
-        with self.assertRaisesRegex(ValueError, "row 0.*audio_filepath"):
-            rows_from_manifest([{"audio_filepath": "  ", "text": "hello"}])
+        with self.assertRaisesRegex(ValueError, "audio_filepath"):
+            rows_from_manifest([_canonical_row(audio_filepath="  ")])
 
     def test_missing_text_raises_with_row_context(self) -> None:
-        with self.assertRaisesRegex(ValueError, "row 0.*text"):
-            rows_from_manifest([{"audio_filepath": "gs://b/a.flac"}])
+        row = _canonical_row()
+        row.pop("text")
+        with self.assertRaisesRegex(ValueError, "text"):
+            rows_from_manifest([row])
 
     def test_blank_text_raises_with_row_context(self) -> None:
-        with self.assertRaisesRegex(ValueError, "row 0.*text"):
-            rows_from_manifest(
-                [{"audio_filepath": "gs://b/a.flac", "text": "  "}]
-            )
+        with self.assertRaisesRegex(ValueError, "text"):
+            rows_from_manifest([_canonical_row(text="  ")])
 
     def test_required_string_values_are_stripped(self) -> None:
         rows = rows_from_manifest(
             [
-                {
-                    "audio_filepath": " gs://b/a.flac ",
-                    "text": " hello ",
-                }
+                _canonical_row(
+                    audio_filepath=" gs://b/a.flac ",
+                    text=" hello ",
+                    example_id=" example ",
+                    segment_id=" 001 ",
+                    split=" train ",
+                    lang=" en ",
+                    dataset={"name": " echo ", "family": " radio "},
+                    source_audio={
+                        "audio_filepath": " gs://bucket/source/example.mp3 ",
+                        "offset": 1,
+                        "duration": 2,
+                    },
+                )
             ]
         )
 
         self.assertEqual(rows[0].audio_filepath, "gs://b/a.flac")
         self.assertEqual(rows[0].text, "hello")
-
-    def test_strict_canonical_rules_remain_outside_row_conversion(self) -> None:
-        rows = rows_from_manifest(
-            [
-                {
-                    "audio_filepath": "local/audio.mp3",
-                    "text": "hello",
-                    "offset": -1,
-                    "duration": -2,
-                },
-                {
-                    "audio_filepath": "local/audio.mp3",
-                    "text": "duplicate audio allowed here",
-                    "offset": 0,
-                    "duration": 0,
-                },
-            ]
+        self.assertEqual(rows[0].example_id, "example")
+        self.assertEqual(rows[0].dataset["name"], "echo")
+        self.assertEqual(
+            rows[0].source_audio["audio_filepath"],
+            "gs://bucket/source/example.mp3",
         )
 
-        self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0].audio_filepath, "local/audio.mp3")
-        self.assertEqual(rows[0].duration, -2.0)
 
+class TestLoadManifestBoundaries(unittest.TestCase):
+    """load_manifest fails on malformed JSON/JSONL boundaries."""
 
-class TestLoadManifestLenientBoundaries(unittest.TestCase):
-    """load_manifest remains a lenient parser, not a strict validator."""
-
-    def test_json_array_is_loaded_without_strict_validation(self) -> None:
+    def test_json_array_is_loaded_without_canonical_validation(self) -> None:
         fd, path = tempfile.mkstemp(suffix=".json")
         try:
             with os.fdopen(fd, "w") as f:
@@ -894,14 +961,13 @@ class TestLoadManifestLenientBoundaries(unittest.TestCase):
 
         self.assertEqual(rows, [{"audio_filepath": "local/audio.mp3"}])
 
-    def test_malformed_jsonl_rows_are_skipped(self) -> None:
+    def test_malformed_jsonl_rows_raise(self) -> None:
         fd, path = tempfile.mkstemp(suffix=".jsonl")
         try:
             with os.fdopen(fd, "w") as f:
                 f.write("{bad json}\n")
                 f.write(json.dumps({"audio_filepath": "local/audio.mp3"}))
-            rows = load_manifest(path)
+            with self.assertRaises(ValueError):
+                load_manifest(path)
         finally:
             Path(path).unlink()
-
-        self.assertEqual(rows, [{"audio_filepath": "local/audio.mp3"}])

@@ -1,14 +1,24 @@
 # Canonical Manifest Contract
 
 Canonical manifests are row-per-audio-segment JSONL inputs consumed before any
-provider-specific model input conversion. New strict train/eval manifests use
-one row shape and should not carry duplicate legacy lineage fields.
+provider-specific model input conversion. Train/eval manifests use one exact
+row shape and must not carry duplicate lineage, provider-specific, prediction,
+or experiment fields.
 
 A provided train, validation, or eval manifest must contain at least one row.
 
+## Decision
+
+As of 2026-07-07, new canonical manifests should stay intentionally small. The
+canonical row is limited to model-ready audio, reference text, row identity,
+split/language, dataset identity, and source-audio timing. Provider-specific
+request fields, prompt-optimizer fields, evaluation outputs, and future
+experiment metadata must be derived in adapters instead of stored in the
+canonical manifest.
+
 ## Required Fields
 
-Each JSONL row must include exactly these core contract fields:
+Each JSONL row must include exactly these contract fields:
 
 - `audio_filepath`: stripped, model-ready `gs://...flac` clip URI.
 - `text`: non-empty transcript text for the segment.
@@ -16,37 +26,45 @@ Each JSONL row must include exactly these core contract fields:
 - `duration`: numeric segment duration; must be positive.
 - `example_id`: logical example identifier.
 - `segment_id`: logical segment identifier.
+- `split`: split label, such as `train`, `validation`, or `eval`.
+- `lang`: language label, such as `en`.
+- `dataset.name`: dataset name, such as `echo`.
+- `dataset.family`: dataset family, such as `radio`.
+- `source_audio.audio_filepath`: source audio locator.
+- `source_audio.offset`: numeric segment offset in the source audio.
+- `source_audio.duration`: numeric source segment duration; must be positive.
 
 `(example_id, segment_id)` is the logical row identity and must be unique
 within one manifest. Strict validation also rejects duplicate
 `audio_filepath` values within one manifest.
 
-## Optional Metadata
+## No Extra Fields
 
-Strict validation accepts shallow optional metadata without requiring every
-generator to emit it:
-
-- `split`: optional split label used by callers that validate an expected
-  train, validation, or eval split.
-- `lang`: optional language label.
-- `dataset.name` and `dataset.family`: optional non-empty strings when
-  `dataset` is present.
-- `source_audio.audio_filepath`: optional source-audio locator when
-  `source_audio` is present.
-- `source_audio.offset` and `source_audio.duration`: optional numeric source
-  timing metadata; source duration must be positive.
-- `audio_processing.masked_categories`: optional list of non-empty category
-  names when `audio_processing` is present.
-
-Unknown row-level fields, unknown keys inside optional metadata blocks, and
-prediction-enriched fields such as `pred_text_*` are tolerated by strict
-validation.
+No additional metadata is part of the canonical contract for now.
+`validate_canonical_manifest(...)` rejects unknown row-level fields, unknown
+keys inside `dataset` or `source_audio`, old lineage fields, `sequence`,
+`audio_processing`, and prediction-enriched fields such as `pred_text_*`.
+Prediction fields belong only to derived inference manifests.
 
 ## JSONL Example
 
 ```jsonl
-{"audio_filepath":"gs://watch-duty-model-ready/train/example-001-seg-001.flac","text":"Engine 42 responding to the incident.","offset":0.0,"duration":4.25,"example_id":"example-001","segment_id":"seg-001","split":"train","lang":"en","dataset":{"name":"watch-duty-radio","family":"dispatch"},"source_audio":{"audio_filepath":"gs://watch-duty-raw/source/example-001.wav","offset":128.5,"duration":4.25},"audio_processing":{"masked_categories":["phone_number"]},"pred_text_baseline":"Engine 42 responding to the incident."}
+{"audio_filepath":"gs://watch-duty-model-ready/train/example-001-seg-001.flac","text":"Engine 42 responding to the incident.","offset":0.0,"duration":4.25,"example_id":"example-001","segment_id":"seg-001","split":"train","lang":"en","dataset":{"name":"echo","family":"radio"},"source_audio":{"audio_filepath":"gs://watch-duty-raw/source/example-001.wav","offset":128.5,"duration":4.25}}
 ```
+
+## Adapter Outputs
+
+Downstream tools should derive their provider-specific inputs from the
+canonical row:
+
+- AdalFlow and DSPy prompt tuning use `audio_filepath`, `text`, and
+  `duration` as prompt-example context.
+- Vertex AI Prompt Optimizer uses `{"input_text": audio_filepath, "target":
+  text}`.
+- Vertex AI batch inference uses `audio_filepath` in Gemini request JSONL.
+- Vertex AI SFT uses `audio_filepath` and `text` in Gemini tuning JSONL.
+- Agent-session evaluation groups rows by `example_id` and sorts by
+  `source_audio.offset` when source ordering matters.
 
 ## Helper Entry Points
 
@@ -56,28 +74,10 @@ validation.
   aggregated `ValueError` when issues are present.
 - `canonical_row_identity(...)` returns `(example_id, segment_id)` for a
   canonical row.
-- `load_manifest()` remains a lenient JSON/JSONL parser for exploratory
-  loading.
-- `rows_from_manifest()` is the compatibility conversion to typed rows and
-  fails loudly when `audio_filepath` or `text` is missing or blank.
+- `load_manifest()` loads local JSON arrays or JSONL files and fails loudly on
+  missing or malformed files. It does not coerce row values.
+- `rows_from_manifest()` validates exact canonical rows and converts them to
+  typed `CanonicalRow` instances.
 
 For documentation-only edits, use lightweight checks such as
 `git diff --check` on the changed files.
-
-## Deprecated Duplicate Fields
-
-New canonical rows should not emit duplicate lineage or denormalized fields
-that were used by older manifests, including:
-
-- `audio_uri`
-- `model_ready_audio_uri`
-- `derived_audio_uri`
-- `original_audio_uri`
-- `original_offset`
-- `dataset_name`
-- `dataset_family`
-- `source_group`
-- `source_strategy`
-- `transformation_metadata`
-- `timestamp`
-- top-level `category`

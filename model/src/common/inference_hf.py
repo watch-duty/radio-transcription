@@ -17,6 +17,7 @@ from google.cloud import storage
 
 from common.audio_utils import preprocess_audio_for_model
 from common.gcs_utils import download_to_scratch
+from common.manifest import require_canonical_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,8 @@ def run_huggingface_inference_pipeline(
     Args:
         model: Loaded Hugging Face speech model.
         processor: Corresponding Hugging Face processor.
-        manifest_data: List of manifest entries with 'audio_filepath' GCS URIs.
+        manifest_data: Strict canonical manifest rows. The row-level
+            ``audio_filepath`` value must point to the cut audio segment in GCS.
         storage_client: GCS storage client.
         project_name: Name of the project for path derivation.
         selected_model: Model name used for output key construction.
@@ -84,6 +86,7 @@ def run_huggingface_inference_pipeline(
         ``pred_text_{selected_model}`` key.
     """
     _require_hf()
+    require_canonical_manifest(manifest_data)
 
     if limit:
         manifest_data = manifest_data[:limit]

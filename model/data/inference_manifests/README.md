@@ -6,8 +6,9 @@ each inference output implies.
 ## Artifact Types
 
 A source/canonical manifest is the row-per-segment input dataset. It contains
-fields such as `audio_filepath`, `text`, `offset`, `duration`, and optional
-dataset metadata. It does not contain model predictions.
+the exact canonical fields documented in `../manifests/README.md`, including
+`audio_filepath`, `text`, `offset`, `duration`, row identity, split/language,
+`dataset`, and `source_audio`. It does not contain model predictions.
 
 A normalized inference manifest is the scorer-ready output for one model family
 and one run. It preserves the source/canonical manifest rows, requires reference
@@ -44,11 +45,10 @@ inference_manifests/<inference_dataset_slug>/<model_family_slug>/<run_id>/<artif
 `artifact_label` distinguishes outputs within a run, such as `base`, `tuned`,
 or `checkpoint_1`.
 
-Historical artifacts remain valid and are not moved. Existing scorer consumers
-discover `pred_text_*` fields and should treat an absent prediction field as an
-empty hypothesis, so they can score a normalized inference manifest with at most
-one prediction field per row or a merged comparison manifest with multiple
-prediction fields.
+Scorer consumers discover `pred_text_*` fields and should treat an absent
+prediction field as an empty hypothesis, so they can score a normalized
+inference manifest with at most one prediction field per row or a merged
+comparison manifest with multiple prediction fields.
 
 Wide base-vs-tuned or model-vs-model comparison manifests are derived artifacts
 and are not produced by default by the Gemini SFT Phase 7 workflow.

@@ -48,17 +48,17 @@ editable model package install.
 ### Canonical Manifest
 
 The unified strict train/eval input contract used before provider-specific
-model input conversion. Each row is row-per-audio-segment JSONL with required
-`audio_filepath`, `text`, `offset`, `duration`, `example_id`, and `segment_id`
-fields. Strict `audio_filepath` values are model-ready `gs://...flac` clip
-URIs, and `(example_id, segment_id)` is the logical row identity, unique within
-one manifest.
+model input conversion. Each row is row-per-audio-segment JSONL with exactly
+these top-level fields: `audio_filepath`, `text`, `offset`, `duration`,
+`example_id`, `segment_id`, `split`, `lang`, `dataset`, and `source_audio`.
+`dataset` contains exactly `name` and `family`; `source_audio` contains exactly
+`audio_filepath`, `offset`, and `duration`.
 
-Optional shallow metadata may include `split`, `lang`, `dataset`,
-`source_audio`, and `audio_processing`. Strict validation through
-`validate_canonical_manifest(...)` ignores unknown row fields, unknown metadata
-keys, and prediction-enriched fields such as `pred_text_*`. See
-`model/data/manifests/README.md` for the detailed contract.
+Strict `audio_filepath` values are model-ready `gs://...flac` clip URIs, and
+`(example_id, segment_id)` is the logical row identity, unique within one
+manifest. Strict validation rejects unknown fields, old lineage fields,
+`audio_processing`, `sequence`, and prediction-enriched fields such as
+`pred_text_*`. See `model/data/manifests/README.md` for the detailed contract.
 
 ### Train, Validation, And Eval Splits
 
