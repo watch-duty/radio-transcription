@@ -170,6 +170,8 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
             fontSize: CONTROL_FONT_SIZE,
             height: CONTROL_HEIGHT,
             borderRadius: CONTROL_RADIUS,
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
           }}
           onClick={onClickViewLatest}
         >
