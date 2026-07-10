@@ -252,23 +252,31 @@ class GeminiTranscriber(base.Transcriber):
             else None
         )
 
+        if reason_str is None:
+            logger.warning(
+                "Gemini response interrupted (finish_reason is None). "
+                "Usually caused by hitting the client timeout (%s ms) before completion. "
+                "Response ID: %s",
+                self.config.client_timeout_ms,
+                response_id,
+            )
+            msg = f"Incomplete response from Gemini (finish_reason: None). (Response ID: {response_id})"
+            raise GeminiTransientTranscriptionError(msg)
+
         if reason_str == types.FinishReason.MAX_TOKENS.name:
             logger.warning(
                 "Gemini response reached MAX_TOKENS limit. Transcript is likely truncated. Response ID: %s",
                 response_id,
             )
 
-        is_valid_reason = (
-            reason_str is None or reason_str in _VALID_FINISH_REASONS
-        )
-        if not is_valid_reason:
-            if reason_str == types.FinishReason.RECITATION.name:
-                logger.info(
-                    "Treating RECITATION block as %s fallback.",
-                    constants.UNINTELLIGIBLE_MARKER,
-                )
-                return constants.UNINTELLIGIBLE_MARKER
+        if reason_str == types.FinishReason.RECITATION.name:
+            logger.info(
+                "Treating RECITATION block as %s fallback.",
+                constants.UNINTELLIGIBLE_MARKER,
+            )
+            return constants.UNINTELLIGIBLE_MARKER
 
+        if reason_str not in _VALID_FINISH_REASONS:
             blocked_ratings = self._get_blocked_ratings(candidate)
             finish_msg = candidate.finish_message or "No finish message"
             logger.warning(
@@ -312,8 +320,6 @@ class GeminiTranscriber(base.Transcriber):
                 f"Finish reason: {reason_str}. Finish Message: {finish_msg}. Blocked Ratings: {blocked_ratings}. "
                 f"(Response ID: {response_id})"
             )
-            if reason_str is None:
-                raise GeminiTransientTranscriptionError(msg)
             raise GeminiTranscriptionError(msg)
 
         text_parts = [p.text for p in candidate.content.parts if p.text]
