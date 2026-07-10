@@ -922,7 +922,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                     duration_ms=1000,
                 )
             self.assertIn(
-                "Gemini response candidate had no content or parts. Finish reason: None",
+                "Incomplete response from Gemini (finish_reason: None).",
                 str(context.exception),
             )
 
