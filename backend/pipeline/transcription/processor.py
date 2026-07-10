@@ -194,10 +194,9 @@ class TranscriptionEventProcessor:
             # We intentionally do NOT append to `errors` here. Appending an error causes
             # the UI to display "[Transcription failed]", which implies a backend crash.
             record_pipeline_stage("transcription_status", "empty_response")
-            return "[Model did not transcribe speech]"
+            return ""
 
         if transcript == CHIRP_UNINTELLIGIBLE_MARKER:
-            logger.info("Speech API returned unintelligible transcription.")
             record_pipeline_stage("transcription_status", "unintelligible")
             return CHIRP_UNINTELLIGIBLE_MARKER
 

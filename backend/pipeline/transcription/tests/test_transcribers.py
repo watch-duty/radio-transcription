@@ -916,7 +916,9 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             transcriber.setup()
 
-            with self.assertRaises(NonRetryableError) as context:
+            with self.assertRaises(
+                GeminiTransientTranscriptionError
+            ) as context:
                 await transcriber.transcribe(
                     audio_data=b"\x00" * 100,
                     duration_ms=1000,

@@ -261,7 +261,7 @@ class GeminiTranscriber(base.Transcriber):
                 response_id,
             )
             msg = f"Incomplete response from Gemini (finish_reason: None). (Response ID: {response_id})"
-            raise exceptions.NonRetryableError(msg)
+            raise GeminiTransientTranscriptionError(msg)
 
         if reason_str == types.FinishReason.MAX_TOKENS.name:
             logger.warning(
