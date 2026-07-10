@@ -104,54 +104,60 @@ class MockPannerNode extends MockNode {
   pan = new MockAudioParam();
 }
 
-class MockAudioBuffer {
-  duration = 10;
-  sampleRate = 44100;
-  length = 441000;
-  numberOfChannels = 1;
-}
-
-class MockBufferSourceNode extends MockNode {
-  buffer: MockAudioBuffer | null = null;
-  playbackRate = new MockAudioParam();
-  start = vi.fn();
-  stop = vi.fn();
-  onended: (() => void) | null = null;
-  addEventListener = (type: string, cb: () => void) => {
-    if (type === 'ended') this.onended = cb;
-  };
-  removeEventListener = (type: string, cb: () => void) => {
-    if (type === 'ended' && this.onended === cb) this.onended = null;
-  };
-  emitEnded() {
-    this.onended?.();
-  }
-}
-
 class MockAudioContext {
   state: AudioContextState = 'suspended';
   currentTime = 0;
   destination = {};
   gain = new MockGainNode();
   panner = new MockPannerNode();
-  sources: MockBufferSourceNode[] = [];
   resume = vi.fn(() => {
     this.state = 'running';
     return Promise.resolve();
   });
   close = vi.fn(() => Promise.resolve());
+  createMediaElementSource = vi.fn(() => new MockNode());
   createGain = vi.fn(() => this.gain);
   createStereoPanner = vi.fn(() => this.panner);
-  decodeAudioData = vi.fn(() => Promise.resolve(new MockAudioBuffer()));
-  createBufferSource = vi.fn(() => {
-    const src = new MockBufferSourceNode();
-    this.sources.push(src);
-    return src;
+}
+
+class MockAudio {
+  paused = true;
+  playbackRate = 1;
+  preservesPitch = true;
+  currentTime = 0;
+  crossOrigin: string | null = null;
+  preload = '';
+  src = '';
+  private listeners: Record<string, Array<() => void>> = {};
+
+  play = vi.fn(() => {
+    this.paused = false;
+    this.emit('play');
+    return Promise.resolve();
   });
+  pause = vi.fn(() => {
+    this.paused = true;
+    this.emit('pause');
+  });
+  load = vi.fn();
+  removeAttribute = vi.fn();
+
+  addEventListener = (type: string, cb: () => void) => {
+    (this.listeners[type] ??= []).push(cb);
+  };
+  removeEventListener = (type: string, cb: () => void) => {
+    this.listeners[type] = (this.listeners[type] ?? []).filter((f) => f !== cb);
+  };
+  emit(type: string) {
+    (this.listeners[type] ?? []).forEach((f) => f());
+  }
 }
 
 let lastContext: MockAudioContext;
+let lastAudio: MockAudio;
 let fetchSpy: ReturnType<typeof vi.fn>;
+let createObjectURLSpy: ReturnType<typeof vi.fn>;
+let revokeObjectURLSpy: ReturnType<typeof vi.fn>;
 
 beforeEach(() => {
   fetchSpy = vi.fn(() =>
@@ -159,13 +165,25 @@ beforeEach(() => {
       ok: true,
       status: 200,
       statusText: 'OK',
-      arrayBuffer: () => Promise.resolve(new ArrayBuffer(8)),
+      blob: () =>
+        Promise.resolve(new Blob(['audio-data'], { type: 'audio/mp4' })),
     } as Response)
   );
+  createObjectURLSpy = vi.fn(() => 'blob:http://localhost/mock-blob-uuid');
+  revokeObjectURLSpy = vi.fn();
+
   vi.stubGlobal('fetch', fetchSpy);
+  vi.stubGlobal('URL', {
+    createObjectURL: createObjectURLSpy,
+    revokeObjectURL: revokeObjectURLSpy,
+  });
   vi.stubGlobal('AudioContext', function () {
     lastContext = new MockAudioContext();
     return lastContext;
+  });
+  vi.stubGlobal('Audio', function () {
+    lastAudio = new MockAudio();
+    return lastAudio;
   });
 });
 
@@ -174,11 +192,15 @@ afterEach(() => {
 });
 
 describe('WebAudioPlayer', () => {
-  it('builds the Gain → StereoPanner → destination graph', () => {
+  it('builds the MediaElementSource → Gain → StereoPanner → destination graph', () => {
     new WebAudioPlayer(new AudioContext());
 
+    expect(lastContext.createMediaElementSource).toHaveBeenCalledWith(
+      lastAudio
+    );
     expect(lastContext.createGain).toHaveBeenCalled();
     expect(lastContext.createStereoPanner).toHaveBeenCalled();
+    expect(lastAudio.crossOrigin).toBe('anonymous');
     expect(lastContext.panner.connect).toHaveBeenCalledWith(
       lastContext.destination
     );
@@ -215,129 +237,106 @@ describe('WebAudioPlayer', () => {
     );
   });
 
-  it('sets playbackRate on current and future buffer sources', async () => {
+  it('sets playbackRate and preservesPitch on the audio element', () => {
     const player = new WebAudioPlayer(new AudioContext());
-    const handle = player.load('https://example.com/clip.m4a', {});
-    handle.play();
-    await vi.waitFor(() => expect(lastContext.sources.length).toBe(1));
 
     player.setSpeed(1.5);
-    expect(
-      lastContext.sources[0].playbackRate.linearRampToValueAtTime
-    ).toHaveBeenCalledWith(1.5, expect.any(Number));
+    expect(lastAudio.playbackRate).toBe(1.5);
+    expect(lastAudio.preservesPitch).toBe(true);
   });
 
-  it('loads a clip, fetches arrayBuffer, decodes, and plays', async () => {
+  it('loads a clip, fetches blob, creates ObjectURL, and plays', async () => {
     const player = new WebAudioPlayer(new AudioContext());
     const onPlay = vi.fn();
-    const onEnd = vi.fn();
-    const handle = player.load('https://example.com/clip.m4a', {
-      onPlay,
-      onEnd,
-    });
+    const handle = player.load('https://example.com/clip.m4a', { onPlay });
 
     handle.play();
     expect(lastContext.resume).toHaveBeenCalled();
     await vi.waitFor(() =>
-      expect(lastContext.createBufferSource).toHaveBeenCalled()
+      expect(lastAudio.src).toBe('blob:http://localhost/mock-blob-uuid')
     );
 
     expect(fetchSpy).toHaveBeenCalledWith('https://example.com/clip.m4a');
-    expect(lastContext.decodeAudioData).toHaveBeenCalled();
-    expect(lastContext.sources[0].start).toHaveBeenCalledWith(0, 0);
-    expect(onPlay).toHaveBeenCalled();
-
-    lastContext.sources[0].emitEnded();
-    expect(onEnd).toHaveBeenCalled();
+    expect(createObjectURLSpy).toHaveBeenCalled();
+    expect(lastAudio.play).toHaveBeenCalled();
+    expect(lastAudio.preservesPitch).toBe(true);
   });
 
-  it('preloads the next clip into buffer cache for instant zero-gap handoff', async () => {
+  it('preloads the next clip into blobCache and reuses ObjectURL on load', async () => {
     const player = new WebAudioPlayer(new AudioContext());
-    const onPlayB = vi.fn();
-
-    // Preload clip 2
-    player.preloadNext('https://example.com/2.m4a');
-    expect(fetchSpy).toHaveBeenCalledWith('https://example.com/2.m4a');
-
-    // Wait for decode to finish
-    await vi.waitFor(() =>
-      expect(lastContext.decodeAudioData).toHaveBeenCalled()
-    );
-
-    // Now load clip 2: since it is already decoded in bufferCache, play() starts without re-fetching
-    fetchSpy.mockClear();
-    lastContext.decodeAudioData.mockClear();
-
-    const handleB = player.load('https://example.com/2.m4a', {
-      onPlay: onPlayB,
-    });
-    handleB.play();
+    player.preloadNext('https://example.com/next.m4a');
 
     await vi.waitFor(() =>
-      expect(lastContext.createBufferSource).toHaveBeenCalled()
+      expect(fetchSpy).toHaveBeenCalledWith('https://example.com/next.m4a')
     );
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(lastContext.decodeAudioData).not.toHaveBeenCalled();
-    expect(onPlayB).toHaveBeenCalled();
+
+    const handle = player.load('https://example.com/next.m4a', {});
+    handle.play();
+
+    await vi.waitFor(() =>
+      expect(lastAudio.src).toBe('blob:http://localhost/mock-blob-uuid')
+    );
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('reads and writes the playback position', async () => {
+  it('reads and writes the playback position', () => {
     const player = new WebAudioPlayer(new AudioContext());
     const handle = player.load('https://example.com/clip.m4a', {});
-    handle.play();
-    await vi.waitFor(() => expect(lastContext.sources.length).toBe(1));
 
-    lastContext.currentTime = 3.2;
-    expect(handle.getCurrentTime()).toBeCloseTo(3.2);
+    lastAudio.currentTime = 3.2;
+    expect(handle.getCurrentTime()).toBe(3.2);
 
     handle.setCurrentTime(7.5);
-    await vi.waitFor(() => expect(lastContext.sources.length).toBe(2));
-    expect(lastContext.sources[1].start).toHaveBeenCalledWith(0, 7.5);
+    expect(lastAudio.currentTime).toBe(7.5);
   });
 
-  it('ignores a non-finite or negative seek target', async () => {
+  it('ignores a non-finite or negative seek target', () => {
     const player = new WebAudioPlayer(new AudioContext());
     const handle = player.load('https://example.com/clip.m4a', {});
-    handle.play();
-    await vi.waitFor(() => expect(lastContext.sources.length).toBe(1));
 
+    lastAudio.currentTime = 4;
     handle.setCurrentTime(Infinity);
     handle.setCurrentTime(NaN);
     handle.setCurrentTime(-5);
-    expect(lastContext.sources.length).toBe(1);
+    expect(lastAudio.currentTime).toBe(4);
   });
 
   it('does not fire callbacks when a stale handle is unloaded', async () => {
     const player = new WebAudioPlayer(new AudioContext());
     const stale = player.load('https://example.com/first.m4a', {});
-    stale.play();
-    await vi.waitFor(() => expect(lastContext.sources.length).toBe(1));
-
-    const onEnd = vi.fn();
-    player.load('https://example.com/second.m4a', { onEnd });
+    const onPause = vi.fn();
+    player.load('https://example.com/second.m4a', { onPause });
 
     stale.unload();
-    lastContext.sources[0].emitEnded();
-    expect(onEnd).not.toHaveBeenCalled();
+    lastAudio.emit('pause');
+    expect(onPause).toHaveBeenCalled();
   });
 
-  it('stops the current source on stop, but leaves the context open', async () => {
+  it('stops the current source on stop, firing pause, but leaves the context open', () => {
     const player = new WebAudioPlayer(new AudioContext());
-    const handle = player.load('https://example.com/clip.m4a', {});
-    handle.play();
-    await vi.waitFor(() => expect(lastContext.sources.length).toBe(1));
-
+    const onPause = vi.fn();
+    player.load('https://example.com/clip.m4a', { onPause });
     player.stop();
-    expect(lastContext.sources[0].stop).toHaveBeenCalled();
+
+    expect(lastAudio.pause).toHaveBeenCalled();
+    expect(lastAudio.removeAttribute).toHaveBeenCalledWith('src');
     expect(lastContext.close).not.toHaveBeenCalled();
   });
 
-  it('disconnects its own nodes on dispose without closing the context', () => {
+  it('disconnects nodes and revokes blob URLs on dispose without closing the context', async () => {
     const player = new WebAudioPlayer(new AudioContext());
+    player.preloadNext('https://example.com/clip.m4a');
+    await vi.waitFor(() => expect(createObjectURLSpy).toHaveBeenCalled());
+
     player.dispose();
 
     expect(lastContext.gain.disconnect).toHaveBeenCalled();
     expect(lastContext.panner.disconnect).toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(revokeObjectURLSpy).toHaveBeenCalledWith(
+        'blob:http://localhost/mock-blob-uuid'
+      )
+    );
     expect(lastContext.close).not.toHaveBeenCalled();
   });
 });

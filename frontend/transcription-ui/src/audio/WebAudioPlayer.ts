@@ -64,29 +64,41 @@ export function createAudioContext(): AudioContext {
   return new AudioContextClass();
 }
 
-/** In-memory PCM Buffer Engine (AudioBufferSourceNode + LRU Buffer Cache for Zero-Gap Playback) */
+type GraphListeners = {
+  play: () => void;
+  pause: () => void;
+  ended: () => void;
+  error: () => void;
+};
+
+/** HTMLAudioElement + Web Audio Graph with In-Memory Blob URL Caching (`preservesPitch` + Zero Network Latency) */
 export class WebAudioPlayer {
   private readonly context: AudioContext;
+  private readonly audio: HTMLAudioElement;
+  private readonly source: MediaElementAudioSourceNode;
   private readonly gain: GainNode;
   private readonly panner: StereoPannerNode;
-  private readonly bufferCache = new Map<string, Promise<AudioBuffer>>();
+  private readonly blobCache = new Map<string, Promise<string>>();
 
-  private currentSource: AudioBufferSourceNode | null = null;
-  private currentBuffer: AudioBuffer | null = null;
   private activeSrc: string | null = null;
-  private activeCallbacks: AudioCallbacks | null = null;
-  private isPlaying = false;
-  private pausedOffset = 0;
-  private playStartHardwareTime = 0;
-  private playStartBufferOffset = 0;
+  private activeListeners: GraphListeners | null = null;
   private speed = 1;
 
   constructor(context: AudioContext) {
     this.context = context;
+
+    this.audio = new Audio();
+    this.audio.crossOrigin = 'anonymous';
+    this.audio.preload = 'auto';
+
+    this.source = this.context.createMediaElementSource(this.audio);
     this.gain = this.context.createGain();
     this.panner = this.context.createStereoPanner();
 
-    this.gain.connect(this.panner).connect(this.context.destination);
+    this.source
+      .connect(this.gain)
+      .connect(this.panner)
+      .connect(this.context.destination);
   }
 
   resume(): void {
@@ -110,36 +122,37 @@ export class WebAudioPlayer {
   }
 
   setSpeed(rate: number): void {
-    if (this.isPlaying && this.currentSource && this.currentBuffer) {
-      const elapsed =
-        (this.context.currentTime - this.playStartHardwareTime) * this.speed;
-      this.playStartBufferOffset = Math.min(
-        this.currentBuffer.duration,
-        this.playStartBufferOffset + elapsed
-      );
-      this.playStartHardwareTime = this.context.currentTime;
-      this.currentSource.playbackRate.linearRampToValueAtTime(
-        rate,
-        this.context.currentTime + RAMP_SECONDS
-      );
-    }
     this.speed = rate;
+    this.audio.playbackRate = rate;
+    if ('preservesPitch' in this.audio) {
+      Object.assign(this.audio, { preservesPitch: true });
+    }
   }
 
   preloadNext(src: string): void {
     if (!src) return;
-    this.fetchAndDecode(src).catch(() => {});
+    this.fetchAndCacheBlobUrl(src).catch(() => {});
   }
 
-  private fetchAndDecode(src: string): Promise<AudioBuffer> {
+  private fetchAndCacheBlobUrl(src: string): Promise<string> {
     if (!src) return Promise.reject(new Error('Empty src'));
-    let promise = this.bufferCache.get(src);
+    let promise = this.blobCache.get(src);
     if (!promise) {
       // LRU evict if cache exceeds 20 items to prevent memory leaks
-      if (this.bufferCache.size >= 20) {
-        const oldestKey = this.bufferCache.keys().next().value;
+      if (this.blobCache.size >= 20) {
+        const oldestKey = this.blobCache.keys().next().value;
         if (oldestKey && oldestKey !== this.activeSrc) {
-          this.bufferCache.delete(oldestKey);
+          const oldPromise = this.blobCache.get(oldestKey);
+          this.blobCache.delete(oldestKey);
+          if (oldPromise) {
+            oldPromise
+              .then((blobUrl) => {
+                try {
+                  URL.revokeObjectURL(blobUrl);
+                } catch {}
+              })
+              .catch(() => {});
+          }
         }
       }
       promise = fetch(src)
@@ -149,158 +162,129 @@ export class WebAudioPlayer {
               `Failed to fetch ${src}: ${res.status} ${res.statusText}`
             );
           }
-          return res.arrayBuffer();
+          return res.blob();
         })
-        .then((buf) => this.context.decodeAudioData(buf))
+        .then((blob) => URL.createObjectURL(blob))
         .catch((err) => {
-          this.bufferCache.delete(src);
+          this.blobCache.delete(src);
           throw err;
         });
-      this.bufferCache.set(src, promise);
+      this.blobCache.set(src, promise);
     }
     return promise;
   }
 
   load(src: string, callbacks: AudioCallbacks): PlaybackController {
-    if (this.activeSrc && this.activeSrc !== src) {
-      this.stopCurrentSource();
-      this.pausedOffset = 0;
-    }
+    this.detachListeners();
     this.activeSrc = src;
-    this.activeCallbacks = callbacks;
 
     if (src) {
-      this.fetchAndDecode(src).catch(() => {});
+      this.fetchAndCacheBlobUrl(src).catch(() => {});
+    }
+
+    const listeners: GraphListeners = {
+      play: () => callbacks.onPlay?.(),
+      pause: () => callbacks.onPause?.(),
+      ended: () => callbacks.onEnd?.(),
+      error: () => callbacks.onError?.(),
+    };
+    this.audio.addEventListener('play', listeners.play);
+    this.audio.addEventListener('pause', listeners.pause);
+    this.audio.addEventListener('ended', listeners.ended);
+    this.audio.addEventListener('error', listeners.error);
+    this.activeListeners = listeners;
+
+    if (src) {
+      this.fetchAndCacheBlobUrl(src)
+        .then((blobUrl) => {
+          if (this.activeSrc !== src || this.activeListeners !== listeners)
+            return;
+          if (this.audio.src !== blobUrl) {
+            this.audio.src = blobUrl;
+            this.audio.load();
+          }
+          this.audio.playbackRate = this.speed;
+          if ('preservesPitch' in this.audio) {
+            Object.assign(this.audio, { preservesPitch: true });
+          }
+        })
+        .catch(() => {
+          if (this.activeSrc === src && this.activeListeners === listeners) {
+            callbacks.onError?.();
+          }
+        });
+    } else {
+      this.audio.removeAttribute('src');
+      this.audio.load();
     }
 
     const controller: PlaybackController = {
       play: () => {
         this.resume();
-        this.isPlaying = true;
-        this.startBufferPlayback(src, this.pausedOffset);
+        if (!src) return;
+        this.fetchAndCacheBlobUrl(src)
+          .then((blobUrl) => {
+            if (this.activeSrc !== src || this.activeListeners !== listeners)
+              return;
+            if (this.audio.src !== blobUrl) {
+              this.audio.src = blobUrl;
+              this.audio.load();
+            }
+            this.audio.playbackRate = this.speed;
+            if ('preservesPitch' in this.audio) {
+              Object.assign(this.audio, { preservesPitch: true });
+            }
+            this.audio.play().catch(() => {});
+          })
+          .catch(() => {});
       },
-      pause: () => {
-        if (!this.isPlaying) return;
-        this.pausedOffset = controller.getCurrentTime();
-        this.isPlaying = false;
-        this.stopCurrentSource();
-        this.activeCallbacks?.onPause?.();
-      },
+      pause: () => this.audio.pause(),
       stop: () => {
-        this.isPlaying = false;
-        this.pausedOffset = 0;
-        this.stopCurrentSource();
+        this.audio.pause();
+        this.audio.currentTime = 0;
       },
-      getCurrentTime: () => {
-        if (!this.isPlaying || !this.currentBuffer) {
-          return this.pausedOffset;
-        }
-        const elapsed =
-          (this.context.currentTime - this.playStartHardwareTime) * this.speed;
-        return Math.min(
-          this.currentBuffer.duration,
-          this.playStartBufferOffset + elapsed
-        );
-      },
+      getCurrentTime: () => this.audio.currentTime,
       setCurrentTime: (time: number) => {
         if (!Number.isFinite(time) || time < 0) return;
-        if (!this.isPlaying) {
-          this.pausedOffset = time;
-        } else {
-          this.startBufferPlayback(src, time);
-        }
+        this.audio.currentTime = time;
       },
-      unload: () => {
-        if (this.activeSrc === src) {
-          this.isPlaying = false;
-          this.stopCurrentSource();
-          this.activeCallbacks = null;
-          this.activeSrc = null;
-        }
-      },
-      off: () => {
-        if (this.activeSrc === src) {
-          this.activeCallbacks = null;
-        }
-      },
+      unload: () => this.detachListeners(listeners),
+      off: () => this.detachListeners(listeners),
     };
     return controller;
   }
 
-  private startBufferPlayback(src: string, offset: number): void {
-    this.stopCurrentSource();
-    if (!src) {
-      this.isPlaying = false;
-      return;
-    }
-
-    this.fetchAndDecode(src)
-      .then((buffer) => {
-        if (!this.isPlaying || this.activeSrc !== src) return;
-        this.currentBuffer = buffer;
-
-        if (offset >= buffer.duration) {
-          this.isPlaying = false;
-          this.pausedOffset = 0;
-          this.activeCallbacks?.onEnd?.();
-          return;
-        }
-
-        const source = this.context.createBufferSource();
-        source.buffer = buffer;
-        source.playbackRate.value = this.speed;
-        source.connect(this.gain);
-        this.currentSource = source;
-        this.playStartHardwareTime = this.context.currentTime;
-        this.playStartBufferOffset = offset;
-
-        source.onended = () => {
-          if (this.currentSource !== source) return;
-          this.currentSource = null;
-          this.isPlaying = false;
-          this.pausedOffset = 0;
-          this.activeCallbacks?.onEnd?.();
-        };
-
-        try {
-          source.start(0, offset);
-          this.activeCallbacks?.onPlay?.();
-        } catch {
-          this.isPlaying = false;
-          this.activeCallbacks?.onError?.();
-        }
-      })
-      .catch(() => {
-        if (this.activeSrc === src) {
-          this.isPlaying = false;
-          this.activeCallbacks?.onError?.();
-        }
-      });
-  }
-
-  private stopCurrentSource(): void {
-    if (this.currentSource) {
-      this.currentSource.onended = null;
-      try {
-        this.currentSource.stop();
-      } catch {}
-      try {
-        this.currentSource.disconnect();
-      } catch {}
-      this.currentSource = null;
-    }
-  }
-
   stop(): void {
-    this.isPlaying = false;
-    this.pausedOffset = 0;
-    this.stopCurrentSource();
+    this.audio.pause();
+    this.detachListeners();
+    this.audio.removeAttribute('src');
+    this.audio.load();
   }
 
   dispose(): void {
     this.stop();
+    this.source.disconnect();
     this.gain.disconnect();
     this.panner.disconnect();
-    this.bufferCache.clear();
+    for (const promise of this.blobCache.values()) {
+      promise
+        .then((blobUrl) => {
+          try {
+            URL.revokeObjectURL(blobUrl);
+          } catch {}
+        })
+        .catch(() => {});
+    }
+    this.blobCache.clear();
+  }
+
+  private detachListeners(listeners?: GraphListeners): void {
+    const target = listeners ?? this.activeListeners;
+    if (!target || (listeners && listeners !== this.activeListeners)) return;
+    this.audio.removeEventListener('play', target.play);
+    this.audio.removeEventListener('pause', target.pause);
+    this.audio.removeEventListener('ended', target.ended);
+    this.audio.removeEventListener('error', target.error);
+    this.activeListeners = null;
   }
 }
