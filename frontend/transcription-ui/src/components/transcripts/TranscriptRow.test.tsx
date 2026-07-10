@@ -469,7 +469,7 @@ describe('TranscriptRow', () => {
     expect(screen.queryByLabelText('copy transcript')).toBeNull();
   });
 
-  it('hides duration when silence row is at the live edge (ongoing silence)', () => {
+  it('shows coarse elapsed time without seconds when silence row is at the live edge (ongoing silence)', () => {
     const mockSilenceBundle: RenderableAudioSegment = {
       id: 'silence-123',
       feedId: 'feed-123',
@@ -507,7 +507,7 @@ describe('TranscriptRow', () => {
 
     expect(screen.getByText('[No speech detected]')).toBeTruthy();
     expect(screen.queryByText('10 sec')).toBeNull();
-    expect(screen.queryByText(/16:00/)).toBeNull();
+    expect(screen.getByText('<1 min')).toBeTruthy();
   });
 
   it('does not render segment info button for non-admins', () => {
