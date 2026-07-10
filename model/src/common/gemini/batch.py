@@ -59,7 +59,6 @@ def run_batch_audio_inference(
     prior_context_mode: str,
     eval_manifest_uri: str,
     histories: Sequence[Sequence[ContextTurn]] | None = None,
-    history_mode: str = "text_turns",
     submit_fn: BatchSubmitFn = submit_batch_inference,
 ) -> BatchPredictionMap | None:
     """Run Gemini batch inference for audio URIs and return parsed predictions."""
@@ -91,7 +90,7 @@ def run_batch_audio_inference(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             histories=histories,
-            history_mode=history_mode,
+            history_mode=prior_context_mode,
             tmp_dir=Path(tmp),
         )
         metadata_uri = batch_prediction_metadata_uri(run_gcs_prefix, label)

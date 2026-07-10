@@ -11,6 +11,7 @@ from common.gemini.batch import (
 )
 from common.gemini.context import ContextTurn
 from common.gemini.eval_artifacts import batch_prediction_metadata_uri
+from common.gemini.vertex import build_request
 from fake_gcs import FakeStorageClient
 from sft_eval_fixtures import (
     batch_identity_kwargs,
@@ -126,6 +127,57 @@ class TestGeminiBatchInference(unittest.TestCase):
         self.assertFalse(
             storage.has(batch_input_uri("gs://bucket/sft/runs/run-a"))
         )
+
+    def test_run_batch_audio_inference_matches_payload_to_context_mode(
+        self,
+    ) -> None:
+        storage = FakeStorageClient()
+        run_gcs_prefix = "gs://bucket/sft/runs/run-a"
+        output_uri = batch_output_uri(run_gcs_prefix)
+        current_audio_uri = "gs://audio/current.flac"
+        history = [ContextTurn("gs://audio/prior.flac", "prior transcript")]
+
+        def submit_batch(**_: object) -> str:
+            storage.put(
+                f"{output_uri}predictions.jsonl",
+                vertex_batch_output(current_audio_uri, "copy") + "\n",
+            )
+            return output_uri
+
+        preds = run_batch_audio_inference(
+            storage_client=storage,
+            run_gcs_prefix=run_gcs_prefix,
+            gcp_project="project",
+            location="us-central1",
+            model_id="gemini-3.1-flash-lite",
+            label="base",
+            audio_uris=[current_audio_uri],
+            system_prompt="sys",
+            user_prompt="user",
+            prior_context_count=1,
+            prior_context_mode="guarded_transcript_block",
+            eval_manifest_uri="gs://data/eval.jsonl",
+            histories=[history],
+            submit_fn=submit_batch,
+        )
+
+        self.assertIsNotNone(preds)
+        metadata = json.loads(
+            storage.get(batch_prediction_metadata_uri(run_gcs_prefix, "base"))
+        )
+        stored_mode = metadata["request_identity"]["prior_context_mode"]
+        self.assertEqual(stored_mode, "guarded_transcript_block")
+        uploaded_request = json.loads(
+            storage.get(batch_input_uri(run_gcs_prefix))
+        )
+        expected_request = build_request(
+            current_audio_uri,
+            system_prompt="sys",
+            user_prompt="user",
+            history=history,
+            history_mode=stored_mode,
+        )
+        self.assertEqual(uploaded_request, expected_request)
 
     def test_run_batch_audio_inference_returns_predictions_and_output_uri(
         self,

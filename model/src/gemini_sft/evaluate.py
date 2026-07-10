@@ -167,7 +167,6 @@ def evaluate_run(  # noqa: PLR0915
             prior_context_count=prior_context_count,
             prior_context_mode=prior_context_mode,
             eval_manifest_uri=eval_manifest_uri,
-            history_mode=prior_context_mode,
         )
         if preds is None:
             return 1
@@ -369,7 +368,6 @@ def batch_infer(
     prior_context_mode: str,
     eval_manifest_uri: str,
     histories: list[Any] | None = None,
-    history_mode: str = "text_turns",
 ) -> PredictionMap | None:
     """Build batch input JSONL, submit, download outputs, and parse predictions."""
     return run_batch_audio_inference(
@@ -386,7 +384,6 @@ def batch_infer(
         prior_context_mode=prior_context_mode,
         eval_manifest_uri=eval_manifest_uri,
         histories=histories,
-        history_mode=history_mode,
         submit_fn=submit_batch_inference,
     )
 
