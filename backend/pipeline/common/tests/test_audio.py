@@ -231,6 +231,27 @@ class TestAudioUtils(unittest.TestCase):
         self.assertGreaterEqual(duration_ms, 7200)
         self.assertLessEqual(duration_ms, 7800)
 
+    @patch("subprocess.run")
+    def test_probe_audio_metadata_stream_duration_fallback_for_fmp4(
+        self, mock_run: MagicMock
+    ) -> None:
+        """Test stream duration fallback when container format duration is N/A (e.g. fragmented M4A)."""
+        mock_result = MagicMock()
+        mock_result.stdout = (
+            b'{"format": {"duration": "N/A", "format_name": "mov,mp4,m4a,3gp,3g2,mj2"}, '
+            b'"streams": [{"codec_type": "audio", "duration": "12.345000"}]}'
+        )
+        mock_run.return_value = mock_result
+
+        duration, mime = audio_helper.probe_audio_metadata(
+            b"dummy fmp4", input_format="m4a"
+        )
+        self.assertEqual(duration, 12345)
+        self.assertEqual(mime, audio_helper.models.AudioMimeType.MP4)
+        command = mock_run.call_args.args[0]
+        self.assertIn("-f", command)
+        self.assertIn("m4a", command)
+
 
 if __name__ == "__main__":
     unittest.main()

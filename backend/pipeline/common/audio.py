@@ -13,7 +13,7 @@ from backend.pipeline.ingestion import models
 logger = logging.getLogger(__name__)
 
 FFPROBE_TIMEOUT_SEC = 10
-type AudioInputFormat = Literal["mp3"]
+type AudioInputFormat = Literal["mp3", "m4a", "mp4"]
 
 # Maps ffprobe format_name tokens to AudioMimeType. Keys are lower-cased
 # substrings that may appear in a comma-separated format_name string.
@@ -75,7 +75,7 @@ def _probe_file(file_path: str, format_args: list[str]) -> ProbeResult:
         "error",
         *format_args,
         "-show_entries",
-        "format=duration,format_name",
+        "format=duration,format_name:stream=duration,codec_type",
         "-of",
         "json",
         file_path,
@@ -92,8 +92,19 @@ def _probe_file(file_path: str, format_args: list[str]) -> ProbeResult:
         data = json.loads(stdout_str)
         if isinstance(data, dict):
             format_info = data.get("format", {})
+            duration = format_info.get("duration")
+            if duration in (None, "N/A", "0.000000", "0", "0.0"):
+                for st in data.get("streams", []):
+                    if isinstance(st, dict) and (
+                        st.get("codec_type") == "audio"
+                        or "codec_type" not in st
+                    ):
+                        st_dur = st.get("duration")
+                        if st_dur not in (None, "N/A", "0.000000", "0", "0.0"):
+                            duration = st_dur
+                            break
             return ProbeResult(
-                duration=format_info.get("duration"),
+                duration=duration,
                 format_name=format_info.get("format_name"),
             )
         return ProbeResult(duration=str(data).strip(), format_name=None)

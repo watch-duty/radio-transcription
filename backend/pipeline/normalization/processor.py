@@ -268,7 +268,7 @@ class NormalizationEventProcessor:
                     raw_audio_bytes
                 ),
             )
-        if lower_uri.endswith(".m4a"):
+        if lower_uri.endswith((".m4a", ".mp4")):
             return audio_processor.TranscodeResult(
                 flac_bytes=self.audio_processor.transcode_to_flac(
                     raw_audio_bytes
