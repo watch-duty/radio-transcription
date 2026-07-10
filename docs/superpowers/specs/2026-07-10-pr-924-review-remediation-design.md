@@ -74,4 +74,3 @@ Development follows red-green-refactor cycles:
    inference-manifest construction.
 5. Run the focused Gemini SFT/common test suite, root Ruff check and format
    check, type checking, dead-code checking, and `git diff --check`.
-
