@@ -246,7 +246,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             "transcription_status", "attempts"
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "empty_response"
+            "transcription_status", "empty"
         )
         self.mock_record_pipeline_stage.assert_any_call(
             "transcription", "success"
