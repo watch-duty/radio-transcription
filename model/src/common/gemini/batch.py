@@ -71,6 +71,11 @@ def run_batch_audio_inference(
         )
         return None
     audio_uri_list = list(audio_uris)
+    history_list = (
+        [list(history) for history in histories]
+        if histories is not None
+        else [[] for _ in audio_uri_list]
+    )
     identity = request_identity.build_gemini_eval_request_identity(
         target_label=label,
         model=model_id,
@@ -80,6 +85,7 @@ def run_batch_audio_inference(
         user_prompt=user_prompt,
         prior_context_count=prior_context_count,
         prior_context_mode=prior_context_mode,
+        histories=history_list,
     )
     with tempfile.TemporaryDirectory() as tmp:
         batch_input_gcs, batch_output_gcs = build_batch_jsonl(
@@ -89,7 +95,7 @@ def run_batch_audio_inference(
             audio_uris=audio_uris,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            histories=histories,
+            histories=history_list,
             history_mode=prior_context_mode,
             tmp_dir=Path(tmp),
         )

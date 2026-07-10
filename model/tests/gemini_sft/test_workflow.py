@@ -11,6 +11,7 @@ import unittest.mock
 from pathlib import Path
 from typing import Any
 
+from common.gemini import context
 from common.gemini.batch import BatchPredictionMap
 from common.gemini.eval_artifacts import batch_prediction_metadata_uri
 from common.gemini.tuning_data import build_audio_tuning_example
@@ -1435,6 +1436,15 @@ class TestEvaluateRun(unittest.TestCase):
                 system_prompt=config["system_prompt"],
                 user_prompt=config["user_prompt"],
                 prior_context_count=1,
+                histories=[
+                    [],
+                    [
+                        context.ContextTurn(
+                            "gs://audio/eval-1.flac",
+                            "first",
+                        )
+                    ],
+                ],
             )
             args = argparse.Namespace(config=str(cfg_path))
 
@@ -1805,6 +1815,14 @@ class TestEvaluateRun(unittest.TestCase):
                 system_prompt=config["system_prompt"],
                 user_prompt=config["user_prompt"],
                 prior_context_count=1,
+                histories=[
+                    [
+                        context.ContextTurn(
+                            "gs://audio/eval-prior.flac",
+                            "prior",
+                        )
+                    ]
+                ],
             )
 
             with (

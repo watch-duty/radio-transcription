@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from common.gemini import request_identity
+from common.gemini import context, request_identity
 from common.gemini.eval_artifacts import (
     batch_prediction_metadata_uri,
     eval_target_artifact_paths,
@@ -86,17 +86,21 @@ def put_batch_metadata(
     user_prompt: str = "user",
     prior_context_count: int = 0,
     prior_context_mode: str = "text_turns",
+    histories: list[list[context.ContextTurn]] | None = None,
 ) -> str:
-    identity = request_identity.build_gemini_eval_request_identity(
-        target_label=label,
-        model=model,
-        eval_manifest_uri=eval_manifest_uri,
-        audio_uris=audio_uris or ["gs://audio/a.flac"],
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        prior_context_count=prior_context_count,
-        prior_context_mode=prior_context_mode,
-    )
+    kwargs = {
+        "target_label": label,
+        "model": model,
+        "eval_manifest_uri": eval_manifest_uri,
+        "audio_uris": audio_uris or ["gs://audio/a.flac"],
+        "system_prompt": system_prompt,
+        "user_prompt": user_prompt,
+        "prior_context_count": prior_context_count,
+        "prior_context_mode": prior_context_mode,
+    }
+    if histories is not None:
+        kwargs["histories"] = histories
+    identity = request_identity.build_gemini_eval_request_identity(**kwargs)
     metadata_uri = batch_prediction_metadata_uri(run_gcs_prefix, label)
     storage.put(
         metadata_uri,

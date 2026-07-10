@@ -244,6 +244,7 @@ async def run_online_target_inference(
         user_prompt=user_prompt,
         prior_context_count=prior_context_count,
         prior_context_mode=prior_context_mode,
+        histories=history_list,
     )
     resume = load_existing_online_predictions(
         storage_client=storage_client,

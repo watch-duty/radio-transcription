@@ -12,6 +12,7 @@ _SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
+from common.gemini import request_identity as request_identity_lib
 from common.gemini.context import ContextTurn
 from common.gemini.eval_artifacts import (
     eval_target_artifact_paths,
@@ -43,17 +44,21 @@ def _identity(
     audio_uris: list[str] | None = None,
     system_prompt: str = "system",
     user_prompt: str = "user",
+    histories: list[list[ContextTurn]] | None = None,
 ) -> dict:
-    return build_gemini_eval_request_identity(
-        target_label="checkpoint_6",
-        model=model,
-        eval_manifest_uri="gs://data/eval.jsonl",
-        audio_uris=audio_uris or ["gs://audio/1.flac", "gs://audio/2.flac"],
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        prior_context_count=8,
-        prior_context_mode="text_turns",
-    )
+    kwargs = {
+        "target_label": "checkpoint_6",
+        "model": model,
+        "eval_manifest_uri": "gs://data/eval.jsonl",
+        "audio_uris": audio_uris or ["gs://audio/1.flac", "gs://audio/2.flac"],
+        "system_prompt": system_prompt,
+        "user_prompt": user_prompt,
+        "prior_context_count": 8,
+        "prior_context_mode": "text_turns",
+    }
+    if histories is not None:
+        kwargs["histories"] = histories
+    return build_gemini_eval_request_identity(**kwargs)
 
 
 def _metadata(identity: dict) -> str:
@@ -161,6 +166,40 @@ class TestOnlineRequestIdentity(unittest.TestCase):
                 _identity(audio_uris=["gs://audio/2.flac", "gs://audio/1.flac"])
             ),
         )
+
+    def test_hash_changes_when_prior_transcript_changes(self) -> None:
+        first = [[ContextTurn("gs://audio/prior.flac", "alpha")], []]
+        second = [[ContextTurn("gs://audio/prior.flac", "bravo")], []]
+
+        self.assertNotEqual(
+            request_identity_hash(_identity(histories=first)),
+            request_identity_hash(_identity(histories=second)),
+        )
+
+    def test_prefix_identity_rejects_changed_existing_request(self) -> None:
+        stored = _identity(
+            audio_uris=["gs://audio/1.flac"],
+            histories=[[]],
+        )
+        requested = _identity(
+            audio_uris=["gs://audio/1.flac", "gs://audio/2.flac"],
+            histories=[
+                [
+                    ContextTurn(
+                        "gs://audio/new-prior.flac",
+                        "changed transcript",
+                    )
+                ],
+                [],
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "request identity mismatch"):
+            request_identity_lib.validate_prefix_identity(
+                stored,
+                requested,
+                "request identity mismatch",
+            )
 
     def test_identity_excludes_operational_settings(self) -> None:
         identity = _identity()
@@ -526,8 +565,8 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             mock_client = unittest.mock.MagicMock()
             mock_client.aio.models.generate_content = generate_content
             mock_genai.Client.return_value = mock_client
-            mock_types.GenerateContentConfig.side_effect = (
-                lambda **kwargs: kwargs
+            mock_types.GenerateContentConfig.side_effect = lambda **kwargs: (
+                kwargs
             )
 
             async def observe_start_order() -> bool:

@@ -247,6 +247,92 @@ class TestGeminiBatchInference(unittest.TestCase):
         self.assertEqual(preds.output_uri, output_uri)
         self.assertEqual(calls, [])
 
+    def test_run_batch_audio_inference_reuses_matching_history(self) -> None:
+        storage = FakeStorageClient()
+        run_gcs_prefix = "gs://bucket/sft/runs/run-a"
+        output_uri = batch_output_uri(run_gcs_prefix)
+        audio_uri = "gs://audio/a.flac"
+        histories = [
+            [ContextTurn("gs://audio/prior.flac", "matching transcript")]
+        ]
+        storage.put(
+            f"{output_uri}predictions.jsonl",
+            vertex_batch_output(audio_uri, "copy") + "\n",
+        )
+        put_batch_metadata(
+            storage,
+            run_gcs_prefix=run_gcs_prefix,
+            audio_uris=[audio_uri],
+            prior_context_count=1,
+            histories=histories,
+        )
+        calls: list[dict[str, object]] = []
+
+        preds = run_batch_audio_inference(
+            storage_client=storage,
+            run_gcs_prefix=run_gcs_prefix,
+            gcp_project="project",
+            location="us-central1",
+            model_id="gemini-3.1-flash-lite",
+            label="base",
+            audio_uris=[audio_uri],
+            system_prompt="sys",
+            user_prompt="user",
+            prior_context_count=1,
+            prior_context_mode="text_turns",
+            eval_manifest_uri="gs://data/eval.jsonl",
+            histories=histories,
+            submit_fn=lambda **kwargs: calls.append(kwargs) or output_uri,
+        )
+
+        self.assertEqual(preds, {audio_uri: "copy"})
+        self.assertEqual(calls, [])
+
+    def test_run_batch_audio_inference_rejects_changed_history(self) -> None:
+        storage = FakeStorageClient()
+        run_gcs_prefix = "gs://bucket/sft/runs/run-a"
+        output_uri = batch_output_uri(run_gcs_prefix)
+        audio_uri = "gs://audio/a.flac"
+        storage.put(
+            f"{output_uri}predictions.jsonl",
+            vertex_batch_output(audio_uri, "copy") + "\n",
+        )
+        put_batch_metadata(
+            storage,
+            run_gcs_prefix=run_gcs_prefix,
+            audio_uris=[audio_uri],
+            prior_context_count=1,
+            histories=[
+                [ContextTurn("gs://audio/prior.flac", "old transcript")]
+            ],
+        )
+        calls: list[dict[str, object]] = []
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "batch prediction request identity mismatch",
+        ):
+            run_batch_audio_inference(
+                storage_client=storage,
+                run_gcs_prefix=run_gcs_prefix,
+                gcp_project="project",
+                location="us-central1",
+                model_id="gemini-3.1-flash-lite",
+                label="base",
+                audio_uris=[audio_uri],
+                system_prompt="sys",
+                user_prompt="user",
+                prior_context_count=1,
+                prior_context_mode="text_turns",
+                eval_manifest_uri="gs://data/eval.jsonl",
+                histories=[
+                    [ContextTurn("gs://audio/prior.flac", "new transcript")]
+                ],
+                submit_fn=lambda **kwargs: calls.append(kwargs) or output_uri,
+            )
+
+        self.assertEqual(calls, [])
+
     def test_run_batch_audio_inference_does_not_mark_failed_submit_reusable(
         self,
     ) -> None:
