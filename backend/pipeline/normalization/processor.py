@@ -48,6 +48,13 @@ _CLASSIFICATION_MAP = {
     SegmentedAudio.AUDIO_CLASSIFICATION_OTHER: AudioClassification.OTHER,
 }
 
+# Cloud Run allows 4 concurrent requests, and each request can spawn up to 3 parallel uploads.
+# We set the global pool size to 12 to handle peak load without queuing.
+_GLOBAL_UPLOAD_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=int(os.environ.get("MAX_UPLOAD_THREADS", "12")),
+    thread_name_prefix="normalization_upload_executor",
+)
+
 
 class DLQPublishError(RuntimeError):
     """Raised when publishing a failed claim to the Dead Letter Queue entirely fails."""
@@ -298,43 +305,42 @@ class NormalizationEventProcessor:
 
         current_ctx = context.get_current()
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-            canonical_future = executor.submit(
+        canonical_future = _GLOBAL_UPLOAD_EXECUTOR.submit(
+            _upload_and_log,
+            flac_bytes,
+            flac_path,
+            "audio/flac",
+            "stitched audio",
+            current_ctx,
+        )
+        playback_future = _GLOBAL_UPLOAD_EXECUTOR.submit(
+            _upload_and_log,
+            m4a_bytes,
+            m4a_path,
+            "audio/mp4",
+            "playback audio",
+            current_ctx,
+        )
+
+        ephemeral_upload_future = None
+        if mono_flac_path and mono_flac_bytes:
+            ephemeral_upload_future = _GLOBAL_UPLOAD_EXECUTOR.submit(
                 _upload_and_log,
-                flac_bytes,
-                flac_path,
+                mono_flac_bytes,
+                mono_flac_path,
                 "audio/flac",
-                "stitched audio",
-                current_ctx,
-            )
-            playback_future = executor.submit(
-                _upload_and_log,
-                m4a_bytes,
-                m4a_path,
-                "audio/mp4",
-                "playback audio",
+                "ephemeral transcription audio",
                 current_ctx,
             )
 
-            ephemeral_upload_future = None
-            if mono_flac_path and mono_flac_bytes:
-                ephemeral_upload_future = executor.submit(
-                    _upload_and_log,
-                    mono_flac_bytes,
-                    mono_flac_path,
-                    "audio/flac",
-                    "ephemeral transcription audio",
-                    current_ctx,
-                )
+        canonical_audio_uri = canonical_future.result()
+        playback_audio_uri = playback_future.result()
 
-            canonical_audio_uri = canonical_future.result()
-            playback_audio_uri = playback_future.result()
-
-            transcription_audio_uri = ""
-            if ephemeral_upload_future:
-                transcription_audio_uri = ephemeral_upload_future.result()
-            elif ephemeral_upload_bypassed:
-                transcription_audio_uri = canonical_audio_uri
+        transcription_audio_uri = ""
+        if ephemeral_upload_future:
+            transcription_audio_uri = ephemeral_upload_future.result()
+        elif ephemeral_upload_bypassed:
+            transcription_audio_uri = canonical_audio_uri
 
         return AudioDerivativeUris(
             canonical_audio_uri=canonical_audio_uri,
