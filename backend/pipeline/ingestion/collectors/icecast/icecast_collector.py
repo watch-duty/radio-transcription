@@ -444,10 +444,11 @@ async def _process_finalized_segment(
     stream_anchor_time: datetime.datetime,
     process_done: bool,
     previous_receipt_time: datetime.datetime | None,
+    cumulative_pcm_samples: int,
     session_id: str,
     feed_id: Any,
     feed_name: Any,
-) -> tuple[CapturedChunk | None, datetime.datetime]:
+) -> tuple[CapturedChunk | None, datetime.datetime, int]:
     """Processes a finalized PCM segment on disk into a decodable FLAC CapturedChunk.
 
     Args:
@@ -456,15 +457,20 @@ async def _process_finalized_segment(
         stream_anchor_time: UTC timestamp when stream capture started.
         process_done: Whether ffmpeg has exited.
         previous_receipt_time: Receipt timestamp of the previous segment.
+        cumulative_pcm_samples: Running total of PCM samples processed prior to this segment.
         session_id: Unique capture session identifier.
         feed_id: The feed ID for logging.
         feed_name: The feed name for logging.
 
     Returns:
-        A tuple of (CapturedChunk or None if encoding failed, updated previous_receipt_time).
+        A tuple of (CapturedChunk or None if encoding failed, updated previous_receipt_time, updated cumulative_pcm_samples).
     """
     # SLO: receipt_time stamp — Icecast segment finalized, bytes available
     receipt_time = _now_utc()
+    pcm_size = _path_size(current_segment_pcm) or 0
+    pcm_samples = pcm_size // (2 * NUM_AUDIO_CHANNELS)
+    chunk_duration_sec = pcm_samples / SAMPLE_RATE_HZ
+
     segment_bytes = await _encode_pcm_segment_to_flac(current_segment_pcm)
     if segment_bytes is None:
         logger.warning(
@@ -478,13 +484,15 @@ async def _process_finalized_segment(
             receipt_time
             if previous_receipt_time is None
             else previous_receipt_time,
+            cumulative_pcm_samples + pcm_samples,
         )
 
+    chunk_start_offset_sec = cumulative_pcm_samples / SAMPLE_RATE_HZ
     chunk_start_time = stream_anchor_time + datetime.timedelta(
-        seconds=next_index * _CHUNK_DURATION
+        seconds=chunk_start_offset_sec
     )
     chunk_end_time = chunk_start_time + datetime.timedelta(
-        seconds=_CHUNK_DURATION
+        seconds=chunk_duration_sec
     )
     if process_done:
         chunk_end_time = min(chunk_end_time, _now_utc())
@@ -493,7 +501,7 @@ async def _process_finalized_segment(
     if previous_receipt_time is not None:
         stream_interval_lag_sec = (
             receipt_time - previous_receipt_time
-        ).total_seconds() - _CHUNK_DURATION
+        ).total_seconds() - chunk_duration_sec
 
     chunk = CapturedChunk(
         audio_bytes=segment_bytes,
@@ -503,7 +511,7 @@ async def _process_finalized_segment(
         receipt_time=receipt_time,
         stream_interval_lag_sec=stream_interval_lag_sec,
     )
-    return chunk, receipt_time
+    return chunk, receipt_time, cumulative_pcm_samples + pcm_samples
 
 
 async def _handle_process_done_no_segment(
@@ -760,6 +768,7 @@ async def capture_icecast_stream(
         )
 
         next_index = 0
+        cumulative_pcm_samples = 0
         last_activity_time = time.monotonic()
         wait_task = asyncio.create_task(process.wait())
 
@@ -804,12 +813,14 @@ async def capture_icecast_stream(
                     (
                         chunk,
                         previous_receipt_time,
+                        cumulative_pcm_samples,
                     ) = await _process_finalized_segment(
                         current_segment_pcm=current_segment_pcm,
                         next_index=next_index,
                         stream_anchor_time=stream_anchor_time,
                         process_done=process_done,
                         previous_receipt_time=previous_receipt_time,
+                        cumulative_pcm_samples=cumulative_pcm_samples,
                         session_id=session_id,
                         feed_id=feed_id,
                         feed_name=feed_name,
