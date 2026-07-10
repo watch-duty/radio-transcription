@@ -113,6 +113,68 @@ model = "{model}"
         with self.assertRaisesRegex(RunConfigError, "validation_manifest_uri"):
             load_run_config(self._write_config(body))
 
+    def test_prepare_config_accepts_complete_training_pair(self) -> None:
+        cfg = config_module.load_prepare_run_config(
+            self._write_config(self._valid_toml())
+        )
+
+        self.assertIsNotNone(cfg.train_manifest_uri)
+        self.assertIsNotNone(cfg.validation_manifest_uri)
+        self.assertIn("gemini_train_uri", cfg.to_record_dict())
+
+    def test_prepare_config_accepts_eval_only_target(self) -> None:
+        body = self._without_manifest_lines(
+            self._valid_toml(
+                eval_section=self._eval_model_section(
+                    "checkpoint_6",
+                    "projects/p/locations/us-central1/endpoints/123",
+                )
+            ),
+            "train_manifest_uri",
+            "validation_manifest_uri",
+        )
+
+        cfg = config_module.load_prepare_run_config(self._write_config(body))
+        record = cfg.to_record_dict()
+
+        self.assertIsNone(cfg.train_manifest_uri)
+        self.assertIsNone(cfg.validation_manifest_uri)
+        self.assertEqual(cfg.eval_model.label, "checkpoint_6")
+        for key in (
+            "canonical_train_uri",
+            "canonical_validation_uri",
+            "gemini_train_uri",
+            "gemini_validation_uri",
+        ):
+            self.assertNotIn(key, record)
+
+    def test_prepare_config_rejects_partial_training_pair(self) -> None:
+        body = self._without_manifest_lines(
+            self._valid_toml(eval_section=self._eval_model_section()),
+            "validation_manifest_uri",
+        )
+
+        with self.assertRaisesRegex(
+            RunConfigError,
+            "both train_manifest_uri and validation_manifest_uri",
+        ):
+            config_module.load_prepare_run_config(self._write_config(body))
+
+    def test_prepare_config_requires_target_without_training_pair(
+        self,
+    ) -> None:
+        body = self._without_manifest_lines(
+            self._valid_toml(),
+            "train_manifest_uri",
+            "validation_manifest_uri",
+        )
+
+        with self.assertRaisesRegex(
+            RunConfigError,
+            r"eval-only prepare.*\[eval\.model\]",
+        ):
+            config_module.load_prepare_run_config(self._write_config(body))
+
     def test_sft_epoch_count_rejects_bool(self) -> None:
         body = self._valid_toml(epoch_count="true")
 

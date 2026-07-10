@@ -172,7 +172,12 @@ class RunConfig:
     paths: RunPaths
 
     def to_record_dict(self) -> dict[str, typing.Any]:
-        """Return the resolved run config shape stored in config.json."""
+        """Build the JSON-compatible durable config record.
+
+        Returns:
+            Resolved run state. Training-only artifact URIs are omitted when
+            the config has no training manifest pair.
+        """
         record = {
             "round_id": self.round_id,
             "inference_dataset_slug": self.inference_dataset_slug,
@@ -190,11 +195,7 @@ class RunConfig:
             "prior_context_mode": self.prior_context_mode,
             "system_prompt": self.system_prompt,
             "user_prompt": self.user_prompt,
-            "canonical_train_uri": self.paths.canonical_train_uri,
-            "canonical_validation_uri": self.paths.canonical_validation_uri,
             "canonical_eval_uri": self.paths.canonical_eval_uri,
-            "gemini_train_uri": self.paths.gemini_train_uri,
-            "gemini_validation_uri": self.paths.gemini_validation_uri,
         }
         if self.train_manifest_uri is not None:
             record["train_manifest_uri"] = self.train_manifest_uri
@@ -202,24 +203,99 @@ class RunConfig:
             record["validation_manifest_uri"] = self.validation_manifest_uri
         if self.eval_model is not None:
             record["eval_model"] = self.eval_model.to_record_dict()
+        if (
+            self.train_manifest_uri is not None
+            and self.validation_manifest_uri is not None
+        ):
+            record.update(
+                {
+                    "canonical_train_uri": self.paths.canonical_train_uri,
+                    "canonical_validation_uri": (
+                        self.paths.canonical_validation_uri
+                    ),
+                    "gemini_train_uri": self.paths.gemini_train_uri,
+                    "gemini_validation_uri": (self.paths.gemini_validation_uri),
+                }
+            )
         record["eval_execution"] = self.eval_execution.to_record_dict()
         return record
 
 
 def load_run_config(path: str | pathlib.Path) -> RunConfig:
-    """Load, validate, and resolve an external TOML run config."""
-    return _load_run_config(path, require_training_manifests=True)
+    """Load a training TOML config with both training manifests required.
+
+    Args:
+        path: Local path to the operator TOML config.
+
+    Returns:
+        A validated training run config.
+
+    Raises:
+        RunConfigError: If the TOML or required training contract is invalid.
+    """
+    return _load_run_config(
+        path,
+        require_training_manifests=True,
+        require_eval_model=False,
+    )
 
 
 def load_eval_run_config(path: str | pathlib.Path) -> RunConfig:
-    """Load an eval TOML config without requiring train/validation manifests."""
-    return _load_run_config(path, require_training_manifests=False)
+    """Load an eval TOML config with one explicit model target required.
+
+    Args:
+        path: Local path to the operator TOML config.
+
+    Returns:
+        A validated evaluation run config.
+
+    Raises:
+        RunConfigError: If the TOML or required eval target is invalid.
+    """
+    return _load_run_config(
+        path,
+        require_training_manifests=False,
+        require_eval_model=True,
+    )
+
+
+def load_prepare_run_config(path: str | pathlib.Path) -> RunConfig:
+    """Load a complete training config or target-bearing eval-only config.
+
+    Args:
+        path: Local path to the operator TOML config.
+
+    Returns:
+        A validated training or eval-only run config.
+
+    Raises:
+        RunConfigError: If only one training manifest is configured or an
+            eval-only config lacks ``[eval.model]``.
+    """
+    run_cfg = _load_run_config(
+        path,
+        require_training_manifests=False,
+        require_eval_model=False,
+    )
+    has_train = run_cfg.train_manifest_uri is not None
+    has_validation = run_cfg.validation_manifest_uri is not None
+    if has_train != has_validation:
+        msg = (
+            "prepare configs must define both train_manifest_uri and "
+            "validation_manifest_uri, or neither"
+        )
+        raise RunConfigError(msg)
+    if not has_train and run_cfg.eval_model is None:
+        msg = "eval-only prepare configs require one [eval.model] target"
+        raise RunConfigError(msg)
+    return run_cfg
 
 
 def _load_run_config(
     path: str | pathlib.Path,
     *,
     require_training_manifests: bool,
+    require_eval_model: bool,
 ) -> RunConfig:
     """Load and resolve a TOML run config."""
     source_path = pathlib.Path(path).expanduser()
@@ -255,7 +331,7 @@ def _load_run_config(
     eval_table = _eval_table(data)
     eval_model = _eval_model_target(
         eval_table,
-        required=not require_training_manifests,
+        required=require_eval_model,
     )
     eval_execution = _eval_execution_config(eval_table)
 
