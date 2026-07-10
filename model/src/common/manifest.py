@@ -8,7 +8,7 @@ Exports:
   is_scoreable_manifest_entry   — shared predicate for rows eligible for scoring
   validate_canonical_manifest   — strict Canonical Manifest validation
   require_canonical_manifest    — fail-loud strict validation wrapper
-  rows_from_manifest            — convert canonical dicts to typed CanonicalRow instances
+  rows_from_manifest            — convert manifest dictionaries to typed rows
   load_manifest                 — load a JSON array or JSONL manifest from local disk
   merge_predictions_to_manifest — URI-first prediction merge onto GT rows
 """
@@ -16,22 +16,19 @@ Exports:
 from __future__ import annotations
 
 import json
-import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
 
-logger = logging.getLogger(__name__)
-
-CANONICAL_DATASET_KEYS: Final = (
+_CANONICAL_DATASET_KEYS = (
     "name",
     "family",
 )
-CANONICAL_REQUIRED_STRING_FIELDS: Final = (
+_CANONICAL_REQUIRED_STRING_FIELDS = (
     "audio_filepath",
     "text",
     "example_id",
@@ -41,10 +38,18 @@ CANONICAL_REQUIRED_STRING_FIELDS: Final = (
 
 @dataclass(frozen=True)
 class CanonicalRow:
-    """Canonical per-segment row — the single contract between dataset adapters and pipeline stages.
+    """Canonical per-segment contract shared by adapters and pipeline stages.
 
-    This is a fan-in dependency: SFT example builders, dataset adapters, and
-    the test suite all consume this exact shape.
+    Attributes:
+        audio_filepath: Model-ready GCS URI for the segment audio.
+        example_id: Logical example identifier.
+        segment_id: Logical segment identifier within the example.
+        offset: Segment offset in seconds.
+        duration: Segment duration in seconds.
+        text: Reference transcript for the segment.
+        split: Optional dataset split label.
+        dataset: Optional dataset metadata and extensions.
+        source_audio: Optional source-audio metadata and extensions.
     """
 
     audio_filepath: str  # gs:// URI to the segment audio
@@ -197,7 +202,7 @@ def _validate_required_fields(
     row_index: int,
     issues: list[CanonicalManifestIssue],
 ) -> None:
-    for field in CANONICAL_REQUIRED_STRING_FIELDS:
+    for field in _CANONICAL_REQUIRED_STRING_FIELDS:
         if field not in row:
             _add_issue(
                 issues,
@@ -306,7 +311,7 @@ def _validate_dataset(
             "dataset must be an object",
         )
         return
-    for key in CANONICAL_DATASET_KEYS:
+    for key in _CANONICAL_DATASET_KEYS:
         field = f"dataset.{key}"
         if (
             key in dataset
@@ -594,9 +599,9 @@ def _optional_dataset(
     dataset_row = {
         key: value
         for key, value in dataset.items()
-        if key not in CANONICAL_DATASET_KEYS or value is not None
+        if key not in _CANONICAL_DATASET_KEYS or value is not None
     }
-    for key in CANONICAL_DATASET_KEYS:
+    for key in _CANONICAL_DATASET_KEYS:
         value = _optional_manifest_string(
             dataset, key, row_index=row_index, prefix="dataset."
         )
@@ -777,7 +782,7 @@ def _prediction_index(
             "audio_filepath",
             "prediction",
         )
-        p_offset = _required_float(pred, "offset", "prediction")
+        p_offset = _required_offset(pred, "prediction")
         raw_text = pred.get("text")
         p_text = "" if raw_text is None else str(raw_text)
         pred_index.setdefault(audio_fp, []).append(
@@ -806,7 +811,7 @@ def _ground_truth_index(
             _GroundTruthCandidate(
                 index=i,
                 audio_filepath=audio_fp,
-                offset=_required_float(gt_row, "offset", "ground truth row"),
+                offset=_required_offset(gt_row, "ground truth row"),
                 identity=_optional_identity(gt_row),
             )
         )
@@ -842,7 +847,21 @@ def _required_stripped_string(
     raise ValueError(msg)
 
 
-def _required_float(row: dict[str, Any], key: str, row_kind: str) -> float:
+def _required_offset(row: dict[str, Any], row_kind: str) -> float:
+    """Parse a required finite, non-negative offset.
+
+    Args:
+        row: Prediction or ground-truth row containing the offset.
+        row_kind: Human-readable row kind used in error messages.
+
+    Returns:
+        The parsed offset.
+
+    Raises:
+        ValueError: If the offset is absent, non-numeric, non-finite, or
+            negative.
+    """
+    key = "offset"
     value = _required_key(row, key, row_kind)
     if isinstance(value, bool):
         msg = f"{row_kind} has non-numeric '{key}': {row!r}"
@@ -854,6 +873,9 @@ def _required_float(row: dict[str, Any], key: str, row_kind: str) -> float:
         raise ValueError(msg) from exc
     if not math.isfinite(parsed):
         msg = f"{row_kind} has non-finite '{key}': {row!r}"
+        raise ValueError(msg)
+    if parsed < 0:
+        msg = f"{row_kind} has negative '{key}': {row!r}"
         raise ValueError(msg)
     return parsed
 

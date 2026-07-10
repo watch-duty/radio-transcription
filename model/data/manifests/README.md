@@ -42,20 +42,6 @@ validation. Conversion to `CanonicalRow` preserves unknown keys inside
 {"audio_filepath":"gs://watch-duty-model-ready/train/example-001-seg-001.flac","text":"Engine 42 responding to the incident.","offset":0.0,"duration":4.25,"example_id":"example-001","segment_id":"seg-001","split":"train","dataset":{"name":"echo","family":"radio"},"source_audio":{"audio_filepath":"gs://watch-duty-raw/source/example-001.wav","offset":128.5,"duration":4.25}}
 ```
 
-## Adapter Outputs
-
-Downstream tools should derive their provider-specific inputs from the
-canonical row:
-
-- AdalFlow and DSPy prompt tuning use `audio_filepath`, `text`, and
-  `duration` as prompt-example context.
-- Vertex AI Prompt Optimizer uses `{"input_text": audio_filepath, "target":
-  text}`.
-- Vertex AI batch inference uses `audio_filepath` in Gemini request JSONL.
-- Vertex AI SFT uses `audio_filepath` and `text` in Gemini tuning JSONL.
-- Agent-session evaluation groups rows by `example_id` and sorts by
-  `source_audio.offset` when source ordering matters.
-
 ## Helper Entry Points
 
 - `validate_canonical_manifest(...)` returns structured issues for strict
@@ -66,8 +52,11 @@ canonical row:
   canonical row.
 - `load_manifest()` loads local JSON arrays or JSONL files and fails loudly on
   missing or malformed files. It does not coerce row values.
-- `rows_from_manifest()` validates canonical rows and converts them to
-  typed `CanonicalRow` instances.
+- `rows_from_manifest()` is a compatibility converter: it derives a missing
+  `example_id` from the audio filename, defaults a missing `segment_id` to
+  `"001"` and a missing `offset` to `0.0`, then validates and returns typed
+  `CanonicalRow` instances. Call `require_canonical_manifest(...)` first when
+  raw input must satisfy the strict contract without compatibility defaults.
 
 For documentation-only edits, use lightweight checks such as
 `git diff --check` on the changed files.

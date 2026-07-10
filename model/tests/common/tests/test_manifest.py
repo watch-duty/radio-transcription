@@ -559,6 +559,19 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "offset"):
                     merge_predictions_to_manifest(gt, preds, "m")
 
+    def test_prediction_negative_offset_raises(self) -> None:
+        gt = [{"audio_filepath": "gs://b/a.flac", "offset": -1.0, "text": "g"}]
+        preds = [
+            {
+                "audio_filepath": "gs://b/a.flac",
+                "offset": -1.0,
+                "text": "p",
+            }
+        ]
+
+        with self.assertRaisesRegex(ValueError, "negative 'offset'"):
+            merge_predictions_to_manifest(gt, preds, "m")
+
     def test_raises_on_missing_ground_truth_offset(self) -> None:
         """A GT row missing 'offset' raises — symmetric to the predictions side.
 
@@ -575,6 +588,12 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
                 gt = [{"audio_filepath": "gs://b/a.flac", "offset": offset}]
                 with self.assertRaisesRegex(ValueError, "offset"):
                     merge_predictions_to_manifest(gt, [], "gemini")
+
+    def test_ground_truth_negative_offset_raises(self) -> None:
+        gt = [{"audio_filepath": "gs://b/a.flac", "offset": -1.0}]
+
+        with self.assertRaisesRegex(ValueError, "negative 'offset'"):
+            merge_predictions_to_manifest(gt, [], "gemini")
 
     def test_raises_on_missing_ground_truth_audio_filepath(self) -> None:
         """A GT row missing 'audio_filepath' raises — symmetric to predictions."""
