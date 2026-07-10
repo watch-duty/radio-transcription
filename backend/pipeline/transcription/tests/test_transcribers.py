@@ -8,6 +8,7 @@ from google.api_core.retry_async import AsyncRetry
 from google.genai import types
 
 from backend.pipeline.common import constants
+from backend.pipeline.common.exceptions import MaxTokensReachedError
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers.chirp import (
     CHIRP_UNINTELLIGIBLE_MARKER,
@@ -740,7 +741,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(info_logs), 1)
 
     async def test_gemini_transcriber_empty_response_other_reason(self) -> None:
-        """Verifies that other finish reasons (e.g. MAX_TOKENS) with no content raise GeminiTranscriptionError."""
+        """Verifies that other finish reasons (e.g. MAX_TOKENS) with no content raise the correct exception."""
         with patch(
             "backend.pipeline.transcription.transcribers.gemini.genai.Client"
         ) as mock_client_cls:
@@ -764,15 +765,12 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             transcriber.setup()
 
-            with self.assertRaises(GeminiTranscriptionError) as context:
+            with self.assertRaises(MaxTokensReachedError) as context:
                 await transcriber.transcribe(
                     audio_data=b"\x00" * 100,
                     duration_ms=1000,
                 )
-            self.assertIn(
-                "Gemini response candidate had no content or parts",
-                str(context.exception),
-            )
+            self.assertIn("Max Tokens Reached", str(context.exception))
 
     async def test_gemini_transcriber_no_candidates(self) -> None:
         """Verifies that empty candidates response raises GeminiTransientTranscriptionError."""

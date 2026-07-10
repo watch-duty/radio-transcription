@@ -222,7 +222,6 @@ class GeminiTranscriber(base.Transcriber):
         )
 
         if not response.candidates:
-<<<<<<< HEAD
             # Check prompt feedback blocks (safety filters at request level)
             if (
                 response.prompt_feedback
@@ -245,9 +244,6 @@ class GeminiTranscriber(base.Transcriber):
             )
             msg = f"Gemini response returned no candidates. (Response ID: {response_id})"
             raise GeminiTransientTranscriptionError(msg)
-=======
-            raise exceptions.NonRetryableError("Gemini response returned no candidates.")
->>>>>>> 879620a72 (fix(transcription): add custom non-retryable exceptions for gemini max tokens and safety filters, and use UI-friendly placeholder for empty transcripts)
 
         candidate = response.candidates[0]
         reason_str = (
@@ -298,13 +294,17 @@ class GeminiTranscriber(base.Transcriber):
                 f"Finish Message: {finish_msg}. Blocked Ratings: {blocked_ratings}. "
                 f"(Response ID: {response_id})"
             )
+
             raise exceptions.InvalidFinishReasonError(msg)
 
         if not candidate.content or not candidate.content.parts:
             if reason_str == types.FinishReason.MAX_TOKENS.name:
-                raise exceptions.MaxTokensReachedError("Max Tokens Reached")
+                msg = "Max Tokens Reached"
+                raise exceptions.MaxTokensReachedError(msg)
             if reason_str == types.FinishReason.STOP.name:
-                logger.info("Gemini returned empty content (finish reason: STOP).")
+                logger.info(
+                    "Gemini returned empty content (finish reason: STOP)."
+                )
                 return ""
 
             blocked_ratings = self._get_blocked_ratings(candidate)
@@ -330,5 +330,4 @@ class GeminiTranscriber(base.Transcriber):
         if not text_parts:
             return ""
 
-        transcript = "".join(text_parts).strip()
-        return transcript
+        return "".join(text_parts).strip()
