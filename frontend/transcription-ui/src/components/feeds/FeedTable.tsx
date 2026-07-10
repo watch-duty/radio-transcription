@@ -682,11 +682,13 @@ export function FeedTable({
           itemContent={(_index, feed) => renderRowContent(feed)}
         />
       )}
-      <FeedHistoryModal
-        feed={historyFeed}
-        open={!!historyFeed}
-        onClose={() => setHistoryFeed(null)}
-      />
+      {historyFeed && (
+        <FeedHistoryModal
+          feed={historyFeed}
+          open={true}
+          onClose={() => setHistoryFeed(null)}
+        />
+      )}
     </Card>
   );
 }

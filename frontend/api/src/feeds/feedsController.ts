@@ -37,7 +37,12 @@ import { feedMutationActorHeaders } from './actorHeaders.js';
 
 import { AuthenticatedRequest } from '../authentication.js';
 import { FEEDS_STORE_API_URL } from '../config.js';
-import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
+import {
+  HttpError,
+  getServiceClient,
+  handleBackendError,
+  toCamel,
+} from '../utils.js';
 
 interface BaseFeedBackend {
   name: string;
@@ -115,8 +120,8 @@ function convertFeedHistoryEventBackend(
     actor: response.actor,
     occurredAt: Date.parse(response.occurred_at),
     feedRevision: response.feed_revision_num,
-    beforeValues: response.before_values,
-    afterValues: response.after_values,
+    beforeValues: toCamel(response.before_values),
+    afterValues: toCamel(response.after_values),
   };
 }
 

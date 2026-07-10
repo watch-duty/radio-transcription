@@ -33,14 +33,6 @@ export function FeedHistoryModal({
 }: FeedHistoryModalProps) {
   const { token } = useAuth();
 
-  const [activeFeed, setActiveFeed] = React.useState<Feed | null>(null);
-
-  React.useEffect(() => {
-    if (feed) {
-      setActiveFeed(feed);
-    }
-  }, [feed]);
-
   const {
     data,
     isLoading,
@@ -49,12 +41,12 @@ export function FeedHistoryModal({
     hasNextPage,
     isFetchingNextPage,
   } = useInfiniteQuery({
-    queryKey: ['listFeedHistory', token, activeFeed?.id],
+    queryKey: ['listFeedHistory', token, feed?.id],
     queryFn: ({ pageParam }) =>
-      listFeedHistory(activeFeed!.id, token!, 50, pageParam),
-    initialPageParam: undefined as string | undefined,
+      listFeedHistory(feed!.id, token!, 50, pageParam),
+    initialPageParam: '',
     getNextPageParam: (lastPage) => lastPage.nextToken,
-    enabled: open && !!token && !!activeFeed?.id,
+    enabled: open && !!token && !!feed?.id,
   });
 
   const historyEvents = data?.pages.flatMap((page) => page.historyEvents) ?? [];
@@ -68,7 +60,7 @@ export function FeedHistoryModal({
       aria-labelledby="feed-history-dialog-title"
     >
       <DialogTitle id="feed-history-dialog-title" sx={{ m: 0, p: 2, pr: 6 }}>
-        {activeFeed ? `Audit Trail: ${activeFeed.name}` : 'Audit Trail'}
+        {feed ? `Audit Trail: ${feed.name}` : 'Audit Trail'}
         <IconButton
           aria-label="close"
           onClick={onClose}

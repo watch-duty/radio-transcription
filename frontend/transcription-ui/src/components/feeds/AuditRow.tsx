@@ -12,7 +12,7 @@ import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
 import type { FeedHistoryEvent } from '@transcription/common';
 
-import { formatDiff, getEffectiveStatus } from './AuditRow.utils';
+import { formatDiff, getDisplayStatus } from './AuditRow.utils';
 
 export function AuditRow({ auditEvent }: { auditEvent: FeedHistoryEvent }) {
   const theme = useTheme();
@@ -76,8 +76,8 @@ export function AuditRow({ auditEvent }: { auditEvent: FeedHistoryEvent }) {
     }
   };
 
-  const beforeStatus = getEffectiveStatus(auditEvent.beforeValues);
-  const afterStatus = getEffectiveStatus(auditEvent.afterValues);
+  const beforeStatus = getDisplayStatus(auditEvent.beforeValues);
+  const afterStatus = getDisplayStatus(auditEvent.afterValues);
 
   const diffChanges =
     auditEvent.action === 'feed.updated'

@@ -71,7 +71,20 @@ export interface ListFeedsResponse {
   total: number;
 }
 
-export type AuditTrailValues = Record<string, unknown>;
+export interface AuditTrailValues { 
+  id?: string;
+  name?: string;
+  sourceType?: SourceType;
+  status?: BackendFeedStatus;
+  failureCount?: number;
+  retryAfter?: string;
+  statusReason?: BackendFeedStatusReason | null;
+  statusReasonUpdatedAt?: string;
+  statusReasonDetail?: string | null;
+  createdAt?: string;
+  sourceFeedId?: string;
+  tags?: Tag[];
+}
 
 export interface FeedHistoryEvent {
   id: string;

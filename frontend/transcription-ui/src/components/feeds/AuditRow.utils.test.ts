@@ -5,62 +5,52 @@ import type { FeedHistoryEvent } from '@transcription/common';
 
 import {
   formatDiff,
-  getEffectiveStatus,
+  getDisplayStatus,
   groupEventsByDate,
 } from './AuditRow.utils';
 
 describe('AuditRow utils', () => {
-  describe('getEffectiveStatus', () => {
+  describe('getDisplayStatus', () => {
     it('returns undefined if values is undefined', () => {
-      expect(getEffectiveStatus(undefined)).toBeUndefined();
+      expect(getDisplayStatus(undefined)).toBeUndefined();
     });
 
-    it('returns undefined if status is missing or not a string', () => {
-      expect(getEffectiveStatus({})).toBeUndefined();
-      expect(getEffectiveStatus({ status: 123 })).toBeUndefined();
+    it('returns undefined if status is missing', () => {
+      expect(getDisplayStatus({})).toBeUndefined();
     });
 
     it('returns the status directly if status is active and no failures/reasons exist', () => {
-      expect(getEffectiveStatus({ status: 'active' })).toBe('active');
-      expect(getEffectiveStatus({ status: 'active', failureCount: 0 })).toBe(
+      expect(getDisplayStatus({ status: 'active' })).toBe('active');
+      expect(getDisplayStatus({ status: 'active', failureCount: 0 })).toBe(
         'active'
       );
     });
 
     it('returns the status directly for non-active statuses even if they have failures', () => {
-      expect(
-        getEffectiveStatus({ status: 'deactivated', failureCount: 5 })
-      ).toBe('deactivated');
-    });
-
-    it('returns failing if status is active and failureCount is greater than 0', () => {
-      expect(getEffectiveStatus({ status: 'active', failureCount: 2 })).toBe(
-        'failing'
+      expect(getDisplayStatus({ status: 'deactivated', failureCount: 5 })).toBe(
+        'deactivated'
       );
     });
 
-    it('returns failing if status is active and failure_count is greater than 0', () => {
-      expect(getEffectiveStatus({ status: 'active', failure_count: 5 })).toBe(
+    it('returns failing if status is active and failureCount is greater than 0', () => {
+      expect(getDisplayStatus({ status: 'active', failureCount: 2 })).toBe(
         'failing'
       );
     });
 
     it('returns failing if status is active and statusReason is set', () => {
       expect(
-        getEffectiveStatus({ status: 'active', statusReason: 'unreachable' })
+        getDisplayStatus({ status: 'active', statusReason: 'source_offline' })
       ).toBe('failing');
     });
 
-    it('returns failing if status is active and status_reason is set', () => {
-      expect(
-        getEffectiveStatus({ status: 'active', status_reason: 'unreachable' })
-      ).toBe('failing');
-    });
-
-    it('returns active if statusReason is an empty string', () => {
-      expect(getEffectiveStatus({ status: 'active', statusReason: '' })).toBe(
+    it('returns active if statusReason is null or undefined', () => {
+      expect(getDisplayStatus({ status: 'active', statusReason: null })).toBe(
         'active'
       );
+      expect(
+        getDisplayStatus({ status: 'active', statusReason: undefined })
+      ).toBe('active');
     });
   });
 

@@ -301,13 +301,40 @@ components:
           type: string
       type: object
       additionalProperties: false
-    Record_string.unknown_:
-      properties: {}
-      additionalProperties: {}
-      type: object
-      description: Construct a type with a set of properties K of type T
     AuditTrailValues:
-      $ref: "#/components/schemas/Record_string.unknown_"
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        sourceType:
+          $ref: "#/components/schemas/SourceType"
+        status:
+          $ref: "#/components/schemas/BackendFeedStatus"
+        failureCount:
+          type: number
+          format: double
+        retryAfter:
+          type: string
+        statusReason:
+          allOf:
+            - $ref: "#/components/schemas/BackendFeedStatusReason"
+          nullable: true
+        statusReasonUpdatedAt:
+          type: string
+        statusReasonDetail:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        sourceFeedId:
+          type: string
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
+      type: object
+      additionalProperties: false
     FeedHistoryEvent:
       properties:
         id:
