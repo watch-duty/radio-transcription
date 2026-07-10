@@ -9,9 +9,8 @@ from google.genai import types
 
 from backend.pipeline.common import constants
 from backend.pipeline.common.exceptions import (
-    MaxTokensReachedError,
-    NonRetryableError,
     InvalidFinishReasonError,
+    MaxTokensReachedError,
 )
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers.chirp import (
