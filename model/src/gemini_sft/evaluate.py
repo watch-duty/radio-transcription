@@ -10,6 +10,7 @@ import typing
 from common import gcs_utils, inference_manifest, scoring
 from common.gemini import batch as gemini_batch
 from common.gemini import eval_artifacts, prompts, vertex
+from google.api_core import exceptions as google_exceptions
 from google.cloud import storage
 
 from gemini_sft import artifacts as artifacts_lib
@@ -61,6 +62,7 @@ def evaluate(args: argparse.Namespace) -> int:
     except (
         ImportError,
         OSError,
+        google_exceptions.GoogleAPIError,
         config_lib.RunConfigError,
         TypeError,
         ValueError,

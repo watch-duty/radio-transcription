@@ -1588,6 +1588,38 @@ class TestEvaluateRun(unittest.TestCase):
 
         self.assertEqual(rc, 1)
 
+    def test_eval_handler_returns_clean_error_when_gcs_download_fails(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
+            cfg_path = _write_config_file(tmp)
+            run_cfg = config_module.load_run_config(cfg_path)
+            storage.put(
+                run_cfg.paths.config_uri,
+                json.dumps(run_cfg.to_record_dict()),
+            )
+            args = argparse.Namespace(config=str(cfg_path))
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module.storage, "Client", return_value=storage
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "download_jsonl_manifest_strict",
+                    side_effect=google_exceptions.NotFound("missing"),
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module, "batch_infer"
+                ) as batch,
+            ):
+                rc = evaluate_module.evaluate(args)
+
+        self.assertEqual(rc, 1)
+        batch.assert_not_called()
+
     def test_eval_uses_shared_batch_parser_and_records_output_uri(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = pathlib.Path(tmp_s)
