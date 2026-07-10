@@ -127,6 +127,7 @@ def download_gcs_directory(
 
     Raises:
         FileNotFoundError: If no files are found under the specified GCS URI.
+        ValueError: If a blob name resolves outside ``local_dir``.
     """
     bucket_name, blob_prefix = parse_gcs_uri(gcs_uri)
     # Strip trailing slash for consistent prefix matching.
@@ -137,13 +138,17 @@ def download_gcs_directory(
         msg = f"No files found under {gcs_uri}"
         raise FileNotFoundError(msg)
 
-    pathlib.Path(local_dir).mkdir(parents=True, exist_ok=True)
+    destination_root = pathlib.Path(local_dir).resolve()
+    destination_root.mkdir(parents=True, exist_ok=True)
     for blob in blobs:
         # Compute relative path within the directory.
         rel_path = blob.name[len(blob_prefix) :].lstrip("/")
         if not rel_path:
             continue
-        local_file = pathlib.Path(local_dir) / rel_path
+        local_file = (destination_root / rel_path).resolve()
+        if not local_file.is_relative_to(destination_root):
+            msg = f"GCS blob path resolves outside destination: {blob.name}"
+            raise ValueError(msg)
         local_file.parent.mkdir(parents=True, exist_ok=True)
         blob.download_to_filename(
             str(local_file),

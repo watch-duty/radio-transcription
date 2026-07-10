@@ -235,6 +235,23 @@ class TestGcsObjectHelpers(unittest.TestCase):
                     storage, "gs://bucket/nonexistent", tmp_dir
                 )
 
+    def test_download_gcs_directory_rejects_path_traversal(self) -> None:
+        storage = FakeStorageClient()
+        storage.put("gs://bucket/dir/../../escaped.txt", "escaped")
+
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            destination = tmp / "safe" / "nested"
+
+            with self.assertRaisesRegex(ValueError, "outside destination"):
+                download_gcs_directory(
+                    storage,
+                    "gs://bucket/dir",
+                    destination,
+                )
+
+            self.assertFalse((tmp / "escaped.txt").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

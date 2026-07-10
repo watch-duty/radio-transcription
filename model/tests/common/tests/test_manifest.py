@@ -423,6 +423,28 @@ class TestCanonicalRowIdentity(unittest.TestCase):
 class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
     """merge_predictions_to_manifest must raise on unexpected error, never return []."""
 
+    def test_rejects_negative_offset_tolerance_before_mutating(self) -> None:
+        ground_truth = [
+            {
+                "audio_filepath": "gs://bucket/clip.flac",
+                "offset": 0.0,
+                "pred_text_gemini": "existing",
+            }
+        ]
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "offset_tolerance must be non-negative",
+        ):
+            merge_predictions_to_manifest(
+                ground_truth,
+                [],
+                "gemini",
+                offset_tolerance=-0.1,
+            )
+
+        self.assertEqual(ground_truth[0]["pred_text_gemini"], "existing")
+
     def test_raises_on_malformed_prediction_offset(self) -> None:
         """A prediction whose offset cannot be cast to float raises ValueError.
 

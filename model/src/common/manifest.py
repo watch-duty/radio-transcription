@@ -763,6 +763,9 @@ def merge_predictions_to_manifest(
         ValueError: If required prediction or ground-truth keys are missing,
             malformed, or any prediction row cannot be matched.
     """
+    if offset_tolerance < 0:
+        msg = "offset_tolerance must be non-negative"
+        raise ValueError(msg)
     pred_index = _prediction_index(predictions)
     gt_by_file = _ground_truth_index(ground_truth)
 

@@ -214,6 +214,14 @@ class TestEmptyOrUnintelligibleRate(unittest.TestCase):
             100.0,
         )
 
+    def test_flags_unintelligible_token_case_insensitively(self) -> None:
+        self.assertEqual(
+            scoring_lib.empty_or_unintelligible_rate(
+                ["[unintelligible]", "[Unintelligible]"]
+            ),
+            100.0,
+        )
+
     def test_mixed_list_partial_rate(self) -> None:
         self.assertEqual(
             scoring_lib.empty_or_unintelligible_rate(

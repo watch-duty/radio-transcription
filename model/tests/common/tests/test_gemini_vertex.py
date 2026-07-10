@@ -707,6 +707,29 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
     """Batch inference returns the destination GCS URI."""
 
     @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_submission_api_error_is_normalized(self, mock_genai) -> None:
+        class FakeAPIError(Exception):
+            pass
+
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.side_effect = FakeAPIError("denied")
+        mock_genai.Client.return_value = mock_client
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Batch inference submission failed",
+        ) as raised:
+            vertex.submit_batch_inference(
+                input_uri="gs://bucket/input.jsonl",
+                output_uri="gs://bucket/output/",
+                model="gemini-2.5-flash",
+                project="p",
+                location="us-central1",
+            )
+
+        self.assertIsInstance(raised.exception.__cause__, FakeAPIError)
+
+    @unittest.mock.patch("common.gemini.vertex.genai")
     def test_returns_dest_gcs_uri(self, mock_genai) -> None:
         """Return cur.dest.gcs_uri rather than BatchJobDestination."""
         mock_dest = unittest.mock.MagicMock()

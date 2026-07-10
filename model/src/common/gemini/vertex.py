@@ -438,6 +438,25 @@ def poll_tuning_job(
     return endpoint
 
 
+def _create_batch_inference_job(
+    *,
+    client: typing.Any,
+    model: str,
+    input_uri: str,
+    output_uri: str,
+) -> typing.Any:
+    """Create one batch job and normalize immediate SDK failures."""
+    try:
+        return client.batches.create(
+            model=model,
+            src=input_uri,
+            config={"dest": output_uri},
+        )
+    except Exception as exc:
+        msg = f"Batch inference submission failed: {exc}"
+        raise RuntimeError(msg) from exc
+
+
 def submit_batch_inference(
     *,
     input_uri: str,
@@ -467,7 +486,8 @@ def submit_batch_inference(
 
     Raises:
         ImportError: If the ``[vertex]`` extra is not installed.
-        RuntimeError: If the batch job ends in FAILED or CANCELLED state.
+        RuntimeError: If submission fails or the batch job ends in a
+            non-success state.
         TimeoutError: If no terminal state is reached within timeout_hours.
     """
     _require_vertex()
@@ -482,10 +502,11 @@ def submit_batch_inference(
         vertexai=True, project=project, location=batch_location
     )
 
-    batch_job = client.batches.create(
+    batch_job = _create_batch_inference_job(
+        client=client,
         model=model,
-        src=input_uri,
-        config={"dest": output_uri},
+        input_uri=input_uri,
+        output_uri=output_uri,
     )
     logger.info(f"Submitted batch inference job: {batch_job.name}")
 
