@@ -691,4 +691,418 @@ $replica_guard_contract$;
 
 SET LOCAL session_replication_role = origin;
 
+-- Broadcastify Calls membership catalog and tuple-state contract. Positive
+-- and expected-failure fixtures remain inside the outer rolled-back
+-- transaction.
+DO $membership_contract$
+DECLARE
+    feed_properties_oid OID;
+    actual_constraint RECORD;
+    actual_constraint_count INTEGER;
+    actual_definition TEXT;
+    expected_definition TEXT;
+    fixture_suffix TEXT;
+    calls_legacy_feed_id UUID := pg_catalog.gen_random_uuid();
+    non_calls_legacy_feed_id UUID := pg_catalog.gen_random_uuid();
+    trunked_feed_id UUID := pg_catalog.gen_random_uuid();
+    nontrunked_feed_id UUID := pg_catalog.gen_random_uuid();
+    negative_feed_id UUID := pg_catalog.gen_random_uuid();
+BEGIN
+    PERFORM pg_catalog.set_config(
+        'search_path',
+        'pg_catalog, public',
+        TRUE
+    );
+
+    SELECT c.oid
+      INTO feed_properties_oid
+      FROM pg_catalog.pg_class AS c
+      JOIN pg_catalog.pg_namespace AS n
+        ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public'
+       AND c.relname = 'feed_properties'
+       AND c.relkind = 'r';
+
+    IF feed_properties_oid IS NULL THEN
+        RAISE EXCEPTION
+            'public.feed_properties is not an ordinary table';
+    END IF;
+
+    CREATE TEMPORARY TABLE phase_1_expected_membership_constraint (
+        source_type TEXT,
+        source_feed_id TEXT,
+        bcfy_calls_sid TEXT,
+        bcfy_calls_group_id TEXT,
+        bcfy_calls_is_trunked BOOLEAN,
+        CONSTRAINT phase_1_expected_membership_check
+        CHECK (
+            CASE
+                WHEN bcfy_calls_sid IS NULL
+                 AND bcfy_calls_group_id IS NULL
+                 AND bcfy_calls_is_trunked IS NULL
+                    THEN TRUE
+                WHEN source_type <> 'bcfy_calls'
+                    THEN FALSE
+                WHEN bcfy_calls_is_trunked IS TRUE
+                    THEN bcfy_calls_sid IS NOT NULL
+                     AND bcfy_calls_group_id IS NOT NULL
+                     AND bcfy_calls_sid ~ '^[0-9]+$'
+                     AND bcfy_calls_group_id ~ '^[0-9]+$'
+                     AND source_feed_id =
+                         bcfy_calls_sid || '-' || bcfy_calls_group_id
+                WHEN bcfy_calls_is_trunked IS FALSE
+                    THEN bcfy_calls_sid IS NULL
+                     AND bcfy_calls_group_id IS NULL
+                ELSE FALSE
+            END
+        )
+    ) ON COMMIT DROP;
+
+    SELECT pg_catalog.pg_get_expr(c.conbin, c.conrelid, TRUE)
+      INTO expected_definition
+      FROM pg_catalog.pg_constraint AS c
+     WHERE c.conrelid =
+           'pg_temp.phase_1_expected_membership_constraint'::regclass
+       AND c.conname = 'phase_1_expected_membership_check';
+
+    SELECT pg_catalog.count(*)
+      INTO actual_constraint_count
+      FROM pg_catalog.pg_constraint AS c
+     WHERE c.conrelid = feed_properties_oid
+       AND c.conname = 'feed_properties_bcfy_calls_membership_check';
+
+    SELECT
+        c.contype,
+        c.condeferrable,
+        c.condeferred,
+        c.convalidated,
+        c.conislocal,
+        c.coninhcount,
+        c.connoinherit,
+        pg_catalog.pg_get_expr(c.conbin, c.conrelid, TRUE) AS definition
+      INTO actual_constraint
+      FROM pg_catalog.pg_constraint AS c
+     WHERE c.conrelid = feed_properties_oid
+       AND c.conname = 'feed_properties_bcfy_calls_membership_check';
+
+    actual_definition := actual_constraint.definition;
+
+    DROP TABLE phase_1_expected_membership_constraint;
+
+    IF actual_constraint_count <> 1
+       OR actual_constraint.contype IS DISTINCT FROM 'c'::"char"
+       OR actual_constraint.condeferrable
+       OR actual_constraint.condeferred
+       OR NOT actual_constraint.convalidated
+       OR NOT actual_constraint.conislocal
+       OR actual_constraint.coninhcount <> 0
+       OR actual_constraint.connoinherit
+       OR actual_definition IS DISTINCT FROM expected_definition THEN
+        RAISE EXCEPTION USING
+            MESSAGE =
+                'Broadcastify Calls membership constraint contract failed',
+            DETAIL = pg_catalog.format(
+                'count=%s validated=%s definition=%s',
+                actual_constraint_count,
+                COALESCE(
+                    actual_constraint.convalidated::TEXT,
+                    'NULL'
+                ),
+                COALESCE(actual_definition, 'NULL')
+            );
+    END IF;
+
+    fixture_suffix := pg_catalog.format(
+        '%s-%s',
+        pg_catalog.pg_backend_pid(),
+        pg_catalog.txid_current()
+    );
+
+    INSERT INTO public.feeds (id, name, source_type)
+    VALUES
+        (
+            calls_legacy_feed_id,
+            'phase-1-membership-calls-legacy-' || fixture_suffix,
+            'bcfy_calls'
+        ),
+        (
+            non_calls_legacy_feed_id,
+            'phase-1-membership-noncalls-legacy-' || fixture_suffix,
+            'bcfy_feeds'
+        ),
+        (
+            trunked_feed_id,
+            'phase-1-membership-trunked-' || fixture_suffix,
+            'bcfy_calls'
+        ),
+        (
+            nontrunked_feed_id,
+            'phase-1-membership-nontrunked-' || fixture_suffix,
+            'bcfy_calls'
+        ),
+        (
+            negative_feed_id,
+            'phase-1-membership-negative-' || fixture_suffix,
+            'bcfy_calls'
+        );
+
+    -- Omitted membership is the valid legacy state for every source.
+    INSERT INTO public.feed_properties (
+        feed_id,
+        source_feed_id,
+        source_type
+    ) VALUES
+        (
+            calls_legacy_feed_id,
+            'phase-1-calls-legacy-' || fixture_suffix,
+            'bcfy_calls'
+        ),
+        (
+            non_calls_legacy_feed_id,
+            'phase-1-noncalls-legacy-' || fixture_suffix,
+            'bcfy_feeds'
+        );
+
+    INSERT INTO public.feed_properties (
+        feed_id,
+        source_feed_id,
+        source_type,
+        bcfy_calls_sid,
+        bcfy_calls_group_id,
+        bcfy_calls_is_trunked
+    ) VALUES (
+        trunked_feed_id,
+        '001-002',
+        'bcfy_calls',
+        '001',
+        '002',
+        TRUE
+    );
+
+    INSERT INTO public.feed_properties (
+        feed_id,
+        source_feed_id,
+        source_type,
+        bcfy_calls_sid,
+        bcfy_calls_group_id,
+        bcfy_calls_is_trunked
+    ) VALUES (
+        nontrunked_feed_id,
+        'phase-1-nontrunked-' || fixture_suffix,
+        'bcfy_calls',
+        NULL,
+        NULL,
+        FALSE
+    );
+
+    INSERT INTO public.feed_properties (
+        feed_id,
+        source_feed_id,
+        source_type
+    ) VALUES (
+        negative_feed_id,
+        'phase-1-negative-' || fixture_suffix,
+        'bcfy_calls'
+    );
+
+    IF NOT EXISTS (
+        SELECT 1
+          FROM public.feed_properties AS fp
+         WHERE fp.feed_id = trunked_feed_id
+           AND fp.source_feed_id = '001-002'
+           AND fp.bcfy_calls_sid = '001'
+           AND fp.bcfy_calls_group_id = '002'
+           AND fp.bcfy_calls_is_trunked IS TRUE
+    ) OR NOT EXISTS (
+        SELECT 1
+          FROM public.feed_properties AS fp
+         WHERE fp.feed_id = nontrunked_feed_id
+           AND fp.bcfy_calls_sid IS NULL
+           AND fp.bcfy_calls_group_id IS NULL
+           AND fp.bcfy_calls_is_trunked IS FALSE
+    ) THEN
+        RAISE EXCEPTION
+            'Positive Broadcastify Calls membership states were not retained';
+    END IF;
+
+    -- Every nonempty proper subset of the trunked tuple is invalid.
+    BEGIN
+        UPDATE public.feed_properties
+           SET bcfy_calls_sid = '101'
+         WHERE feed_id = negative_feed_id;
+        RAISE EXCEPTION 'SID-only membership tuple was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.feed_properties
+           SET bcfy_calls_group_id = '202'
+         WHERE feed_id = negative_feed_id;
+        RAISE EXCEPTION 'group-only membership tuple was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.feed_properties
+           SET bcfy_calls_is_trunked = TRUE
+         WHERE feed_id = negative_feed_id;
+        RAISE EXCEPTION 'trunked-flag-only membership tuple was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.feed_properties
+           SET source_feed_id = '101-202',
+               bcfy_calls_sid = '101',
+               bcfy_calls_group_id = '202'
+         WHERE feed_id = negative_feed_id;
+        RAISE EXCEPTION 'SID/group tuple without trunked flag was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.feed_properties
+           SET bcfy_calls_sid = '101',
+               bcfy_calls_is_trunked = TRUE
+         WHERE feed_id = negative_feed_id;
+        RAISE EXCEPTION 'SID/trunked tuple without group was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.feed_properties
+           SET bcfy_calls_group_id = '202',
+               bcfy_calls_is_trunked = TRUE
+         WHERE feed_id = negative_feed_id;
+        RAISE EXCEPTION 'group/trunked tuple without SID was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    -- A non-Calls source must remain in the all-null state.
+    BEGIN
+        UPDATE public.feed_properties
+           SET source_feed_id = '301-401',
+               bcfy_calls_sid = '301',
+               bcfy_calls_group_id = '401',
+               bcfy_calls_is_trunked = TRUE
+         WHERE feed_id = non_calls_legacy_feed_id;
+        RAISE EXCEPTION 'Populated non-Calls membership was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    -- Trunked identifiers must be nonempty ASCII numeric text. Keep source
+    -- identity equal in these probes so the regex is the rejected invariant.
+    BEGIN
+        UPDATE public.feed_properties
+           SET source_feed_id = '-202',
+               bcfy_calls_sid = '',
+               bcfy_calls_group_id = '202',
+               bcfy_calls_is_trunked = TRUE
+         WHERE feed_id = negative_feed_id;
+        RAISE EXCEPTION 'Empty Broadcastify Calls SID was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.feed_properties
+           SET source_feed_id = '101-',
+               bcfy_calls_sid = '101',
+               bcfy_calls_group_id = '',
+               bcfy_calls_is_trunked = TRUE
+         WHERE feed_id = negative_feed_id;
+        RAISE EXCEPTION 'Empty Broadcastify Calls group ID was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.feed_properties
+           SET source_feed_id = '١-202',
+               bcfy_calls_sid = '١',
+               bcfy_calls_group_id = '202',
+               bcfy_calls_is_trunked = TRUE
+         WHERE feed_id = negative_feed_id;
+        RAISE EXCEPTION 'Non-ASCII Broadcastify Calls SID was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.feed_properties
+           SET source_feed_id = '101-٢',
+               bcfy_calls_sid = '101',
+               bcfy_calls_group_id = '٢',
+               bcfy_calls_is_trunked = TRUE
+         WHERE feed_id = negative_feed_id;
+        RAISE EXCEPTION 'Non-ASCII Broadcastify Calls group ID was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.feed_properties
+           SET source_feed_id = '10x-202',
+               bcfy_calls_sid = '10x',
+               bcfy_calls_group_id = '202',
+               bcfy_calls_is_trunked = TRUE
+         WHERE feed_id = negative_feed_id;
+        RAISE EXCEPTION 'Nonnumeric Broadcastify Calls SID was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.feed_properties
+           SET source_feed_id = '101-20x',
+               bcfy_calls_sid = '101',
+               bcfy_calls_group_id = '20x',
+               bcfy_calls_is_trunked = TRUE
+         WHERE feed_id = negative_feed_id;
+        RAISE EXCEPTION 'Nonnumeric Broadcastify Calls group ID was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.feed_properties
+           SET source_feed_id = '101-999',
+               bcfy_calls_sid = '101',
+               bcfy_calls_group_id = '202',
+               bcfy_calls_is_trunked = TRUE
+         WHERE feed_id = negative_feed_id;
+        RAISE EXCEPTION 'Mismatched Broadcastify Calls identity was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.feed_properties
+           SET bcfy_calls_sid = '101',
+               bcfy_calls_is_trunked = FALSE
+         WHERE feed_id = negative_feed_id;
+        RAISE EXCEPTION 'Nontrunked membership with SID was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.feed_properties
+           SET bcfy_calls_group_id = '202',
+               bcfy_calls_is_trunked = FALSE
+         WHERE feed_id = negative_feed_id;
+        RAISE EXCEPTION 'Nontrunked membership with group ID was accepted';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+END
+$membership_contract$;
+
 ROLLBACK;
