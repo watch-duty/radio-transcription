@@ -19,7 +19,11 @@ WITH matched_segments AS (
         s.created_at
     FROM audio_segments s
     WHERE ($1::uuid[] IS NULL OR s.feed_id = ANY($1))
-      AND ($2::timestamptz IS NULL OR s.end_timestamp {operator} $2 OR (s.end_timestamp = $2 AND s.id {operator} $3))
+      AND (
+          $2::timestamptz IS NULL
+          OR s.end_timestamp {operator} $2
+          OR (s.end_timestamp = $2 AND s.id {operator} $3)
+      )
       AND ($4::timestamptz IS NULL OR s.end_timestamp >= $4)
       AND ($5::timestamptz IS NULL OR s.end_timestamp <= $5)
       AND ($6::boolean IS NULL OR (
