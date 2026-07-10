@@ -1710,11 +1710,10 @@ describe('TranscriptView', () => {
       );
     });
 
-    // Open the search popover, type a query, and Apply.
-    fireEvent.click(screen.getByRole('button', { name: 'search' }));
+    // Type a query into the inline search field and apply it with Enter.
     const searchInput = screen.getByPlaceholderText(/Search transcripts/i);
     fireEvent.change(searchInput, { target: { value: 'dispatch' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    fireEvent.keyDown(searchInput, { key: 'Enter' });
 
     // React query should refetch transcripts using the text query filter.
     await waitFor(() => {

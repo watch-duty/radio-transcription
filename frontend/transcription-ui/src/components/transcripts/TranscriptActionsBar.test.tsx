@@ -156,78 +156,65 @@ describe('TranscriptActionsBar', () => {
     expect(setDateTime).not.toHaveBeenCalled();
   });
 
-  it('opens the search popover, applies the query on Apply, and clears it', () => {
+  it('commits the query after a typing pause (debounced)', () => {
+    vi.useFakeTimers();
+    try {
+      const mockSetSearchQuery = vi.fn();
+      render(
+        <TranscriptActionsBar
+          {...baseProps}
+          searchQuery=""
+          setSearchQuery={mockSetSearchQuery}
+        />
+      );
+
+      const searchInput = screen.getByPlaceholderText(/Search transcripts/i);
+      fireEvent.change(searchInput, { target: { value: 'fir' } });
+      fireEvent.change(searchInput, { target: { value: 'fire' } });
+
+      // Nothing commits mid-typing.
+      vi.advanceTimersByTime(200);
+      expect(mockSetSearchQuery).not.toHaveBeenCalled();
+
+      // Only the final value commits, once, after the pause.
+      vi.advanceTimersByTime(200);
+      expect(mockSetSearchQuery).toHaveBeenCalledTimes(1);
+      expect(mockSetSearchQuery).toHaveBeenCalledWith('fire');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('commits immediately on Enter and clears with the X button', () => {
     const mockSetSearchQuery = vi.fn();
     const { rerender } = render(
       <TranscriptActionsBar
-        disableJumpToLive={false}
-        redactTranscripts={false}
-        setRedactTranscripts={vi.fn()}
-        dateTime={null}
-        setDateTime={vi.fn()}
-        alertFilter="all"
-        setAlertFilter={vi.fn()}
-        onClickViewLatest={vi.fn()}
+        {...baseProps}
         searchQuery=""
         setSearchQuery={mockSetSearchQuery}
       />
     );
 
-    // Open the search popover from the magnifier button.
-    fireEvent.click(screen.getByRole('button', { name: 'search' }));
-
     const searchInput = screen.getByPlaceholderText(/Search transcripts/i);
     fireEvent.change(searchInput, { target: { value: 'fire' } });
-
-    // Typing alone doesn't apply the query — only Apply commits it.
-    expect(mockSetSearchQuery).not.toHaveBeenCalled();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    fireEvent.keyDown(searchInput, { key: 'Enter' });
     expect(mockSetSearchQuery).toHaveBeenCalledWith('fire');
 
-    // Parent reflects the applied query; Clear resets it.
+    // Parent reflects the applied query; the X button resets it.
     rerender(
       <TranscriptActionsBar
-        disableJumpToLive={false}
-        redactTranscripts={false}
-        setRedactTranscripts={vi.fn()}
-        dateTime={null}
-        setDateTime={vi.fn()}
-        alertFilter="all"
-        setAlertFilter={vi.fn()}
-        onClickViewLatest={vi.fn()}
+        {...baseProps}
         searchQuery="fire"
         setSearchQuery={mockSetSearchQuery}
       />
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'search' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+    fireEvent.click(screen.getByRole('button', { name: 'clear search' }));
     expect(mockSetSearchQuery).toHaveBeenLastCalledWith('');
   });
 
-  it('applies the query on Enter', () => {
-    const mockSetSearchQuery = vi.fn();
-    render(
-      <TranscriptActionsBar
-        disableJumpToLive={false}
-        redactTranscripts={false}
-        setRedactTranscripts={vi.fn()}
-        dateTime={null}
-        setDateTime={vi.fn()}
-        alertFilter="all"
-        setAlertFilter={vi.fn()}
-        onClickViewLatest={vi.fn()}
-        searchQuery=""
-        setSearchQuery={mockSetSearchQuery}
-      />
-    );
-
-    fireEvent.click(screen.getByRole('button', { name: 'search' }));
-    const searchInput = screen.getByPlaceholderText(/Search transcripts/i);
-    fireEvent.change(searchInput, { target: { value: 'fire' } });
-    fireEvent.keyDown(searchInput, { key: 'Enter' });
-
-    expect(mockSetSearchQuery).toHaveBeenCalledWith('fire');
+  it('hides the clear button when the search field is empty', () => {
+    render(<TranscriptActionsBar {...baseProps} searchQuery="" />);
+    expect(screen.queryByRole('button', { name: 'clear search' })).toBeNull();
   });
 });

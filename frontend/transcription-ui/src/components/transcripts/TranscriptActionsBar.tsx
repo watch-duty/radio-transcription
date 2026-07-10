@@ -1,7 +1,7 @@
 import React from 'react';
 
 import CalendarMonthIcon from '@mui/icons-material/CalendarMonth';
-import SearchIcon from '@mui/icons-material/Search';
+import ClearIcon from '@mui/icons-material/Clear';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import FormControl from '@mui/material/FormControl';
@@ -41,6 +41,13 @@ const CONTROL_RADIUS = 1;
 const CONTROL_FONT_SIZE = '0.8125rem';
 const FOOTER_BUTTON_SX = { textTransform: 'none' } as const;
 
+// Fixed width sized to hold the placeholder plus the clear button.
+const SEARCH_WIDTH = 150;
+
+// Wait for a typing pause before committing the query so we don't refetch on
+// every keystroke.
+const SEARCH_DEBOUNCE_MS = 300;
+
 // Filled rounded-rect for an active filter button — reads as "on" and cues it's clearable.
 const ACTIVE_FILTER_SX = {
   borderRadius: 1,
@@ -54,19 +61,15 @@ interface DraftFilterPopoverProps {
   onCancel: () => void;
   onClear: () => void;
   onApply: () => void;
-  // Focus the first input once the open transition finishes (autoFocus alone is
-  // unreliable inside the portalled, transitioning popover).
-  autoFocusInput?: boolean;
   children: React.ReactNode;
 }
 
-// Shared chrome for the search and date filter popovers.
+// Clear/Cancel/Apply footer around the date filter's draft picker.
 function DraftFilterPopover({
   anchorEl,
   onCancel,
   onClear,
   onApply,
-  autoFocusInput,
   children,
 }: DraftFilterPopoverProps) {
   return (
@@ -78,16 +81,6 @@ function DraftFilterPopover({
       disableRestoreFocus
       anchorOrigin={{ vertical: 'bottom', horizontal: 'left' }}
       transformOrigin={{ vertical: 'top', horizontal: 'left' }}
-      slotProps={
-        autoFocusInput
-          ? {
-              transition: {
-                onEntered: (node: HTMLElement) =>
-                  node.querySelector<HTMLElement>('input, textarea')?.focus(),
-              },
-            }
-          : undefined
-      }
     >
       <Box
         sx={{
@@ -145,7 +138,28 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
     null
   );
 
-  const searchFilter = useDraftPopover<string>(searchQuery, setSearchQuery, '');
+  const [searchDraft, setSearchDraft] = React.useState(searchQuery);
+  // Mirror external commits into the draft during render, not in an effect.
+  const [prevSearchQuery, setPrevSearchQuery] = React.useState(searchQuery);
+  if (searchQuery !== prevSearchQuery) {
+    setPrevSearchQuery(searchQuery);
+    setSearchDraft(searchQuery);
+  }
+
+  // Commit the draft after a typing pause; Enter/Clear commit immediately below.
+  React.useEffect(() => {
+    if (searchDraft === searchQuery) return;
+    const id = setTimeout(
+      () => setSearchQuery(searchDraft),
+      SEARCH_DEBOUNCE_MS
+    );
+    return () => clearTimeout(id);
+  }, [searchDraft, searchQuery, setSearchQuery]);
+
+  const clearSearch = () => {
+    setSearchDraft('');
+    if (searchQuery) setSearchQuery('');
+  };
 
   return (
     <Box
@@ -210,46 +224,40 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
       </Box>
 
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-        <Tooltip title="Search transcripts">
-          <IconButton
-            aria-label="search"
-            size="small"
-            onClick={searchFilter.open}
-            sx={{
-              width: CONTROL_HEIGHT,
+        <TextField
+          size="small"
+          placeholder="Search transcripts…"
+          value={searchDraft}
+          onChange={(e) => setSearchDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') setSearchQuery(searchDraft);
+          }}
+          sx={{
+            width: SEARCH_WIDTH,
+            '& .MuiOutlinedInput-root': {
               height: CONTROL_HEIGHT,
-              ...(searchQuery && ACTIVE_FILTER_SX),
-            }}
-          >
-            <SearchIcon />
-          </IconButton>
-        </Tooltip>
-        <DraftFilterPopover
-          anchorEl={searchFilter.anchorEl}
-          onCancel={searchFilter.cancel}
-          onClear={searchFilter.clear}
-          onApply={searchFilter.apply}
-          autoFocusInput
-        >
-          <TextField
-            size="small"
-            placeholder="Search transcripts…"
-            value={searchFilter.draft}
-            onChange={(e) => searchFilter.setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') searchFilter.apply();
-            }}
-            slotProps={{
-              input: {
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchIcon fontSize="small" />
-                  </InputAdornment>
-                ),
-              },
-            }}
-          />
-        </DraftFilterPopover>
+              borderRadius: CONTROL_RADIUS,
+              fontSize: CONTROL_FONT_SIZE,
+            },
+          }}
+          slotProps={{
+            input: {
+              'aria-label': 'Search transcripts',
+              endAdornment: searchDraft ? (
+                <InputAdornment position="end">
+                  <IconButton
+                    aria-label="clear search"
+                    size="small"
+                    edge="end"
+                    onClick={clearSearch}
+                  >
+                    <ClearIcon fontSize="small" />
+                  </IconButton>
+                </InputAdornment>
+              ) : null,
+            },
+          }}
+        />
         <FormControl size="small" sx={{ minWidth: 120 }}>
           <Select
             value={alertFilter}
