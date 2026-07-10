@@ -259,7 +259,7 @@ class NormalizationEventProcessor:
     def _transcode_audio(
         self, raw_audio_uri: str, raw_audio_bytes: bytes
     ) -> audio_processor.TranscodeResult:
-        """Transcodes raw bytes into lossless FLAC and streaming M4A derivatives."""
+        """Transcodes raw bytes into lossless FLAC and streaming fMP4 derivatives."""
         lower_uri = raw_audio_uri.lower()
         if lower_uri.endswith(".flac"):
             return audio_processor.TranscodeResult(
@@ -267,13 +267,6 @@ class NormalizationEventProcessor:
                 m4a_bytes=self.audio_processor.transcode_to_m4a(
                     raw_audio_bytes
                 ),
-            )
-        if lower_uri.endswith((".m4a", ".mp4")):
-            return audio_processor.TranscodeResult(
-                flac_bytes=self.audio_processor.transcode_to_flac(
-                    raw_audio_bytes
-                ),
-                m4a_bytes=raw_audio_bytes,
             )
         return self.audio_processor.transcode_derivatives(raw_audio_bytes)
 
