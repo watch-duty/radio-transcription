@@ -87,6 +87,23 @@ model = "{eval_model}"
 """
 
 
+def _eval_only_config_text(
+    *,
+    round_id: str = "round-a",
+    eval_label: str = "base",
+    eval_model: str = "gemini-3.1-flash-lite",
+) -> str:
+    body = _config_text(
+        round_id=round_id,
+        eval_label=eval_label,
+        eval_model=eval_model,
+    )
+    excluded = ("train_manifest_uri =", "validation_manifest_uri =")
+    return "\n".join(
+        line for line in body.splitlines() if not line.startswith(excluded)
+    )
+
+
 def _fake_wer(
     refs: list[str],
     hyps: list[str],
@@ -321,6 +338,127 @@ class TestPreflight(unittest.TestCase):
 
 
 class TestPrepareRun(unittest.TestCase):
+    def test_prepare_cli_publishes_only_eval_artifacts_for_eval_only_round(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
+            storage.put(
+                "gs://source/manifests/eval.jsonl",
+                _manifest([_row("gs://audio/eval.flac", "eval transcript")]),
+            )
+            cfg_path = tmp / "run.toml"
+            cfg_path.write_text(_eval_only_config_text(), encoding="utf-8")
+            run_cfg = config_module.load_prepare_run_config(cfg_path)
+
+            with (
+                unittest.mock.patch.object(
+                    prepare.storage,
+                    "Client",
+                    return_value=storage,
+                ),
+                unittest.mock.patch.object(
+                    prepare,
+                    "RESULTS_DIR",
+                    tmp / "results",
+                ),
+                unittest.mock.patch.object(
+                    prepare.preflight,
+                    "run_preflight",
+                ) as run_preflight,
+                unittest.mock.patch.object(
+                    prepare,
+                    "write_gemini_jsonl",
+                ) as write_gemini,
+            ):
+                result = prepare.prepare(
+                    argparse.Namespace(config=str(cfg_path))
+                )
+
+            self.assertEqual(result, 0)
+            run_preflight.assert_not_called()
+            write_gemini.assert_not_called()
+            self.assertEqual(
+                storage.uploads,
+                [
+                    run_cfg.paths.run_config_uri,
+                    run_cfg.paths.canonical_eval_uri,
+                    run_cfg.paths.config_uri,
+                ],
+            )
+            durable = json.loads(storage.get(run_cfg.paths.config_uri))
+            self.assertEqual(durable["status"], "eval_prepared")
+            self.assertEqual(durable["canonical_eval_rows"], 1)
+            self.assertNotIn("gemini_train_uri", durable)
+            self.assertFalse(
+                (tmp / "results" / "round-a" / "preflight").exists()
+            )
+
+    def test_eval_only_prepare_rejects_invalid_manifests_before_upload(
+        self,
+    ) -> None:
+        cases = {
+            "malformed JSONL": (
+                _manifest([_row("gs://audio/eval.flac")]) + "{bad json}\n"
+            ),
+            "empty manifest": "",
+            "invalid canonical row": _manifest(
+                [_row("local/eval.mp3", "invalid audio URI")]
+            ),
+        }
+        for name, content in cases.items():
+            with (
+                self.subTest(name=name),
+                tempfile.TemporaryDirectory() as tmp_s,
+            ):
+                tmp = pathlib.Path(tmp_s)
+                storage = fake_gcs.FakeStorageClient()
+                storage.put("gs://source/manifests/eval.jsonl", content)
+                cfg_path = tmp / "run.toml"
+                cfg_path.write_text(
+                    _eval_only_config_text(),
+                    encoding="utf-8",
+                )
+
+                with (
+                    unittest.mock.patch.object(
+                        prepare.storage,
+                        "Client",
+                        return_value=storage,
+                    ),
+                    unittest.mock.patch.object(
+                        prepare,
+                        "RESULTS_DIR",
+                        tmp / "results",
+                    ),
+                ):
+                    result = prepare.prepare(
+                        argparse.Namespace(config=str(cfg_path))
+                    )
+
+                self.assertEqual(result, 1)
+                self.assertEqual(storage.uploads, [])
+
+    def test_tune_rejects_eval_only_config_before_provider_submission(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = pathlib.Path(tmp_s)
+            cfg_path = tmp / "run.toml"
+            cfg_path.write_text(_eval_only_config_text(), encoding="utf-8")
+
+            with unittest.mock.patch.object(
+                tune_module,
+                "submit_tuning_job",
+            ) as submit:
+                result = tune_module.tune(
+                    argparse.Namespace(config=str(cfg_path), confirm=True)
+                )
+
+            self.assertEqual(result, 1)
+            submit.assert_not_called()
+
     def test_prepare_reports_manifest_type_errors_as_cli_failures(self) -> None:
         run_cfg = types.SimpleNamespace(
             gcp_project="project-id",
@@ -332,7 +470,7 @@ class TestPrepareRun(unittest.TestCase):
         with (
             unittest.mock.patch.object(
                 prepare.config_lib,
-                "load_run_config",
+                "load_prepare_run_config",
                 return_value=run_cfg,
             ),
             unittest.mock.patch.object(prepare.storage, "Client"),

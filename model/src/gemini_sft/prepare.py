@@ -23,9 +23,16 @@ RESULTS_DIR = artifacts_lib.DEFAULT_RESULTS_DIR
 
 
 def prepare(args: argparse.Namespace) -> int:
-    """CLI handler for ``gemini-sft prepare``."""
+    """Prepare and publish one training or eval-only run.
+
+    Args:
+        args: Parsed CLI namespace containing the config path.
+
+    Returns:
+        Zero when preparation succeeds; one for a validation or I/O failure.
+    """
     try:
-        run_cfg = config_lib.load_run_config(args.config)
+        run_cfg = config_lib.load_prepare_run_config(args.config)
         storage_client = storage.Client(project=run_cfg.gcp_project)
         if gcs_utils.gcs_uri_exists(storage_client, run_cfg.paths.config_uri):
             logger.error(
@@ -46,6 +53,12 @@ def prepare(args: argparse.Namespace) -> int:
         )
     except (OSError, config_lib.RunConfigError, TypeError, ValueError) as exc:
         return _log_cli_error(exc)
+    if isinstance(artifacts, artifacts_lib.PreparedEvalArtifacts):
+        logger.info(
+            "Prepared eval-only round with %s eval rows.",
+            artifacts.canonical_eval_rows,
+        )
+        return 0 if config.get("status") == "eval_prepared" else 1
     logger.info(
         "Prepared %s train rows, %s validation rows, and %s eval rows.",
         artifacts.canonical_train_rows,
@@ -65,8 +78,34 @@ def prepare_run(
     run_cfg: config_lib.RunConfig,
     storage_client: storage.Client,
     results_dir: pathlib.Path,
-) -> tuple[artifacts_lib.PreparedRunArtifacts, dict[str, typing.Any]]:
-    """Prepare local/GCS artifacts for one config-driven run."""
+) -> tuple[
+    artifacts_lib.PreparedRunArtifacts | artifacts_lib.PreparedEvalArtifacts,
+    dict[str, typing.Any],
+]:
+    """Prepare and publish one validated training or eval-only run.
+
+    Args:
+        run_cfg: Validated preparation config.
+        storage_client: Client used for source and durable GCS artifacts.
+        results_dir: Local root for the run mirror.
+
+    Returns:
+        Prepared local artifacts and the durable config record.
+
+    Raises:
+        OSError: If local or GCS artifacts cannot be read or written.
+        TypeError: If strict manifest parsing finds a non-object row.
+        ValueError: If canonical validation or preparation invariants fail.
+    """
+    if (
+        run_cfg.train_manifest_uri is None
+        and run_cfg.validation_manifest_uri is None
+    ):
+        return _prepare_eval_run(
+            run_cfg=run_cfg,
+            storage_client=storage_client,
+            results_dir=results_dir,
+        )
     run_dir = artifacts_lib.local_run_dir(results_dir, run_cfg.round_id)
     artifacts = prepare_artifacts(run_cfg, storage_client, run_dir)
     report = preflight.run_preflight(
@@ -126,6 +165,62 @@ def prepare_run(
             run_cfg.paths.preflight_report_uri,
         )
     return artifacts, config
+
+
+def _prepare_eval_run(
+    *,
+    run_cfg: config_lib.RunConfig,
+    storage_client: storage.Client,
+    results_dir: pathlib.Path,
+) -> tuple[artifacts_lib.PreparedEvalArtifacts, dict[str, typing.Any]]:
+    run_dir = artifacts_lib.local_run_dir(results_dir, run_cfg.round_id)
+    artifacts = _prepare_eval_artifacts(run_cfg, storage_client, run_dir)
+    config = {
+        **run_cfg.to_record_dict(),
+        "canonical_eval_rows": artifacts.canonical_eval_rows,
+        "status": "eval_prepared",
+    }
+    for local_path, gcs_uri in (
+        (artifacts.run_config_path, run_cfg.paths.run_config_uri),
+        (artifacts.canonical_eval_path, run_cfg.paths.canonical_eval_uri),
+    ):
+        gcs_utils.upload_local_file(storage_client, local_path, gcs_uri)
+    config = artifacts_lib.write_and_upload_config(
+        results_dir=results_dir,
+        run_cfg=run_cfg,
+        storage_client=storage_client,
+        config=config,
+    )
+    return artifacts, config
+
+
+def _prepare_eval_artifacts(
+    run_cfg: config_lib.RunConfig,
+    storage_client: storage.Client,
+    run_dir: pathlib.Path,
+) -> artifacts_lib.PreparedEvalArtifacts:
+    if run_cfg.eval_model is None:
+        msg = "eval-only prepare requires one [eval.model] target"
+        raise ValueError(msg)
+    canonical_dir = run_dir / "manifests" / "canonical"
+    canonical_dir.mkdir(parents=True, exist_ok=True)
+    run_config_path = run_dir / "run_config.toml"
+    run_config_path.write_text(run_cfg.raw_toml, encoding="utf-8")
+    canonical_eval_path = canonical_dir / "eval.jsonl"
+    gcs_utils.download_gcs_uri(
+        storage_client,
+        run_cfg.eval_manifest_uri,
+        canonical_eval_path,
+    )
+    _, eval_rows = artifacts_lib.load_canonical_rows(
+        canonical_eval_path,
+        "eval",
+    )
+    return artifacts_lib.PreparedEvalArtifacts(
+        run_config_path=run_config_path,
+        canonical_eval_path=canonical_eval_path,
+        canonical_eval_rows=len(eval_rows),
+    )
 
 
 def prepare_artifacts(

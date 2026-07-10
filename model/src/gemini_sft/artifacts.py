@@ -56,6 +56,21 @@ class PreparedRunArtifacts:
 
 
 @dataclasses.dataclass(frozen=True)
+class PreparedEvalArtifacts:
+    """Local paths and count produced by preparing an eval-only round.
+
+    Attributes:
+        run_config_path: Local copy of the operator TOML.
+        canonical_eval_path: Local validated canonical eval manifest.
+        canonical_eval_rows: Number of validated canonical eval rows.
+    """
+
+    run_config_path: pathlib.Path
+    canonical_eval_path: pathlib.Path
+    canonical_eval_rows: int
+
+
+@dataclasses.dataclass(frozen=True)
 class EvalRowsWithHistory:
     """Canonical eval rows plus aligned prior-context histories.
 
