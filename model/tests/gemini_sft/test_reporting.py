@@ -119,7 +119,8 @@ class TestReportingContract(unittest.TestCase):
             ),
         )
         expected_header = (
-            "empty_or_unintelligible_rate | insertions | deletions | substitutions | "
+            "empty_or_unintelligible_rate | insertions | "
+            "deletions | substitutions | "
             "total_reference_words | missing_prediction_count"
         )
 

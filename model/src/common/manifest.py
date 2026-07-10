@@ -9,8 +9,10 @@ Exports:
   validate_canonical_manifest   — strict Canonical Manifest validation
   require_canonical_manifest    — fail-loud strict validation wrapper
   rows_from_manifest            — convert raw manifest dicts to typed CanonicalRow instances
-  strict_canonical_rows_from_manifest — validate and convert via one strict boundary
-  parse_manifest_text           — parse JSON array/JSONL text into normalized row dicts
+  strict_canonical_rows_from_manifest — validate and convert via one strict
+                                        boundary
+  parse_manifest_text           — parse JSON array/JSONL text into normalized
+                                  row dicts
   load_manifest                 — load a JSON array or JSONL manifest from local disk
   merge_predictions_to_manifest — URI-first prediction merge onto GT rows
 """
@@ -590,7 +592,8 @@ def parse_manifest_text(
             isinstance(row, dict) for row in parsed
         ):
             logger.error(
-                f"Expected a JSON array of objects in {source!r}, got unexpected shape"
+                f"Expected a JSON array of objects in {source!r}, got "
+                "unexpected shape",
             )
             return []
         data = parsed

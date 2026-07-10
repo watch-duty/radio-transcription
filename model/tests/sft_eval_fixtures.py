@@ -12,6 +12,15 @@ if typing.TYPE_CHECKING:
 
 
 def vertex_batch_output(audio_uri: str, text: str) -> str:
+    """Build one serialized fake Vertex batch output row.
+
+    Args:
+        audio_uri: Audio URI echoed in the fake request payload.
+        text: Prediction text returned in the fake response payload.
+
+    Returns:
+        A JSON string containing one batch output object.
+    """
     return json.dumps(
         {
             "request": {
@@ -35,6 +44,11 @@ def vertex_batch_output(audio_uri: str, text: str) -> str:
 
 
 def batch_identity_kwargs() -> dict[str, object]:
+    """Build shared request-identity arguments for batch tests.
+
+    Returns:
+        Default context and eval-manifest fields for batch inference helpers.
+    """
     return {
         "prior_context_count": 0,
         "prior_context_mode": "text_turns",
@@ -43,12 +57,30 @@ def batch_identity_kwargs() -> dict[str, object]:
 
 
 def batch_output_uri(run_gcs_prefix: str, label: str = "base") -> str:
+    """Build the fake batch output prefix for one eval target.
+
+    Args:
+        run_gcs_prefix: Durable GCS prefix for the fake run.
+        label: Stable target label used in the artifact path.
+
+    Returns:
+        The target-specific batch output GCS prefix.
+    """
     return eval_artifacts.eval_target_artifact_paths(
         run_gcs_prefix, label
     ).output_uri
 
 
 def batch_input_uri(run_gcs_prefix: str, label: str = "base") -> str:
+    """Build the fake batch input URI for one eval target.
+
+    Args:
+        run_gcs_prefix: Durable GCS prefix for the fake run.
+        label: Stable target label used in the artifact path.
+
+    Returns:
+        The target-specific batch input JSONL URI.
+    """
     return eval_artifacts.eval_target_artifact_paths(
         run_gcs_prefix, label
     ).input_uri
@@ -58,6 +90,15 @@ def online_prediction_artifacts(
     run_gcs_prefix: str,
     label: str = "base",
 ) -> dict[str, str]:
+    """Build fake online prediction artifact locations.
+
+    Args:
+        run_gcs_prefix: Durable GCS prefix for the fake run.
+        label: Stable target label used in the artifact paths.
+
+    Returns:
+        Online prediction and request-metadata URIs keyed by constructor name.
+    """
     paths = eval_artifacts.eval_target_artifact_paths(run_gcs_prefix, label)
     return {
         "online_predictions_uri": paths.online_predictions_uri,
@@ -66,6 +107,14 @@ def online_prediction_artifacts(
 
 
 def summary_artifacts(run_gcs_prefix: str) -> dict[str, str]:
+    """Build fake run-level summary artifact locations.
+
+    Args:
+        run_gcs_prefix: Durable GCS prefix for the fake run.
+
+    Returns:
+        JSON and Markdown summary URIs keyed by report artifact field.
+    """
     summary_json_uri, summary_markdown_uri = (
         eval_artifacts.wer_summary_gcs_uris(run_gcs_prefix)
     )
@@ -89,6 +138,28 @@ def put_batch_metadata(
     prior_context_mode: str = "text_turns",
     histories: list[list[context.ContextTurn]] | None = None,
 ) -> str:
+    """Seed fake GCS with a batch request-identity metadata sidecar.
+
+    Args:
+        storage: Fake storage client that receives the sidecar.
+        run_gcs_prefix: Durable GCS prefix for the fake run.
+        label: Stable target label used in the metadata path and identity.
+        model: Publisher model ID or full resource recorded in the identity.
+        eval_manifest_uri: Canonical eval manifest URI recorded in identity.
+        audio_uris: Ordered audio URI sequence represented by the identity.
+        system_prompt: System instruction represented by the identity.
+        user_prompt: Current-turn user instruction represented by the identity.
+        prior_context_count: Context-window size recorded in the identity.
+        prior_context_mode: Context encoding mode used for request digests.
+        histories: Prior turns aligned one-for-one with ``audio_uris``.
+
+    Returns:
+        The GCS URI of the seeded metadata sidecar.
+
+    Raises:
+        ValueError: If histories and audio URIs are misaligned or the context
+            mode is unsupported.
+    """
     kwargs = {
         "target_label": label,
         "model": model,

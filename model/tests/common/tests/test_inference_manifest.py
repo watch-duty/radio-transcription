@@ -11,12 +11,12 @@ _SRC_DIR = str(Path(__file__).resolve().parents[3] / "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
+from common import inference_manifest as inference_manifest_lib  # noqa: E402
 from common.inference_manifest import (  # noqa: E402
     build_inference_manifest_blob_path,
     build_inference_manifest_rows,
     model_family_slug_from_model_id,
     upload_inference_manifest,
-    validate_artifact_label,
 )
 
 
@@ -224,7 +224,10 @@ class TestInferenceManifest(unittest.TestCase):
     def test_validate_artifact_label_returns_valid_labels(self) -> None:
         for label in ("base", "tuned", "checkpoint_6"):
             with self.subTest(label=label):
-                self.assertEqual(validate_artifact_label(label), label)
+                self.assertEqual(
+                    inference_manifest_lib.validate_artifact_label(label),
+                    label,
+                )
 
     def test_validate_artifact_label_rejects_invalid_labels(self) -> None:
         for label in (
@@ -237,7 +240,7 @@ class TestInferenceManifest(unittest.TestCase):
         ):
             with self.subTest(label=label):
                 with self.assertRaises(ValueError):
-                    validate_artifact_label(label)
+                    inference_manifest_lib.validate_artifact_label(label)
 
     def test_upload_inference_manifest_writes_jsonl_and_returns_uri(
         self,

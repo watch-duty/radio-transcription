@@ -10,12 +10,10 @@ caller-supplied parameters.
 
 from __future__ import annotations
 
+import collections.abc  # noqa: TC003 - needed by runtime annotation resolution
 import typing
 
 from common.gemini import context
-
-if typing.TYPE_CHECKING:
-    import collections.abc
 
 
 def build_audio_tuning_example(

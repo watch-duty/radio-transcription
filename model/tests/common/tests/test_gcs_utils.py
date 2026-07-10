@@ -8,7 +8,6 @@ from common.gcs_utils import (
     download_gcs_directory,
     download_gcs_uri,
     download_json_text,
-    download_jsonl_manifest,
     download_to_scratch,
     gcs_prefix_has_any_blob,
     gcs_uri_exists,
@@ -165,7 +164,7 @@ class TestGcsObjectHelpers(unittest.TestCase):
             '{"audio_filepath": "gs://b/b.flac", "text": "line\\nbreak"}',
         )
 
-        rows = download_jsonl_manifest(
+        rows = gcs_utils_lib.download_jsonl_manifest(
             storage,
             "gs://bucket/manifest/eval.jsonl",
         )

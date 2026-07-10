@@ -2,6 +2,7 @@ import os
 import pathlib
 import subprocess
 import sys
+import typing
 import unittest
 
 from common.gemini import context, tuning_data
@@ -15,6 +16,12 @@ def _first_file_part(turn: dict) -> dict:
 
 
 class TestBuildExample(unittest.TestCase):
+    def test_public_annotations_resolve_at_runtime(self) -> None:
+        hints = typing.get_type_hints(tuning_data.build_audio_tuning_example)
+
+        self.assertIn("history", hints)
+        self.assertIn("return", hints)
+
     def test_round_trips_audio_uri(self) -> None:
         example = tuning_data.build_audio_tuning_example(
             audio_uri="gs://bucket/seg001.flac",

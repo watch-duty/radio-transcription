@@ -20,10 +20,8 @@ from common.manifest import (
     is_scoreable_manifest_entry,
     load_manifest,
     merge_predictions_to_manifest,
-    parse_manifest_text,
     require_canonical_manifest,
     rows_from_manifest,
-    strict_canonical_rows_from_manifest,
     validate_canonical_manifest,
 )
 
@@ -763,7 +761,7 @@ class TestParseManifestText(unittest.TestCase):
     """The shared parser defines lenient manifest I/O behavior."""
 
     def test_jsonl_parser_skips_bad_lines_and_normalizes_text(self) -> None:
-        rows = parse_manifest_text(
+        rows = manifest_lib.parse_manifest_text(
             "\n".join(
                 [
                     json.dumps(
@@ -794,7 +792,7 @@ class TestParseManifestText(unittest.TestCase):
         )
 
     def test_json_array_parser_uses_same_text_normalization(self) -> None:
-        rows = parse_manifest_text(
+        rows = manifest_lib.parse_manifest_text(
             json.dumps(
                 [
                     {"audio_filepath": "gs://b/a.flac", "text": 123},
@@ -993,7 +991,7 @@ class TestStrictCanonicalRowsFromManifest(unittest.TestCase):
     def test_validates_before_converting_to_canonical_rows(self) -> None:
         source_rows = [_canonical_row(split="eval")]
 
-        entries, rows = strict_canonical_rows_from_manifest(
+        entries, rows = manifest_lib.strict_canonical_rows_from_manifest(
             source_rows,
             expected_split="eval",
             source="eval.jsonl",

@@ -690,11 +690,17 @@ def _optional_config_eval_execution_backend(
     if value is None:
         return None
     if not isinstance(value, str):
-        msg = "config.json field eval_execution.backend must be one of batch, online"
+        msg = (
+            "config.json field eval_execution.backend must be one of batch, "
+            "online"
+        )
         raise TypeError(msg)
     backend = value.strip()
     if backend not in EVAL_EXECUTION_BACKENDS:
-        msg = "config.json field eval_execution.backend must be one of batch, online"
+        msg = (
+            "config.json field eval_execution.backend must be one of batch, "
+            "online"
+        )
         raise ValueError(msg)
     return backend
 
@@ -831,11 +837,13 @@ def _optional_prior_context_mode(data: dict[str, typing.Any], key: str) -> str:
     if value is None:
         return "text_turns"
     if not isinstance(value, str):
-        msg = f"{key} must be one of {', '.join(sorted(context.PRIOR_CONTEXT_MODES))}"
+        modes = ", ".join(sorted(context.PRIOR_CONTEXT_MODES))
+        msg = f"{key} must be one of {modes}"
         raise RunConfigError(msg)
     mode = value.strip().lower()
     if mode not in context.PRIOR_CONTEXT_MODES:
-        msg = f"{key} must be one of {', '.join(sorted(context.PRIOR_CONTEXT_MODES))}"
+        modes = ", ".join(sorted(context.PRIOR_CONTEXT_MODES))
+        msg = f"{key} must be one of {modes}"
         raise RunConfigError(msg)
     return mode
 

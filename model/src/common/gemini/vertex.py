@@ -26,6 +26,7 @@ Important behavior:
 
 from __future__ import annotations
 
+import collections.abc  # noqa: TC003 - needed by runtime annotation resolution
 import json
 import logging
 import re
@@ -33,9 +34,6 @@ import time
 import typing
 
 from common.gemini import context
-
-if typing.TYPE_CHECKING:
-    import collections.abc
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +129,10 @@ def parse_batch_output(
         TypeError: If ``lines`` is one string instead of an iterable of rows.
     """
     if isinstance(lines, str):
-        msg = "parse_batch_output expects an iterable of JSONL lines, not a string"
+        msg = (
+            "parse_batch_output expects an iterable of JSONL lines, not a "
+            "string"
+        )
         raise TypeError(msg)
     result: dict[str, str] = {}
     for line in lines:

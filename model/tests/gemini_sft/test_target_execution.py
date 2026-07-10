@@ -236,8 +236,10 @@ class TestOnlinePredictionResume(unittest.TestCase):
         self.storage.put(
             self.predictions_uri,
             (
-                '{"audio_filepath":"gs://audio/1.flac","pred_text":"one","error":null}\n'
-                '{"audio_filepath":"gs://audio/2.flac","pred_text":"","error":"empty response"}\n'
+                '{"audio_filepath":"gs://audio/1.flac",'
+                '"pred_text":"one","error":null}\n'
+                '{"audio_filepath":"gs://audio/2.flac",'
+                '"pred_text":"","error":"empty response"}\n'
             ),
         )
         self.storage.put(self.metadata_uri, _metadata(identity))
@@ -309,7 +311,8 @@ class TestOnlinePredictionResume(unittest.TestCase):
         self.storage.put(
             self.predictions_uri,
             (
-                '{"audio_filepath":"gs://audio/1.flac","pred_text":"one","error":null}\n'
+                '{"audio_filepath":"gs://audio/1.flac",'
+                '"pred_text":"one","error":null}\n'
                 '{"audio_filepath":"gs://audio/2.flac","pred_text":\n'
             ),
         )
@@ -383,7 +386,9 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                     project="project",
                     default_location="us-central1",
                     target_label="checkpoint_6",
-                    target_model="projects/p/locations/us-central1/endpoints/123",
+                    target_model=(
+                        "projects/p/locations/us-central1/endpoints/123"
+                    ),
                     audio_uris=["gs://audio/1.flac", "gs://audio/1.flac"],
                     histories=[[], []],
                     system_prompt="system",
@@ -644,7 +649,9 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                     project="project",
                     default_location="us-central1",
                     target_label="checkpoint_6",
-                    target_model="projects/p/locations/us-central1/endpoints/123",
+                    target_model=(
+                        "projects/p/locations/us-central1/endpoints/123"
+                    ),
                     audio_uris=["gs://audio/1.flac"],
                     histories=[[]],
                     system_prompt="system",
@@ -701,7 +708,8 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                 "gemini_sft.target_execution.ONLINE_SYNC_EVERY", 1
             ),
             unittest.mock.patch(
-                "gemini_sft.target_execution._upload_periodic_prediction_snapshot",
+                "gemini_sft.target_execution."
+                "_upload_periodic_prediction_snapshot",
                 fake_periodic_upload,
             ),
         ):
@@ -712,7 +720,9 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                     project="project",
                     default_location="us-central1",
                     target_label="checkpoint_6",
-                    target_model="projects/p/locations/us-central1/endpoints/123",
+                    target_model=(
+                        "projects/p/locations/us-central1/endpoints/123"
+                    ),
                     audio_uris=["gs://audio/1.flac"],
                     histories=[[]],
                     system_prompt="system",
@@ -915,8 +925,10 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         self.storage.put(
             predictions_uri,
             (
-                '{"audio_filepath":"gs://audio/1.flac","pred_text":"one","error":null}\n'
-                '{"audio_filepath":"gs://audio/2.flac","pred_text":"two","error":null}\n'
+                '{"audio_filepath":"gs://audio/1.flac",'
+                '"pred_text":"one","error":null}\n'
+                '{"audio_filepath":"gs://audio/2.flac",'
+                '"pred_text":"two","error":null}\n'
             ),
         )
         self.storage.put(metadata_uri, _metadata(identity))
@@ -966,8 +978,10 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         self.storage.put(
             predictions_uri,
             (
-                '{"audio_filepath":"gs://audio/1.flac","pred_text":"one","error":null}\n'
-                '{"audio_filepath":"gs://audio/2.flac","pred_text":"","error":"TimeoutError: timed out"}\n'
+                '{"audio_filepath":"gs://audio/1.flac",'
+                '"pred_text":"one","error":null}\n'
+                '{"audio_filepath":"gs://audio/2.flac",'
+                '"pred_text":"","error":"TimeoutError: timed out"}\n'
             ),
         )
         self.storage.put(metadata_uri, _metadata(identity))

@@ -11,6 +11,7 @@ the suite SKIPS — never errors — on a bare-core checkout.
 
 import unittest
 
+from common import scoring as scoring_lib
 from common.scoring import (
     bootstrap_paired,
     build_normalizer,
@@ -18,7 +19,6 @@ from common.scoring import (
     compute_wer,
     count_keyword_occurrences,
     duration_bucket_wer,
-    empty_or_unintelligible_rate,
     keyword_metrics,
 )
 
@@ -203,31 +203,36 @@ class TestComputeCer(unittest.TestCase):
 
 class TestEmptyOrUnintelligibleRate(unittest.TestCase):
     def test_empty_list_returns_zero(self) -> None:
-        self.assertEqual(empty_or_unintelligible_rate([]), 0.0)
+        self.assertEqual(scoring_lib.empty_or_unintelligible_rate([]), 0.0)
 
     def test_flags_empty_string(self) -> None:
-        self.assertEqual(empty_or_unintelligible_rate([""]), 100.0)
+        self.assertEqual(scoring_lib.empty_or_unintelligible_rate([""]), 100.0)
 
     def test_flags_unintelligible_token(self) -> None:
         self.assertEqual(
-            empty_or_unintelligible_rate(["[UNINTELLIGIBLE]"]), 100.0
+            scoring_lib.empty_or_unintelligible_rate(["[UNINTELLIGIBLE]"]),
+            100.0,
         )
 
     def test_mixed_list_partial_rate(self) -> None:
         self.assertEqual(
-            empty_or_unintelligible_rate(["engine 41", "", "copy", ""]),
+            scoring_lib.empty_or_unintelligible_rate(
+                ["engine 41", "", "copy", ""]
+            ),
             50.0,
         )
 
     def test_mixed_unintelligible_and_empty_outputs(self) -> None:
         self.assertEqual(
-            empty_or_unintelligible_rate(["", "[UNINTELLIGIBLE]", "copy"]),
+            scoring_lib.empty_or_unintelligible_rate(
+                ["", "[UNINTELLIGIBLE]", "copy"]
+            ),
             66.67,
         )
 
     def test_missing_prediction_fallback_counts_as_empty_output(self) -> None:
         self.assertEqual(
-            empty_or_unintelligible_rate(["engine 41", ""]),
+            scoring_lib.empty_or_unintelligible_rate(["engine 41", ""]),
             50.0,
         )
 

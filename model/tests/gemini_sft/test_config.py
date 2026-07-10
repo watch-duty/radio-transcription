@@ -9,12 +9,11 @@ _SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
+from gemini_sft import config as config_module  # noqa: E402
 from gemini_sft.config import (  # noqa: E402
     RunConfigError,
     load_eval_run_config,
     load_run_config,
-    require_config_eval_execution,
-    require_config_eval_model,
 )
 
 
@@ -442,7 +441,7 @@ model = "gemini-3.1-flash-lite"
                     load_run_config(self._write_config(body))
 
     def test_require_config_eval_model_returns_valid_target(self) -> None:
-        target = require_config_eval_model(
+        target = config_module.require_config_eval_model(
             {
                 "eval_model": {
                     "label": "base",
@@ -462,7 +461,7 @@ model = "gemini-3.1-flash-lite"
             r"config\.json missing required eval_model.*"
             r"\[eval\.model\].*label.*model",
         ):
-            require_config_eval_model(
+            config_module.require_config_eval_model(
                 {
                     "base_model": "gemini-3.1-flash-lite",
                     "endpoint": "projects/p/locations/us/endpoints/123",
@@ -473,7 +472,7 @@ model = "gemini-3.1-flash-lite"
         for label in ("", ".", "..", "bad label", "nested/label", "base.jsonl"):
             with self.subTest(label=label):
                 with self.assertRaisesRegex(ValueError, "eval_model"):
-                    require_config_eval_model(
+                    config_module.require_config_eval_model(
                         {
                             "eval_model": {
                                 "label": label,
@@ -484,19 +483,21 @@ model = "gemini-3.1-flash-lite"
 
     def test_require_config_eval_model_rejects_empty_model(self) -> None:
         with self.assertRaisesRegex(ValueError, r"eval_model\.model"):
-            require_config_eval_model(
+            config_module.require_config_eval_model(
                 {"eval_model": {"label": "base", "model": "   "}}
             )
 
     def test_require_config_eval_model_rejects_non_object(self) -> None:
         with self.assertRaisesRegex(TypeError, "eval_model must be an object"):
-            require_config_eval_model({"eval_model": "not-an-object"})
+            config_module.require_config_eval_model(
+                {"eval_model": "not-an-object"}
+            )
 
     def test_require_config_eval_model_rejects_unsupported_fields(
         self,
     ) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported: type"):
-            require_config_eval_model(
+            config_module.require_config_eval_model(
                 {
                     "eval_model": {
                         "label": "base",
@@ -507,7 +508,7 @@ model = "gemini-3.1-flash-lite"
             )
 
     def test_require_config_eval_execution_defaults_when_missing(self) -> None:
-        execution = require_config_eval_execution({})
+        execution = config_module.require_config_eval_execution({})
 
         self.assertIsNone(execution.backend)
         self.assertIsNone(execution.limit)
@@ -515,7 +516,7 @@ model = "gemini-3.1-flash-lite"
         self.assertEqual(execution.max_retries, 3)
 
     def test_require_config_eval_execution_returns_valid_config(self) -> None:
-        execution = require_config_eval_execution(
+        execution = config_module.require_config_eval_execution(
             {
                 "eval_execution": {
                     "backend": "batch",
@@ -549,7 +550,9 @@ model = "gemini-3.1-flash-lite"
                     (TypeError, ValueError),
                     "config.json field eval_execution",
                 ):
-                    require_config_eval_execution({"eval_execution": execution})
+                    config_module.require_config_eval_execution(
+                        {"eval_execution": execution}
+                    )
 
     def test_round_id_must_be_safe_single_path_component(self) -> None:
         for round_id in (

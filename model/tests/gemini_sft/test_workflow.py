@@ -321,6 +321,41 @@ class TestPreflight(unittest.TestCase):
 
 
 class TestPrepareRun(unittest.TestCase):
+    def test_prepare_reports_manifest_type_errors_as_cli_failures(self) -> None:
+        run_cfg = types.SimpleNamespace(
+            gcp_project="project-id",
+            paths=types.SimpleNamespace(
+                config_uri="gs://bucket/run/config.json",
+                gcs_prefix="gs://bucket/run",
+            ),
+        )
+        with (
+            unittest.mock.patch.object(
+                prepare.config_lib,
+                "load_run_config",
+                return_value=run_cfg,
+            ),
+            unittest.mock.patch.object(prepare.storage, "Client"),
+            unittest.mock.patch.object(
+                prepare.gcs_utils,
+                "gcs_uri_exists",
+                return_value=False,
+            ),
+            unittest.mock.patch.object(
+                prepare.gcs_utils,
+                "gcs_prefix_has_any_blob",
+                return_value=False,
+            ),
+            unittest.mock.patch.object(
+                prepare,
+                "prepare_run",
+                side_effect=TypeError("expected JSON object at line 1"),
+            ),
+        ):
+            result = prepare.prepare(argparse.Namespace(config="run.toml"))
+
+        self.assertEqual(result, 1)
+
     def test_prepare_uploads_required_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = pathlib.Path(tmp_s)
@@ -1450,7 +1485,10 @@ class TestEvaluateRun(unittest.TestCase):
                                             "parts": [
                                                 {
                                                     "fileData": {
-                                                        "fileUri": "gs://audio/eval-1.flac"
+                                                        "fileUri": (
+                                                            "gs://audio/"
+                                                            "eval-1.flac"
+                                                        )
                                                     }
                                                 }
                                             ]
@@ -1476,7 +1514,10 @@ class TestEvaluateRun(unittest.TestCase):
                                             "parts": [
                                                 {
                                                     "fileData": {
-                                                        "fileUri": "gs://audio/eval-2.flac"
+                                                        "fileUri": (
+                                                            "gs://audio/"
+                                                            "eval-2.flac"
+                                                        )
                                                     }
                                                 }
                                             ]
@@ -1866,7 +1907,8 @@ class TestEvaluateRun(unittest.TestCase):
                                         {
                                             "fileData": {
                                                 "fileUri": (
-                                                    "gs://audio/eval-current.flac"
+                                                    "gs://audio/"
+                                                    "eval-current.flac"
                                                 )
                                             }
                                         }

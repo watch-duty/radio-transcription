@@ -4,10 +4,18 @@ import builtins
 import importlib.util
 import json
 import pathlib
+import typing
 import unittest
 import unittest.mock
 
 from common.gemini import context, vertex
+
+
+def test_public_request_annotations_resolve_at_runtime() -> None:
+    hints = typing.get_type_hints(vertex.build_request)
+
+    assert "history" in hints
+    assert "return" in hints
 
 
 def _make_mock_client(
@@ -34,7 +42,7 @@ class TestSubmitTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_defaults_to_gemini_31_flash_lite(self, mock_genai) -> None:
-        """vertex.submit_tuning_job defaults to the current supervised-tuning model."""
+        """Verify the default is the current supervised-tuning model."""
         mock_client = _make_mock_client()
         mock_genai.Client.return_value = mock_client
 
@@ -222,7 +230,7 @@ class TestPollTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_raises_timeout_when_never_terminal(self, mock_genai) -> None:
-        """vertex.poll_tuning_job raises TimeoutError if no terminal state within timeout_hours."""
+        """Raise TimeoutError when no state is terminal before the timeout."""
         mock_genai.Client.return_value = _make_mock_client(
             state="JOB_STATE_RUNNING"
         )
@@ -700,7 +708,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_returns_dest_gcs_uri(self, mock_genai) -> None:
-        """vertex.submit_batch_inference returns cur.dest.gcs_uri, not BatchJobDestination object."""
+        """Return cur.dest.gcs_uri rather than BatchJobDestination."""
         mock_dest = unittest.mock.MagicMock()
         mock_dest.gcs_uri = "gs://bucket/output/"
         mock_batch_job = unittest.mock.MagicMock()
@@ -727,7 +735,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
     def test_falls_back_to_output_uri_when_dest_is_none(
         self, mock_genai
     ) -> None:
-        """vertex.submit_batch_inference uses output_uri fallback when cur.dest is None."""
+        """Use the output_uri fallback when cur.dest is None."""
         mock_batch_job = unittest.mock.MagicMock()
         mock_batch_job.name = "projects/p/locations/l/batchPredictionJobs/1"
         mock_cur = unittest.mock.MagicMock()
@@ -787,7 +795,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
     def test_batch_poll_retries_transient_get_error(
         self, mock_genai, mock_sleep
     ) -> None:
-        """vertex.submit_batch_inference retries a transient batches.get failure."""
+        """Retry a transient batches.get failure."""
         mock_dest = unittest.mock.MagicMock()
         mock_dest.gcs_uri = "gs://bucket/output/"
         mock_batch_job = unittest.mock.MagicMock()
@@ -844,7 +852,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_batch_uses_us_location_for_31_flash_lite(self, mock_genai) -> None:
-        """Gemini 3.1 Flash-Lite batch jobs are served from Vertex location us."""
+        """Serve Gemini 3.1 Flash-Lite batch jobs from location us."""
         mock_dest = unittest.mock.MagicMock()
         mock_dest.gcs_uri = "gs://bucket/output/"
         mock_batch_job = unittest.mock.MagicMock()

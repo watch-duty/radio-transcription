@@ -85,7 +85,19 @@ def write_wer_summary(
     round_id: str,
     report: reporting.EvalReport,
 ) -> tuple[pathlib.Path, pathlib.Path]:
-    """Write results/<round-id>/wer_summary.{json,md}."""
+    """Write the JSON and Markdown WER summaries for one round.
+
+    Args:
+        results_dir: Local root directory for evaluation results.
+        round_id: Stable run identifier used for the output directory.
+        report: Structured evaluation report to serialize and render.
+
+    Returns:
+        The local JSON summary path followed by the Markdown summary path.
+
+    Raises:
+        OSError: If the output directory or either summary cannot be written.
+    """
     out_dir = results_dir / round_id
     out_dir.mkdir(parents=True, exist_ok=True)
     payload = reporting.report_to_dict(report)

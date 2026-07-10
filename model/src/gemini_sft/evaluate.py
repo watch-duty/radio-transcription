@@ -374,7 +374,33 @@ def batch_infer(
     eval_manifest_uri: str,
     histories: list[typing.Any] | None = None,
 ) -> PredictionMap | None:
-    """Build batch input JSONL, submit, download outputs, and parse predictions."""
+    """Build, submit, download, and parse one batch inference target.
+
+    Args:
+        storage_client: Client used to read and write GCS artifacts.
+        run_gcs_prefix: Durable GCS prefix for the prepared run.
+        gcp_project: GCP project used to submit batch inference.
+        location: Preferred Vertex location for batch inference.
+        model_id: Publisher model ID or full model resource name.
+        label: Stable target label used in artifact paths and logs.
+        eval_rows: Canonical eval rows containing ``audio_filepath`` values.
+        system_prompt: System instruction included in every request.
+        user_prompt: User instruction included in every current audio turn.
+        prior_context_count: Context-window size recorded in request identity.
+        prior_context_mode: Context encoding mode used for requests.
+        eval_manifest_uri: Canonical eval manifest URI recorded in identity.
+        histories: Prior turns aligned one-for-one with ``eval_rows``.
+
+    Returns:
+        Parsed predictions with their raw output URI, or ``None`` when batch
+        submission or output loading fails.
+
+    Raises:
+        ImportError: If the optional Vertex dependency is unavailable.
+        OSError: If a temporary batch artifact cannot be read or written.
+        TypeError: If reusable request metadata has an invalid shape.
+        ValueError: If request inputs or reusable metadata are inconsistent.
+    """
     return gemini_batch.run_batch_audio_inference(
         storage_client=storage_client,
         run_gcs_prefix=run_gcs_prefix,

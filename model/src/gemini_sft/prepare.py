@@ -44,7 +44,7 @@ def prepare(args: argparse.Namespace) -> int:
             storage_client=storage_client,
             results_dir=RESULTS_DIR,
         )
-    except (OSError, config_lib.RunConfigError, ValueError) as exc:
+    except (OSError, config_lib.RunConfigError, TypeError, ValueError) as exc:
         return _log_cli_error(exc)
     logger.info(
         "Prepared %s train rows, %s validation rows, and %s eval rows.",
@@ -231,7 +231,20 @@ def write_gemini_jsonl(
     prior_context_count: int = 0,
     prior_context_mode: str = "text_turns",
 ) -> None:
-    """Write Gemini audio-SFT JSONL from canonical rows."""
+    """Write Gemini audio-SFT JSONL from canonical rows.
+
+    Args:
+        rows: Canonical manifest rows to convert in input order.
+        path: Local JSONL destination path.
+        system_prompt: System instruction included in every example.
+        user_prompt: User instruction included in every current audio turn.
+        prior_context_count: Maximum prior same-source transcript turns.
+        prior_context_mode: Context encoding mode used for each example.
+
+    Raises:
+        OSError: If the destination cannot be created or written.
+        ValueError: If context settings or a generated example are invalid.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     histories = context.build_context_histories(
         rows,
