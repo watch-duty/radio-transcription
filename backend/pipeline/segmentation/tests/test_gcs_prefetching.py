@@ -5,6 +5,7 @@ import unittest
 
 import numpy as np
 
+from backend.pipeline.common import tracing_utils
 from backend.pipeline.segmentation.datatypes import (
     AudioSignal,
     BufferedChunk,
@@ -78,6 +79,46 @@ class GcsPrefetchingTest(unittest.TestCase):
 
         self.assertTrue(len(execution_threads) > 0)
         self.assertNotIn(main_thread_name, execution_threads)
+
+    def test_prefetch_audio_futures_propagates_otel_context(self) -> None:
+        """Verifies that pre-fetching in background threads inherits the active OpenTelemetry span context from the calling thread."""
+        traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+        with tracing_utils.with_tracer_context(
+            traceparent, "parent_span", __name__
+        ):
+            captured_traceparents = {}
+
+            def mock_fetch_and_decode(
+                uri: str, trace_attrs: dict[str, str] | None = None
+            ) -> AudioSignal:
+                captured_traceparents[uri] = (
+                    tracing_utils.get_current_traceparent()
+                )
+                return AudioSignal(
+                    samples=np.zeros(1600, dtype=np.int16), sample_rate=16000
+                )
+
+            self.engine.processor.fetch_and_decode_audio = mock_fetch_and_decode  # type: ignore
+
+            chunks = [
+                BufferedChunk(gcs_uri="gs://bucket/1.flac", timestamp_ms=1000),
+                BufferedChunk(gcs_uri="gs://bucket/2.flac", timestamp_ms=2000),
+            ]
+
+            futures_map = self.engine.prefetch_audio_futures(
+                chunks, self.logger
+            )
+            self.assertIsNotNone(futures_map)
+
+            for future in futures_map.values():  # type: ignore
+                future.result()
+
+            self.assertEqual(len(captured_traceparents), 2)
+            for tp in captured_traceparents.values():
+                self.assertTrue(
+                    tp.startswith("00-4bf92f3577b34da6a3ce929d0e0e4736-"),
+                    f"Expected trace ID 4bf92f3577b34da6a3ce929d0e0e4736 to propagate, got: {tp}",
+                )
 
 
 if __name__ == "__main__":

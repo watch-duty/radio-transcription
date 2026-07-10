@@ -35,6 +35,9 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
 from backend.pipeline.transcription.transcribers.base import Transcriber
+from backend.pipeline.transcription.transcribers.gemini import (
+    GeminiTransientTranscriptionError,
+)
 from backend.services.audio_segments import models as audio_segments_models
 
 CHIRP_UNINTELLIGIBLE_MARKER = constants.UNINTELLIGIBLE_MARKER
@@ -152,11 +155,15 @@ class TranscriptionEventProcessor:
             errors.append(f"Permanent Failure: {e}")
         finally:
             if segment_id:
-                await self._write_transcript_annotation(
-                    segment_id,
-                    transcript or "",
-                    errors,
+                has_transient_error = any(
+                    err.startswith("Transient Failure:") for err in errors
                 )
+                if not has_transient_error:
+                    await self._write_transcript_annotation(
+                        segment_id,
+                        transcript or "",
+                        errors,
+                    )
 
     async def _transcribe_audio_segment(
         self, claim: NormalizedAudio, errors: list[str]
@@ -175,13 +182,24 @@ class TranscriptionEventProcessor:
                 duration_ms=duration_ms,
             )
 
+        return self._record_status_and_get_fallback_text(transcript, errors)
+
+    def _record_status_and_get_fallback_text(
+        self, transcript: str | None, errors: list[str]
+    ) -> str:
+        """Determines transcription status and returns the formatted text."""
         if not transcript:
             logger.info(
-                "Speech API returned empty transcription. Using fallback unintelligible marker."
+                "Speech API returned empty transcription. "
+                "Using fallback unintelligible marker."
             )
             errors.append("Empty transcription from Speech Model")
-            record_pipeline_stage("transcription_status", "unintelligible")
+            record_pipeline_stage("transcription_status", "empty")
             return CHIRP_UNINTELLIGIBLE_MARKER
+
+        if transcript == CHIRP_UNINTELLIGIBLE_MARKER:
+            record_pipeline_stage("transcription_status", "unintelligible")
+            return transcript
 
         record_pipeline_stage("transcription_status", "success")
         return transcript
@@ -316,19 +334,22 @@ def _is_http_transient(e: requests.exceptions.HTTPError) -> bool:
 def _is_transient_exception(e: Exception) -> bool:
     """Determines if an exception is transient and should be retried."""
     match e:
+        case GeminiTransientTranscriptionError():
+            result = True
+
         case exceptions.RetryError():
             cause = e.cause or e.__cause__
-            return (
+            result = (
                 _is_transient_exception(cause)
                 if isinstance(cause, Exception)
                 else True
             )
 
         case exceptions.GoogleAPICallError() | genai_errors.APIError():
-            return e.code in (409, 429, 499) or bool(e.code and e.code >= 500)
+            result = e.code in (409, 429, 499) or bool(e.code and e.code >= 500)
 
         case grpc.Call():
-            return _is_grpc_transient(e)
+            result = _is_grpc_transient(e)
 
         case (
             ConnectionError()
@@ -339,10 +360,12 @@ def _is_transient_exception(e: Exception) -> bool:
             | httpx.TimeoutException()
             | aiohttp.ClientError()
         ):
-            return True
+            result = True
 
         case requests.exceptions.HTTPError():
-            return _is_http_transient(e)
+            result = _is_http_transient(e)
 
         case _:
-            return False
+            result = False
+
+    return result

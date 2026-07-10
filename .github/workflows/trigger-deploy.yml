@@ -16,4 +16,4 @@ jobs:
           GH_TOKEN: ${{ secrets.PRIVATE_REPO_PAT }}
         run: |
           echo "Triggering deployment..."
-          gh workflow run deploy.yml --repo ${{ secrets.PRIVATE_REPO_TARGET }} -f app_deploy_sha=${{ github.sha }} -f environment=dev -f deploy_release=true
+          gh workflow run dev_deploy.yml --repo ${{ secrets.PRIVATE_REPO_TARGET }} -f app_deploy_sha=${{ github.sha }}

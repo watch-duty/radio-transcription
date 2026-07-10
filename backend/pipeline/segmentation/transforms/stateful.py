@@ -599,10 +599,10 @@ class OrderedStitchAudioFn(beam.DoFn):
     2. Exactly-Once ML FSM Protection: Pub/Sub fundamentally only guarantees `At-Least-Once Delivery`. Any transient
        network blip or VM preemption forces Pub/Sub to actively re-deliver un-acked duplicates. Our isolated Beam
        SequenceBuffer beautifully filters duplicate frames, entirely preventing false positive VAD speech boundaries.
-    3. Bounded Micro-Batch Self-Chaining: When unrolling multi-day incident backlogs, emissions are clamped to
-       `MAX_CHUNKS_PER_WINDMILL_BUNDLE` (10 chunks) and an Event-Time recursive timer is re-armed to open fresh worker
-       bundles. This proves our worker heartbeats to central Windmill servers every ~3-4 seconds, entirely avoiding
-       300-second bundle lease evictions ("poison pills") while ensuring perfectly smooth downstream side-input join checkpointing.
+    3. Bounded Self-Chaining Drains: When unrolling out-of-order backlogs, emissions are
+       clamped to `MAX_CHUNKS_PER_WINDMILL_BUNDLE` (25 chunks) and a watermark timer is
+       re-armed to open fresh bundles, preventing 300-second bundle lease evictions
+       while reducing intermediate timer queuing delays during catch-up.
     """
 
     SHARED_THREADPOOL_HANDLE = Shared()
@@ -1247,7 +1247,7 @@ class OrderedStitchAudioFn(beam.DoFn):
 
             # Cap the drain based on our remaining bundle capacity.
             # In a fresh timer-activated bundle, processed_in_bundle starts at 0, so
-            # we can drain up to the full MAX_CHUNKS_PER_WINDMILL_BUNDLE (5 chunks).
+            # we can drain up to the full MAX_CHUNKS_PER_WINDMILL_BUNDLE (25 chunks).
             new_expected_next_ts, new_buffer_elements, elements_to_emit = (
                 seq_buf.drain_ready_elements(
                     expected_next_ts=curr_context.expected_next_chunk_start_ms,
