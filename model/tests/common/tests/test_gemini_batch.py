@@ -5,13 +5,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from common.gemini import vertex
 from common.gemini.batch import (
     build_batch_jsonl,
     run_batch_audio_inference,
 )
 from common.gemini.context import ContextTurn
 from common.gemini.eval_artifacts import batch_prediction_metadata_uri
-from common.gemini.vertex import build_request
 from fake_gcs import FakeStorageClient
 from sft_eval_fixtures import (
     batch_identity_kwargs,
@@ -170,7 +170,7 @@ class TestGeminiBatchInference(unittest.TestCase):
         uploaded_request = json.loads(
             storage.get(batch_input_uri(run_gcs_prefix))
         )
-        expected_request = build_request(
+        expected_request = vertex.build_request(
             current_audio_uri,
             system_prompt="sys",
             user_prompt="user",
