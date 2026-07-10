@@ -219,22 +219,23 @@ export function TranscriptRow({
               })}
             </Typography>
           )}
-          {!isOngoingSilence && (
-            <Typography
-              variant="caption"
-              color="text.secondary"
-              sx={{
-                opacity: 0.8,
-                fontStyle: isSilence || isOutage ? 'italic' : 'normal',
-              }}
-            >
-              {formatDuration(
-                (new Date(audioSegment.endTimestamp).getTime() -
-                  new Date(audioSegment.startTimestamp).getTime()) /
-                  1000
-              )}
-            </Typography>
-          )}
+          {/* For ongoing silence at the live edge, display elapsed time without seconds
+              to keep the running duration informative without causing second-by-second visual jitter during polling. */}
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            sx={{
+              opacity: 0.8,
+              fontStyle: isSilence || isOutage ? 'italic' : 'normal',
+            }}
+          >
+            {formatDuration(
+              (new Date(audioSegment.endTimestamp).getTime() -
+                new Date(audioSegment.startTimestamp).getTime()) /
+                1000,
+              !isOngoingSilence
+            )}
+          </Typography>
         </Box>
         <Box
           sx={{

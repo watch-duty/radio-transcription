@@ -165,5 +165,21 @@ describe('timeUtils', () => {
       expect(formatDuration(0.5)).toBe('<1 sec');
       expect(formatDuration(0.9)).toBe('<1 sec');
     });
+
+    it('formats durations over 60 minutes with hours, minutes, and seconds', () => {
+      expect(formatDuration(3600)).toBe('1 hr');
+      expect(formatDuration(3660)).toBe('1 hr 1 min');
+      expect(formatDuration(3665)).toBe('1 hr 1 min 5 sec');
+      expect(formatDuration(34780)).toBe('9 hr 39 min 40 sec');
+      expect(formatDuration(86411)).toBe('24 hr 11 sec');
+    });
+
+    it('formats durations cleanly without seconds when showSeconds is false', () => {
+      expect(formatDuration(45, false)).toBe('<1 min');
+      expect(formatDuration(120, false)).toBe('2 min');
+      expect(formatDuration(3665, false)).toBe('1 hr 1 min');
+      expect(formatDuration(34780, false)).toBe('9 hr 39 min');
+      expect(formatDuration(86411, false)).toBe('24 hr');
+    });
   });
 });

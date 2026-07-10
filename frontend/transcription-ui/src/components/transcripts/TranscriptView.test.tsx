@@ -231,6 +231,21 @@ vi.mock('../../audio/WebAudioPlayer', async (importOriginal) => ({
   },
 }));
 
+// MUI's segmented picker inputs are unusable under JSDOM; mock the shared field
+// with a button that writes a fixed draft, then Apply (in the popover) commits it.
+const DATE_FILTER_PICK = new Date('2026-04-10T09:00:00Z');
+vi.mock('../common/DateTimePicker', () => ({
+  DateTimePicker: ({
+    setDateTime,
+  }: {
+    setDateTime: (value: Date | null) => void;
+  }) => (
+    <button onClick={() => setDateTime(DATE_FILTER_PICK)}>
+      picker-set-date
+    </button>
+  ),
+}));
+
 describe('TranscriptView', () => {
   const mockHandleError = vi.fn();
 
@@ -797,22 +812,16 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 1 (Alert)')).toBeTruthy();
     });
 
-    // Open the filter menu popover
-    const filterButton = screen.getByRole('button', { name: 'filter' });
-    fireEvent.click(filterButton);
-
-    // Click on the alerts filter select dropdown trigger
-    const selectTrigger = screen.getByRole('combobox', { name: /Show/i });
+    // Select "Alerts only" from the inline filter (applies immediately).
+    const selectTrigger = screen.getByRole('combobox', {
+      name: /Transcript filter/i,
+    });
     fireEvent.mouseDown(selectTrigger);
 
     const optionElement = await screen.findByRole('option', {
       name: /Alerts only/i,
     });
     fireEvent.click(optionElement);
-
-    // Click the "Apply" button to apply changes
-    const applyButton = screen.getByRole('button', { name: 'Apply' });
-    fireEvent.click(applyButton);
 
     // Wait for the query containing isAlert=true to complete and render
     await waitFor(() => {
@@ -1345,22 +1354,16 @@ describe('TranscriptView', () => {
       );
     });
 
-    // Open the filter menu popover
-    const filterButton = screen.getByRole('button', { name: 'filter' });
-    fireEvent.click(filterButton);
-
-    // Click on the alerts filter select dropdown trigger
-    const selectTrigger = screen.getByRole('combobox', { name: /Show/i });
+    // Select "Alerts only" from the inline filter (applies immediately).
+    const selectTrigger = screen.getByRole('combobox', {
+      name: /Transcript filter/i,
+    });
     fireEvent.mouseDown(selectTrigger);
 
     const optionElement = await screen.findByRole('option', {
       name: /Alerts only/i,
     });
     fireEvent.click(optionElement);
-
-    // Click the "Apply" button to apply changes
-    const applyButton = screen.getByRole('button', { name: 'Apply' });
-    fireEvent.click(applyButton);
 
     // React query should refetch transcripts using the isAlert filter
     await waitFor(() => {
@@ -1411,22 +1414,16 @@ describe('TranscriptView', () => {
       expect(screen.getByText('Transcript 1')).toBeTruthy();
     });
 
-    // Open the filter menu popover
-    const filterButton = screen.getByRole('button', { name: 'filter' });
-    fireEvent.click(filterButton);
-
-    // Click on the alerts filter select dropdown trigger
-    const selectTrigger = screen.getByRole('combobox', { name: /Show/i });
+    // Select "Alerts only" from the inline filter (applies immediately).
+    const selectTrigger = screen.getByRole('combobox', {
+      name: /Transcript filter/i,
+    });
     fireEvent.mouseDown(selectTrigger);
 
     const optionElement = await screen.findByRole('option', {
       name: /Alerts only/i,
     });
     fireEvent.click(optionElement);
-
-    // Click the "Apply" button to apply changes
-    const applyButton = screen.getByRole('button', { name: 'Apply' });
-    fireEvent.click(applyButton);
 
     // React query should refetch transcripts using the isAlert filter and undefined for timestamps
     await waitFor(() => {
@@ -1713,19 +1710,12 @@ describe('TranscriptView', () => {
       );
     });
 
-    // Open the filter menu popover
-    const filterButton = screen.getByRole('button', { name: 'filter' });
-    fireEvent.click(filterButton);
-
-    // Enter a search query in the search input
-    const searchInput = screen.getByPlaceholderText(/Search transcripts.../i);
+    // Type a query into the inline search field and apply it with Enter.
+    const searchInput = screen.getByPlaceholderText(/Search transcripts/i);
     fireEvent.change(searchInput, { target: { value: 'dispatch' } });
+    fireEvent.keyDown(searchInput, { key: 'Enter' });
 
-    // Click the "Apply" button to apply changes
-    const applyButton = screen.getByRole('button', { name: 'Apply' });
-    fireEvent.click(applyButton);
-
-    // React query should refetch transcripts using the text query filter
+    // React query should refetch transcripts using the text query filter.
     await waitFor(() => {
       expect(listAudioSegments).toHaveBeenLastCalledWith(
         'feed123',
@@ -1739,6 +1729,94 @@ describe('TranscriptView', () => {
         'dispatch'
       );
     });
+  });
+
+  it('parks without re-grabbing playback when a date filter is applied (from playing)', async () => {
+    const playSpy = audioEngineMock.playSpy;
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments: initialAudioSegments,
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => expect(screen.getByText('Transcript 1')).toBeTruthy());
+    // Auto-play started; at the live edge Jump to live is disabled.
+    await waitFor(() => expect(playSpy).toHaveBeenCalledTimes(1));
+    expect(
+      screen.getByRole('button', { name: /Jump to live/i })
+    ).toBeDisabled();
+
+    // Open the calendar and apply a date — same as a mini-map navigation.
+    fireEvent.click(screen.getByRole('button', { name: /filter by date/i }));
+    fireEvent.click(await screen.findByText('picker-set-date'));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    // Parked: Jump to live re-enables (a date filter is now active) and playback
+    // was stopped, not re-grabbed onto the refetched list.
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Jump to live/i })
+      ).not.toBeDisabled()
+    );
+    expect(playSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('parks without playing when a date filter is applied while paused', async () => {
+    const playSpy = audioEngineMock.playSpy;
+    const initialAudioSegments = [
+      makeMockAudioSegment(
+        '1',
+        'feed123',
+        '2026-04-10T12:00:00Z',
+        '2026-04-10T12:00:05Z',
+        'Transcript 1',
+        'gs:://foo.m4a',
+        []
+      ),
+    ];
+    vi.mocked(listAudioSegments).mockResolvedValue({
+      segments: initialAudioSegments,
+      nextToken: undefined,
+    });
+
+    renderTranscriptView(
+      <TranscriptView onError={mockHandleError} triggerSnackbar={vi.fn()} />,
+      { initialEntries: ['/?feedId=feed123'] }
+    );
+
+    await waitFor(() => expect(screen.getByText('Transcript 1')).toBeTruthy());
+    await waitFor(() => expect(playSpy).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getAllByLabelText('pause')[0]);
+    await waitFor(() =>
+      expect(screen.getAllByLabelText('play')[0]).toBeTruthy()
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: /filter by date/i }));
+    fireEvent.click(await screen.findByText('picker-set-date'));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: /Jump to live/i })
+      ).not.toBeDisabled()
+    );
+    expect(playSpy).toHaveBeenCalledTimes(1);
   });
 
   it('advances playback to the next silence segment inside a silence bundle when the current one finishes', async () => {
