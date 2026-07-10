@@ -469,6 +469,7 @@ async def _process_finalized_segment(
     receipt_time = _now_utc()
     pcm_size = _path_size(current_segment_pcm) or 0
     pcm_samples = pcm_size // (2 * NUM_AUDIO_CHANNELS)
+    updated_cumulative_samples = cumulative_pcm_samples + pcm_samples
     chunk_duration_sec = pcm_samples / SAMPLE_RATE_HZ
 
     segment_bytes = await _encode_pcm_segment_to_flac(current_segment_pcm)
@@ -484,7 +485,7 @@ async def _process_finalized_segment(
             receipt_time
             if previous_receipt_time is None
             else previous_receipt_time,
-            cumulative_pcm_samples + pcm_samples,
+            updated_cumulative_samples,
         )
 
     chunk_start_offset_sec = cumulative_pcm_samples / SAMPLE_RATE_HZ
@@ -511,7 +512,7 @@ async def _process_finalized_segment(
         receipt_time=receipt_time,
         stream_interval_lag_sec=stream_interval_lag_sec,
     )
-    return chunk, receipt_time, cumulative_pcm_samples + pcm_samples
+    return chunk, receipt_time, updated_cumulative_samples
 
 
 async def _handle_process_done_no_segment(
