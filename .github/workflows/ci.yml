@@ -610,8 +610,25 @@ jobs:
             exit 1
           fi
 
-          if psql -v ON_ERROR_STOP=1 -f "$index_preflight_sql"; then
+          set +e
+          preflight_rejection_output=$(
+            psql -v ON_ERROR_STOP=1 -f "$index_preflight_sql" 2>&1
+          )
+          preflight_rejection_status=$?
+          set -e
+
+          if [ "$preflight_rejection_status" -eq 0 ]; then
             echo "::error::Membership-index preflight accepted the invalid wrong-table index"
+            exit 1
+          fi
+          if [ "$preflight_rejection_status" -ne 3 ]; then
+            echo "::error::Membership-index preflight failed outside the SQL script"
+            echo "$preflight_rejection_output"
+            exit 1
+          fi
+          if [[ "$preflight_rejection_output" != *"Unexpected or unhealthy membership-index relation in public"* ]]; then
+            echo "::error::Membership-index preflight failed with the wrong diagnostic"
+            echo "$preflight_rejection_output"
             exit 1
           fi
 
