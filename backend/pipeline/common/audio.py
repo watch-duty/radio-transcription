@@ -98,23 +98,30 @@ def _probe_file(file_path: str, format_args: list[str]) -> ProbeResult:
     stdout_str = res.stdout.decode(errors="replace").strip()
     try:
         data = json.loads(stdout_str)
-        if isinstance(data, dict):
-            format_info = data.get("format", {})
-            duration = format_info.get("duration")
-            if _is_unusable_duration(duration):
-                for st in data.get("streams", []):
-                    if isinstance(st, dict) and st.get("codec_type") == "audio":
-                        st_dur = st.get("duration")
-                        if not _is_unusable_duration(st_dur):
-                            duration = st_dur
-                            break
-            return ProbeResult(
-                duration=duration,
-                format_name=format_info.get("format_name"),
-            )
-        return ProbeResult(duration=str(data).strip(), format_name=None)
     except json.JSONDecodeError:
         return ProbeResult(duration=stdout_str, format_name=None)
+
+    if not isinstance(data, dict):
+        return ProbeResult(duration=str(data).strip(), format_name=None)
+
+    format_info = data.get("format", {})
+    duration = format_info.get("duration")
+    if _is_unusable_duration(duration):
+        duration = next(
+            (
+                st.get("duration")
+                for st in data.get("streams", [])
+                if isinstance(st, dict)
+                and st.get("codec_type") == "audio"
+                and not _is_unusable_duration(st.get("duration"))
+            ),
+            duration,
+        )
+
+    return ProbeResult(
+        duration=duration,
+        format_name=format_info.get("format_name"),
+    )
 
 
 def _run_verbose_probe(file_path: str) -> str:
