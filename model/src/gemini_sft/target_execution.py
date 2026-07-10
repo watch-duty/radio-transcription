@@ -42,7 +42,6 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 
-ONLINE_RETRY_SLEEP_SECONDS = 2.0
 ONLINE_SYNC_EVERY = 100
 ONLINE_LOG_EVERY = 100
 
@@ -264,20 +263,32 @@ async def run_online_target_inference(
         project=project,
         location=resource_location(target_model, default_location),
     )
+    max_attempts = max(1, max_retries)
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
         safety_settings=GEMINI_SAFETY_SETTINGS,
         temperature=float(GEMINI_GENERATION_CONFIG["temperature"]),
         max_output_tokens=int(GEMINI_GENERATION_CONFIG["max_output_tokens"]),
+        http_options=types.HttpOptions(
+            retry_options=types.HttpRetryOptions(
+                attempts=max_attempts,
+                initial_delay=2.0,
+                max_delay=60.0,
+                exp_base=2.0,
+                jitter=1.0,
+                http_status_codes=[408, 429, 500, 502, 503, 504],
+            )
+        ),
     )
     lock = asyncio.Lock()
-    semaphore = asyncio.Semaphore(max(1, concurrency))
+    snapshot_upload_lock = asyncio.Lock()
+    batch_size = max(1, concurrency)
+    semaphore = asyncio.Semaphore(batch_size)
     progress = {
         "done": len(completed),
         "since_sync": 0,
         "errors": _online_error_count(attempt_rows),
     }
-    max_attempts = max(1, max_retries)
 
     async def process_one(index: int, audio_uri: str) -> None:
         if audio_uri in completed:
@@ -290,12 +301,11 @@ async def run_online_target_inference(
                 history=history_list[index],
                 history_mode=prior_context_mode,
             )["request"]
-            prediction, error = await _generate_with_retries(
+            prediction, error = await _generate_response(
                 client=client,
                 model_id=target_model,
                 contents=request["contents"],
                 config=config,
-                max_retries=max_attempts,
             )
         out_row = {
             "audio_filepath": audio_uri,
@@ -325,19 +335,22 @@ async def run_online_target_inference(
                 log_errors,
             )
         if upload_rows is not None:
-            await _upload_periodic_prediction_snapshot(
-                storage_client=storage_client,
-                snapshot=_prediction_rows_jsonl(upload_rows),
-                predictions_uri=predictions_uri,
-                target_label=target_label,
-            )
+            async with snapshot_upload_lock:
+                await _upload_periodic_prediction_snapshot(
+                    storage_client=storage_client,
+                    snapshot=_prediction_rows_jsonl(upload_rows),
+                    predictions_uri=predictions_uri,
+                    target_label=target_label,
+                )
 
-    await asyncio.gather(
-        *(
-            process_one(index, audio_uri)
-            for index, audio_uri in enumerate(audio_uri_list)
+    for batch_start in range(0, len(audio_uri_list), batch_size):
+        batch_end = min(batch_start + batch_size, len(audio_uri_list))
+        await asyncio.gather(
+            *(
+                process_one(index, audio_uri_list[index])
+                for index in range(batch_start, batch_end)
+            )
         )
-    )
     await _upload_text_async(
         storage_client,
         _prediction_rows_jsonl(attempt_rows.values()),
@@ -460,30 +473,23 @@ def _prediction_rows_jsonl(rows: Iterable[dict[str, Any]]) -> str:
     return "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
 
 
-async def _generate_with_retries(
+async def _generate_response(
     *,
     client: Any,
     model_id: str,
     contents: list[dict[str, Any]],
     config: Any,
-    max_retries: int,
 ) -> tuple[str, str | None]:
-    last_error = "unknown error"
-    for attempt in range(1, max_retries + 1):
-        try:
-            response = await client.aio.models.generate_content(
-                model=model_id,
-                contents=contents,
-                config=config,
-            )
-            text = (response.text or "").strip()
-        except Exception as exc:  # pragma: no cover - exercised by callers.
-            last_error = f"{type(exc).__name__}: {exc}"
-            if attempt < max_retries:
-                await asyncio.sleep(ONLINE_RETRY_SLEEP_SECONDS * attempt)
-            continue
-        return text, None
-    return "", last_error
+    try:
+        response = await client.aio.models.generate_content(
+            model=model_id,
+            contents=contents,
+            config=config,
+        )
+        text = (response.text or "").strip()
+    except Exception as exc:
+        return "", f"{type(exc).__name__}: {exc}"
+    return text, None
 
 
 def _prediction_map(

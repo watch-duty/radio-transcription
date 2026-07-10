@@ -26,7 +26,7 @@ from common.gemini.vertex import (
 from fake_gcs import FakeStorageClient
 from gemini_sft.config import EvalExecutionConfig, EvalModelTarget
 from gemini_sft.target_execution import (
-    _generate_with_retries,
+    _generate_response,
     load_existing_online_predictions,
     online_prediction_metadata_uri,
     online_prediction_uri,
@@ -384,6 +384,8 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         mock_client = unittest.mock.MagicMock()
         mock_client.aio.models.generate_content = generate_content
         mock_genai.Client.return_value = mock_client
+        mock_types.HttpRetryOptions.side_effect = lambda **kwargs: kwargs
+        mock_types.HttpOptions.side_effect = lambda **kwargs: kwargs
         mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
 
         result = asyncio.run(
@@ -406,7 +408,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                 eval_manifest_uri="gs://data/eval.jsonl",
                 local_dir=self.local_dir,
                 concurrency=2,
-                max_retries=1,
+                max_retries=3,
             )
         )
 
@@ -428,9 +430,74 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         self.assertEqual(
             calls[0]["config"]["safety_settings"], GEMINI_SAFETY_SETTINGS
         )
+        self.assertEqual(
+            calls[0]["config"]["http_options"]["retry_options"],
+            {
+                "attempts": 3,
+                "initial_delay": 2.0,
+                "max_delay": 60.0,
+                "exp_base": 2.0,
+                "jitter": 1.0,
+                "http_status_codes": [408, 429, 500, 502, 503, 504],
+            },
+        )
         self.assertIn(
             '"error": null', self.storage.get(result.online_predictions_uri)
         )
+
+    @unittest.mock.patch("gemini_sft.target_execution.types")
+    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    def test_gather_batches_do_not_exceed_concurrency(
+        self, mock_genai, mock_types
+    ) -> None:
+        class Response:
+            text = "recognized"
+
+        async def generate_content(**kwargs):
+            return Response()
+
+        gather_argument_counts: list[int] = []
+        original_gather = asyncio.gather
+
+        async def tracking_gather(*awaitables, **kwargs):
+            gather_argument_counts.append(len(awaitables))
+            return await original_gather(*awaitables, **kwargs)
+
+        mock_client = unittest.mock.MagicMock()
+        mock_client.aio.models.generate_content = generate_content
+        mock_genai.Client.return_value = mock_client
+        mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
+
+        with unittest.mock.patch(
+            "gemini_sft.target_execution.asyncio.gather",
+            tracking_gather,
+        ):
+            asyncio.run(
+                run_online_target_inference(
+                    storage_client=self.storage,
+                    run_gcs_prefix="gs://bucket/run",
+                    project="project",
+                    default_location="us-central1",
+                    target_label="checkpoint_6",
+                    target_model=(
+                        "projects/p/locations/us-central1/endpoints/123"
+                    ),
+                    audio_uris=[
+                        f"gs://audio/{index}.flac" for index in range(5)
+                    ],
+                    histories=[[] for _ in range(5)],
+                    system_prompt="system",
+                    user_prompt="user",
+                    prior_context_count=8,
+                    prior_context_mode="text_turns",
+                    eval_manifest_uri="gs://data/eval.jsonl",
+                    local_dir=self.local_dir,
+                    concurrency=2,
+                    max_retries=1,
+                )
+            )
+
+        self.assertEqual(gather_argument_counts, [2, 2, 1])
 
     @unittest.mock.patch("gemini_sft.target_execution.types")
     @unittest.mock.patch("gemini_sft.target_execution.genai")
@@ -558,7 +625,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
     @unittest.mock.patch("gemini_sft.target_execution.types")
     @unittest.mock.patch("gemini_sft.target_execution.genai")
-    def test_periodic_upload_does_not_hold_append_lock(
+    def test_periodic_uploads_are_serialized_without_holding_append_lock(
         self, mock_genai, mock_types
     ) -> None:
         class Response:
@@ -569,6 +636,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
         async def run_scenario() -> None:
             upload_started = asyncio.Event()
+            second_upload_started = asyncio.Event()
             release_upload = asyncio.Event()
             prediction_upload_calls = 0
             first_snapshot_line_count: int | None = None
@@ -583,6 +651,8 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                     first_snapshot_line_count = len(str(args[1]).splitlines())
                     upload_started.set()
                     await release_upload.wait()
+                elif prediction_upload_calls == 2:
+                    second_upload_started.set()
 
             async def wait_for_two_rows(path: Path) -> None:
                 while True:
@@ -632,6 +702,8 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                     await asyncio.wait_for(
                         wait_for_two_rows(predictions_path), timeout=1.0
                     )
+                    await asyncio.sleep(0)
+                    self.assertFalse(second_upload_started.is_set())
                 finally:
                     release_upload.set()
                     await task
@@ -888,7 +960,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         )
 
 
-class TestGenerateWithRetries(unittest.TestCase):
+class TestGenerateResponse(unittest.TestCase):
     def test_empty_text_is_successful_prediction(self) -> None:
         class Response:
             text = ""
@@ -901,19 +973,18 @@ class TestGenerateWithRetries(unittest.TestCase):
         client.aio.models = Models()
 
         prediction, error = asyncio.run(
-            _generate_with_retries(
+            _generate_response(
                 client=client,
                 model_id="projects/p/locations/us-central1/endpoints/123",
                 contents=[],
                 config={},
-                max_retries=3,
             )
         )
 
         self.assertEqual(prediction, "")
         self.assertIsNone(error)
 
-    def test_response_text_exception_is_returned_as_standard_error(
+    def test_response_text_exception_is_captured_after_one_sdk_call(
         self,
     ) -> None:
         class Response:
@@ -923,19 +994,23 @@ class TestGenerateWithRetries(unittest.TestCase):
                 raise ValueError(msg)
 
         class Models:
+            def __init__(self) -> None:
+                self.calls = 0
+
             async def generate_content(self, **kwargs):
+                self.calls += 1
                 return Response()
 
+        models = Models()
         client = unittest.mock.MagicMock()
-        client.aio.models = Models()
+        client.aio.models = models
 
         prediction, error = asyncio.run(
-            _generate_with_retries(
+            _generate_response(
                 client=client,
                 model_id="projects/p/locations/us-central1/endpoints/123",
                 contents=[],
                 config={},
-                max_retries=1,
             )
         )
 
@@ -944,6 +1019,7 @@ class TestGenerateWithRetries(unittest.TestCase):
             error,
             "ValueError: response contains no candidates",
         )
+        self.assertEqual(models.calls, 1)
 
 
 if __name__ == "__main__":
