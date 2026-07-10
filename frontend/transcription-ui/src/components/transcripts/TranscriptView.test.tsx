@@ -203,6 +203,7 @@ vi.mock('../../audio/WebAudioPlayer', async (importOriginal) => ({
     setVolumeDb() {}
     setPan() {}
     setSpeed() {}
+    preloadNext() {}
     // Real stop() detaches listeners before the async pause event, so onPause
     // never fires — useAudioPlayback.stop() clears playback state directly.
     stop() {}

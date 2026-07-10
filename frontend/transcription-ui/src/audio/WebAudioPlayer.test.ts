@@ -153,16 +153,18 @@ class MockAudio {
 }
 
 let lastContext: MockAudioContext;
-let lastAudio: MockAudio;
+let audioInstances: MockAudio[] = [];
 
 beforeEach(() => {
+  audioInstances = [];
   vi.stubGlobal('AudioContext', function () {
     lastContext = new MockAudioContext();
     return lastContext;
   });
   vi.stubGlobal('Audio', function () {
-    lastAudio = new MockAudio();
-    return lastAudio;
+    const audio = new MockAudio();
+    audioInstances.push(audio);
+    return audio;
   });
 });
 
@@ -171,15 +173,19 @@ afterEach(() => {
 });
 
 describe('WebAudioPlayer', () => {
-  it('builds the MediaElementSource → Gain → StereoPanner → destination graph', () => {
+  it('builds the MediaElementSource → Gain → StereoPanner → destination graph for both players', () => {
     new WebAudioPlayer(new AudioContext());
 
     expect(lastContext.createMediaElementSource).toHaveBeenCalledWith(
-      lastAudio
+      audioInstances[0]
+    );
+    expect(lastContext.createMediaElementSource).toHaveBeenCalledWith(
+      audioInstances[1]
     );
     expect(lastContext.createGain).toHaveBeenCalled();
     expect(lastContext.createStereoPanner).toHaveBeenCalled();
-    expect(lastAudio.crossOrigin).toBe('anonymous');
+    expect(audioInstances[0].crossOrigin).toBe('anonymous');
+    expect(audioInstances[1].crossOrigin).toBe('anonymous');
     expect(lastContext.panner.connect).toHaveBeenCalledWith(
       lastContext.destination
     );
@@ -216,11 +222,12 @@ describe('WebAudioPlayer', () => {
     );
   });
 
-  it('sets playbackRate', () => {
+  it('sets playbackRate on both A and B players', () => {
     const player = new WebAudioPlayer(new AudioContext());
 
     player.setSpeed(1.5);
-    expect(lastAudio.playbackRate).toBe(1.5);
+    expect(audioInstances[0].playbackRate).toBe(1.5);
+    expect(audioInstances[1].playbackRate).toBe(1.5);
   });
 
   it('loads a clip, wires callbacks, and re-applies the current speed', () => {
@@ -234,38 +241,62 @@ describe('WebAudioPlayer', () => {
       onEnd,
     });
 
-    expect(lastAudio.src).toBe('https://example.com/clip.m4a');
-    expect(lastAudio.load).toHaveBeenCalled();
-    expect(lastAudio.playbackRate).toBe(1.25);
+    expect(audioInstances[0].src).toBe('https://example.com/clip.m4a');
+    expect(audioInstances[0].load).toHaveBeenCalled();
+    expect(audioInstances[0].playbackRate).toBe(1.25);
 
     handle.play();
     expect(lastContext.resume).toHaveBeenCalled();
-    expect(lastAudio.play).toHaveBeenCalled();
+    expect(audioInstances[0].play).toHaveBeenCalled();
     expect(onPlay).toHaveBeenCalled();
 
-    lastAudio.emit('ended');
+    audioInstances[0].emit('ended');
     expect(onEnd).toHaveBeenCalled();
+  });
+
+  it('preloads the next clip onto standby player and flips active player on load for gapless handoff', () => {
+    const player = new WebAudioPlayer(new AudioContext());
+    const onPlayB = vi.fn();
+
+    // Load clip 1 onto active player A
+    player.load('https://example.com/1.m4a', {});
+    expect(audioInstances[0].src).toBe('https://example.com/1.m4a');
+    expect(audioInstances[1].src).toBe('');
+
+    // Preload clip 2 onto standby player B
+    player.preloadNext('https://example.com/2.m4a');
+    expect(audioInstances[1].src).toBe('https://example.com/2.m4a');
+    expect(audioInstances[1].load).toHaveBeenCalled();
+
+    // Now load clip 2: since it is preloaded on player B, it flips active player to B
+    const handleB = player.load('https://example.com/2.m4a', {
+      onPlay: onPlayB,
+    });
+    handleB.play();
+
+    expect(audioInstances[1].play).toHaveBeenCalled();
+    expect(onPlayB).toHaveBeenCalled();
   });
 
   it('reads and writes the playback position', () => {
     const player = new WebAudioPlayer(new AudioContext());
     const handle = player.load('https://example.com/clip.m4a', {});
 
-    lastAudio.currentTime = 3.2;
+    audioInstances[0].currentTime = 3.2;
     expect(handle.getCurrentTime()).toBe(3.2);
 
     handle.setCurrentTime(7.5);
-    expect(lastAudio.currentTime).toBe(7.5);
+    expect(audioInstances[0].currentTime).toBe(7.5);
   });
 
   it('ignores a non-finite seek target', () => {
     const player = new WebAudioPlayer(new AudioContext());
     const handle = player.load('https://example.com/clip.m4a', {});
 
-    lastAudio.currentTime = 4;
+    audioInstances[0].currentTime = 4;
     handle.setCurrentTime(Infinity);
     handle.setCurrentTime(NaN);
-    expect(lastAudio.currentTime).toBe(4);
+    expect(audioInstances[0].currentTime).toBe(4);
   });
 
   it('does not detach the current clip when a stale handle is unloaded', () => {
@@ -277,7 +308,7 @@ describe('WebAudioPlayer', () => {
 
     stale.unload();
 
-    lastAudio.emit('pause');
+    audioInstances[0].emit('pause');
     expect(onPause).toHaveBeenCalled();
   });
 
@@ -287,9 +318,11 @@ describe('WebAudioPlayer', () => {
     player.load('https://example.com/clip.m4a', { onPause });
     player.stop();
 
-    expect(lastAudio.pause).toHaveBeenCalled();
+    expect(audioInstances[0].pause).toHaveBeenCalled();
+    expect(audioInstances[1].pause).toHaveBeenCalled();
     expect(onPause).toHaveBeenCalled();
-    expect(lastAudio.removeAttribute).toHaveBeenCalledWith('src');
+    expect(audioInstances[0].removeAttribute).toHaveBeenCalledWith('src');
+    expect(audioInstances[1].removeAttribute).toHaveBeenCalledWith('src');
     expect(lastContext.close).not.toHaveBeenCalled();
   });
 

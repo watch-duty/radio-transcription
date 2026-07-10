@@ -26,6 +26,7 @@ const engineMock = vi.hoisted(() => ({
   setVolumeDbSpy: vi.fn(),
   setPanSpy: vi.fn(),
   setSpeedSpy: vi.fn(),
+  preloadNextSpy: vi.fn(),
 }));
 
 vi.mock('../audio/WebAudioPlayer', () => ({
@@ -48,6 +49,9 @@ vi.mock('../audio/WebAudioPlayer', () => ({
     }
     setSpeed(rate: number) {
       engineMock.setSpeedSpy(rate);
+    }
+    preloadNext(src: string) {
+      engineMock.preloadNextSpy(src);
     }
     stop() {
       engineMock.stopSpy();

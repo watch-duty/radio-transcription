@@ -71,29 +71,63 @@ export function createAudioContext(): AudioContext {
   return new AudioContextClass();
 }
 
-/** MediaElementSource → GainNode → StereoPannerNode → destination */
+function urlsMatch(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  try {
+    const base =
+      typeof window !== 'undefined' && window.location?.href
+        ? window.location.href
+        : 'http://localhost';
+    return new URL(a, base).href === new URL(b, base).href;
+  } catch {
+    return a === b;
+  }
+}
+
+/** Dual MediaElementSource → GainNode → StereoPannerNode → destination (A/B Ping-Pong Buffering) */
 export class WebAudioPlayer {
   private readonly context: AudioContext;
-  private readonly audio: HTMLAudioElement;
-  private readonly source: MediaElementAudioSourceNode;
+  private readonly audioA: HTMLAudioElement;
+  private readonly audioB: HTMLAudioElement;
+  private readonly sourceA: MediaElementAudioSourceNode;
+  private readonly sourceB: MediaElementAudioSourceNode;
   private readonly gain: GainNode;
   private readonly panner: StereoPannerNode;
 
+  private activePlayer: 'A' | 'B' = 'A';
   private activeListeners: GraphListeners | null = null;
   private speed = 1;
+
+  private get activeAudio(): HTMLAudioElement {
+    return this.activePlayer === 'A' ? this.audioA : this.audioB;
+  }
+
+  private get standbyAudio(): HTMLAudioElement {
+    return this.activePlayer === 'A' ? this.audioB : this.audioA;
+  }
 
   constructor(context: AudioContext) {
     this.context = context;
 
-    this.audio = new Audio();
-    // Cross-origin GCS media must be CORS-clean here or Web Audio silences the output.
-    this.audio.crossOrigin = 'anonymous';
-    this.audio.preload = 'auto';
+    this.audioA = new Audio();
+    this.audioA.crossOrigin = 'anonymous';
+    this.audioA.preload = 'auto';
 
-    this.source = this.context.createMediaElementSource(this.audio);
+    this.audioB = new Audio();
+    this.audioB.crossOrigin = 'anonymous';
+    this.audioB.preload = 'auto';
+
+    this.sourceA = this.context.createMediaElementSource(this.audioA);
+    this.sourceB = this.context.createMediaElementSource(this.audioB);
+
     this.gain = this.context.createGain();
     this.panner = this.context.createStereoPanner();
-    this.source
+
+    this.sourceA
+      .connect(this.gain)
+      .connect(this.panner)
+      .connect(this.context.destination);
+    this.sourceB
       .connect(this.gain)
       .connect(this.panner)
       .connect(this.context.destination);
@@ -121,43 +155,69 @@ export class WebAudioPlayer {
 
   setSpeed(rate: number): void {
     this.speed = rate;
-    this.audio.playbackRate = rate;
+    this.audioA.playbackRate = rate;
+    this.audioB.playbackRate = rate;
+  }
+
+  preloadNext(src: string): void {
+    if (!src) return;
+    const standby = this.standbyAudio;
+    if (!urlsMatch(standby.src, src)) {
+      standby.src = src;
+      standby.load();
+      standby.playbackRate = this.speed;
+    }
   }
 
   load(src: string, callbacks: AudioCallbacks): PlaybackController {
     this.detachListeners();
 
+    const standby = this.standbyAudio;
+    if (urlsMatch(standby.src, src)) {
+      // Flip active player to the already-loaded standby player for instant gapless handoff
+      this.activePlayer = this.activePlayer === 'A' ? 'B' : 'A';
+    } else {
+      const active = this.activeAudio;
+      if (!urlsMatch(active.src, src)) {
+        active.src = src;
+        active.load();
+        active.playbackRate = this.speed;
+      }
+      if (standby.src) {
+        standby.removeAttribute('src');
+        standby.load();
+      }
+    }
+
+    const audio = this.activeAudio;
     const listeners: GraphListeners = {
       play: () => callbacks.onPlay?.(),
       pause: () => callbacks.onPause?.(),
       ended: () => callbacks.onEnd?.(),
       error: () => callbacks.onError?.(),
     };
-    this.audio.addEventListener('play', listeners.play);
-    this.audio.addEventListener('pause', listeners.pause);
-    this.audio.addEventListener('ended', listeners.ended);
-    this.audio.addEventListener('error', listeners.error);
+    audio.addEventListener('play', listeners.play);
+    audio.addEventListener('pause', listeners.pause);
+    audio.addEventListener('ended', listeners.ended);
+    audio.addEventListener('error', listeners.error);
     this.activeListeners = listeners;
 
-    this.audio.src = src;
-    this.audio.load();
-    // Changing src resets playbackRate, so re-apply the current speed.
-    this.audio.playbackRate = this.speed;
+    audio.playbackRate = this.speed;
 
     return {
       play: () => {
         this.resume();
-        this.audio.play().catch(() => {});
+        audio.play().catch(() => {});
       },
-      pause: () => this.audio.pause(),
+      pause: () => audio.pause(),
       stop: () => {
-        this.audio.pause();
-        this.audio.currentTime = 0;
+        audio.pause();
+        audio.currentTime = 0;
       },
-      getCurrentTime: () => this.audio.currentTime,
+      getCurrentTime: () => audio.currentTime,
       setCurrentTime: (time: number) => {
         if (!Number.isFinite(time)) return;
-        this.audio.currentTime = time;
+        audio.currentTime = time;
       },
       unload: () => this.detachListeners(listeners),
       off: () => this.detachListeners(listeners),
@@ -165,29 +225,34 @@ export class WebAudioPlayer {
   }
 
   stop(): void {
-    // Halt output before tearing down. The `pause` event is async, so callers
-    // must clear their own playback state — it won't reach a detached listener.
-    this.audio.pause();
+    this.audioA.pause();
+    this.audioB.pause();
     this.detachListeners();
-    this.audio.removeAttribute('src');
-    this.audio.load();
+    this.audioA.removeAttribute('src');
+    this.audioA.load();
+    this.audioB.removeAttribute('src');
+    this.audioB.load();
   }
 
   dispose(): void {
     this.stop();
-    this.source.disconnect();
+    this.sourceA.disconnect();
+    this.sourceB.disconnect();
     this.gain.disconnect();
     this.panner.disconnect();
   }
 
-  // A stale handle (already replaced by a newer `load`) is a no-op.
   private detachListeners(listeners?: GraphListeners): void {
     const target = listeners ?? this.activeListeners;
     if (!target || (listeners && listeners !== this.activeListeners)) return;
-    this.audio.removeEventListener('play', target.play);
-    this.audio.removeEventListener('pause', target.pause);
-    this.audio.removeEventListener('ended', target.ended);
-    this.audio.removeEventListener('error', target.error);
+    this.audioA.removeEventListener('play', target.play);
+    this.audioA.removeEventListener('pause', target.pause);
+    this.audioA.removeEventListener('ended', target.ended);
+    this.audioA.removeEventListener('error', target.error);
+    this.audioB.removeEventListener('play', target.play);
+    this.audioB.removeEventListener('pause', target.pause);
+    this.audioB.removeEventListener('ended', target.ended);
+    this.audioB.removeEventListener('error', target.error);
     this.activeListeners = null;
   }
 }

@@ -130,6 +130,14 @@ export function useAudioPlayback({
           onPlay: () => {
             setIsAudioPlaying(true);
             isAudioPlayingRef.current = true;
+            const next = getNextContinuousSegment(
+              audioSegmentsRef.current ?? [],
+              rawAudioSegmentsRef.current ?? [],
+              segmentId
+            );
+            if (next && playerRef.current) {
+              playerRef.current.preloadNext(getAudioUrl(next.uri));
+            }
           },
           onPause: () => {
             setIsAudioPlaying(false);
@@ -161,12 +169,33 @@ export function useAudioPlayback({
 
       if (!isAudioPlayingRef.current || newAudio) {
         currentAudio.current.play();
+        const next = getNextContinuousSegment(
+          audioSegmentsRef.current ?? [],
+          rawAudioSegmentsRef.current ?? [],
+          segmentId
+        );
+        if (next && playerRef.current) {
+          playerRef.current.preloadNext(getAudioUrl(next.uri));
+        }
       } else {
         currentAudio.current.pause();
       }
     },
     [audioSegmentsRef, rawAudioSegmentsRef, onPlaySegment]
   );
+
+  useEffect(() => {
+    if (isAudioPlaying && currentlyPlayingSegmentId && playerRef.current) {
+      const next = getNextContinuousSegment(
+        audioSegmentsRef.current ?? [],
+        rawAudioSegmentsRef.current ?? [],
+        currentlyPlayingSegmentId
+      );
+      if (next) {
+        playerRef.current.preloadNext(getAudioUrl(next.uri));
+      }
+    }
+  });
 
   const stop = useCallback(() => {
     playerRef.current?.stop();
