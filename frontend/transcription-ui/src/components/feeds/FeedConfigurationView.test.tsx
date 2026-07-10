@@ -1190,7 +1190,7 @@ describe('FeedConfigurationView', () => {
     // The alert should be in the document immediately
     expect(
       screen.getByText(
-        'Updating timezone requires a manual deactivate and reset in order to take effect.'
+        'After updating the timezone, please deactivate and reset the feed.'
       )
     ).toBeInTheDocument();
   });
@@ -1213,7 +1213,7 @@ describe('FeedConfigurationView', () => {
     // Warning is displayed immediately upon typing
     expect(
       screen.getByText(
-        'Updating timezone requires a manual deactivate and reset in order to take effect.'
+        'After updating the timezone, please deactivate and reset the feed.'
       )
     ).toBeInTheDocument();
 
@@ -1222,7 +1222,7 @@ describe('FeedConfigurationView', () => {
     fireEvent.change(tagKeyInput, { target: { value: '' } });
     expect(
       screen.queryByText(
-        'Updating timezone requires a manual deactivate and reset in order to take effect.'
+        'After updating the timezone, please deactivate and reset the feed.'
       )
     ).not.toBeInTheDocument();
 
