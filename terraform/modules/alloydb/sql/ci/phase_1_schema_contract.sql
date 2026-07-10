@@ -421,4 +421,274 @@ BEGIN
 END
 $contract$;
 
+-- Guard catalog and ordinary-role behavior probes.
+DO $guard_contract$
+DECLARE
+    lease_table_oid OID;
+    guard_function_oid OID;
+    source_type_attnum SMALLINT;
+    lease_key_attnum SMALLINT;
+    fencing_token_attnum SMALLINT;
+    fixture_source_type TEXT;
+    fixture_key TEXT;
+    expected_trigger RECORD;
+    actual_trigger RECORD;
+BEGIN
+    SELECT c.oid
+      INTO lease_table_oid
+      FROM pg_catalog.pg_class AS c
+      JOIN pg_catalog.pg_namespace AS n
+        ON n.oid = c.relnamespace
+     WHERE n.nspname = 'public'
+       AND c.relname = 'ingestion_leases'
+       AND c.relkind = 'r';
+
+    SELECT p.oid
+      INTO guard_function_oid
+      FROM pg_catalog.pg_proc AS p
+      JOIN pg_catalog.pg_namespace AS n
+        ON n.oid = p.pronamespace
+      JOIN pg_catalog.pg_language AS l
+        ON l.oid = p.prolang
+     WHERE n.nspname = 'public'
+       AND p.proname = 'guard_ingestion_lease_identity'
+       AND p.pronargs = 0
+       AND p.prorettype = 'trigger'::regtype
+       AND l.lanname = 'plpgsql';
+
+    IF lease_table_oid IS NULL OR guard_function_oid IS NULL THEN
+        RAISE EXCEPTION 'Lease guard table/function catalog contract failed';
+    END IF;
+
+    SELECT a.attnum
+      INTO source_type_attnum
+      FROM pg_catalog.pg_attribute AS a
+     WHERE a.attrelid = lease_table_oid
+       AND a.attname = 'source_type'
+       AND a.attnum > 0
+       AND NOT a.attisdropped;
+
+    SELECT a.attnum
+      INTO lease_key_attnum
+      FROM pg_catalog.pg_attribute AS a
+     WHERE a.attrelid = lease_table_oid
+       AND a.attname = 'lease_key'
+       AND a.attnum > 0
+       AND NOT a.attisdropped;
+
+    SELECT a.attnum
+      INTO fencing_token_attnum
+      FROM pg_catalog.pg_attribute AS a
+     WHERE a.attrelid = lease_table_oid
+       AND a.attname = 'fencing_token'
+       AND a.attnum > 0
+       AND NOT a.attisdropped;
+
+    FOR expected_trigger IN
+        SELECT *
+          FROM (VALUES
+              (
+                  'trg_ingestion_leases_prevent_delete',
+                  11::SMALLINT,
+                  ''::TEXT
+              ),
+              (
+                  'trg_ingestion_leases_prevent_truncate',
+                  34::SMALLINT,
+                  ''::TEXT
+              ),
+              (
+                  'trg_ingestion_leases_protect_identity_and_fence',
+                  19::SMALLINT,
+                  pg_catalog.format(
+                      '%s %s %s',
+                      source_type_attnum,
+                      lease_key_attnum,
+                      fencing_token_attnum
+                  )
+              )
+          ) AS required(trigger_name, trigger_type, trigger_columns)
+    LOOP
+        SELECT
+            t.tgfoid,
+            t.tgtype,
+            t.tgenabled,
+            t.tgisinternal,
+            t.tgnargs,
+            t.tgattr::TEXT AS trigger_columns,
+            t.tgqual
+          INTO actual_trigger
+          FROM pg_catalog.pg_trigger AS t
+         WHERE t.tgrelid = lease_table_oid
+           AND t.tgname = expected_trigger.trigger_name;
+
+        IF NOT FOUND
+           OR actual_trigger.tgfoid IS DISTINCT FROM guard_function_oid
+           OR actual_trigger.tgtype IS DISTINCT FROM
+              expected_trigger.trigger_type
+           OR actual_trigger.tgenabled <> 'A'
+           OR actual_trigger.tgisinternal
+           OR actual_trigger.tgnargs <> 0
+           OR actual_trigger.trigger_columns IS DISTINCT FROM
+              expected_trigger.trigger_columns
+           OR actual_trigger.tgqual IS NOT NULL THEN
+            RAISE EXCEPTION
+                'Lease guard trigger % failed the schema contract',
+                expected_trigger.trigger_name;
+        END IF;
+    END LOOP;
+
+    SELECT st.slug
+      INTO fixture_source_type
+      FROM public.source_types AS st
+     ORDER BY st.slug
+     LIMIT 1;
+
+    fixture_key := pg_catalog.format(
+        'phase-1-guard-%s-%s',
+        pg_catalog.pg_backend_pid(),
+        pg_catalog.txid_current()
+    );
+
+    INSERT INTO public.ingestion_leases (
+        source_type,
+        lease_key,
+        fencing_token
+    ) VALUES (fixture_source_type, fixture_key, 10);
+
+    BEGIN
+        DELETE FROM public.ingestion_leases
+         WHERE source_type = fixture_source_type
+           AND lease_key = fixture_key;
+        RAISE EXCEPTION 'Lease DELETE guard did not return SQLSTATE 23514';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        TRUNCATE TABLE public.ingestion_leases;
+        RAISE EXCEPTION 'Lease TRUNCATE guard did not return SQLSTATE 23514';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.ingestion_leases
+           SET source_type = fixture_source_type || '-re-keyed'
+         WHERE source_type = fixture_source_type
+           AND lease_key = fixture_key;
+        RAISE EXCEPTION 'Lease source re-key guard did not return SQLSTATE 23514';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.ingestion_leases
+           SET lease_key = fixture_key || '-re-keyed'
+         WHERE source_type = fixture_source_type
+           AND lease_key = fixture_key;
+        RAISE EXCEPTION 'Lease key re-key guard did not return SQLSTATE 23514';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        UPDATE public.ingestion_leases
+           SET fencing_token = 9
+         WHERE source_type = fixture_source_type
+           AND lease_key = fixture_key;
+        RAISE EXCEPTION 'Lease fence regression guard did not return SQLSTATE 23514';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    IF NOT EXISTS (
+        SELECT 1
+          FROM public.ingestion_leases AS il
+         WHERE il.source_type = fixture_source_type
+           AND il.lease_key = fixture_key
+           AND il.fencing_token = 10
+    ) THEN
+        RAISE EXCEPTION
+            'Rejected Lease operations changed or hid the protected row';
+    END IF;
+
+    UPDATE public.ingestion_leases
+       SET fencing_token = 10
+     WHERE source_type = fixture_source_type
+       AND lease_key = fixture_key;
+
+    UPDATE public.ingestion_leases
+       SET fencing_token = 11
+     WHERE source_type = fixture_source_type
+       AND lease_key = fixture_key;
+
+    IF NOT EXISTS (
+        SELECT 1
+          FROM public.ingestion_leases AS il
+         WHERE il.source_type = fixture_source_type
+           AND il.lease_key = fixture_key
+           AND il.fencing_token = 11
+    ) THEN
+        RAISE EXCEPTION
+            'Equal or increasing Lease fencing-token update was rejected';
+    END IF;
+END
+$guard_contract$;
+
+SET LOCAL session_replication_role = replica;
+
+-- ALWAYS triggers must still reject both protected row mutation and
+-- destructive table mutation when ordinary triggers would be suppressed.
+DO $replica_guard_contract$
+DECLARE
+    fixture_source_type TEXT;
+    fixture_key TEXT;
+BEGIN
+    SELECT st.slug
+      INTO fixture_source_type
+      FROM public.source_types AS st
+     ORDER BY st.slug
+     LIMIT 1;
+
+    fixture_key := pg_catalog.format(
+        'phase-1-guard-%s-%s',
+        pg_catalog.pg_backend_pid(),
+        pg_catalog.txid_current()
+    );
+
+    BEGIN
+        UPDATE public.ingestion_leases
+           SET fencing_token = 10
+         WHERE source_type = fixture_source_type
+           AND lease_key = fixture_key;
+        RAISE EXCEPTION
+            'Replica-role fence guard did not return SQLSTATE 23514';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    BEGIN
+        TRUNCATE TABLE public.ingestion_leases;
+        RAISE EXCEPTION
+            'Replica-role TRUNCATE guard did not return SQLSTATE 23514';
+    EXCEPTION
+        WHEN SQLSTATE '23514' THEN NULL;
+    END;
+
+    IF NOT EXISTS (
+        SELECT 1
+          FROM public.ingestion_leases AS il
+         WHERE il.source_type = fixture_source_type
+           AND il.lease_key = fixture_key
+           AND il.fencing_token = 11
+    ) THEN
+        RAISE EXCEPTION
+            'Replica-role protected operations changed or hid the Lease row';
+    END IF;
+END
+$replica_guard_contract$;
+
+SET LOCAL session_replication_role = origin;
+
 ROLLBACK;
