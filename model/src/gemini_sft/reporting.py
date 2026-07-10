@@ -26,7 +26,15 @@ REPORT_COLUMNS = (
 
 @dataclasses.dataclass(frozen=True)
 class ReportArtifacts:
-    """Artifact URIs that make a target's aggregate metrics reproducible."""
+    """Artifact URIs that make a target's aggregate metrics reproducible.
+
+    Attributes:
+        raw_output_uri: Raw batch-provider output location, when applicable.
+        online_predictions_uri: Online prediction-attempt cache location.
+        normalized_manifest_uri: Normalized inference manifest location.
+        summary_json_uri: Published JSON summary location.
+        summary_markdown_uri: Published Markdown summary location.
+    """
 
     raw_output_uri: str | None = None
     online_predictions_uri: str | None = None
@@ -37,7 +45,25 @@ class ReportArtifacts:
 
 @dataclasses.dataclass(frozen=True)
 class TargetMetrics:
-    """Metrics and provenance for one evaluated model target."""
+    """Metrics and provenance for one evaluated model target.
+
+    Attributes:
+        target_label: Stable operator-facing label for the target.
+        model: Publisher model, tuned endpoint, or checkpoint endpoint.
+        wer: Word error rate percentage.
+        cer: Character error rate percentage.
+        keyword_accuracy: Occurrence-weighted keyword accuracy percentage.
+        empty_or_unintelligible_rate: Percentage of empty or explicitly
+            unintelligible hypotheses.
+        insertions: Word-level insertion count.
+        deletions: Word-level deletion count.
+        substitutions: Word-level substitution count.
+        total_reference_words: Number of words in the scoring denominator.
+        missing_prediction_count: Eval rows without successful predictions.
+        artifacts: URIs for reproducible evaluation artifacts.
+        keyword_metrics: Per-keyword occurrence and accuracy details.
+        metadata: Backend- or target-specific report metadata.
+    """
 
     target_label: str
     model: str
@@ -61,7 +87,14 @@ class TargetMetrics:
 
 @dataclasses.dataclass(frozen=True)
 class EvalReport:
-    """Structured report rendered to console, Markdown, and JSON."""
+    """Structured report rendered to console, Markdown, and JSON.
+
+    Attributes:
+        round_id: Stable identifier for the SFT run.
+        generated_at: ISO-formatted report generation timestamp.
+        target: Metrics and provenance for the evaluated target.
+        metadata: Run-level report metadata.
+    """
 
     round_id: str
     generated_at: str
@@ -95,6 +128,10 @@ def build_target_metrics(
 
     Returns:
         Canonical target metrics ready for JSON, Markdown, or console output.
+
+    Raises:
+        ImportError: If the optional scoring dependency is unavailable.
+        ValueError: If reference and hypothesis counts differ.
     """
     wer_result = scoring.compute_wer(refs, hyps, normalizer=normalizer)
     cer_result = scoring.compute_cer(refs, hyps, normalizer=normalizer)
@@ -123,7 +160,14 @@ def build_target_metrics(
 
 
 def report_to_dict(report: EvalReport) -> dict[str, typing.Any]:
-    """Return a JSON-compatible dictionary for an eval report."""
+    """Return a JSON-compatible dictionary for an eval report.
+
+    Args:
+        report: Structured report to serialize.
+
+    Returns:
+        JSON-compatible report data with columns, metadata, and target metrics.
+    """
     return {
         "round_id": report.round_id,
         "generated_at": report.generated_at,
@@ -134,7 +178,14 @@ def report_to_dict(report: EvalReport) -> dict[str, typing.Any]:
 
 
 def render_markdown_report(report: EvalReport) -> str:
-    """Render the shared report as Markdown."""
+    """Render the shared report as Markdown.
+
+    Args:
+        report: Structured report to render.
+
+    Returns:
+        Markdown containing the run heading and target metrics table.
+    """
     lines = [
         f"# Gemini SFT Eval Report - {report.round_id}",
         "",
@@ -147,7 +198,14 @@ def render_markdown_report(report: EvalReport) -> str:
 
 
 def render_console_report(report: EvalReport) -> str:
-    """Render the shared report for console output."""
+    """Render the shared report for console output.
+
+    Args:
+        report: Structured report to render.
+
+    Returns:
+        Markdown-style target metrics table suitable for console logging.
+    """
     return _render_target_table(report.target)
 
 

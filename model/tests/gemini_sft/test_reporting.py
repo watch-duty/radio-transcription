@@ -1,4 +1,4 @@
-"""Tests for the Gemini SFT evaluation reporting contract."""
+"""Tests for Gemini SFT evaluation reporting."""
 
 from __future__ import annotations
 

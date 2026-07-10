@@ -76,6 +76,21 @@ def build_request(
     ``mimeType``/``systemInstruction``/``generationConfig``/
     ``safetySettings``). SFT JSONL, batch input JSONL, and batch output parsing
     all use the same shape.
+
+    Args:
+        audio_uri: GCS URI for the current FLAC audio segment.
+        system_prompt: System instruction included in the request.
+        user_prompt: User instruction for the current audio turn.
+        history: Prior transcript turns ordered from oldest to newest.
+        history_mode: Context encoding mode used to build request contents.
+        generation_config: Generation parameters copied into the request.
+        safety_settings: Safety settings copied into the request.
+
+    Returns:
+        A canonical batch request wrapper containing plain Python objects.
+
+    Raises:
+        ValueError: If ``history_mode`` is unsupported.
     """
     contents = context.build_transcription_contents(
         audio_uri=audio_uri,
@@ -105,6 +120,15 @@ def parse_batch_output(
     canonical camelCase request shape emitted by ``build_request``. Error/status
     rows, malformed JSONL rows, and output rows without an identifiable audio
     URI are skipped.
+
+    Args:
+        lines: Iterable of complete JSONL rows from Vertex batch output.
+
+    Returns:
+        A mapping from each identifiable audio URI to its prediction text.
+
+    Raises:
+        TypeError: If ``lines`` is one string instead of an iterable of rows.
     """
     if isinstance(lines, str):
         msg = "parse_batch_output expects an iterable of JSONL lines, not a string"
@@ -528,7 +552,15 @@ def submit_batch_inference(
 def resource_location(
     resource_name: str, default: str | None = None
 ) -> str | None:
-    """Extract a Vertex resource location from a full resource name."""
+    """Extract a Vertex location from a full resource name.
+
+    Args:
+        resource_name: Full Vertex resource name or publisher model ID.
+        default: Value returned when the name contains no location segment.
+
+    Returns:
+        The embedded location when present; otherwise, ``default``.
+    """
     match = _RESOURCE_LOCATION_RE.search(resource_name)
     return match.group(1) if match else default
 

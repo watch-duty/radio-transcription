@@ -76,7 +76,26 @@ def evaluate_run(  # noqa: PLR0915
     storage_client: storage.Client,
     config: dict[str, typing.Any],
 ) -> int:
-    """Run the configured eval model and score one config-driven run."""
+    """Run the configured eval model and score one config-driven run.
+
+    Args:
+        args: Parsed CLI arguments retained for handler compatibility.
+        run_cfg: Validated local configuration for the eval run.
+        storage_client: Client used to read and write GCS artifacts.
+        config: Durable run configuration loaded from GCS ``config.json``.
+
+    Returns:
+        Zero after evaluation and report publication complete, or one when
+        batch inference does not produce predictions.
+
+    Raises:
+        ImportError: If a required provider or scoring dependency is missing.
+        OSError: If a local evaluation artifact cannot be read or written.
+        TypeError: If the durable configuration has an invalid field type.
+        ValueError: If configuration, manifest, or backend validation fails.
+        RuntimeError: If a provider operation reaches a failed state.
+        TimeoutError: If a provider operation exceeds its timeout.
+    """
     del args
     system_prompt = config_lib.require_config_str(config, "system_prompt")
     user_prompt = config_lib.require_config_str(config, "user_prompt")

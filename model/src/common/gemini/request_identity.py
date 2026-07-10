@@ -27,7 +27,28 @@ def build_request_identity(
     generation_config: dict[str, typing.Any],
     safety_settings: collections.abc.Sequence[dict[str, typing.Any]],
 ) -> dict[str, typing.Any]:
-    """Return the request-defining identity for Gemini eval inference."""
+    """Build the request-defining identity for Gemini evaluation inference.
+
+    Args:
+        target_label: Stable model target label.
+        model: Publisher model ID or full Vertex model resource name.
+        eval_manifest_uri: Canonical evaluation manifest URI.
+        audio_uris: Ordered audio URIs included in the evaluation.
+        request_digests: Ordered request hashes aligned with ``audio_uris``.
+        system_prompt: System instruction used for inference.
+        user_prompt: User instruction used for each current audio turn.
+        prior_context_count: Configured prior-turn window size.
+        prior_context_mode: Configured context encoding mode.
+        generation_config: Generation parameters that affect inference.
+        safety_settings: Safety settings that affect inference.
+
+    Returns:
+        A JSON-compatible identity dictionary with copied mutable values.
+
+    Raises:
+        ValueError: If ``request_digests`` and ``audio_uris`` have different
+            lengths.
+    """
     audio_uri_list = list(audio_uris)
     request_digest_list = list(request_digests)
     if len(audio_uri_list) != len(request_digest_list):
@@ -64,7 +85,27 @@ def build_gemini_eval_request_identity(
     ]
     | None = None,
 ) -> dict[str, typing.Any]:
-    """Return the canonical Gemini eval inference identity."""
+    """Build the canonical identity for Gemini evaluation inference.
+
+    Args:
+        target_label: Stable model target label.
+        model: Publisher model ID or full Vertex model resource name.
+        eval_manifest_uri: Canonical evaluation manifest URI.
+        audio_uris: Ordered audio URIs included in the evaluation.
+        system_prompt: System instruction used for inference.
+        user_prompt: User instruction used for each current audio turn.
+        prior_context_count: Configured prior-turn window size.
+        prior_context_mode: Context encoding mode used to build each request.
+        histories: Prior turns aligned one-for-one with ``audio_uris``. Empty
+            histories are used when omitted.
+
+    Returns:
+        A request identity containing one deterministic digest per audio URI.
+
+    Raises:
+        ValueError: If histories are misaligned or ``prior_context_mode`` is
+            unsupported.
+    """
     audio_uri_list = list(audio_uris)
     history_list = (
         [list(history) for history in histories]
@@ -94,7 +135,14 @@ def build_gemini_eval_request_identity(
 
 
 def request_identity_hash(identity: dict[str, typing.Any]) -> str:
-    """Return a stable SHA-256 hash for a request identity."""
+    """Hash a request identity using deterministic JSON serialization.
+
+    Args:
+        identity: JSON-compatible request identity.
+
+    Returns:
+        The lowercase hexadecimal SHA-256 digest.
+    """
     payload = json.dumps(
         identity,
         ensure_ascii=True,
@@ -107,7 +155,14 @@ def request_identity_hash(identity: dict[str, typing.Any]) -> str:
 def metadata_payload(
     identity: dict[str, typing.Any],
 ) -> dict[str, typing.Any]:
-    """Return the metadata sidecar payload for a request identity."""
+    """Build the metadata sidecar payload for a request identity.
+
+    Args:
+        identity: JSON-compatible request identity.
+
+    Returns:
+        A dictionary containing the identity and its deterministic hash.
+    """
     return {
         "request_identity_hash": request_identity_hash(identity),
         "request_identity": identity,
@@ -118,7 +173,12 @@ def write_metadata(
     path: pathlib.Path,
     identity: dict[str, typing.Any],
 ) -> None:
-    """Write a request identity metadata sidecar."""
+    """Write a request identity metadata sidecar as JSON.
+
+    Args:
+        path: Local destination path. Missing parent directories are created.
+        identity: JSON-compatible request identity to persist.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(metadata_payload(identity), sort_keys=True) + "\n",
@@ -131,7 +191,19 @@ def load_metadata_identity(
     *,
     error_message: str = "request identity mismatch",
 ) -> dict[str, typing.Any]:
-    """Load and hash-check request identity metadata from a sidecar file."""
+    """Load and hash-check request identity metadata from a sidecar file.
+
+    Args:
+        path: Local metadata sidecar path.
+        error_message: Prefix used for validation error messages.
+
+    Returns:
+        The validated request identity dictionary.
+
+    Raises:
+        TypeError: If the sidecar or its request identity is not an object.
+        ValueError: If a stored identity hash does not match its payload.
+    """
     metadata = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(metadata, dict):
         msg = f"{error_message}: invalid metadata"
@@ -152,7 +224,16 @@ def validate_exact_identity(
     request_identity: dict[str, typing.Any],
     error_message: str,
 ) -> None:
-    """Raise if two request identities are not exactly equal."""
+    """Validate exact equality between stored and requested identities.
+
+    Args:
+        existing_identity: Identity loaded from reusable output metadata.
+        request_identity: Identity required by the current evaluation.
+        error_message: Message used when validation fails.
+
+    Raises:
+        ValueError: If the identities differ.
+    """
     if existing_identity != request_identity:
         raise ValueError(error_message)
 
@@ -162,7 +243,18 @@ def validate_prefix_identity(
     request_identity: dict[str, typing.Any],
     error_message: str,
 ) -> None:
-    """Raise unless identity matches exactly or stored audio is a prefix."""
+    """Validate that stored requests form a reusable prefix.
+
+    Args:
+        existing_identity: Identity loaded from reusable online output.
+        request_identity: Identity required by the current evaluation.
+        error_message: Message used when validation fails.
+
+    Raises:
+        ValueError: If fixed identity fields differ, URI and digest sequence
+            lengths disagree, or stored URI and request-digest sequences are
+            not prefixes of the requested sequences.
+    """
     existing_audio = list(existing_identity.get("audio_uris") or [])
     request_audio = list(request_identity.get("audio_uris") or [])
     existing_digests = list(existing_identity.get("request_digests") or [])

@@ -24,7 +24,23 @@ EVALS_README_TEXT = "Reserved for Gemini SFT eval artifacts."
 
 @dataclasses.dataclass(frozen=True)
 class PreparedRunArtifacts:
-    """Local paths and counts produced by preparing a config-driven run."""
+    """Local paths and counts produced by preparing a config-driven run.
+
+    Attributes:
+        run_config_path: Local copy of the operator TOML.
+        canonical_train_path: Local canonical training manifest.
+        canonical_validation_path: Local canonical validation manifest.
+        canonical_eval_path: Local canonical evaluation manifest.
+        gemini_train_path: Local Gemini training JSONL.
+        gemini_validation_path: Local Gemini validation JSONL.
+        preflight_report_path: Local preparation preflight report.
+        total_train_duration_seconds: Total duration of canonical training
+            audio.
+        canonical_train_rows: Number of validated canonical training rows.
+        canonical_validation_rows: Number of validated canonical validation
+            rows.
+        canonical_eval_rows: Number of validated canonical evaluation rows.
+    """
 
     run_config_path: pathlib.Path
     canonical_train_path: pathlib.Path
@@ -41,7 +57,14 @@ class PreparedRunArtifacts:
 
 @dataclasses.dataclass(frozen=True)
 class EvalRowsWithHistory:
-    """Canonical eval rows plus aligned prior-context histories."""
+    """Canonical eval rows plus aligned prior-context histories.
+
+    Attributes:
+        source_rows: Validated raw eval rows preserved for normalized output.
+        eval_rows: Typed canonical rows aligned with ``source_rows``.
+        histories: Prior same-source transcript turns aligned with each eval
+            row.
+    """
 
     source_rows: list[dict[str, typing.Any]]
     eval_rows: list[manifest.CanonicalRow]
@@ -153,7 +176,22 @@ def eval_rows_with_histories_from_entries(
     prior_context_count: int,
     limit: int | None = None,
 ) -> EvalRowsWithHistory:
-    """Return eval source rows, canonical rows, and aligned histories."""
+    """Return eval source rows, canonical rows, and aligned histories.
+
+    Args:
+        entries: Raw canonical eval manifest dictionaries.
+        source: Human-readable manifest source used in validation errors.
+        prior_context_count: Maximum prior same-source turns per eval row.
+        limit: Optional maximum number of aligned eval rows to return.
+
+    Returns:
+        Validated source rows, canonical rows, and prior-context histories in
+        matching order.
+
+    Raises:
+        ValueError: If the eval manifest is empty or invalid, or if
+            ``prior_context_count`` is negative.
+    """
     source_rows, eval_rows = canonical_rows_from_entries(
         entries,
         split="eval",

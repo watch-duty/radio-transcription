@@ -23,7 +23,11 @@ BatchSubmitFn = collections.abc.Callable[..., str]
 
 
 class BatchPredictionMap(dict[str, str]):
-    """Prediction map with the GCS batch output URI attached for provenance."""
+    """Prediction map with its raw Vertex output location.
+
+    Attributes:
+        output_uri: GCS prefix containing the raw batch prediction output.
+    """
 
     output_uri: str
 
@@ -48,7 +52,37 @@ def run_batch_audio_inference(
     | None = None,
     submit_fn: BatchSubmitFn = vertex.submit_batch_inference,
 ) -> BatchPredictionMap | None:
-    """Run Gemini batch inference for audio URIs and return parsed predictions."""
+    """Run resumable Gemini batch inference for one evaluation target.
+
+    Args:
+        storage_client: Authenticated GCS client used for request and result
+            artifacts.
+        run_gcs_prefix: Durable GCS prefix for the prepared run.
+        gcp_project: GCP project used to submit a new batch job.
+        location: Preferred Vertex location for a new batch job.
+        model_id: Publisher model ID or full Vertex model resource name.
+        label: Stable target label used in artifact paths and logs.
+        audio_uris: Ordered audio URIs to transcribe.
+        system_prompt: System instruction included in every request.
+        user_prompt: User instruction included in every current audio turn.
+        prior_context_count: Context-window size recorded in request identity.
+        prior_context_mode: Context encoding mode used to build each request.
+        eval_manifest_uri: Canonical evaluation manifest URI recorded in
+            request identity.
+        histories: Prior turns aligned one-for-one with ``audio_uris``. Empty
+            histories are used when omitted.
+        submit_fn: Batch submission callable, injectable for tests.
+
+    Returns:
+        Parsed predictions with their raw output URI, or ``None`` when the
+        input has duplicate audio URIs, submission fails, output is missing,
+        or output contains an unexpected audio URI.
+
+    Raises:
+        TypeError: If reusable output metadata lacks an object identity.
+        ValueError: If histories are misaligned, the context mode is invalid,
+            or existing output metadata is missing or does not match.
+    """
     expected_audio_uris = _unique_audio_uris(audio_uris)
     if expected_audio_uris is None:
         logger.error(
@@ -186,7 +220,26 @@ def build_batch_jsonl(
     history_mode: str = "text_turns",
     tmp_dir: pathlib.Path,
 ) -> tuple[str, str]:
-    """Write and upload a Vertex batch input JSONL file."""
+    """Write and upload a Vertex batch input JSONL file.
+
+    Args:
+        storage_client: Authenticated GCS client used for the upload.
+        run_gcs_prefix: Durable GCS prefix for the prepared run.
+        label: Stable target label used in the input and output paths.
+        audio_uris: Ordered audio URIs to encode as batch requests.
+        system_prompt: System instruction included in every request.
+        user_prompt: User instruction included in every current audio turn.
+        histories: Prior turns aligned one-for-one with ``audio_uris``.
+        history_mode: Context encoding mode used to build each request.
+        tmp_dir: Existing local directory in which to write the JSONL file.
+
+    Returns:
+        A pair containing the uploaded input URI and batch output prefix.
+
+    Raises:
+        ValueError: If histories are misaligned, audio URIs are duplicated, or
+            ``history_mode`` is unsupported.
+    """
     if histories is not None and len(histories) != len(audio_uris):
         msg = "histories must have one entry per audio URI"
         raise ValueError(msg)

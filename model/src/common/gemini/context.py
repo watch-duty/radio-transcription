@@ -11,7 +11,12 @@ import typing
 
 @dataclasses.dataclass(frozen=True)
 class ContextTurn:
-    """One previous transcript with its source audio URI for provenance."""
+    """One previous transcript retained for evaluation context.
+
+    Attributes:
+        audio_uri: Source audio URI retained for provenance and identity.
+        text: Transcript text supplied as prior context.
+    """
 
     audio_uri: str
     text: str
@@ -37,7 +42,16 @@ def build_transcript_context_prompt(
     history: collections.abc.Sequence[ContextTurn],
     user_prompt: str,
 ) -> str:
-    """Return a user prompt with prior same-source transcripts as text context."""
+    """Prepend prior same-source transcripts to a user prompt.
+
+    Args:
+        history: Prior turns ordered from oldest to newest.
+        user_prompt: Instruction for the current audio turn.
+
+    Returns:
+        The original prompt when history is empty; otherwise, a prompt with a
+        numbered prior-transcript preamble.
+    """
     if not history:
         return user_prompt
     lines = [
@@ -56,7 +70,16 @@ def build_guarded_transcript_context_prompt(
     history: collections.abc.Sequence[ContextTurn],
     user_prompt: str,
 ) -> str:
-    """Return a guarded prior-transcript block plus the current prompt."""
+    """Build a guarded prior-transcript block plus the current prompt.
+
+    Args:
+        history: Prior turns ordered from oldest to newest.
+        user_prompt: Instruction for the current audio turn.
+
+    Returns:
+        A prompt that marks prior transcripts as context only. When history is
+        empty, the guarded block contains an explicit no-history sentence.
+    """
     prior_context = (
         "\n".join(
             f"{index}. {' '.join(turn.text.split())}"
@@ -76,6 +99,12 @@ def build_prior_text_user_turn(user_prompt: str) -> str:
     This intentionally reuses the current-turn prompt exactly. For the prior
     context SFT run that prompt is the manual-context notebook TURN_PROMPT; the
     only omitted prior-turn part is the audio.
+
+    Args:
+        user_prompt: Instruction reused for a prior text-only user turn.
+
+    Returns:
+        ``user_prompt`` unchanged.
     """
     return user_prompt
 
@@ -87,7 +116,20 @@ def build_transcription_contents(
     history: collections.abc.Sequence[ContextTurn] | None = None,
     history_mode: str = "text_turns",
 ) -> list[dict[str, typing.Any]]:
-    """Return Gemini contents for prior context plus the current audio turn."""
+    """Build Gemini contents for prior context and the current audio turn.
+
+    Args:
+        audio_uri: GCS URI for the current FLAC audio segment.
+        user_prompt: Instruction for the current audio turn.
+        history: Prior turns ordered from oldest to newest.
+        history_mode: One of the modes in ``PRIOR_CONTEXT_MODES``.
+
+    Returns:
+        Gemini content dictionaries ending with the current user audio turn.
+
+    Raises:
+        ValueError: If ``history_mode`` is unsupported.
+    """
     history_mode = validate_history_mode(history_mode)
     contents: list[dict[str, typing.Any]] = []
     history_turns = list(history or ())
@@ -128,7 +170,17 @@ def build_transcription_contents(
 
 
 def validate_history_mode(history_mode: str) -> str:
-    """Return a normalized history mode or raise ``ValueError``."""
+    """Normalize and validate a prior-context encoding mode.
+
+    Args:
+        history_mode: Candidate mode name.
+
+    Returns:
+        The stripped, lowercase mode name.
+
+    Raises:
+        ValueError: If the normalized name is not in ``PRIOR_CONTEXT_MODES``.
+    """
     mode = history_mode.strip().lower()
     if mode not in PRIOR_CONTEXT_MODES:
         msg = (
@@ -140,7 +192,14 @@ def validate_history_mode(history_mode: str) -> str:
 
 
 def audio_file_data_part(audio_uri: str) -> dict[str, typing.Any]:
-    """Return a Gemini audio file-data part in canonical camelCase JSON."""
+    """Build a Gemini audio file-data part in canonical camelCase JSON.
+
+    Args:
+        audio_uri: GCS URI for a FLAC audio segment.
+
+    Returns:
+        A ``fileData`` part with ``audio/flac`` MIME type and ``audio_uri``.
+    """
     return {
         "fileData": {
             "mimeType": "audio/flac",
@@ -160,6 +219,17 @@ def build_context_histories(
     Histories are returned in the same order as ``rows``. A row enters future
     histories only when its transcript is non-empty and not the explicit
     ``[UNINTELLIGIBLE]`` sentinel, matching the manual-context notebook.
+
+    Args:
+        rows: Canonical or compatibility manifest rows in caller order.
+        max_turns: Maximum number of preceding turns retained per row.
+
+    Returns:
+        Histories aligned one-for-one with ``rows``, each ordered oldest to
+        newest.
+
+    Raises:
+        ValueError: If ``max_turns`` is negative.
     """
     if max_turns < 0:
         msg = "max_turns must be non-negative"

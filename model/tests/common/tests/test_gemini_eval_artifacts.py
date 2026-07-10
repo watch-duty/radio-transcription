@@ -1,4 +1,4 @@
-"""Tests for stable Gemini evaluation artifact paths."""
+"""Tests for Gemini evaluation artifact paths."""
 
 import unittest
 

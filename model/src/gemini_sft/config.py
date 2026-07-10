@@ -42,6 +42,21 @@ class RunPaths:
     These paths are part of the resume/eval contract: later stages discover
     their inputs by round_id under ``sft/runs/<round_id>`` rather than by
     re-reading the operator's local TOML file.
+
+    Attributes:
+        gcs_prefix: Root GCS URI for all durable artifacts in the round.
+        run_config_uri: GCS URI for the original operator TOML.
+        config_uri: GCS URI for the resolved durable ``config.json`` state.
+        status_uri: GCS URI for the run-level status record.
+        canonical_train_uri: GCS URI for the canonical training manifest.
+        canonical_validation_uri: GCS URI for the canonical validation
+            manifest.
+        canonical_eval_uri: GCS URI for the canonical evaluation manifest.
+        gemini_train_uri: GCS URI for the Gemini training JSONL.
+        gemini_validation_uri: GCS URI for the Gemini validation JSONL.
+        preflight_report_uri: GCS URI for the preparation preflight report.
+        tuning_status_uri: GCS URI for the tuning status record.
+        evals_readme_uri: GCS URI for the eval artifact placeholder README.
     """
 
     gcs_prefix: str
@@ -64,7 +79,8 @@ class EvalModelTarget:
 
     Attributes:
         label: Safe artifact/report label for the target.
-        model: Unclassified model or endpoint string supplied by the operator.
+        model: Publisher model ID or endpoint resource supplied by the
+            operator.
     """
 
     label: str
@@ -77,7 +93,14 @@ class EvalModelTarget:
 
 @dataclasses.dataclass(frozen=True)
 class EvalExecutionConfig:
-    """Execution controls for eval target inference."""
+    """Execution controls for eval target inference.
+
+    Attributes:
+        backend: Optional forced ``batch`` or ``online`` backend.
+        limit: Optional maximum number of eval rows to process.
+        concurrency: Maximum concurrent online inference requests.
+        max_retries: Configured retry-attempt cap for online inference.
+    """
 
     backend: str | None = None
     limit: int | None = None
@@ -99,7 +122,32 @@ class EvalExecutionConfig:
 
 @dataclasses.dataclass(frozen=True)
 class RunConfig:
-    """Validated operator config with defaults and derived paths resolved."""
+    """Validated operator config with defaults and derived paths resolved.
+
+    Attributes:
+        source_path: Local path from which the TOML config was loaded.
+        raw_toml: Original TOML text retained for durable storage.
+        round_id: Safe identifier for the run and its artifact namespace.
+        inference_dataset_slug: Relative dataset path for normalized inference
+            output.
+        train_manifest_uri: Optional source training manifest GCS URI.
+        validation_manifest_uri: Optional source validation manifest GCS URI.
+        eval_manifest_uri: Source evaluation manifest GCS URI.
+        eval_model: Optional single model target configured for evaluation.
+        eval_execution: Runtime and backend controls for evaluation.
+        gcp_project: Google Cloud project used for Vertex and storage clients.
+        gcs_bucket: Bucket that owns durable run artifacts.
+        location: Default Vertex AI location for the run.
+        base_model: Publisher model used as the tuning base.
+        epoch_count: Number of requested tuning epochs.
+        adapter_size: Vertex adapter-size enum key.
+        learning_rate_multiplier: Tuning learning-rate multiplier.
+        prior_context_count: Maximum prior same-source transcript turns.
+        prior_context_mode: Request shape used to represent prior context.
+        system_prompt: Resolved Gemini system instruction.
+        user_prompt: Resolved Gemini current-turn instruction.
+        paths: Derived local-independent durable artifact paths.
+    """
 
     source_path: pathlib.Path
     raw_toml: str
@@ -285,7 +333,18 @@ def _load_run_config(
 
 
 def require_config_str(config: dict[str, typing.Any], key: str) -> str:
-    """Return a required string from durable GCS config.json state."""
+    """Return a required string from durable GCS config.json state.
+
+    Args:
+        config: Parsed durable config record.
+        key: Top-level field to retrieve.
+
+    Returns:
+        The non-empty string stored at ``key``.
+
+    Raises:
+        ValueError: If ``key`` is absent, empty, or not a string.
+    """
     value = config.get(key)
     if not isinstance(value, str) or not value:
         msg = f"config.json missing required string field: {key}"
@@ -294,7 +353,18 @@ def require_config_str(config: dict[str, typing.Any], key: str) -> str:
 
 
 def require_config_int(config: dict[str, typing.Any], key: str) -> int:
-    """Return a required integer from durable GCS config.json state."""
+    """Return a required integer from durable GCS config.json state.
+
+    Args:
+        config: Parsed durable config record.
+        key: Top-level field to retrieve.
+
+    Returns:
+        The integer stored at ``key``.
+
+    Raises:
+        TypeError: If ``key`` is absent, is a boolean, or is not an integer.
+    """
     value = config.get(key)
     if isinstance(value, bool) or not isinstance(value, int):
         msg = f"config.json missing required integer field: {key}"
@@ -303,7 +373,18 @@ def require_config_int(config: dict[str, typing.Any], key: str) -> int:
 
 
 def require_config_float(config: dict[str, typing.Any], key: str) -> float:
-    """Return a required numeric value from durable GCS config.json state."""
+    """Return a required numeric value from durable GCS config.json state.
+
+    Args:
+        config: Parsed durable config record.
+        key: Top-level field to retrieve.
+
+    Returns:
+        The numeric value stored at ``key``, converted to ``float``.
+
+    Raises:
+        TypeError: If ``key`` is absent, is a boolean, or is not numeric.
+    """
     value = config.get(key)
     if isinstance(value, bool) or not isinstance(value, (float, int)):
         msg = f"config.json missing required numeric field: {key}"
@@ -312,7 +393,19 @@ def require_config_float(config: dict[str, typing.Any], key: str) -> float:
 
 
 def require_config_eval_model(config: dict[str, typing.Any]) -> EvalModelTarget:
-    """Return the validated eval target from durable GCS config.json state."""
+    """Return the validated eval target from durable GCS config.json state.
+
+    Args:
+        config: Parsed durable config record.
+
+    Returns:
+        The validated single evaluation target.
+
+    Raises:
+        TypeError: If ``eval_model`` exists but is not an object.
+        ValueError: If ``eval_model`` is missing or its label/model contract is
+            invalid.
+    """
     raw_target = config.get("eval_model")
     if raw_target is None:
         raise ValueError(CONFIG_EVAL_MODEL_REQUIRED_MESSAGE)
@@ -334,7 +427,21 @@ def require_config_eval_model(config: dict[str, typing.Any]) -> EvalModelTarget:
 def require_config_eval_execution(
     config: dict[str, typing.Any],
 ) -> EvalExecutionConfig:
-    """Return validated eval execution controls from durable config.json."""
+    """Return validated eval execution controls from durable config.json.
+
+    Args:
+        config: Parsed durable config record.
+
+    Returns:
+        Validated execution controls, using defaults when ``eval_execution`` is
+        absent.
+
+    Raises:
+        TypeError: If the execution record or one of its values has the wrong
+            type.
+        ValueError: If the record contains unsupported fields or invalid
+            values.
+    """
     raw_execution = config.get("eval_execution")
     if raw_execution is None:
         return EvalExecutionConfig()
@@ -347,7 +454,19 @@ def require_config_eval_execution(
 def optional_config_prior_context_mode(
     config: dict[str, typing.Any], key: str
 ) -> str:
-    """Return a validated durable prior-context mode."""
+    """Return a validated durable prior-context mode.
+
+    Args:
+        config: Parsed durable config record.
+        key: Top-level context-mode field to retrieve.
+
+    Returns:
+        The normalized configured mode, or ``text_turns`` when absent.
+
+    Raises:
+        TypeError: If the configured value is not a string.
+        ValueError: If the normalized mode is unsupported.
+    """
     value = config.get(key, "text_turns")
     if not isinstance(value, str):
         msg = (

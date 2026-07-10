@@ -1,4 +1,4 @@
-"""Shared fixtures for Gemini SFT batch and online evaluation tests."""
+"""Shared fixtures for Gemini SFT evaluation tests."""
 
 from __future__ import annotations
 

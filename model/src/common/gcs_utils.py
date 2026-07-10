@@ -218,7 +218,20 @@ def download_jsonl_manifest_strict(
     storage_client: storage.Client,
     gcs_manifest_uri: str,
 ) -> list[dict[str, typing.Any]]:
-    """Download and parse a GCS manifest without skipping invalid rows."""
+    """Download and parse a GCS manifest without skipping invalid rows.
+
+    Args:
+        storage_client: Initialized GCS client used to download the object.
+        gcs_manifest_uri: URI of a JSON array or JSONL manifest in GCS.
+
+    Returns:
+        Parsed manifest object rows in their original order.
+
+    Raises:
+        TypeError: If a JSONL row is not an object.
+        ValueError: If the manifest contains malformed JSON or has an invalid
+            JSON-array shape.
+    """
     bucket_name, blob_path = parse_gcs_uri(gcs_manifest_uri)
     content = (
         storage_client.bucket(bucket_name)

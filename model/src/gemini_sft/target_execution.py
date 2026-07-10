@@ -26,6 +26,15 @@ ONLINE_LOG_EVERY = 100
 
 @dataclasses.dataclass(frozen=True)
 class OnlineResumeState:
+    """Validated state restored from an online prediction cache.
+
+    Attributes:
+        rows_by_audio_uri: Successful reusable rows keyed by audio URI.
+        attempt_rows_by_audio_uri: Latest attempt rows keyed by audio URI.
+        error_count: Number of latest attempt rows that contain errors.
+        request_identity_hash: Hash of the validated request identity.
+    """
+
     rows_by_audio_uri: dict[str, dict[str, typing.Any]]
     attempt_rows_by_audio_uri: dict[str, dict[str, typing.Any]]
     error_count: int
@@ -33,7 +42,16 @@ class OnlineResumeState:
 
 
 class OnlinePredictionMap(dict[str, str]):
-    """Prediction map plus online artifact locations."""
+    """Successful predictions plus online artifact locations.
+
+    The mapping stores prediction text keyed by audio URI.
+
+    Attributes:
+        online_predictions_uri: GCS location of the prediction-attempt cache.
+        metadata_uri: GCS location of the request identity metadata.
+        error_count: Number of unresolved prediction errors.
+        request_identity_hash: Hash of the request identity for these results.
+    """
 
     def __init__(
         self,
@@ -60,6 +78,13 @@ def resolve_target_backend(
     Backend selection is intentionally offline and conservative. Full Vertex
     endpoint resources default to online generation; all other model strings
     default to batch unless the config-wide execution backend forces a choice.
+
+    Args:
+        target: Model target whose resource shape selects the default backend.
+        execution: Eval execution controls, including an optional override.
+
+    Returns:
+        ``"online"`` or ``"batch"`` for the target.
     """
     if execution.backend is not None:
         return execution.backend
@@ -127,7 +152,24 @@ def load_existing_online_predictions(
     local_metadata_path: pathlib.Path,
     request_identity: dict[str, typing.Any],
 ) -> OnlineResumeState:
-    """Download and validate reusable online predictions, if present."""
+    """Download and validate reusable online predictions, if present.
+
+    Args:
+        storage_client: Client used to inspect and download GCS artifacts.
+        predictions_uri: GCS URI of the online prediction cache.
+        metadata_uri: GCS URI of the request identity metadata.
+        local_predictions_path: Local destination for downloaded predictions.
+        local_metadata_path: Local destination for downloaded metadata.
+        request_identity: Identity expected for the current request set.
+
+    Returns:
+        Validated successful rows, latest attempts, errors, and identity hash.
+
+    Raises:
+        TypeError: If cached request identity metadata has an invalid shape.
+        ValueError: If metadata is missing, corrupt, or does not match the
+            current request identity.
+    """
     if not gcs_utils.blob_exists(storage_client, predictions_uri):
         local_predictions_path.unlink(missing_ok=True)
         local_metadata_path.unlink(missing_ok=True)
@@ -200,7 +242,35 @@ async def run_online_target_inference(
     concurrency: int,
     max_retries: int,
 ) -> OnlinePredictionMap:
-    """Run resumable online Gemini inference for one eval target."""
+    """Run resumable online Gemini inference for one eval target.
+
+    Args:
+        storage_client: Client used to read and publish GCS artifacts.
+        run_gcs_prefix: GCS prefix for the durable run artifacts.
+        project: Google Cloud project used for Vertex requests.
+        default_location: Vertex location used when the model has no location.
+        target_label: Stable artifact label for the evaluated target.
+        target_model: Publisher model or endpoint resource to invoke.
+        audio_uris: Ordered audio URIs to evaluate.
+        histories: Prior-context turns parallel to ``audio_uris``.
+        system_prompt: System instruction sent with every request.
+        user_prompt: Current-audio transcription prompt.
+        prior_context_count: Maximum prior turns encoded in request identity.
+        prior_context_mode: Strategy used to encode prior transcript context.
+        eval_manifest_uri: Canonical eval manifest used by this run.
+        local_dir: Directory for local prediction and metadata mirrors.
+        concurrency: Maximum concurrent online generation requests.
+        max_retries: Maximum SDK attempts for each generation request.
+
+    Returns:
+        Successful predictions with artifact URIs and unresolved error count.
+
+    Raises:
+        ImportError: If the optional Vertex SDK is unavailable.
+        TypeError: If cached request identity metadata has an invalid shape.
+        ValueError: If audio URIs are duplicated, histories are misaligned, or
+            cached predictions do not match the current request identity.
+    """
     audio_uri_list = list(audio_uris)
     if len(set(audio_uri_list)) != len(audio_uri_list):
         msg = (

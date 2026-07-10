@@ -515,7 +515,21 @@ def strict_canonical_rows_from_manifest(
     expected_split: str | None = None,
     source: str = "manifest",
 ) -> tuple[list[dict[str, Any]], list[CanonicalRow]]:
-    """Validate and convert manifest entries through the strict canonical API."""
+    """Validate and convert manifest entries through the strict canonical API.
+
+    Args:
+        manifest: Raw manifest dictionaries to validate and convert.
+        expected_split: Optional split value required on rows that declare a
+            split.
+        source: Human-readable source name included in conversion errors.
+
+    Returns:
+        The original manifest dictionaries and their aligned canonical rows.
+
+    Raises:
+        ValueError: If strict canonical validation or row conversion fails, or
+            if conversion does not preserve the row count.
+    """
     require_canonical_manifest(manifest, expected_split=expected_split)
     rows = rows_from_manifest(manifest)
     if len(rows) != len(manifest):
@@ -552,6 +566,14 @@ def parse_manifest_text(
     Parsing is intentionally lenient: malformed JSONL rows and non-object rows
     are skipped, while malformed JSON arrays return an empty list. Strict
     semantic validation belongs in ``require_canonical_manifest``.
+
+    Args:
+        content: JSON array or JSONL manifest text.
+        source: Human-readable source name used in log messages.
+
+    Returns:
+        Parsed and normalized object rows. Invalid JSONL rows are omitted, and
+        an invalid JSON array produces an empty list.
     """
     data: list[dict[str, Any]] = []
     content = content.strip()
@@ -598,7 +620,20 @@ def parse_manifest_text_strict(
     *,
     source: str = "manifest",
 ) -> list[dict[str, Any]]:
-    """Parse a JSON array or JSONL manifest without skipping invalid rows."""
+    """Parse a JSON array or JSONL manifest without skipping invalid rows.
+
+    Args:
+        content: JSON array or JSONL manifest text.
+        source: Human-readable source name included in parse errors.
+
+    Returns:
+        Parsed and normalized object rows, or an empty list for empty input.
+
+    Raises:
+        ValueError: If the JSON array or a JSONL row is malformed, or if an
+            array does not contain only objects.
+        TypeError: If a JSONL row is valid JSON but is not an object.
+    """
     stripped = content.strip()
     if not stripped:
         return []
@@ -673,7 +708,20 @@ def load_manifest(path: str) -> list[dict[str, Any]]:
 
 
 def load_manifest_strict(path: str) -> list[dict[str, Any]]:
-    """Load a local JSON array or JSONL manifest without skipping rows."""
+    """Load a local JSON array or JSONL manifest without skipping rows.
+
+    Args:
+        path: Local path to a JSON array or JSONL manifest.
+
+    Returns:
+        Parsed and normalized object rows.
+
+    Raises:
+        OSError: If the manifest cannot be read.
+        ValueError: If the manifest contains malformed JSON or an invalid JSON
+            array shape.
+        TypeError: If a JSONL row is valid JSON but is not an object.
+    """
     content = Path(path).read_text(encoding="utf-8")
     return parse_manifest_text_strict(content, source=path)
 

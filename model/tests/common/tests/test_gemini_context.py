@@ -1,4 +1,4 @@
-"""Tests for prior-context history construction."""
+"""Tests for Gemini prior-context construction."""
 
 from __future__ import annotations
 
