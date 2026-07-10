@@ -1189,6 +1189,39 @@ class TestEvaluateRun(unittest.TestCase):
 
         submit.assert_not_called()
 
+    def test_eval_rejects_partially_malformed_manifest_before_inference(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            storage.put(
+                run_cfg.paths.canonical_eval_uri,
+                _manifest([_row("gs://audio/eval.flac", "valid")])
+                + "{bad json}\n",
+            )
+            config = run_cfg.to_record_dict()
+            storage.put(run_cfg.paths.config_uri, json.dumps(config))
+
+            with unittest.mock.patch.object(
+                evaluate_module,
+                "submit_batch_inference",
+            ) as submit:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    r"canonical/eval.jsonl: malformed JSON at line 2",
+                ):
+                    evaluate_module.evaluate_run(
+                        argparse.Namespace(config=str(cfg_path)),
+                        run_cfg,
+                        storage,
+                        config,
+                    )
+
+        submit.assert_not_called()
+
     def test_eval_handler_returns_clean_error_when_vertex_extra_missing(
         self,
     ) -> None:
@@ -1714,7 +1747,7 @@ class TestEvaluateRun(unittest.TestCase):
                 ),
                 unittest.mock.patch.object(
                     evaluate_module,
-                    "download_jsonl_manifest",
+                    "download_jsonl_manifest_strict",
                     return_value=[
                         _row("gs://audio/eval.flac", "eval transcript")
                     ],
@@ -2100,7 +2133,7 @@ class TestEvaluateRun(unittest.TestCase):
                     evaluate_module.storage, "Client", return_value=storage
                 ),
                 unittest.mock.patch.object(
-                    evaluate_module, "download_jsonl_manifest"
+                    evaluate_module, "download_jsonl_manifest_strict"
                 ) as download_manifest,
                 unittest.mock.patch.object(
                     evaluate_module, "submit_batch_inference"
@@ -2147,7 +2180,7 @@ class TestEvaluateRun(unittest.TestCase):
                 ),
                 unittest.mock.patch.object(
                     evaluate_module,
-                    "download_jsonl_manifest",
+                    "download_jsonl_manifest_strict",
                     return_value=[
                         _row("gs://audio/eval.flac", "eval transcript")
                     ],
@@ -2208,7 +2241,7 @@ max_retries = 1
                 ),
                 unittest.mock.patch.object(
                     evaluate_module,
-                    "download_jsonl_manifest",
+                    "download_jsonl_manifest_strict",
                     return_value=[
                         _row("gs://audio/eval.flac", "eval transcript")
                     ],
@@ -2256,7 +2289,7 @@ max_retries = 1
                     evaluate_module.storage, "Client", return_value=storage
                 ),
                 unittest.mock.patch.object(
-                    evaluate_module, "download_jsonl_manifest"
+                    evaluate_module, "download_jsonl_manifest_strict"
                 ) as download_manifest,
                 unittest.mock.patch.object(
                     evaluate_module, "submit_batch_inference"
@@ -2296,7 +2329,7 @@ max_retries = 1
                 ),
                 unittest.mock.patch.object(
                     evaluate_module,
-                    "download_jsonl_manifest",
+                    "download_jsonl_manifest_strict",
                     return_value=[
                         _row("gs://audio/eval.flac", "eval transcript")
                     ],
@@ -2350,7 +2383,7 @@ max_retries = 1
                 ),
                 unittest.mock.patch.object(
                     evaluate_module,
-                    "download_jsonl_manifest",
+                    "download_jsonl_manifest_strict",
                     return_value=[
                         _row(
                             "gs://audio/eval.flac",

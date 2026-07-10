@@ -8,12 +8,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from common import manifest as manifest_lib
 from common.gcs_utils import upload_local_file
 from common.gemini.context import build_context_histories
 from common.manifest import (
     CanonicalRow,
     canonical_row_identity,
-    load_manifest,
     strict_canonical_rows_from_manifest,
 )
 
@@ -129,7 +129,7 @@ def load_canonical_rows(
     path: Path, split: str
 ) -> tuple[list[dict[str, Any]], list[CanonicalRow]]:
     """Load a canonical manifest and return raw entries plus parsed rows."""
-    entries = load_manifest(str(path))
+    entries = manifest_lib.load_manifest_strict(str(path))
     return canonical_rows_from_entries(entries, split=split, source=str(path))
 
 

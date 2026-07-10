@@ -3,6 +3,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
+from common import gcs_utils as gcs_utils_lib
 from common.gcs_utils import (
     download_gcs_directory,
     download_gcs_uri,
@@ -176,6 +177,20 @@ class TestGcsObjectHelpers(unittest.TestCase):
                 {"audio_filepath": "gs://b/b.flac", "text": "line break"},
             ],
         )
+
+    def test_strict_manifest_download_rejects_malformed_line(self) -> None:
+        storage = FakeStorageClient()
+        uri = "gs://bucket/manifest/eval.jsonl"
+        storage.put(
+            uri,
+            '{"audio_filepath":"gs://b/a.flac","text":"ok"}\n{bad json}\n',
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"gs://bucket/manifest/eval.jsonl: malformed JSON at line 2",
+        ):
+            gcs_utils_lib.download_jsonl_manifest_strict(storage, uri)
 
     def test_upload_and_download_local_text_artifacts(self) -> None:
         storage = FakeStorageClient()

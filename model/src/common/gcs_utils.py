@@ -8,7 +8,7 @@ from typing import Any
 from google.cloud import storage
 from google.cloud.storage.retry import DEFAULT_RETRY
 
-from common.manifest import parse_manifest_text
+from common import manifest
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +189,31 @@ def download_jsonl_manifest(
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
     content = blob.download_as_text(retry=DEFAULT_RETRY)
-    manifest_entries = parse_manifest_text(content, source=gcs_manifest_uri)
+    manifest_entries = manifest.parse_manifest_text(
+        content,
+        source=gcs_manifest_uri,
+    )
+    logger.info(
+        f"Downloaded {len(manifest_entries)} entries from {gcs_manifest_uri}"
+    )
+    return manifest_entries
+
+
+def download_jsonl_manifest_strict(
+    storage_client: storage.Client,
+    gcs_manifest_uri: str,
+) -> list[dict[str, Any]]:
+    """Download and parse a GCS manifest without skipping invalid rows."""
+    bucket_name, blob_path = parse_gcs_uri(gcs_manifest_uri)
+    content = (
+        storage_client.bucket(bucket_name)
+        .blob(blob_path)
+        .download_as_text(retry=DEFAULT_RETRY)
+    )
+    manifest_entries = manifest.parse_manifest_text_strict(
+        content,
+        source=gcs_manifest_uri,
+    )
     logger.info(
         f"Downloaded {len(manifest_entries)} entries from {gcs_manifest_uri}"
     )

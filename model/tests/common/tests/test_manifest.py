@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from common import manifest as manifest_lib
 from common.manifest import (
     CanonicalManifestIssue,
     CanonicalRow,
@@ -790,6 +791,42 @@ class TestParseManifestText(unittest.TestCase):
             [row["text"] for row in rows],
             ["123", "x y"],
         )
+
+    def test_strict_jsonl_parser_rejects_malformed_line(self) -> None:
+        content = '{"audio_filepath":"gs://b/a.flac","text":"ok"}\n{bad json}'
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"inline.jsonl: malformed JSON at line 2",
+        ):
+            manifest_lib.parse_manifest_text_strict(
+                content,
+                source="inline.jsonl",
+            )
+
+    def test_strict_jsonl_parser_rejects_non_object_line(self) -> None:
+        with self.assertRaisesRegex(
+            TypeError,
+            r"inline.jsonl: expected JSON object at line 1",
+        ):
+            manifest_lib.parse_manifest_text_strict(
+                '"not an object"\n',
+                source="inline.jsonl",
+            )
+
+    def test_strict_local_loader_rejects_partially_malformed_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            path = Path(tmp_s) / "eval.jsonl"
+            path.write_text(
+                '{"audio_filepath":"gs://b/a.flac","text":"ok"}\n{bad json}\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                r"eval.jsonl: malformed JSON at line 2",
+            ):
+                manifest_lib.load_manifest_strict(str(path))
 
 
 class TestLoadManifestMalformedRows(unittest.TestCase):

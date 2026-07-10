@@ -577,7 +577,52 @@ def parse_manifest_text(
                 continue
             data.append(obj)
 
-    for row in data:
+    return _normalize_manifest_rows(data)
+
+
+def parse_manifest_text_strict(
+    content: str,
+    *,
+    source: str = "manifest",
+) -> list[dict[str, Any]]:
+    """Parse a JSON array or JSONL manifest without skipping invalid rows."""
+    stripped = content.strip()
+    if not stripped:
+        return []
+
+    if stripped.startswith("["):
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError as exc:
+            msg = f"{source}: malformed JSON array: {exc}"
+            raise ValueError(msg) from exc
+        if not isinstance(parsed, list) or not all(
+            isinstance(row, dict) for row in parsed
+        ):
+            msg = f"{source}: expected JSON array of objects"
+            raise ValueError(msg)
+        return _normalize_manifest_rows(parsed)
+
+    rows: list[dict[str, Any]] = []
+    for line_number, line in enumerate(content.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            parsed_row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            msg = f"{source}: malformed JSON at line {line_number}: {exc}"
+            raise ValueError(msg) from exc
+        if not isinstance(parsed_row, dict):
+            msg = f"{source}: expected JSON object at line {line_number}"
+            raise TypeError(msg)
+        rows.append(parsed_row)
+    return _normalize_manifest_rows(rows)
+
+
+def _normalize_manifest_rows(
+    rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    for row in rows:
         if "text" in row:
             # Coerce malformed text values once at the parser boundary. Null
             # text becomes absent transcript text rather than the literal word
@@ -585,7 +630,7 @@ def parse_manifest_text(
             raw = row["text"]
             text = "" if raw is None else str(raw)
             row["text"] = text.replace("\n", " ").replace("\r", " ")
-    return data
+    return rows
 
 
 def load_manifest(path: str) -> list[dict[str, Any]]:
@@ -612,6 +657,12 @@ def load_manifest(path: str) -> list[dict[str, Any]]:
         logger.exception(f"Could not read manifest {path}: {e}")
         return []
     return parse_manifest_text(content, source=path)
+
+
+def load_manifest_strict(path: str) -> list[dict[str, Any]]:
+    """Load a local JSON array or JSONL manifest without skipping rows."""
+    content = Path(path).read_text(encoding="utf-8")
+    return parse_manifest_text_strict(content, source=path)
 
 
 def merge_predictions_to_manifest(

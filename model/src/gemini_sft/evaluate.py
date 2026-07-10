@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from common.gcs_utils import (
     download_json_text,
-    download_jsonl_manifest,
+    download_jsonl_manifest_strict,
     gcs_uri_exists,
     upload_local_file,
 )
@@ -137,7 +137,10 @@ def evaluate_run(  # noqa: PLR0915
         target.label,
     )
 
-    eval_entries = download_jsonl_manifest(storage_client, eval_manifest_uri)
+    eval_entries = download_jsonl_manifest_strict(
+        storage_client,
+        eval_manifest_uri,
+    )
     eval_data = eval_rows_with_histories_from_entries(
         eval_entries,
         source=eval_manifest_uri,
