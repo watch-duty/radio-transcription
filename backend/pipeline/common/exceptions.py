@@ -36,3 +36,11 @@ class FeedStateConflictError(Exception):
 
 class NonRetryableError(Exception):
     """Exception raised for non-retryable errors that should not trigger a message retry."""
+
+
+class MaxTokensReachedError(NonRetryableError):
+    """Raised when a transcription model hits the maximum token limit."""
+
+
+class InvalidFinishReasonError(NonRetryableError):
+    """Raised when a transcription model returns an invalid finish reason (e.g., safety filters)."""

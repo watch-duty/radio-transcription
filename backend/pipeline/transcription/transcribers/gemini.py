@@ -7,7 +7,7 @@ import pydantic
 from google import genai
 from google.genai import types
 
-from backend.pipeline.common import constants, log_helper, utils
+from backend.pipeline.common import constants, exceptions, log_helper, utils
 from backend.pipeline.transcription.transcribers import base, prompts
 
 DEFAULT_GEMINI_LOCATION = "us"
@@ -212,7 +212,7 @@ class GeminiTranscriber(base.Transcriber):
     def _parse_response(
         self,
         response: types.GenerateContentResponse,
-    ) -> str | None:
+    ) -> str:
         """Extracts transcript text from Gemini GenerateContentResponse."""
         response_id = response.response_id or "Unknown"
         headers = (
@@ -222,6 +222,7 @@ class GeminiTranscriber(base.Transcriber):
         )
 
         if not response.candidates:
+<<<<<<< HEAD
             # Check prompt feedback blocks (safety filters at request level)
             if (
                 response.prompt_feedback
@@ -244,6 +245,9 @@ class GeminiTranscriber(base.Transcriber):
             )
             msg = f"Gemini response returned no candidates. (Response ID: {response_id})"
             raise GeminiTransientTranscriptionError(msg)
+=======
+            raise exceptions.NonRetryableError("Gemini response returned no candidates.")
+>>>>>>> 879620a72 (fix(transcription): add custom non-retryable exceptions for gemini max tokens and safety filters, and use UI-friendly placeholder for empty transcripts)
 
         candidate = response.candidates[0]
         reason_str = (
@@ -261,7 +265,7 @@ class GeminiTranscriber(base.Transcriber):
                 response_id,
             )
             msg = f"Incomplete response from Gemini (finish_reason: None). (Response ID: {response_id})"
-            raise GeminiTransientTranscriptionError(msg)
+            raise exceptions.NonRetryableError(msg)
 
         if reason_str == types.FinishReason.MAX_TOKENS.name:
             logger.warning(
@@ -294,14 +298,14 @@ class GeminiTranscriber(base.Transcriber):
                 f"Finish Message: {finish_msg}. Blocked Ratings: {blocked_ratings}. "
                 f"(Response ID: {response_id})"
             )
-            raise GeminiTranscriptionError(msg)
+            raise exceptions.InvalidFinishReasonError(msg)
 
         if not candidate.content or not candidate.content.parts:
+            if reason_str == types.FinishReason.MAX_TOKENS.name:
+                raise exceptions.MaxTokensReachedError("Max Tokens Reached")
             if reason_str == types.FinishReason.STOP.name:
-                logger.info(
-                    "Gemini returned empty content (finish reason: STOP)."
-                )
-                return None
+                logger.info("Gemini returned empty content (finish reason: STOP).")
+                return ""
 
             blocked_ratings = self._get_blocked_ratings(candidate)
             finish_msg = candidate.finish_message or "No finish message"
@@ -320,12 +324,11 @@ class GeminiTranscriber(base.Transcriber):
                 f"Finish reason: {reason_str}. Finish Message: {finish_msg}. Blocked Ratings: {blocked_ratings}. "
                 f"(Response ID: {response_id})"
             )
-            raise GeminiTranscriptionError(msg)
+            raise exceptions.NonRetryableError(msg)
 
         text_parts = [p.text for p in candidate.content.parts if p.text]
         if not text_parts:
-            logger.warning("Gemini response candidate had no text parts.")
-            return None
+            return ""
 
         transcript = "".join(text_parts).strip()
-        return transcript or None
+        return transcript

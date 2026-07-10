@@ -19,7 +19,7 @@ from google.cloud import pubsub_v1
 from google.genai import errors as genai_errors
 from opentelemetry.trace import StatusCode
 
-from backend.pipeline.common import constants
+from backend.pipeline.common import constants, exceptions as pipeline_exceptions
 from backend.pipeline.common.clients import audio_segments_client
 from backend.pipeline.common.log_helper import record_pipeline_stage
 from backend.pipeline.common.tracing_utils import (
@@ -185,6 +185,7 @@ class TranscriptionEventProcessor:
         transcript = transcript.strip() if transcript else ""
         return self._record_status_and_get_fallback_text(transcript, errors)
 
+<<<<<<< HEAD
     def _record_status_and_get_fallback_text(
         self, transcript: str, errors: list[str]
     ) -> str:
@@ -193,11 +194,21 @@ class TranscriptionEventProcessor:
             logger.warning("Speech API returned an empty transcription.")
             # We intentionally do NOT append to `errors` here. Appending an error causes 
             # the UI to display "[Transcription failed]", which implies a backend crash.
+=======
+        if not transcript:
+            logger.warning("Speech API returned an empty transcription.")
+>>>>>>> 879620a72 (fix(transcription): add custom non-retryable exceptions for gemini max tokens and safety filters, and use UI-friendly placeholder for empty transcripts)
             record_pipeline_stage("transcription_status", "empty_response")
             return "[Model did not transcribe speech]"
 
         if transcript == CHIRP_UNINTELLIGIBLE_MARKER:
+<<<<<<< HEAD
             logger.info("Speech API returned unintelligible transcription.")
+=======
+            logger.info(
+                "Speech API returned unintelligible transcription."
+            )
+>>>>>>> 879620a72 (fix(transcription): add custom non-retryable exceptions for gemini max tokens and safety filters, and use UI-friendly placeholder for empty transcripts)
             record_pipeline_stage("transcription_status", "unintelligible")
             return CHIRP_UNINTELLIGIBLE_MARKER
 
