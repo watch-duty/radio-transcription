@@ -276,12 +276,10 @@ class StitcherEngine:
         )
 
         start_time_ms = curr_ctx.stale_start_time_ms
-        end_time_ms = curr_ctx.last_end_time_ms
         processed_uris = curr_ctx.contributing_audio_uris
 
         if (
             start_time_ms is not None
-            and end_time_ms is not None
             and curr_ctx.buffer_start_time_ms is not None
         ):
             try:
@@ -306,6 +304,9 @@ class StitcherEngine:
                     if curr_ctx.speech_segments
                     else datatypes.AudioClassification.AUDIO_CLASSIFICATION_OTHER
                 )
+                is_speech = trans_utils.is_speech_classification(
+                    audio_classification
+                )
 
                 yield (
                     feed_id,
@@ -315,8 +316,10 @@ class StitcherEngine:
                         contributing_audio_uris=processed_uris,
                         contributing_chunks=list(curr_ctx.contributing_chunks),
                         time_range=time_range,
-                        missing_prior_context=curr_ctx.missing_prior_context,
-                        missing_post_context=True,
+                        missing_prior_context=curr_ctx.missing_prior_context
+                        if is_speech
+                        else False,
+                        missing_post_context=is_speech,
                         start_audio_offset_ms=max(
                             0, curr_ctx.start_audio_offset_ms or 0
                         ),
