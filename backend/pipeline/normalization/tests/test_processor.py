@@ -1,6 +1,7 @@
 """Unit tests for the NormalizationEventProcessor class."""
 
 import base64
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -709,6 +710,53 @@ class NormalizationEventProcessorTest(unittest.TestCase):
         self.mock_record_pipeline_stage.assert_any_call(
             "normalization", "success"
         )
+
+    @patch("backend.pipeline.normalization.processor.waveform.compute_waveform")
+    @patch("backend.pipeline.normalization.audio_processor.AudioProcessor")
+    @patch("backend.pipeline.common.storage.gcs_uploader.GCSAudioUploader")
+    def test_process_event_upload_failure_drains_all_futures(
+        self,
+        mock_uploader_cls: MagicMock,
+        mock_processor_cls: MagicMock,
+        mock_compute_waveform: MagicMock,
+    ) -> None:
+        """Verifies that an exception in one upload waits for all others to finish, then routes to DLQ."""
+        processor, cloud_event = self._wire_flac_speech_event(
+            mock_uploader_cls, mock_processor_cls
+        )
+        mock_uploader = mock_uploader_cls.return_value
+
+        completed_uploads = set()
+
+        def upload_side_effect(
+            data, bucket_name, destination_path, content_type
+        ):
+            if "lossless" in destination_path:
+                msg = "Boom on canonical upload"
+                raise RuntimeError(msg)
+            # Sleep slightly to ensure they run concurrently and we verify wait behavior
+            time.sleep(0.1)
+            completed_uploads.add(destination_path)
+            return f"gs://{bucket_name}/{destination_path}"
+
+        mock_uploader.upload_bytes.side_effect = upload_side_effect
+
+        processor.process_event(cloud_event)
+
+        # The other two uploads (playback and ephemeral) should have completed despite the error in canonical
+        self.assertEqual(len(completed_uploads), 2)
+        self.assertTrue(any("playback" in p for p in completed_uploads))
+        self.assertTrue(any("ephemeral" in p for p in completed_uploads))
+
+        # We should have routed the failure to the DLQ (which implies it caught the error)
+        self.mock_record_pipeline_stage.assert_any_call(
+            "normalization", "error"
+        )
+        # Ensure it published to DLQ
+        publish_calls = self.mock_publisher.return_value.publish.call_args_list
+        dlq_call = publish_calls[0]
+        self.assertEqual(dlq_call.kwargs.get("ordering_key"), "")
+        self.assertIn(b"Boom on canonical upload", dlq_call.kwargs.get("data"))
 
 
 if __name__ == "__main__":

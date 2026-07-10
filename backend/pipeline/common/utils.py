@@ -1,10 +1,13 @@
 """Common utilities for all pipeline packages."""
 
 import logging
+import os
 import uuid
 from typing import Self
 
 import pydantic
+
+from backend.pipeline.common.env import is_gcp_env
 
 logger = logging.getLogger(__name__)
 
@@ -38,3 +41,33 @@ def generate_segment_id(
     """
     deterministic_id = f"{feed_or_session_id}_{unique_suffix}"
     return str(uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id))
+
+
+def get_optimal_thread_pool_size(
+    env_var: str, default_threads_per_core: int = 4
+) -> int:
+    """Determine thread pool size based on env override or CPU cores."""
+    env_val = os.getenv(env_var)
+    if env_val:
+        try:
+            return max(1, int(env_val))
+        except ValueError:
+            logger.warning(
+                "Invalid %s value: %s, falling back to dynamic calculation",
+                env_var,
+                env_val,
+            )
+
+    if not is_gcp_env():
+        return 16
+
+    try:
+        sched_getaffinity = getattr(os, "sched_getaffinity", None)
+        if sched_getaffinity:
+            core_count = len(sched_getaffinity(0))
+        else:
+            core_count = os.cpu_count() or 4
+    except (AttributeError, NotImplementedError):
+        core_count = os.cpu_count() or 4
+
+    return max(4, min(32, core_count * default_threads_per_core))

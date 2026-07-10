@@ -28,6 +28,7 @@ from backend.pipeline.common.tracing_utils import (
     parse_pubsub_cloudevent,
     with_tracer_context,
 )
+from backend.pipeline.common.utils import get_optimal_thread_pool_size
 from backend.pipeline.normalization import audio_processor, waveform
 from backend.pipeline.schema_types.normalized_audio_pb2 import NormalizedAudio
 from backend.pipeline.schema_types.segmented_audio_pb2 import (
@@ -48,10 +49,13 @@ _CLASSIFICATION_MAP = {
     SegmentedAudio.AUDIO_CLASSIFICATION_OTHER: AudioClassification.OTHER,
 }
 
+# We dynamically derive the thread pool based on CPU limits.
 # Cloud Run allows 4 concurrent requests, and each request can spawn up to 3 parallel uploads.
-# We set the global pool size to 12 to handle peak load without queuing.
+# Assuming standard 4-core instance, 4 * 3 = 12 threads will handle peak load without queuing.
 _GLOBAL_UPLOAD_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
-    max_workers=int(os.environ.get("MAX_UPLOAD_THREADS", "12")),
+    max_workers=get_optimal_thread_pool_size(
+        "MAX_UPLOAD_THREADS", default_threads_per_core=3
+    ),
     thread_name_prefix="normalization_upload_executor",
 )
 
@@ -323,6 +327,7 @@ class NormalizationEventProcessor:
         )
 
         ephemeral_upload_future = None
+        futures_to_wait = [canonical_future, playback_future]
         if mono_flac_path and mono_flac_bytes:
             ephemeral_upload_future = _GLOBAL_UPLOAD_EXECUTOR.submit(
                 _upload_and_log,
@@ -332,6 +337,12 @@ class NormalizationEventProcessor:
                 "ephemeral transcription audio",
                 current_ctx,
             )
+            futures_to_wait.append(ephemeral_upload_future)
+
+        # Drain all futures before inspecting results to prevent dangling work on exception
+        concurrent.futures.wait(
+            futures_to_wait, return_when=concurrent.futures.ALL_COMPLETED
+        )
 
         canonical_audio_uri = canonical_future.result()
         playback_audio_uri = playback_future.result()
