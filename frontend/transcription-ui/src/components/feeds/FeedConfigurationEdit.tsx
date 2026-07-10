@@ -585,8 +585,7 @@ export function FeedConfigurationEdit({
                     (tag) => tag.key.trim() === SYSTEM_TIMEZONE
                   )) && (
                   <Alert severity="warning" sx={{ mb: 2 }}>
-                    Updating timezone requires a manual deactivate and reset in
-                    order to take effect.
+                    After updating the timezone, please deactivate and reset the feed.
                   </Alert>
                 )}
 
