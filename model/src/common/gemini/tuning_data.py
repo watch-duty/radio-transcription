@@ -8,13 +8,14 @@ No GCP project or bucket constants are defined in this module. All GCP identifie
 caller-supplied parameters.
 """
 
-from collections.abc import Sequence
-from typing import Any
+from __future__ import annotations
 
-from common.gemini.context import (
-    ContextTurn,
-    build_transcription_contents,
-)
+import typing
+
+from common.gemini import context
+
+if typing.TYPE_CHECKING:
+    import collections.abc
 
 
 def build_audio_tuning_example(
@@ -22,9 +23,9 @@ def build_audio_tuning_example(
     gt_text: str,
     system_prompt: str,
     user_prompt: str,
-    history: Sequence[ContextTurn] | None = None,
+    history: collections.abc.Sequence[context.ContextTurn] | None = None,
     history_mode: str = "text_turns",
-) -> dict[str, Any]:
+) -> dict[str, typing.Any]:
     """Build a single Gemini/Vertex AI audio-SFT JSONL example.
 
     The caller supplies ``system_prompt`` and ``user_prompt`` so prompt text stays
@@ -50,7 +51,7 @@ def build_audio_tuning_example(
         A dict matching the current Vertex AI audio-SFT JSONL schema:
         ``{systemInstruction, contents: [history..., current user, target]}``.
     """
-    contents = build_transcription_contents(
+    contents = context.build_transcription_contents(
         audio_uri=audio_uri,
         user_prompt=user_prompt,
         history=history,
@@ -66,7 +67,7 @@ def build_audio_tuning_example(
     }
 
 
-def validate_audio_tuning_example(example: dict[str, Any]) -> bool:
+def validate_audio_tuning_example(example: dict[str, typing.Any]) -> bool:
     """Return True if the example matches the local audio-SFT data contract.
 
     This intentionally avoids provider-specific checks such as audio count,
@@ -93,7 +94,7 @@ def validate_audio_tuning_example(example: dict[str, Any]) -> bool:
     return bool(_extract_model_text(target_turn).strip())
 
 
-def _extract_model_text(model_turn: dict[str, Any]) -> str:
+def _extract_model_text(model_turn: dict[str, typing.Any]) -> str:
     model_parts = model_turn.get("parts", [])
     if not isinstance(model_parts, list) or not model_parts:
         return ""

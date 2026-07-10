@@ -3,39 +3,18 @@ from __future__ import annotations
 # ruff: noqa: E402
 import asyncio
 import json
+import pathlib
 import sys
 import unittest
 import unittest.mock
-from pathlib import Path
 
-_SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")
+_SRC_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "src")
 if _SRC_DIR not in sys.path:
     sys.path.insert(0, _SRC_DIR)
 
-from common.gemini import request_identity as request_identity_lib
-from common.gemini.context import ContextTurn
-from common.gemini.eval_artifacts import (
-    eval_target_artifact_paths,
-)
-from common.gemini.request_identity import (
-    build_gemini_eval_request_identity,
-    request_identity_hash,
-)
-from common.gemini.vertex import (
-    GEMINI_SAFETY_SETTINGS,
-)
-from fake_gcs import FakeStorageClient
-from gemini_sft.config import EvalExecutionConfig, EvalModelTarget
-from gemini_sft.target_execution import (
-    _generate_response,
-    load_existing_online_predictions,
-    online_prediction_metadata_uri,
-    online_prediction_uri,
-    resolve_target_backend,
-    run_online_target_inference,
-    upload_local_file,
-    upload_text,
-)
+import fake_gcs
+from common.gemini import context, eval_artifacts, request_identity, vertex
+from gemini_sft import config, target_execution
 
 
 def _identity(
@@ -44,7 +23,7 @@ def _identity(
     audio_uris: list[str] | None = None,
     system_prompt: str = "system",
     user_prompt: str = "user",
-    histories: list[list[ContextTurn]] | None = None,
+    histories: list[list[context.ContextTurn]] | None = None,
 ) -> dict:
     kwargs = {
         "target_label": "checkpoint_6",
@@ -58,14 +37,16 @@ def _identity(
     }
     if histories is not None:
         kwargs["histories"] = histories
-    return build_gemini_eval_request_identity(**kwargs)
+    return request_identity.build_gemini_eval_request_identity(**kwargs)
 
 
 def _metadata(identity: dict) -> str:
     return (
         json.dumps(
             {
-                "request_identity_hash": request_identity_hash(identity),
+                "request_identity_hash": request_identity.request_identity_hash(
+                    identity
+                ),
                 "request_identity": identity,
             },
             sort_keys=True,
@@ -74,7 +55,7 @@ def _metadata(identity: dict) -> str:
     )
 
 
-def _line_count(path: Path) -> int:
+def _line_count(path: pathlib.Path) -> int:
     if not path.exists():
         return 0
     return len(path.read_text(encoding="utf-8").splitlines())
@@ -82,45 +63,45 @@ def _line_count(path: Path) -> int:
 
 class TestTargetBackendResolver(unittest.TestCase):
     def test_publisher_model_defaults_to_batch(self) -> None:
-        backend = resolve_target_backend(
-            EvalModelTarget(label="base", model="gemini-3.1-flash-lite"),
-            EvalExecutionConfig(),
+        backend = target_execution.resolve_target_backend(
+            config.EvalModelTarget(label="base", model="gemini-3.1-flash-lite"),
+            config.EvalExecutionConfig(),
         )
 
         self.assertEqual(backend, "batch")
 
     def test_endpoint_resource_defaults_to_online(self) -> None:
-        backend = resolve_target_backend(
-            EvalModelTarget(
+        backend = target_execution.resolve_target_backend(
+            config.EvalModelTarget(
                 label="checkpoint_6",
                 model="projects/p/locations/us-central1/endpoints/123",
             ),
-            EvalExecutionConfig(),
+            config.EvalExecutionConfig(),
         )
 
         self.assertEqual(backend, "online")
 
     def test_forced_backend_overrides_model_shape(self) -> None:
-        publisher = EvalModelTarget(
+        publisher = config.EvalModelTarget(
             label="base",
             model="gemini-3.1-flash-lite",
         )
-        endpoint = EvalModelTarget(
+        endpoint = config.EvalModelTarget(
             label="checkpoint_6",
             model="projects/p/locations/us-central1/endpoints/123",
         )
 
         self.assertEqual(
-            resolve_target_backend(
+            target_execution.resolve_target_backend(
                 publisher,
-                EvalExecutionConfig(backend="online"),
+                config.EvalExecutionConfig(backend="online"),
             ),
             "online",
         )
         self.assertEqual(
-            resolve_target_backend(
+            target_execution.resolve_target_backend(
                 endpoint,
-                EvalExecutionConfig(backend="batch"),
+                config.EvalExecutionConfig(backend="batch"),
             ),
             "batch",
         )
@@ -129,14 +110,18 @@ class TestTargetBackendResolver(unittest.TestCase):
 class TestOnlineRequestIdentity(unittest.TestCase):
     def test_prediction_uris_are_under_eval_label(self) -> None:
         prefix = "gs://bucket/runs/run-1/"
-        paths = eval_target_artifact_paths(prefix, "checkpoint_6")
+        paths = eval_artifacts.eval_target_artifact_paths(
+            prefix, "checkpoint_6"
+        )
 
         self.assertEqual(
-            online_prediction_uri(prefix, "checkpoint_6"),
+            eval_artifacts.online_prediction_uri(prefix, "checkpoint_6"),
             paths.online_predictions_uri,
         )
         self.assertEqual(
-            online_prediction_metadata_uri(prefix, "checkpoint_6"),
+            eval_artifacts.online_prediction_metadata_uri(
+                prefix, "checkpoint_6"
+            ),
             paths.online_metadata_uri,
         )
 
@@ -145,35 +130,45 @@ class TestOnlineRequestIdentity(unittest.TestCase):
         reordered = {key: identity[key] for key in reversed(identity)}
 
         self.assertEqual(
-            request_identity_hash(identity),
-            request_identity_hash(reordered),
+            request_identity.request_identity_hash(identity),
+            request_identity.request_identity_hash(reordered),
         )
 
     def test_hash_changes_for_request_content(self) -> None:
-        base = request_identity_hash(_identity())
+        base = request_identity.request_identity_hash(_identity())
 
         self.assertNotEqual(
             base,
-            request_identity_hash(_identity(system_prompt="different")),
+            request_identity.request_identity_hash(
+                _identity(system_prompt="different")
+            ),
         )
         self.assertNotEqual(
             base,
-            request_identity_hash(_identity(model="gemini-3.1-flash-lite")),
+            request_identity.request_identity_hash(
+                _identity(model="gemini-3.1-flash-lite")
+            ),
         )
         self.assertNotEqual(
             base,
-            request_identity_hash(
+            request_identity.request_identity_hash(
                 _identity(audio_uris=["gs://audio/2.flac", "gs://audio/1.flac"])
             ),
         )
 
     def test_hash_changes_when_prior_transcript_changes(self) -> None:
-        first = [[ContextTurn("gs://audio/prior.flac", "alpha")], []]
-        second = [[ContextTurn("gs://audio/prior.flac", "bravo")], []]
+        first = [
+            [context.ContextTurn("gs://audio/prior.flac", "alpha")],
+            [],
+        ]
+        second = [
+            [context.ContextTurn("gs://audio/prior.flac", "bravo")],
+            [],
+        ]
 
         self.assertNotEqual(
-            request_identity_hash(_identity(histories=first)),
-            request_identity_hash(_identity(histories=second)),
+            request_identity.request_identity_hash(_identity(histories=first)),
+            request_identity.request_identity_hash(_identity(histories=second)),
         )
 
     def test_prefix_identity_rejects_changed_existing_request(self) -> None:
@@ -185,7 +180,7 @@ class TestOnlineRequestIdentity(unittest.TestCase):
             audio_uris=["gs://audio/1.flac", "gs://audio/2.flac"],
             histories=[
                 [
-                    ContextTurn(
+                    context.ContextTurn(
                         "gs://audio/new-prior.flac",
                         "changed transcript",
                     )
@@ -195,7 +190,7 @@ class TestOnlineRequestIdentity(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "request identity mismatch"):
-            request_identity_lib.validate_prefix_identity(
+            request_identity.validate_prefix_identity(
                 stored,
                 requested,
                 "request identity mismatch",
@@ -210,14 +205,14 @@ class TestOnlineRequestIdentity(unittest.TestCase):
 
 class TestOnlinePredictionResume(unittest.TestCase):
     def setUp(self) -> None:
-        self.storage = FakeStorageClient()
-        self.predictions_uri = online_prediction_uri(
+        self.storage = fake_gcs.FakeStorageClient()
+        self.predictions_uri = eval_artifacts.online_prediction_uri(
             "gs://bucket/run", "checkpoint_6"
         )
-        self.metadata_uri = online_prediction_metadata_uri(
+        self.metadata_uri = eval_artifacts.online_prediction_metadata_uri(
             "gs://bucket/run", "checkpoint_6"
         )
-        self.local_dir = Path(self.id().replace(".", "_"))
+        self.local_dir = pathlib.Path(self.id().replace(".", "_"))
         self.addCleanup(
             lambda: __import__("shutil").rmtree(
                 self.local_dir, ignore_errors=True
@@ -225,7 +220,7 @@ class TestOnlinePredictionResume(unittest.TestCase):
         )
 
     def _load(self, identity: dict):
-        return load_existing_online_predictions(
+        return target_execution.load_existing_online_predictions(
             storage_client=self.storage,
             predictions_uri=self.predictions_uri,
             metadata_uri=self.metadata_uri,
@@ -363,16 +358,16 @@ class TestOnlinePredictionResume(unittest.TestCase):
 
 class TestRunOnlineTargetInference(unittest.TestCase):
     def setUp(self) -> None:
-        self.storage = FakeStorageClient()
-        self.local_dir = Path(self.id().replace(".", "_"))
+        self.storage = fake_gcs.FakeStorageClient()
+        self.local_dir = pathlib.Path(self.id().replace(".", "_"))
         self.addCleanup(
             lambda: __import__("shutil").rmtree(
                 self.local_dir, ignore_errors=True
             )
         )
 
-    @unittest.mock.patch("gemini_sft.target_execution.types")
-    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
     def test_rejects_duplicate_audio_uris_before_paid_calls(
         self, mock_genai, mock_types
     ) -> None:
@@ -380,7 +375,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "duplicate audio_uri"):
             asyncio.run(
-                run_online_target_inference(
+                target_execution.run_online_target_inference(
                     storage_client=self.storage,
                     run_gcs_prefix="gs://bucket/run",
                     project="project",
@@ -402,8 +397,8 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
         mock_genai.Client.assert_not_called()
 
-    @unittest.mock.patch("gemini_sft.target_execution.types")
-    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
     def test_runs_with_shared_request_builder_and_records_empty_prediction(
         self, mock_genai, mock_types
     ) -> None:
@@ -428,7 +423,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
 
         result = asyncio.run(
-            run_online_target_inference(
+            target_execution.run_online_target_inference(
                 storage_client=self.storage,
                 run_gcs_prefix="gs://bucket/run",
                 project="project",
@@ -437,7 +432,11 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                 target_model="projects/p/locations/us-central1/endpoints/123",
                 audio_uris=["gs://audio/1.flac", "gs://audio/2.flac"],
                 histories=[
-                    [ContextTurn(audio_uri="gs://audio/0.flac", text="prior")],
+                    [
+                        context.ContextTurn(
+                            audio_uri="gs://audio/0.flac", text="prior"
+                        )
+                    ],
                     [],
                 ],
                 system_prompt="system",
@@ -467,7 +466,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             calls[0]["contents"][1]["parts"],
         )
         self.assertEqual(
-            calls[0]["config"]["safety_settings"], GEMINI_SAFETY_SETTINGS
+            calls[0]["config"]["safety_settings"], vertex.GEMINI_SAFETY_SETTINGS
         )
         self.assertEqual(
             calls[0]["config"]["http_options"]["retry_options"],
@@ -484,8 +483,8 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             '"error": null', self.storage.get(result.online_predictions_uri)
         )
 
-    @unittest.mock.patch("gemini_sft.target_execution.types")
-    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
     def test_worker_pool_schedules_at_most_concurrency_workers(
         self, mock_genai, mock_types
     ) -> None:
@@ -512,7 +511,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             tracking_gather,
         ):
             asyncio.run(
-                run_online_target_inference(
+                target_execution.run_online_target_inference(
                     storage_client=self.storage,
                     run_gcs_prefix="gs://bucket/run",
                     project="project",
@@ -538,8 +537,8 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
         self.assertEqual(gather_argument_counts, [2])
 
-    @unittest.mock.patch("gemini_sft.target_execution.types")
-    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
     def test_worker_pool_starts_next_request_before_straggler_finishes(
         self, mock_genai, mock_types
     ) -> None:
@@ -584,7 +583,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                     release_slow.set()
 
             _, third_started_before_release = await asyncio.gather(
-                run_online_target_inference(
+                target_execution.run_online_target_inference(
                     storage_client=self.storage,
                     run_gcs_prefix="gs://bucket/run",
                     project="project",
@@ -612,8 +611,8 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
         asyncio.run(run_scenario())
 
-    @unittest.mock.patch("gemini_sft.target_execution.types")
-    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
     def test_uploads_run_in_thread_pool(self, mock_genai, mock_types) -> None:
         class Response:
             text = "recognized"
@@ -637,7 +636,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             fake_to_thread,
         ):
             asyncio.run(
-                run_online_target_inference(
+                target_execution.run_online_target_inference(
                     storage_client=self.storage,
                     run_gcs_prefix="gs://bucket/run",
                     project="project",
@@ -658,16 +657,24 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             )
 
         self.assertGreaterEqual(
-            sum(1 for fn, _, _ in to_thread_calls if fn is upload_local_file),
+            sum(
+                1
+                for fn, _, _ in to_thread_calls
+                if fn is target_execution.gcs_utils.upload_local_file
+            ),
             1,
         )
         self.assertGreaterEqual(
-            sum(1 for fn, _, _ in to_thread_calls if fn is upload_text),
+            sum(
+                1
+                for fn, _, _ in to_thread_calls
+                if fn is target_execution.gcs_utils.upload_text
+            ),
             1,
         )
 
-    @unittest.mock.patch("gemini_sft.target_execution.types")
-    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
     def test_periodic_snapshot_uploads_completed_rows(
         self, mock_genai, mock_types
     ) -> None:
@@ -697,7 +704,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             ),
         ):
             asyncio.run(
-                run_online_target_inference(
+                target_execution.run_online_target_inference(
                     storage_client=self.storage,
                     run_gcs_prefix="gs://bucket/run",
                     project="project",
@@ -736,8 +743,8 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             ],
         )
 
-    @unittest.mock.patch("gemini_sft.target_execution.types")
-    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
     def test_periodic_uploads_are_serialized_without_holding_append_lock(
         self, mock_genai, mock_types
     ) -> None:
@@ -767,7 +774,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                 elif prediction_upload_calls == 2:
                     second_upload_started.set()
 
-            async def wait_for_two_rows(path: Path) -> None:
+            async def wait_for_two_rows(path: pathlib.Path) -> None:
                 while True:
                     line_count = await asyncio.to_thread(_line_count, path)
                     if line_count >= 2:
@@ -784,7 +791,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                 ),
             ):
                 task = asyncio.create_task(
-                    run_online_target_inference(
+                    target_execution.run_online_target_inference(
                         storage_client=self.storage,
                         run_gcs_prefix="gs://bucket/run",
                         project="project",
@@ -829,8 +836,8 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
         asyncio.run(run_scenario())
 
-    @unittest.mock.patch("gemini_sft.target_execution.types")
-    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
     def test_periodic_upload_failure_does_not_abort_generation(
         self, mock_genai, mock_types
     ) -> None:
@@ -868,7 +875,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             ) as logs,
         ):
             result = asyncio.run(
-                run_online_target_inference(
+                target_execution.run_online_target_inference(
                     storage_client=self.storage,
                     run_gcs_prefix="gs://bucket/run",
                     project="project",
@@ -894,13 +901,13 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         self.assertEqual(len(prediction_uploads), 2)
         self.assertIn("temporary upload failure", "\n".join(logs.output))
 
-    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
     def test_safe_resume_skips_existing_rows(self, mock_genai) -> None:
         identity = _identity()
-        predictions_uri = online_prediction_uri(
+        predictions_uri = eval_artifacts.online_prediction_uri(
             "gs://bucket/run", "checkpoint_6"
         )
-        metadata_uri = online_prediction_metadata_uri(
+        metadata_uri = eval_artifacts.online_prediction_metadata_uri(
             "gs://bucket/run", "checkpoint_6"
         )
         self.storage.put(
@@ -913,7 +920,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         self.storage.put(metadata_uri, _metadata(identity))
 
         result = asyncio.run(
-            run_online_target_inference(
+            target_execution.run_online_target_inference(
                 storage_client=self.storage,
                 run_gcs_prefix="gs://bucket/run",
                 project="project",
@@ -942,16 +949,16 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             },
         )
 
-    @unittest.mock.patch("gemini_sft.target_execution.types")
-    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
     def test_resume_retries_cached_error_rows(
         self, mock_genai, mock_types
     ) -> None:
         identity = _identity()
-        predictions_uri = online_prediction_uri(
+        predictions_uri = eval_artifacts.online_prediction_uri(
             "gs://bucket/run", "checkpoint_6"
         )
-        metadata_uri = online_prediction_metadata_uri(
+        metadata_uri = eval_artifacts.online_prediction_metadata_uri(
             "gs://bucket/run", "checkpoint_6"
         )
         self.storage.put(
@@ -980,7 +987,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
 
         result = asyncio.run(
-            run_online_target_inference(
+            target_execution.run_online_target_inference(
                 storage_client=self.storage,
                 run_gcs_prefix="gs://bucket/run",
                 project="project",
@@ -1010,8 +1017,8 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         )
         self.assertEqual(result.error_count, 0)
 
-    @unittest.mock.patch("gemini_sft.target_execution.types")
-    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
     def test_unresolved_online_errors_are_not_predictions(
         self, mock_genai, mock_types
     ) -> None:
@@ -1033,7 +1040,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
 
         result = asyncio.run(
-            run_online_target_inference(
+            target_execution.run_online_target_inference(
                 storage_client=self.storage,
                 run_gcs_prefix="gs://bucket/run",
                 project="project",
@@ -1086,7 +1093,7 @@ class TestGenerateResponse(unittest.TestCase):
         client.aio.models = Models()
 
         prediction, error = asyncio.run(
-            _generate_response(
+            target_execution._generate_response(
                 client=client,
                 model_id="projects/p/locations/us-central1/endpoints/123",
                 contents=[],
@@ -1119,7 +1126,7 @@ class TestGenerateResponse(unittest.TestCase):
         client.aio.models = models
 
         prediction, error = asyncio.run(
-            _generate_response(
+            target_execution._generate_response(
                 client=client,
                 model_id="projects/p/locations/us-central1/endpoints/123",
                 contents=[],

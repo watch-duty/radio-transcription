@@ -4,56 +4,35 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Any
+import typing
 
-from common.gcs_utils import (
-    download_gcs_uri,
-    gcs_prefix_has_any_blob,
-    gcs_uri_exists,
-    upload_local_file,
-)
-from common.gemini.context import build_context_histories
-from common.gemini.tuning_data import (
-    build_audio_tuning_example,
-    validate_audio_tuning_example,
-)
+from common import gcs_utils
+from common.gemini import context, tuning_data
 from google.cloud import storage
 
-from gemini_sft.artifacts import (
-    DEFAULT_RESULTS_DIR,
-    EVALS_README_TEXT,
-    PreparedRunArtifacts,
-    load_canonical_rows,
-    local_run_dir,
-    reject_split_overlap,
-    utc_now,
-    write_and_upload_config,
-    write_json_artifact,
-    write_status,
-    write_text_artifact,
-)
-from gemini_sft.config import RunConfig, RunConfigError, load_run_config
-from gemini_sft.preflight import run_preflight
+from gemini_sft import artifacts as artifacts_lib
+from gemini_sft import config as config_lib
+from gemini_sft import preflight
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     import argparse
-    from pathlib import Path
+    import pathlib
 
 logger = logging.getLogger(__name__)
-RESULTS_DIR = DEFAULT_RESULTS_DIR
+RESULTS_DIR = artifacts_lib.DEFAULT_RESULTS_DIR
 
 
 def prepare(args: argparse.Namespace) -> int:
     """CLI handler for ``gemini-sft prepare``."""
     try:
-        run_cfg = load_run_config(args.config)
+        run_cfg = config_lib.load_run_config(args.config)
         storage_client = storage.Client(project=run_cfg.gcp_project)
-        if gcs_uri_exists(storage_client, run_cfg.paths.config_uri):
+        if gcs_utils.gcs_uri_exists(storage_client, run_cfg.paths.config_uri):
             logger.error(
                 "Run config already exists in GCS; use a new round_id or run tune/eval."
             )
             return 1
-        if gcs_prefix_has_any_blob(
+        if gcs_utils.gcs_prefix_has_any_blob(
             storage_client, run_cfg.paths.gcs_prefix + "/"
         ):
             logger.error(
@@ -65,7 +44,7 @@ def prepare(args: argparse.Namespace) -> int:
             storage_client=storage_client,
             results_dir=RESULTS_DIR,
         )
-    except (OSError, RunConfigError, ValueError) as exc:
+    except (OSError, config_lib.RunConfigError, ValueError) as exc:
         return _log_cli_error(exc)
     logger.info(
         "Prepared %s train rows, %s validation rows, and %s eval rows.",
@@ -83,14 +62,14 @@ def _log_cli_error(exc: Exception) -> int:
 
 def prepare_run(
     *,
-    run_cfg: RunConfig,
+    run_cfg: config_lib.RunConfig,
     storage_client: storage.Client,
-    results_dir: Path,
-) -> tuple[PreparedRunArtifacts, dict[str, Any]]:
+    results_dir: pathlib.Path,
+) -> tuple[artifacts_lib.PreparedRunArtifacts, dict[str, typing.Any]]:
     """Prepare local/GCS artifacts for one config-driven run."""
-    run_dir = local_run_dir(results_dir, run_cfg.round_id)
+    run_dir = artifacts_lib.local_run_dir(results_dir, run_cfg.round_id)
     artifacts = prepare_artifacts(run_cfg, storage_client, run_dir)
-    report = run_preflight(
+    report = preflight.run_preflight(
         train_jsonl_path=artifacts.gemini_train_path,
         val_jsonl_path=artifacts.gemini_validation_path,
         storage_client=storage_client,
@@ -107,7 +86,7 @@ def prepare_run(
         "status": "preflight_passed" if report.passed else "preflight_failed",
     }
     upload_prepared_artifacts(artifacts, run_cfg, storage_client)
-    config = write_and_upload_config(
+    config = artifacts_lib.write_and_upload_config(
         results_dir=results_dir,
         run_cfg=run_cfg,
         storage_client=storage_client,
@@ -116,24 +95,29 @@ def prepare_run(
     status = {
         "round_id": run_cfg.round_id,
         "status": config["status"],
-        "updated_at": utc_now(),
+        "updated_at": artifacts_lib.utc_now(),
     }
-    write_status(run_dir, storage_client, run_cfg.paths.status_uri, status)
-    write_json_artifact(
+    artifacts_lib.write_status(
+        run_dir,
+        storage_client,
+        run_cfg.paths.status_uri,
+        status,
+    )
+    artifacts_lib.write_json_artifact(
         run_dir / "tuning" / "status.json",
         storage_client,
         run_cfg.paths.tuning_status_uri,
         {
             "round_id": run_cfg.round_id,
             "status": "not_submitted",
-            "updated_at": utc_now(),
+            "updated_at": artifacts_lib.utc_now(),
         },
     )
-    write_text_artifact(
+    artifacts_lib.write_text_artifact(
         run_dir / "evals" / "README.txt",
         storage_client,
         run_cfg.paths.evals_readme_uri,
-        EVALS_README_TEXT,
+        artifacts_lib.EVALS_README_TEXT,
     )
     if not report.passed:
         logger.error(
@@ -145,10 +129,10 @@ def prepare_run(
 
 
 def prepare_artifacts(
-    run_cfg: RunConfig,
+    run_cfg: config_lib.RunConfig,
     storage_client: storage.Client,
-    run_dir: Path,
-) -> PreparedRunArtifacts:
+    run_dir: pathlib.Path,
+) -> artifacts_lib.PreparedRunArtifacts:
     """Build canonical and Gemini model-input artifacts locally."""
     if (
         run_cfg.train_manifest_uri is None
@@ -169,29 +153,37 @@ def prepare_artifacts(
     canonical_train_path = canonical_dir / "train.jsonl"
     canonical_validation_path = canonical_dir / "validation.jsonl"
     canonical_eval_path = canonical_dir / "eval.jsonl"
-    download_gcs_uri(
+    gcs_utils.download_gcs_uri(
         storage_client, run_cfg.train_manifest_uri, canonical_train_path
     )
-    download_gcs_uri(
+    gcs_utils.download_gcs_uri(
         storage_client,
         run_cfg.validation_manifest_uri,
         canonical_validation_path,
     )
-    download_gcs_uri(
+    gcs_utils.download_gcs_uri(
         storage_client, run_cfg.eval_manifest_uri, canonical_eval_path
     )
 
-    train_entries, train_rows = load_canonical_rows(
+    train_entries, train_rows = artifacts_lib.load_canonical_rows(
         canonical_train_path, "train"
     )
-    validation_entries, validation_rows = load_canonical_rows(
+    validation_entries, validation_rows = artifacts_lib.load_canonical_rows(
         canonical_validation_path, "validation"
     )
-    _, eval_rows = load_canonical_rows(canonical_eval_path, "eval")
+    _, eval_rows = artifacts_lib.load_canonical_rows(
+        canonical_eval_path,
+        "eval",
+    )
     # Training audio must stay out of both validation and eval. Validation and
     # eval may intentionally point at the same manifest for Gemini SFT runs.
-    reject_split_overlap("train", train_rows, "validation", validation_rows)
-    reject_split_overlap("train", train_rows, "eval", eval_rows)
+    artifacts_lib.reject_split_overlap(
+        "train",
+        train_rows,
+        "validation",
+        validation_rows,
+    )
+    artifacts_lib.reject_split_overlap("train", train_rows, "eval", eval_rows)
 
     gemini_train_path = model_inputs_dir / "train.jsonl"
     gemini_validation_path = model_inputs_dir / "validation.jsonl"
@@ -215,7 +207,7 @@ def prepare_artifacts(
         prior_context_mode=run_cfg.prior_context_mode,
     )
 
-    return PreparedRunArtifacts(
+    return artifacts_lib.PreparedRunArtifacts(
         run_config_path=run_config_path,
         canonical_train_path=canonical_train_path,
         canonical_validation_path=canonical_validation_path,
@@ -231,8 +223,8 @@ def prepare_artifacts(
 
 
 def write_gemini_jsonl(
-    rows: list[dict[str, Any]],
-    path: Path,
+    rows: list[dict[str, typing.Any]],
+    path: pathlib.Path,
     *,
     system_prompt: str,
     user_prompt: str,
@@ -241,11 +233,14 @@ def write_gemini_jsonl(
 ) -> None:
     """Write Gemini audio-SFT JSONL from canonical rows."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    histories = build_context_histories(rows, max_turns=prior_context_count)
+    histories = context.build_context_histories(
+        rows,
+        max_turns=prior_context_count,
+    )
     with path.open("w", encoding="utf-8") as fh:
         for row, history in zip(rows, histories, strict=True):
             audio_uri = str(row.get("audio_filepath") or "")
-            example = build_audio_tuning_example(
+            example = tuning_data.build_audio_tuning_example(
                 audio_uri=audio_uri,
                 gt_text=str(row.get("text") or ""),
                 system_prompt=system_prompt,
@@ -253,15 +248,15 @@ def write_gemini_jsonl(
                 history=history,
                 history_mode=prior_context_mode,
             )
-            if not validate_audio_tuning_example(example):
+            if not tuning_data.validate_audio_tuning_example(example):
                 msg = f"invalid Gemini SFT example for {audio_uri}"
                 raise ValueError(msg)
             fh.write(json.dumps(example) + "\n")
 
 
 def upload_prepared_artifacts(
-    artifacts: PreparedRunArtifacts,
-    run_cfg: RunConfig,
+    artifacts: artifacts_lib.PreparedRunArtifacts,
+    run_cfg: config_lib.RunConfig,
     storage_client: storage.Client,
 ) -> None:
     """Upload prepared local artifacts to their canonical GCS locations."""
@@ -278,4 +273,4 @@ def upload_prepared_artifacts(
         (artifacts.preflight_report_path, run_cfg.paths.preflight_report_uri),
     ]
     for local_path, gcs_uri in uploads:
-        upload_local_file(storage_client, local_path, gcs_uri)
+        gcs_utils.upload_local_file(storage_client, local_path, gcs_uri)

@@ -4,35 +4,24 @@ import argparse
 import contextlib
 import json
 import logging
+import pathlib
 import tempfile
 import types
+import typing
 import unittest
 import unittest.mock
-from pathlib import Path
-from typing import Any
 
-from common.gemini import context
-from common.gemini.batch import BatchPredictionMap
-from common.gemini.eval_artifacts import batch_prediction_metadata_uri
-from common.gemini.tuning_data import build_audio_tuning_example
-from fake_gcs import FakeStorageClient
-from gemini_sft import cli
+import fake_gcs
+import sft_eval_fixtures
+from common.gemini import batch, context, eval_artifacts, tuning_data
+from gemini_sft import cli, preflight, prepare
+from gemini_sft import config as config_module
 from gemini_sft import evaluate as evaluate_module
 from gemini_sft import reporting as reporting_module
 from gemini_sft import tune as tune_module
-from gemini_sft.config import load_run_config
-from gemini_sft.preflight import run_preflight
-from gemini_sft.prepare import prepare_run
-from sft_eval_fixtures import (
-    batch_input_uri,
-    batch_output_uri,
-    online_prediction_artifacts,
-    put_batch_metadata,
-    summary_artifacts,
-)
 
 
-def _manifest(rows: list[dict[str, Any]]) -> str:
+def _manifest(rows: list[dict[str, typing.Any]]) -> str:
     return "".join(json.dumps(row) + "\n" for row in rows)
 
 
@@ -45,7 +34,7 @@ def _row(
     segment_id: str = "001",
     offset: float = 0.0,
     split: str | None = None,
-) -> dict[str, Any]:
+) -> dict[str, typing.Any]:
     if example_id is None:
         example_id = uri.rsplit("/", maxsplit=1)[-1].removesuffix(".flac")
     row = {
@@ -101,7 +90,7 @@ model = "{eval_model}"
 def _fake_wer(
     refs: list[str],
     hyps: list[str],
-    normalizer: Any = None,
+    normalizer: typing.Any = None,
 ) -> dict[str, float | int]:
     del normalizer
     total_words = sum(len(ref.split()) for ref in refs)
@@ -117,20 +106,20 @@ def _fake_wer(
 def _fake_cer(
     refs: list[str],
     hyps: list[str],
-    normalizer: Any = None,
+    normalizer: typing.Any = None,
 ) -> dict[str, float]:
     del normalizer
     return {"cer": 0.0 if refs == hyps else 1.0}
 
 
 @contextlib.contextmanager
-def _patched_eval_scoring() -> Any:
+def _patched_eval_scoring() -> typing.Any:
     with (
         unittest.mock.patch.object(
-            evaluate_module, "build_normalizer", return_value=None
+            evaluate_module.scoring, "build_normalizer", return_value=None
         ),
         unittest.mock.patch.multiple(
-            reporting_module,
+            reporting_module.scoring,
             compute_wer=_fake_wer,
             compute_cer=_fake_cer,
             keyword_metrics=lambda *_, **__: [],
@@ -142,11 +131,11 @@ def _patched_eval_scoring() -> Any:
 def _batch_prediction_map(
     predictions: dict[str, str],
     *,
-    output_uri: str = batch_output_uri(
+    output_uri: str = sft_eval_fixtures.batch_output_uri(
         "gs://test-bucket/sft/runs/round-a",
     ),
-) -> Any:
-    preds = BatchPredictionMap(predictions)
+) -> typing.Any:
+    preds = batch.BatchPredictionMap(predictions)
     preds.output_uri = output_uri
     return preds
 
@@ -178,19 +167,19 @@ def _online_prediction_map(
 ) -> _OnlinePredictionMap:
     return _OnlinePredictionMap(
         predictions,
-        **online_prediction_artifacts(run_gcs_prefix, label),
+        **sft_eval_fixtures.online_prediction_artifacts(run_gcs_prefix, label),
         error_count=error_count,
         request_identity_hash=request_identity_hash,
     )
 
 
 def _write_config_file(
-    tmp: Path,
+    tmp: pathlib.Path,
     round_id: str = "round-a",
     prior_context_count: int | None = None,
     eval_label: str = "base",
     eval_model: str = "gemini-3.1-flash-lite",
-) -> Path:
+) -> pathlib.Path:
     path = tmp / "run.toml"
     path.write_text(
         _config_text(
@@ -205,7 +194,7 @@ def _write_config_file(
 
 
 def _seed_source_manifests(
-    storage: FakeStorageClient,
+    storage: fake_gcs.FakeStorageClient,
     *,
     train_uri: str = "gs://audio/train.flac",
     validation_uri: str = "gs://audio/validation.flac",
@@ -230,8 +219,8 @@ def _seed_source_manifests(
 
 def _assert_no_prepared_outputs(
     test_case: unittest.TestCase,
-    tmp: Path,
-    storage: FakeStorageClient,
+    tmp: pathlib.Path,
+    storage: fake_gcs.FakeStorageClient,
 ) -> None:
     gemini_dir = tmp / "results" / "round-a" / "model_inputs" / "gemini"
     test_case.assertFalse((gemini_dir / "train.jsonl").exists())
@@ -286,8 +275,8 @@ class TestPreflight(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            train_example = build_audio_tuning_example(
+            tmp = pathlib.Path(tmp_s)
+            train_example = tuning_data.build_audio_tuning_example(
                 "gs://audio/train.flac",
                 "train",
                 "sys",
@@ -302,7 +291,7 @@ class TestPreflight(unittest.TestCase):
                     }
                 },
             )
-            val_example = build_audio_tuning_example(
+            val_example = tuning_data.build_audio_tuning_example(
                 "gs://audio/validation.flac",
                 "validation",
                 "sys",
@@ -314,7 +303,7 @@ class TestPreflight(unittest.TestCase):
             train_path.write_text(json.dumps(train_example) + "\n")
             val_path.write_text(json.dumps(val_example) + "\n")
 
-            report = run_preflight(
+            report = preflight.run_preflight(
                 train_jsonl_path=train_path,
                 val_jsonl_path=val_path,
                 storage_client=None,
@@ -334,12 +323,12 @@ class TestPreflight(unittest.TestCase):
 class TestPrepareRun(unittest.TestCase):
     def test_prepare_uploads_required_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage)
-            run_cfg = load_run_config(_write_config_file(tmp))
+            run_cfg = config_module.load_run_config(_write_config_file(tmp))
 
-            artifacts, config = prepare_run(
+            artifacts, config = prepare.prepare_run(
                 run_cfg=run_cfg,
                 storage_client=storage,
                 results_dir=tmp / "results",
@@ -364,12 +353,12 @@ class TestPrepareRun(unittest.TestCase):
 
     def test_prepare_uploads_config_after_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage)
-            run_cfg = load_run_config(_write_config_file(tmp))
+            run_cfg = config_module.load_run_config(_write_config_file(tmp))
 
-            prepare_run(
+            prepare.prepare_run(
                 run_cfg=run_cfg,
                 storage_client=storage,
                 results_dir=tmp / "results",
@@ -394,17 +383,17 @@ class TestPrepareRun(unittest.TestCase):
 
     def test_train_eval_overlap_fails_before_uploading_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(
                 storage,
                 train_uri="gs://audio/shared.flac",
                 eval_uri="gs://audio/shared.flac",
             )
-            run_cfg = load_run_config(_write_config_file(tmp))
+            run_cfg = config_module.load_run_config(_write_config_file(tmp))
 
             with self.assertRaisesRegex(ValueError, "train and eval"):
-                prepare_run(
+                prepare.prepare_run(
                     run_cfg=run_cfg,
                     storage_client=storage,
                     results_dir=tmp / "results",
@@ -466,14 +455,16 @@ class TestPrepareRun(unittest.TestCase):
         for role, mode, content, message in cases:
             with self.subTest(role=role, mode=mode):
                 with tempfile.TemporaryDirectory() as tmp_s:
-                    tmp = Path(tmp_s)
-                    storage = FakeStorageClient()
+                    tmp = pathlib.Path(tmp_s)
+                    storage = fake_gcs.FakeStorageClient()
                     _seed_source_manifests(storage)
                     storage.put(manifest_uris[role], content)
-                    run_cfg = load_run_config(_write_config_file(tmp))
+                    run_cfg = config_module.load_run_config(
+                        _write_config_file(tmp)
+                    )
 
                     with self.assertRaisesRegex(ValueError, message):
-                        prepare_run(
+                        prepare.prepare_run(
                             run_cfg=run_cfg,
                             storage_client=storage,
                             results_dir=tmp / "results",
@@ -485,8 +476,8 @@ class TestPrepareRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage)
             storage.put(
                 "gs://source/manifests/train.jsonl",
@@ -530,10 +521,10 @@ class TestPrepareRun(unittest.TestCase):
                     ]
                 ),
             )
-            run_cfg = load_run_config(_write_config_file(tmp))
+            run_cfg = config_module.load_run_config(_write_config_file(tmp))
 
             with self.assertRaisesRegex(ValueError, "train and eval") as ctx:
-                prepare_run(
+                prepare.prepare_run(
                     run_cfg=run_cfg,
                     storage_client=storage,
                     results_dir=tmp / "results",
@@ -546,8 +537,8 @@ class TestPrepareRun(unittest.TestCase):
 
     def test_prepare_rejects_mismatched_split_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage)
             storage.put(
                 "gs://source/manifests/train.jsonl",
@@ -588,12 +579,12 @@ class TestPrepareRun(unittest.TestCase):
                     ]
                 ),
             )
-            run_cfg = load_run_config(_write_config_file(tmp))
+            run_cfg = config_module.load_run_config(_write_config_file(tmp))
 
             with self.assertRaisesRegex(
                 ValueError, "Canonical Manifest validation failed"
             ):
-                prepare_run(
+                prepare.prepare_run(
                     run_cfg=run_cfg,
                     storage_client=storage,
                     results_dir=tmp / "results",
@@ -605,8 +596,8 @@ class TestPrepareRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(
                 storage,
                 train_uri="gs://audio/train.flac",
@@ -640,10 +631,10 @@ class TestPrepareRun(unittest.TestCase):
                     ]
                 ),
             )
-            run_cfg = load_run_config(_write_config_file(tmp))
+            run_cfg = config_module.load_run_config(_write_config_file(tmp))
 
             with self.assertRaisesRegex(ValueError, "identity"):
-                prepare_run(
+                prepare.prepare_run(
                     run_cfg=run_cfg,
                     storage_client=storage,
                     results_dir=tmp / "results",
@@ -660,8 +651,8 @@ class TestPrepareRun(unittest.TestCase):
 
     def test_train_validation_identity_overlap_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(
                 storage,
                 train_uri="gs://audio/train.flac",
@@ -695,13 +686,13 @@ class TestPrepareRun(unittest.TestCase):
                     ]
                 ),
             )
-            run_cfg = load_run_config(_write_config_file(tmp))
+            run_cfg = config_module.load_run_config(_write_config_file(tmp))
 
             with self.assertRaisesRegex(
                 ValueError,
                 "train and validation.*identity",
             ):
-                prepare_run(
+                prepare.prepare_run(
                     run_cfg=run_cfg,
                     storage_client=storage,
                     results_dir=tmp / "results",
@@ -709,16 +700,16 @@ class TestPrepareRun(unittest.TestCase):
 
     def test_validation_eval_overlap_is_allowed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(
                 storage,
                 validation_uri="gs://audio/shared.flac",
                 eval_uri="gs://audio/shared.flac",
             )
-            run_cfg = load_run_config(_write_config_file(tmp))
+            run_cfg = config_module.load_run_config(_write_config_file(tmp))
 
-            _, config = prepare_run(
+            _, config = prepare.prepare_run(
                 run_cfg=run_cfg,
                 storage_client=storage,
                 results_dir=tmp / "results",
@@ -733,8 +724,8 @@ class TestPrepareRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             train_rows = [
                 {
                     **_row(
@@ -796,11 +787,11 @@ class TestPrepareRun(unittest.TestCase):
                 "gs://audio/eval.flac",
             ):
                 storage.put(uri, "audio")
-            run_cfg = load_run_config(
+            run_cfg = config_module.load_run_config(
                 _write_config_file(tmp, prior_context_count=8)
             )
 
-            _, config = prepare_run(
+            _, config = prepare.prepare_run(
                 run_cfg=run_cfg,
                 storage_client=storage,
                 results_dir=tmp / "results",
@@ -848,10 +839,10 @@ class TestPrepareRun(unittest.TestCase):
 class TestTuneRun(unittest.TestCase):
     def test_existing_job_resumes_without_submit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             storage.put(
                 run_cfg.paths.config_uri,
                 json.dumps({**run_cfg.to_record_dict(), "job_name": "jobs/1"}),
@@ -882,11 +873,11 @@ class TestTuneRun(unittest.TestCase):
 
     def test_confirmation_decline_does_not_submit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage)
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             args = argparse.Namespace(config=str(cfg_path), confirm=False)
 
             with (
@@ -910,10 +901,10 @@ class TestTuneRun(unittest.TestCase):
 
     def test_existing_prepared_config_drives_tune_submission(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             prepared_config = {
                 **run_cfg.to_record_dict(),
                 "status": "preflight_passed",
@@ -958,8 +949,8 @@ class TestTuneRun(unittest.TestCase):
 
     def test_tune_validates_prepared_config_model_not_local_toml(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             cfg_path = tmp / "run.toml"
             cfg_path.write_text(
                 _config_text().replace(
@@ -968,7 +959,7 @@ class TestTuneRun(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             prepared_config = {
                 **run_cfg.to_record_dict(),
                 "status": "preflight_passed",
@@ -1004,10 +995,10 @@ class TestTuneRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             prepared_config = {
                 **run_cfg.to_record_dict(),
                 "status": "preflight_passed",
@@ -1041,10 +1032,10 @@ class TestTuneRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             prepared_config = {
                 **run_cfg.to_record_dict(),
                 "status": "preflight_passed",
@@ -1075,10 +1066,10 @@ class TestTuneRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             prepared_config = {
                 **run_cfg.to_record_dict(),
                 "status": "preflight_passed",
@@ -1117,11 +1108,11 @@ class TestEvaluateRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage)
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             storage.put(
                 run_cfg.paths.canonical_eval_uri,
                 _manifest(
@@ -1162,10 +1153,10 @@ class TestEvaluateRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             storage.put(
                 run_cfg.paths.canonical_eval_uri,
                 _manifest(
@@ -1202,11 +1193,11 @@ class TestEvaluateRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage)
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             storage.put(run_cfg.paths.canonical_eval_uri, "")
             config = run_cfg.to_record_dict()
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
@@ -1233,10 +1224,10 @@ class TestEvaluateRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             storage.put(
                 run_cfg.paths.canonical_eval_uri,
                 _manifest([_row("gs://audio/eval.flac", "valid")])
@@ -1266,11 +1257,11 @@ class TestEvaluateRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage, eval_uri="gs://audio/eval.flac")
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             storage.put(
                 run_cfg.paths.canonical_eval_uri,
                 _manifest([_row("gs://audio/eval.flac", "eval transcript")]),
@@ -1298,18 +1289,20 @@ class TestEvaluateRun(unittest.TestCase):
 
     def test_eval_uses_shared_batch_parser_and_records_output_uri(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage, eval_uri="gs://audio/eval.flac")
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             storage.put(
                 run_cfg.paths.canonical_eval_uri,
                 _manifest([_row("gs://audio/eval.flac", "eval transcript")]),
             )
             config = run_cfg.to_record_dict()
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
+            output_uri = sft_eval_fixtures.batch_output_uri(
+                run_cfg.paths.gcs_prefix
+            )
             pred_blob = f"{output_uri}predictions.jsonl"
             storage.put(
                 pred_blob,
@@ -1341,7 +1334,7 @@ class TestEvaluateRun(unittest.TestCase):
                 )
                 + "\n",
             )
-            put_batch_metadata(
+            sft_eval_fixtures.put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=config["canonical_eval_uri"],
@@ -1382,7 +1375,9 @@ class TestEvaluateRun(unittest.TestCase):
                 "gs://test-bucket/inference_manifests/echo/eval/"
                 "gemini_3_1_flash_lite/round-a/base.jsonl",
             )
-            summary = summary_artifacts(run_cfg.paths.gcs_prefix)
+            summary = sft_eval_fixtures.summary_artifacts(
+                run_cfg.paths.gcs_prefix
+            )
             self.assertEqual(
                 artifacts["summary_json_uri"],
                 summary["summary_json_uri"],
@@ -1407,10 +1402,10 @@ class TestEvaluateRun(unittest.TestCase):
 
     def test_eval_builds_prior_context_batch_requests(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             cfg_path = _write_config_file(tmp, prior_context_count=1)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             eval_rows = [
                 {
                     **_row(
@@ -1440,7 +1435,9 @@ class TestEvaluateRun(unittest.TestCase):
             config = run_cfg.to_record_dict()
             storage.put(run_cfg.paths.canonical_eval_uri, _manifest(eval_rows))
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
+            output_uri = sft_eval_fixtures.batch_output_uri(
+                run_cfg.paths.gcs_prefix
+            )
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 "\n".join(
@@ -1501,7 +1498,7 @@ class TestEvaluateRun(unittest.TestCase):
                 )
                 + "\n",
             )
-            put_batch_metadata(
+            sft_eval_fixtures.put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=config["canonical_eval_uri"],
@@ -1542,7 +1539,7 @@ class TestEvaluateRun(unittest.TestCase):
             batch_rows = [
                 json.loads(line)
                 for line in storage.get(
-                    batch_input_uri(run_cfg.paths.gcs_prefix)
+                    sft_eval_fixtures.batch_input_uri(run_cfg.paths.gcs_prefix)
                 ).splitlines()
                 if line.strip()
             ]
@@ -1565,8 +1562,8 @@ class TestEvaluateRun(unittest.TestCase):
 
     def test_eval_manifest_uri_comes_from_gcs_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(
                 storage,
                 eval_uri="gs://audio/local-eval.flac",
@@ -1576,12 +1573,14 @@ class TestEvaluateRun(unittest.TestCase):
                 _manifest([_row("gs://audio/prepared-eval.flac", "prepared")]),
             )
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             config = {
                 **run_cfg.to_record_dict(),
                 "canonical_eval_uri": "gs://prepared/eval.jsonl",
             }
-            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
+            output_uri = sft_eval_fixtures.batch_output_uri(
+                run_cfg.paths.gcs_prefix
+            )
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 json.dumps(
@@ -1608,7 +1607,7 @@ class TestEvaluateRun(unittest.TestCase):
                 )
                 + "\n",
             )
-            put_batch_metadata(
+            sft_eval_fixtures.put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=config["canonical_eval_uri"],
@@ -1646,11 +1645,11 @@ class TestEvaluateRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage, eval_uri="gs://audio/eval-1.flac")
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             storage.put(
                 run_cfg.paths.canonical_eval_uri,
                 _manifest(
@@ -1670,7 +1669,9 @@ class TestEvaluateRun(unittest.TestCase):
             )
             config = run_cfg.to_record_dict()
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
+            output_uri = sft_eval_fixtures.batch_output_uri(
+                run_cfg.paths.gcs_prefix
+            )
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 json.dumps(
@@ -1701,7 +1702,7 @@ class TestEvaluateRun(unittest.TestCase):
                 )
                 + "\n",
             )
-            put_batch_metadata(
+            sft_eval_fixtures.put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=config["canonical_eval_uri"],
@@ -1764,15 +1765,15 @@ class TestEvaluateRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage)
             cfg_path = _write_config_file(
                 tmp,
                 eval_label="checkpoint_6",
                 eval_model="projects/p/locations/us-central1/endpoints/123",
             )
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
             online_preds = _online_prediction_map(
@@ -1817,10 +1818,10 @@ class TestEvaluateRun(unittest.TestCase):
 
     def test_eval_execution_limit_scores_one_row_and_batch_input(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             cfg_path = _write_config_file(tmp, prior_context_count=1)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
             config["eval_execution"]["limit"] = 1
             eval_rows = [
@@ -1851,7 +1852,9 @@ class TestEvaluateRun(unittest.TestCase):
             ]
             storage.put(run_cfg.paths.canonical_eval_uri, _manifest(eval_rows))
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
-            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
+            output_uri = sft_eval_fixtures.batch_output_uri(
+                run_cfg.paths.gcs_prefix
+            )
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 json.dumps(
@@ -1880,7 +1883,7 @@ class TestEvaluateRun(unittest.TestCase):
                 )
                 + "\n",
             )
-            put_batch_metadata(
+            sft_eval_fixtures.put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=config["canonical_eval_uri"],
@@ -1924,7 +1927,7 @@ class TestEvaluateRun(unittest.TestCase):
             batch_rows = [
                 json.loads(line)
                 for line in storage.get(
-                    batch_input_uri(run_cfg.paths.gcs_prefix)
+                    sft_eval_fixtures.batch_input_uri(run_cfg.paths.gcs_prefix)
                 ).splitlines()
                 if line.strip()
             ]
@@ -1951,10 +1954,10 @@ class TestEvaluateRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
             config["eval_model"] = {
                 "label": "base",
@@ -1967,7 +1970,9 @@ class TestEvaluateRun(unittest.TestCase):
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
             batch_preds = _batch_prediction_map(
                 {"gs://audio/eval.flac": "eval transcript"},
-                output_uri=batch_output_uri(run_cfg.paths.gcs_prefix),
+                output_uri=sft_eval_fixtures.batch_output_uri(
+                    run_cfg.paths.gcs_prefix
+                ),
             )
             with (
                 unittest.mock.patch.object(
@@ -2018,7 +2023,7 @@ class TestEvaluateRun(unittest.TestCase):
             "normalized_manifest_uri",
             target["artifacts"],
         )
-        summary = summary_artifacts(run_cfg.paths.gcs_prefix)
+        summary = sft_eval_fixtures.summary_artifacts(run_cfg.paths.gcs_prefix)
         self.assertEqual(
             target["artifacts"]["summary_json_uri"],
             summary["summary_json_uri"],
@@ -2038,10 +2043,10 @@ class TestEvaluateRun(unittest.TestCase):
         self.assertIn("batch", batch_backend_toml)
 
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
             config["eval_execution"]["backend"] = "online"
             storage.put(
@@ -2080,10 +2085,10 @@ class TestEvaluateRun(unittest.TestCase):
         batch.assert_not_called()
 
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
             config["eval_model"] = {
                 "label": "checkpoint_6",
@@ -2097,7 +2102,9 @@ class TestEvaluateRun(unittest.TestCase):
             batch_preds = _batch_prediction_map(
                 {"gs://audio/eval.flac": "eval transcript"},
                 output_uri=(
-                    batch_output_uri(run_cfg.paths.gcs_prefix, "checkpoint_6")
+                    sft_eval_fixtures.batch_output_uri(
+                        run_cfg.paths.gcs_prefix, "checkpoint_6"
+                    )
                 ),
             )
 
@@ -2131,11 +2138,11 @@ class TestEvaluateRun(unittest.TestCase):
 
     def test_eval_requires_canonical_eval_uri_in_gcs_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage)
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
             config.pop("canonical_eval_uri")
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
@@ -2158,11 +2165,11 @@ class TestEvaluateRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage)
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
             config.pop("eval_model")
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
@@ -2189,11 +2196,11 @@ class TestEvaluateRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage)
             base_cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(base_cfg_path)
+            run_cfg = config_module.load_run_config(base_cfg_path)
             storage.put(
                 run_cfg.paths.config_uri,
                 json.dumps(run_cfg.to_record_dict()),
@@ -2210,7 +2217,9 @@ class TestEvaluateRun(unittest.TestCase):
             )
             batch_preds = _batch_prediction_map(
                 {"gs://audio/eval.flac": "eval transcript"},
-                output_uri=batch_output_uri(run_cfg.paths.gcs_prefix),
+                output_uri=sft_eval_fixtures.batch_output_uri(
+                    run_cfg.paths.gcs_prefix
+                ),
             )
             args = argparse.Namespace(config=str(checkpoint_cfg_path))
 
@@ -2245,8 +2254,8 @@ class TestEvaluateRun(unittest.TestCase):
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage)
             cfg_path = tmp / "online_eval.toml"
             cfg_path.write_text(
@@ -2263,7 +2272,7 @@ max_retries = 1
 """,
                 encoding="utf-8",
             )
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             durable_config = run_cfg.to_record_dict()
             durable_config["eval_execution"]["concurrency"] = 16
             durable_config["eval_execution"]["max_retries"] = 3
@@ -2311,11 +2320,11 @@ max_retries = 1
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage)
             cfg_path = _write_config_file(tmp)
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
             config["eval_model"] = {
                 "label": "bad label",
@@ -2345,15 +2354,15 @@ max_retries = 1
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage)
             cfg_path = _write_config_file(
                 tmp,
                 eval_label="checkpoint_6",
                 eval_model="projects/p/locations/us/endpoints/123",
             )
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
             online_preds = _online_prediction_map(
@@ -2398,15 +2407,15 @@ max_retries = 1
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
             _seed_source_manifests(storage)
             cfg_path = _write_config_file(
                 tmp,
                 eval_label="checkpoint_6",
                 eval_model="projects/p/locations/us/endpoints/123",
             )
-            run_cfg = load_run_config(cfg_path)
+            run_cfg = config_module.load_run_config(cfg_path)
             config = run_cfg.to_record_dict()
             storage.put(run_cfg.paths.config_uri, json.dumps(config))
             online_preds = _online_prediction_map(
@@ -2474,10 +2483,12 @@ max_retries = 1
 
     def test_batch_infer_fails_when_vertex_writes_no_jsonl(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
-            run_cfg = load_run_config(_write_config_file(tmp))
-            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
+            run_cfg = config_module.load_run_config(_write_config_file(tmp))
+            output_uri = sft_eval_fixtures.batch_output_uri(
+                run_cfg.paths.gcs_prefix
+            )
             eval_rows = [
                 types.SimpleNamespace(audio_filepath="gs://audio/eval.flac")
             ]
@@ -2501,7 +2512,7 @@ max_retries = 1
                     prior_context_mode="text_turns",
                     eval_manifest_uri=run_cfg.paths.canonical_eval_uri,
                 )
-            metadata_uri = batch_prediction_metadata_uri(
+            metadata_uri = eval_artifacts.batch_prediction_metadata_uri(
                 run_cfg.paths.gcs_prefix,
                 "base",
             )
@@ -2511,10 +2522,12 @@ max_retries = 1
 
     def test_batch_infer_rejects_existing_output_without_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
-            run_cfg = load_run_config(_write_config_file(tmp))
-            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
+            run_cfg = config_module.load_run_config(_write_config_file(tmp))
+            output_uri = sft_eval_fixtures.batch_output_uri(
+                run_cfg.paths.gcs_prefix
+            )
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 json.dumps(
@@ -2578,10 +2591,12 @@ max_retries = 1
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
-            run_cfg = load_run_config(_write_config_file(tmp))
-            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
+            run_cfg = config_module.load_run_config(_write_config_file(tmp))
+            output_uri = sft_eval_fixtures.batch_output_uri(
+                run_cfg.paths.gcs_prefix
+            )
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 json.dumps(
@@ -2612,7 +2627,7 @@ max_retries = 1
                 )
                 + "\n",
             )
-            put_batch_metadata(
+            sft_eval_fixtures.put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=run_cfg.paths.canonical_eval_uri,
@@ -2651,10 +2666,12 @@ max_retries = 1
 
     def test_batch_infer_reuses_exact_metadata_without_submit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
-            run_cfg = load_run_config(_write_config_file(tmp))
-            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
+            run_cfg = config_module.load_run_config(_write_config_file(tmp))
+            output_uri = sft_eval_fixtures.batch_output_uri(
+                run_cfg.paths.gcs_prefix
+            )
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 json.dumps(
@@ -2685,7 +2702,7 @@ max_retries = 1
                 )
                 + "\n",
             )
-            put_batch_metadata(
+            sft_eval_fixtures.put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=run_cfg.paths.canonical_eval_uri,
@@ -2722,9 +2739,9 @@ max_retries = 1
 
     def test_batch_infer_rejects_duplicate_eval_audio_uris(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
-            run_cfg = load_run_config(_write_config_file(tmp))
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
+            run_cfg = config_module.load_run_config(_write_config_file(tmp))
             eval_rows = [
                 types.SimpleNamespace(audio_filepath="gs://audio/eval.flac"),
                 types.SimpleNamespace(audio_filepath="gs://audio/eval.flac"),
@@ -2756,10 +2773,12 @@ max_retries = 1
         self,
     ) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            tmp = Path(tmp_s)
-            storage = FakeStorageClient()
-            run_cfg = load_run_config(_write_config_file(tmp))
-            output_uri = batch_output_uri(run_cfg.paths.gcs_prefix)
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
+            run_cfg = config_module.load_run_config(_write_config_file(tmp))
+            output_uri = sft_eval_fixtures.batch_output_uri(
+                run_cfg.paths.gcs_prefix
+            )
             storage.put(
                 f"{output_uri}predictions.jsonl",
                 json.dumps(
@@ -2786,7 +2805,7 @@ max_retries = 1
                 )
                 + "\n",
             )
-            put_batch_metadata(
+            sft_eval_fixtures.put_batch_metadata(
                 storage,
                 run_gcs_prefix=run_cfg.paths.gcs_prefix,
                 eval_manifest_uri=run_cfg.paths.canonical_eval_uri,

@@ -2,34 +2,30 @@
 
 from __future__ import annotations
 
+import dataclasses
+import pathlib
 import re
 import tomllib
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Final
+import typing
 
-from common.gemini.context import PRIOR_CONTEXT_MODES
-from common.gemini.prompts import (
-    GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
-    GEMINI_TRANSCRIBE_USER_PROMPT,
-)
-from common.inference_manifest import (
-    validate_artifact_label,
-    validate_inference_dataset_slug,
-)
+from common import inference_manifest
+from common.gemini import context
+from common.gemini import prompts as prompt_defaults
 
-ADAPTER_SIZES: Final = frozenset({"ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"})
-EVAL_EXECUTION_BACKENDS: Final = frozenset({"batch", "online"})
-EVAL_MODEL_FIELDS: Final = frozenset({"label", "model"})
-EVAL_EXECUTION_FIELDS: Final = frozenset(
+ADAPTER_SIZES: typing.Final = frozenset(
+    {"ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"}
+)
+EVAL_EXECUTION_BACKENDS: typing.Final = frozenset({"batch", "online"})
+EVAL_MODEL_FIELDS: typing.Final = frozenset({"label", "model"})
+EVAL_EXECUTION_FIELDS: typing.Final = frozenset(
     {"backend", "concurrency", "limit", "max_retries"}
 )
-ROUND_ID_PATTERN: Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-EVAL_MODEL_REQUIRED_MESSAGE: Final = (
+ROUND_ID_PATTERN: typing.Final = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+EVAL_MODEL_REQUIRED_MESSAGE: typing.Final = (
     "eval configs must define one [eval.model] target with required label and "
     "model fields"
 )
-CONFIG_EVAL_MODEL_REQUIRED_MESSAGE: Final = (
+CONFIG_EVAL_MODEL_REQUIRED_MESSAGE: typing.Final = (
     "config.json missing required eval_model object; configure one "
     "[eval.model] target with required label and model fields"
 )
@@ -39,7 +35,7 @@ class RunConfigError(ValueError):
     """Raised when an external SFT run config is invalid."""
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class RunPaths:
     """Resolved local/GCS artifact contract for one SFT round.
 
@@ -62,7 +58,7 @@ class RunPaths:
     evals_readme_uri: str
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class EvalModelTarget:
     """Static eval target config for one model or endpoint string.
 
@@ -79,7 +75,7 @@ class EvalModelTarget:
         return {"label": self.label, "model": self.model}
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class EvalExecutionConfig:
     """Execution controls for eval target inference."""
 
@@ -101,11 +97,11 @@ class EvalExecutionConfig:
         return record
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class RunConfig:
     """Validated operator config with defaults and derived paths resolved."""
 
-    source_path: Path
+    source_path: pathlib.Path
     raw_toml: str
     round_id: str
     inference_dataset_slug: str
@@ -127,7 +123,7 @@ class RunConfig:
     user_prompt: str
     paths: RunPaths
 
-    def to_record_dict(self) -> dict[str, Any]:
+    def to_record_dict(self) -> dict[str, typing.Any]:
         """Return the resolved run config shape stored in config.json."""
         record = {
             "round_id": self.round_id,
@@ -162,23 +158,23 @@ class RunConfig:
         return record
 
 
-def load_run_config(path: str | Path) -> RunConfig:
+def load_run_config(path: str | pathlib.Path) -> RunConfig:
     """Load, validate, and resolve an external TOML run config."""
     return _load_run_config(path, require_training_manifests=True)
 
 
-def load_eval_run_config(path: str | Path) -> RunConfig:
+def load_eval_run_config(path: str | pathlib.Path) -> RunConfig:
     """Load an eval TOML config without requiring train/validation manifests."""
     return _load_run_config(path, require_training_manifests=False)
 
 
 def _load_run_config(
-    path: str | Path,
+    path: str | pathlib.Path,
     *,
     require_training_manifests: bool,
 ) -> RunConfig:
     """Load and resolve a TOML run config."""
-    source_path = Path(path).expanduser()
+    source_path = pathlib.Path(path).expanduser()
     try:
         raw_toml = source_path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -253,13 +249,13 @@ def _load_run_config(
         prompts,
         key="system",
         file_key="system_file",
-        default=GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
+        default=prompt_defaults.GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
     )
     user_prompt = _resolve_prompt(
         prompts,
         key="user",
         file_key="user_file",
-        default=GEMINI_TRANSCRIBE_USER_PROMPT,
+        default=prompt_defaults.GEMINI_TRANSCRIBE_USER_PROMPT,
     )
 
     paths = _build_paths(gcs_bucket, round_id)
@@ -288,7 +284,7 @@ def _load_run_config(
     )
 
 
-def require_config_str(config: dict[str, Any], key: str) -> str:
+def require_config_str(config: dict[str, typing.Any], key: str) -> str:
     """Return a required string from durable GCS config.json state."""
     value = config.get(key)
     if not isinstance(value, str) or not value:
@@ -297,7 +293,7 @@ def require_config_str(config: dict[str, Any], key: str) -> str:
     return value
 
 
-def require_config_int(config: dict[str, Any], key: str) -> int:
+def require_config_int(config: dict[str, typing.Any], key: str) -> int:
     """Return a required integer from durable GCS config.json state."""
     value = config.get(key)
     if isinstance(value, bool) or not isinstance(value, int):
@@ -306,7 +302,7 @@ def require_config_int(config: dict[str, Any], key: str) -> int:
     return value
 
 
-def require_config_float(config: dict[str, Any], key: str) -> float:
+def require_config_float(config: dict[str, typing.Any], key: str) -> float:
     """Return a required numeric value from durable GCS config.json state."""
     value = config.get(key)
     if isinstance(value, bool) or not isinstance(value, (float, int)):
@@ -315,7 +311,7 @@ def require_config_float(config: dict[str, Any], key: str) -> float:
     return float(value)
 
 
-def require_config_eval_model(config: dict[str, Any]) -> EvalModelTarget:
+def require_config_eval_model(config: dict[str, typing.Any]) -> EvalModelTarget:
     """Return the validated eval target from durable GCS config.json state."""
     raw_target = config.get("eval_model")
     if raw_target is None:
@@ -336,7 +332,7 @@ def require_config_eval_model(config: dict[str, Any]) -> EvalModelTarget:
 
 
 def require_config_eval_execution(
-    config: dict[str, Any],
+    config: dict[str, typing.Any],
 ) -> EvalExecutionConfig:
     """Return validated eval execution controls from durable config.json."""
     raw_execution = config.get("eval_execution")
@@ -348,26 +344,30 @@ def require_config_eval_execution(
     return _config_eval_execution_config(raw_execution)
 
 
-def optional_config_prior_context_mode(config: dict[str, Any], key: str) -> str:
+def optional_config_prior_context_mode(
+    config: dict[str, typing.Any], key: str
+) -> str:
     """Return a validated durable prior-context mode."""
     value = config.get(key, "text_turns")
     if not isinstance(value, str):
         msg = (
             f"config.json field must be one of "
-            f"{', '.join(sorted(PRIOR_CONTEXT_MODES))}: {key}"
+            f"{', '.join(sorted(context.PRIOR_CONTEXT_MODES))}: {key}"
         )
         raise TypeError(msg)
     mode = value.strip().lower()
-    if mode not in PRIOR_CONTEXT_MODES:
+    if mode not in context.PRIOR_CONTEXT_MODES:
         msg = (
             f"config.json field must be one of "
-            f"{', '.join(sorted(PRIOR_CONTEXT_MODES))}: {key}"
+            f"{', '.join(sorted(context.PRIOR_CONTEXT_MODES))}: {key}"
         )
         raise ValueError(msg)
     return mode
 
 
-def _required_table(data: dict[str, Any], key: str) -> dict[str, Any]:
+def _required_table(
+    data: dict[str, typing.Any], key: str
+) -> dict[str, typing.Any]:
     value = data.get(key)
     if not isinstance(value, dict):
         msg = f"missing required [{key}] table"
@@ -375,7 +375,7 @@ def _required_table(data: dict[str, Any], key: str) -> dict[str, Any]:
     return value
 
 
-def _eval_table(data: dict[str, Any]) -> dict[str, Any] | None:
+def _eval_table(data: dict[str, typing.Any]) -> dict[str, typing.Any] | None:
     eval_table = data.get("eval")
     if eval_table is None:
         return None
@@ -395,7 +395,7 @@ def _eval_table(data: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _eval_model_target(
-    eval_table: dict[str, Any] | None,
+    eval_table: dict[str, typing.Any] | None,
     *,
     required: bool,
 ) -> EvalModelTarget | None:
@@ -425,7 +425,7 @@ def _eval_model_target(
 
 
 def _parse_eval_model_mapping(
-    raw_target: dict[str, Any],
+    raw_target: dict[str, typing.Any],
     *,
     object_name: str,
     label_name: str,
@@ -452,7 +452,7 @@ def _parse_eval_model_mapping(
         msg = f"{label_name} must be a non-empty string"
         raise error_cls(msg)
     try:
-        label = validate_artifact_label(label_value.strip())
+        label = inference_manifest.validate_artifact_label(label_value.strip())
     except ValueError as exc:
         msg = f"{label_name} is invalid: {exc}"
         raise error_cls(msg) from exc
@@ -465,7 +465,7 @@ def _parse_eval_model_mapping(
 
 
 def _eval_execution_config(
-    eval_table: dict[str, Any] | None,
+    eval_table: dict[str, typing.Any] | None,
 ) -> EvalExecutionConfig:
     if eval_table is None:
         return EvalExecutionConfig()
@@ -506,7 +506,7 @@ def _eval_execution_config(
 
 
 def _config_eval_execution_config(
-    raw_execution: dict[str, Any],
+    raw_execution: dict[str, typing.Any],
 ) -> EvalExecutionConfig:
     _reject_unsupported_fields(
         raw_execution,
@@ -535,7 +535,7 @@ def _config_eval_execution_config(
 
 
 def _reject_unsupported_fields(
-    data: dict[str, Any],
+    data: dict[str, typing.Any],
     *,
     allowed: frozenset[str],
     context: str,
@@ -548,7 +548,7 @@ def _reject_unsupported_fields(
 
 
 def _optional_eval_execution_backend(
-    data: dict[str, Any],
+    data: dict[str, typing.Any],
     key: str,
 ) -> str | None:
     value = _lookup(data, key)
@@ -565,7 +565,7 @@ def _optional_eval_execution_backend(
 
 
 def _optional_config_eval_execution_backend(
-    data: dict[str, Any],
+    data: dict[str, typing.Any],
 ) -> str | None:
     value = data.get("backend")
     if value is None:
@@ -580,7 +580,7 @@ def _optional_config_eval_execution_backend(
     return backend
 
 
-def _required_str(data: dict[str, Any], key: str) -> str:
+def _required_str(data: dict[str, typing.Any], key: str) -> str:
     value = _lookup(data, key)
     if not isinstance(value, str) or not value.strip():
         msg = f"missing required string field: {key}"
@@ -588,7 +588,7 @@ def _required_str(data: dict[str, Any], key: str) -> str:
     return value.strip()
 
 
-def _required_round_id(data: dict[str, Any], key: str) -> str:
+def _required_round_id(data: dict[str, typing.Any], key: str) -> str:
     value = _required_str(data, key)
     if not ROUND_ID_PATTERN.fullmatch(value):
         msg = (
@@ -599,7 +599,7 @@ def _required_round_id(data: dict[str, Any], key: str) -> str:
     return value
 
 
-def _required_gcs_uri(data: dict[str, Any], key: str) -> str:
+def _required_gcs_uri(data: dict[str, typing.Any], key: str) -> str:
     value = _required_str(data, key)
     if not value.startswith("gs://"):
         msg = f"{key} must be a gs:// URI"
@@ -607,7 +607,7 @@ def _required_gcs_uri(data: dict[str, Any], key: str) -> str:
     return value
 
 
-def _optional_stripped_str(data: dict[str, Any], key: str) -> str | None:
+def _optional_stripped_str(data: dict[str, typing.Any], key: str) -> str | None:
     value = _lookup(data, key)
     if value is None:
         return None
@@ -618,7 +618,7 @@ def _optional_stripped_str(data: dict[str, Any], key: str) -> str | None:
     return text or None
 
 
-def _optional_gcs_uri(data: dict[str, Any], key: str) -> str | None:
+def _optional_gcs_uri(data: dict[str, typing.Any], key: str) -> str | None:
     value = _lookup(data, key)
     if value is None:
         return None
@@ -634,16 +634,18 @@ def _optional_gcs_uri(data: dict[str, Any], key: str) -> str | None:
     return uri
 
 
-def _required_inference_dataset_slug(data: dict[str, Any], key: str) -> str:
+def _required_inference_dataset_slug(
+    data: dict[str, typing.Any], key: str
+) -> str:
     value = _required_str(data, key)
     try:
-        return validate_inference_dataset_slug(value)
+        return inference_manifest.validate_inference_dataset_slug(value)
     except ValueError as exc:
         msg = f"{key} must be a safe relative path: {exc}"
         raise RunConfigError(msg) from exc
 
 
-def _required_bucket(data: dict[str, Any], key: str) -> str:
+def _required_bucket(data: dict[str, typing.Any], key: str) -> str:
     value = _required_str(data, key)
     if value.startswith("gs://") or "/" in value:
         msg = f"{key} must be a bucket name, not a gs:// URI or path"
@@ -651,7 +653,7 @@ def _required_bucket(data: dict[str, Any], key: str) -> str:
     return value
 
 
-def _required_positive_int(data: dict[str, Any], key: str) -> int:
+def _required_positive_int(data: dict[str, typing.Any], key: str) -> int:
     value = _lookup(data, key)
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         msg = f"{key} must be a positive integer"
@@ -660,7 +662,7 @@ def _required_positive_int(data: dict[str, Any], key: str) -> int:
 
 
 def _optional_positive_int(
-    data: dict[str, Any],
+    data: dict[str, typing.Any],
     key: str,
     *,
     default: int | None,
@@ -675,7 +677,7 @@ def _optional_positive_int(
 
 
 def _optional_config_positive_int(
-    data: dict[str, Any],
+    data: dict[str, typing.Any],
     key: str,
     *,
     default: int | None,
@@ -694,7 +696,7 @@ def _optional_config_positive_int(
 
 
 def _optional_nonnegative_int(
-    data: dict[str, Any], key: str, *, default: int
+    data: dict[str, typing.Any], key: str, *, default: int
 ) -> int:
     value = _lookup(data, key)
     if value is None:
@@ -705,21 +707,21 @@ def _optional_nonnegative_int(
     return value
 
 
-def _optional_prior_context_mode(data: dict[str, Any], key: str) -> str:
+def _optional_prior_context_mode(data: dict[str, typing.Any], key: str) -> str:
     value = _lookup(data, key)
     if value is None:
         return "text_turns"
     if not isinstance(value, str):
-        msg = f"{key} must be one of {', '.join(sorted(PRIOR_CONTEXT_MODES))}"
+        msg = f"{key} must be one of {', '.join(sorted(context.PRIOR_CONTEXT_MODES))}"
         raise RunConfigError(msg)
     mode = value.strip().lower()
-    if mode not in PRIOR_CONTEXT_MODES:
-        msg = f"{key} must be one of {', '.join(sorted(PRIOR_CONTEXT_MODES))}"
+    if mode not in context.PRIOR_CONTEXT_MODES:
+        msg = f"{key} must be one of {', '.join(sorted(context.PRIOR_CONTEXT_MODES))}"
         raise RunConfigError(msg)
     return mode
 
 
-def _required_adapter_size(data: dict[str, Any], key: str) -> str:
+def _required_adapter_size(data: dict[str, typing.Any], key: str) -> str:
     value = _required_str(data, key).upper()
     if value not in ADAPTER_SIZES:
         msg = f"{key} must be one of {', '.join(sorted(ADAPTER_SIZES))}"
@@ -727,7 +729,7 @@ def _required_adapter_size(data: dict[str, Any], key: str) -> str:
     return value
 
 
-def _required_lr_multiplier(data: dict[str, Any], key: str) -> float:
+def _required_lr_multiplier(data: dict[str, typing.Any], key: str) -> float:
     value = _lookup(data, key)
     if not isinstance(value, (float, int)) or isinstance(value, bool):
         msg = f"{key} must be a number"
@@ -740,7 +742,7 @@ def _required_lr_multiplier(data: dict[str, Any], key: str) -> float:
 
 
 def _resolve_prompt(
-    prompts: dict[str, Any], *, key: str, file_key: str, default: str
+    prompts: dict[str, typing.Any], *, key: str, file_key: str, default: str
 ) -> str:
     if file_key in prompts:
         msg = (
@@ -786,7 +788,7 @@ def _build_paths(bucket: str, round_id: str) -> RunPaths:
     )
 
 
-def _lookup(data: dict[str, Any], dotted_key: str) -> Any:
+def _lookup(data: dict[str, typing.Any], dotted_key: str) -> typing.Any:
     """Return the leaf key from an already-selected TOML table.
 
     ``dotted_key`` is only used for human-readable error names such as

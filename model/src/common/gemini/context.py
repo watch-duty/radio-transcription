@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
+import collections
+import collections.abc
+import dataclasses
 import math
-from collections import defaultdict
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
+import typing
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class ContextTurn:
     """One previous transcript with its source audio URI for provenance."""
 
@@ -19,7 +17,7 @@ class ContextTurn:
     text: str
 
 
-PRIOR_CONTEXT_MODES: Final = frozenset(
+PRIOR_CONTEXT_MODES: typing.Final = frozenset(
     {"text_turns", "transcript", "guarded_transcript_block"}
 )
 GUARDED_TRANSCRIPT_CONTEXT_HEADER = (
@@ -36,7 +34,7 @@ GUARDED_TRANSCRIPT_NO_HISTORY_TEXT = (
 
 
 def build_transcript_context_prompt(
-    history: Sequence[ContextTurn],
+    history: collections.abc.Sequence[ContextTurn],
     user_prompt: str,
 ) -> str:
     """Return a user prompt with prior same-source transcripts as text context."""
@@ -55,7 +53,7 @@ def build_transcript_context_prompt(
 
 
 def build_guarded_transcript_context_prompt(
-    history: Sequence[ContextTurn],
+    history: collections.abc.Sequence[ContextTurn],
     user_prompt: str,
 ) -> str:
     """Return a guarded prior-transcript block plus the current prompt."""
@@ -86,12 +84,12 @@ def build_transcription_contents(
     *,
     audio_uri: str,
     user_prompt: str,
-    history: Sequence[ContextTurn] | None = None,
+    history: collections.abc.Sequence[ContextTurn] | None = None,
     history_mode: str = "text_turns",
-) -> list[dict[str, Any]]:
+) -> list[dict[str, typing.Any]]:
     """Return Gemini contents for prior context plus the current audio turn."""
     history_mode = validate_history_mode(history_mode)
-    contents: list[dict[str, Any]] = []
+    contents: list[dict[str, typing.Any]] = []
     history_turns = list(history or ())
     if history_mode == "text_turns":
         for turn in history_turns:
@@ -141,7 +139,7 @@ def validate_history_mode(history_mode: str) -> str:
     return mode
 
 
-def audio_file_data_part(audio_uri: str) -> dict[str, Any]:
+def audio_file_data_part(audio_uri: str) -> dict[str, typing.Any]:
     """Return a Gemini audio file-data part in canonical camelCase JSON."""
     return {
         "fileData": {
@@ -152,7 +150,7 @@ def audio_file_data_part(audio_uri: str) -> dict[str, Any]:
 
 
 def build_context_histories(
-    rows: list[dict[str, Any]],
+    rows: list[dict[str, typing.Any]],
     *,
     max_turns: int,
 ) -> list[list[ContextTurn]]:
@@ -170,7 +168,7 @@ def build_context_histories(
     if max_turns == 0 or not rows:
         return histories
 
-    grouped_indices: dict[str, list[int]] = defaultdict(list)
+    grouped_indices: dict[str, list[int]] = collections.defaultdict(list)
     for index, row in enumerate(rows):
         grouped_indices[_episode_key(row, index)].append(index)
 
@@ -186,7 +184,7 @@ def build_context_histories(
     return histories
 
 
-def _episode_key(row: dict[str, Any], fallback_index: int) -> str:
+def _episode_key(row: dict[str, typing.Any], fallback_index: int) -> str:
     value = row.get("original_audio_uri")
     if isinstance(value, str) and value.strip():
         return value.strip()
@@ -207,7 +205,7 @@ def _episode_key(row: dict[str, Any], fallback_index: int) -> str:
 
 
 def _row_sort_key(
-    row: dict[str, Any], fallback_index: int
+    row: dict[str, typing.Any], fallback_index: int
 ) -> tuple[float, int, str]:
     offset = _numeric_value(row.get("original_offset"))
     if offset is None:
@@ -233,7 +231,7 @@ def _usable_history_text(text: str) -> bool:
     return bool(text) and text.strip() != "[UNINTELLIGIBLE]"
 
 
-def _numeric_value(value: Any) -> float | None:
+def _numeric_value(value: typing.Any) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)) and math.isfinite(float(value)):
@@ -248,7 +246,7 @@ def _numeric_value(value: Any) -> float | None:
     return None
 
 
-def _int_value(value: Any) -> int | None:
+def _int_value(value: typing.Any) -> int | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, int):

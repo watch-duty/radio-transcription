@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
-from dataclasses import dataclass, field
-from typing import Any
+import typing
 
-from common.scoring import (
-    compute_cer,
-    compute_wer,
-    empty_or_unintelligible_rate,
-    keyword_metrics,
-)
+from common import scoring
 
 REPORT_COLUMNS = (
     "target_label",
@@ -29,7 +24,7 @@ REPORT_COLUMNS = (
 )
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class ReportArtifacts:
     """Artifact URIs that make a target's aggregate metrics reproducible."""
 
@@ -40,7 +35,7 @@ class ReportArtifacts:
     summary_markdown_uri: str | None = None
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class TargetMetrics:
     """Metrics and provenance for one evaluated model target."""
 
@@ -55,19 +50,23 @@ class TargetMetrics:
     substitutions: int
     total_reference_words: int
     missing_prediction_count: int
-    artifacts: ReportArtifacts = field(default_factory=ReportArtifacts)
-    keyword_metrics: list[dict[str, Any]] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    artifacts: ReportArtifacts = dataclasses.field(
+        default_factory=ReportArtifacts
+    )
+    keyword_metrics: list[dict[str, typing.Any]] = dataclasses.field(
+        default_factory=list
+    )
+    metadata: dict[str, typing.Any] = dataclasses.field(default_factory=dict)
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class EvalReport:
     """Structured report rendered to console, Markdown, and JSON."""
 
     round_id: str
     generated_at: str
     target: TargetMetrics
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, typing.Any] = dataclasses.field(default_factory=dict)
 
 
 def build_target_metrics(
@@ -75,11 +74,11 @@ def build_target_metrics(
     model: str,
     refs: list[str],
     hyps: list[str],
-    normalizer: Any,
+    normalizer: typing.Any,
     keywords: list[str],
     missing_prediction_count: int = 0,
     artifacts: ReportArtifacts | None = None,
-    metadata: dict[str, Any] | None = None,
+    metadata: dict[str, typing.Any] | None = None,
 ) -> TargetMetrics:
     """Build canonical metrics for one evaluated target.
 
@@ -97,9 +96,9 @@ def build_target_metrics(
     Returns:
         Canonical target metrics ready for JSON, Markdown, or console output.
     """
-    wer_result = compute_wer(refs, hyps, normalizer=normalizer)
-    cer_result = compute_cer(refs, hyps, normalizer=normalizer)
-    keyword_rows = keyword_metrics(refs, hyps, keywords)
+    wer_result = scoring.compute_wer(refs, hyps, normalizer=normalizer)
+    cer_result = scoring.compute_cer(refs, hyps, normalizer=normalizer)
+    keyword_rows = scoring.keyword_metrics(refs, hyps, keywords)
     total_reference_words = (
         int(wer_result["hits"])
         + int(wer_result["substitutions"])
@@ -111,7 +110,7 @@ def build_target_metrics(
         wer=float(wer_result["wer"]),
         cer=float(cer_result["cer"]),
         keyword_accuracy=_overall_keyword_accuracy(keyword_rows),
-        empty_or_unintelligible_rate=empty_or_unintelligible_rate(hyps),
+        empty_or_unintelligible_rate=scoring.empty_or_unintelligible_rate(hyps),
         insertions=int(wer_result["insertions"]),
         deletions=int(wer_result["deletions"]),
         substitutions=int(wer_result["substitutions"]),
@@ -123,7 +122,7 @@ def build_target_metrics(
     )
 
 
-def report_to_dict(report: EvalReport) -> dict[str, Any]:
+def report_to_dict(report: EvalReport) -> dict[str, typing.Any]:
     """Return a JSON-compatible dictionary for an eval report."""
     return {
         "round_id": report.round_id,
@@ -152,7 +151,7 @@ def render_console_report(report: EvalReport) -> str:
     return _render_target_table(report.target)
 
 
-def _target_to_dict(target: TargetMetrics) -> dict[str, Any]:
+def _target_to_dict(target: TargetMetrics) -> dict[str, typing.Any]:
     return {
         "target_label": target.target_label,
         "model": target.model,
@@ -195,7 +194,7 @@ def _render_target_row(target: TargetMetrics) -> str:
     return "| " + " | ".join(values) + " |"
 
 
-def _format_cell(value: Any) -> str:
+def _format_cell(value: typing.Any) -> str:
     if value is None:
         return "n/a"
     if isinstance(value, float):
@@ -207,7 +206,9 @@ def _format_cell(value: Any) -> str:
     return str(value)
 
 
-def _overall_keyword_accuracy(rows: list[dict[str, Any]]) -> float | None:
+def _overall_keyword_accuracy(
+    rows: list[dict[str, typing.Any]],
+) -> float | None:
     total_occurrences = sum(row["occurrences"] for row in rows)
     if total_occurrences == 0:
         return None

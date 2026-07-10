@@ -7,19 +7,15 @@ Writes:
 
 from __future__ import annotations
 
+import datetime
 import importlib.metadata
 import json
+import pathlib
 import subprocess
 import sys
-from datetime import UTC, datetime
-from pathlib import Path
-from typing import Any
+import typing
 
-from gemini_sft.reporting import (
-    EvalReport,
-    render_markdown_report,
-    report_to_dict,
-)
+from gemini_sft import reporting
 
 
 def _git_sha() -> str:
@@ -32,7 +28,7 @@ def _git_sha() -> str:
             timeout=5,
             check=False,
             cwd=str(
-                Path(__file__).resolve().parent.parent.parent
+                pathlib.Path(__file__).resolve().parent.parent.parent
             ),  # resolves to model/ (inside the repo; git finds the root from here)
         )
         return result.stdout.strip() if result.returncode == 0 else "unknown"
@@ -61,15 +57,17 @@ def _dep_versions() -> dict[str, str]:
 
 
 def write_config(
-    results_dir: Path, round_id: str, config: dict[str, Any]
-) -> dict[str, Any]:
+    results_dir: pathlib.Path,
+    round_id: str,
+    config: dict[str, typing.Any],
+) -> dict[str, typing.Any]:
     """Write (or overwrite) results/<round-id>/config.json with resolved run config.
 
     Always adds written_at, git_sha, and dep_versions to the written JSON.
     """
     config_with_meta = {
         **config,
-        "written_at": datetime.now(UTC).isoformat(),
+        "written_at": datetime.datetime.now(datetime.UTC).isoformat(),
         "git_sha": _git_sha(),
         "dep_versions": _dep_versions(),
     }
@@ -83,13 +81,15 @@ def write_config(
 
 
 def write_wer_summary(
-    results_dir: Path, round_id: str, report: EvalReport
-) -> tuple[Path, Path]:
+    results_dir: pathlib.Path,
+    round_id: str,
+    report: reporting.EvalReport,
+) -> tuple[pathlib.Path, pathlib.Path]:
     """Write results/<round-id>/wer_summary.{json,md}."""
     out_dir = results_dir / round_id
     out_dir.mkdir(parents=True, exist_ok=True)
-    payload = report_to_dict(report)
-    markdown = render_markdown_report(report)
+    payload = reporting.report_to_dict(report)
+    markdown = reporting.render_markdown_report(report)
     json_path = out_dir / "wer_summary.json"
     markdown_path = out_dir / "wer_summary.md"
     json_path.write_text(

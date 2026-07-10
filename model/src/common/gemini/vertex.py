@@ -24,17 +24,18 @@ Important behavior:
 ``import common.gemini.vertex`` succeeds with only the light core installed.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import re
 import time
-from collections.abc import Iterable, Sequence
-from typing import Any
+import typing
 
-from common.gemini.context import (
-    ContextTurn,
-    build_transcription_contents,
-)
+from common.gemini import context
+
+if typing.TYPE_CHECKING:
+    import collections.abc
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ def build_request(
     *,
     system_prompt: str,
     user_prompt: str,
-    history: Sequence[ContextTurn] | None = None,
+    history: collections.abc.Sequence[context.ContextTurn] | None = None,
     history_mode: str = "text_turns",
     generation_config: dict = GEMINI_GENERATION_CONFIG,
     safety_settings: list = GEMINI_SAFETY_SETTINGS,
@@ -76,7 +77,7 @@ def build_request(
     ``safetySettings``). SFT JSONL, batch input JSONL, and batch output parsing
     all use the same shape.
     """
-    contents = build_transcription_contents(
+    contents = context.build_transcription_contents(
         audio_uri=audio_uri,
         user_prompt=user_prompt,
         history=history,
@@ -95,7 +96,9 @@ def build_request(
     }
 
 
-def parse_batch_output(lines: Iterable[str]) -> dict[str, str]:
+def parse_batch_output(
+    lines: collections.abc.Iterable[str],
+) -> dict[str, str]:
     """Parse Vertex Gemini batch output JSONL into ``{audio_uri: prediction}``.
 
     Vertex echoes the original request in batch output. This parser accepts the
@@ -126,7 +129,9 @@ def parse_batch_output(lines: Iterable[str]) -> dict[str, str]:
     return result
 
 
-def _extract_request_audio_uri(request: dict[str, Any]) -> str | None:
+def _extract_request_audio_uri(
+    request: dict[str, typing.Any],
+) -> str | None:
     contents = request.get("contents", [])
     if not isinstance(contents, list) or not contents:
         return None
@@ -149,7 +154,7 @@ def _extract_request_audio_uri(request: dict[str, Any]) -> str | None:
     return audio_uri
 
 
-def _extract_prediction_text(response: Any) -> str:
+def _extract_prediction_text(response: typing.Any) -> str:
     if not isinstance(response, dict):
         return ""
     first_candidate = _first_dict(response.get("candidates"))
@@ -165,7 +170,9 @@ def _extract_prediction_text(response: Any) -> str:
     return ""
 
 
-def _first_dict(value: Any) -> dict[str, Any] | None:
+def _first_dict(
+    value: typing.Any,
+) -> dict[str, typing.Any] | None:
     if isinstance(value, list) and value and isinstance(value[0], dict):
         return value[0]
     return None
@@ -296,7 +303,7 @@ def submit_tuning_job(
         raise ValueError(msg)
     client = genai.Client(vertexai=True, project=project, location=location)
 
-    cfg_kwargs: dict[str, Any] = {
+    cfg_kwargs: dict[str, typing.Any] = {
         "tuned_model_display_name": display_name,
         "epoch_count": epoch_count,
         "adapter_size": _ADAPTER_ENUM[adapter_size],

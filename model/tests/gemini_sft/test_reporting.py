@@ -1,16 +1,11 @@
+"""Tests for the Gemini SFT evaluation reporting contract."""
+
 from __future__ import annotations
 
 import unittest
 
-from common.scoring import compute_wer
-from gemini_sft.reporting import (
-    EvalReport,
-    ReportArtifacts,
-    build_target_metrics,
-    render_console_report,
-    render_markdown_report,
-    report_to_dict,
-)
+from common import scoring
+from gemini_sft import reporting
 
 try:
     import jiwer  # noqa: F401
@@ -31,7 +26,7 @@ class TestReportingContract(unittest.TestCase):
     def test_target_metrics_use_canonical_public_keys(self) -> None:
         refs = ["engine copy", "brush"]
         hyps = ["engine copy", ""]
-        target = build_target_metrics(
+        target = reporting.build_target_metrics(
             label="base",
             model="gemini-3.1-flash-lite",
             refs=refs,
@@ -39,20 +34,20 @@ class TestReportingContract(unittest.TestCase):
             normalizer=None,
             keywords=["engine", "copy", "brush"],
             missing_prediction_count=1,
-            artifacts=ReportArtifacts(
+            artifacts=reporting.ReportArtifacts(
                 raw_output_uri="gs://bucket/raw/",
                 normalized_manifest_uri="gs://bucket/normalized.jsonl",
                 summary_json_uri="gs://bucket/evals/wer_summary.json",
                 summary_markdown_uri="gs://bucket/evals/wer_summary.md",
             ),
         )
-        report = EvalReport(
+        report = reporting.EvalReport(
             round_id="round-a",
             generated_at="2026-06-28T00:00:00Z",
             target=target,
         )
 
-        row = report_to_dict(report)["target"]
+        row = reporting.report_to_dict(report)["target"]
         for key in (
             "empty_or_unintelligible_rate",
             "insertions",
@@ -80,7 +75,7 @@ class TestReportingContract(unittest.TestCase):
     def test_total_reference_words_matches_wer_denominator(self) -> None:
         refs = ["engine copy", "brush"]
         hyps = ["engine copy", ""]
-        target = build_target_metrics(
+        target = reporting.build_target_metrics(
             label="base",
             model="gemini-3.1-flash-lite",
             refs=refs,
@@ -88,7 +83,7 @@ class TestReportingContract(unittest.TestCase):
             normalizer=None,
             keywords=[],
         )
-        wer = compute_wer(refs, hyps, normalizer=None)
+        wer = scoring.compute_wer(refs, hyps, normalizer=None)
         expected_total = (
             int(wer["hits"]) + int(wer["substitutions"]) + int(wer["deletions"])
         )
@@ -98,7 +93,7 @@ class TestReportingContract(unittest.TestCase):
     def test_empty_or_unintelligible_metric_counts_scored_empty_hypotheses(
         self,
     ) -> None:
-        target = build_target_metrics(
+        target = reporting.build_target_metrics(
             label="base",
             model="gemini-3.1-flash-lite",
             refs=["copy", "engine", "brush"],
@@ -111,10 +106,10 @@ class TestReportingContract(unittest.TestCase):
         self.assertEqual(target.empty_or_unintelligible_rate, 100.0)
 
     def test_markdown_and_console_share_target_header(self) -> None:
-        report = EvalReport(
+        report = reporting.EvalReport(
             round_id="round-a",
             generated_at="2026-06-28T00:00:00Z",
-            target=build_target_metrics(
+            target=reporting.build_target_metrics(
                 label="base",
                 model="gemini-3.1-flash-lite",
                 refs=["engine copy"],
@@ -128,8 +123,8 @@ class TestReportingContract(unittest.TestCase):
             "total_reference_words | missing_prediction_count"
         )
 
-        self.assertIn(expected_header, render_markdown_report(report))
-        self.assertIn(expected_header, render_console_report(report))
+        self.assertIn(expected_header, reporting.render_markdown_report(report))
+        self.assertIn(expected_header, reporting.render_console_report(report))
 
 
 if __name__ == "__main__":

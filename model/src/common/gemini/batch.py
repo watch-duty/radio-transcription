@@ -2,40 +2,24 @@
 
 from __future__ import annotations
 
+import collections.abc
 import json
 import logging
+import pathlib
 import tempfile
-from collections.abc import Callable, Sequence
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+import typing
 
-from common.gcs_utils import (
-    blob_exists,
-    download_blob_to_file,
-    download_gcs_uri,
-    parse_gcs_uri,
-    upload_file_to_blob,
-    upload_local_file,
-)
-from common.gemini import request_identity
-from common.gemini.eval_artifacts import (
-    batch_prediction_metadata_uri,
-    eval_target_artifact_paths,
-)
-from common.gemini.vertex import (
-    build_request,
-    parse_batch_output,
-    submit_batch_inference,
-)
+from common import gcs_utils
+from common.gemini import eval_artifacts, request_identity, vertex
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     from google.cloud import storage
 
-    from common.gemini.context import ContextTurn
+    from common.gemini import context
 
 logger = logging.getLogger(__name__)
 
-BatchSubmitFn = Callable[..., str]
+BatchSubmitFn = collections.abc.Callable[..., str]
 
 
 class BatchPredictionMap(dict[str, str]):
@@ -52,14 +36,17 @@ def run_batch_audio_inference(
     location: str,
     model_id: str,
     label: str,
-    audio_uris: Sequence[str],
+    audio_uris: collections.abc.Sequence[str],
     system_prompt: str,
     user_prompt: str,
     prior_context_count: int,
     prior_context_mode: str,
     eval_manifest_uri: str,
-    histories: Sequence[Sequence[ContextTurn]] | None = None,
-    submit_fn: BatchSubmitFn = submit_batch_inference,
+    histories: collections.abc.Sequence[
+        collections.abc.Sequence[context.ContextTurn]
+    ]
+    | None = None,
+    submit_fn: BatchSubmitFn = vertex.submit_batch_inference,
 ) -> BatchPredictionMap | None:
     """Run Gemini batch inference for audio URIs and return parsed predictions."""
     expected_audio_uris = _unique_audio_uris(audio_uris)
@@ -97,10 +84,15 @@ def run_batch_audio_inference(
             user_prompt=user_prompt,
             histories=history_list,
             history_mode=prior_context_mode,
-            tmp_dir=Path(tmp),
+            tmp_dir=pathlib.Path(tmp),
         )
-        metadata_uri = batch_prediction_metadata_uri(run_gcs_prefix, label)
-        metadata_path = Path(tmp) / f"batch_predictions_{label}.meta.json"
+        metadata_uri = eval_artifacts.batch_prediction_metadata_uri(
+            run_gcs_prefix,
+            label,
+        )
+        metadata_path = (
+            pathlib.Path(tmp) / f"batch_predictions_{label}.meta.json"
+        )
         pred_blobs = _list_batch_prediction_blobs(
             storage_client,
             batch_output_gcs,
@@ -116,7 +108,7 @@ def run_batch_audio_inference(
                 storage_client=storage_client,
                 output_uri=batch_output_gcs,
                 label=label,
-                tmp_dir=Path(tmp),
+                tmp_dir=pathlib.Path(tmp),
                 pred_blobs=pred_blobs,
             )
             if preds is None:
@@ -144,12 +136,16 @@ def run_batch_audio_inference(
                 storage_client=storage_client,
                 output_uri=output_loc,
                 label=label,
-                tmp_dir=Path(tmp),
+                tmp_dir=pathlib.Path(tmp),
             )
             if preds is None:
                 return None
             request_identity.write_metadata(metadata_path, identity)
-            upload_local_file(storage_client, metadata_path, metadata_uri)
+            gcs_utils.upload_local_file(
+                storage_client,
+                metadata_path,
+                metadata_uri,
+            )
 
     extra_prediction_uris = set(preds) - expected_audio_uris
     if extra_prediction_uris:
@@ -180,12 +176,15 @@ def build_batch_jsonl(
     storage_client: storage.Client,
     run_gcs_prefix: str,
     label: str,
-    audio_uris: Sequence[str],
+    audio_uris: collections.abc.Sequence[str],
     system_prompt: str,
     user_prompt: str,
-    histories: Sequence[Sequence[ContextTurn]] | None = None,
+    histories: collections.abc.Sequence[
+        collections.abc.Sequence[context.ContextTurn]
+    ]
+    | None = None,
     history_mode: str = "text_turns",
-    tmp_dir: Path,
+    tmp_dir: pathlib.Path,
 ) -> tuple[str, str]:
     """Write and upload a Vertex batch input JSONL file."""
     if histories is not None and len(histories) != len(audio_uris):
@@ -203,7 +202,7 @@ def build_batch_jsonl(
             history = histories[index] if histories is not None else None
             fh.write(
                 json.dumps(
-                    build_request(
+                    vertex.build_request(
                         audio_uri,
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
@@ -213,11 +212,11 @@ def build_batch_jsonl(
                 )
                 + "\n"
             )
-    paths = eval_target_artifact_paths(run_gcs_prefix, label)
+    paths = eval_artifacts.eval_target_artifact_paths(run_gcs_prefix, label)
     batch_input_gcs = paths.input_uri
     batch_output_gcs = paths.output_uri
-    in_bucket, in_blob = parse_gcs_uri(batch_input_gcs)
-    upload_file_to_blob(
+    in_bucket, in_blob = gcs_utils.parse_gcs_uri(batch_input_gcs)
+    gcs_utils.upload_file_to_blob(
         storage_client, in_bucket, in_blob, str(batch_input_path)
     )
     return batch_input_gcs, batch_output_gcs
@@ -228,8 +227,8 @@ def _load_batch_predictions(
     storage_client: storage.Client,
     output_uri: str,
     label: str,
-    tmp_dir: Path,
-    pred_blobs: Sequence[Any] | None = None,
+    tmp_dir: pathlib.Path,
+    pred_blobs: collections.abc.Sequence[typing.Any] | None = None,
     missing_ok: bool = False,
 ) -> BatchPredictionMap | None:
     pred_blobs = pred_blobs or _list_batch_prediction_blobs(
@@ -244,23 +243,25 @@ def _load_batch_predictions(
                 output_uri,
             )
         return None
-    out_bucket, _ = parse_gcs_uri(output_uri.rstrip("/") + "/")
+    out_bucket, _ = gcs_utils.parse_gcs_uri(output_uri.rstrip("/") + "/")
     preds = BatchPredictionMap()
     for i, blob in enumerate(pred_blobs):
         local_path = tmp_dir / f"predictions_{i}.jsonl"
-        download_blob_to_file(
+        gcs_utils.download_blob_to_file(
             storage_client, out_bucket, blob.name, str(local_path)
         )
         with local_path.open(encoding="utf-8") as handle:
-            preds.update(parse_batch_output(handle))
+            preds.update(vertex.parse_batch_output(handle))
     return preds
 
 
 def _list_batch_prediction_blobs(
     storage_client: storage.Client,
     output_uri: str,
-) -> list[Any]:
-    out_bucket, out_prefix = parse_gcs_uri(output_uri.rstrip("/") + "/")
+) -> list[typing.Any]:
+    out_bucket, out_prefix = gcs_utils.parse_gcs_uri(
+        output_uri.rstrip("/") + "/"
+    )
     return [
         blob
         for blob in storage_client.bucket(out_bucket).list_blobs(
@@ -274,13 +275,13 @@ def _validate_reusable_batch_output(
     *,
     storage_client: storage.Client,
     metadata_uri: str,
-    metadata_path: Path,
-    request_identity_payload: dict[str, Any],
+    metadata_path: pathlib.Path,
+    request_identity_payload: dict[str, typing.Any],
 ) -> None:
-    if not blob_exists(storage_client, metadata_uri):
+    if not gcs_utils.blob_exists(storage_client, metadata_uri):
         msg = f"batch prediction metadata missing: {metadata_uri}"
         raise ValueError(msg)
-    download_gcs_uri(storage_client, metadata_uri, metadata_path)
+    gcs_utils.download_gcs_uri(storage_client, metadata_uri, metadata_path)
     existing_identity = request_identity.load_metadata_identity(
         metadata_path,
         error_message="batch prediction request identity mismatch",
@@ -292,7 +293,9 @@ def _validate_reusable_batch_output(
     )
 
 
-def _unique_audio_uris(audio_uris: Sequence[str]) -> set[str] | None:
+def _unique_audio_uris(
+    audio_uris: collections.abc.Sequence[str],
+) -> set[str] | None:
     seen: set[str] = set()
     for audio_uri in audio_uris:
         if audio_uri in seen:

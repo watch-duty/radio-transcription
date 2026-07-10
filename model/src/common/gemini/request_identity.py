@@ -6,13 +6,11 @@ import hashlib
 import json
 import typing
 
-from common.gemini import vertex
+from common.gemini import context, vertex
 
 if typing.TYPE_CHECKING:
+    import collections.abc
     import pathlib
-    from collections import abc as collections_abc
-
-    from common.gemini import context
 
 
 def build_request_identity(
@@ -20,14 +18,14 @@ def build_request_identity(
     target_label: str,
     model: str,
     eval_manifest_uri: str,
-    audio_uris: collections_abc.Sequence[str],
-    request_digests: collections_abc.Sequence[str],
+    audio_uris: collections.abc.Sequence[str],
+    request_digests: collections.abc.Sequence[str],
     system_prompt: str,
     user_prompt: str,
     prior_context_count: int,
     prior_context_mode: str,
     generation_config: dict[str, typing.Any],
-    safety_settings: collections_abc.Sequence[dict[str, typing.Any]],
+    safety_settings: collections.abc.Sequence[dict[str, typing.Any]],
 ) -> dict[str, typing.Any]:
     """Return the request-defining identity for Gemini eval inference."""
     audio_uri_list = list(audio_uris)
@@ -56,13 +54,13 @@ def build_gemini_eval_request_identity(
     target_label: str,
     model: str,
     eval_manifest_uri: str,
-    audio_uris: collections_abc.Sequence[str],
+    audio_uris: collections.abc.Sequence[str],
     system_prompt: str,
     user_prompt: str,
     prior_context_count: int,
     prior_context_mode: str,
-    histories: collections_abc.Sequence[
-        collections_abc.Sequence[context.ContextTurn]
+    histories: collections.abc.Sequence[
+        collections.abc.Sequence[context.ContextTurn]
     ]
     | None = None,
 ) -> dict[str, typing.Any]:
@@ -195,9 +193,9 @@ def _identity_without_sequences(
 
 def _request_digests(
     *,
-    audio_uris: collections_abc.Sequence[str],
-    histories: collections_abc.Sequence[
-        collections_abc.Sequence[context.ContextTurn]
+    audio_uris: collections.abc.Sequence[str],
+    histories: collections.abc.Sequence[
+        collections.abc.Sequence[context.ContextTurn]
     ],
     system_prompt: str,
     user_prompt: str,
@@ -221,7 +219,7 @@ def _request_digests(
 
 
 def _request_digest(
-    request: collections_abc.Mapping[str, typing.Any],
+    request: collections.abc.Mapping[str, typing.Any],
 ) -> str:
     payload = json.dumps(
         request,

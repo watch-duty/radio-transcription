@@ -3,22 +3,11 @@
 import builtins
 import importlib.util
 import json
+import pathlib
 import unittest
 import unittest.mock
-from pathlib import Path
 
-import common.gemini.vertex as vmod
-from common.gemini.context import ContextTurn
-from common.gemini.vertex import (
-    _ADAPTER_ENUM,
-    GEMINI_GENERATION_CONFIG,
-    GEMINI_SAFETY_SETTINGS,
-    build_request,
-    parse_batch_output,
-    poll_tuning_job,
-    submit_batch_inference,
-    submit_tuning_job,
-)
+from common.gemini import context, vertex
 
 
 def _make_mock_client(
@@ -45,11 +34,11 @@ class TestSubmitTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_defaults_to_gemini_31_flash_lite(self, mock_genai) -> None:
-        """submit_tuning_job defaults to the current supervised-tuning model."""
+        """vertex.submit_tuning_job defaults to the current supervised-tuning model."""
         mock_client = _make_mock_client()
         mock_genai.Client.return_value = mock_client
 
-        submit_tuning_job(
+        vertex.submit_tuning_job(
             train_uri="gs://b/train.jsonl",
             display_name="test",
             project="p",
@@ -61,10 +50,10 @@ class TestSubmitTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_returns_job_name_not_endpoint(self, mock_genai) -> None:
-        """submit_tuning_job returns job.name (str), not endpoint."""
+        """vertex.submit_tuning_job returns job.name (str), not endpoint."""
         mock_genai.Client.return_value = _make_mock_client()
 
-        result = submit_tuning_job(
+        result = vertex.submit_tuning_job(
             train_uri="gs://b/train.jsonl",
             display_name="test",
             project="p",
@@ -78,7 +67,7 @@ class TestSubmitTuningJob(unittest.TestCase):
     def test_submit_returns_string(self, mock_genai) -> None:
         mock_genai.Client.return_value = _make_mock_client()
 
-        result = submit_tuning_job(
+        result = vertex.submit_tuning_job(
             train_uri="gs://bucket/train.jsonl",
             display_name="test-display",
             project="test-project",
@@ -88,10 +77,10 @@ class TestSubmitTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_submit_does_not_poll(self, mock_genai) -> None:
-        """submit_tuning_job must NOT call tunings.get (no polling)."""
+        """vertex.submit_tuning_job must NOT call tunings.get (no polling)."""
         mock_genai.Client.return_value = _make_mock_client()
 
-        submit_tuning_job(
+        vertex.submit_tuning_job(
             train_uri="gs://b/train.jsonl",
             display_name="test",
             project="p",
@@ -110,7 +99,7 @@ class TestSubmitTuningJob(unittest.TestCase):
         mock_types.TuningValidationDataset.return_value = "val-dataset"
         mock_types.CreateTuningJobConfig.side_effect = lambda **kwargs: kwargs
 
-        submit_tuning_job(
+        vertex.submit_tuning_job(
             train_uri="gs://b/train.jsonl",
             display_name="test",
             project="p",
@@ -138,7 +127,7 @@ class TestSubmitTuningJob(unittest.TestCase):
         mock_types.TuningDataset.return_value = "train-dataset"
         mock_types.CreateTuningJobConfig.side_effect = lambda **kwargs: kwargs
 
-        submit_tuning_job(
+        vertex.submit_tuning_job(
             train_uri="gs://b/train.jsonl",
             display_name="test",
             project="p",
@@ -157,10 +146,10 @@ class TestPollTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_returns_endpoint(self, mock_genai) -> None:
-        """poll_tuning_job polls and returns endpoint."""
+        """vertex.poll_tuning_job polls and returns endpoint."""
         mock_genai.Client.return_value = _make_mock_client()
 
-        result = poll_tuning_job(
+        result = vertex.poll_tuning_job(
             name="projects/p/locations/l/tuningJobs/123",
             project="p",
             location="us-central1",
@@ -174,7 +163,7 @@ class TestPollTuningJob(unittest.TestCase):
         )
 
         with self.assertRaises(RuntimeError):
-            poll_tuning_job(
+            vertex.poll_tuning_job(
                 name="projects/p/locations/l/tuningJobs/1",
                 project="p",
                 location="us-central1",
@@ -187,7 +176,7 @@ class TestPollTuningJob(unittest.TestCase):
         )
 
         with self.assertRaises(RuntimeError):
-            poll_tuning_job(
+            vertex.poll_tuning_job(
                 name="projects/p/locations/l/tuningJobs/1",
                 project="p",
                 location="us-central1",
@@ -195,11 +184,11 @@ class TestPollTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_calls_tunings_get(self, mock_genai) -> None:
-        """poll_tuning_job must call tunings.get to re-fetch by name."""
+        """vertex.poll_tuning_job must call tunings.get to re-fetch by name."""
         mock_client = _make_mock_client()
         mock_genai.Client.return_value = mock_client
 
-        poll_tuning_job(
+        vertex.poll_tuning_job(
             name="projects/p/locations/l/tuningJobs/123",
             project="p",
             location="us-central1",
@@ -222,7 +211,7 @@ class TestPollTuningJob(unittest.TestCase):
         mock_client.tunings.get.side_effect = [running, succeeded]
         mock_genai.Client.return_value = mock_client
 
-        result = poll_tuning_job(
+        result = vertex.poll_tuning_job(
             name="projects/p/locations/l/tuningJobs/123",
             project="p",
             location="us-central1",
@@ -233,13 +222,13 @@ class TestPollTuningJob(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_poll_raises_timeout_when_never_terminal(self, mock_genai) -> None:
-        """poll_tuning_job raises TimeoutError if no terminal state within timeout_hours."""
+        """vertex.poll_tuning_job raises TimeoutError if no terminal state within timeout_hours."""
         mock_genai.Client.return_value = _make_mock_client(
             state="JOB_STATE_RUNNING"
         )
 
         with self.assertRaises(TimeoutError):
-            poll_tuning_job(
+            vertex.poll_tuning_job(
                 name="projects/p/locations/l/tuningJobs/123",
                 project="p",
                 location="us-central1",
@@ -252,7 +241,7 @@ class TestPollTuningJob(unittest.TestCase):
     def test_poll_retries_transient_get_error(
         self, mock_genai, mock_sleep
     ) -> None:
-        """poll_tuning_job retries a transient tunings.get failure."""
+        """vertex.poll_tuning_job retries a transient tunings.get failure."""
         mock_client = _make_mock_client()
         success = mock_client.tunings.get.return_value
         mock_client.tunings.get.side_effect = [
@@ -261,7 +250,7 @@ class TestPollTuningJob(unittest.TestCase):
         ]
         mock_genai.Client.return_value = mock_client
 
-        result = poll_tuning_job(
+        result = vertex.poll_tuning_job(
             name="projects/p/locations/l/tuningJobs/123",
             project="p",
             location="us-central1",
@@ -283,7 +272,7 @@ class TestPollTuningJob(unittest.TestCase):
         with self.assertRaisesRegex(
             RuntimeError, "succeeded but returned no tuned_model.endpoint"
         ):
-            poll_tuning_job(
+            vertex.poll_tuning_job(
                 name="projects/p/locations/l/tuningJobs/123",
                 project="p",
                 location="us-central1",
@@ -291,17 +280,19 @@ class TestPollTuningJob(unittest.TestCase):
 
 
 class TestAdapterEnum(unittest.TestCase):
-    """Guard against silent miskeys in _ADAPTER_ENUM."""
+    """Guard against silent miskeys in vertex._ADAPTER_ENUM."""
 
     def test_enum_contains_required_sizes(self) -> None:
         for key in ("ONE", "TWO", "FOUR", "EIGHT", "SIXTEEN"):
-            self.assertIn(key, _ADAPTER_ENUM, f"Missing adapter size: {key}")
+            self.assertIn(
+                key, vertex._ADAPTER_ENUM, f"Missing adapter size: {key}"
+            )
 
     def test_enum_maps_two(self) -> None:
-        self.assertEqual(_ADAPTER_ENUM["TWO"], "ADAPTER_SIZE_TWO")
+        self.assertEqual(vertex._ADAPTER_ENUM["TWO"], "ADAPTER_SIZE_TWO")
 
     def test_enum_values_have_adapter_size_prefix(self) -> None:
-        for val in _ADAPTER_ENUM.values():
+        for val in vertex._ADAPTER_ENUM.values():
             self.assertTrue(val.startswith("ADAPTER_SIZE_"), val)
 
 
@@ -310,7 +301,7 @@ class TestImportGuard(unittest.TestCase):
 
     def test_patch_targets_exist_when_vertex_extra_missing(self) -> None:
         vertex_path = (
-            Path(__file__).resolve().parents[3]
+            pathlib.Path(__file__).resolve().parents[3]
             / "src"
             / "common"
             / "gemini"
@@ -344,25 +335,25 @@ class TestImportGuard(unittest.TestCase):
         self.assertIsNone(module.types)
 
     def test_require_vertex_raises_when_missing(self) -> None:
-        orig = vmod._VERTEX_MISSING
+        orig = vertex._VERTEX_MISSING
         try:
-            vmod._VERTEX_MISSING = ImportError("test")
+            vertex._VERTEX_MISSING = ImportError("test")
             with self.assertRaises(ImportError):
-                vmod._require_vertex()
+                vertex._require_vertex()
         finally:
-            vmod._VERTEX_MISSING = orig
+            vertex._VERTEX_MISSING = orig
 
 
 class TestBuildRequest(unittest.TestCase):
     """Tests for common.gemini.vertex.build_request — no GCP calls, pure dict construction."""
 
     def setUp(self) -> None:
-        self.build_request = build_request
-        self.default_gen_config = GEMINI_GENERATION_CONFIG
-        self.default_safety = GEMINI_SAFETY_SETTINGS
+        self.build_request = vertex.build_request
+        self.default_gen_config = vertex.GEMINI_GENERATION_CONFIG
+        self.default_safety = vertex.GEMINI_SAFETY_SETTINGS
 
     def test_return_shape(self) -> None:
-        """build_request returns the canonical nested dict shape."""
+        """vertex.build_request returns the canonical nested dict shape."""
         result = self.build_request(
             "gs://bucket/audio.flac",
             system_prompt="System.",
@@ -456,8 +447,8 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt=user_prompt,
             history=[
-                ContextTurn("gs://bucket/prev-1.flac", "first"),
-                ContextTurn("gs://bucket/prev-2.flac", "second"),
+                context.ContextTurn("gs://bucket/prev-1.flac", "first"),
+                context.ContextTurn("gs://bucket/prev-2.flac", "second"),
             ],
         )
 
@@ -493,8 +484,8 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt="U",
             history=[
-                ContextTurn("gs://bucket/prev-1.flac", "first"),
-                ContextTurn("gs://bucket/prev-2.flac", "second"),
+                context.ContextTurn("gs://bucket/prev-1.flac", "first"),
+                context.ContextTurn("gs://bucket/prev-2.flac", "second"),
             ],
             history_mode="transcript",
         )
@@ -522,8 +513,12 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt="IMPORTANT: current prompt",
             history=[
-                ContextTurn("gs://bucket/prev-1.flac", " first   transcript "),
-                ContextTurn("gs://bucket/prev-2.flac", "second transcript"),
+                context.ContextTurn(
+                    "gs://bucket/prev-1.flac", " first   transcript "
+                ),
+                context.ContextTurn(
+                    "gs://bucket/prev-2.flac", "second transcript"
+                ),
             ],
             history_mode="guarded_transcript_block",
         )
@@ -563,8 +558,8 @@ class TestBuildRequest(unittest.TestCase):
             system_prompt="S",
             user_prompt=user_prompt,
             history=[
-                ContextTurn("gs://bucket/prev-1.flac", "first"),
-                ContextTurn("gs://bucket/prev-2.flac", "second"),
+                context.ContextTurn("gs://bucket/prev-1.flac", "first"),
+                context.ContextTurn("gs://bucket/prev-2.flac", "second"),
             ],
             history_mode="text_turns",
         )
@@ -614,7 +609,7 @@ class TestParseBatchOutput(unittest.TestCase):
         }
 
         self.assertEqual(
-            parse_batch_output([json.dumps(output)]),
+            vertex.parse_batch_output([json.dumps(output)]),
             {"gs://bucket/a.flac": "engine 41"},
         )
 
@@ -650,7 +645,7 @@ class TestParseBatchOutput(unittest.TestCase):
         }
 
         self.assertEqual(
-            parse_batch_output([json.dumps(output)]),
+            vertex.parse_batch_output([json.dumps(output)]),
             {"gs://bucket/current.flac": "current"},
         )
 
@@ -661,11 +656,11 @@ class TestParseBatchOutput(unittest.TestCase):
             json.dumps({"request": {}, "response": {}}),
         ]
 
-        self.assertEqual(parse_batch_output(lines), {})
+        self.assertEqual(vertex.parse_batch_output(lines), {})
 
     def test_rejects_single_string_to_avoid_character_iteration(self) -> None:
         with self.assertRaisesRegex(TypeError, "iterable of JSONL lines"):
-            parse_batch_output("{}")
+            vertex.parse_batch_output("{}")
 
     def test_accepts_line_iterators_without_full_file_read(self) -> None:
         rows = (
@@ -695,7 +690,7 @@ class TestParseBatchOutput(unittest.TestCase):
         )
 
         self.assertEqual(
-            parse_batch_output(rows),
+            vertex.parse_batch_output(rows),
             {"gs://bucket/a.flac": "copy"},
         )
 
@@ -705,7 +700,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_returns_dest_gcs_uri(self, mock_genai) -> None:
-        """submit_batch_inference returns cur.dest.gcs_uri, not BatchJobDestination object."""
+        """vertex.submit_batch_inference returns cur.dest.gcs_uri, not BatchJobDestination object."""
         mock_dest = unittest.mock.MagicMock()
         mock_dest.gcs_uri = "gs://bucket/output/"
         mock_batch_job = unittest.mock.MagicMock()
@@ -718,7 +713,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         mock_client.batches.get.return_value = mock_cur
         mock_genai.Client.return_value = mock_client
 
-        result = submit_batch_inference(
+        result = vertex.submit_batch_inference(
             input_uri="gs://bucket/input.jsonl",
             output_uri="gs://bucket/output/",
             model="gemini-2.5-flash",
@@ -732,7 +727,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
     def test_falls_back_to_output_uri_when_dest_is_none(
         self, mock_genai
     ) -> None:
-        """submit_batch_inference uses output_uri fallback when cur.dest is None."""
+        """vertex.submit_batch_inference uses output_uri fallback when cur.dest is None."""
         mock_batch_job = unittest.mock.MagicMock()
         mock_batch_job.name = "projects/p/locations/l/batchPredictionJobs/1"
         mock_cur = unittest.mock.MagicMock()
@@ -744,7 +739,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         mock_genai.Client.return_value = mock_client
 
         with self.assertLogs("common.gemini.vertex", level="WARNING") as logs:
-            result = submit_batch_inference(
+            result = vertex.submit_batch_inference(
                 input_uri="gs://bucket/input.jsonl",
                 output_uri="gs://bucket/fallback/",
                 model="gemini-2.5-flash",
@@ -776,7 +771,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         mock_client.batches.get.side_effect = [running, succeeded]
         mock_genai.Client.return_value = mock_client
 
-        result = submit_batch_inference(
+        result = vertex.submit_batch_inference(
             input_uri="gs://bucket/input.jsonl",
             output_uri="gs://bucket/output/",
             model="gemini-2.5-flash",
@@ -792,7 +787,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
     def test_batch_poll_retries_transient_get_error(
         self, mock_genai, mock_sleep
     ) -> None:
-        """submit_batch_inference retries a transient batches.get failure."""
+        """vertex.submit_batch_inference retries a transient batches.get failure."""
         mock_dest = unittest.mock.MagicMock()
         mock_dest.gcs_uri = "gs://bucket/output/"
         mock_batch_job = unittest.mock.MagicMock()
@@ -808,7 +803,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         ]
         mock_genai.Client.return_value = mock_client
 
-        result = submit_batch_inference(
+        result = vertex.submit_batch_inference(
             input_uri="gs://bucket/input.jsonl",
             output_uri="gs://bucket/output/",
             model="gemini-2.5-flash",
@@ -835,7 +830,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         mock_client.batches.get.return_value = mock_cur
         mock_genai.Client.return_value = mock_client
 
-        submit_batch_inference(
+        vertex.submit_batch_inference(
             input_uri="gs://bucket/input.jsonl",
             output_uri="gs://bucket/output/",
             model="projects/p/locations/us/endpoints/123",
@@ -862,7 +857,7 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         mock_client.batches.get.return_value = mock_cur
         mock_genai.Client.return_value = mock_client
 
-        submit_batch_inference(
+        vertex.submit_batch_inference(
             input_uri="gs://bucket/input.jsonl",
             output_uri="gs://bucket/output/",
             model="gemini-3.1-flash-lite",
