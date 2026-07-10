@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import cast
@@ -130,10 +131,11 @@ class TestRecordHeartbeat:
         conn.execute.assert_called_once()
         conn.execute.return_value.fetchone.assert_called_once_with()
         sql, params = conn.execute.call_args[0]
-        assert (
-            "status NOT IN ('quarantined'::feed_status, "
-            "'deactivated'::feed_status)"
-        ) in sql
+        assert re.search(
+            r"status NOT IN \(\s*'quarantined'::feed_status,\s*"
+            r"'deactivated'::feed_status\s*\)",
+            sql,
+        )
         assert params == (feed_id, _ECHO_ACTOR_ID)
         notifications.emit_feed_change_notification.assert_called_once_with(
             payload
@@ -191,10 +193,11 @@ class TestRecordFailure:
         conn.execute.assert_called_once()
         conn.execute.return_value.fetchone.assert_called_once_with()
         sql, params = conn.execute.call_args[0]
-        assert (
-            "status NOT IN ('quarantined'::feed_status, "
-            "'deactivated'::feed_status)"
-        ) in sql
+        assert re.search(
+            r"status NOT IN \(\s*'quarantined'::feed_status,\s*"
+            r"'deactivated'::feed_status\s*\)",
+            sql,
+        )
         assert params == (
             feed_id,
             "system_pipeline_error",
@@ -375,14 +378,16 @@ class TestRecordNonBudgetedFailure:
         assert "failure_count = 0" in sql
         assert "retry_after = NULL" in sql
         assert "status_reason_updated_at = CASE" in sql
-        assert (
-            "WHEN feeds.status_reason IS DISTINCT FROM "
-            "status_reason_input.status_reason THEN NOW()"
-        ) in sql
-        assert (
-            "status NOT IN ('quarantined'::feed_status, "
-            "'deactivated'::feed_status)"
-        ) in sql
+        assert re.search(
+            r"WHEN feeds\.status_reason IS DISTINCT FROM \(\s*"
+            r"status_reason_input\.status_reason\s*\) THEN NOW\(\)",
+            sql,
+        )
+        assert re.search(
+            r"status NOT IN \(\s*'quarantined'::feed_status,\s*"
+            r"'deactivated'::feed_status\s*\)",
+            sql,
+        )
         assert params == (
             feed_id,
             "system_pipeline_error",

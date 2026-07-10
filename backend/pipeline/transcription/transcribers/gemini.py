@@ -45,6 +45,14 @@ logger = log_helper.get_task_logger(
 )
 
 
+class GeminiTranscriptionError(ValueError):
+    """Raised when Gemini transcription fails or is blocked."""
+
+
+class GeminiTransientTranscriptionError(GeminiTranscriptionError):
+    """Raised when Gemini transcription fails due to a potentially transient model/backend issue."""
+
+
 @dataclasses.dataclass(frozen=True)
 class SafetySetting:
     """Safety setting category and threshold."""
@@ -189,14 +197,53 @@ class GeminiTranscriber(base.Transcriber):
 
         return self._parse_response(response)
 
+    def _get_blocked_ratings(self, candidate: types.Candidate) -> str:
+        """Helper to extract a string list of blocked safety categories."""
+        if not candidate.safety_ratings:
+            return "None"
+        blocked = []
+        for r in candidate.safety_ratings:
+            if getattr(r, "blocked", False):
+                cat = getattr(r.category, "name", str(r.category))
+                prob = getattr(r.probability, "name", str(r.probability))
+                blocked.append(f"{cat}={prob}")
+        return ", ".join(blocked) if blocked else "None"
+
     def _parse_response(
         self,
         response: types.GenerateContentResponse,
     ) -> str | None:
         """Extracts transcript text from Gemini GenerateContentResponse."""
+        response_id = response.response_id or "Unknown"
+        headers = (
+            response.sdk_http_response.headers
+            if response.sdk_http_response
+            else {}
+        )
+
         if not response.candidates:
-            logger.warning("Gemini response returned no candidates.")
-            return None
+            # Check prompt feedback blocks (safety filters at request level)
+            if (
+                response.prompt_feedback
+                and response.prompt_feedback.block_reason
+            ):
+                block_reason = response.prompt_feedback.block_reason
+                logger.error(
+                    "Gemini prompt blocked at request level. Block Reason: %s. Response ID: %s",
+                    block_reason,
+                    response_id,
+                )
+                msg = f"Gemini prompt blocked. Block Reason: {block_reason}. (Response ID: {response_id})"
+                raise GeminiTranscriptionError(msg)
+
+            logger.warning(
+                "Gemini response returned no candidates. "
+                "Response ID: %s, Headers: %s",
+                response_id,
+                headers,
+            )
+            msg = f"Gemini response returned no candidates. (Response ID: {response_id})"
+            raise GeminiTransientTranscriptionError(msg)
 
         candidate = response.candidates[0]
         reason_str = (
@@ -205,34 +252,75 @@ class GeminiTranscriber(base.Transcriber):
             else None
         )
 
-        is_valid_reason = (
-            reason_str is None or reason_str in _VALID_FINISH_REASONS
-        )
-        if not is_valid_reason:
+        if reason_str is None:
             logger.warning(
-                f"Gemini response finished with reason: {reason_str}"
+                "Gemini response interrupted (finish_reason is None). "
+                "Usually caused by hitting the client timeout (%s ms) before completion. "
+                "Response ID: %s",
+                self.config.client_timeout_ms,
+                response_id,
             )
-            if reason_str == types.FinishReason.RECITATION.name:
-                logger.info(
-                    "Treating RECITATION block as %s fallback.",
-                    constants.UNINTELLIGIBLE_MARKER,
-                )
-                return constants.UNINTELLIGIBLE_MARKER
-            return None
+            msg = f"Incomplete response from Gemini (finish_reason: None). (Response ID: {response_id})"
+            raise GeminiTransientTranscriptionError(msg)
+
+        if reason_str == types.FinishReason.MAX_TOKENS.name:
+            logger.warning(
+                "Gemini response reached MAX_TOKENS limit. Transcript is likely truncated. Response ID: %s",
+                response_id,
+            )
+
+        if reason_str == types.FinishReason.RECITATION.name:
+            logger.info(
+                "Treating RECITATION block as %s fallback.",
+                constants.UNINTELLIGIBLE_MARKER,
+            )
+            return constants.UNINTELLIGIBLE_MARKER
+
+        if reason_str not in _VALID_FINISH_REASONS:
+            blocked_ratings = self._get_blocked_ratings(candidate)
+            finish_msg = candidate.finish_message or "No finish message"
+            logger.warning(
+                "Gemini response finished with invalid reason: %s. "
+                "Finish Message: %s. Blocked Ratings: %s. "
+                "Response ID: %s, Headers: %s",
+                reason_str,
+                finish_msg,
+                blocked_ratings,
+                response_id,
+                headers,
+            )
+            msg = (
+                f"Gemini response finished with invalid reason: {reason_str}. "
+                f"Finish Message: {finish_msg}. Blocked Ratings: {blocked_ratings}. "
+                f"(Response ID: {response_id})"
+            )
+            raise GeminiTranscriptionError(msg)
 
         if not candidate.content or not candidate.content.parts:
             if reason_str == types.FinishReason.STOP.name:
                 logger.info(
                     "Gemini returned empty content (finish reason: STOP)."
                 )
-            else:
-                logger.warning(
-                    "Gemini response candidate had no content or parts. "
-                    "Finish reason: %s. Candidate: %s",
-                    reason_str,
-                    candidate,
-                )
-            return None
+                return None
+
+            blocked_ratings = self._get_blocked_ratings(candidate)
+            finish_msg = candidate.finish_message or "No finish message"
+            logger.warning(
+                "Gemini response candidate had no content or parts. "
+                "Finish reason: %s. Finish Message: %s. Blocked Ratings: %s. "
+                "Response ID: %s, Headers: %s",
+                reason_str,
+                finish_msg,
+                blocked_ratings,
+                response_id,
+                headers,
+            )
+            msg = (
+                f"Gemini response candidate had no content or parts. "
+                f"Finish reason: {reason_str}. Finish Message: {finish_msg}. Blocked Ratings: {blocked_ratings}. "
+                f"(Response ID: {response_id})"
+            )
+            raise GeminiTranscriptionError(msg)
 
         text_parts = [p.text for p in candidate.content.parts if p.text]
         if not text_parts:

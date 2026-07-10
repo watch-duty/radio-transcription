@@ -100,6 +100,17 @@ def _assert_collector_failure(
     testcase.assertEqual(str(exc), reason)
 
 
+def _make_pcm_segment(duration_sec: float = CHUNK_DURATION_SECONDS) -> bytes:
+    """Create dummy PCM bytes of exact length corresponding to duration_sec."""
+    num_bytes = int(
+        icecast_collector.SAMPLE_RATE_HZ
+        * 2
+        * icecast_collector.NUM_AUDIO_CHANNELS
+        * duration_sec
+    )
+    return b"\x00" * num_bytes
+
+
 def _make_process_factory(
     *,
     pid: int,
@@ -412,7 +423,10 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         ]
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=7,
-            segments=[b"seg0", b"seg1"],
+            segments=[
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+            ],
             wait_delay=0.05,
             wait_result=0,
         )
@@ -1115,9 +1129,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=3333,
             segments=[
-                b"FLAC_SEGMENT_0",
-                b"FLAC_SEGMENT_1",
-                b"FLAC_SEGMENT_2",
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
             ],
             wait_delay=0.0,
             wait_result=0,
@@ -1160,6 +1174,57 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
+    async def test_timestamps_use_exact_pcm_sample_count(
+        self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Test timestamp math: chunk start and end times reflect exact sample duration."""
+        fixed_anchor = datetime.datetime(
+            2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
+        )
+        far_future = fixed_anchor + datetime.timedelta(seconds=3600)
+        mock_now_utc.side_effect = [fixed_anchor] + [far_future] * 10
+
+        # Segments of exact lengths: 12.5 seconds and 18.25 seconds
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=3334,
+            segments=[
+                _make_pcm_segment(12.5),
+                _make_pcm_segment(18.25),
+            ],
+            wait_delay=0.0,
+            wait_result=0,
+        )
+
+        feed = _make_feed("exact-pcm-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+        results = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(results), 2)
+
+        ts0 = results[0].chunk_start_time
+        end0 = results[0].chunk_end_time
+        ts1 = results[1].chunk_start_time
+        end1 = results[1].chunk_end_time
+
+        self.assertEqual(ts0, fixed_anchor)
+        self.assertEqual((end0 - ts0).total_seconds(), 12.5)
+        self.assertEqual(ts1, end0)
+        self.assertEqual((end1 - ts1).total_seconds(), 18.25)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc",
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
     async def test_last_chunk_end_time_clamped_to_current_time(
         self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
     ) -> None:
@@ -1184,7 +1249,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
 
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=4444,
-            segments=[b"FLAC_SEGMENT_0"],
+            segments=[_make_pcm_segment(CHUNK_DURATION_SECONDS)],
             wait_delay=0.1,
             wait_result=0,
         )
