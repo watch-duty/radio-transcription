@@ -141,6 +141,18 @@ logger = get_task_logger(
 )
 
 
+def _get_trace_attrs(
+    traceparent: str | None, baggage: str | None
+) -> dict[str, str]:
+    """Helper to construct trace attributes dictionary from metadata or context."""
+    trace_attrs = {}
+    if traceparent:
+        trace_attrs["traceparent"] = traceparent
+    if baggage:
+        trace_attrs["baggage"] = baggage
+    return trace_attrs
+
+
 def _get_task_logger(
     feed_id: str, session_id: str | None, component: str
 ) -> std_logging.LoggerAdapter:
@@ -366,7 +378,50 @@ def _manage_out_of_order_timers(
     return order_timer_active
 
 
-def process_ordering(  # noqa: PLR0912, PLR0915
+def _drain_and_update_bag(
+    seq_buf: sequence_buffer.SequenceBuffer,
+    expected_next_ts: int,
+    curr_context: datatypes.TransmissionContext,
+    out_of_order_buffer_state: Any,
+    epsilon_ms: int,
+    max_emit: int,
+    deadline_monotonic: float | None,
+) -> tuple[int, list[datatypes.BufferedChunk], bool, bool]:
+    """Drains ready elements from out-of-order bag and updates state."""
+    buffer_elements = []
+    if curr_context.order_timer_active:
+        buffer_elements = list(out_of_order_buffer_state.read())
+
+    if not buffer_elements:
+        return expected_next_ts, [], False, False
+
+    new_expected_ts, remaining_elements, drained = seq_buf.drain_ready_elements(
+        expected_next_ts=expected_next_ts,
+        buffer_elements=buffer_elements,
+        epsilon_ms=epsilon_ms,
+        max_emit=max_emit - 1,
+        deadline_monotonic=deadline_monotonic,
+    )
+    if new_expected_ts is None:
+        msg = "expected_next_ts cannot be None after draining"
+        raise ValueError(msg)
+
+    out_of_order_buffer_state.clear()
+    for c in remaining_elements:
+        out_of_order_buffer_state.add(c)
+    has_buffer_elements = len(remaining_elements) > 0
+    clamped = bool(
+        len(drained) >= (max_emit - 1)
+        or (
+            deadline_monotonic is not None
+            and time.monotonic() >= deadline_monotonic
+            and remaining_elements
+        )
+    )
+    return new_expected_ts, drained, has_buffer_elements, clamped
+
+
+def process_ordering(
     element: tuple[str, datatypes.ChunkMetadata],
     timestamp: Timestamp,
     curr_context: datatypes.TransmissionContext,
@@ -433,39 +488,18 @@ def process_ordering(  # noqa: PLR0912, PLR0915
         )
         expected_next_ts = current_ts_ms + duration
 
-        # Drain from bag
-        buffer_elements = []
-        if curr_context.order_timer_active:
-            buffer_elements = list(out_of_order_buffer_state.read())
-
-        if buffer_elements:
-            expected_next_ts, remaining_elements, drained = (
-                seq_buf.drain_ready_elements(
-                    expected_next_ts=expected_next_ts,
-                    buffer_elements=buffer_elements,
-                    epsilon_ms=epsilon_ms,
-                    max_emit=max_emit - 1,  # -1 for the current chunk
-                    deadline_monotonic=deadline_monotonic,
-                )
+        expected_next_ts, drained, has_buffer_elements, clamped = (
+            _drain_and_update_bag(
+                seq_buf=seq_buf,
+                expected_next_ts=expected_next_ts,
+                curr_context=curr_context,
+                out_of_order_buffer_state=out_of_order_buffer_state,
+                epsilon_ms=epsilon_ms,
+                max_emit=max_emit,
+                deadline_monotonic=deadline_monotonic,
             )
-            to_emit.extend(drained)
-
-            # Update BagState
-            out_of_order_buffer_state.clear()
-            for c in remaining_elements:
-                out_of_order_buffer_state.add(c)
-            has_buffer_elements = len(remaining_elements) > 0
-            clamped = bool(
-                len(drained) >= (max_emit - 1)
-                or (
-                    deadline_monotonic is not None
-                    and time.monotonic() >= deadline_monotonic
-                    and remaining_elements
-                )
-            )
-        else:
-            has_buffer_elements = False
-            clamped = False
+        )
+        to_emit.extend(drained)
 
     elif difference < -epsilon_ms:
         # LATE PATH
@@ -756,6 +790,75 @@ class OrderedStitchAudioFn(beam.DoFn):
             >= trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
         )
 
+    def _buffer_chunk_on_budget_exhausted(
+        self,
+        metadata: datatypes.ChunkMetadata,
+        timestamp: Timestamp,
+        curr_context: datatypes.TransmissionContext,
+        transmission_context_state: Any,
+        last_start_ms_state: Any,
+        out_of_order_buffer_state: Any,
+        deferred_drain_timer: Any,
+    ) -> bool:
+        """Buffers the incoming chunk and arms deferral timer if bundle budget is exhausted."""
+        if not self._is_bundle_budget_exhausted():
+            return False
+
+        state_changed = False
+        if isinstance(curr_context, datatypes.IdleFeedState):
+            curr_context = datatypes.ActiveStitchingState(
+                session_id=metadata.session_id,
+                feed_metadata=metadata.feed_metadata,
+                out_of_order_buffer=[],
+                order_timer_active=curr_context.order_timer_active,
+                traceparent=metadata.traceparent,
+                baggage=metadata.baggage,
+            )
+            state_changed = True
+
+        current_ts_ms = (
+            metadata.timestamp_ms
+            if metadata.timestamp_ms is not None
+            else int(float(timestamp) * common_constants.MS_PER_SECOND)
+        )
+        out_of_order_buffer_state.add(
+            datatypes.BufferedChunk(
+                timestamp_ms=current_ts_ms,
+                gcs_uri=metadata.gcs_uri,
+                traceparent=metadata.traceparent,
+                baggage=metadata.baggage,
+            )
+        )
+        if not curr_context.order_timer_active:
+            curr_context = replace(curr_context, order_timer_active=True)
+            state_changed = True
+
+        if state_changed:
+            _write_transmission_context(
+                transmission_context_state,
+                curr_context,
+                last_start_ms_state,
+                out_of_order_buffer_state,
+            )
+        deferred_drain_timer.set(
+            timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
+        )
+        return True
+
+    def _defer_remaining_chunks(
+        self,
+        remaining_chunks: list[datatypes.BufferedChunk],
+        out_of_order_buffer_state: Any,
+        deferred_drain_timer: Any,
+        timestamp: Timestamp,
+    ) -> None:
+        """Parks remaining chunks back into state and schedules deferred drain."""
+        for c in remaining_chunks:
+            out_of_order_buffer_state.add(c)
+        deferred_drain_timer.set(
+            timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
+        )
+
     def _yield_tagged_outputs(
         self,
         results: Iterable[Any],
@@ -775,7 +878,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                 yield res
 
     @override
-    def process(  # noqa: PLR0912, PLR0915
+    def process(
         self,
         element: tuple[str, datatypes.ChunkMetadata],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
@@ -798,11 +901,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         else:
             feed_id = key_str
 
-        trace_attrs = {}
-        if metadata.traceparent:
-            trace_attrs["traceparent"] = metadata.traceparent
-        if metadata.baggage:
-            trace_attrs["baggage"] = metadata.baggage
+        trace_attrs = _get_trace_attrs(metadata.traceparent, metadata.baggage)
 
         # Load context and handle migration
         curr_context = (
@@ -814,50 +913,20 @@ class OrderedStitchAudioFn(beam.DoFn):
             else None
         )
 
-        curr_context, state_changed = _migrate_legacy_buffer(
+        curr_context, _state_changed = _migrate_legacy_buffer(
             curr_context, out_of_order_buffer_state
         )
 
         # Windmill lease & memory guard
-        if self._is_bundle_budget_exhausted():
-            if isinstance(curr_context, datatypes.IdleFeedState):
-                curr_context = datatypes.ActiveStitchingState(
-                    session_id=metadata.session_id,
-                    feed_metadata=metadata.feed_metadata,
-                    out_of_order_buffer=[],
-                    order_timer_active=curr_context.order_timer_active,
-                    traceparent=metadata.traceparent,
-                    baggage=metadata.baggage,
-                )
-                state_changed = True
-
-            current_ts_ms = (
-                metadata.timestamp_ms
-                if metadata.timestamp_ms is not None
-                else int(float(timestamp) * common_constants.MS_PER_SECOND)
-            )
-            out_of_order_buffer_state.add(
-                datatypes.BufferedChunk(
-                    timestamp_ms=current_ts_ms,
-                    gcs_uri=metadata.gcs_uri,
-                    traceparent=metadata.traceparent,
-                    baggage=metadata.baggage,
-                )
-            )
-            if not curr_context.order_timer_active:
-                curr_context = replace(curr_context, order_timer_active=True)
-                state_changed = True
-
-            if state_changed:
-                _write_transmission_context(
-                    transmission_context_state,
-                    curr_context,
-                    last_start_ms_state,
-                    out_of_order_buffer_state,
-                )
-            deferred_drain_timer.set(
-                timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
-            )
+        if self._buffer_chunk_on_budget_exhausted(
+            metadata,
+            timestamp,
+            curr_context,
+            transmission_context_state,
+            last_start_ms_state,
+            out_of_order_buffer_state,
+            deferred_drain_timer,
+        ):
             return
 
         results = []
@@ -923,11 +992,11 @@ class OrderedStitchAudioFn(beam.DoFn):
                 previous_expected_ts = initial_expected_ts
                 for i, chunk in enumerate(elements_to_emit):
                     if i > 0 and self._is_bundle_budget_exhausted():
-                        for remaining_chunk in elements_to_emit[i:]:
-                            out_of_order_buffer_state.add(remaining_chunk)
-                        deferred_drain_timer.set(
-                            timestamp
-                            + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
+                        self._defer_remaining_chunks(
+                            elements_to_emit[i:],
+                            out_of_order_buffer_state,
+                            deferred_drain_timer,
+                            timestamp,
                         )
                         break
                     curr_context = (
@@ -1088,11 +1157,9 @@ class OrderedStitchAudioFn(beam.DoFn):
             raise TypeError(msg)
         if state_changed:
             transmission_context_state.write(curr_context)
-        trace_attrs: dict[str, str] = {}
-        if curr_context.traceparent:
-            trace_attrs["traceparent"] = curr_context.traceparent
-        if curr_context.baggage:
-            trace_attrs["baggage"] = curr_context.baggage
+        trace_attrs = _get_trace_attrs(
+            curr_context.traceparent, curr_context.baggage
+        )
         active_session_id = curr_context.session_id
         active_feed_metadata = curr_context.feed_metadata
         active_traceparent = curr_context.traceparent
@@ -1261,7 +1328,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         yield from self._yield_tagged_outputs(results)
 
     @on_timer(DEFERRED_DRAIN_TIMER_SPEC)
-    def handle_deferred_drain(  # noqa: PLR0912, PLR0915
+    def handle_deferred_drain(
         self,
         feed_id: str = beam.DoFn.KeyParam,  # type: ignore
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
@@ -1290,11 +1357,9 @@ class OrderedStitchAudioFn(beam.DoFn):
             raise TypeError(msg)
         if state_changed:
             transmission_context_state.write(curr_context)
-        trace_attrs: dict[str, str] = {}
-        if curr_context.traceparent:
-            trace_attrs["traceparent"] = curr_context.traceparent
-        if curr_context.baggage:
-            trace_attrs["baggage"] = curr_context.baggage
+        trace_attrs = _get_trace_attrs(
+            curr_context.traceparent, curr_context.baggage
+        )
         active_session_id = curr_context.session_id
         active_feed_metadata = curr_context.feed_metadata
         active_traceparent = curr_context.traceparent
@@ -1381,11 +1446,11 @@ class OrderedStitchAudioFn(beam.DoFn):
 
                 for i, chunk in enumerate(elements_to_emit):
                     if i > 0 and self._is_bundle_budget_exhausted():
-                        for remaining_chunk in elements_to_emit[i:]:
-                            out_of_order_buffer_state.add(remaining_chunk)
-                        deferred_drain_timer.set(
-                            timestamp
-                            + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
+                        self._defer_remaining_chunks(
+                            elements_to_emit[i:],
+                            out_of_order_buffer_state,
+                            deferred_drain_timer,
+                            timestamp,
                         )
                         break
                     # Fetch current state context
