@@ -82,19 +82,40 @@ $guard$;
 DO $install$
 DECLARE
     lease_table_oid OID;
+    lease_table_kind "char";
+    lease_table_persistence "char";
+    lease_table_is_partition BOOLEAN;
+    lease_inheritance_links BIGINT;
 BEGIN
-    SELECT c.oid
-      INTO lease_table_oid
+    SELECT
+        c.oid,
+        c.relkind,
+        c.relpersistence,
+        c.relispartition
+      INTO
+        lease_table_oid,
+        lease_table_kind,
+        lease_table_persistence,
+        lease_table_is_partition
       FROM pg_catalog.pg_class AS c
       JOIN pg_catalog.pg_namespace AS n
         ON n.oid = c.relnamespace
      WHERE n.nspname = 'public'
-       AND c.relname = 'ingestion_leases'
-       AND c.relkind = 'r';
+       AND c.relname = 'ingestion_leases';
 
-    IF lease_table_oid IS NULL THEN
+    SELECT pg_catalog.count(*)
+      INTO lease_inheritance_links
+      FROM pg_catalog.pg_inherits AS i
+     WHERE i.inhrelid = lease_table_oid
+        OR i.inhparent = lease_table_oid;
+
+    IF lease_table_oid IS NULL
+       OR lease_table_kind <> 'r'
+       OR lease_table_persistence <> 'p'
+       OR lease_table_is_partition
+       OR lease_inheritance_links <> 0 THEN
         RAISE EXCEPTION
-            'public.ingestion_leases is missing or is not an ordinary table';
+            'public.ingestion_leases is not a permanent standalone ordinary table';
     END IF;
 
     IF NOT EXISTS (
