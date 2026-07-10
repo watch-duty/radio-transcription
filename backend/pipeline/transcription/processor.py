@@ -190,7 +190,6 @@ class TranscriptionEventProcessor:
     ) -> str:
         """Determines transcription status and returns the formatted text."""
         if not transcript:
-            logger.warning("Speech API returned an empty transcription.")
             # We intentionally do NOT append to `errors` here. Appending an error causes
             # the UI to display "[Transcription failed]", which implies a backend crash.
             record_pipeline_stage("transcription_status", "empty")
@@ -198,7 +197,7 @@ class TranscriptionEventProcessor:
 
         if transcript == CHIRP_UNINTELLIGIBLE_MARKER:
             record_pipeline_stage("transcription_status", "unintelligible")
-            return CHIRP_UNINTELLIGIBLE_MARKER
+            return transcript
 
         record_pipeline_stage("transcription_status", "success")
         return transcript
