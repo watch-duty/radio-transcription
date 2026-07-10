@@ -84,3 +84,15 @@ def test_ci_exercises_lease_guard_partial_state_recovery() -> None:
         '"$malformed_trigger_state_before" ]; then',
     ):
         assert token in workflow
+
+
+def test_ci_requires_the_expected_membership_preflight_rejection() -> None:
+    workflow = _read(".github/workflows/ci.yml")
+
+    for token in (
+        "preflight_rejection_output=",
+        "preflight_rejection_status=$?",
+        'if [ "$preflight_rejection_status" -ne 3 ]; then',
+        "Unexpected or unhealthy membership-index relation in public",
+    ):
+        assert token in workflow
