@@ -268,7 +268,22 @@ def prepare_artifacts(
     storage_client: storage.Client,
     run_dir: pathlib.Path,
 ) -> artifacts_lib.PreparedRunArtifacts:
-    """Build canonical and Gemini model-input artifacts locally."""
+    """Build canonical and Gemini model-input artifacts locally.
+
+    Args:
+        run_cfg: Validated training-mode run configuration.
+        storage_client: Client used to download source manifests.
+        run_dir: Local directory for the prepared run mirror.
+
+    Returns:
+        Paths and counts for the validated training artifacts.
+
+    Raises:
+        google_exceptions.GoogleAPIError: If a source download fails.
+        OSError: If a local artifact cannot be read or written.
+        TypeError: If strict parsing finds a non-object manifest row.
+        ValueError: If training manifests or generated examples are invalid.
+    """
     if (
         run_cfg.train_manifest_uri is None
         or run_cfg.validation_manifest_uri is None
@@ -407,7 +422,17 @@ def upload_prepared_artifacts(
     run_cfg: config_lib.RunConfig,
     storage_client: storage.Client,
 ) -> None:
-    """Upload prepared local artifacts to their canonical GCS locations."""
+    """Upload prepared local artifacts to their canonical GCS locations.
+
+    Args:
+        artifacts: Validated local training artifact paths.
+        run_cfg: Run configuration containing durable destination URIs.
+        storage_client: Client used to upload each artifact.
+
+    Raises:
+        google_exceptions.GoogleAPIError: If a GCS upload fails.
+        OSError: If a local artifact cannot be read.
+    """
     uploads = [
         (artifacts.run_config_path, run_cfg.paths.run_config_uri),
         (artifacts.canonical_train_path, run_cfg.paths.canonical_train_uri),

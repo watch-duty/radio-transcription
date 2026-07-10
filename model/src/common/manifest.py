@@ -615,7 +615,7 @@ def parse_manifest_text(
                 continue
             data.append(obj)
 
-    return _normalize_manifest_rows(data)
+    return _normalize_manifest_rows(data, coerce_non_string_text=True)
 
 
 def parse_manifest_text_strict(
@@ -652,7 +652,10 @@ def parse_manifest_text_strict(
         ):
             msg = f"{source}: expected JSON array of objects"
             raise ValueError(msg)
-        return _normalize_manifest_rows(parsed)
+        return _normalize_manifest_rows(
+            parsed,
+            coerce_non_string_text=False,
+        )
 
     rows: list[dict[str, Any]] = []
     for line_number, line in enumerate(content.splitlines(), start=1):
@@ -667,19 +670,35 @@ def parse_manifest_text_strict(
             msg = f"{source}: expected JSON object at line {line_number}"
             raise TypeError(msg)
         rows.append(parsed_row)
-    return _normalize_manifest_rows(rows)
+    return _normalize_manifest_rows(rows, coerce_non_string_text=False)
 
 
 def _normalize_manifest_rows(
     rows: list[dict[str, Any]],
+    *,
+    coerce_non_string_text: bool,
 ) -> list[dict[str, Any]]:
+    """Normalize transcript line breaks without masking strict type errors.
+
+    Args:
+        rows: Parsed manifest rows to normalize in place.
+        coerce_non_string_text: Whether lenient callers convert other values
+            to strings before normalization.
+
+    Returns:
+        The same row list with eligible transcript values normalized.
+    """
     for row in rows:
         if "text" in row:
-            # Coerce malformed text values once at the parser boundary. Null
-            # text becomes absent transcript text rather than the literal word
-            # "None".
             raw = row["text"]
-            text = "" if raw is None else str(raw)
+            if isinstance(raw, str):
+                text = raw
+            elif coerce_non_string_text:
+                # Lenient parsing treats null as an absent transcript rather
+                # than the literal word "None".
+                text = "" if raw is None else str(raw)
+            else:
+                continue
             row["text"] = text.replace("\n", " ").replace("\r", " ")
     return rows
 

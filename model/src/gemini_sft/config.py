@@ -88,11 +88,19 @@ class EvalModelTarget:
 
     @property
     def is_endpoint(self) -> bool:
-        """Return whether the model is a full Vertex endpoint resource."""
+        """Return whether the model is a full Vertex endpoint resource.
+
+        Returns:
+            ``True`` when ``model`` names a Vertex endpoint resource.
+        """
         return "/endpoints/" in self.model
 
     def to_record_dict(self) -> dict[str, str]:
-        """Return the JSON-compatible config.json record for this target."""
+        """Build the JSON-compatible durable record for this target.
+
+        Returns:
+            A mapping containing the target label and model identifier.
+        """
         return {"label": self.label, "model": self.model}
 
 
@@ -113,7 +121,12 @@ class EvalExecutionConfig:
     max_retries: int = 3
 
     def to_record_dict(self) -> dict[str, int | str]:
-        """Return the durable config.json execution record."""
+        """Build the durable execution-settings record.
+
+        Returns:
+            A mapping containing required controls and any configured optional
+            backend or limit.
+        """
         record: dict[str, int | str] = {
             "concurrency": self.concurrency,
             "max_retries": self.max_retries,
@@ -646,6 +659,22 @@ def _parse_eval_model_mapping(
     model_name: str,
     error_cls: type[Exception],
 ) -> EvalModelTarget:
+    """Validate and parse one evaluation target mapping.
+
+    Args:
+        raw_target: Unvalidated target mapping.
+        object_name: Human-readable mapping name for validation errors.
+        label_name: Human-readable label field name for validation errors.
+        model_name: Human-readable model field name for validation errors.
+        error_cls: Exception type raised for invalid input.
+
+    Returns:
+        A validated evaluation target.
+
+    Raises:
+        Exception: ``error_cls`` when fields are missing, unsupported, empty,
+            or contain an invalid artifact label.
+    """
     keys = set(raw_target)
     if keys != EVAL_MODEL_FIELDS:
         missing = sorted(EVAL_MODEL_FIELDS - keys)

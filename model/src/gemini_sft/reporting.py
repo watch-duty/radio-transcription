@@ -253,15 +253,47 @@ def _render_target_row(target: TargetMetrics) -> str:
 
 
 def _format_cell(value: typing.Any) -> str:
+    """Format a report value for one safe Markdown table cell.
+
+    Args:
+        value: Scalar or artifact mapping to render.
+
+    Returns:
+        A display string with stable float/empty formatting and escaped table
+        delimiters.
+    """
     if value is None:
-        return "n/a"
-    if isinstance(value, float):
-        return f"{value:.2f}"
-    if isinstance(value, dict):
+        rendered = "n/a"
+    elif isinstance(value, float):
+        rendered = f"{value:.2f}"
+    elif isinstance(value, dict):
         if not value:
-            return "n/a"
-        return json.dumps(value, sort_keys=True)
-    return str(value)
+            rendered = "n/a"
+        else:
+            rendered = json.dumps(value, sort_keys=True)
+    else:
+        rendered = str(value)
+    return _escape_markdown_cell(rendered)
+
+
+def _escape_markdown_cell(value: str) -> str:
+    """Fold line breaks and escape Markdown table delimiters in one cell.
+
+    Args:
+        value: Preformatted cell text.
+
+    Returns:
+        Single-line text whose pipes cannot split the surrounding table.
+    """
+    return (
+        value.replace("\\r\\n", " ")
+        .replace("\\r", " ")
+        .replace("\\n", " ")
+        .replace("\r\n", " ")
+        .replace("\r", " ")
+        .replace("\n", " ")
+        .replace("|", "\\|")
+    )
 
 
 def _overall_keyword_accuracy(

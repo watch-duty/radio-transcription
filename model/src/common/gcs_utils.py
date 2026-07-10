@@ -204,7 +204,19 @@ def download_json_text(
 def download_jsonl_manifest(
     storage_client: storage.Client, gcs_manifest_uri: str
 ) -> list[dict[str, typing.Any]]:
-    """Downloads and parses a JSONL manifest from GCS."""
+    """Download and leniently parse a JSON array or JSONL manifest.
+
+    Args:
+        storage_client: Client used to download the GCS object.
+        gcs_manifest_uri: URI of the manifest object.
+
+    Returns:
+        Parsed object rows. Malformed JSONL rows are skipped by the lenient
+        parser.
+
+    Raises:
+        ValueError: If ``gcs_manifest_uri`` is not a valid GCS URI.
+    """
     bucket_name, blob_path = parse_gcs_uri(gcs_manifest_uri)
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)

@@ -127,6 +127,36 @@ class TestReportingContract(unittest.TestCase):
         self.assertIn(expected_header, reporting.render_markdown_report(report))
         self.assertIn(expected_header, reporting.render_console_report(report))
 
+    def test_markdown_cells_escape_pipes_and_fold_newlines(self) -> None:
+        target = reporting.TargetMetrics(
+            target_label="base",
+            model="gemini|experimental\ncheckpoint",
+            wer=0.0,
+            cer=0.0,
+            keyword_accuracy=None,
+            empty_or_unintelligible_rate=0.0,
+            insertions=0,
+            deletions=0,
+            substitutions=0,
+            total_reference_words=1,
+            missing_prediction_count=0,
+            artifacts=reporting.ReportArtifacts(
+                raw_output_uri="gs://bucket/raw|output\npart"
+            ),
+        )
+
+        report = reporting.EvalReport(
+            round_id="round-a",
+            generated_at="2026-06-28T00:00:00Z",
+            target=target,
+        )
+
+        rendered = reporting.render_console_report(report)
+
+        self.assertEqual(len(rendered.splitlines()), 3)
+        self.assertIn("gemini\\|experimental checkpoint", rendered)
+        self.assertIn("gs://bucket/raw\\|output part", rendered)
+
 
 if __name__ == "__main__":
     unittest.main()

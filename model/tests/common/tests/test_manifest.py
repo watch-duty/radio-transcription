@@ -8,22 +8,11 @@ Covers:
 
 import json
 import os
+import pathlib
 import tempfile
 import unittest
-from pathlib import Path
 
 from common import manifest as manifest_lib
-from common.manifest import (
-    CanonicalManifestIssue,
-    CanonicalRow,
-    canonical_row_identity,
-    is_scoreable_manifest_entry,
-    load_manifest,
-    merge_predictions_to_manifest,
-    require_canonical_manifest,
-    rows_from_manifest,
-    validate_canonical_manifest,
-)
 
 
 def _canonical_row(**overrides: object) -> dict[str, object]:
@@ -44,7 +33,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
 
     def assertHasIssue(
         self,
-        issues: list[CanonicalManifestIssue],
+        issues: list[manifest_lib.CanonicalManifestIssue],
         code: str,
         field: str,
     ) -> None:
@@ -79,16 +68,18 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             unknown_row_key={"ignored": True},
         )
 
-        issues = validate_canonical_manifest([row], expected_split="train")
+        issues = manifest_lib.validate_canonical_manifest(
+            [row], expected_split="train"
+        )
 
         self.assertEqual(issues, [])
 
     def test_empty_manifest_is_invalid(self) -> None:
-        issues = validate_canonical_manifest([])
+        issues = manifest_lib.validate_canonical_manifest([])
 
         self.assertTrue(any(issue.code == "empty_manifest" for issue in issues))
         with self.assertRaisesRegex(ValueError, "empty_manifest"):
-            require_canonical_manifest([])
+            manifest_lib.require_canonical_manifest([])
 
     def test_required_field_failures_report_code_and_field(self) -> None:
         cases = [
@@ -122,7 +113,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 else:
                     row[field] = value
 
-                issues = validate_canonical_manifest([row])
+                issues = manifest_lib.validate_canonical_manifest([row])
 
                 self.assertHasIssue(issues, expected_code, field)
 
@@ -136,7 +127,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
 
         for audio_filepath, name in cases:
             with self.subTest(name=name):
-                issues = validate_canonical_manifest(
+                issues = manifest_lib.validate_canonical_manifest(
                     [_canonical_row(audio_filepath=audio_filepath)]
                 )
 
@@ -146,7 +137,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                     "audio_filepath",
                 )
 
-        duplicate_audio_issues = validate_canonical_manifest(
+        duplicate_audio_issues = manifest_lib.validate_canonical_manifest(
             [
                 _canonical_row(
                     audio_filepath="gs://bucket/audio/dup.flac",
@@ -166,7 +157,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             "audio_filepath",
         )
 
-        duplicate_identity_issues = validate_canonical_manifest(
+        duplicate_identity_issues = manifest_lib.validate_canonical_manifest(
             [
                 _canonical_row(
                     audio_filepath="gs://bucket/audio/a.flac",
@@ -191,7 +182,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             audio_filepath="  gs://bucket/audio/example.flac  ",
         )
 
-        issues = validate_canonical_manifest([row])
+        issues = manifest_lib.validate_canonical_manifest([row])
 
         self.assertEqual(
             [(issue.code, issue.field) for issue in issues],
@@ -201,7 +192,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             ValueError,
             "audio_filepath must not contain leading or trailing whitespace",
         ):
-            require_canonical_manifest([row])
+            manifest_lib.require_canonical_manifest([row])
 
     def test_optional_metadata_failures_report_code_and_field(self) -> None:
         cases = [
@@ -235,7 +226,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
 
         for name, overrides, expected_code, expected_field in cases:
             with self.subTest(name=name):
-                issues = validate_canonical_manifest(
+                issues = manifest_lib.validate_canonical_manifest(
                     [_canonical_row(**overrides)],
                     expected_split="train",
                 )
@@ -254,7 +245,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             unknown_future_field={"ignored": True},
         )
 
-        issues = validate_canonical_manifest([row])
+        issues = manifest_lib.validate_canonical_manifest([row])
 
         self.assertEqual(issues, [])
 
@@ -285,11 +276,16 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             _canonical_row(audio_filepath="gs://bucket/audio/other.flac"),
         ]
 
-        issues = validate_canonical_manifest(rows, expected_split="train")
+        issues = manifest_lib.validate_canonical_manifest(
+            rows, expected_split="train"
+        )
         codes = {issue.code for issue in issues}
 
         self.assertTrue(
-            all(isinstance(issue, CanonicalManifestIssue) for issue in issues)
+            all(
+                isinstance(issue, manifest_lib.CanonicalManifestIssue)
+                for issue in issues
+            )
         )
         self.assertIn("missing_required", codes)
         self.assertIn("blank_required", codes)
@@ -329,7 +325,9 @@ class TestCanonicalManifestValidation(unittest.TestCase):
         rows = [_canonical_row(text=" ", split="eval")]
 
         with self.assertRaisesRegex(ValueError, "blank_required") as ctx:
-            require_canonical_manifest(rows, expected_split="train")
+            manifest_lib.require_canonical_manifest(
+                rows, expected_split="train"
+            )
 
         message = str(ctx.exception)
         self.assertIn("split_mismatch", message)
@@ -348,7 +346,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
 
         for expected_code, field, value in cases:
             with self.subTest(field=field, value=value):
-                issues = validate_canonical_manifest(
+                issues = manifest_lib.validate_canonical_manifest(
                     [_canonical_row(**{field: value})]
                 )
 
@@ -370,7 +368,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
         for field, value in cases:
             parent, child = field.split(".")
             with self.subTest(field=field, value=value):
-                issues = validate_canonical_manifest(
+                issues = manifest_lib.validate_canonical_manifest(
                     [
                         _canonical_row(
                             **{
@@ -396,11 +394,11 @@ class TestCanonicalRowIdentity(unittest.TestCase):
     """Row identity is public and stable for dict rows and CanonicalRow."""
 
     def test_identity_from_dict_and_canonical_row_is_stripped(self) -> None:
-        dict_identity = canonical_row_identity(
+        dict_identity = manifest_lib.canonical_row_identity(
             {"example_id": " example ", "segment_id": " 001 "}
         )
-        typed_identity = canonical_row_identity(
-            CanonicalRow(
+        typed_identity = manifest_lib.canonical_row_identity(
+            manifest_lib.CanonicalRow(
                 audio_filepath="gs://bucket/audio/example.flac",
                 example_id="typed-example",
                 segment_id="002",
@@ -415,9 +413,11 @@ class TestCanonicalRowIdentity(unittest.TestCase):
 
     def test_identity_missing_or_blank_fields_raise(self) -> None:
         with self.assertRaisesRegex(ValueError, "segment_id"):
-            canonical_row_identity({"example_id": "example"})
+            manifest_lib.canonical_row_identity({"example_id": "example"})
         with self.assertRaisesRegex(ValueError, "example_id"):
-            canonical_row_identity({"example_id": " ", "segment_id": "001"})
+            manifest_lib.canonical_row_identity(
+                {"example_id": " ", "segment_id": "001"}
+            )
 
 
 class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
@@ -436,7 +436,7 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
             ValueError,
             "offset_tolerance must be non-negative",
         ):
-            merge_predictions_to_manifest(
+            manifest_lib.merge_predictions_to_manifest(
                 ground_truth,
                 [],
                 "gemini",
@@ -465,7 +465,7 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
         ]
 
         with self.assertRaises(ValueError):
-            merge_predictions_to_manifest(
+            manifest_lib.merge_predictions_to_manifest(
                 ground_truth, bad_predictions, "gemini"
             )
 
@@ -474,14 +474,14 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
         gt = [{"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "g"}]
         preds = [{"offset": 1.0, "text": "p"}]  # no audio_filepath
         with self.assertRaises(ValueError):
-            merge_predictions_to_manifest(gt, preds, "m")
+            manifest_lib.merge_predictions_to_manifest(gt, preds, "m")
 
     def test_prediction_missing_offset_raises(self) -> None:
         """A prediction without `offset` fails loud, not silently defaults to 0.0."""
         gt = [{"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "g"}]
         preds = [{"audio_filepath": "gs://b/a.flac", "text": "p"}]  # no offset
         with self.assertRaises(ValueError):
-            merge_predictions_to_manifest(gt, preds, "m")
+            manifest_lib.merge_predictions_to_manifest(gt, preds, "m")
 
     def test_raises_on_missing_ground_truth_offset(self) -> None:
         """A GT row missing 'offset' raises — symmetric to the predictions side.
@@ -491,13 +491,13 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
         """
         gt = [{"audio_filepath": "gs://b/a.flac"}]  # no 'offset' key
         with self.assertRaises(ValueError):
-            merge_predictions_to_manifest(gt, [], "gemini")
+            manifest_lib.merge_predictions_to_manifest(gt, [], "gemini")
 
     def test_raises_on_missing_ground_truth_audio_filepath(self) -> None:
         """A GT row missing 'audio_filepath' raises — symmetric to predictions."""
         gt = [{"offset": 1.0}]  # no 'audio_filepath' key
         with self.assertRaises(ValueError):
-            merge_predictions_to_manifest(gt, [], "gemini")
+            manifest_lib.merge_predictions_to_manifest(gt, [], "gemini")
 
     def test_does_not_return_empty_list_on_error(self) -> None:
         """Verify the old silent-failure path (return []) is gone."""
@@ -515,7 +515,7 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
         result = None
         raised = False
         try:
-            result = merge_predictions_to_manifest(
+            result = manifest_lib.merge_predictions_to_manifest(
                 ground_truth, bad_predictions, "gemini"
             )
         except Exception:
@@ -542,7 +542,9 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             }
         ]
 
-        result = merge_predictions_to_manifest(gt, preds, "whisper")
+        result = manifest_lib.merge_predictions_to_manifest(
+            gt, preds, "whisper"
+        )
 
         self.assertEqual(result[0]["pred_text_whisper"], "predicted")
 
@@ -567,7 +569,7 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             }
         ]
 
-        result = merge_predictions_to_manifest(gt, preds, "model")
+        result = manifest_lib.merge_predictions_to_manifest(gt, preds, "model")
 
         self.assertEqual(
             result[0]["pred_text_model"],
@@ -600,7 +602,9 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             },
         ]
 
-        result = merge_predictions_to_manifest(gt, preds, "whisper")
+        result = manifest_lib.merge_predictions_to_manifest(
+            gt, preds, "whisper"
+        )
 
         self.assertEqual(result[0]["pred_text_whisper"], "closer")
         self.assertEqual(result[1]["pred_text_whisper"], "first")
@@ -621,7 +625,7 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": None}
         ]
 
-        result = merge_predictions_to_manifest(gt, preds, "m")
+        result = manifest_lib.merge_predictions_to_manifest(gt, preds, "m")
 
         self.assertEqual(result[0]["pred_text_m"], "")
 
@@ -639,7 +643,9 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             {"audio_filepath": "gs://b/a.flac", "offset": 1.18, "text": "only"},
         ]
 
-        result = merge_predictions_to_manifest(gt, preds, "whisper")
+        result = manifest_lib.merge_predictions_to_manifest(
+            gt, preds, "whisper"
+        )
 
         # 1.18 is nearer 1.2 than 1.0, so row 1 binds it; row 0 stays blank.
         self.assertNotIn("pred_text_whisper", result[0])
@@ -681,7 +687,9 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             },
         ]
 
-        result = merge_predictions_to_manifest(gt, preds, "whisper")
+        result = manifest_lib.merge_predictions_to_manifest(
+            gt, preds, "whisper"
+        )
 
         self.assertEqual(result[0]["pred_text_whisper"], "pred A")
         self.assertEqual(result[1]["pred_text_whisper"], "pred B")
@@ -709,7 +717,7 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
         ]
 
         with self.assertRaisesRegex(ValueError, "unmatched prediction"):
-            merge_predictions_to_manifest(gt, preds, "whisper")
+            manifest_lib.merge_predictions_to_manifest(gt, preds, "whisper")
 
     def test_stale_pred_text_field_is_cleared_on_rerun(self) -> None:
         """Re-running clears a stale pred_text_{model_key} when no new prediction matches.
@@ -727,7 +735,7 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "p1"},
             {"audio_filepath": "gs://b/a.flac", "offset": 9.0, "text": "p2"},
         ]
-        merge_predictions_to_manifest(gt, preds_v1, "m")
+        manifest_lib.merge_predictions_to_manifest(gt, preds_v1, "m")
         self.assertEqual(gt[0]["pred_text_m"], "p1")
         self.assertEqual(gt[1]["pred_text_m"], "p2")
 
@@ -739,7 +747,7 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
                 "text": "p1_new",
             },
         ]
-        merge_predictions_to_manifest(gt, preds_v2, "m")
+        manifest_lib.merge_predictions_to_manifest(gt, preds_v2, "m")
         self.assertEqual(gt[0]["pred_text_m"], "p1_new")
         self.assertNotIn(
             "pred_text_m",
@@ -760,12 +768,12 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
         ]
 
         with self.assertRaisesRegex(ValueError, "unmatched prediction"):
-            merge_predictions_to_manifest(gt, preds, "whisper")
+            manifest_lib.merge_predictions_to_manifest(gt, preds, "whisper")
 
     def test_returns_same_list_object(self) -> None:
         """Result is the ground_truth list mutated in place."""
         gt = [{"audio_filepath": "gs://b/a.flac", "offset": 0.0, "text": "x"}]
-        result = merge_predictions_to_manifest(gt, [], "m")
+        result = manifest_lib.merge_predictions_to_manifest(gt, [], "m")
 
         self.assertIs(result, gt)
 
@@ -774,7 +782,7 @@ class TestLoadManifestEmptyReturns(unittest.TestCase):
     """load_manifest still returns [] for bad inputs — these paths are intentional."""
 
     def test_missing_file_returns_empty(self) -> None:
-        result = load_manifest("./nonexistent_manifest.jsonl")
+        result = manifest_lib.load_manifest("./nonexistent_manifest.jsonl")
 
         self.assertEqual(result, [])
 
@@ -851,9 +859,22 @@ class TestParseManifestText(unittest.TestCase):
                 source="inline.jsonl",
             )
 
+    def test_strict_parser_preserves_invalid_text_for_validation(self) -> None:
+        rows = manifest_lib.parse_manifest_text_strict(
+            json.dumps([_canonical_row(text=123)]),
+            source="inline.json",
+        )
+
+        self.assertEqual(rows[0]["text"], 123)
+        with self.assertRaisesRegex(
+            ValueError,
+            r"blank_required \(row 0, field text\)",
+        ):
+            manifest_lib.strict_canonical_rows_from_manifest(rows)
+
     def test_strict_local_loader_rejects_partially_malformed_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
-            path = Path(tmp_s) / "eval.jsonl"
+            path = pathlib.Path(tmp_s) / "eval.jsonl"
             path.write_text(
                 '{"audio_filepath":"gs://b/a.flac","text":"ok"}\n{bad json}\n',
                 encoding="utf-8",
@@ -877,9 +898,9 @@ class TestLoadManifestMalformedRows(unittest.TestCase):
                 f.write(
                     json.dumps({"audio_filepath": "gs://b/a.flac", "text": 123})
                 )
-            rows = load_manifest(path)
+            rows = manifest_lib.load_manifest(path)
         finally:
-            Path(path).unlink()
+            pathlib.Path(path).unlink()
 
         self.assertEqual(rows[0]["text"], "123")
 
@@ -894,9 +915,9 @@ class TestLoadManifestMalformedRows(unittest.TestCase):
         try:
             with os.fdopen(fd, "w") as f:
                 f.write("\n".join(json.dumps(row) for row in rows_in))
-            rows = load_manifest(path)
+            rows = manifest_lib.load_manifest(path)
         finally:
-            Path(path).unlink()
+            pathlib.Path(path).unlink()
 
         # 0 / False are str()-cast; a null text becomes "" (absent transcript).
         self.assertEqual([r["text"] for r in rows], ["0", "False", ""])
@@ -908,7 +929,7 @@ class TestRowsFromManifestNullSafe(unittest.TestCase):
     """rows_from_manifest tolerates explicit null offset/duration (no TypeError)."""
 
     def test_explicit_null_offset_duration_default_to_zero(self) -> None:
-        rows = rows_from_manifest(
+        rows = manifest_lib.rows_from_manifest(
             [
                 {
                     "audio_filepath": "gs://b/a.flac",
@@ -928,26 +949,28 @@ class TestRowsFromManifestNullSafe(unittest.TestCase):
 class TestScoreableManifestEntry(unittest.TestCase):
     def test_requires_audio_filepath_and_non_blank_text(self) -> None:
         self.assertTrue(
-            is_scoreable_manifest_entry(
+            manifest_lib.is_scoreable_manifest_entry(
                 {"audio_filepath": "gs://b/a.flac", "text": "hello"}
             )
         )
         self.assertFalse(
-            is_scoreable_manifest_entry(
+            manifest_lib.is_scoreable_manifest_entry(
                 {"audio_filepath": "gs://b/a.flac", "text": ""}
             )
         )
         self.assertFalse(
-            is_scoreable_manifest_entry(
+            manifest_lib.is_scoreable_manifest_entry(
                 {"audio_filepath": "gs://b/a.flac", "text": "   "}
             )
         )
         self.assertFalse(
-            is_scoreable_manifest_entry(
+            manifest_lib.is_scoreable_manifest_entry(
                 {"audio_filepath": "gs://b/a.flac", "text": None}
             )
         )
-        self.assertFalse(is_scoreable_manifest_entry({"text": "hello"}))
+        self.assertFalse(
+            manifest_lib.is_scoreable_manifest_entry({"text": "hello"})
+        )
 
 
 class TestRowsFromManifestRequiredFields(unittest.TestCase):
@@ -955,24 +978,28 @@ class TestRowsFromManifestRequiredFields(unittest.TestCase):
 
     def test_missing_audio_filepath_raises_with_row_context(self) -> None:
         with self.assertRaisesRegex(ValueError, "row 0.*audio_filepath"):
-            rows_from_manifest([{"text": "hello"}])
+            manifest_lib.rows_from_manifest([{"text": "hello"}])
 
     def test_blank_audio_filepath_raises_with_row_context(self) -> None:
         with self.assertRaisesRegex(ValueError, "row 0.*audio_filepath"):
-            rows_from_manifest([{"audio_filepath": "  ", "text": "hello"}])
+            manifest_lib.rows_from_manifest(
+                [{"audio_filepath": "  ", "text": "hello"}]
+            )
 
     def test_missing_text_raises_with_row_context(self) -> None:
         with self.assertRaisesRegex(ValueError, "row 0.*text"):
-            rows_from_manifest([{"audio_filepath": "gs://b/a.flac"}])
+            manifest_lib.rows_from_manifest(
+                [{"audio_filepath": "gs://b/a.flac"}]
+            )
 
     def test_blank_text_raises_with_row_context(self) -> None:
         with self.assertRaisesRegex(ValueError, "row 0.*text"):
-            rows_from_manifest(
+            manifest_lib.rows_from_manifest(
                 [{"audio_filepath": "gs://b/a.flac", "text": "  "}]
             )
 
     def test_required_string_values_are_stripped(self) -> None:
-        rows = rows_from_manifest(
+        rows = manifest_lib.rows_from_manifest(
             [
                 {
                     "audio_filepath": " gs://b/a.flac ",
@@ -985,7 +1012,7 @@ class TestRowsFromManifestRequiredFields(unittest.TestCase):
         self.assertEqual(rows[0].text, "hello")
 
     def test_strict_canonical_rules_remain_outside_row_conversion(self) -> None:
-        rows = rows_from_manifest(
+        rows = manifest_lib.rows_from_manifest(
             [
                 {
                     "audio_filepath": "local/audio.mp3",
@@ -1034,9 +1061,9 @@ class TestLoadManifestLenientBoundaries(unittest.TestCase):
         try:
             with os.fdopen(fd, "w") as f:
                 json.dump([{"audio_filepath": "local/audio.mp3"}], f)
-            rows = load_manifest(path)
+            rows = manifest_lib.load_manifest(path)
         finally:
-            Path(path).unlink()
+            pathlib.Path(path).unlink()
 
         self.assertEqual(rows, [{"audio_filepath": "local/audio.mp3"}])
 
@@ -1046,8 +1073,8 @@ class TestLoadManifestLenientBoundaries(unittest.TestCase):
             with os.fdopen(fd, "w") as f:
                 f.write("{bad json}\n")
                 f.write(json.dumps({"audio_filepath": "local/audio.mp3"}))
-            rows = load_manifest(path)
+            rows = manifest_lib.load_manifest(path)
         finally:
-            Path(path).unlink()
+            pathlib.Path(path).unlink()
 
         self.assertEqual(rows, [{"audio_filepath": "local/audio.mp3"}])

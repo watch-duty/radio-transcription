@@ -96,12 +96,11 @@ class TestBuildExample(unittest.TestCase):
             [turn["role"] for turn in example["contents"]],
             ["user", "model", "user", "model", "user", "model"],
         )
-        audio_parts = [
-            part
-            for turn in example["contents"]
-            for part in turn["parts"]
-            if "fileData" in part
-        ]
+        audio_parts = []
+        for turn in example["contents"]:
+            for part in turn["parts"]:
+                if "fileData" in part:
+                    audio_parts.append(part)
         self.assertEqual(len(audio_parts), 1)
         self.assertEqual(
             audio_parts[0]["fileData"]["fileUri"],
@@ -234,12 +233,11 @@ class TestBuildExample(unittest.TestCase):
             [turn["role"] for turn in example["contents"]],
             ["user", "model", "user", "model", "user", "model"],
         )
-        audio_parts = [
-            part
-            for turn in example["contents"]
-            for part in turn["parts"]
-            if "fileData" in part
-        ]
+        audio_parts = []
+        for turn in example["contents"]:
+            for part in turn["parts"]:
+                if "fileData" in part:
+                    audio_parts.append(part)
         self.assertEqual(len(audio_parts), 1)
         self.assertEqual(
             audio_parts[0]["fileData"]["fileUri"],

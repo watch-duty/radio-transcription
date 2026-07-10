@@ -76,7 +76,7 @@ def run_batch_audio_inference(
     Returns:
         Parsed predictions with their raw output URI, or ``None`` when the
         input has duplicate audio URIs, submission fails, output is missing,
-        or output contains an unexpected audio URI.
+        or output contains duplicate or unexpected audio URIs.
 
     Raises:
         TypeError: If reusable output metadata lacks an object identity.
@@ -92,11 +92,10 @@ def run_batch_audio_inference(
         )
         return None
     audio_uri_list = list(audio_uris)
-    history_list = (
-        [list(history) for history in histories]
-        if histories is not None
-        else [[] for _ in audio_uri_list]
-    )
+    if histories is None:
+        history_list = [[] for _ in audio_uri_list]
+    else:
+        history_list = [list(history) for history in histories]
     identity = request_identity.build_gemini_eval_request_identity(
         target_label=label,
         model=model_id,
@@ -108,22 +107,10 @@ def run_batch_audio_inference(
         prior_context_mode=prior_context_mode,
         histories=history_list,
     )
+    paths = eval_artifacts.eval_target_artifact_paths(run_gcs_prefix, label)
+    batch_output_gcs = paths.output_uri
+    metadata_uri = paths.batch_metadata_uri
     with tempfile.TemporaryDirectory() as tmp:
-        batch_input_gcs, batch_output_gcs = build_batch_jsonl(
-            storage_client=storage_client,
-            run_gcs_prefix=run_gcs_prefix,
-            label=label,
-            audio_uris=audio_uris,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            histories=history_list,
-            history_mode=prior_context_mode,
-            tmp_dir=pathlib.Path(tmp),
-        )
-        metadata_uri = eval_artifacts.batch_prediction_metadata_uri(
-            run_gcs_prefix,
-            label,
-        )
         metadata_path = (
             pathlib.Path(tmp) / f"batch_predictions_{label}.meta.json"
         )
@@ -138,6 +125,18 @@ def run_batch_audio_inference(
                 metadata_path=metadata_path,
                 request_identity_payload=identity,
             )
+        batch_input_gcs, batch_output_gcs = build_batch_jsonl(
+            storage_client=storage_client,
+            run_gcs_prefix=run_gcs_prefix,
+            label=label,
+            audio_uris=audio_uris,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            histories=history_list,
+            history_mode=prior_context_mode,
+            tmp_dir=pathlib.Path(tmp),
+        )
+        if pred_blobs:
             preds = _load_batch_predictions(
                 storage_client=storage_client,
                 output_uri=batch_output_gcs,
@@ -174,23 +173,25 @@ def run_batch_audio_inference(
             )
             if preds is None:
                 return None
+
+        extra_prediction_uris = set(preds) - expected_audio_uris
+        if extra_prediction_uris:
+            preview = ", ".join(sorted(extra_prediction_uris)[:3])
+            logger.error(
+                "[%s] prediction output contained audio URIs outside the eval "
+                "manifest: %s",
+                label,
+                preview,
+            )
+            return None
+
+        if not pred_blobs:
             request_identity.write_metadata(metadata_path, identity)
             gcs_utils.upload_local_file(
                 storage_client,
                 metadata_path,
                 metadata_uri,
             )
-
-    extra_prediction_uris = set(preds) - expected_audio_uris
-    if extra_prediction_uris:
-        preview = ", ".join(sorted(extra_prediction_uris)[:3])
-        logger.error(
-            "[%s] prediction output contained audio URIs outside the eval "
-            "manifest: %s",
-            label,
-            preview,
-        )
-        return None
 
     missing = max(0, len(expected_audio_uris) - len(preds))
     if missing > 0:
@@ -284,6 +285,20 @@ def _load_batch_predictions(
     pred_blobs: collections.abc.Sequence[typing.Any] | None = None,
     missing_ok: bool = False,
 ) -> BatchPredictionMap | None:
+    """Download and merge prediction shards without ambiguous duplicates.
+
+    Args:
+        storage_client: Client used to list and download output blobs.
+        output_uri: GCS prefix containing one batch job's output.
+        label: Target label included in diagnostics.
+        tmp_dir: Local directory used for downloaded shards.
+        pred_blobs: Optional prelisted output blobs beneath ``output_uri``.
+        missing_ok: Whether absent output should avoid an error log.
+
+    Returns:
+        Predictions keyed by audio URI, or ``None`` when output is absent or
+        multiple blobs contain the same audio URI.
+    """
     pred_blobs = pred_blobs or _list_batch_prediction_blobs(
         storage_client,
         output_uri,
@@ -304,7 +319,17 @@ def _load_batch_predictions(
             storage_client, out_bucket, blob.name, str(local_path)
         )
         with local_path.open(encoding="utf-8") as handle:
-            preds.update(vertex.parse_batch_output(handle))
+            parsed = vertex.parse_batch_output(handle)
+        duplicate_audio_uris = set(preds) & set(parsed)
+        if duplicate_audio_uris:
+            preview = ", ".join(sorted(duplicate_audio_uris)[:3])
+            logger.error(
+                "[%s] duplicate audio URIs across batch output blobs: %s",
+                label,
+                preview,
+            )
+            return None
+        preds.update(parsed)
     return preds
 
 

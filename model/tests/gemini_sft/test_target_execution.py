@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-# ruff: noqa: E402
 import asyncio
 import json
 import pathlib
-import sys
+import shutil
 import unittest
 import unittest.mock
-
-_SRC_DIR = str(pathlib.Path(__file__).resolve().parents[2] / "src")
-if _SRC_DIR not in sys.path:
-    sys.path.insert(0, _SRC_DIR)
 
 import fake_gcs
 from common.gemini import context, eval_artifacts, request_identity, vertex
@@ -215,11 +210,7 @@ class TestOnlinePredictionResume(unittest.TestCase):
             "gs://bucket/run", "checkpoint_6"
         )
         self.local_dir = pathlib.Path(self.id().replace(".", "_"))
-        self.addCleanup(
-            lambda: __import__("shutil").rmtree(
-                self.local_dir, ignore_errors=True
-            )
-        )
+        self.addCleanup(shutil.rmtree, self.local_dir, ignore_errors=True)
 
     def _load(self, identity: dict):
         return target_execution.load_existing_online_predictions(
@@ -365,11 +356,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
     def setUp(self) -> None:
         self.storage = fake_gcs.FakeStorageClient()
         self.local_dir = pathlib.Path(self.id().replace(".", "_"))
-        self.addCleanup(
-            lambda: __import__("shutil").rmtree(
-                self.local_dir, ignore_errors=True
-            )
-        )
+        self.addCleanup(shutil.rmtree, self.local_dir, ignore_errors=True)
 
     @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
     @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
@@ -571,9 +558,8 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             mock_client = unittest.mock.MagicMock()
             mock_client.aio.models.generate_content = generate_content
             mock_genai.Client.return_value = mock_client
-            mock_types.GenerateContentConfig.side_effect = lambda **kwargs: (
-                kwargs
-            )
+            generate_config = mock_types.GenerateContentConfig
+            generate_config.side_effect = lambda **kwargs: kwargs
 
             async def observe_start_order() -> bool:
                 try:

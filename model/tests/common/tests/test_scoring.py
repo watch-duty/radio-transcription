@@ -12,15 +12,6 @@ the suite SKIPS — never errors — on a bare-core checkout.
 import unittest
 
 from common import scoring as scoring_lib
-from common.scoring import (
-    bootstrap_paired,
-    build_normalizer,
-    compute_cer,
-    compute_wer,
-    count_keyword_occurrences,
-    duration_bucket_wer,
-    keyword_metrics,
-)
 
 try:
     # build_normalizer() needs BOTH packages; probe both so a partial
@@ -43,7 +34,7 @@ class TestBuildNormalizerGolden(unittest.TestCase):
     """Golden tests pin normalizer behavior — changing scoring.py must update these."""
 
     def setUp(self) -> None:
-        self.normalizer = build_normalizer()
+        self.normalizer = scoring_lib.build_normalizer()
 
     def test_strips_fillers(self) -> None:
         result = self.normalizer("uh engine forty one copy")
@@ -117,45 +108,57 @@ class TestComputeWerPolicies(unittest.TestCase):
 
     def test_verbatim_policy_identical_lists_score_zero(self) -> None:
         refs = ["engine 41 copy", "battalion 2 responding"]
-        result = compute_wer(refs, refs, normalizer=None)
+        result = scoring_lib.compute_wer(refs, refs, normalizer=None)
         self.assertEqual(result["wer"], 0)
 
     def test_normalized_policy_identical_lists_score_zero(self) -> None:
         refs = ["engine 41 copy", "battalion 2 responding"]
-        result = compute_wer(refs, refs, normalizer=build_normalizer())
+        result = scoring_lib.compute_wer(
+            refs, refs, normalizer=scoring_lib.build_normalizer()
+        )
         self.assertEqual(result["wer"], 0)
 
     def test_verbatim_policy_is_case_sensitive(self) -> None:
-        result = compute_wer(["Engine 41"], ["engine 41"], normalizer=None)
+        result = scoring_lib.compute_wer(
+            ["Engine 41"], ["engine 41"], normalizer=None
+        )
         self.assertGreater(result["wer"], 0)
 
     def test_normalized_policy_is_case_insensitive(self) -> None:
         # After NeMo normalization both sides are lowercased; "41" normalizes
         # identically on both sides — so WER must be 0
-        result = compute_wer(
-            ["Engine 41"], ["engine 41"], normalizer=build_normalizer()
+        result = scoring_lib.compute_wer(
+            ["Engine 41"],
+            ["engine 41"],
+            normalizer=scoring_lib.build_normalizer(),
         )
         self.assertEqual(result["wer"], 0)
 
     def test_compute_wer_result_has_breakdown_keys(self) -> None:
-        result = compute_wer(["engine 41"], ["engine 41"], normalizer=None)
+        result = scoring_lib.compute_wer(
+            ["engine 41"], ["engine 41"], normalizer=None
+        )
         for key in ("wer", "insertions", "deletions", "substitutions", "hits"):
             self.assertIn(key, result)
 
     def test_normalized_empty_reference_scores_empty_hypothesis_correct(
         self,
     ) -> None:
-        result = compute_wer(["Um"], [""], normalizer=build_normalizer())
+        result = scoring_lib.compute_wer(
+            ["Um"], [""], normalizer=scoring_lib.build_normalizer()
+        )
         self.assertEqual(result["wer"], 0)
 
     def test_normalized_empty_reference_penalizes_nonempty_hypothesis(
         self,
     ) -> None:
-        result = compute_wer(["Um"], ["copy"], normalizer=build_normalizer())
+        result = scoring_lib.compute_wer(
+            ["Um"], ["copy"], normalizer=scoring_lib.build_normalizer()
+        )
         self.assertGreater(result["wer"], 0)
 
     def test_empty_reference_hallucination_counts_as_insertions(self) -> None:
-        result = compute_wer(
+        result = scoring_lib.compute_wer(
             ["engine copy", ""],
             ["engine copy", "extra words"],
             normalizer=None,
@@ -170,7 +173,7 @@ class TestComputeWerPolicies(unittest.TestCase):
     def test_all_empty_references_with_hypothesis_reports_insertions(
         self,
     ) -> None:
-        result = compute_wer([""], ["extra words"], normalizer=None)
+        result = scoring_lib.compute_wer([""], ["extra words"], normalizer=None)
 
         self.assertEqual(result["wer"], 100.0)
         self.assertEqual(result["insertions"], 2)
@@ -180,23 +183,27 @@ class TestComputeWerPolicies(unittest.TestCase):
 @_scoring_required
 class TestComputeCer(unittest.TestCase):
     def test_identical_lists_score_zero_cer(self) -> None:
-        result = compute_cer(["engine 41"], ["engine 41"])
+        result = scoring_lib.compute_cer(["engine 41"], ["engine 41"])
         self.assertEqual(result["cer"], 0)
 
     def test_cer_result_has_cer_key(self) -> None:
-        result = compute_cer(["engine 41"], ["engine 41"])
+        result = scoring_lib.compute_cer(["engine 41"], ["engine 41"])
         self.assertIn("cer", result)
 
     def test_normalized_empty_reference_scores_empty_hypothesis_correct(
         self,
     ) -> None:
-        result = compute_cer(["Uh,"], [""], normalizer=build_normalizer())
+        result = scoring_lib.compute_cer(
+            ["Uh,"], [""], normalizer=scoring_lib.build_normalizer()
+        )
         self.assertEqual(result["cer"], 0)
 
     def test_empty_reference_hallucination_counts_as_char_insertions(
         self,
     ) -> None:
-        result = compute_cer(["abc", ""], ["abc", "xy"], normalizer=None)
+        result = scoring_lib.compute_cer(
+            ["abc", ""], ["abc", "xy"], normalizer=None
+        )
 
         self.assertEqual(result["cer"], 66.67)
 
@@ -247,11 +254,13 @@ class TestEmptyOrUnintelligibleRate(unittest.TestCase):
 
 class TestKeywordMetrics(unittest.TestCase):
     def test_absent_keyword_omitted(self) -> None:
-        result = keyword_metrics(["engine 41"], ["engine 41"], ["battalion"])
+        result = scoring_lib.keyword_metrics(
+            ["engine 41"], ["engine 41"], ["battalion"]
+        )
         self.assertEqual(result, [])
 
     def test_present_keyword_returns_accuracy_dict(self) -> None:
-        result = keyword_metrics(
+        result = scoring_lib.keyword_metrics(
             ["engine 41 copy"], ["engine 41 copy"], ["engine"]
         )
         self.assertEqual(len(result), 1)
@@ -261,12 +270,16 @@ class TestKeywordMetrics(unittest.TestCase):
         self.assertIn("accuracy", result[0])
 
     def test_count_keyword_occurrences_whole_word_only(self) -> None:
-        self.assertEqual(count_keyword_occurrences("copy", "copy that copy"), 2)
-        self.assertEqual(count_keyword_occurrences("copy", "copycat"), 0)
+        self.assertEqual(
+            scoring_lib.count_keyword_occurrences("copy", "copy that copy"), 2
+        )
+        self.assertEqual(
+            scoring_lib.count_keyword_occurrences("copy", "copycat"), 0
+        )
 
     def test_keyword_metrics_length_mismatch_raises(self) -> None:
         with self.assertRaises(ValueError):
-            keyword_metrics(["a"], ["a", "b"], ["a"])
+            scoring_lib.keyword_metrics(["a"], ["a", "b"], ["a"])
 
 
 @_scoring_required
@@ -275,13 +288,15 @@ class TestDurationBucketWer(unittest.TestCase):
 
     def test_length_mismatch_raises(self) -> None:
         with self.assertRaises(ValueError):
-            duration_bucket_wer(["a"], ["a"], [1.0, 2.0])
+            scoring_lib.duration_bucket_wer(["a"], ["a"], [1.0, 2.0])
 
     def test_buckets_by_duration_excluding_long_and_negative(self) -> None:
         # Short, Medium, Long, >=15s (excluded), negative (excluded).
         refs = ["one", "two", "three", "four", "five"]
         durations = [1.0, 3.0, 10.0, 20.0, -1.0]
-        result = duration_bucket_wer(refs, refs, durations, normalizer=None)
+        result = scoring_lib.duration_bucket_wer(
+            refs, refs, durations, normalizer=None
+        )
         counts = {r["bucket"]: r["count"] for r in result}
         self.assertEqual(
             counts,
@@ -293,7 +308,7 @@ class TestDurationBucketWer(unittest.TestCase):
         # The empty-ground-truth segment must not be counted (M-B2 filter).
         refs = ["engine one", "", "engine two"]
         hyps = ["engine one", "garbage", "engine two"]
-        result = duration_bucket_wer(
+        result = scoring_lib.duration_bucket_wer(
             refs, hyps, [1.0, 1.0, 1.0], normalizer=None
         )
         self.assertEqual(len(result), 1)
@@ -301,7 +316,7 @@ class TestDurationBucketWer(unittest.TestCase):
         self.assertEqual(result[0]["count"], 2)
 
     def test_identical_lists_score_zero_wer_and_ser(self) -> None:
-        result = duration_bucket_wer(
+        result = scoring_lib.duration_bucket_wer(
             ["a b c"], ["a b c"], [1.0], normalizer=None
         )
         self.assertEqual(result[0]["wer"], 0)
@@ -311,13 +326,17 @@ class TestDurationBucketWer(unittest.TestCase):
         # One perfect segment, one wrong, both Short — SER must be 50%.
         refs = ["a b c", "d e f"]
         hyps = ["a b c", "x y z"]
-        result = duration_bucket_wer(refs, hyps, [1.0, 1.0], normalizer=None)
+        result = scoring_lib.duration_bucket_wer(
+            refs, hyps, [1.0, 1.0], normalizer=None
+        )
         self.assertEqual(result[0]["count"], 2)
         self.assertEqual(result[0]["ser"], 50.0)
         self.assertGreater(result[0]["wer"], 0)
 
     def test_result_dicts_have_expected_keys(self) -> None:
-        result = duration_bucket_wer(["a"], ["a"], [1.0], normalizer=None)
+        result = scoring_lib.duration_bucket_wer(
+            ["a"], ["a"], [1.0], normalizer=None
+        )
         for key in ("bucket", "wer", "ser", "count"):
             self.assertIn(key, result[0])
 
@@ -328,22 +347,22 @@ class TestBootstrapPaired(unittest.TestCase):
 
     def test_length_mismatch_raises(self) -> None:
         with self.assertRaises(ValueError):
-            bootstrap_paired(["a", "b"], ["a"], ["a", "b"])
+            scoring_lib.bootstrap_paired(["a", "b"], ["a"], ["a", "b"])
 
     def test_empty_eval_set_raises(self) -> None:
         with self.assertRaises(ValueError):
-            bootstrap_paired([], [], [])
+            scoring_lib.bootstrap_paired([], [], [])
 
     def test_non_positive_n_resamples_raises(self) -> None:
         with self.assertRaises(ValueError):
-            bootstrap_paired(["a"], ["a"], ["a"], n_resamples=0)
+            scoring_lib.bootstrap_paired(["a"], ["a"], ["a"], n_resamples=0)
 
     def test_non_int_n_resamples_raises_valueerror(self) -> None:
         """The docstring promises ValueError; without the isinstance guard
         a float would crash with a cryptic TypeError from range() instead.
         """
         with self.assertRaises(ValueError):
-            bootstrap_paired(["a"], ["a"], ["a"], n_resamples=1.5)
+            scoring_lib.bootstrap_paired(["a"], ["a"], ["a"], n_resamples=1.5)
 
     def test_bool_n_resamples_raises_valueerror(self) -> None:
         """`bool` is a subclass of `int`, so True / False would pass a plain
@@ -351,23 +370,25 @@ class TestBootstrapPaired(unittest.TestCase):
         `n_resamples=True` can't silently mean "one resample".
         """
         with self.assertRaises(ValueError):
-            bootstrap_paired(["a"], ["a"], ["a"], n_resamples=True)
+            scoring_lib.bootstrap_paired(["a"], ["a"], ["a"], n_resamples=True)
 
     def test_confidence_outside_unit_interval_raises(self) -> None:
         for bad in (0.0, 1.0, 1.5, -0.1):
             with self.assertRaises(ValueError):
-                bootstrap_paired(["a"], ["a"], ["a"], confidence=bad)
+                scoring_lib.bootstrap_paired(
+                    ["a"], ["a"], ["a"], confidence=bad
+                )
 
     def test_identical_systems_zero_delta_and_p_value_one(self) -> None:
         refs = ["engine one", "battalion two"]
-        result = bootstrap_paired(
+        result = scoring_lib.bootstrap_paired(
             refs, refs, refs, normalizer=None, n_resamples=200
         )
         self.assertEqual(result["delta"], 0)
         self.assertEqual(result["p_value_one_sided"], 1.0)
 
     def test_result_uses_p_value_one_sided_key(self) -> None:
-        result = bootstrap_paired(
+        result = scoring_lib.bootstrap_paired(
             ["a b"], ["a b"], ["a b"], normalizer=None, n_resamples=50
         )
         for key in (
@@ -389,10 +410,10 @@ class TestBootstrapPaired(unittest.TestCase):
         refs = ["engine one copy", "battalion two", "engine three"]
         hyps_a = ["engine one copy", "battalion two", "engine three"]
         hyps_b = ["engine one", "battalion", "engine three four"]
-        first = bootstrap_paired(
+        first = scoring_lib.bootstrap_paired(
             refs, hyps_a, hyps_b, normalizer=None, n_resamples=200, seed=42
         )
-        second = bootstrap_paired(
+        second = scoring_lib.bootstrap_paired(
             refs, hyps_a, hyps_b, normalizer=None, n_resamples=200, seed=42
         )
         self.assertEqual(first, second)
@@ -401,7 +422,7 @@ class TestBootstrapPaired(unittest.TestCase):
         refs = ["engine one copy", "battalion two responding"]
         hyps_a = ["engine one copy", "battalion two responding"]  # perfect
         hyps_b = ["engine one", "battalion"]  # worse
-        result = bootstrap_paired(
+        result = scoring_lib.bootstrap_paired(
             refs, hyps_a, hyps_b, normalizer=None, n_resamples=100
         )
         self.assertEqual(

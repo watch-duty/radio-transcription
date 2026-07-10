@@ -11,11 +11,12 @@ import unittest.mock
 from common.gemini import context, vertex
 
 
-def test_public_request_annotations_resolve_at_runtime() -> None:
-    hints = typing.get_type_hints(vertex.build_request)
+class TestPublicRequestAnnotations(unittest.TestCase):
+    def test_annotations_resolve_at_runtime(self) -> None:
+        hints = typing.get_type_hints(vertex.build_request)
 
-    assert "history" in hints
-    assert "return" in hints
+        self.assertIn("history", hints)
+        self.assertIn("return", hints)
 
 
 def _make_mock_client(
@@ -390,7 +391,7 @@ class TestBuildRequest(unittest.TestCase):
         self.assertEqual(gen_cfg["max_output_tokens"], 512)
 
     def test_generation_config_is_copied(self) -> None:
-        """generation_config.copy() is used — mutating the result leaves the default intact."""
+        """Mutating request generation config leaves defaults intact."""
         result = self.build_request(
             "gs://bucket/audio.flac",
             system_prompt="S",
@@ -414,14 +415,16 @@ class TestBuildRequest(unittest.TestCase):
             self.assertEqual(entry["threshold"], "BLOCK_NONE")
 
     def test_safety_settings_is_copied(self) -> None:
-        """safety_settings is shallow-copied — mutating the result leaves the default intact."""
+        """Mutating request safety settings leaves defaults intact."""
         result = self.build_request(
             "gs://bucket/audio.flac",
             system_prompt="S",
             user_prompt="U",
         )
         result["request"]["safetySettings"].pop()
+        result["request"]["safetySettings"][0]["threshold"] = "CHANGED"
         self.assertEqual(len(self.default_safety), 4)
+        self.assertEqual(self.default_safety[0]["threshold"], "BLOCK_NONE")
 
     def test_system_prompt_preserved_exactly(self) -> None:
         """system_prompt is embedded without normalization."""
@@ -465,12 +468,11 @@ class TestBuildRequest(unittest.TestCase):
             [turn["role"] for turn in contents],
             ["user", "model", "user", "model", "user"],
         )
-        audio_parts = [
-            part
-            for turn in contents
-            for part in turn["parts"]
-            if "fileData" in part
-        ]
+        audio_parts = []
+        for turn in contents:
+            audio_parts.extend(
+                part for part in turn["parts"] if "fileData" in part
+            )
         self.assertEqual(len(audio_parts), 1)
         self.assertEqual(
             audio_parts[0]["fileData"]["fileUri"],
@@ -577,12 +579,11 @@ class TestBuildRequest(unittest.TestCase):
             [turn["role"] for turn in contents],
             ["user", "model", "user", "model", "user"],
         )
-        audio_parts = [
-            part
-            for turn in contents
-            for part in turn["parts"]
-            if "fileData" in part
-        ]
+        audio_parts = []
+        for turn in contents:
+            audio_parts.extend(
+                part for part in turn["parts"] if "fileData" in part
+            )
         self.assertEqual(len(audio_parts), 1)
         self.assertEqual(
             audio_parts[0]["fileData"]["fileUri"],
@@ -619,6 +620,33 @@ class TestParseBatchOutput(unittest.TestCase):
         self.assertEqual(
             vertex.parse_batch_output([json.dumps(output)]),
             {"gs://bucket/a.flac": "engine 41"},
+        )
+
+    def test_parses_snake_case_request_echo(self) -> None:
+        output = {
+            "request": {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "file_data": {
+                                    "file_uri": "gs://bucket/legacy.flac",
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "response": {
+                "candidates": [
+                    {"content": {"parts": [{"text": "legacy output"}]}}
+                ]
+            },
+        }
+
+        self.assertEqual(
+            vertex.parse_batch_output([json.dumps(output)]),
+            {"gs://bucket/legacy.flac": "legacy output"},
         )
 
     def test_parses_last_file_uri_when_request_contains_history(self) -> None:

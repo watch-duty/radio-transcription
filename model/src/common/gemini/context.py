@@ -80,14 +80,13 @@ def build_guarded_transcript_context_prompt(
         A prompt that marks prior transcripts as context only. When history is
         empty, the guarded block contains an explicit no-history sentence.
     """
-    prior_context = (
-        "\n".join(
+    if history:
+        prior_context = "\n".join(
             f"{index}. {' '.join(turn.text.split())}"
             for index, turn in enumerate(history, 1)
         )
-        if history
-        else GUARDED_TRANSCRIPT_NO_HISTORY_TEXT
-    )
+    else:
+        prior_context = GUARDED_TRANSCRIPT_NO_HISTORY_TEXT
     return (
         f"{GUARDED_TRANSCRIPT_CONTEXT_HEADER}\n{prior_context}\n\n{user_prompt}"
     )
@@ -255,6 +254,16 @@ def build_context_histories(
 
 
 def _episode_key(row: dict[str, typing.Any], fallback_index: int) -> str:
+    """Return the best available same-source episode key for a row.
+
+    Args:
+        row: Canonical manifest row to group with related segments.
+        fallback_index: Stable row position used when no identity is available.
+
+    Returns:
+        The original recording URI when available, otherwise the first usable
+        row-level identity or a unique fallback key.
+    """
     value = row.get("original_audio_uri")
     if isinstance(value, str) and value.strip():
         return value.strip()
@@ -277,6 +286,15 @@ def _episode_key(row: dict[str, typing.Any], fallback_index: int) -> str:
 def _row_sort_key(
     row: dict[str, typing.Any], fallback_index: int
 ) -> tuple[float, int, str]:
+    """Return a deterministic chronological sort key for one manifest row.
+
+    Args:
+        row: Canonical manifest row within an episode group.
+        fallback_index: Stable row position used for missing offsets or order.
+
+    Returns:
+        A tuple of source offset, row order, and audio URI.
+    """
     offset = _numeric_value(row.get("original_offset"))
     if offset is None:
         source_audio = row.get("source_audio")

@@ -27,6 +27,9 @@ download_jsonl_manifest_strict = gcs_utils.download_jsonl_manifest_strict
 submit_batch_inference = vertex.submit_batch_inference
 run_online_target_inference = target_execution.run_online_target_inference
 _LOCAL_DURABLE_EVAL_FIELDS = (
+    "round_id",
+    "run_gcs_prefix",
+    "canonical_eval_uri",
     "inference_dataset_slug",
     "eval_manifest_uri",
     "gcp_project",
@@ -41,7 +44,15 @@ _LOCAL_DURABLE_EVAL_FIELDS = (
 
 
 def evaluate(args: argparse.Namespace) -> int:
-    """CLI handler for ``gemini-sft eval``."""
+    """Validate durable state and run ``gemini-sft eval``.
+
+    Args:
+        args: Parsed CLI namespace containing the local config path.
+
+    Returns:
+        Zero after evaluation succeeds; one after a handled configuration,
+        provider, storage, or local I/O failure.
+    """
     try:
         run_cfg = config_lib.load_eval_run_config(args.config)
         storage_client = storage.Client(project=run_cfg.gcp_project)
@@ -307,7 +318,16 @@ def _validate_local_eval_config_matches_durable(
     run_cfg: config_lib.RunConfig,
     config: dict[str, typing.Any],
 ) -> None:
-    """Fail loudly when a local eval TOML disagrees with durable GCS state."""
+    """Fail when a local eval TOML disagrees with durable GCS state.
+
+    Args:
+        run_cfg: Validated local evaluation configuration.
+        config: Durable run configuration loaded from GCS.
+
+    Raises:
+        TypeError: If a durable field has an invalid type.
+        ValueError: If local metric identity differs from durable state.
+    """
     local_record = run_cfg.to_record_dict()
     durable_record = dict(config)
     durable_record["prior_context_count"] = _optional_config_nonnegative_int(
@@ -370,7 +390,16 @@ def _effective_eval_execution(
     durable: config_lib.EvalExecutionConfig,
     local: config_lib.EvalExecutionConfig,
 ) -> config_lib.EvalExecutionConfig:
-    """Use durable eval identity with local operational runtime controls."""
+    """Combine durable metric identity with local runtime controls.
+
+    Args:
+        durable: Prepared evaluation settings that determine metric identity.
+        local: Current operator settings that may override runtime controls.
+
+    Returns:
+        Execution settings with durable backend/limit and local concurrency and
+        retry controls.
+    """
     if (
         local.concurrency != durable.concurrency
         or local.max_retries != durable.max_retries

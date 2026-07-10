@@ -107,11 +107,10 @@ def build_gemini_eval_request_identity(
             unsupported.
     """
     audio_uri_list = list(audio_uris)
-    history_list = (
-        [list(history) for history in histories]
-        if histories is not None
-        else [[] for _ in audio_uri_list]
-    )
+    if histories is None:
+        history_list = [[] for _ in audio_uri_list]
+    else:
+        history_list = [list(history) for history in histories]
 
     return build_request_identity(
         target_label=target_label,

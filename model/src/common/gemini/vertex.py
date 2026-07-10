@@ -27,6 +27,7 @@ Important behavior:
 from __future__ import annotations
 
 import collections.abc  # noqa: TC003 - needed by runtime annotation resolution
+import copy
 import json
 import logging
 import re
@@ -59,16 +60,16 @@ def build_request(
     user_prompt: str,
     history: collections.abc.Sequence[context.ContextTurn] | None = None,
     history_mode: str = "text_turns",
-    generation_config: dict = GEMINI_GENERATION_CONFIG,
-    safety_settings: list = GEMINI_SAFETY_SETTINGS,
+    generation_config: dict[str, typing.Any] | None = None,
+    safety_settings: list[dict[str, typing.Any]] | None = None,
 ) -> dict:
     """Build the canonical Vertex batch-inference request dict for one audio segment.
 
     Returns the plain-dict batch request consumed by ``submit_batch_inference`` and the
     Gemini batch API — the single shape used by both ``gemini_sft.evaluate`` and
-    the ``gemini_transcribe_audio`` notebook. ``generation_config`` is ``.copy()``-ed so a
-    caller mutating the result never touches the module-level default. Pure dict
-    construction — does not require the ``[vertex]`` extra.
+    the ``gemini_transcribe_audio`` notebook. Configuration values are copied
+    so callers cannot mutate module-level defaults. Pure dictionary
+    construction does not require the ``[vertex]`` extra.
 
     Field keys are canonical camelCase JSON (``fileData``/``fileUri``/
     ``mimeType``/``systemInstruction``/``generationConfig``/
@@ -96,6 +97,14 @@ def build_request(
         history=history,
         history_mode=history_mode,
     )
+    if generation_config is None:
+        resolved_generation_config = GEMINI_GENERATION_CONFIG
+    else:
+        resolved_generation_config = generation_config
+    if safety_settings is None:
+        resolved_safety_settings = GEMINI_SAFETY_SETTINGS
+    else:
+        resolved_safety_settings = safety_settings
     return {
         "request": {
             "contents": contents,
@@ -103,8 +112,8 @@ def build_request(
                 "role": "system",
                 "parts": [{"text": system_prompt}],
             },
-            "generationConfig": generation_config.copy(),
-            "safetySettings": list(safety_settings),
+            "generationConfig": copy.deepcopy(resolved_generation_config),
+            "safetySettings": copy.deepcopy(resolved_safety_settings),
         }
     }
 
@@ -115,9 +124,10 @@ def parse_batch_output(
     """Parse Vertex Gemini batch output JSONL into ``{audio_uri: prediction}``.
 
     Vertex echoes the original request in batch output. This parser accepts the
-    canonical camelCase request shape emitted by ``build_request``. Error/status
-    rows, malformed JSONL rows, and output rows without an identifiable audio
-    URI are skipped.
+    canonical camelCase request shape emitted by ``build_request`` and the
+    legacy snake_case shape used by historical outputs. Error/status rows,
+    malformed JSONL rows, and output rows without an identifiable audio URI
+    are skipped.
 
     Args:
         lines: Iterable of complete JSONL rows from Vertex batch output.
@@ -157,6 +167,19 @@ def parse_batch_output(
 def _extract_request_audio_uri(
     request: dict[str, typing.Any],
 ) -> str | None:
+    """Return the target audio URI echoed in a batch request.
+
+    Historical batch outputs may use snake_case SDK field names, while current
+    requests use canonical camelCase JSON. When history contains audio, the
+    last URI is the current target because request construction appends the
+    current turn last.
+
+    Args:
+        request: Request object echoed by the Vertex batch API.
+
+    Returns:
+        The last non-empty audio URI, or ``None`` when none is identifiable.
+    """
     contents = request.get("contents", [])
     if not isinstance(contents, list) or not contents:
         return None
@@ -170,10 +193,10 @@ def _extract_request_audio_uri(
         for part in parts:
             if not isinstance(part, dict):
                 continue
-            file_data = part.get("fileData")
+            file_data = part.get("fileData") or part.get("file_data")
             if not isinstance(file_data, dict):
                 continue
-            candidate = file_data.get("fileUri")
+            candidate = file_data.get("fileUri") or file_data.get("file_uri")
             if isinstance(candidate, str) and candidate:
                 audio_uri = candidate
     return audio_uri

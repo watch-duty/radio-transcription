@@ -131,7 +131,12 @@ def _fake_cer(
 
 
 @contextlib.contextmanager
-def _patched_eval_scoring() -> typing.Any:
+def _patched_eval_scoring() -> typing.Iterator[None]:
+    """Patch scoring dependencies with deterministic test implementations.
+
+    Yields:
+        Control while the deterministic scoring patches are active.
+    """
     with (
         unittest.mock.patch.object(
             evaluate_module.scoring, "build_normalizer", return_value=None
@@ -1020,12 +1025,11 @@ class TestPrepareRun(unittest.TestCase):
             [turn["role"] for turn in second_contents],
             ["user", "model", "user", "model"],
         )
-        audio_parts = [
-            part
-            for turn in second_contents
-            for part in turn["parts"]
-            if "fileData" in part
-        ]
+        audio_parts = []
+        for turn in second_contents:
+            audio_parts.extend(
+                part for part in turn["parts"] if "fileData" in part
+            )
         self.assertEqual(
             [part["fileData"]["fileUri"] for part in audio_parts],
             ["gs://audio/source-a/002.flac"],
@@ -2590,6 +2594,62 @@ class TestEvaluateRun(unittest.TestCase):
         download_manifest.assert_not_called()
         batch.assert_not_called()
 
+    def test_eval_rejects_durable_round_routing_mismatches_before_work(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = pathlib.Path(tmp_s)
+            cfg_path = _write_config_file(tmp)
+            run_cfg = config_module.load_eval_run_config(cfg_path)
+            args = argparse.Namespace(config=str(cfg_path))
+            mismatches = {
+                "round_id": "round-b",
+                "run_gcs_prefix": "gs://test-bucket/sft/runs/round-b",
+                "canonical_eval_uri": (
+                    "gs://test-bucket/sft/runs/round-b/manifests/"
+                    "canonical/eval.jsonl"
+                ),
+            }
+
+            for field, mismatched_value in mismatches.items():
+                with self.subTest(field=field):
+                    storage = fake_gcs.FakeStorageClient()
+                    durable_config = run_cfg.to_record_dict()
+                    durable_config[field] = mismatched_value
+                    storage.put(
+                        run_cfg.paths.config_uri,
+                        json.dumps(durable_config),
+                    )
+
+                    with (
+                        unittest.mock.patch.object(
+                            evaluate_module.storage,
+                            "Client",
+                            return_value=storage,
+                        ),
+                        unittest.mock.patch.object(
+                            evaluate_module,
+                            "download_jsonl_manifest_strict",
+                        ) as download_manifest,
+                        unittest.mock.patch.object(
+                            evaluate_module,
+                            "batch_infer",
+                        ) as batch,
+                        self.assertLogs(
+                            evaluate_module.logger,
+                            level=logging.ERROR,
+                        ) as logs,
+                    ):
+                        rc = evaluate_module.evaluate(args)
+
+                    self.assertEqual(rc, 1)
+                    self.assertIn(
+                        f"Mismatched field(s): {field}",
+                        "\n".join(logs.output),
+                    )
+                    download_manifest.assert_not_called()
+                    batch.assert_not_called()
+
     def test_eval_match_defaults_missing_durable_prior_context_fields(
         self,
     ) -> None:
@@ -2894,7 +2954,9 @@ max_retries = 1
                                     "parts": [
                                         {
                                             "fileData": {
-                                                "fileUri": "gs://audio/eval.flac"
+                                                "fileUri": (
+                                                    "gs://audio/eval.flac"
+                                                )
                                             }
                                         }
                                     ]
@@ -2963,7 +3025,9 @@ max_retries = 1
                                     "parts": [
                                         {
                                             "fileData": {
-                                                "fileUri": "gs://audio/eval.flac"
+                                                "fileUri": (
+                                                    "gs://audio/eval.flac"
+                                                )
                                             }
                                         }
                                     ]
@@ -3038,7 +3102,9 @@ max_retries = 1
                                     "parts": [
                                         {
                                             "fileData": {
-                                                "fileUri": "gs://audio/eval.flac"
+                                                "fileUri": (
+                                                    "gs://audio/eval.flac"
+                                                )
                                             }
                                         }
                                     ]
@@ -3145,7 +3211,9 @@ max_retries = 1
                                     "parts": [
                                         {
                                             "fileData": {
-                                                "fileUri": "gs://audio/other.flac"
+                                                "fileUri": (
+                                                    "gs://audio/other.flac"
+                                                )
                                             }
                                         }
                                     ]

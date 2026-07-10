@@ -212,6 +212,13 @@ async def _run_bounded_online_workers(
         [int, str], collections.abc.Awaitable[None]
     ],
 ) -> None:
+    """Process pending items through a fixed-size rolling worker pool.
+
+    Args:
+        pending_items: Indexed audio URIs awaiting inference.
+        worker_count: Number of concurrent workers to start.
+        process_one: Coroutine callback invoked once for each pending item.
+    """
     pending = iter(pending_items)
 
     async def worker() -> None:
@@ -371,6 +378,12 @@ async def run_online_target_inference(
     }
 
     async def process_one(index: int, audio_uri: str) -> None:
+        """Generate and durably record one pending audio prediction.
+
+        Args:
+            index: Position of the audio URI and its aligned history.
+            audio_uri: GCS URI of the audio segment to transcribe.
+        """
         if audio_uri in completed:
             return
         async with semaphore:
@@ -479,6 +492,15 @@ def _validate_existing_rows(
 def _load_prediction_rows(
     path: pathlib.Path,
 ) -> dict[str, dict[str, typing.Any]]:
+    """Load the latest valid attempt row for every audio URI.
+
+    Args:
+        path: Local append-only online prediction log.
+
+    Returns:
+        Parsed rows keyed by audio URI. Later duplicate rows replace earlier
+        attempts, and malformed JSON lines are skipped with a warning.
+    """
     rows: dict[str, dict[str, typing.Any]] = {}
     if not path.exists():
         return rows
@@ -525,6 +547,21 @@ def _record_online_attempt(
     progress: dict[str, int],
     total_count: int,
 ) -> tuple[list[dict[str, typing.Any]] | None, bool]:
+    """Record one online attempt and advance snapshot/log counters.
+
+    Args:
+        completed: Successful rows keyed by audio URI, updated in place.
+        attempt_rows: Latest attempt per audio URI, updated in place.
+        audio_uri: URI identifying the attempted audio segment.
+        row: Prediction or error row produced by the attempt.
+        local_predictions_path: Append-only local attempt-log path.
+        progress: Mutable progress counters for completion, sync, and errors.
+        total_count: Total number of requested audio segments.
+
+    Returns:
+        A deduplicated snapshot when the sync threshold is reached and whether
+        progress should be logged.
+    """
     previous_error = bool(attempt_rows.get(audio_uri, {}).get("error"))
     attempt_rows[audio_uri] = row
     if row.get("error"):
