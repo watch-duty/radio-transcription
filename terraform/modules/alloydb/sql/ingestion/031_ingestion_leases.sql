@@ -55,6 +55,9 @@ DO $migration$
 DECLARE
     lease_table_oid OID;
     lease_table_kind "char";
+    lease_table_persistence "char";
+    lease_table_is_partition BOOLEAN;
+    lease_inheritance_links BIGINT;
     source_types_oid OID;
     source_type_attnum SMALLINT;
     lease_key_attnum SMALLINT;
@@ -70,21 +73,43 @@ BEGIN
         TRUE
     );
 
-    SELECT c.oid, c.relkind
-      INTO lease_table_oid, lease_table_kind
+    SELECT
+        c.oid,
+        c.relkind,
+        c.relpersistence,
+        c.relispartition
+      INTO
+        lease_table_oid,
+        lease_table_kind,
+        lease_table_persistence,
+        lease_table_is_partition
       FROM pg_catalog.pg_class AS c
       JOIN pg_catalog.pg_namespace AS n
         ON n.oid = c.relnamespace
      WHERE n.nspname = 'public'
        AND c.relname = 'ingestion_leases';
 
-    IF lease_table_oid IS NULL OR lease_table_kind <> 'r' THEN
+    SELECT pg_catalog.count(*)
+      INTO lease_inheritance_links
+      FROM pg_catalog.pg_inherits AS i
+     WHERE i.inhrelid = lease_table_oid
+        OR i.inhparent = lease_table_oid;
+
+    IF lease_table_oid IS NULL
+       OR lease_table_kind <> 'r'
+       OR lease_table_persistence <> 'p'
+       OR lease_table_is_partition
+       OR lease_inheritance_links <> 0 THEN
         RAISE EXCEPTION USING
-            MESSAGE = 'public.ingestion_leases is not an ordinary table',
+            MESSAGE =
+                'public.ingestion_leases is not a permanent standalone ordinary table',
             DETAIL = pg_catalog.format(
-                'resolved_oid=%s relkind=%s',
+                'resolved_oid=%s relkind=%s relpersistence=%s is_partition=%s inheritance_links=%s',
                 COALESCE(lease_table_oid::TEXT, 'NULL'),
-                COALESCE(lease_table_kind::TEXT, 'NULL')
+                COALESCE(lease_table_kind::TEXT, 'NULL'),
+                COALESCE(lease_table_persistence::TEXT, 'NULL'),
+                COALESCE(lease_table_is_partition::TEXT, 'NULL'),
+                lease_inheritance_links
             );
     END IF;
 
