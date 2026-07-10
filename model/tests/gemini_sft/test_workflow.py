@@ -19,6 +19,7 @@ from gemini_sft import config as config_module
 from gemini_sft import evaluate as evaluate_module
 from gemini_sft import reporting as reporting_module
 from gemini_sft import tune as tune_module
+from google.api_core import exceptions as google_exceptions
 
 
 def _manifest(rows: list[dict[str, typing.Any]]) -> str:
@@ -439,6 +440,39 @@ class TestPrepareRun(unittest.TestCase):
 
                 self.assertEqual(result, 1)
                 self.assertEqual(storage.uploads, [])
+
+    def test_eval_only_prepare_reports_missing_source_as_cli_failure(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
+            cfg_path = tmp / "run.toml"
+            cfg_path.write_text(_eval_only_config_text(), encoding="utf-8")
+
+            with (
+                unittest.mock.patch.object(
+                    prepare.storage,
+                    "Client",
+                    return_value=storage,
+                ),
+                unittest.mock.patch.object(
+                    prepare,
+                    "RESULTS_DIR",
+                    tmp / "results",
+                ),
+                unittest.mock.patch.object(
+                    prepare.gcs_utils,
+                    "download_gcs_uri",
+                    side_effect=google_exceptions.NotFound("missing"),
+                ),
+            ):
+                result = prepare.prepare(
+                    argparse.Namespace(config=str(cfg_path))
+                )
+
+            self.assertEqual(result, 1)
+            self.assertEqual(storage.uploads, [])
 
     def test_tune_rejects_eval_only_config_before_provider_submission(
         self,

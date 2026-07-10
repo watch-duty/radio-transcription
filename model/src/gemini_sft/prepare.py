@@ -8,6 +8,7 @@ import typing
 
 from common import gcs_utils
 from common.gemini import context, tuning_data
+from google.api_core import exceptions as google_exceptions
 from google.cloud import storage
 
 from gemini_sft import artifacts as artifacts_lib
@@ -51,7 +52,13 @@ def prepare(args: argparse.Namespace) -> int:
             storage_client=storage_client,
             results_dir=RESULTS_DIR,
         )
-    except (OSError, config_lib.RunConfigError, TypeError, ValueError) as exc:
+    except (
+        OSError,
+        google_exceptions.GoogleAPIError,
+        config_lib.RunConfigError,
+        TypeError,
+        ValueError,
+    ) as exc:
         return _log_cli_error(exc)
     if isinstance(artifacts, artifacts_lib.PreparedEvalArtifacts):
         logger.info(
@@ -93,6 +100,7 @@ def prepare_run(
         Prepared local artifacts and the durable config record.
 
     Raises:
+        google_exceptions.GoogleAPIError: If a GCS operation fails.
         OSError: If local or GCS artifacts cannot be read or written.
         TypeError: If strict manifest parsing finds a non-object row.
         ValueError: If canonical validation or preparation invariants fail.
@@ -173,6 +181,22 @@ def _prepare_eval_run(
     storage_client: storage.Client,
     results_dir: pathlib.Path,
 ) -> tuple[artifacts_lib.PreparedEvalArtifacts, dict[str, typing.Any]]:
+    """Prepare and publish the durable state for one eval-only run.
+
+    Args:
+        run_cfg: Validated eval-only preparation config.
+        storage_client: Client used for source and durable GCS artifacts.
+        results_dir: Local root for the run mirror.
+
+    Returns:
+        Prepared local eval artifacts and their durable config record.
+
+    Raises:
+        google_exceptions.GoogleAPIError: If a GCS operation fails.
+        OSError: If a local or GCS artifact cannot be read or written.
+        TypeError: If strict manifest parsing finds a non-object row.
+        ValueError: If the eval manifest or target is invalid.
+    """
     run_dir = artifacts_lib.local_run_dir(results_dir, run_cfg.round_id)
     artifacts = _prepare_eval_artifacts(run_cfg, storage_client, run_dir)
     config = {
@@ -199,6 +223,22 @@ def _prepare_eval_artifacts(
     storage_client: storage.Client,
     run_dir: pathlib.Path,
 ) -> artifacts_lib.PreparedEvalArtifacts:
+    """Build and validate local artifacts for one eval-only run.
+
+    Args:
+        run_cfg: Validated eval-only preparation config.
+        storage_client: Client used to download the source eval manifest.
+        run_dir: Local directory for the run mirror.
+
+    Returns:
+        Paths and row count for the validated local eval artifacts.
+
+    Raises:
+        google_exceptions.GoogleAPIError: If the source download fails.
+        OSError: If a local or GCS artifact cannot be read or written.
+        TypeError: If strict manifest parsing finds a non-object row.
+        ValueError: If the eval manifest or target is invalid.
+    """
     if run_cfg.eval_model is None:
         msg = "eval-only prepare requires one [eval.model] target"
         raise ValueError(msg)

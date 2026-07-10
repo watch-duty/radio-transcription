@@ -88,7 +88,7 @@ def resolve_target_backend(
     """
     if execution.backend is not None:
         return execution.backend
-    if "/endpoints/" in target.model:
+    if target.is_endpoint:
         return "online"
     return "batch"
 

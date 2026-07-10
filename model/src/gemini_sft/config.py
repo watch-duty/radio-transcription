@@ -86,6 +86,11 @@ class EvalModelTarget:
     label: str
     model: str
 
+    @property
+    def is_endpoint(self) -> bool:
+        """Return whether the model is a full Vertex endpoint resource."""
+        return "/endpoints/" in self.model
+
     def to_record_dict(self) -> dict[str, str]:
         """Return the JSON-compatible config.json record for this target."""
         return {"label": self.label, "model": self.model}
@@ -297,7 +302,21 @@ def _load_run_config(
     require_training_manifests: bool,
     require_eval_model: bool,
 ) -> RunConfig:
-    """Load and resolve a TOML run config."""
+    """Load and resolve a TOML run config under explicit mode requirements.
+
+    Args:
+        path: Local path to the operator TOML config.
+        require_training_manifests: Whether both training manifests are
+            required.
+        require_eval_model: Whether one explicit eval target is required.
+
+    Returns:
+        The parsed, validated, and path-resolved run configuration.
+
+    Raises:
+        RunConfigError: If the file cannot be read or any config field is
+            invalid for the requested mode.
+    """
     source_path = pathlib.Path(path).expanduser()
     try:
         raw_toml = source_path.read_text(encoding="utf-8")

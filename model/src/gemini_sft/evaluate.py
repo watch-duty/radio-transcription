@@ -84,7 +84,7 @@ def _eval_model_family_id(
         The target model for publisher targets, or ``base_model`` for
         endpoints.
     """
-    if "/endpoints/" in target.model:
+    if target.is_endpoint:
         return base_model
     return target.model
 
