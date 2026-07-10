@@ -32,13 +32,13 @@ import { getFeed } from '../../service/getFeed';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import {
-  type PlaybackState,
   getNextContinuousSegment,
   isWithinSegment,
 } from '../../utils/playbackUtils';
 import { TIMELINE_RANGE_DURATION_MS } from '../../utils/timeUtils';
 import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
+import { deriveTimelineState } from '../audio/deriveTimelineState';
 import FeedSearchView from '../feeds/FeedSearchView';
 import AudioSettingsButton from './AudioSettingsButton';
 import FeedHeader from './FeedHeader';
@@ -120,14 +120,6 @@ export function TranscriptView({
     pan,
     speed,
   });
-
-  // Drives the timeline playhead's color and label. Idle and un-paused reads as
-  // "listening" at the live edge.
-  const playbackState: PlaybackState = isAudioPlaying
-    ? 'playing'
-    : playbackIntent === 'paused'
-      ? 'paused'
-      : 'listening';
 
   // Side effects for segments that arrive from a live poll: notify, bump the
   // unread badge when backgrounded, and optionally autoplay the latest.
@@ -279,6 +271,18 @@ export function TranscriptView({
     currentlyPlayingSegmentId,
     highlightedSegmentId,
     resetKey: audioWindowResetKey,
+  });
+
+  // Playhead color/label + jump-to-live enablement, derived from window +
+  // playback state (see deriveTimelineState for the truth table).
+  const { playbackState, isViewingLive } = deriveTimelineState({
+    isAudioPlaying,
+    playbackIntent,
+    isLatestTimeWindow,
+    hasDateFilter: searchedTimestamp != null,
+    currentlyPlayingSegmentId,
+    audioSegments,
+    hasNewerAudioSegments,
   });
 
   // 24h overview density for the mini-map, derived from the preloaded segments.
@@ -605,10 +609,8 @@ export function TranscriptView({
       return prev;
     });
 
-    // Given that clearing the date effectively jumps to live, we will
-    // navigate to the top of the table in case the user is scrolled
-    // down in the table.
     if (date === null) {
+      // Clearing the date effectively jumps to live; return to the top.
       setTimeout(() => {
         virtuosoRef.current?.scrollToIndex({
           index: 0,
@@ -617,6 +619,12 @@ export function TranscriptView({
         });
       }, 100);
       hasScrolledToTarget.current = false;
+    } else {
+      // Applying a date filter navigates the window to that time — same as a
+      // mini-map click: stop playback and drop the selection so it parks there
+      // (amber) rather than playing on, and the refetched list doesn't autoplay.
+      stopPlayback();
+      setHighlightedSegmentId(null);
     }
     hasScrolledAwayFromTop.current = false;
   };
@@ -756,9 +764,7 @@ export function TranscriptView({
         }}
       >
         <TranscriptActionsBar
-          searchedTimestamp={searchedTimestamp}
-          hasNewerAudioSegments={hasNewerAudioSegments}
-          isLatestTimeWindow={isLatestTimeWindow}
+          disableJumpToLive={isViewingLive}
           redactTranscripts={redactTranscripts}
           setRedactTranscripts={setRedactTranscripts}
           dateTime={searchedTimestamp}
