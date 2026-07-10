@@ -447,7 +447,7 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
     @unittest.mock.patch("gemini_sft.target_execution.types")
     @unittest.mock.patch("gemini_sft.target_execution.genai")
-    def test_gather_batches_do_not_exceed_concurrency(
+    def test_worker_pool_schedules_at_most_concurrency_workers(
         self, mock_genai, mock_types
     ) -> None:
         class Response:
@@ -497,7 +497,81 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(gather_argument_counts, [2, 2, 1])
+        self.assertEqual(gather_argument_counts, [2])
+
+    @unittest.mock.patch("gemini_sft.target_execution.types")
+    @unittest.mock.patch("gemini_sft.target_execution.genai")
+    def test_worker_pool_starts_next_request_before_straggler_finishes(
+        self, mock_genai, mock_types
+    ) -> None:
+        class Response:
+            text = "recognized"
+
+        async def run_scenario() -> None:
+            slow_started = asyncio.Event()
+            third_started = asyncio.Event()
+            release_slow = asyncio.Event()
+
+            async def generate_content(**kwargs):
+                audio_uri = kwargs["contents"][-1]["parts"][-1]["fileData"][
+                    "fileUri"
+                ]
+                if audio_uri.endswith("0.flac"):
+                    slow_started.set()
+                    await release_slow.wait()
+                elif audio_uri.endswith("2.flac"):
+                    third_started.set()
+                return Response()
+
+            mock_client = unittest.mock.MagicMock()
+            mock_client.aio.models.generate_content = generate_content
+            mock_genai.Client.return_value = mock_client
+            mock_types.GenerateContentConfig.side_effect = (
+                lambda **kwargs: kwargs
+            )
+
+            async def observe_start_order() -> bool:
+                try:
+                    await asyncio.wait_for(slow_started.wait(), timeout=1.0)
+                    try:
+                        await asyncio.wait_for(
+                            third_started.wait(), timeout=1.0
+                        )
+                    except TimeoutError:
+                        return False
+                    else:
+                        return True
+                finally:
+                    release_slow.set()
+
+            _, third_started_before_release = await asyncio.gather(
+                run_online_target_inference(
+                    storage_client=self.storage,
+                    run_gcs_prefix="gs://bucket/run",
+                    project="project",
+                    default_location="us-central1",
+                    target_label="checkpoint_6",
+                    target_model=(
+                        "projects/p/locations/us-central1/endpoints/123"
+                    ),
+                    audio_uris=[
+                        f"gs://audio/{index}.flac" for index in range(3)
+                    ],
+                    histories=[[] for _ in range(3)],
+                    system_prompt="system",
+                    user_prompt="user",
+                    prior_context_count=8,
+                    prior_context_mode="text_turns",
+                    eval_manifest_uri="gs://data/eval.jsonl",
+                    local_dir=self.local_dir,
+                    concurrency=2,
+                    max_retries=1,
+                ),
+                observe_start_order(),
+            )
+            self.assertTrue(third_started_before_release)
+
+        asyncio.run(run_scenario())
 
     @unittest.mock.patch("gemini_sft.target_execution.types")
     @unittest.mock.patch("gemini_sft.target_execution.genai")

@@ -33,7 +33,7 @@ from common.gemini.vertex import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Awaitable, Callable, Iterable, Sequence
     from pathlib import Path
 
     from common.gemini.context import ContextTurn
@@ -178,6 +178,21 @@ def load_existing_online_predictions(
         _online_error_count(rows),
         request_identity_hash(existing_identity),
     )
+
+
+async def _run_bounded_online_workers(
+    *,
+    pending_items: Iterable[tuple[int, str]],
+    worker_count: int,
+    process_one: Callable[[int, str], Awaitable[None]],
+) -> None:
+    pending = iter(pending_items)
+
+    async def worker() -> None:
+        for index, audio_uri in pending:
+            await process_one(index, audio_uri)
+
+    await asyncio.gather(*(worker() for _ in range(worker_count)))
 
 
 async def run_online_target_inference(
@@ -343,14 +358,15 @@ async def run_online_target_inference(
                     target_label=target_label,
                 )
 
-    for batch_start in range(0, len(audio_uri_list), batch_size):
-        batch_end = min(batch_start + batch_size, len(audio_uri_list))
-        await asyncio.gather(
-            *(
-                process_one(index, audio_uri_list[index])
-                for index in range(batch_start, batch_end)
-            )
-        )
+    await _run_bounded_online_workers(
+        pending_items=(
+            (index, audio_uri)
+            for index, audio_uri in enumerate(audio_uri_list)
+            if audio_uri not in completed
+        ),
+        worker_count=min(batch_size, len(missing_audio_uris)),
+        process_one=process_one,
+    )
     await _upload_text_async(
         storage_client,
         _prediction_rows_jsonl(attempt_rows.values()),
