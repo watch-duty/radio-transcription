@@ -99,4 +99,5 @@ def _extract_model_text(model_turn: dict[str, typing.Any]) -> str:
     first_model_part = model_parts[0]
     if not isinstance(first_model_part, dict):
         return ""
-    return first_model_part.get("text") or ""
+    text = first_model_part.get("text")
+    return text if isinstance(text, str) else ""

@@ -307,10 +307,20 @@ def _validate_local_eval_config_matches_durable(
 ) -> None:
     """Fail loudly when a local eval TOML disagrees with durable GCS state."""
     local_record = run_cfg.to_record_dict()
+    durable_record = dict(config)
+    durable_record["prior_context_count"] = _optional_config_nonnegative_int(
+        config, "prior_context_count"
+    )
+    durable_record["prior_context_mode"] = (
+        config_lib.optional_config_prior_context_mode(
+            config,
+            "prior_context_mode",
+        )
+    )
     mismatches = [
         key
         for key in _LOCAL_DURABLE_EVAL_FIELDS
-        if local_record.get(key) != config.get(key)
+        if local_record.get(key) != durable_record.get(key)
     ]
 
     if run_cfg.eval_model is None:

@@ -2558,6 +2558,22 @@ class TestEvaluateRun(unittest.TestCase):
         download_manifest.assert_not_called()
         batch.assert_not_called()
 
+    def test_eval_match_defaults_missing_durable_prior_context_fields(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = pathlib.Path(tmp_s)
+            cfg_path = _write_config_file(tmp)
+            run_cfg = config_module.load_eval_run_config(cfg_path)
+            durable_config = run_cfg.to_record_dict()
+            durable_config.pop("prior_context_count")
+            durable_config.pop("prior_context_mode")
+
+            evaluate_module._validate_local_eval_config_matches_durable(
+                run_cfg,
+                durable_config,
+            )
+
     def test_eval_allows_local_operational_execution_overrides(
         self,
     ) -> None:

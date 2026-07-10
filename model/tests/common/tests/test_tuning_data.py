@@ -310,6 +310,16 @@ class TestValidateExample(unittest.TestCase):
         )
         self.assertFalse(tuning_data.validate_audio_tuning_example(ex))
 
+    def test_rejects_non_string_model_text(self) -> None:
+        for value in (123, ["copy"]):
+            with self.subTest(value=value):
+                ex = tuning_data.build_audio_tuning_example(
+                    "gs://b/s.flac", "copy", "sys", "user"
+                )
+                ex["contents"][-1]["parts"][0]["text"] = value
+
+                self.assertFalse(tuning_data.validate_audio_tuning_example(ex))
+
     def test_rejects_contents_with_wrong_turn_count(self) -> None:
         ex = tuning_data.build_audio_tuning_example(
             "gs://b/s.flac", "copy", "sys", "user"
