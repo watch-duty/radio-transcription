@@ -8,7 +8,11 @@ from google.api_core.retry_async import AsyncRetry
 from google.genai import types
 
 from backend.pipeline.common import constants
-from backend.pipeline.common.exceptions import MaxTokensReachedError
+from backend.pipeline.common.exceptions import (
+    MaxTokensReachedError,
+    NonRetryableError,
+    InvalidFinishReasonError,
+)
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers.chirp import (
     CHIRP_UNINTELLIGIBLE_MARKER,
@@ -729,7 +733,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                     duration_ms=1000,
                 )
 
-            self.assertIsNone(transcript)
+            self.assertEqual(transcript, "")
             # Verify it logged at INFO level
             info_logs = [
                 record
@@ -876,7 +880,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             transcriber.setup()
 
-            with self.assertRaises(GeminiTranscriptionError) as context:
+            with self.assertRaises(InvalidFinishReasonError) as context:
                 await transcriber.transcribe(
                     audio_data=b"\x00" * 100,
                     duration_ms=1000,
@@ -912,9 +916,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             transcriber.setup()
 
-            with self.assertRaises(
-                GeminiTransientTranscriptionError
-            ) as context:
+            with self.assertRaises(NonRetryableError) as context:
                 await transcriber.transcribe(
                     audio_data=b"\x00" * 100,
                     duration_ms=1000,
