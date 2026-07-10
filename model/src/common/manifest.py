@@ -205,7 +205,20 @@ def _validate_required_fields(
                 field=field,
             )
 
-    audio_filepath = _stripped_string(row.get("audio_filepath"))
+    raw_audio_filepath = row.get("audio_filepath")
+    audio_filepath = _stripped_string(raw_audio_filepath)
+    if (
+        isinstance(raw_audio_filepath, str)
+        and audio_filepath is not None
+        and raw_audio_filepath != audio_filepath
+    ):
+        _add_issue(
+            issues,
+            "unstripped_audio_filepath",
+            "audio_filepath must not contain leading or trailing whitespace",
+            row_index=row_index,
+            field="audio_filepath",
+        )
     if audio_filepath and not _is_gcs_flac_uri(audio_filepath):
         _add_issue(
             issues,

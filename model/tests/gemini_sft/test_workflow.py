@@ -1158,6 +1158,46 @@ class TestEvaluateRun(unittest.TestCase):
 
         submit.assert_not_called()
 
+    def test_eval_rejects_unstripped_audio_uri_before_batch_inference(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+            cfg_path = _write_config_file(tmp)
+            run_cfg = load_run_config(cfg_path)
+            storage.put(
+                run_cfg.paths.canonical_eval_uri,
+                _manifest(
+                    [
+                        _row(
+                            "  gs://audio/eval.flac  ",
+                            "invalid URI spacing",
+                        )
+                    ]
+                ),
+            )
+            config = run_cfg.to_record_dict()
+            storage.put(run_cfg.paths.config_uri, json.dumps(config))
+
+            with unittest.mock.patch.object(
+                evaluate_module,
+                "submit_batch_inference",
+            ) as submit:
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "audio_filepath must not contain leading or trailing "
+                    "whitespace",
+                ):
+                    evaluate_module.evaluate_run(
+                        argparse.Namespace(config=str(cfg_path)),
+                        run_cfg,
+                        storage,
+                        config,
+                    )
+
+        submit.assert_not_called()
+
     def test_eval_rejects_empty_eval_manifest_before_batch_inference(
         self,
     ) -> None:

@@ -188,6 +188,23 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             "example_id,segment_id",
         )
 
+    def test_unstripped_audio_uri_is_invalid(self) -> None:
+        row = _canonical_row(
+            audio_filepath="  gs://bucket/audio/example.flac  ",
+        )
+
+        issues = validate_canonical_manifest([row])
+
+        self.assertEqual(
+            [(issue.code, issue.field) for issue in issues],
+            [("unstripped_audio_filepath", "audio_filepath")],
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "audio_filepath must not contain leading or trailing whitespace",
+        ):
+            require_canonical_manifest([row])
+
     def test_optional_metadata_failures_report_code_and_field(self) -> None:
         cases = [
             ("blank split", {"split": " "}, "invalid_metadata", "split"),
