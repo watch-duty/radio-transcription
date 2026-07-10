@@ -1,10 +1,4 @@
-"""Tests for common.manifest.
-
-Covers:
-  - merge_predictions_to_manifest: fail-loud (re-raise) on unexpected error
-  - merge_predictions_to_manifest: happy-path offset-tolerant merge
-  - load_manifest: fail-loud JSON/JSONL parsing
-"""
+"""Tests for canonical manifest validation, conversion, loading, and merging."""
 
 import json
 import os
@@ -275,19 +269,8 @@ class TestCanonicalManifestValidation(unittest.TestCase):
 
         self.assertEqual(issues, [])
 
-    def test_unknown_prediction_and_removed_fields_are_tolerated(
-        self,
-    ) -> None:
-        for field in (
-            "pred_text_whisper",
-            "unknown_future_field",
-            "audio_processing",
-            "sequence",
-            "original_audio_uri",
-            "source_group",
-            "dataset_name",
-            "lang",
-        ):
+    def test_prediction_and_unknown_fields_are_tolerated(self) -> None:
+        for field in ("pred_text_whisper", "unknown_future_field"):
             with self.subTest(field=field):
                 issues = validate_canonical_manifest(
                     [_canonical_row(**{field: "not canonical"})]
@@ -336,7 +319,6 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                     "offset": False,
                     "duration": 0,
                 },
-                audio_processing={"masked_categories": ["ok", "", 42]},
             ),
             {
                 "audio_filepath": "gs://bucket/audio/other.flac",
@@ -490,20 +472,14 @@ class TestCanonicalRowIdentity(unittest.TestCase):
             canonical_row_identity({"example_id": " ", "segment_id": "001"})
 
 
-class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
-    """merge_predictions_to_manifest must raise on unexpected error, never return []."""
+class TestMergePredictionValidation(unittest.TestCase):
+    """Malformed prediction and ground-truth rows are rejected."""
 
     def test_raises_on_malformed_prediction_offset(self) -> None:
-        """A prediction whose offset cannot be cast to float raises ValueError.
-
-        The internal ``float(pred.get("offset", 0.0))`` call throws when the
-        offset is a non-numeric string.  The function must propagate the
-        exception rather than swallowing it and returning [].
-        """
+        """A prediction with a non-numeric offset raises ValueError."""
         ground_truth = [
             {"audio_filepath": "gs://bucket/clip.flac", "offset": 0.0}
         ]
-        # Non-numeric offset triggers float() ValueError inside the try block
         bad_predictions = [
             {
                 "audio_filepath": "gs://bucket/clip.flac",
@@ -518,7 +494,7 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
             )
 
     def test_prediction_missing_audio_filepath_raises(self) -> None:
-        """A prediction without `audio_filepath` fails loud, not silently merges to ""."""
+        """A prediction requires a non-blank audio_filepath."""
         gt = [{"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "g"}]
         preds = [{"offset": 1.0, "text": "p"}]  # no audio_filepath
         with self.assertRaises(ValueError):
@@ -539,7 +515,7 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
                     merge_predictions_to_manifest(gt, preds, "m")
 
     def test_prediction_missing_offset_raises(self) -> None:
-        """A prediction without `offset` fails loud, not silently defaults to 0.0."""
+        """A prediction requires an offset."""
         gt = [{"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "g"}]
         preds = [{"audio_filepath": "gs://b/a.flac", "text": "p"}]  # no offset
         with self.assertRaises(ValueError):
@@ -573,11 +549,7 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
             merge_predictions_to_manifest(gt, preds, "m")
 
     def test_raises_on_missing_ground_truth_offset(self) -> None:
-        """A GT row missing 'offset' raises — symmetric to the predictions side.
-
-        Silently defaulting to 0.0 would let a malformed manifest bind every
-        row missing an offset to whichever prediction sits at 0.0.
-        """
+        """A ground-truth row requires an offset."""
         gt = [{"audio_filepath": "gs://b/a.flac"}]  # no 'offset' key
         with self.assertRaises(ValueError):
             merge_predictions_to_manifest(gt, [], "gemini")
@@ -608,36 +580,9 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "audio_filepath"):
                     merge_predictions_to_manifest(gt, [], "gemini")
 
-    def test_does_not_return_empty_list_on_error(self) -> None:
-        """Verify the old silent-failure path (return []) is gone."""
-        ground_truth = [
-            {"audio_filepath": "gs://bucket/clip.flac", "offset": 0.0}
-        ]
-        bad_predictions = [
-            {
-                "audio_filepath": "gs://bucket/clip.flac",
-                "offset": "not-a-number",
-                "text": "hi",
-            }
-        ]
 
-        result = None
-        raised = False
-        try:
-            result = merge_predictions_to_manifest(
-                ground_truth, bad_predictions, "gemini"
-            )
-        except Exception:
-            raised = True
-
-        self.assertTrue(raised, "Expected an exception but none was raised")
-        self.assertIsNone(
-            result, "Function must not return a value when it raises"
-        )
-
-
-class TestMergePredictionsHappyPath(unittest.TestCase):
-    """Sanity-check the normal merge path is unaffected by the re-raise change."""
+class TestMergePredictionMatching(unittest.TestCase):
+    """Prediction matching uses URI, identity, and offset constraints."""
 
     def test_matched_prediction_written_to_gt_row(self) -> None:
         gt = [
@@ -675,10 +620,10 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
 
         self.assertEqual(result[0]["pred_text_m"], "prediction")
 
-    def test_prediction_without_identity_matches_exact_uri_and_offset(
+    def test_prediction_without_identity_matches_by_uri_and_offset(
         self,
     ) -> None:
-        """Older predictions without identity still match by exact URI."""
+        """Identity is optional when URI and offset identify the row."""
         gt = [
             {
                 "audio_filepath": "gs://b/a.flac",
@@ -692,16 +637,13 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             {
                 "audio_filepath": "gs://b/a.flac",
                 "offset": 1.0,
-                "text": "legacy prediction",
+                "text": "prediction",
             }
         ]
 
-        result = merge_predictions_to_manifest(gt, preds, "legacy")
+        result = merge_predictions_to_manifest(gt, preds, "m")
 
-        self.assertEqual(
-            result[0]["pred_text_legacy"],
-            "legacy prediction",
-        )
+        self.assertEqual(result[0]["pred_text_m"], "prediction")
 
     def test_binds_closest_of_multiple_in_tolerance_candidates(self) -> None:
         """When several predictions are within tolerance, the nearest wins."""
@@ -844,7 +786,7 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
         """Re-running clears a stale pred_text_{model_key} when no new prediction matches.
 
         Without this, a re-run that fails to produce a prediction for some
-        row leaves the OLD prediction in place — and downstream WER scores
+        row leaves the previous prediction in place, and downstream WER scores
         the missing output as a successful prediction.
         """
         gt = [
@@ -876,7 +818,7 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             "stale prediction must be cleared on re-run",
         )
 
-    def test_unmatched_prediction_leaves_field_absent(self) -> None:
+    def test_offset_mismatch_raises_unmatched_prediction(self) -> None:
         gt = [
             {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "gold"}
         ]
@@ -900,13 +842,13 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
 
 
 class TestLoadManifestFailLoud(unittest.TestCase):
-    """load_manifest parses JSON/JSONL without compatibility coercion."""
+    """load_manifest parses faithfully and rejects malformed input."""
 
     def test_missing_file_raises(self) -> None:
         with self.assertRaises(FileNotFoundError):
             load_manifest("./nonexistent_manifest.jsonl")
 
-    def test_non_string_text_is_not_coerced(self) -> None:
+    def test_non_string_text_value_is_preserved(self) -> None:
         fd, path = tempfile.mkstemp(suffix=".jsonl")
         try:
             with os.fdopen(fd, "w") as f:
@@ -920,7 +862,7 @@ class TestLoadManifestFailLoud(unittest.TestCase):
         self.assertEqual(rows[0]["text"], 123)
 
 
-class TestRowsFromManifestStrict(unittest.TestCase):
+class TestRowsFromManifestConversion(unittest.TestCase):
     """rows_from_manifest converts valid rows and fills conversion defaults."""
 
     def test_row_maps_core_and_optional_fields(self) -> None:
@@ -1106,7 +1048,7 @@ class TestScoreableManifestEntry(unittest.TestCase):
 
 
 class TestRowsFromManifestRequiredFields(unittest.TestCase):
-    """rows_from_manifest fails loudly for strict canonical fields."""
+    """rows_from_manifest rejects invalid required string fields."""
 
     def test_missing_audio_filepath_raises_with_row_context(self) -> None:
         row = _canonical_row()
@@ -1128,7 +1070,7 @@ class TestRowsFromManifestRequiredFields(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "text"):
             rows_from_manifest([_canonical_row(text="  ")])
 
-    def test_non_string_text_raises_type_error_with_row_context(self) -> None:
+    def test_non_string_text_raises_value_error_with_row_context(self) -> None:
         with self.assertRaisesRegex(ValueError, "text must be a string"):
             rows_from_manifest([_canonical_row(text=123)])
 
