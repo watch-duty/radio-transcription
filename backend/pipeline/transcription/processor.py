@@ -182,24 +182,24 @@ class TranscriptionEventProcessor:
                 duration_ms=duration_ms,
             )
 
+        transcript = transcript.strip() if transcript else ""
         return self._record_status_and_get_fallback_text(transcript, errors)
 
     def _record_status_and_get_fallback_text(
-        self, transcript: str | None, errors: list[str]
+        self, transcript: str, errors: list[str]
     ) -> str:
         """Determines transcription status and returns the formatted text."""
         if not transcript:
-            logger.info(
-                "Speech API returned empty transcription. "
-                "Using fallback unintelligible marker."
-            )
-            errors.append("Empty transcription from Speech Model")
-            record_pipeline_stage("transcription_status", "empty")
-            return CHIRP_UNINTELLIGIBLE_MARKER
+            logger.warning("Speech API returned an empty transcription.")
+            # We intentionally do NOT append to `errors` here. Appending an error causes 
+            # the UI to display "[Transcription failed]", which implies a backend crash.
+            record_pipeline_stage("transcription_status", "empty_response")
+            return "[Model did not transcribe speech]"
 
         if transcript == CHIRP_UNINTELLIGIBLE_MARKER:
+            logger.info("Speech API returned unintelligible transcription.")
             record_pipeline_stage("transcription_status", "unintelligible")
-            return transcript
+            return CHIRP_UNINTELLIGIBLE_MARKER
 
         record_pipeline_stage("transcription_status", "success")
         return transcript
