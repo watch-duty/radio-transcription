@@ -101,7 +101,7 @@ export function getDisplayStatus(
   const hasActiveFailure =
     status === 'active' &&
     ((typeof failureCount === 'number' && failureCount > 0) ||
-      (typeof statusReason === 'string' && statusReason !== ''));
+      typeof statusReason === 'string');
 
   return hasActiveFailure ? 'failing' : status;
 }

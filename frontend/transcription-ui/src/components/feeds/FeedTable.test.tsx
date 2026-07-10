@@ -13,7 +13,7 @@ import {
   screen,
   within,
 } from '@testing-library/react';
-import type { Feed } from '@transcription/common';
+import type { Feed, FeedHistoryEvent } from '@transcription/common';
 import { SourceType } from '@transcription/common';
 
 import { listFeedHistory } from '../../service/listFeedHistory';
@@ -486,7 +486,7 @@ describe('FeedTable', () => {
   });
 
   it('renders visibility eye icon and opens history modal on click when allowEdit is true', async () => {
-    const mockHistoryEvents = [
+    const mockHistoryEvents: FeedHistoryEvent[] = [
       {
         id: 'evt_1',
         feedId: 'feed-1',
@@ -517,7 +517,7 @@ describe('FeedTable', () => {
       'feed-1',
       'fake-jwt-token-xyz',
       50,
-      undefined
+      ''
     );
 
     // Verify modal is open and elements are rendered
