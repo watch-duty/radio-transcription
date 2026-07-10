@@ -54,13 +54,6 @@ export interface PlaybackController {
   off: () => void;
 }
 
-type GraphListeners = {
-  play: () => void;
-  pause: () => void;
-  ended: () => void;
-  error: () => void;
-};
-
 const RAMP_SECONDS = 0.05;
 
 export function createAudioContext(): AudioContext {
@@ -71,66 +64,29 @@ export function createAudioContext(): AudioContext {
   return new AudioContextClass();
 }
 
-function urlsMatch(a: string, b: string): boolean {
-  if (!a || !b) return false;
-  try {
-    const base =
-      typeof window !== 'undefined' && window.location?.href
-        ? window.location.href
-        : 'http://localhost';
-    return new URL(a, base).href === new URL(b, base).href;
-  } catch {
-    return a === b;
-  }
-}
-
-/** Dual MediaElementSource → GainNode → StereoPannerNode → destination (A/B Ping-Pong Buffering) */
+/** In-memory PCM Buffer Engine (AudioBufferSourceNode + LRU Buffer Cache for Zero-Gap Playback) */
 export class WebAudioPlayer {
   private readonly context: AudioContext;
-  private readonly audioA: HTMLAudioElement;
-  private readonly audioB: HTMLAudioElement;
-  private readonly sourceA: MediaElementAudioSourceNode;
-  private readonly sourceB: MediaElementAudioSourceNode;
   private readonly gain: GainNode;
   private readonly panner: StereoPannerNode;
+  private readonly bufferCache = new Map<string, Promise<AudioBuffer>>();
 
-  private activePlayer: 'A' | 'B' = 'A';
-  private activeListeners: GraphListeners | null = null;
+  private currentSource: AudioBufferSourceNode | null = null;
+  private currentBuffer: AudioBuffer | null = null;
+  private activeSrc: string | null = null;
+  private activeCallbacks: AudioCallbacks | null = null;
+  private isPlaying = false;
+  private pausedOffset = 0;
+  private playStartHardwareTime = 0;
+  private playStartBufferOffset = 0;
   private speed = 1;
-
-  private get activeAudio(): HTMLAudioElement {
-    return this.activePlayer === 'A' ? this.audioA : this.audioB;
-  }
-
-  private get standbyAudio(): HTMLAudioElement {
-    return this.activePlayer === 'A' ? this.audioB : this.audioA;
-  }
 
   constructor(context: AudioContext) {
     this.context = context;
-
-    this.audioA = new Audio();
-    this.audioA.crossOrigin = 'anonymous';
-    this.audioA.preload = 'auto';
-
-    this.audioB = new Audio();
-    this.audioB.crossOrigin = 'anonymous';
-    this.audioB.preload = 'auto';
-
-    this.sourceA = this.context.createMediaElementSource(this.audioA);
-    this.sourceB = this.context.createMediaElementSource(this.audioB);
-
     this.gain = this.context.createGain();
     this.panner = this.context.createStereoPanner();
 
-    this.sourceA
-      .connect(this.gain)
-      .connect(this.panner)
-      .connect(this.context.destination);
-    this.sourceB
-      .connect(this.gain)
-      .connect(this.panner)
-      .connect(this.context.destination);
+    this.gain.connect(this.panner).connect(this.context.destination);
   }
 
   resume(): void {
@@ -154,105 +110,197 @@ export class WebAudioPlayer {
   }
 
   setSpeed(rate: number): void {
+    if (this.isPlaying && this.currentSource && this.currentBuffer) {
+      const elapsed =
+        (this.context.currentTime - this.playStartHardwareTime) * this.speed;
+      this.playStartBufferOffset = Math.min(
+        this.currentBuffer.duration,
+        this.playStartBufferOffset + elapsed
+      );
+      this.playStartHardwareTime = this.context.currentTime;
+      this.currentSource.playbackRate.linearRampToValueAtTime(
+        rate,
+        this.context.currentTime + RAMP_SECONDS
+      );
+    }
     this.speed = rate;
-    this.audioA.playbackRate = rate;
-    this.audioB.playbackRate = rate;
   }
 
   preloadNext(src: string): void {
     if (!src) return;
-    const standby = this.standbyAudio;
-    if (!urlsMatch(standby.src, src)) {
-      standby.src = src;
-      standby.load();
-      standby.playbackRate = this.speed;
+    this.fetchAndDecode(src).catch(() => {});
+  }
+
+  private fetchAndDecode(src: string): Promise<AudioBuffer> {
+    if (!src) return Promise.reject(new Error('Empty src'));
+    let promise = this.bufferCache.get(src);
+    if (!promise) {
+      // LRU evict if cache exceeds 20 items to prevent memory leaks
+      if (this.bufferCache.size >= 20) {
+        const oldestKey = this.bufferCache.keys().next().value;
+        if (oldestKey && oldestKey !== this.activeSrc) {
+          this.bufferCache.delete(oldestKey);
+        }
+      }
+      promise = fetch(src)
+        .then((res) => {
+          if (!res.ok) {
+            throw new Error(
+              `Failed to fetch ${src}: ${res.status} ${res.statusText}`
+            );
+          }
+          return res.arrayBuffer();
+        })
+        .then((buf) => this.context.decodeAudioData(buf))
+        .catch((err) => {
+          this.bufferCache.delete(src);
+          throw err;
+        });
+      this.bufferCache.set(src, promise);
     }
+    return promise;
   }
 
   load(src: string, callbacks: AudioCallbacks): PlaybackController {
-    this.detachListeners();
+    if (this.activeSrc && this.activeSrc !== src) {
+      this.stopCurrentSource();
+      this.pausedOffset = 0;
+    }
+    this.activeSrc = src;
+    this.activeCallbacks = callbacks;
 
-    const standby = this.standbyAudio;
-    if (urlsMatch(standby.src, src)) {
-      // Flip active player to the already-loaded standby player for instant gapless handoff
-      this.activePlayer = this.activePlayer === 'A' ? 'B' : 'A';
-    } else {
-      const active = this.activeAudio;
-      if (!urlsMatch(active.src, src)) {
-        active.src = src;
-        active.load();
-        active.playbackRate = this.speed;
-      }
-      if (standby.src) {
-        standby.removeAttribute('src');
-        standby.load();
-      }
+    if (src) {
+      this.fetchAndDecode(src).catch(() => {});
     }
 
-    const audio = this.activeAudio;
-    const listeners: GraphListeners = {
-      play: () => callbacks.onPlay?.(),
-      pause: () => callbacks.onPause?.(),
-      ended: () => callbacks.onEnd?.(),
-      error: () => callbacks.onError?.(),
-    };
-    audio.addEventListener('play', listeners.play);
-    audio.addEventListener('pause', listeners.pause);
-    audio.addEventListener('ended', listeners.ended);
-    audio.addEventListener('error', listeners.error);
-    this.activeListeners = listeners;
-
-    audio.playbackRate = this.speed;
-
-    return {
+    const controller: PlaybackController = {
       play: () => {
         this.resume();
-        audio.play().catch(() => {});
+        this.isPlaying = true;
+        this.startBufferPlayback(src, this.pausedOffset);
       },
-      pause: () => audio.pause(),
+      pause: () => {
+        if (!this.isPlaying) return;
+        this.pausedOffset = controller.getCurrentTime();
+        this.isPlaying = false;
+        this.stopCurrentSource();
+        this.activeCallbacks?.onPause?.();
+      },
       stop: () => {
-        audio.pause();
-        audio.currentTime = 0;
+        this.isPlaying = false;
+        this.pausedOffset = 0;
+        this.stopCurrentSource();
       },
-      getCurrentTime: () => audio.currentTime,
+      getCurrentTime: () => {
+        if (!this.isPlaying || !this.currentBuffer) {
+          return this.pausedOffset;
+        }
+        const elapsed =
+          (this.context.currentTime - this.playStartHardwareTime) * this.speed;
+        return Math.min(
+          this.currentBuffer.duration,
+          this.playStartBufferOffset + elapsed
+        );
+      },
       setCurrentTime: (time: number) => {
-        if (!Number.isFinite(time)) return;
-        audio.currentTime = time;
+        if (!Number.isFinite(time) || time < 0) return;
+        if (!this.isPlaying) {
+          this.pausedOffset = time;
+        } else {
+          this.startBufferPlayback(src, time);
+        }
       },
-      unload: () => this.detachListeners(listeners),
-      off: () => this.detachListeners(listeners),
+      unload: () => {
+        if (this.activeSrc === src) {
+          this.isPlaying = false;
+          this.stopCurrentSource();
+          this.activeCallbacks = null;
+          this.activeSrc = null;
+        }
+      },
+      off: () => {
+        if (this.activeSrc === src) {
+          this.activeCallbacks = null;
+        }
+      },
     };
+    return controller;
+  }
+
+  private startBufferPlayback(src: string, offset: number): void {
+    this.stopCurrentSource();
+    if (!src) {
+      this.isPlaying = false;
+      return;
+    }
+
+    this.fetchAndDecode(src)
+      .then((buffer) => {
+        if (!this.isPlaying || this.activeSrc !== src) return;
+        this.currentBuffer = buffer;
+
+        if (offset >= buffer.duration) {
+          this.isPlaying = false;
+          this.pausedOffset = 0;
+          this.activeCallbacks?.onEnd?.();
+          return;
+        }
+
+        const source = this.context.createBufferSource();
+        source.buffer = buffer;
+        source.playbackRate.value = this.speed;
+        source.connect(this.gain);
+        this.currentSource = source;
+        this.playStartHardwareTime = this.context.currentTime;
+        this.playStartBufferOffset = offset;
+
+        source.onended = () => {
+          if (this.currentSource !== source) return;
+          this.currentSource = null;
+          this.isPlaying = false;
+          this.pausedOffset = 0;
+          this.activeCallbacks?.onEnd?.();
+        };
+
+        try {
+          source.start(0, offset);
+          this.activeCallbacks?.onPlay?.();
+        } catch {
+          this.isPlaying = false;
+          this.activeCallbacks?.onError?.();
+        }
+      })
+      .catch(() => {
+        if (this.activeSrc === src) {
+          this.isPlaying = false;
+          this.activeCallbacks?.onError?.();
+        }
+      });
+  }
+
+  private stopCurrentSource(): void {
+    if (this.currentSource) {
+      this.currentSource.onended = null;
+      try {
+        this.currentSource.stop();
+      } catch {}
+      try {
+        this.currentSource.disconnect();
+      } catch {}
+      this.currentSource = null;
+    }
   }
 
   stop(): void {
-    this.audioA.pause();
-    this.audioB.pause();
-    this.detachListeners();
-    this.audioA.removeAttribute('src');
-    this.audioA.load();
-    this.audioB.removeAttribute('src');
-    this.audioB.load();
+    this.isPlaying = false;
+    this.pausedOffset = 0;
+    this.stopCurrentSource();
   }
 
   dispose(): void {
     this.stop();
-    this.sourceA.disconnect();
-    this.sourceB.disconnect();
     this.gain.disconnect();
     this.panner.disconnect();
-  }
-
-  private detachListeners(listeners?: GraphListeners): void {
-    const target = listeners ?? this.activeListeners;
-    if (!target || (listeners && listeners !== this.activeListeners)) return;
-    this.audioA.removeEventListener('play', target.play);
-    this.audioA.removeEventListener('pause', target.pause);
-    this.audioA.removeEventListener('ended', target.ended);
-    this.audioA.removeEventListener('error', target.error);
-    this.audioB.removeEventListener('play', target.play);
-    this.audioB.removeEventListener('pause', target.pause);
-    this.audioB.removeEventListener('ended', target.ended);
-    this.audioB.removeEventListener('error', target.error);
-    this.activeListeners = null;
+    this.bufferCache.clear();
   }
 }
