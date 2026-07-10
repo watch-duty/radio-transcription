@@ -26,6 +26,3 @@ after_values
 
 # FastAPI discovers this route handler through decorator registration.
 receive_feed_change_notification
-
-# Public utility method on AudioProcessor for transcoding arbitrary bytes to FLAC.
-transcode_to_flac

@@ -141,8 +141,8 @@ class NormalizationEventProcessorTest(unittest.TestCase):
             timeout=GCS_DOWNLOAD_TIMEOUT_SEC
         )
 
-        # Verify we copied FLAC directly (no transcode_to_flac called)
-        mock_processor.transcode_to_flac.assert_not_called()
+        # Verify we copied FLAC directly (no transcode_derivatives called)
+        mock_processor.transcode_derivatives.assert_not_called()
 
         # Verify audio processor was called to transcode FLAC to M4A
         mock_processor.transcode_to_m4a.assert_called_once_with(
