@@ -1277,6 +1277,100 @@ class TestTuneRun(unittest.TestCase):
 
 
 class TestEvaluateRun(unittest.TestCase):
+    def test_eval_model_family_uses_publisher_target_model(self) -> None:
+        target = config_module.EvalModelTarget(
+            label="base",
+            model="gemini-2.5-flash",
+        )
+
+        self.assertEqual(
+            evaluate_module._eval_model_family_id(
+                target,
+                "gemini-3.1-flash-lite",
+            ),
+            "gemini-2.5-flash",
+        )
+
+    def test_eval_model_family_uses_base_model_for_endpoint(self) -> None:
+        target = config_module.EvalModelTarget(
+            label="checkpoint_6",
+            model="projects/p/locations/us-central1/endpoints/123",
+        )
+
+        self.assertEqual(
+            evaluate_module._eval_model_family_id(
+                target,
+                "gemini-3.1-flash-lite",
+            ),
+            "gemini-3.1-flash-lite",
+        )
+
+    def test_eval_consumes_eval_only_prepared_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
+            storage.put(
+                "gs://source/manifests/eval.jsonl",
+                _manifest([_row("gs://audio/eval.flac", "eval transcript")]),
+            )
+            cfg_path = tmp / "run.toml"
+            cfg_path.write_text(
+                _eval_only_config_text(eval_model="gemini-2.5-flash"),
+                encoding="utf-8",
+            )
+            with (
+                unittest.mock.patch.object(
+                    prepare.storage,
+                    "Client",
+                    return_value=storage,
+                ),
+                unittest.mock.patch.object(
+                    prepare,
+                    "RESULTS_DIR",
+                    tmp / "results",
+                ),
+            ):
+                self.assertEqual(
+                    prepare.prepare(argparse.Namespace(config=str(cfg_path))),
+                    0,
+                )
+            predictions = _batch_prediction_map(
+                {"gs://audio/eval.flac": "eval transcript"}
+            )
+            with (
+                _patched_eval_scoring(),
+                unittest.mock.patch.object(
+                    evaluate_module.storage,
+                    "Client",
+                    return_value=storage,
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "RESULTS_DIR",
+                    tmp / "results",
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "batch_infer",
+                    return_value=predictions,
+                ),
+            ):
+                result = evaluate_module.evaluate(
+                    argparse.Namespace(config=str(cfg_path))
+                )
+
+        self.assertEqual(result, 0)
+        normalized_uri = (
+            "gs://test-bucket/inference_manifests/echo/eval/"
+            "gemini_2_5_flash/round-a/base.jsonl"
+        )
+        self.assertTrue(storage.has(normalized_uri))
+        normalized = json.loads(storage.get(normalized_uri).strip())
+        self.assertEqual(
+            normalized["pred_text_gemini_2_5_flash"],
+            "eval transcript",
+        )
+
     def test_eval_rejects_invalid_eval_manifest_before_batch_inference(
         self,
     ) -> None:

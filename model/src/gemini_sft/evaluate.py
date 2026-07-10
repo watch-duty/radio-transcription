@@ -70,6 +70,25 @@ def evaluate(args: argparse.Namespace) -> int:
         return _log_cli_error(exc)
 
 
+def _eval_model_family_id(
+    target: config_lib.EvalModelTarget,
+    base_model: str,
+) -> str:
+    """Return the publisher family represented by one eval target.
+
+    Args:
+        target: Durable evaluated model or endpoint target.
+        base_model: Publisher model used to create endpoint targets.
+
+    Returns:
+        The target model for publisher targets, or ``base_model`` for
+        endpoints.
+    """
+    if "/endpoints/" in target.model:
+        return base_model
+    return target.model
+
+
 def evaluate_run(  # noqa: PLR0915
     args: argparse.Namespace,
     run_cfg: config_lib.RunConfig,
@@ -143,7 +162,7 @@ def evaluate_run(  # noqa: PLR0915
     eval_rows = eval_data.eval_rows
     histories = eval_data.histories
     model_family_slug = inference_manifest.model_family_slug_from_model_id(
-        base_model
+        _eval_model_family_id(target, base_model)
     )
     audio_uris = [row.audio_filepath for row in eval_rows]
     refs = [row.text for row in eval_rows]
