@@ -235,8 +235,8 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             audio_segment_id="tx-1111",
             annotation_type=audio_segments_models.AnnotationType.TRANSCRIPT,
             data={
-                "text": (CHIRP_UNINTELLIGIBLE_MARKER),
-                "errors": ["Empty transcription from Speech Model"],
+                "text": "",
+                "errors": [],
             },
         )
         self.mock_record_pipeline_stage.assert_any_call(

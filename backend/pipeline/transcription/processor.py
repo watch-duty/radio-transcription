@@ -189,13 +189,9 @@ class TranscriptionEventProcessor:
     ) -> str:
         """Determines transcription status and returns the formatted text."""
         if not transcript:
-            logger.info(
-                "Speech API returned empty transcription. "
-                "Using fallback unintelligible marker."
-            )
-            errors.append("Empty transcription from Speech Model")
+            logger.info("Speech API returned empty transcription.")
             record_pipeline_stage("transcription_status", "empty")
-            return CHIRP_UNINTELLIGIBLE_MARKER
+            return ""
 
         if transcript == CHIRP_UNINTELLIGIBLE_MARKER:
             record_pipeline_stage("transcription_status", "unintelligible")

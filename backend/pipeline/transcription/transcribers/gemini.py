@@ -297,6 +297,10 @@ class GeminiTranscriber(base.Transcriber):
             raise GeminiTranscriptionError(msg)
 
         if not candidate.content or not candidate.content.parts:
+            if reason_str == types.FinishReason.MAX_TOKENS.name:
+                msg = "Max Tokens Reached"
+                raise GeminiTranscriptionError(msg)
+
             if reason_str == types.FinishReason.STOP.name:
                 logger.info(
                     "Gemini returned empty content (finish reason: STOP)."
