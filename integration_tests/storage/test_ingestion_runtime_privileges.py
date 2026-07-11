@@ -6,8 +6,8 @@ import dataclasses
 import datetime
 import os
 import re
+import typing
 import uuid
-from typing import TYPE_CHECKING
 
 import asyncpg
 import pytest
@@ -15,7 +15,7 @@ import pytest_asyncio
 
 from backend.pipeline.storage import feed_store, ingestion_lease_store
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     import collections.abc
 
 pytestmark = pytest.mark.asyncio(loop_scope="module")
@@ -25,8 +25,10 @@ _RUNTIME_DSN_ENV = "INGESTION_RUNTIME_TEST_DSN"
 _LEGACY_DSN_ENV = "INGESTION_LEGACY_TEST_DSN"
 _RUNTIME_ROLE_ENV = "INGESTION_RUNTIME_ROLE"
 _LEGACY_ROLE_ENV = "INGESTION_LEGACY_ROLE"
+_LEGACY_PARENT_ROLE_ENV = "INGESTION_LEGACY_PARENT_ROLE"
 _CREATOR_ROLE_ENV = "INGESTION_RUNTIME_CREATOR_ROLE"
 _LARGE_OBJECT_FIXTURE_ENV = "INGESTION_LARGE_OBJECT_FIXTURE"
+_LEGACY_LO_COMPAT_FIXTURE_ENV = "INGESTION_LEGACY_LO_COMPAT_FIXTURE"
 _REQUIRED_ENV = "INGESTION_RUNTIME_EXTERNAL_POSTGRES_REQUIRED"
 _SOURCE_TYPE = feed_store.SourceType.BCFY_CALLS
 _ACTOR_ID = "service_account:gcp:ingestion-runtime-privilege-test"
@@ -49,12 +51,24 @@ _LARGE_OBJECT_CREATION_SIGNATURES = frozenset(
         "lo_create(oid)",
         "lo_creat(integer)",
         "lo_from_bytea(oid,bytea)",
+        "lo_import(text)",
+        "lo_import(text,oid)",
+    }
+)
+_EXPECTED_LEGACY_LARGE_OBJECT_CREATION_SIGNATURES = frozenset(
+    {
+        "lo_create(oid)",
+        "lo_creat(integer)",
+        "lo_from_bytea(oid,bytea)",
+        "lo_import(text)",
     }
 )
 _LARGE_OBJECT_CREATION_PROBES = (
     "SELECT pg_catalog.lo_create(0)",
     "SELECT pg_catalog.lo_creat(0)",
     "SELECT pg_catalog.lo_from_bytea(0, decode('00', 'hex'))",
+    "SELECT pg_catalog.lo_import('/etc/hosts')",
+    ("SELECT pg_catalog.lo_import('/etc/hosts', 4000000000::pg_catalog.oid)"),
 )
 
 
@@ -74,7 +88,22 @@ class _PrivilegeFixtures:
     future_type: str
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _EffectiveRolePrivileges:
+    """Effective public-schema capabilities for one limited identity."""
+
+    tables: frozenset[tuple[str, str]]
+    table_grant_options: frozenset[tuple[str, str]]
+    columns: frozenset[tuple[str, str, str]]
+    column_grant_options: frozenset[tuple[str, str, str]]
+    available_columns: frozenset[tuple[str, str]]
+    sequences: frozenset[tuple[str, str]]
+    routines: frozenset[str]
+    types: frozenset[str]
+
+
 def _configured_value(name: str) -> str:
+    """Return a configured gate value or skip/fail with a precise reason."""
     value = os.environ.get(name)
     if value:
         return value
@@ -84,10 +113,12 @@ def _configured_value(name: str) -> str:
 
 
 def _dsn(name: str) -> str:
+    """Return a required PostgreSQL DSN for a named environment variable."""
     return _configured_value(name)
 
 
 def _configured_identifier(name: str) -> str:
+    """Return a required simple PostgreSQL identifier."""
     value = _configured_value(name)
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value) is None:
         pytest.fail(f"{name} must be a simple PostgreSQL identifier")
@@ -95,6 +126,7 @@ def _configured_identifier(name: str) -> str:
 
 
 def _configured_oid(name: str) -> int:
+    """Return a required positive PostgreSQL object identifier."""
     value = _configured_value(name)
     if re.fullmatch(r"[0-9]+", value) is None or int(value) <= 0:
         pytest.fail(f"{name} must be a positive PostgreSQL OID")
@@ -103,7 +135,11 @@ def _configured_oid(name: str) -> int:
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def admin_pool() -> collections.abc.AsyncIterator[asyncpg.Pool]:
-    """Create the fixture-only administrator pool."""
+    """Create the fixture-only administrator pool.
+
+    Yields:
+        A bounded administrator connection pool.
+    """
     if os.environ.get("PYTEST_XDIST_WORKER"):
         pytest.fail("the ingestion runtime privilege module must run serially")
     pool = await asyncpg.create_pool(
@@ -120,7 +156,11 @@ async def admin_pool() -> collections.abc.AsyncIterator[asyncpg.Pool]:
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def runtime_pool() -> collections.abc.AsyncIterator[asyncpg.Pool]:
-    """Create the limited runtime pool used by every production operation."""
+    """Create the limited runtime pool used by every production operation.
+
+    Yields:
+        A bounded connection pool authenticated as the runtime identity.
+    """
     pool = await asyncpg.create_pool(
         dsn=_dsn(_RUNTIME_DSN_ENV),
         min_size=2,
@@ -135,7 +175,11 @@ async def runtime_pool() -> collections.abc.AsyncIterator[asyncpg.Pool]:
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def legacy_pool() -> collections.abc.AsyncIterator[asyncpg.Pool]:
-    """Create the limited compatibility pool for legacy Feed operations."""
+    """Create the limited compatibility pool for legacy Feed operations.
+
+    Yields:
+        A bounded connection pool authenticated as the legacy identity.
+    """
     pool = await asyncpg.create_pool(
         dsn=_dsn(_LEGACY_DSN_ENV),
         min_size=2,
@@ -149,6 +193,14 @@ async def legacy_pool() -> collections.abc.AsyncIterator[asyncpg.Pool]:
 
 
 async def _role_name(pool: asyncpg.Pool) -> str:
+    """Return the authenticated PostgreSQL role for a pool.
+
+    Args:
+        pool: Pool whose authenticated identity is inspected.
+
+    Returns:
+        The current PostgreSQL role name.
+    """
     role = await pool.fetchval("SELECT current_user")
     assert isinstance(role, str)
     return role
@@ -158,6 +210,15 @@ async def _large_object_creation_privileges(
     admin_pool: asyncpg.Pool,
     role: str,
 ) -> list[asyncpg.Record]:
+    """Inspect rights on all five server-side large-object creators.
+
+    Args:
+        admin_pool: Administrator pool used only for catalog inspection.
+        role: PostgreSQL role whose effective rights are inspected.
+
+    Returns:
+        Creator signatures with execute and grant-option decisions.
+    """
     return await admin_pool.fetch(
         """
         SELECT
@@ -176,7 +237,9 @@ async def _large_object_creation_privileges(
         WHERE procedure.oid IN (
             'pg_catalog.lo_create(oid)'::pg_catalog.regprocedure,
             'pg_catalog.lo_creat(integer)'::pg_catalog.regprocedure,
-            'pg_catalog.lo_from_bytea(oid, bytea)'::pg_catalog.regprocedure
+            'pg_catalog.lo_from_bytea(oid, bytea)'::pg_catalog.regprocedure,
+            'pg_catalog.lo_import(text)'::pg_catalog.regprocedure,
+            'pg_catalog.lo_import(text, oid)'::pg_catalog.regprocedure
         )
         ORDER BY procedure.oid::pg_catalog.regprocedure::text
         """,
@@ -188,10 +251,62 @@ async def _large_object_capabilities(
     admin_pool: asyncpg.Pool,
     role: str,
 ) -> list[asyncpg.Record]:
+    """Inspect owner, read, write, and grant paths for large objects.
+
+    Args:
+        admin_pool: Administrator pool used only for catalog inspection.
+        role: PostgreSQL role whose effective rights are inspected.
+
+    Returns:
+        One capability record per large object and privilege.
+    """
     server_version = int(await admin_pool.fetchval("SHOW server_version_num"))
     set_role_membership_mode = "SET" if server_version >= 160000 else "MEMBER"
     return await admin_pool.fetch(
         """
+        WITH role_identity AS (
+            SELECT oid
+            FROM pg_catalog.pg_roles
+            WHERE rolname = $1
+        ), database AS (
+            SELECT oid
+            FROM pg_catalog.pg_database
+            WHERE datname = pg_catalog.current_database()
+        ), catalog_candidate AS (
+            SELECT
+                substring(
+                    configuration.setting
+                    FROM pg_catalog.strpos(configuration.setting, '=') + 1
+                )::boolean AS enabled,
+                CASE
+                    WHEN role_setting.setrole = role_identity.oid
+                     AND role_setting.setdatabase = database.oid THEN 4
+                    WHEN role_setting.setrole = role_identity.oid
+                     AND role_setting.setdatabase = 0::oid THEN 3
+                    WHEN role_setting.setrole = 0::oid
+                     AND role_setting.setdatabase = database.oid THEN 2
+                    ELSE 1
+                END AS priority
+            FROM role_identity
+            CROSS JOIN database
+            JOIN pg_catalog.pg_db_role_setting AS role_setting
+              ON role_setting.setrole IN (0::oid, role_identity.oid)
+             AND role_setting.setdatabase IN (0::oid, database.oid)
+            CROSS JOIN LATERAL unnest(role_setting.setconfig)
+              AS configuration(setting)
+            WHERE pg_catalog.split_part(configuration.setting, '=', 1) =
+                  'lo_compat_privileges'
+        ), effective_lo_compat AS (
+            SELECT COALESCE(
+                (
+                    SELECT enabled
+                    FROM catalog_candidate
+                    ORDER BY priority DESC
+                    LIMIT 1
+                ),
+                pg_catalog.current_setting('lo_compat_privileges')::boolean
+            ) AS enabled
+        )
         SELECT
             large_object.oid,
             privilege.name,
@@ -204,7 +319,7 @@ async def _large_object_capabilities(
                 large_object.lomowner,
                 $2
             ) AS owner_capability,
-            COALESCE(
+            effective_lo_compat.enabled OR COALESCE(
                 pg_catalog.bool_or(
                     acl.privilege_type = privilege.name
                     AND CASE
@@ -242,6 +357,7 @@ async def _large_object_capabilities(
                 FALSE
             ) AS grantable
         FROM pg_catalog.pg_largeobject_metadata AS large_object
+        CROSS JOIN effective_lo_compat
         CROSS JOIN (VALUES ('SELECT'), ('UPDATE')) AS privilege(name)
         LEFT JOIN LATERAL pg_catalog.aclexplode(
             COALESCE(
@@ -249,7 +365,11 @@ async def _large_object_capabilities(
                 pg_catalog.acldefault('L'::"char", large_object.lomowner)
             )
         ) AS acl ON TRUE
-        GROUP BY large_object.oid, large_object.lomowner, privilege.name
+        GROUP BY
+            large_object.oid,
+            large_object.lomowner,
+            privilege.name,
+            effective_lo_compat.enabled
         ORDER BY large_object.oid, privilege.name
         """,
         role,
@@ -261,11 +381,209 @@ async def _assert_no_large_object_capabilities(
     admin_pool: asyncpg.Pool,
     role: str,
 ) -> None:
+    """Assert that a role has no capability on any large object.
+
+    Args:
+        admin_pool: Administrator pool used only for catalog inspection.
+        role: PostgreSQL role expected to have no capability.
+    """
     capabilities = await _large_object_capabilities(admin_pool, role)
     assert capabilities, "CI must provide an existing large object"
     assert not any(
         row["owner_capability"] or row["allowed"] or row["grantable"]
         for row in capabilities
+    )
+
+
+async def _assert_exact_legacy_large_object_capabilities(
+    admin_pool: asyncpg.Pool,
+    role: str,
+) -> None:
+    """Assert the legacy compatibility setting retained exact LO access.
+
+    Args:
+        admin_pool: Administrator pool used only for catalog inspection.
+        role: Preserved legacy PostgreSQL role.
+    """
+    capabilities = await _large_object_capabilities(admin_pool, role)
+    assert capabilities, "CI must provide an existing large object"
+    expected_fixtures = {
+        _configured_oid(_LARGE_OBJECT_FIXTURE_ENV),
+        _configured_oid(_LEGACY_LO_COMPAT_FIXTURE_ENV),
+    }
+    assert expected_fixtures <= {row["oid"] for row in capabilities}
+    for row in capabilities:
+        assert row["owner_capability"] is False
+        assert row["grantable"] is False
+        assert row["allowed"] is True
+
+
+async def _effective_role_privileges(
+    admin_pool: asyncpg.Pool,
+    role: str,
+) -> _EffectiveRolePrivileges:
+    """Return deterministic public-schema privilege sets for one role.
+
+    Args:
+        admin_pool: Administrator pool used only for catalog inspection.
+        role: PostgreSQL role whose effective rights are inspected.
+
+    Returns:
+        Canonical effective privilege sets across public-schema surfaces.
+    """
+    server_version = int(await admin_pool.fetchval("SHOW server_version_num"))
+    table_privileges = [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+    ]
+    if server_version >= 170000:
+        table_privileges.append("MAINTAIN")
+
+    table_rows = await admin_pool.fetch(
+        """
+        SELECT
+            relation.relname,
+            privilege.name,
+            pg_catalog.has_table_privilege(
+                $1,
+                relation.oid,
+                privilege.name
+            ) AS allowed,
+            pg_catalog.has_table_privilege(
+                $1,
+                relation.oid,
+                privilege.name || ' WITH GRANT OPTION'
+            ) AS grantable
+        FROM pg_catalog.pg_class AS relation
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+        CROSS JOIN unnest($2::text[]) AS privilege(name)
+        WHERE namespace.nspname = 'public'
+          AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
+        ORDER BY relation.relname, privilege.name
+        """,
+        role,
+        table_privileges,
+    )
+    column_rows = await admin_pool.fetch(
+        """
+        SELECT
+            relation.relname,
+            attribute.attname,
+            privilege.name,
+            pg_catalog.has_column_privilege(
+                $1,
+                relation.oid,
+                attribute.attnum,
+                privilege.name
+            ) AS allowed,
+            pg_catalog.has_column_privilege(
+                $1,
+                relation.oid,
+                attribute.attnum,
+                privilege.name || ' WITH GRANT OPTION'
+            ) AS grantable
+        FROM pg_catalog.pg_attribute AS attribute
+        JOIN pg_catalog.pg_class AS relation
+          ON relation.oid = attribute.attrelid
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+        CROSS JOIN unnest(
+            ARRAY['SELECT', 'INSERT', 'UPDATE', 'REFERENCES']
+        ) AS privilege(name)
+        WHERE namespace.nspname = 'public'
+          AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped
+        ORDER BY relation.relname, attribute.attnum, privilege.name
+        """,
+        role,
+    )
+    sequence_rows = await admin_pool.fetch(
+        """
+        SELECT relation.relname, privilege.name
+        FROM pg_catalog.pg_class AS relation
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+        CROSS JOIN unnest(
+            ARRAY['USAGE', 'SELECT', 'UPDATE']
+        ) AS privilege(name)
+        WHERE namespace.nspname = 'public'
+          AND relation.relkind = 'S'
+          AND pg_catalog.has_sequence_privilege(
+              $1,
+              relation.oid,
+              privilege.name
+          )
+        ORDER BY relation.relname, privilege.name
+        """,
+        role,
+    )
+    routine_rows = await admin_pool.fetch(
+        """
+        SELECT procedure.oid::pg_catalog.regprocedure::text AS signature
+        FROM pg_catalog.pg_proc AS procedure
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = procedure.pronamespace
+        WHERE namespace.nspname = 'public'
+          AND pg_catalog.has_function_privilege($1, procedure.oid, 'EXECUTE')
+        ORDER BY signature
+        """,
+        role,
+    )
+    type_rows = await admin_pool.fetch(
+        """
+        SELECT type.typname
+        FROM pg_catalog.pg_type AS type
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = type.typnamespace
+        LEFT JOIN pg_catalog.pg_class AS type_relation
+          ON type_relation.oid = type.typrelid
+        WHERE namespace.nspname = 'public'
+          AND type.typelem = 0
+          AND (
+              (type.typrelid = 0 AND type.typtype IN ('b', 'd', 'e', 'm', 'r'))
+              OR (type.typtype = 'c' AND type_relation.relkind = 'c')
+          )
+          AND pg_catalog.has_type_privilege($1, type.oid, 'USAGE')
+        ORDER BY type.typname
+        """,
+        role,
+    )
+    return _EffectiveRolePrivileges(
+        tables=frozenset(
+            (row["relname"], row["name"])
+            for row in table_rows
+            if row["allowed"]
+        ),
+        table_grant_options=frozenset(
+            (row["relname"], row["name"])
+            for row in table_rows
+            if row["grantable"]
+        ),
+        columns=frozenset(
+            (row["relname"], row["attname"], row["name"])
+            for row in column_rows
+            if row["allowed"]
+        ),
+        column_grant_options=frozenset(
+            (row["relname"], row["attname"], row["name"])
+            for row in column_rows
+            if row["grantable"]
+        ),
+        available_columns=frozenset(
+            (row["relname"], row["attname"]) for row in column_rows
+        ),
+        sequences=frozenset(
+            (row["relname"], row["name"]) for row in sequence_rows
+        ),
+        routines=frozenset(row["signature"] for row in routine_rows),
+        types=frozenset(row["typname"] for row in type_rows),
     )
 
 
@@ -280,6 +598,7 @@ async def _assert_admin_connection(
 
 
 def _fixture_identifier(prefix: str) -> str:
+    """Return a unique simple PostgreSQL identifier with a stable prefix."""
     return f"{prefix}_{uuid.uuid4().hex}"
 
 
@@ -287,7 +606,11 @@ def _fixture_identifier(prefix: str) -> str:
 async def _privilege_fixture_guard(
     admin_pool: asyncpg.Pool,
 ) -> collections.abc.AsyncIterator[_PrivilegeFixtures]:
-    """Arm durable cleanup before the dependent fixture starts setup."""
+    """Arm durable cleanup before the dependent fixture starts setup.
+
+    Yields:
+        Unique fixture identities whose cleanup is already armed.
+    """
     runtime_role = _configured_identifier(_RUNTIME_ROLE_ENV)
     legacy_role = _configured_identifier(_LEGACY_ROLE_ENV)
     limited_roles = frozenset({runtime_role, legacy_role})
@@ -395,7 +718,11 @@ async def privilege_fixtures(
     admin_pool: asyncpg.Pool,
     _privilege_fixture_guard: _PrivilegeFixtures,
 ) -> collections.abc.AsyncIterator[_PrivilegeFixtures]:
-    """Create unique fixtures exclusively through the admin setup pool."""
+    """Create unique fixtures exclusively through the admin setup pool.
+
+    Yields:
+        Fully materialized database fixtures for limited-role tests.
+    """
     runtime_role = _configured_identifier(_RUNTIME_ROLE_ENV)
     legacy_role = _configured_identifier(_LEGACY_ROLE_ENV)
     creator_role = _configured_identifier(_CREATOR_ROLE_ENV)
@@ -568,7 +895,7 @@ async def test_limited_login_identities_are_isolated(
         await legacy_pool.fetchval(
             "SELECT pg_catalog.current_setting('session_replication_role')"
         )
-        == "origin"
+        == "replica"
     )
     assert (
         await runtime_pool.fetchval(
@@ -580,19 +907,49 @@ async def test_limited_login_identities_are_isolated(
         await legacy_pool.fetchval(
             "SELECT pg_catalog.current_setting('lo_compat_privileges')"
         )
-        == "off"
+        == "on"
     )
 
-    for limited_role in (runtime_role, legacy_role):
-        creation_privileges = await _large_object_creation_privileges(
-            admin_pool,
-            limited_role,
-        )
-        assert {row["signature"] for row in creation_privileges} == (
-            _LARGE_OBJECT_CREATION_SIGNATURES
-        )
-        assert not any(row["allowed"] for row in creation_privileges)
-        assert not any(row["grantable"] for row in creation_privileges)
+    runtime_creation_privileges = await _large_object_creation_privileges(
+        admin_pool,
+        runtime_role,
+    )
+    assert {row["signature"] for row in runtime_creation_privileges} == (
+        _LARGE_OBJECT_CREATION_SIGNATURES
+    )
+    assert not any(row["allowed"] for row in runtime_creation_privileges)
+    assert not any(row["grantable"] for row in runtime_creation_privileges)
+
+    legacy_creation_privileges = await _large_object_creation_privileges(
+        admin_pool,
+        legacy_role,
+    )
+    assert {row["signature"] for row in legacy_creation_privileges} == (
+        _LARGE_OBJECT_CREATION_SIGNATURES
+    )
+    assert {
+        row["signature"] for row in legacy_creation_privileges if row["allowed"]
+    } == _EXPECTED_LEGACY_LARGE_OBJECT_CREATION_SIGNATURES
+    assert not any(row["grantable"] for row in legacy_creation_privileges)
+
+    async with legacy_pool.acquire() as connection:
+        transaction = connection.transaction()
+        await transaction.start()
+        try:
+            compat_fixture = _configured_oid(_LEGACY_LO_COMPAT_FIXTURE_ENV)
+            assert (
+                await connection.fetchval(
+                    "SELECT pg_catalog.lo_get($1::oid)",
+                    compat_fixture,
+                )
+                == b"\x01"
+            )
+            await connection.execute(
+                "SELECT pg_catalog.lo_put($1::oid, 0, decode('03', 'hex'))",
+                compat_fixture,
+            )
+        finally:
+            await transaction.rollback()
 
     admin_creation_privileges = await _large_object_creation_privileges(
         admin_pool,
@@ -661,16 +1018,34 @@ async def test_limited_login_identities_are_isolated(
     assert [(row["rolname"], row["admin_option"]) for row in memberships] == [
         ("app_ingestion_runtime", False)
     ]
-    legacy_memberships = await admin_pool.fetchval(
+    legacy_parent_role = _configured_identifier(_LEGACY_PARENT_ROLE_ENV)
+    legacy_memberships = await admin_pool.fetch(
         """
-        SELECT pg_catalog.count(*)
+        SELECT
+            parent.rolname,
+            parent.rolcanlogin,
+            parent.rolsuper,
+            parent.rolcreatedb,
+            parent.rolcreaterole,
+            membership.admin_option
         FROM pg_catalog.pg_auth_members AS membership
+        JOIN pg_catalog.pg_roles AS parent ON parent.oid = membership.roleid
         JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member
         WHERE member.rolname = $1
+        ORDER BY parent.rolname
         """,
         legacy_role,
     )
-    assert legacy_memberships == 0
+    assert [dict(row) for row in legacy_memberships] == [
+        {
+            "rolname": legacy_parent_role,
+            "rolcanlogin": False,
+            "rolsuper": False,
+            "rolcreatedb": True,
+            "rolcreaterole": True,
+            "admin_option": False,
+        }
+    ]
     assert (
         await admin_pool.fetchval(
             "SELECT pg_catalog.pg_has_role($1, 'postgres', 'MEMBER')",
@@ -697,166 +1072,27 @@ async def test_runtime_effective_privileges_are_the_exact_contract(
     """Inspect effective direct, inherited, owner, and PUBLIC privileges."""
     del privilege_fixtures
     runtime_role = await _role_name(runtime_pool)
-    server_version = int(await admin_pool.fetchval("SHOW server_version_num"))
-    table_privileges = [
-        "SELECT",
-        "INSERT",
-        "UPDATE",
-        "DELETE",
-        "TRUNCATE",
-        "REFERENCES",
-        "TRIGGER",
-    ]
-    if server_version >= 170000:
-        table_privileges.append("MAINTAIN")
-
-    rows = await admin_pool.fetch(
-        """
-        SELECT
-            relation.relname,
-            privilege.name,
-            pg_catalog.has_table_privilege(
-                $1,
-                relation.oid,
-                privilege.name
-            ) AS allowed,
-            pg_catalog.has_table_privilege(
-                $1,
-                relation.oid,
-                privilege.name || ' WITH GRANT OPTION'
-            ) AS grantable
-        FROM pg_catalog.pg_class AS relation
-        JOIN pg_catalog.pg_namespace AS namespace
-          ON namespace.oid = relation.relnamespace
-        CROSS JOIN unnest($2::text[]) AS privilege(name)
-        WHERE namespace.nspname = 'public'
-          AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
-        ORDER BY relation.relname, privilege.name
-        """,
-        runtime_role,
-        table_privileges,
-    )
-    allowed = {(row["relname"], row["name"]) for row in rows if row["allowed"]}
-    expected = {
+    effective = await _effective_role_privileges(admin_pool, runtime_role)
+    expected_tables = frozenset(
         (table, privilege)
         for table, privileges in _EXPECTED_TABLE_PRIVILEGES.items()
         for privilege in privileges
-    }
-    assert allowed == expected
-    assert not any(row["grantable"] for row in rows)
+    )
+    assert effective.tables == expected_tables
+    assert not effective.table_grant_options
 
-    column_privileges = ["SELECT", "INSERT", "UPDATE", "REFERENCES"]
-    column_rows = await admin_pool.fetch(
-        """
-        SELECT
-            relation.relname,
-            attribute.attname,
-            privilege.name,
-            pg_catalog.has_column_privilege(
-                $1,
-                relation.oid,
-                attribute.attnum,
-                privilege.name
-            ) AS allowed,
-            pg_catalog.has_column_privilege(
-                $1,
-                relation.oid,
-                attribute.attnum,
-                privilege.name || ' WITH GRANT OPTION'
-            ) AS grantable
-        FROM pg_catalog.pg_attribute AS attribute
-        JOIN pg_catalog.pg_class AS relation
-          ON relation.oid = attribute.attrelid
-        JOIN pg_catalog.pg_namespace AS namespace
-          ON namespace.oid = relation.relnamespace
-        CROSS JOIN unnest($2::text[]) AS privilege(name)
-        WHERE namespace.nspname = 'public'
-          AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
-          AND attribute.attnum > 0
-          AND NOT attribute.attisdropped
-        ORDER BY relation.relname, attribute.attnum, privilege.name
-        """,
-        runtime_role,
-        column_privileges,
+    expected_columns = frozenset(
+        (table, column, privilege)
+        for table, column in effective.available_columns
+        for privilege in _EXPECTED_TABLE_PRIVILEGES.get(table, frozenset())
     )
-    for column_row in column_rows:
-        expected_allowed = column_row["name"] in (
-            _EXPECTED_TABLE_PRIVILEGES.get(
-                column_row["relname"],
-                frozenset(),
-            )
-        )
-        assert column_row["allowed"] is expected_allowed
-        assert column_row["grantable"] is False
+    assert effective.columns == expected_columns
+    assert not effective.column_grant_options
 
-    assert (
-        await admin_pool.fetchval(
-            """
-        SELECT NOT pg_catalog.bool_or(
-            pg_catalog.has_sequence_privilege(
-                $1,
-                relation.oid,
-                privilege.name
-            )
-        )
-        FROM pg_catalog.pg_class AS relation
-        JOIN pg_catalog.pg_namespace AS namespace
-          ON namespace.oid = relation.relnamespace
-        CROSS JOIN unnest(
-            ARRAY['USAGE', 'SELECT', 'UPDATE']
-        ) AS privilege(name)
-        WHERE namespace.nspname = 'public'
-          AND relation.relkind = 'S'
-        """,
-            runtime_role,
-        )
-        is True
-    )
-    assert (
-        await admin_pool.fetchval(
-            """
-        SELECT NOT pg_catalog.bool_or(
-            pg_catalog.has_function_privilege($1, procedure.oid, 'EXECUTE')
-        )
-        FROM pg_catalog.pg_proc AS procedure
-        JOIN pg_catalog.pg_namespace AS namespace
-          ON namespace.oid = procedure.pronamespace
-        WHERE namespace.nspname = 'public'
-        """,
-            runtime_role,
-        )
-        is True
-    )
+    assert not effective.sequences
+    assert not effective.routines
 
-    type_rows = await admin_pool.fetch(
-        """
-        SELECT
-            type.typname,
-            pg_catalog.has_type_privilege($1, type.oid, 'USAGE') AS allowed
-        FROM pg_catalog.pg_type AS type
-        JOIN pg_catalog.pg_namespace AS namespace
-          ON namespace.oid = type.typnamespace
-        LEFT JOIN pg_catalog.pg_class AS type_relation
-          ON type_relation.oid = type.typrelid
-        WHERE namespace.nspname = 'public'
-          AND type.typelem = 0
-          AND (
-              (
-                  type.typrelid = 0
-                  AND type.typtype IN ('b', 'd', 'e', 'm', 'r')
-              )
-              OR (
-                  type.typtype = 'c'
-                  AND type_relation.relkind = 'c'
-              )
-          )
-        ORDER BY type.typname
-        """,
-        runtime_role,
-    )
-    assert {row["typname"] for row in type_rows if row["allowed"]} == {
-        "feed_status"
-    }
+    assert effective.types == {"feed_status"}
     assert (
         await admin_pool.fetchval(
             "SELECT pg_catalog.has_database_privilege($1, current_database(), 'CONNECT')",
@@ -975,103 +1211,32 @@ async def test_legacy_feed_store_runs_through_separate_limited_pool(
 ) -> None:
     """Prove the minimal legacy Feed claim/progress/audit compatibility path."""
     legacy_role = await _role_name(legacy_pool)
-    server_version = int(await admin_pool.fetchval("SHOW server_version_num"))
-    table_privileges = [
-        "SELECT",
-        "INSERT",
-        "UPDATE",
-        "DELETE",
-        "TRUNCATE",
-        "REFERENCES",
-        "TRIGGER",
-    ]
-    if server_version >= 170000:
-        table_privileges.append("MAINTAIN")
-    rows = await admin_pool.fetch(
-        """
-        SELECT
-            relation.relname,
-            privilege.name,
-            pg_catalog.has_table_privilege(
-                $1,
-                relation.oid,
-                privilege.name
-            ) AS allowed,
-            pg_catalog.has_table_privilege(
-                $1,
-                relation.oid,
-                privilege.name || ' WITH GRANT OPTION'
-            ) AS grantable
-        FROM pg_catalog.pg_class AS relation
-        JOIN pg_catalog.pg_namespace AS namespace
-          ON namespace.oid = relation.relnamespace
-        CROSS JOIN unnest($2::text[]) AS privilege(name)
-        WHERE namespace.nspname = 'public'
-          AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
-        ORDER BY relation.relname, privilege.name
-        """,
-        legacy_role,
-        table_privileges,
-    )
-    actual = {(row["relname"], row["name"]) for row in rows if row["allowed"]}
-    expected = {
+    effective = await _effective_role_privileges(admin_pool, legacy_role)
+    expected_tables = frozenset(
         (table, privilege)
         for table, privileges in _EXPECTED_LEGACY_TABLE_PRIVILEGES.items()
         for privilege in privileges
-    }
-    assert actual == expected
-    assert not any(row["grantable"] for row in rows)
-
-    column_privileges = ["SELECT", "INSERT", "UPDATE", "REFERENCES"]
-    column_rows = await admin_pool.fetch(
-        """
-        SELECT
-            relation.relname,
-            attribute.attname,
-            privilege.name,
-            pg_catalog.has_column_privilege(
-                $1,
-                relation.oid,
-                attribute.attnum,
-                privilege.name
-            ) AS allowed,
-            pg_catalog.has_column_privilege(
-                $1,
-                relation.oid,
-                attribute.attnum,
-                privilege.name || ' WITH GRANT OPTION'
-            ) AS grantable
-        FROM pg_catalog.pg_attribute AS attribute
-        JOIN pg_catalog.pg_class AS relation
-          ON relation.oid = attribute.attrelid
-        JOIN pg_catalog.pg_namespace AS namespace
-          ON namespace.oid = relation.relnamespace
-        CROSS JOIN unnest($2::text[]) AS privilege(name)
-        WHERE namespace.nspname = 'public'
-          AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
-          AND attribute.attnum > 0
-          AND NOT attribute.attisdropped
-        ORDER BY relation.relname, attribute.attnum, privilege.name
-        """,
-        legacy_role,
-        column_privileges,
     )
-    for column_row in column_rows:
-        expected_allowed = column_row["name"] in (
-            _EXPECTED_LEGACY_TABLE_PRIVILEGES.get(
-                column_row["relname"],
-                frozenset(),
-            )
+    assert effective.tables == expected_tables
+    assert not effective.table_grant_options
+
+    expected_columns = frozenset(
+        (table, column, privilege)
+        for table, column in effective.available_columns
+        for privilege in _EXPECTED_LEGACY_TABLE_PRIVILEGES.get(
+            table,
+            frozenset(),
         )
-        assert column_row["allowed"] is expected_allowed
-        assert column_row["grantable"] is False
+    )
+    assert effective.columns == expected_columns
+    assert not effective.column_grant_options
 
     assert (
         await admin_pool.fetchval(
             "SELECT pg_catalog.has_schema_privilege($1, 'public', 'CREATE')",
             legacy_role,
         )
-        is False
+        is True
     )
     assert (
         await admin_pool.fetchval(
@@ -1094,7 +1259,7 @@ async def test_legacy_feed_store_runs_through_separate_limited_pool(
                 legacy_role,
                 database_privilege,
             )
-            is False
+            is True
         )
     assert (
         await admin_pool.fetchval(
@@ -1124,67 +1289,9 @@ async def test_legacy_feed_store_runs_through_separate_limited_pool(
         )
         is False
     )
-    assert (
-        await admin_pool.fetchval(
-            """
-            SELECT NOT pg_catalog.bool_or(
-                pg_catalog.has_sequence_privilege(
-                    $1,
-                    relation.oid,
-                    privilege.name
-                )
-            )
-            FROM pg_catalog.pg_class AS relation
-            JOIN pg_catalog.pg_namespace AS namespace
-              ON namespace.oid = relation.relnamespace
-            CROSS JOIN unnest(
-                ARRAY['USAGE', 'SELECT', 'UPDATE']
-            ) AS privilege(name)
-            WHERE namespace.nspname = 'public'
-              AND relation.relkind = 'S'
-            """,
-            legacy_role,
-        )
-        is True
-    )
-    assert (
-        await admin_pool.fetchval(
-            """
-            SELECT NOT pg_catalog.bool_or(
-                pg_catalog.has_function_privilege($1, routine.oid, 'EXECUTE')
-            )
-            FROM pg_catalog.pg_proc AS routine
-            JOIN pg_catalog.pg_namespace AS namespace
-              ON namespace.oid = routine.pronamespace
-            WHERE namespace.nspname = 'public'
-            """,
-            legacy_role,
-        )
-        is True
-    )
-    legacy_type_privileges = await admin_pool.fetch(
-        """
-        SELECT
-            type.typname,
-            pg_catalog.has_type_privilege($1, type.oid, 'USAGE') AS allowed
-        FROM pg_catalog.pg_type AS type
-        JOIN pg_catalog.pg_namespace AS namespace
-          ON namespace.oid = type.typnamespace
-        LEFT JOIN pg_catalog.pg_class AS type_relation
-          ON type_relation.oid = type.typrelid
-        WHERE namespace.nspname = 'public'
-          AND type.typelem = 0
-          AND (
-              (type.typrelid = 0 AND type.typtype IN ('b', 'd', 'e', 'm', 'r'))
-              OR (type.typtype = 'c' AND type_relation.relkind = 'c')
-          )
-        ORDER BY type.typname
-        """,
-        legacy_role,
-    )
-    assert {
-        row["typname"] for row in legacy_type_privileges if row["allowed"]
-    } == {"feed_status"}
+    assert not effective.sequences
+    assert not effective.routines
+    assert effective.types == {"feed_status"}
 
     unsafe_parameter_grants = await admin_pool.fetchval(
         """
@@ -1207,9 +1314,12 @@ async def test_legacy_feed_store_runs_through_separate_limited_pool(
         """,
         legacy_role,
     )
-    assert unsafe_parameter_grants == 0
+    assert unsafe_parameter_grants == 1
 
-    await _assert_no_large_object_capabilities(admin_pool, legacy_role)
+    await _assert_exact_legacy_large_object_capabilities(
+        admin_pool,
+        legacy_role,
+    )
 
     eligible = await admin_pool.fetch(
         """

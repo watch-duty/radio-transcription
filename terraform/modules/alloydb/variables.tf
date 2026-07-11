@@ -42,6 +42,11 @@ variable "worker_user_id" {
   description = "The username for the dedicated worker fleet service account."
   type        = string
   default     = "worker"
+
+  validation {
+    condition     = can(regex("^[A-Za-z_][A-Za-z0-9_]*$", var.worker_user_id))
+    error_message = "worker_user_id must be a simple PostgreSQL identifier."
+  }
 }
 
 variable "worker_user_password" {

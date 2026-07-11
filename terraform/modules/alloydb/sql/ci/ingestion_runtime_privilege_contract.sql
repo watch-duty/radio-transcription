@@ -11,6 +11,25 @@ CREATE TEMPORARY TABLE ingestion_runtime_contract_input (
 INSERT INTO ingestion_runtime_contract_input (runtime_role)
 VALUES (:'runtime_role');
 
+CREATE TEMP TABLE ingestion_contract_runtime_roles (
+    oid OID PRIMARY KEY
+) ON COMMIT DROP;
+
+WITH RECURSIVE runtime_roles AS (
+    SELECT role.oid
+      FROM pg_catalog.pg_roles AS role
+     WHERE role.rolname = 'app_ingestion_runtime'
+    UNION
+    SELECT member.oid
+      FROM runtime_roles AS parent
+      JOIN pg_catalog.pg_auth_members AS membership
+        ON membership.roleid = parent.oid
+      JOIN pg_catalog.pg_roles AS member
+        ON member.oid = membership.member
+)
+INSERT INTO pg_temp.ingestion_contract_runtime_roles (oid)
+SELECT oid FROM runtime_roles;
+
 DO $contract$
 DECLARE
     runtime_role_name NAME;
@@ -187,19 +206,7 @@ BEGIN
     END IF;
 
     IF EXISTS (
-        WITH RECURSIVE runtime_roles AS (
-            SELECT role.oid
-              FROM pg_catalog.pg_roles AS role
-             WHERE role.rolname = 'app_ingestion_runtime'
-            UNION
-            SELECT member.oid
-              FROM runtime_roles AS parent
-              JOIN pg_catalog.pg_auth_members AS membership
-                ON membership.roleid = parent.oid
-              JOIN pg_catalog.pg_roles AS member
-                ON member.oid = membership.member
-        ),
-        privileged_parameters AS (
+        WITH privileged_parameters AS (
             SELECT parameter_acl.parname
               FROM pg_catalog.pg_parameter_acl AS parameter_acl
             UNION
@@ -208,7 +215,7 @@ BEGIN
             SELECT 'lo_compat_privileges'::TEXT
         )
         SELECT 1
-          FROM runtime_roles AS runtime_role
+          FROM pg_temp.ingestion_contract_runtime_roles AS runtime_role
           CROSS JOIN privileged_parameters AS parameter
           CROSS JOIN (VALUES ('SET'), ('ALTER SYSTEM')) AS access(privilege)
          WHERE pg_catalog.has_parameter_privilege(
@@ -222,21 +229,10 @@ BEGIN
     END IF;
     IF pg_catalog.current_setting('server_version_num')::INTEGER >= 160000 THEN
         EXECUTE $parameter_set_query$
-            WITH RECURSIVE runtime_roles AS (
-                SELECT role.oid
-                  FROM pg_catalog.pg_roles AS role
-                 WHERE role.rolname = 'app_ingestion_runtime'
-                UNION
-                SELECT member.oid
-                  FROM runtime_roles AS parent
-                  JOIN pg_catalog.pg_auth_members AS membership
-                    ON membership.roleid = parent.oid
-                  JOIN pg_catalog.pg_roles AS member
-                    ON member.oid = membership.member
-            )
             SELECT EXISTS (
                 SELECT 1
-                  FROM runtime_roles AS runtime_role
+                  FROM pg_temp.ingestion_contract_runtime_roles
+                       AS runtime_role
                   CROSS JOIN pg_catalog.pg_parameter_acl AS parameter_acl
                   CROSS JOIN LATERAL
                     pg_catalog.aclexplode(parameter_acl.paracl) AS acl
@@ -250,21 +246,9 @@ BEGIN
         $parameter_set_query$
         INTO settable_parameter_grant;
     ELSE
-        WITH RECURSIVE runtime_roles AS (
-            SELECT role.oid
-              FROM pg_catalog.pg_roles AS role
-             WHERE role.rolname = 'app_ingestion_runtime'
-            UNION
-            SELECT member.oid
-              FROM runtime_roles AS parent
-              JOIN pg_catalog.pg_auth_members AS membership
-                ON membership.roleid = parent.oid
-              JOIN pg_catalog.pg_roles AS member
-                ON member.oid = membership.member
-        )
         SELECT EXISTS (
             SELECT 1
-              FROM runtime_roles AS runtime_role
+              FROM pg_temp.ingestion_contract_runtime_roles AS runtime_role
               CROSS JOIN pg_catalog.pg_parameter_acl AS parameter_acl
               CROSS JOIN LATERAL
                 pg_catalog.aclexplode(parameter_acl.paracl) AS acl
@@ -282,18 +266,6 @@ BEGIN
             'runtime member can SET ROLE to a parameter grantee';
     END IF;
     IF EXISTS (
-        WITH RECURSIVE runtime_roles AS (
-            SELECT role.oid
-              FROM pg_catalog.pg_roles AS role
-             WHERE role.rolname = 'app_ingestion_runtime'
-            UNION
-            SELECT member.oid
-              FROM runtime_roles AS parent
-              JOIN pg_catalog.pg_auth_members AS membership
-                ON membership.roleid = parent.oid
-              JOIN pg_catalog.pg_roles AS member
-                ON member.oid = membership.member
-        )
         SELECT 1
           FROM pg_catalog.pg_db_role_setting AS role_setting
           CROSS JOIN LATERAL
@@ -304,7 +276,9 @@ BEGIN
          WHERE (
                    (
                        role_setting.setrole IN (
-                           SELECT runtime_role.oid FROM runtime_roles AS runtime_role
+                           SELECT runtime_role.oid
+                             FROM pg_temp.ingestion_contract_runtime_roles
+                                  AS runtime_role
                        )
                        AND role_setting.setdatabase IN (
                            0::OID,
@@ -330,14 +304,80 @@ BEGIN
                    )
                )
            AND parameter.context IN ('superuser', 'superuser-backend')
+           AND NOT (
+                   parameter.name = 'lo_compat_privileges'
+               AND substring(
+                       configuration.setting
+                       FROM pg_catalog.strpos(configuration.setting, '=') + 1
+                   )::BOOLEAN IS FALSE
+               OR parameter.name = 'session_replication_role'
+               AND substring(
+                       configuration.setting
+                       FROM pg_catalog.strpos(configuration.setting, '=') + 1
+                   ) = 'origin'
+           )
     ) THEN
         RAISE EXCEPTION
             'runtime member has an unsafe role parameter default';
     END IF;
-    IF pg_catalog.current_setting('session_replication_role') <> 'origin'
-       OR pg_catalog.current_setting('lo_compat_privileges') <> 'off' THEN
+
+    IF EXISTS (
+        WITH expected_setting(parameter_name, configuration_value) AS (
+            VALUES
+                ('session_replication_role', 'origin'),
+                ('lo_compat_privileges', 'off')
+        )
+        SELECT 1
+          FROM expected_setting
+         WHERE NOT EXISTS (
+                   SELECT 1
+                     FROM pg_catalog.pg_db_role_setting AS role_setting
+                     CROSS JOIN LATERAL unnest(role_setting.setconfig)
+                          AS configuration(setting)
+                    WHERE role_setting.setrole = 0::OID
+                      AND role_setting.setdatabase = (
+                              SELECT database.oid
+                                FROM pg_catalog.pg_database AS database
+                               WHERE database.datname =
+                                     pg_catalog.current_database()
+                          )
+                      AND configuration.setting =
+                          expected_setting.parameter_name || '=' ||
+                          expected_setting.configuration_value
+               )
+    ) THEN
         RAISE EXCEPTION
-            'contract unsafe session setting survived reconciliation';
+            'safe runtime database parameter defaults are missing';
+    END IF;
+
+    IF EXISTS (
+        WITH expected_setting(parameter_name, configuration_value) AS (
+            VALUES
+                ('session_replication_role', 'origin'),
+                ('lo_compat_privileges', 'off')
+        )
+        SELECT 1
+          FROM pg_temp.ingestion_contract_runtime_roles AS runtime_role
+          CROSS JOIN expected_setting
+         WHERE NOT EXISTS (
+                   SELECT 1
+                     FROM pg_catalog.pg_db_role_setting AS role_setting
+                     CROSS JOIN LATERAL unnest(role_setting.setconfig)
+                          AS configuration(setting)
+                    WHERE role_setting.setrole = runtime_role.oid
+                      AND role_setting.setdatabase = (
+                              SELECT database.oid
+                                FROM pg_catalog.pg_database AS database
+                               WHERE database.datname =
+                                     pg_catalog.current_database()
+                          )
+                      AND configuration.setting =
+                          expected_setting.parameter_name || '=' ||
+                          expected_setting.configuration_value
+               )
+    ) THEN
+        RAISE EXCEPTION
+            'safe runtime role parameter defaults are missing';
     END IF;
 
     set_role_membership_mode := CASE
@@ -347,25 +387,15 @@ BEGIN
     END;
 
     IF EXISTS (
-        WITH RECURSIVE runtime_roles AS (
-            SELECT role.oid
-              FROM pg_catalog.pg_roles AS role
-             WHERE role.rolname = 'app_ingestion_runtime'
-            UNION
-            SELECT member.oid
-              FROM runtime_roles AS parent
-              JOIN pg_catalog.pg_auth_members AS membership
-                ON membership.roleid = parent.oid
-              JOIN pg_catalog.pg_roles AS member
-                ON member.oid = membership.member
-        )
         SELECT 1
           FROM pg_catalog.pg_proc AS procedure
-          CROSS JOIN runtime_roles AS runtime_role
+          CROSS JOIN pg_temp.ingestion_contract_runtime_roles AS runtime_role
          WHERE procedure.oid IN (
                    'pg_catalog.lo_create(oid)'::pg_catalog.regprocedure,
                    'pg_catalog.lo_creat(integer)'::pg_catalog.regprocedure,
-                   'pg_catalog.lo_from_bytea(oid, bytea)'::pg_catalog.regprocedure
+                   'pg_catalog.lo_from_bytea(oid, bytea)'::pg_catalog.regprocedure,
+                   'pg_catalog.lo_import(text)'::pg_catalog.regprocedure,
+                   'pg_catalog.lo_import(text, oid)'::pg_catalog.regprocedure
                )
            AND (
                pg_catalog.has_function_privilege(
@@ -391,14 +421,17 @@ BEGIN
          WHERE procedure.oid IN (
                    'pg_catalog.lo_create(oid)'::pg_catalog.regprocedure,
                    'pg_catalog.lo_creat(integer)'::pg_catalog.regprocedure,
-                   'pg_catalog.lo_from_bytea(oid, bytea)'::pg_catalog.regprocedure
+                   'pg_catalog.lo_from_bytea(oid, bytea)'::pg_catalog.regprocedure,
+                   'pg_catalog.lo_import(text)'::pg_catalog.regprocedure,
+                   'pg_catalog.lo_import(text, oid)'::pg_catalog.regprocedure
                )
            AND acl.privilege_type = 'EXECUTE'
            AND (
                acl.grantee = 0::OID
                OR EXISTS (
                    SELECT 1
-                     FROM runtime_roles AS runtime_role
+                     FROM pg_temp.ingestion_contract_runtime_roles
+                          AS runtime_role
                     WHERE acl.grantee = runtime_role.oid
                        OR (
                            acl.grantee <> 0::OID
@@ -423,23 +456,12 @@ BEGIN
     END IF;
 
     IF EXISTS (
-        WITH RECURSIVE runtime_roles AS (
-            SELECT role.oid
-              FROM pg_catalog.pg_roles AS role
-             WHERE role.rolname = 'app_ingestion_runtime'
-            UNION
-            SELECT member.oid
-              FROM runtime_roles AS parent
-              JOIN pg_catalog.pg_auth_members AS membership
-                ON membership.roleid = parent.oid
-              JOIN pg_catalog.pg_roles AS member
-                ON member.oid = membership.member
-        )
         SELECT 1
           FROM pg_catalog.pg_largeobject_metadata AS large_object
          WHERE EXISTS (
                    SELECT 1
-                     FROM runtime_roles AS runtime_role
+                     FROM pg_temp.ingestion_contract_runtime_roles
+                          AS runtime_role
                     WHERE large_object.lomowner = runtime_role.oid
                        OR pg_catalog.pg_has_role(
                            runtime_role.oid,
@@ -471,7 +493,8 @@ BEGIN
                           acl.grantee = 0::OID
                           OR EXISTS (
                               SELECT 1
-                                FROM runtime_roles AS runtime_role
+                                FROM pg_temp.ingestion_contract_runtime_roles
+                                     AS runtime_role
                                WHERE acl.grantee = runtime_role.oid
                                   OR (
                                       acl.grantee <> 0::OID
@@ -497,19 +520,7 @@ BEGIN
     END IF;
 
     IF EXISTS (
-        WITH RECURSIVE runtime_roles AS (
-            SELECT role.oid
-              FROM pg_catalog.pg_roles AS role
-             WHERE role.rolname = 'app_ingestion_runtime'
-            UNION
-            SELECT member.oid
-              FROM runtime_roles AS parent
-              JOIN pg_catalog.pg_auth_members AS membership
-                ON membership.roleid = parent.oid
-              JOIN pg_catalog.pg_roles AS member
-                ON member.oid = membership.member
-        ),
-        creators AS (
+        WITH creators AS (
             SELECT role.oid
               FROM pg_catalog.pg_roles AS role
              WHERE pg_catalog.has_schema_privilege(
@@ -562,7 +573,8 @@ BEGIN
          WHERE acl.grantee = 0::OID
             OR EXISTS (
                 SELECT 1
-                  FROM runtime_roles AS runtime_role
+                  FROM pg_temp.ingestion_contract_runtime_roles
+                       AS runtime_role
                  WHERE acl.grantee = runtime_role.oid
                     OR (
                         acl.grantee <> 0::OID
@@ -822,22 +834,10 @@ BEGIN
             'runtime has an unrelated application type privilege';
     END IF;
 
-    WITH RECURSIVE runtime_roles AS (
-        SELECT role.oid
-          FROM pg_catalog.pg_roles AS role
-         WHERE role.rolname = 'app_ingestion_runtime'
-        UNION
-        SELECT member.oid
-          FROM runtime_roles AS parent
-          JOIN pg_catalog.pg_auth_members AS membership
-            ON membership.roleid = parent.oid
-          JOIN pg_catalog.pg_roles AS member
-            ON member.oid = membership.member
-    )
     SELECT pg_catalog.count(*)
       INTO unexpected_count
       FROM pg_catalog.pg_shdepend AS dependency
-      JOIN runtime_roles AS owner
+      JOIN pg_temp.ingestion_contract_runtime_roles AS owner
         ON owner.oid = dependency.refobjid
      WHERE dependency.refclassid =
                'pg_catalog.pg_authid'::pg_catalog.regclass
