@@ -103,7 +103,6 @@ the one `[eval.model]` target owned by a prepared round. Each evaluation writes
 one local and GCS `wer_summary.{json,md}` report containing one target, together
 with target-labeled raw provider or online prediction artifacts and a normalized
 inference-manifest URI.
-
 ### Online Prediction Attempt
 
 A raw online endpoint eval record for one audio URI. It may contain a
