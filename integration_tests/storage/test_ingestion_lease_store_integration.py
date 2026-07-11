@@ -24,6 +24,8 @@ from backend.pipeline.storage import feed_store, ingestion_lease_store
 if typing.TYPE_CHECKING:
     import collections.abc
 
+pytestmark = pytest.mark.asyncio(loop_scope="module")
+
 _ACTOR_ID = "service_account:gcp:ingestion-lease-integration"
 _BASE_CURSOR = datetime.datetime(2026, 7, 10, 12, 0, tzinfo=datetime.UTC)
 _TIMEOUT_SECONDS = 10.0
