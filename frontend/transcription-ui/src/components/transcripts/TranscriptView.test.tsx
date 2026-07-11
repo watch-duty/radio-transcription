@@ -228,6 +228,33 @@ vi.mock('../../audio/WebAudioPlayer', async (importOriginal) => ({
         off: () => {},
       };
     }
+    loadSequence(options: {
+      initialSegmentId: string;
+      initialUri: string;
+      callbacks: NonNullable<typeof audioEngineMock.lastCallbacks>;
+      getNextSegment: (currentId: string) => { id: string; uri: string } | null;
+    }) {
+      audioEngineMock.lastSrc = options.initialUri;
+      let currentId = options.initialSegmentId;
+      const wrappedCallbacks: typeof audioEngineMock.lastCallbacks = {
+        ...options.callbacks,
+        onEnd: (id?: string) => {
+          const checkId = id || currentId;
+          const next = options.getNextSegment(checkId);
+          if (next) {
+            currentId = next.id;
+            audioEngineMock.lastSrc = next.uri;
+            options.callbacks.onSegmentChange?.(next.id);
+            audioEngineMock.playSpy();
+            options.callbacks.onPlay?.();
+          } else {
+            options.callbacks.onEnd?.(checkId);
+          }
+        },
+      };
+      audioEngineMock.lastCallbacks = wrappedCallbacks;
+      return this.load(options.initialUri, wrappedCallbacks);
+    }
   },
 }));
 

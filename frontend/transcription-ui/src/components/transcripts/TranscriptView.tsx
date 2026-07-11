@@ -149,7 +149,7 @@ export function TranscriptView({
         !isAudioPlaying &&
         speechSegments.length > 0
       ) {
-        const audioToPlay = speechSegments[speechSegments.length - 1];
+        const audioToPlay = speechSegments[0];
         if (audioToPlay.playbackAudioUri) {
           togglePlay(audioToPlay.id, audioToPlay.playbackAudioUri);
         }

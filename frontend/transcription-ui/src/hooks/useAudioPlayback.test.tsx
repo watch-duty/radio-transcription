@@ -17,8 +17,9 @@ const engineMock = vi.hoisted(() => ({
   lastCallbacks: null as {
     onPlay?: () => void;
     onPause?: () => void;
-    onEnd?: () => void;
+    onEnd?: (lastSegmentId?: string) => void;
     onError?: () => void;
+    onSegmentChange?: (segmentId: string) => void;
   } | null,
   playSpy: vi.fn(),
   pauseSpy: vi.fn(),
@@ -63,6 +64,30 @@ vi.mock('../audio/WebAudioPlayer', () => ({
         pause: () => {
           engineMock.pauseSpy();
           callbacks.onPause?.();
+        },
+        stop: () => {},
+        getCurrentTime: () => 0,
+        setCurrentTime: () => {},
+        unload: () => engineMock.unloadSpy(),
+        off: () => {},
+      };
+    }
+    loadSequence(options: {
+      initialSegmentId: string;
+      initialUri: string;
+      callbacks: NonNullable<typeof engineMock.lastCallbacks>;
+      getNextSegment: (currentId: string) => { id: string; uri: string } | null;
+    }) {
+      engineMock.lastSrc = options.initialUri;
+      engineMock.lastCallbacks = options.callbacks;
+      return {
+        play: () => {
+          engineMock.playSpy();
+          options.callbacks.onPlay?.();
+        },
+        pause: () => {
+          engineMock.pauseSpy();
+          options.callbacks.onPause?.();
         },
         stop: () => {},
         getCurrentTime: () => 0,
@@ -211,7 +236,7 @@ describe('useAudioPlayback', () => {
     const { result } = renderPlayback([makeSegment('a')]);
 
     act(() => result.current.togglePlay('a', 'a.m4a'));
-    act(() => engineMock.lastCallbacks?.onEnd?.());
+    act(() => engineMock.lastCallbacks?.onEnd?.('a'));
 
     // 'a' is at index 0 (newest), so there is no newer segment to advance to.
     expect(result.current.isAudioPlaying).toBe(false);
@@ -224,7 +249,7 @@ describe('useAudioPlayback', () => {
     const { result } = renderPlayback([makeSegment('b'), makeSegment('a')]);
 
     act(() => result.current.togglePlay('a', 'a.m4a'));
-    act(() => engineMock.lastCallbacks?.onEnd?.());
+    act(() => engineMock.lastCallbacks?.onSegmentChange?.('b'));
 
     // It should have transitioned synchronously to playing segment 'b'
     expect(result.current.currentlyPlayingSegmentId).toBe('b');

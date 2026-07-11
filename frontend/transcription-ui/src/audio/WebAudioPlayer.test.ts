@@ -301,4 +301,100 @@ describe('WebAudioPlayer', () => {
     expect(lastContext.panner.disconnect).toHaveBeenCalled();
     expect(lastContext.close).not.toHaveBeenCalled();
   });
+
+  it('loadSequence in fallback mode loads initial clip and advances when ended', () => {
+    const player = new WebAudioPlayer(new AudioContext());
+    const onPlay = vi.fn();
+    const onSegmentChange = vi.fn();
+    const onEnd = vi.fn();
+
+    const getNextSegment = vi
+      .fn()
+      .mockReturnValueOnce({
+        id: 'seg-2',
+        uri: 'https://example.com/seg-2.m4a',
+      })
+      .mockReturnValueOnce(null);
+
+    const handle = player.loadSequence({
+      initialSegmentId: 'seg-1',
+      initialUri: 'https://example.com/seg-1.m4a',
+      callbacks: { onPlay, onSegmentChange, onEnd },
+      getNextSegment,
+    });
+
+    expect(lastAudio.src).toBe('https://example.com/seg-1.m4a');
+    handle.play();
+    expect(onPlay).toHaveBeenCalled();
+
+    // Clip 1 ends -> should advance to seg-2
+    lastAudio.emit('ended');
+    expect(getNextSegment).toHaveBeenCalledWith('seg-1');
+    expect(onSegmentChange).toHaveBeenCalledWith('seg-2');
+    expect(lastAudio.src).toBe('https://example.com/seg-2.m4a');
+    expect(lastAudio.play).toHaveBeenCalled();
+
+    // Clip 2 ends -> getNextSegment returns null -> should call onEnd
+    lastAudio.emit('ended');
+    expect(getNextSegment).toHaveBeenCalledWith('seg-2');
+    expect(onEnd).toHaveBeenCalledWith('seg-2');
+  });
+
+  it('loadSequence in MSE mode creates MediaSource and manages sequence timeline', () => {
+    class MockSourceBuffer {
+      mode = '';
+      buffered = {
+        length: 1,
+        end: () => 5.0,
+      };
+      updating = false;
+      listeners: Record<string, Array<() => void>> = {};
+      addEventListener = (type: string, cb: () => void) => {
+        (this.listeners[type] ??= []).push(cb);
+      };
+      removeEventListener = vi.fn();
+      appendBuffer = vi.fn(() => {
+        // simulate async append completion
+        setTimeout(() => {
+          (this.listeners['updateend'] ?? []).forEach((f) => f());
+        }, 0);
+      });
+      abort = vi.fn();
+    }
+
+    class MockMediaSource {
+      readyState = 'open';
+      listeners: Record<string, Array<() => void>> = {};
+      static isTypeSupported = vi.fn(() => true);
+      addSourceBuffer = vi.fn(() => new MockSourceBuffer());
+      endOfStream = vi.fn();
+      addEventListener = (type: string, cb: () => void) => {
+        (this.listeners[type] ??= []).push(cb);
+      };
+      removeEventListener = vi.fn();
+      emit(type: string) {
+        (this.listeners[type] ?? []).forEach((f) => f());
+      }
+    }
+
+    vi.stubGlobal('MediaSource', MockMediaSource);
+    vi.stubGlobal('URL', {
+      createObjectURL: vi.fn(() => 'blob:mock-media-source'),
+      revokeObjectURL: vi.fn(),
+    });
+
+    const player = new WebAudioPlayer(new AudioContext());
+    const onSegmentChange = vi.fn();
+    const getNextSegment = vi.fn().mockReturnValue(null);
+
+    const handle = player.loadSequence({
+      initialSegmentId: 'seg-1',
+      initialUri: 'https://example.com/seg-1.m4a',
+      callbacks: { onSegmentChange },
+      getNextSegment,
+    });
+
+    expect(lastAudio.src).toBe('blob:mock-media-source');
+    expect(handle.getCurrentTime()).toBe(0);
+  });
 });
