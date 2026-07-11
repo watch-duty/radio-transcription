@@ -16,10 +16,11 @@ DEFAULT_SIGNIFICANT_GAP_MS: Final = 800
 # limit, leaving a generous 240-second safety margin for GCS uploads and state checkpointing.
 MAX_WINDMILL_BUNDLE_DURATION_SEC: Final = 60.0
 
-# Memory & GCS prefetch backstop: Maximum number of chunks popped and prefetched
-# per bundle during backfills. Sized to ~50 minutes of audio (~300 chunks), which takes
-# roughly ~8 seconds to compute, preventing instantaneous heap unrolls from flooding
-# memory with thousands of in-flight GCS futures during multi-hour catch-ups.
+# Memory & GCS prefetch backstop / active per-bundle cap: Maximum number of chunks popped
+# and prefetched per bundle during backfills, acting alongside the wall-clock budget
+# (MAX_WINDMILL_BUNDLE_DURATION_SEC) as a hard item-count processing limit. Sized to
+# ~50 minutes of audio (~300 chunks), which takes roughly ~8 seconds to compute, preventing
+# instantaneous heap unrolls from flooding memory with thousands of in-flight GCS futures.
 MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 300
 
 # Resilient Runner V2 Gate: Minimum timer advancement (in seconds) to satisfy Dataflow Streaming

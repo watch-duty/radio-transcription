@@ -643,9 +643,9 @@ class OrderedStitchAudioFn(beam.DoFn):
        network blip or VM preemption forces Pub/Sub to actively re-deliver un-acked duplicates. Our isolated Beam
        SequenceBuffer beautifully filters duplicate frames, entirely preventing false positive VAD speech boundaries.
     3. Bounded Self-Chaining Drains: When unrolling out-of-order backlogs, emissions are
-       clamped to `MAX_CHUNKS_PER_WINDMILL_BUNDLE` (25 chunks) and a watermark timer is
-       re-armed to open fresh bundles, preventing 300-second bundle lease evictions
-       while reducing intermediate timer queuing delays during catch-up.
+       clamped to `MAX_CHUNKS_PER_WINDMILL_BUNDLE` (300 chunks) alongside a 60s wall-clock
+       budget, and a watermark timer is re-armed to open fresh bundles, preventing 300-second
+       bundle lease evictions while reducing intermediate timer queuing delays during catch-up.
     """
 
     SHARED_THREADPOOL_HANDLE = Shared()
@@ -851,12 +851,23 @@ class OrderedStitchAudioFn(beam.DoFn):
         out_of_order_buffer_state: Any,
         deferred_drain_timer: Any,
         timestamp: Timestamp,
+        curr_context: datatypes.TransmissionContext,
+        transmission_context_state: Any,
+        last_start_ms_state: Any,
     ) -> None:
         """Parks remaining chunks back into state and schedules deferred drain."""
         for c in remaining_chunks:
             out_of_order_buffer_state.add(c)
         deferred_drain_timer.set(
             timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
+        )
+        if not curr_context.order_timer_active:
+            curr_context = replace(curr_context, order_timer_active=True)
+        _write_transmission_context(
+            transmission_context_state,
+            curr_context,
+            last_start_ms_state,
+            out_of_order_buffer_state,
         )
 
     def _yield_tagged_outputs(
@@ -997,6 +1008,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                             out_of_order_buffer_state,
                             deferred_drain_timer,
                             timestamp,
+                            curr_context,
+                            transmission_context_state,
+                            last_start_ms_state,
                         )
                         break
                     curr_context = (
@@ -1287,6 +1301,12 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 curr_context = replace(
                                     curr_context, order_timer_active=True
                                 )
+                            _write_transmission_context(
+                                transmission_context_state,
+                                curr_context,
+                                last_start_ms_state,
+                                out_of_order_buffer_state,
+                            )
                             break
                         curr_context = (
                             transmission_context_state.read()
@@ -1378,7 +1398,7 @@ class OrderedStitchAudioFn(beam.DoFn):
 
             # Cap the drain based on our remaining bundle capacity.
             # In a fresh timer-activated bundle, processed_in_bundle starts at 0, so
-            # we can drain up to the full MAX_CHUNKS_PER_WINDMILL_BUNDLE (25 chunks).
+            # we can drain up to the full MAX_CHUNKS_PER_WINDMILL_BUNDLE (300 chunks).
             new_expected_next_ts, new_buffer_elements, elements_to_emit = (
                 seq_buf.drain_ready_elements(
                     expected_next_ts=curr_context.expected_next_chunk_start_ms,
@@ -1451,6 +1471,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                             out_of_order_buffer_state,
                             deferred_drain_timer,
                             timestamp,
+                            curr_context,
+                            transmission_context_state,
+                            last_start_ms_state,
                         )
                         break
                     # Fetch current state context

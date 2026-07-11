@@ -1339,6 +1339,121 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 {f"gs://test-bucket/path/to/chunk{i}.flac" for i in [1, 2, 3]},
             )
 
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_ordered_stitch_mid_loop_budget_exhaustion_persists_timer_active(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that mid-loop budget exhaustion in OrderedStitchAudioFn persists order_timer_active=True and prevents out-of-order emission."""
+        mock_processor_inst = mock_audio_processor.return_value
+
+        def download_side_effect(gcs_uri, timestamp_ms, *args, **kwargs):
+            return AudioChunkData(
+                start_ms=timestamp_ms,
+                audio=np.ones(16000, dtype=np.int16),
+                sample_rate=16000,
+                speech_segments=[TimeRange(0, 1000)],
+                gcs_uri=gcs_uri,
+                duration_ms=1000,
+            )
+
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            download_side_effect
+        )
+        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
+
+        order_config = OrderRestorerConfig(
+            out_of_order_timeout_ms=5000, chunk_duration_ms=1000
+        )
+        stitch_config = get_test_stitch_config(
+            stale_timeout_ms=5000, significant_gap_ms=5000
+        )
+
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.audio_processor = mock_processor_inst
+        fn.setup()
+
+        # Mock state cells
+        class MockValueState:
+            def __init__(self, initial=None) -> None:
+                self.val = initial
+
+            def read(self):
+                return self.val
+
+            def write(self, val):
+                self.val = val
+
+            def clear(self):
+                self.val = None
+
+        transmission_context_state = MockValueState(IdleFeedState())
+        last_start_ms_state = MockValueState(None)
+        out_of_order_buffer_state = MockBagState()
+
+        class MockTimer:
+            def __init__(self, name="timer") -> None:
+                self.name = name
+                self.deadline = None
+
+            def set(self, deadline):
+                self.deadline = deadline
+
+            def clear(self):
+                self.deadline = None
+
+        gap_timer_event = MockTimer("gap_event")
+        gap_timer_event_v2 = MockTimer("gap_event_v2")
+        gap_timer_proc = MockTimer("gap_proc")
+        stale_timer_event = MockTimer("stale_event")
+        stale_timer_proc = MockTimer("stale_proc")
+        deferred_drain_timer = MockTimer("deferred_drain")
+
+        chunks = [
+            ChunkMetadata(
+                gcs_uri=f"gs://test-bucket/path/to/chunk{i}.flac",
+                session_id="mock-session-id",
+                duration_ms=1000,
+                feed_metadata=FeedMetadata(feed_name="mock-feed"),
+            )
+            for i in range(1, 4)
+        ]
+
+        # Mock _is_bundle_budget_exhausted: return False on chunk 1 (i=0), True on chunk 2 (i=1)
+        budget_exhausted_calls = []
+
+        def mock_budget_exhausted():
+            budget_exhausted_calls.append(True)
+            return len(budget_exhausted_calls) >= 1
+
+        fn._is_bundle_budget_exhausted = mock_budget_exhausted  # type: ignore
+
+        fn.processed_in_bundle = 0
+        for i, chunk in enumerate(chunks):
+            list(
+                fn.process(
+                    element=("test-feed", chunk),
+                    timestamp=Timestamp(100 + i),
+                    transmission_context_state=transmission_context_state,  # type: ignore
+                    last_start_ms_state=last_start_ms_state,  # type: ignore
+                    out_of_order_buffer_state=out_of_order_buffer_state,  # type: ignore
+                    gap_timer_event=gap_timer_event,  # type: ignore
+                    gap_timer_event_v2=gap_timer_event_v2,  # type: ignore
+                    gap_timer_proc=gap_timer_proc,  # type: ignore
+                    stale_timer_event=stale_timer_event,  # type: ignore
+                    stale_timer_proc=stale_timer_proc,  # type: ignore
+                    deferred_drain_timer=deferred_drain_timer,  # type: ignore
+                )
+            )
+
+        curr_context = transmission_context_state.read()
+        self.assertIsNotNone(curr_context)
+        self.assertTrue(curr_context.order_timer_active)
+        self.assertTrue(len(out_of_order_buffer_state.items) > 0)
+
 
 class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
     @patch(
