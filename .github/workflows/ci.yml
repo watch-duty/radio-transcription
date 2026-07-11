@@ -670,8 +670,8 @@ jobs:
 
           echo "PostgreSQL $server_major schema compatibility and recovery checks passed."
 
-  # Matrix expansion changes check context names; confirm all version-qualified
-  # ingestion-lease-storage-postgres checks in branch protection before merge.
+  # Update the live ruleset only after this workflow reaches main, then require
+  # all version-qualified ingestion-lease-storage-postgres contexts.
   ingestion-lease-storage-postgres:
     needs: [setup]
     if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'

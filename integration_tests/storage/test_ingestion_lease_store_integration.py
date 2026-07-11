@@ -60,8 +60,9 @@ async def ingestion_lease_pool() -> collections.abc.AsyncIterator[asyncpg.Pool]:
         if expected_major is not None:
             if expected_major not in _SUPPORTED_POSTGRES_MAJORS:
                 pytest.fail(
-                    "EXPECTED_POSTGRES_MAJOR must be one of the supported "
-                    "PostgreSQL services"
+                    f"EXPECTED_POSTGRES_MAJOR {expected_major!r} is not "
+                    "supported; expected one of "
+                    f"{sorted(_SUPPORTED_POSTGRES_MAJORS)!r}"
                 )
             version_num = await pool.fetchval("SHOW server_version_num")
             actual_major = int(version_num) // 10000
