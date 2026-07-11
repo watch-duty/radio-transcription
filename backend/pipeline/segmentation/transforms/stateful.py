@@ -728,7 +728,11 @@ class OrderedStitchAudioFn(beam.DoFn):
 
     def _yield_tagged_outputs(
         self,
-        results: Iterable[Any],
+        results: Iterable[
+            tuple[str, datatypes.FlushRequest]
+            | tuple[str, datatypes.StitcherDlqPayload]
+            | beam.pvalue.TaggedOutput
+        ],
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
     ]:
@@ -833,7 +837,10 @@ class OrderedStitchAudioFn(beam.DoFn):
             )
             return
 
-        results = []
+        results: list[
+            tuple[str, datatypes.FlushRequest]
+            | tuple[str, datatypes.StitcherDlqPayload]
+        ] = []
         with tracing_utils.with_tracer_context(
             trace_attrs, "stitching_process", __name__
         ):
@@ -1029,13 +1036,17 @@ class OrderedStitchAudioFn(beam.DoFn):
         active_baggage: str | None = None,
         increment_processed: bool = True,
     ) -> tuple[
-        list[tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput],
+        list[
+            tuple[str, datatypes.FlushRequest]
+            | tuple[str, datatypes.StitcherDlqPayload]
+        ],
         datatypes.TransmissionContext,
         int | None,
     ]:
         """Processes and stitches a batch of chunks for a feed in local memory."""
         results: list[
-            tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
+            tuple[str, datatypes.FlushRequest]
+            | tuple[str, datatypes.StitcherDlqPayload]
         ] = []
         task_logger = _get_task_logger(
             feed_id,
@@ -1078,7 +1089,7 @@ class OrderedStitchAudioFn(beam.DoFn):
 
         return results, curr_context, last_start_ms
 
-    def _handle_gap_timeout_common(  # noqa: PLR0912, PLR0915
+    def _handle_gap_timeout_common(  # noqa: PLR0915
         self,
         key_str: str,
         transmission_context_state: ReadModifyWriteRuntimeState,
@@ -1104,14 +1115,12 @@ class OrderedStitchAudioFn(beam.DoFn):
         )
         if isinstance(curr_context, datatypes.IdleFeedState):
             return
-        curr_context, state_changed = _migrate_legacy_buffer(
+        curr_context, _ = _migrate_legacy_buffer(
             curr_context, out_of_order_buffer_state
         )
         if not isinstance(curr_context, datatypes.ActiveStitchingState):
             msg = "Expected ActiveStitchingState after migration"
             raise TypeError(msg)
-        if state_changed:
-            transmission_context_state.write(curr_context)
         trace_attrs: dict[str, str] = {}
         if curr_context.traceparent:
             trace_attrs["traceparent"] = curr_context.traceparent
@@ -1122,7 +1131,10 @@ class OrderedStitchAudioFn(beam.DoFn):
         active_traceparent = curr_context.traceparent
         active_baggage = curr_context.baggage
 
-        results = []
+        results: list[
+            tuple[str, datatypes.FlushRequest]
+            | tuple[str, datatypes.StitcherDlqPayload]
+        ] = []
         with tracing_utils.with_tracer_context(
             trace_attrs, "handle_audio_gap", __name__
         ):
@@ -1194,12 +1206,6 @@ class OrderedStitchAudioFn(beam.DoFn):
                     curr_context,
                     expected_next_chunk_start_ms=new_expected_next_ts,
                 )
-                _write_transmission_context(
-                    transmission_context_state,
-                    curr_context,
-                    last_start_ms_state,
-                    out_of_order_buffer_state,
-                )
 
                 # Handle ready elements
                 if elements_to_emit:
@@ -1264,14 +1270,12 @@ class OrderedStitchAudioFn(beam.DoFn):
         )
         if isinstance(curr_context, datatypes.IdleFeedState):
             return
-        curr_context, state_changed = _migrate_legacy_buffer(
+        curr_context, _ = _migrate_legacy_buffer(
             curr_context, out_of_order_buffer_state
         )
         if not isinstance(curr_context, datatypes.ActiveStitchingState):
             msg = "Expected ActiveStitchingState after migration"
             raise TypeError(msg)
-        if state_changed:
-            transmission_context_state.write(curr_context)
         trace_attrs: dict[str, str] = {}
         if curr_context.traceparent:
             trace_attrs["traceparent"] = curr_context.traceparent
@@ -1282,7 +1286,10 @@ class OrderedStitchAudioFn(beam.DoFn):
         active_traceparent = curr_context.traceparent
         active_baggage = curr_context.baggage
 
-        results = []
+        results: list[
+            tuple[str, datatypes.FlushRequest]
+            | tuple[str, datatypes.StitcherDlqPayload]
+        ] = []
         with tracing_utils.with_tracer_context(
             trace_attrs, "deferred_drain", __name__
         ):
