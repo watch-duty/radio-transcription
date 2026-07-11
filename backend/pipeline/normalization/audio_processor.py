@@ -10,7 +10,7 @@ import io
 import logging
 import subprocess
 import tempfile
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,7 +42,7 @@ class AudioProcessor:
         """No-op setup for compatibility."""
 
     @contextlib.contextmanager
-    def _temp_files(self, *suffixes: str) -> Iterator[list[str]]:
+    def _temp_files(self, *suffixes: str) -> Generator[list[str]]:
         """Context manager to safely create and cleanup temporary files."""
         paths = []
         try:
@@ -73,28 +73,6 @@ class AudioProcessor:
                 f"ffmpeg error during {op_label}: {process.stderr.decode(errors='replace')}"
             )
             raise RuntimeError(err_msg)
-
-    def transcode_to_flac(self, input_bytes: bytes) -> bytes:
-        """Transcodes input audio bytes of any format to lossless FLAC using ffmpeg."""
-        with self._temp_files(".flac") as (temp_filename,):
-            self._execute_ffmpeg(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    "pipe:0",
-                    "-f",
-                    "flac",
-                    "-compression_level",
-                    FLAC_COMPRESSION_LEVEL,
-                    temp_filename,
-                ],
-                input_bytes,
-                "FLAC transcode",
-                "Failed to transcode to FLAC via ffmpeg",
-            )
-            with open(temp_filename, "rb") as f:
-                return f.read()
 
     def is_mono(self, input_bytes: bytes) -> bool:
         """Returns True if the given FLAC bytes represent a mono audio track."""
@@ -141,7 +119,7 @@ class AudioProcessor:
                     "-b:a",
                     M4A_BITRATE,
                     "-movflags",
-                    "+faststart",
+                    "frag_keyframe+empty_moov+default_base_moof",
                     temp_filename,
                 ],
                 input_bytes,
@@ -172,7 +150,7 @@ class AudioProcessor:
                     "-b:a",
                     M4A_BITRATE,
                     "-movflags",
-                    "+faststart",
+                    "frag_keyframe+empty_moov+default_base_moof",
                     m4a_name,
                 ],
                 input_bytes,
