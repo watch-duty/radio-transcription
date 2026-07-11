@@ -55,6 +55,53 @@ def _lease_row(**overrides: object) -> dict[str, object]:
     return row
 
 
+def _failure_result_row(
+    *,
+    after_status: str = "failing",
+    after_failure_count: int = 3,
+    after_retry_after: datetime.datetime | None = _NOW,
+    **overrides: object,
+) -> dict[str, object]:
+    applied = overrides.pop("applied", True)
+    row = _lease_row(applied=applied, **overrides)
+    row.update(
+        {
+            "after_status": after_status,
+            "after_last_heartbeat": None,
+            "after_failure_count": after_failure_count,
+            "after_retry_after": after_retry_after,
+            "after_status_reason": "source_unreachable",
+            "after_status_reason_detail": "provider timeout",
+            "after_status_reason_updated_at": _NOW,
+            "after_audit_revision": 4,
+            "after_membership_revision": 4,
+            "after_updated_at": _NOW,
+        }
+    )
+    return row
+
+
+def _member_row(**overrides: object) -> dict[str, object]:
+    row: dict[str, object] = {
+        "feed_id": uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+        "property_source_type": "bcfy_calls",
+        "feed_source_type": "bcfy_calls",
+        "source_feed_id": "00123-00045",
+        "sid": "00123",
+        "group_id": "00045",
+        "status": "active",
+        "last_processed_filename": "gs://bucket/last.ogg",
+        "last_bookmark_time": _NOW,
+        "failure_count": 0,
+        "retry_after": None,
+        "status_reason": None,
+        "status_reason_detail": None,
+        "audit_revision": 2,
+    }
+    row.update(overrides)
+    return row
+
+
 class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
     """Tests that malformed control input fails before pool checkout."""
 
@@ -470,6 +517,504 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
             await store.release(_grant())
 
         pool.fetchrow.assert_awaited_once()
+
+
+class TestLeaseFailureActionValidation(unittest.IsolatedAsyncioTestCase):
+    """Tests for pre-checkout closed failure policy validation."""
+
+    def test_budgeted_action_rejects_invalid_parameters(self) -> None:
+        cases = (
+            {"failure_threshold": 0},
+            {"failure_threshold": True},
+            {"backoff_base_sec": 0},
+            {"backoff_max_sec": 0},
+            {"backoff_base_sec": 20, "backoff_max_sec": 10},
+        )
+
+        for case_index, kwargs in enumerate(cases):
+            with self.subTest(case_index=case_index):
+                with self.assertRaises((TypeError, ValueError)):
+                    ingestion_lease_store.BudgetedFailure(**kwargs)
+
+    def test_non_budgeted_action_requires_utc_aware_retry(self) -> None:
+        cases = (
+            datetime.datetime(2026, 7, 10),
+            datetime.datetime(
+                2026,
+                7,
+                10,
+                tzinfo=datetime.timezone(datetime.timedelta(hours=1)),
+            ),
+            "tomorrow",
+        )
+
+        for case_index, retry_after in enumerate(cases):
+            with self.subTest(case_index=case_index):
+                with self.assertRaises((TypeError, ValueError)):
+                    ingestion_lease_store.NonBudgetedFailure(retry_after)
+
+    async def test_finalize_rejects_invalid_actor_and_reason_before_pool(
+        self,
+    ) -> None:
+        pool = connection_util.make_mock_pool()
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+        action = ingestion_lease_store.BudgetedFailure()
+        invalid_actors = ("", "has space", "x" * 513)
+
+        for actor_id in invalid_actors:
+            with self.assertRaises(ValueError):
+                await store.finalize_failure(
+                    _grant(),
+                    action,
+                    feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                    actor_id=actor_id,
+                )
+
+        with self.assertRaises(TypeError):
+            await store.finalize_failure(
+                _grant(),
+                action,
+                "source_unreachable",
+                actor_id="service_account:gcp:collector",
+            )
+
+        pool.fetchrow.assert_not_awaited()
+
+
+class TestFinalizeLeaseFailure(unittest.IsolatedAsyncioTestCase):
+    """Tests for one-shot exact-grant finalized failures."""
+
+    async def test_budgeted_failure_returns_before_and_after_effect(
+        self,
+    ) -> None:
+        pool = connection_util.make_mock_pool(
+            fetchrow_result=_failure_result_row()
+        )
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.finalize_failure(
+            _grant(),
+            ingestion_lease_store.BudgetedFailure(),
+            feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            actor_id="service_account:gcp:collector",
+            reason="provider timeout",
+        )
+
+        self.assertIs(
+            result.disposition,
+            ingestion_lease_store.LeaseOperationDisposition.APPLIED,
+        )
+        self.assertIs(
+            result.effect,
+            ingestion_lease_store.LeaseFailureEffect.FAILURE_RECORDED,
+        )
+        self.assertEqual(result.before_snapshot.failure_count, 2)
+        self.assertEqual(result.after_snapshot.failure_count, 3)
+        self.assertEqual(
+            result.after_snapshot.status,
+            feed_store.FeedStatus.FAILING,
+        )
+        args = pool.fetchrow.await_args.args
+        self.assertIs(
+            args[0],
+            ingestion_lease_queries.FINALIZE_BUDGETED_FAILURE_SQL,
+        )
+        self.assertEqual(args[5:8], (5, 600, 15))
+        self.assertEqual(args[8], "source_unreachable")
+        self.assertEqual(args[9], "provider timeout")
+
+    async def test_budgeted_failure_reports_quarantine_at_threshold(
+        self,
+    ) -> None:
+        pool = connection_util.make_mock_pool(
+            fetchrow_result=_failure_result_row(
+                after_status="quarantined",
+                after_failure_count=5,
+                after_retry_after=None,
+                failure_count=4,
+            )
+        )
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.finalize_failure(
+            _grant(),
+            ingestion_lease_store.BudgetedFailure(),
+            feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            actor_id="service_account:gcp:collector",
+        )
+
+        self.assertIs(
+            result.effect,
+            ingestion_lease_store.LeaseFailureEffect.QUARANTINED,
+        )
+        self.assertIsNone(result.after_snapshot.retry_after)
+
+    async def test_non_budgeted_failure_resets_count_and_uses_retry_time(
+        self,
+    ) -> None:
+        retry_after = _NOW + datetime.timedelta(minutes=8)
+        pool = connection_util.make_mock_pool(
+            fetchrow_result=_failure_result_row(
+                after_failure_count=0,
+                after_retry_after=retry_after,
+            )
+        )
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.finalize_failure(
+            _grant(),
+            ingestion_lease_store.NonBudgetedFailure(retry_after),
+            feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            actor_id="service_account:gcp:collector",
+        )
+
+        self.assertEqual(result.after_snapshot.failure_count, 0)
+        self.assertEqual(result.after_snapshot.retry_after, retry_after)
+        args = pool.fetchrow.await_args.args
+        self.assertIs(
+            args[0],
+            ingestion_lease_queries.FINALIZE_NON_BUDGETED_FAILURE_SQL,
+        )
+        self.assertEqual(args[5], retry_after)
+
+    async def test_failure_detail_is_bounded_before_database_call(self) -> None:
+        pool = connection_util.make_mock_pool(
+            fetchrow_result=_failure_result_row()
+        )
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        await store.finalize_failure(
+            _grant(),
+            ingestion_lease_store.BudgetedFailure(),
+            feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            actor_id="service_account:gcp:collector",
+            reason="x" * 3000,
+        )
+
+        detail = pool.fetchrow.await_args.args[-1]
+        self.assertEqual(len(detail), 2048)
+        self.assertTrue(detail.endswith("[truncated]"))
+
+    async def test_present_rejection_preserves_same_before_after_state(
+        self,
+    ) -> None:
+        row = _failure_result_row(
+            applied=False,
+            worker_id=_OTHER_OWNER_ID,
+        )
+        for field in (
+            "status",
+            "last_heartbeat",
+            "failure_count",
+            "retry_after",
+            "status_reason",
+            "status_reason_detail",
+            "status_reason_updated_at",
+            "audit_revision",
+            "membership_revision",
+            "updated_at",
+        ):
+            row[f"after_{field}"] = row[field]
+        pool = connection_util.make_mock_pool(fetchrow_result=row)
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.finalize_failure(
+            _grant(),
+            ingestion_lease_store.BudgetedFailure(),
+            feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            actor_id="service_account:gcp:collector",
+        )
+
+        self.assertIs(
+            result.disposition,
+            ingestion_lease_store.LeaseOperationDisposition.OWNER_MISMATCH,
+        )
+        self.assertIs(
+            result.effect, ingestion_lease_store.LeaseFailureEffect.NONE
+        )
+        self.assertEqual(result.before_snapshot, result.after_snapshot)
+
+    async def test_missing_failure_has_nullable_before_and_after(self) -> None:
+        pool = connection_util.make_mock_pool(fetchrow_result=None)
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.finalize_failure(
+            _grant(),
+            ingestion_lease_store.BudgetedFailure(),
+            feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            actor_id="service_account:gcp:collector",
+        )
+
+        self.assertIs(
+            result.disposition,
+            ingestion_lease_store.LeaseOperationDisposition.MISSING,
+        )
+        self.assertIs(
+            result.effect, ingestion_lease_store.LeaseFailureEffect.NONE
+        )
+        self.assertIsNone(result.before_snapshot)
+        self.assertIsNone(result.after_snapshot)
+
+    async def test_database_exception_is_never_retried(self) -> None:
+        pool = connection_util.make_mock_pool()
+        pool.fetchrow.side_effect = RuntimeError("outcome unknown")
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        with self.assertRaisesRegex(RuntimeError, "outcome unknown"):
+            await store.finalize_failure(
+                _grant(),
+                ingestion_lease_store.BudgetedFailure(),
+                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                actor_id="service_account:gcp:collector",
+            )
+
+        pool.fetchrow.assert_awaited_once()
+
+    async def test_finalized_failure_makes_stale_release_ineligible(
+        self,
+    ) -> None:
+        pool = connection_util.make_mock_pool()
+        pool.fetchrow.side_effect = [
+            _failure_result_row(),
+            _lease_row(
+                status="failing",
+                worker_id=None,
+                last_heartbeat=None,
+                applied=False,
+            ),
+        ]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        failure = await store.finalize_failure(
+            _grant(),
+            ingestion_lease_store.BudgetedFailure(),
+            feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            actor_id="service_account:gcp:collector",
+        )
+        release = await store.release(
+            _grant(),
+            cause=ingestion_lease_store.LeaseReleaseCause.SHUTDOWN,
+        )
+
+        self.assertIs(
+            failure.disposition,
+            ingestion_lease_store.LeaseOperationDisposition.APPLIED,
+        )
+        self.assertIs(
+            release.disposition,
+            ingestion_lease_store.LeaseOperationDisposition.STATUS_INELIGIBLE,
+        )
+        self.assertEqual(pool.fetchrow.await_count, 2)
+
+
+class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
+    """Tests for fail-closed authoritative membership snapshots."""
+
+    async def test_rejects_unsupported_source_before_checkout(self) -> None:
+        pool = connection_util.make_mock_pool(transaction=True)
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+        grant = ingestion_lease_store.LeaseGrant(
+            feed_store.SourceType.OPENMHZ,
+            "123",
+            _OWNER_ID,
+            7,
+        )
+
+        with self.assertRaises(ValueError):
+            await store.load_membership(grant)
+
+        pool.acquire.assert_not_called()
+
+    async def test_loads_members_after_exact_grant_lock_in_transaction(
+        self,
+    ) -> None:
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row(lease_key="00123")
+        connection.fetch.return_value = [
+            _member_row(),
+            _member_row(
+                feed_id=uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff"),
+                source_feed_id="00123-00046",
+                group_id="00046",
+                status="failing",
+            ),
+            _member_row(
+                feed_id=uuid.UUID("cccccccc-dddd-eeee-ffff-000000000000"),
+                source_feed_id="00123-00047",
+                group_id="00047",
+                status="deactivated",
+            ),
+        ]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.load_membership(_grant("00123"))
+
+        self.assertIsInstance(
+            result,
+            ingestion_lease_store.MembershipSnapshot,
+        )
+        assert isinstance(result, ingestion_lease_store.MembershipSnapshot)
+        self.assertEqual(result.membership_revision, 4)
+        self.assertEqual(len(result.members), 2)
+        self.assertEqual(result.excluded_count, 1)
+        self.assertEqual(result.members[0].identity.sid, "00123")
+        self.assertEqual(result.members[0].identity.group_id, "00045")
+        self.assertEqual(
+            result.members[0].identity.source_feed_id, "00123-00045"
+        )
+        connection.transaction.assert_called_once_with(
+            isolation="read_committed"
+        )
+        self.assertIs(
+            connection.fetchrow.await_args.args[0],
+            ingestion_lease_queries.LOCK_LEASE_SQL,
+        )
+        self.assertIs(
+            connection.fetch.await_args.args[0],
+            ingestion_lease_queries.LOAD_BCFY_CALLS_MEMBERSHIP_SQL,
+        )
+        method_names = [item[0] for item in connection.method_calls]
+        self.assertLess(
+            method_names.index("fetchrow"),
+            method_names.index("fetch"),
+        )
+
+    async def test_invalid_grants_return_shared_rejection_before_members(
+        self,
+    ) -> None:
+        cases = (
+            (
+                _lease_row(worker_id=_OTHER_OWNER_ID),
+                ingestion_lease_store.GrantRejectionReason.OWNER_MISMATCH,
+            ),
+            (
+                _lease_row(fencing_token=8),
+                ingestion_lease_store.GrantRejectionReason.FENCE_MISMATCH,
+            ),
+            (
+                _lease_row(
+                    status="unclaimed",
+                    worker_id=None,
+                    last_heartbeat=None,
+                ),
+                ingestion_lease_store.GrantRejectionReason.STATUS_INELIGIBLE,
+            ),
+            (None, ingestion_lease_store.GrantRejectionReason.MISSING),
+        )
+
+        for row, expected_reason in cases:
+            with self.subTest(reason=expected_reason.value):
+                pool = connection_util.make_mock_pool(transaction=True)
+                connection = pool.acquired_connection
+                connection.fetchrow.return_value = row
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+                result = await store.load_membership(_grant())
+
+                self.assertIsInstance(
+                    result,
+                    ingestion_lease_store.GrantRejected,
+                )
+                assert isinstance(result, ingestion_lease_store.GrantRejected)
+                self.assertIs(result.reason, expected_reason)
+                if expected_reason is (
+                    ingestion_lease_store.GrantRejectionReason.MISSING
+                ):
+                    self.assertIsNone(result.snapshot)
+                else:
+                    self.assertIsNotNone(result.snapshot)
+                connection.fetch.assert_not_awaited()
+
+    async def test_empty_and_no_eligible_members_fail_closed(self) -> None:
+        cases = (
+            (),
+            (_member_row(status="deactivated"),),
+        )
+
+        for case_index, rows in enumerate(cases):
+            with self.subTest(case_index=case_index):
+                pool = connection_util.make_mock_pool(transaction=True)
+                connection = pool.acquired_connection
+                connection.fetchrow.return_value = _lease_row()
+                connection.fetch.return_value = list(rows)
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+                result = await store.load_membership(_grant())
+
+                self.assertIsInstance(
+                    result,
+                    ingestion_lease_store.MembershipInvariantViolation,
+                )
+
+    async def test_missing_identity_and_source_mismatch_fail_closed(
+        self,
+    ) -> None:
+        cases = (
+            _member_row(source_feed_id=None),
+            _member_row(feed_source_type="openmhz"),
+            _member_row(group_id=None),
+            _member_row(feed_source_type=None),
+            _member_row(feed_id=None),
+            _member_row(sid="not-numeric"),
+        )
+
+        for case_index, row in enumerate(cases):
+            with self.subTest(case_index=case_index):
+                pool = connection_util.make_mock_pool(transaction=True)
+                connection = pool.acquired_connection
+                connection.fetchrow.return_value = _lease_row()
+                connection.fetch.return_value = [row]
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+                result = await store.load_membership(_grant())
+
+                self.assertIsInstance(
+                    result,
+                    ingestion_lease_store.MembershipInvariantViolation,
+                )
+
+    async def test_revision_changes_snapshot_but_not_grant_identity(
+        self,
+    ) -> None:
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.side_effect = [
+            _lease_row(lease_key="00123", membership_revision=4),
+            _lease_row(lease_key="00123", membership_revision=5),
+        ]
+        connection.fetch.side_effect = [[_member_row()], [_member_row()]]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+        grant = _grant("00123")
+
+        first = await store.load_membership(grant)
+        second = await store.load_membership(grant)
+
+        self.assertEqual(first.grant, second.grant)
+        self.assertEqual(first.membership_revision, 4)
+        self.assertEqual(second.membership_revision, 5)
+
+    async def test_property_free_claim_can_fail_closed_on_membership_load(
+        self,
+    ) -> None:
+        pool = connection_util.make_mock_pool(transaction=True)
+        pool.fetch.return_value = [_lease_row(fencing_token=8)]
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row(fencing_token=8)
+        connection.fetch.return_value = []
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        claims = await store.claim_unclaimed(
+            feed_store.SourceType.BCFY_CALLS,
+            _OWNER_ID,
+            1,
+        )
+        result = await store.load_membership(claims[0].grant)
+
+        self.assertIsInstance(
+            result,
+            ingestion_lease_store.MembershipInvariantViolation,
+        )
 
 
 if __name__ == "__main__":

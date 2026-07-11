@@ -344,5 +344,175 @@ class TestGrantRejectionContract(unittest.TestCase):
             rejection.snapshot = None  # type: ignore[misc]
 
 
+class TestLeaseFailureContract(unittest.TestCase):
+    """Tests for caller-selected finalized-failure values and SQL."""
+
+    def test_failure_values_are_closed_frozen_and_use_shared_defaults(
+        self,
+    ) -> None:
+        action = ingestion_lease_store.BudgetedFailure()
+
+        self.assertEqual(action.failure_threshold, 5)
+        self.assertEqual(action.backoff_base_sec, 15)
+        self.assertEqual(action.backoff_max_sec, 600)
+        self.assertTrue(hasattr(type(action), "__slots__"))
+        self.assertEqual(
+            [
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.LeaseFailureResult
+                )
+            ],
+            [
+                "disposition",
+                "effect",
+                "before_snapshot",
+                "after_snapshot",
+            ],
+        )
+
+    def test_finalized_failure_queries_require_one_exact_active_grant(
+        self,
+    ) -> None:
+        for query in (
+            ingestion_lease_queries.FINALIZE_BUDGETED_FAILURE_SQL,
+            ingestion_lease_queries.FINALIZE_NON_BUDGETED_FAILURE_SQL,
+        ):
+            sql = _normalized_sql(query)
+            self.assertIn("FOR NO KEY UPDATE", sql)
+            self.assertIn("current_state.worker_id = $3", sql)
+            self.assertIn("current_state.fencing_token = $4", sql)
+            self.assertIn(
+                "current_state.status = 'active'::public.feed_status",
+                sql,
+            )
+            self.assertIn("worker_id = NULL", sql)
+            self.assertIn("last_heartbeat = NULL", sql)
+            self.assertIn("unclaimed_since = NOW()", sql)
+            self.assertIn("audit_revision = leases.audit_revision + 1", sql)
+            self.assertIn("status_reason_updated_at = NOW()", sql)
+            self.assertIn("updated_at = NOW()", sql)
+
+    def test_budgeted_failure_uses_retained_count_backoff_and_threshold(
+        self,
+    ) -> None:
+        sql = _normalized_sql(
+            ingestion_lease_queries.FINALIZE_BUDGETED_FAILURE_SQL
+        )
+
+        self.assertIn("failure_count = leases.failure_count + 1", sql)
+        self.assertIn("leases.failure_count + 1 >= $5", sql)
+        self.assertIn("'quarantined'::public.feed_status", sql)
+        self.assertIn("'failing'::public.feed_status", sql)
+        self.assertIn("LEAST( $6 * INTERVAL '1 second'", sql)
+        self.assertIn("$7 * INTERVAL '1 second' * POWER(2", sql)
+        self.assertIn("RANDOM() * INTERVAL '10 seconds'", sql)
+
+    def test_non_budgeted_failure_resets_count_and_cannot_quarantine(
+        self,
+    ) -> None:
+        sql = _normalized_sql(
+            ingestion_lease_queries.FINALIZE_NON_BUDGETED_FAILURE_SQL
+        )
+
+        self.assertIn("status = 'failing'::public.feed_status", sql)
+        self.assertIn("failure_count = 0", sql)
+        self.assertIn("retry_after = $5", sql)
+        self.assertNotIn("quarantined", sql)
+        self.assertNotIn("failure_count + 1", sql)
+        self.assertNotIn("RANDOM()", sql)
+
+    def test_store_owns_no_failure_reason_policy_map(self) -> None:
+        production_text = "\n".join(
+            pathlib.Path(path).read_text()
+            for path in (
+                "backend/pipeline/storage/ingestion_lease_store.py",
+                "backend/pipeline/storage/ingestion_lease_queries.py",
+            )
+        )
+
+        self.assertNotIn(
+            "backend.pipeline.ingestion.failure_policy", production_text
+        )
+        self.assertNotIn("SYSTEM_CONFIGURATION_INVALID", production_text)
+        self.assertNotIn(
+            "SYSTEM_RUNTIME_CONFIGURATION_INVALID", production_text
+        )
+
+
+class TestMembershipSnapshotContract(unittest.TestCase):
+    """Tests for authoritative immutable membership snapshot SQL."""
+
+    def test_member_identity_has_no_revision_or_lease_projection(self) -> None:
+        fields = {
+            field.name
+            for field in dataclasses.fields(
+                ingestion_lease_store.LeaseMemberIdentity
+            )
+        }
+
+        self.assertEqual(
+            fields,
+            {
+                "feed_id",
+                "source_type",
+                "source_feed_id",
+                "sid",
+                "group_id",
+            },
+        )
+        self.assertNotIn("membership_revision", fields)
+        self.assertNotIn("owner_worker_id", fields)
+        self.assertNotIn("fencing_token", fields)
+
+    def test_membership_uses_maintained_index_identity_and_order(self) -> None:
+        sql = _normalized_sql(
+            ingestion_lease_queries.LOAD_BCFY_CALLS_MEMBERSHIP_SQL
+        )
+
+        self.assertIn("fp.bcfy_calls_sid", sql)
+        self.assertIn("fp.bcfy_calls_group_id", sql)
+        self.assertIn("fp.source_feed_id", sql)
+        self.assertIn("fp.source_type = 'bcfy_calls'", sql)
+        self.assertIn("fp.bcfy_calls_is_trunked IS TRUE", sql)
+        self.assertIn("ORDER BY fp.bcfy_calls_group_id, fp.feed_id", sql)
+        self.assertNotIn("split_part", sql.lower())
+        self.assertNotRegex(
+            sql.lower(), r"bcfy_calls_(sid|group_id)::(int|bigint)"
+        )
+
+    def test_revision_is_snapshot_state_not_a_lifecycle_fence(self) -> None:
+        lifecycle_queries = (
+            ingestion_lease_queries.CLAIM_UNCLAIMED_LEASES_SQL,
+            ingestion_lease_queries.CLAIM_RECOVERABLE_LEASES_SQL,
+            ingestion_lease_queries.RENEW_LEASE_HEARTBEATS_SQL,
+            ingestion_lease_queries.RELEASE_LEASE_SQL,
+            ingestion_lease_queries.FINALIZE_BUDGETED_FAILURE_SQL,
+            ingestion_lease_queries.FINALIZE_NON_BUDGETED_FAILURE_SQL,
+        )
+
+        for query in lifecycle_queries:
+            sql = _normalized_sql(query)
+            self.assertNotIn("membership_revision = $", sql)
+            self.assertNotIn("membership_revision = input", sql)
+            self.assertNotIn("membership_revision = current", sql)
+
+    def test_plan_remains_storage_only_and_operationally_inert(self) -> None:
+        query_text = pathlib.Path(
+            "backend/pipeline/storage/ingestion_lease_queries.py"
+        ).read_text()
+
+        for token in (
+            "CREATE TABLE",
+            "ALTER TABLE",
+            "CREATE TRIGGER",
+            "INSERT INTO ingestion_leases",
+            "pg_advisory",
+            "LISTEN ",
+            "SET LOCAL",
+        ):
+            self.assertNotIn(token, query_text)
+
+
 if __name__ == "__main__":
     unittest.main()
