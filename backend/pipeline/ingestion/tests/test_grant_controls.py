@@ -379,8 +379,14 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
                 grant_control.HeartbeatDisposition.LOST,
             ],
         )
-        self.assertFalse(translated[0].lifecycle.durable_failing)
-        self.assertTrue(translated[1].lifecycle.durable_failing)
+        first_lifecycle = translated[0].lifecycle
+        second_lifecycle = translated[1].lifecycle
+        self.assertIsNotNone(first_lifecycle)
+        self.assertIsNotNone(second_lifecycle)
+        assert first_lifecycle is not None
+        assert second_lifecycle is not None
+        self.assertFalse(first_lifecycle.durable_failing)
+        self.assertTrue(second_lifecycle.durable_failing)
         self.assertTrue(all(item.lifecycle is None for item in translated[2:]))
 
     async def test_heartbeat_rejects_every_malformed_correlation(self) -> None:
@@ -492,8 +498,14 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             released.disposition,
             grant_control.FinalizeDisposition.APPLIED,
         )
-        self.assertTrue(budgeted.lifecycle.durable_failing)
-        self.assertTrue(non_budgeted.lifecycle.durable_failing)
+        budgeted_lifecycle = budgeted.lifecycle
+        non_budgeted_lifecycle = non_budgeted.lifecycle
+        self.assertIsNotNone(budgeted_lifecycle)
+        self.assertIsNotNone(non_budgeted_lifecycle)
+        assert budgeted_lifecycle is not None
+        assert non_budgeted_lifecycle is not None
+        self.assertTrue(budgeted_lifecycle.durable_failing)
+        self.assertTrue(non_budgeted_lifecycle.durable_failing)
         self.data_store.release_feed.assert_awaited_once_with(
             grant.feed_id,
             grant.owner_worker_id,
@@ -660,8 +672,14 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
                 grant_control.HeartbeatDisposition.LOST,
             ],
         )
-        self.assertFalse(translated[0].lifecycle.durable_failing)
-        self.assertTrue(translated[1].lifecycle.durable_failing)
+        first_lifecycle = translated[0].lifecycle
+        second_lifecycle = translated[1].lifecycle
+        self.assertIsNotNone(first_lifecycle)
+        self.assertIsNotNone(second_lifecycle)
+        assert first_lifecycle is not None
+        assert second_lifecycle is not None
+        self.assertFalse(first_lifecycle.durable_failing)
+        self.assertTrue(second_lifecycle.durable_failing)
         self.assertTrue(all(item.lifecycle is None for item in translated[2:]))
 
     async def test_heartbeat_rejects_every_malformed_correlation(self) -> None:
@@ -821,8 +839,14 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             budgeted.disposition,
             grant_control.FinalizeDisposition.APPLIED,
         )
-        self.assertTrue(budgeted.lifecycle.durable_failing)
-        self.assertTrue(non_budgeted.lifecycle.durable_failing)
+        budgeted_lifecycle = budgeted.lifecycle
+        non_budgeted_lifecycle = non_budgeted.lifecycle
+        self.assertIsNotNone(budgeted_lifecycle)
+        self.assertIsNotNone(non_budgeted_lifecycle)
+        assert budgeted_lifecycle is not None
+        assert non_budgeted_lifecycle is not None
+        self.assertTrue(budgeted_lifecycle.durable_failing)
+        self.assertTrue(non_budgeted_lifecycle.durable_failing)
         policy_mock.assert_not_called()
         retry_mock.assert_not_awaited()
         self.data_store.load_membership.assert_not_awaited()
@@ -880,6 +904,23 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
 
                 self.assertIs(result.disposition, expected)
                 self.assertFalse(hasattr(self.data_store, "release_batch"))
+
+    async def test_retained_release_requires_snapshot_evidence(self) -> None:
+        grant = _lease_grant()
+        self.data_store.release.return_value = (
+            ingestion_lease_store.LeaseOperationResult(
+                ingestion_lease_store.LeaseOperationDisposition.ACCEPTED_NOOP,
+                None,
+            )
+        )
+
+        with self.assertRaises(grant_control.GrantControlIntegrityError):
+            await self.control.finalize(
+                grant,
+                grant_control.NeutralRelease(
+                    grant_control.TerminalCause.NORMAL
+                ),
+            )
 
     async def test_store_exception_propagates_without_retry(self) -> None:
         grant = _lease_grant()

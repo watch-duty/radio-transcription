@@ -1466,6 +1466,8 @@ class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
         unknown = _grant_heartbeat_row(grant, caller_ordinal=8)
         malformed = dict(valid)
         del malformed["caller_ordinal"]
+        missing_state_field = dict(valid)
+        del missing_state_field["status_reason"]
         cases = (
             [],
             [valid, valid],
@@ -1473,6 +1475,7 @@ class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
             [wrong_identity],
             [unknown],
             [malformed],
+            [missing_state_field],
         )
 
         for rows in cases:

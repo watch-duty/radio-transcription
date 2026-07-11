@@ -681,6 +681,19 @@ class FeedStore:
         row: collections.abc.Mapping[str, object],
     ) -> FeedGrantHeartbeatResult:
         """Classify one validated caller-correlated heartbeat row."""
+        required_fields = (
+            "status",
+            "worker_id",
+            "fencing_token",
+            "last_heartbeat",
+            "failure_count",
+            "status_reason",
+            "applied",
+        )
+        if any(field not in row for field in required_fields):
+            msg = "Feed heartbeat row is missing required state fields"
+            raise ValueError(msg)
+
         applied = row.get("applied")
         if not isinstance(applied, bool):
             msg = "Feed heartbeat row contains an invalid applied flag"

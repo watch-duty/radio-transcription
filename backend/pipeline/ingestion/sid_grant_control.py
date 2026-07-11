@@ -232,6 +232,16 @@ class SidGrantControl:
                 msg = "SID release returned an invalid result type"
                 raise grant_control.GrantControlIntegrityError(msg)
             disposition = _finalize_disposition(result.disposition)
+            if (
+                disposition
+                in (
+                    grant_control.FinalizeDisposition.APPLIED,
+                    grant_control.FinalizeDisposition.ACCEPTED_NOOP,
+                )
+                and result.snapshot is None
+            ):
+                msg = "retained SID release is missing its snapshot"
+                raise grant_control.GrantControlIntegrityError(msg)
             lifecycle = (
                 _lifecycle(result.snapshot)
                 if result.snapshot is not None
