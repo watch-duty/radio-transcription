@@ -739,6 +739,24 @@ def test_ci_rejects_createdb_member_drift_and_proves_rollback() -> None:
     assert "run_member_attribute_rejection_fixture" in proof
 
 
+def test_pg15_set_role_fixture_expects_intrinsic_attribute_rejection() -> None:
+    gate_script = _read(_GATE_SCRIPT_PATH)
+    fixture_start = gate_script.index("run_default_acl_rejection_fixture()")
+    fixture_end = gate_script.index(
+        "run_ownership_rejection_fixture()",
+        fixture_start,
+    )
+    fixture = gate_script[fixture_start:fixture_end]
+
+    assert 'expected_diagnostic="future public objects expose' in fixture
+    assert 'if [ "$version" -lt 160000 ]; then' in fixture
+    assert (
+        'expected_diagnostic="app ingestion closure has unsafe role attributes"'
+        in fixture
+    )
+    assert '"$expected_diagnostic"' in fixture
+
+
 def test_r3_shared_hardening_is_uploaded_hashed_and_included_once() -> None:
     hardening_path = _REPO_ROOT / _HARDENING_PATH
     assert hardening_path.is_file(), "the shared privilege fragment is missing"

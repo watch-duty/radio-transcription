@@ -1321,7 +1321,8 @@ SQL
 }
 
 run_default_acl_rejection_fixture() {
-  local version=$1
+  local version=$1 expected_diagnostic
+  expected_diagnostic="future public objects expose PUBLIC or an app ingestion member"
   echo "Starting SET-ROLE-only default-ACL fixture..."
   if [ "$version" -ge 160000 ]; then
     psql_gate <<'SQL'
@@ -1336,10 +1337,11 @@ SQL
 ALTER ROLE :"runtime_role" NOINHERIT;
 GRANT :"creator_role" TO :"runtime_role";
 SQL
+    expected_diagnostic="app ingestion closure has unsafe role attributes"
   fi
   expect_reconcile_rejection \
     "a SET-ROLE-only default ACL" \
-    "future public objects expose PUBLIC or an app ingestion member"
+    "$expected_diagnostic"
   psql_gate <<'SQL'
 \getenv runtime_role INGESTION_RUNTIME_ROLE
 \getenv creator_role INGESTION_RUNTIME_CREATOR_ROLE
