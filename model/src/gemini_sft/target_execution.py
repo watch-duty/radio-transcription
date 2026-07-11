@@ -493,7 +493,7 @@ def _load_prediction_rows(
 
     Returns:
         Parsed rows keyed by audio URI. Later duplicate rows replace earlier
-        attempts, and malformed JSON lines are skipped with a warning.
+        attempts, and malformed or non-object rows are skipped with a warning.
     """
     rows: dict[str, dict[str, typing.Any]] = {}
     if not path.exists():
@@ -509,6 +509,12 @@ def _load_prediction_rows(
                     "Skipping malformed online prediction row in %s: %s",
                     path,
                     exc,
+                )
+                continue
+            if not isinstance(row, dict):
+                LOGGER.warning(
+                    "Skipping non-object online prediction row in %s",
+                    path,
                 )
                 continue
             audio_uri = str(row.get("audio_filepath") or "")
