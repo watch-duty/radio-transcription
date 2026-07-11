@@ -207,3 +207,32 @@ def test_database_contract_checks_effective_rights_and_every_object_class() -> (
     assert "server_version_num')::INTEGER >= 160000" in sql
     assert "type.typrelid = 0" in sql
     assert "type_relation.relkind = 'c'" in sql
+
+
+def test_ci_uses_separate_masked_admin_and_runtime_connections() -> None:
+    workflow = _read(".github/workflows/ci.yml")
+    integration_test = _read(
+        "integration_tests/storage/test_ingestion_runtime_privileges.py"
+    )
+
+    for token in (
+        "INGESTION_RUNTIME_ADMIN_DSN",
+        "INGESTION_RUNTIME_TEST_DSN",
+        "INGESTION_RUNTIME_EXTERNAL_POSTGRES_REQUIRED",
+        "::add-mask::",
+        "app_ingestion_runtime",
+        "ingestion_runtime_privilege_contract.sql",
+        "Starting column-ACL drift recovery fixture",
+        "GRANT SELECT (slug)",
+    ):
+        assert token in workflow
+    assert "statement_cache_size=0" in integration_test
+    assert "admin_pool" in integration_test
+    assert "runtime_pool" in integration_test
+    assert "INGESTION_RUNTIME_ROLE" in integration_test
+    assert "has_column_privilege" in integration_test
+    assert "if server_version >= 160000" in integration_test
+    assert (
+        "async def privilege_fixtures(\n    admin_pool: asyncpg.Pool,\n)"
+    ) in integration_test
+    assert "fixture construction must use the admin pool" in integration_test

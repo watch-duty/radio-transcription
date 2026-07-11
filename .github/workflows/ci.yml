@@ -722,6 +722,8 @@ jobs:
           set -euo pipefail
           export LC_ALL=C
 
+          privilege_bootstrap_sql="$GITHUB_WORKSPACE/terraform/modules/alloydb/sql/privileges/000_ingestion_runtime_bootstrap.sql"
+          privilege_reconcile_sql="$GITHUB_WORKSPACE/terraform/modules/alloydb/sql/privileges/999_ingestion_runtime_reconcile.sql"
           server_version_num=$(psql -v ON_ERROR_STOP=1 -t -A \
             -c "SHOW server_version_num")
           if [[ ! "$server_version_num" =~ ^[0-9]+$ ]]; then
@@ -735,6 +737,7 @@ jobs:
             exit 1
           fi
 
+          psql -X -v ON_ERROR_STOP=1 -f "$privilege_bootstrap_sql"
           for migration in *.sql; do
             case "$migration" in
               *pg_cron*)
@@ -742,11 +745,74 @@ jobs:
                 continue;;
             esac
             echo "Applying $migration..."
-            psql -v ON_ERROR_STOP=1 -f "$migration"
+            psql -X -v ON_ERROR_STOP=1 -f "$migration"
           done
-      - name: Run serial ingestion Lease storage proofs
+          psql -X -v ON_ERROR_STOP=1 -f "$privilege_reconcile_sql"
+
+          echo "Starting column-ACL drift recovery fixture..."
+          psql -X -v ON_ERROR_STOP=1 \
+            -c "GRANT SELECT (slug) ON TABLE public.source_types TO app_ingestion_runtime WITH GRANT OPTION" \
+            -c "GRANT UPDATE (slug) ON TABLE public.source_types TO PUBLIC"
+          psql -X -v ON_ERROR_STOP=1 -f "$privilege_reconcile_sql"
+      - name: Run dedicated runtime and serial Lease storage proofs
         env:
-          INGESTION_LEASE_TEST_DSN: postgresql://postgres:postgres@localhost:5432/postgres
-          INGESTION_LEASE_EXTERNAL_POSTGRES_REQUIRED: "1"
-          EXPECTED_POSTGRES_MAJOR: ${{ matrix.postgres-version }}
-        run: uv run python -m pytest integration_tests/storage/test_ingestion_lease_store_integration.py -q -n 0
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: postgres
+        run: |
+          set -euo pipefail
+
+          runtime_role="ci_ingestion_runtime_${{ matrix.postgres-version }}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          runtime_password=$(openssl rand -hex 32)
+          admin_dsn="postgresql://postgres:postgres@localhost:5432/postgres"
+          runtime_dsn="postgresql://${runtime_role}:${runtime_password}@localhost:5432/postgres"
+          echo "::add-mask::$runtime_password"
+          echo "::add-mask::$admin_dsn"
+          echo "::add-mask::$runtime_dsn"
+
+          export INGESTION_RUNTIME_ROLE="$runtime_role"
+          export INGESTION_RUNTIME_PASSWORD="$runtime_password"
+          psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          \getenv runtime_role INGESTION_RUNTIME_ROLE
+          \getenv runtime_password INGESTION_RUNTIME_PASSWORD
+          CREATE ROLE :"runtime_role"
+              LOGIN
+              NOSUPERUSER
+              NOCREATEDB
+              NOCREATEROLE
+              INHERIT
+              NOREPLICATION
+              NOBYPASSRLS
+              PASSWORD :'runtime_password';
+          GRANT app_ingestion_runtime TO :"runtime_role";
+          SQL
+          unset INGESTION_RUNTIME_PASSWORD
+
+          cleanup_runtime_role() {
+            set +e
+            psql -X -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
+          \getenv runtime_role INGESTION_RUNTIME_ROLE
+          DROP ROLE IF EXISTS :"runtime_role";
+          SQL
+          }
+          trap cleanup_runtime_role EXIT
+
+          psql -X -v ON_ERROR_STOP=1 \
+            -v runtime_role="$runtime_role" \
+            -f "$GITHUB_WORKSPACE/terraform/modules/alloydb/sql/ci/ingestion_runtime_privilege_contract.sql"
+
+          INGESTION_RUNTIME_ADMIN_DSN="$admin_dsn" \
+          INGESTION_RUNTIME_TEST_DSN="$runtime_dsn" \
+          INGESTION_RUNTIME_EXTERNAL_POSTGRES_REQUIRED="1" \
+          uv run python -m pytest \
+            integration_tests/storage/test_ingestion_runtime_privileges.py \
+            -q -n 0
+
+          INGESTION_LEASE_TEST_DSN="$admin_dsn" \
+          INGESTION_LEASE_EXTERNAL_POSTGRES_REQUIRED="1" \
+          EXPECTED_POSTGRES_MAJOR="${{ matrix.postgres-version }}" \
+          uv run python -m pytest \
+            integration_tests/storage/test_ingestion_lease_store_integration.py \
+            -q -n 0
