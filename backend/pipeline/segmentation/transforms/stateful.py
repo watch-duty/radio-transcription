@@ -627,26 +627,11 @@ class OrderedStitchAudioFn(beam.DoFn):
 
     # --- Timers ---
 
-    # LEGACY — to be removed in a follow-up PR (GOO-667 incident recovery).
-    # This timer family name ("out_of_order_timer") is persisted in Windmill state for
-    # existing keys. It must remain until all pending firings have drained from prod.
-    # Once quiet, open a follow-up PR that removes this spec and its @on_timer handler.
-    # See: two-step timer rename process documented below on GAP_TIMER_EVENT_V2_SPEC.
+    # Watermark timer for out-of-order restoration / gap timeouts.
     GAP_TIMER_EVENT_SPEC = TimerSpec(
-        "out_of_order_timer", beam.TimeDomain.WATERMARK
-    )
-    GAP_TIMER_EVENT = beam.DoFn.TimerParam(GAP_TIMER_EVENT_SPEC)
-
-    # Replacement for the legacy GAP_TIMER_EVENT_SPEC above. New elements schedule
-    # timers under this name. Once "out_of_order_timer" has fully drained from Windmill
-    # state (no more NOT_FOUND errors in logs), remove the legacy spec and its handler.
-    # NOTE: To rename this value again in the future, use the same two-step process:
-    #   Step 1 — Add the new TimerSpec alongside this one, deploy via --update, wait for drain.
-    #   Step 2 — Remove this spec and its @on_timer handler, deploy via --update.
-    GAP_TIMER_EVENT_V2_SPEC = TimerSpec(
         "gap_timer_event", beam.TimeDomain.WATERMARK
     )
-    GAP_TIMER_EVENT_V2 = beam.DoFn.TimerParam(GAP_TIMER_EVENT_V2_SPEC)
+    GAP_TIMER_EVENT = beam.DoFn.TimerParam(GAP_TIMER_EVENT_SPEC)
 
     GAP_TIMER_PROC_SPEC = TimerSpec("gap_timer_proc", beam.TimeDomain.REAL_TIME)
     GAP_TIMER_PROC = beam.DoFn.TimerParam(GAP_TIMER_PROC_SPEC)
@@ -752,8 +737,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
         last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
         out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
-        gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore  # LEGACY — remove with GAP_TIMER_EVENT_SPEC
-        gap_timer_event_v2: RuntimeTimer = GAP_TIMER_EVENT_V2,  # type: ignore
+        gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore
         gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
         stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
@@ -850,7 +834,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                 timestamp,
                 curr_context,
                 out_of_order_buffer_state,
-                gap_timer_event_v2,
+                gap_timer_event,
                 gap_timer_proc,
                 self.order_config,
                 is_backfill=is_backfill,
@@ -926,7 +910,6 @@ class OrderedStitchAudioFn(beam.DoFn):
 
         yield from self._yield_tagged_outputs(results)
 
-    # LEGACY — remove alongside GAP_TIMER_EVENT_SPEC in the follow-up PR.
     @on_timer(GAP_TIMER_EVENT_SPEC)
     def handle_gap_timeout_event(
         self,
@@ -938,37 +921,6 @@ class OrderedStitchAudioFn(beam.DoFn):
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
         gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore
-        gap_timer_event_v2: RuntimeTimer = GAP_TIMER_EVENT_V2,  # type: ignore
-        gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
-    ) -> Iterator[
-        tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
-    ]:
-        """Handles the gap timeout triggered by the legacy event-time watermark timer."""
-        gap_timer_event.clear()
-        yield from self._handle_gap_timeout_common(
-            key_str=feed_id,
-            transmission_context_state=transmission_context_state,
-            last_start_ms_state=last_start_ms_state,
-            out_of_order_buffer_state=out_of_order_buffer_state,
-            stale_timer_event=stale_timer_event,
-            stale_timer_proc=stale_timer_proc,
-            timestamp=timestamp,
-            gap_timer_event=gap_timer_event_v2,
-            gap_timer_proc=gap_timer_proc,
-            timer_type="event",
-        )
-
-    @on_timer(GAP_TIMER_EVENT_V2_SPEC)
-    def handle_gap_timeout_event_v2(
-        self,
-        feed_id: str = beam.DoFn.KeyParam,  # type: ignore
-        transmission_context_state: ReadModifyWriteRuntimeState = TRANSMISSION_CONTEXT_STATE,  # type: ignore
-        last_start_ms_state: ReadModifyWriteRuntimeState = LAST_START_MS_STATE,  # type: ignore
-        out_of_order_buffer_state: BagRuntimeState = OUT_OF_ORDER_BUFFER_STATE,  # type: ignore
-        stale_timer_event: RuntimeTimer = STALE_TIMER_EVENT_PARAM,  # type: ignore
-        stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
-        timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
-        gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT_V2,  # type: ignore
         gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
@@ -998,7 +950,6 @@ class OrderedStitchAudioFn(beam.DoFn):
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
         gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT,  # type: ignore
-        gap_timer_event_v2: RuntimeTimer = GAP_TIMER_EVENT_V2,  # type: ignore
         gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
@@ -1013,7 +964,7 @@ class OrderedStitchAudioFn(beam.DoFn):
             stale_timer_event=stale_timer_event,
             stale_timer_proc=stale_timer_proc,
             timestamp=timestamp,
-            gap_timer_event=gap_timer_event_v2,
+            gap_timer_event=gap_timer_event,
             gap_timer_proc=gap_timer_proc,
             timer_type="processing",
         )
