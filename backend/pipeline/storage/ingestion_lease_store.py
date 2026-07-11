@@ -258,6 +258,7 @@ def _member_binding_proof(
     grant: LeaseGrant,
     identity: LeaseMemberIdentity,
 ) -> bytes:
+    """Return the process-local seal for one exact grant/member binding."""
     payload = json.dumps(
         (
             _MEMBER_BINDING_VERSION,

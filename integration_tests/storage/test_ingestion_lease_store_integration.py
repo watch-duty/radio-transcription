@@ -1545,9 +1545,72 @@ async def test_cursor_matrix_is_independent_from_lifecycle(
         assert deactivated_row["last_bookmark_time"] == current
 
 
+async def test_budgeted_failure_threshold_quarantines_retained_count(
+    ingestion_lease_pool: asyncpg.Pool,
+) -> None:
+    sid = _unique_digits()
+    await _insert_lease(ingestion_lease_pool, sid)
+    store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
+    grant = await _claim_exact(store, sid, uuid.uuid4())
+    cursor = _BASE_CURSOR + datetime.timedelta(minutes=5)
+    member = await _insert_member(
+        ingestion_lease_pool,
+        grant,
+        status="failing",
+        cursor=_BASE_CURSOR,
+        failure_count=4,
+        retry_after=datetime.datetime.now(datetime.UTC)
+        + datetime.timedelta(minutes=1),
+        status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE.value,
+    )
+    lease_before = dict(await _fetch_lease(ingestion_lease_pool, sid))
+
+    result = await _commit(
+        store,
+        grant,
+        _batch(_failure(member, cursor, budgeted=True)),
+    )
+    feed_after = dict(await _fetch_feed(ingestion_lease_pool, member.feed_id))
+    lease_after = dict(await _fetch_lease(ingestion_lease_pool, sid))
+    events_after = await _audit_rows(
+        ingestion_lease_pool,
+        member.feed_id,
+    )
+
+    assert isinstance(result, ingestion_lease_store.BatchCommitted)
+    assert result.children[0].disposition is (
+        ingestion_lease_store.ChildDisposition.APPLIED
+    )
+    assert result.children[0].cursor_effect is (
+        ingestion_lease_store.CursorEffect.ADVANCED
+    )
+    assert result.children[0].lifecycle_effect is (
+        ingestion_lease_store.LifecycleEffect.QUARANTINED
+    )
+    assert feed_after["status"] == "quarantined"
+    assert feed_after["failure_count"] == 5
+    assert feed_after["retry_after"] is None
+    assert feed_after["audit_revision"] == 1
+    assert feed_after["status_reason"] == (
+        feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID.value
+    )
+    assert lease_after == lease_before
+    assert len(events_after) == 1
+    assert events_after[0]["action"] == "feed.quarantined"
+    assert events_after[0]["feed_revision"] == 1
+    assert events_after[0]["before_status"] == "failing"
+    assert events_after[0]["before_failure_count"] == 4
+    assert events_after[0]["after_status"] == "quarantined"
+    assert events_after[0]["after_failure_count"] == 5
+
+
 @pytest.mark.parametrize(
     "boundary_kind",
-    ["budgeted_failure", "non_budgeted_failure", "finalized_recovery"],
+    [
+        "nonterminal_budgeted_failure",
+        "retained_non_budgeted_failure",
+        "finalized_recovery",
+    ],
 )
 async def test_boundary_retry_does_not_double_charge(  # noqa: PLR0915
     ingestion_lease_pool: asyncpg.Pool,
@@ -1591,12 +1654,15 @@ async def test_boundary_retry_does_not_double_charge(  # noqa: PLR0915
             lease_effect=ingestion_lease_store.FinalizeLeaseRecovery(),
         )
     else:
+        initial_feed_failure_count = (
+            0 if boundary_kind == "nonterminal_budgeted_failure" else 4
+        )
         member = await _insert_member(
             ingestion_lease_pool,
             grant,
             status="failing",
             cursor=_BASE_CURSOR,
-            failure_count=4,
+            failure_count=initial_feed_failure_count,
             retry_after=datetime.datetime.now(datetime.UTC)
             + datetime.timedelta(minutes=1),
             status_reason=(
@@ -1606,7 +1672,7 @@ async def test_boundary_retry_does_not_double_charge(  # noqa: PLR0915
         failure = _failure(
             member,
             cursor,
-            budgeted=boundary_kind == "budgeted_failure",
+            budgeted=boundary_kind == "nonterminal_budgeted_failure",
         )
         if isinstance(
             failure.action,
@@ -1655,33 +1721,36 @@ async def test_boundary_retry_does_not_double_charge(  # noqa: PLR0915
         assert feed_after_first["failure_count"] == 0
         assert lease_after_first["failure_count"] == 0
     else:
+        assert first.children[0].disposition is (
+            ingestion_lease_store.ChildDisposition.APPLIED
+        )
         assert feed_after_first["audit_revision"] == 1
         assert [event["feed_revision"] for event in events_after_first] == [1]
         assert events_after_first[0]["before_status"] == "failing"
-        assert events_after_first[0]["before_failure_count"] == 4
+        assert (
+            events_after_first[0]["before_failure_count"]
+            == initial_feed_failure_count
+        )
         assert lease_after_first["audit_revision"] == 0
-        if boundary_kind == "budgeted_failure":
-            assert second.children[0].disposition is (
-                ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE
-            )
+        assert second.children[0].disposition is (
+            ingestion_lease_store.ChildDisposition.ACCEPTED_NOOP
+        )
+        if boundary_kind == "nonterminal_budgeted_failure":
             assert first.children[0].lifecycle_effect is (
-                ingestion_lease_store.LifecycleEffect.QUARANTINED
+                ingestion_lease_store.LifecycleEffect.FAILURE_RECORDED
             )
-            assert feed_after_first["status"] == "quarantined"
-            assert feed_after_first["failure_count"] == 5
-            assert feed_after_first["retry_after"] is None
-            assert events_after_first[0]["after_status"] == "quarantined"
-            assert events_after_first[0]["after_failure_count"] == 5
+            assert feed_after_first["status"] == "failing"
+            assert feed_after_first["failure_count"] == 1
+            assert feed_after_first["retry_after"] is not None
+            assert events_after_first[0]["after_status"] == "failing"
+            assert events_after_first[0]["after_failure_count"] == 1
             assert feed_after_first["status_reason"] == (
                 feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID.value
             )
             assert [event["action"] for event in events_after_first] == [
-                "feed.quarantined"
+                "feed.failure_reported"
             ]
         else:
-            assert second.children[0].disposition is (
-                ingestion_lease_store.ChildDisposition.ACCEPTED_NOOP
-            )
             assert first.children[0].lifecycle_effect is (
                 ingestion_lease_store.LifecycleEffect.FAILURE_RECORDED
             )
