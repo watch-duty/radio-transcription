@@ -103,6 +103,59 @@ def test_bootstrap_normalizes_a_non_login_role_without_touching_worker() -> (
     assert "worker" not in sql.replace(_ROLE, "")
 
 
+def test_hardening_rejects_unsafe_attributes_on_every_runtime_member() -> None:
+    hardening = _normalized_sql(_HARDENING_PATH)
+    postcondition_start = hardening.index(
+        "DO $runtime_hardening_postcondition$"
+    )
+    postcondition_end = hardening.index(
+        "$runtime_hardening_postcondition$;",
+        postcondition_start,
+    )
+    postcondition = hardening[postcondition_start:postcondition_end]
+
+    closure_check = re.search(
+        r"IF EXISTS \( SELECT 1 FROM "
+        r"pg_temp\.ingestion_runtime_roles AS runtime_role "
+        r"JOIN pg_catalog\.pg_roles AS role "
+        r"ON role\.oid = runtime_role\.oid "
+        r"WHERE (?P<predicates>.*?) \) THEN RAISE EXCEPTION "
+        r"'app ingestion closure has unsafe role attributes'; END IF;",
+        postcondition,
+    )
+    assert closure_check is not None
+    predicates = closure_check.group("predicates")
+    for unsafe_predicate in (
+        "role.rolsuper",
+        "role.rolcreatedb",
+        "role.rolcreaterole",
+        "role.rolreplication",
+        "role.rolbypassrls",
+        "NOT role.rolinherit",
+    ):
+        assert unsafe_predicate in predicates
+
+    group_check = re.search(
+        r"SELECT (?P<columns>.*?) INTO role_state "
+        r"FROM pg_catalog\.pg_authid "
+        r"WHERE rolname = 'app_ingestion_runtime'; "
+        r"IF NOT FOUND (?P<predicates>.*?) THEN RAISE EXCEPTION "
+        r"'app_ingestion_runtime has unsafe group attributes'; END IF;",
+        postcondition[closure_check.end() :],
+    )
+    assert group_check is not None
+    columns = {
+        column.strip() for column in group_check.group("columns").split(",")
+    }
+    assert columns == {"rolcanlogin", "rolconnlimit", "rolpassword"}
+    for group_predicate in (
+        "role_state.rolcanlogin",
+        "role_state.rolconnlimit <> -1",
+        "role_state.rolpassword IS NOT NULL",
+    ):
+        assert group_predicate in group_check.group("predicates")
+
+
 def test_reconciliation_revokes_before_the_four_exact_table_grants() -> None:
     sql = _shared_entrypoint_sql(_RECONCILE_PATH)
 
@@ -644,6 +697,46 @@ def test_ci_uses_isolated_admin_runtime_legacy_and_creator_identities() -> None:
     _assert_gate_script_large_object_contract(gate_script)
     _assert_gate_fixture_lifecycle(gate_script)
     _assert_integration_privilege_module_contract(integration_test)
+
+
+def test_ci_rejects_createdb_member_drift_and_proves_rollback() -> None:
+    gate_script = _read(_GATE_SCRIPT_PATH)
+    fixture_start = gate_script.index(
+        "run_member_attribute_rejection_fixture()"
+    )
+    fixture_end = gate_script.index(
+        "run_inherited_creator_fixture()",
+        fixture_start,
+    )
+    fixture = gate_script[fixture_start:fixture_end]
+
+    for contract in (
+        'ALTER ROLE :"runtime_role" CREATEDB;',
+        "GRANT SELECT ON TABLE public.source_types",
+        "app ingestion closure has unsafe role attributes",
+        "pg_catalog.aclexplode(relation.relacl)",
+        "failed reconciliation did not roll back direct member ACL removal",
+        'ALTER ROLE :"runtime_role" NOCREATEDB;',
+        "successful reconciliation left direct member ACL drift",
+    ):
+        assert contract in fixture
+    assert fixture.index('ALTER ROLE :"runtime_role" CREATEDB;') < (
+        fixture.index("expect_reconcile_rejection")
+    )
+    assert fixture.index("expect_reconcile_rejection") < fixture.index(
+        "failed reconciliation did not roll back direct member ACL removal"
+    )
+    assert fixture.index('ALTER ROLE :"runtime_role" NOCREATEDB;') < (
+        fixture.rindex("reconcile_with_legacy")
+    )
+
+    cleanup_start = gate_script.index("cleanup_ephemeral_roles()")
+    cleanup_end = gate_script.index("create_ephemeral_roles()")
+    cleanup = gate_script[cleanup_start:cleanup_end]
+    assert "ALTER ROLE %I NOCREATEDB NOCREATEROLE INHERIT" in cleanup
+
+    proof = gate_script[gate_script.index("dedicated_proof_gate()") :]
+    assert "run_member_attribute_rejection_fixture" in proof
 
 
 def test_r3_shared_hardening_is_uploaded_hashed_and_included_once() -> None:

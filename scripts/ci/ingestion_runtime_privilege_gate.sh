@@ -395,7 +395,9 @@ WHERE EXISTS (
   AND EXISTS (
       SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = parent.rolname
   ) \gexec
-SELECT pg_catalog.format('ALTER ROLE %I INHERIT', rolname)
+SELECT pg_catalog.format(
+    'ALTER ROLE %I NOCREATEDB NOCREATEROLE INHERIT', rolname
+)
 FROM pg_catalog.pg_roles WHERE rolname = :'runtime_role' \gexec
 SELECT pg_catalog.format(
     'REVOKE %I FROM %I', :'legacy_parent_role', :'legacy_role'
@@ -1198,6 +1200,62 @@ expect_reconcile_rejection() {
   fi
 }
 
+run_member_attribute_rejection_fixture() {
+  local direct_acl_after_failure direct_acl_after_reconcile
+  echo "Starting fail-closed CREATEDB member fixture..."
+  psql_gate <<'SQL'
+\getenv runtime_role INGESTION_RUNTIME_ROLE
+ALTER ROLE :"runtime_role" CREATEDB;
+GRANT SELECT ON TABLE public.source_types TO :"runtime_role";
+SQL
+  expect_reconcile_rejection \
+    "a CREATEDB app ingestion member" \
+    "app ingestion closure has unsafe role attributes"
+
+  direct_acl_after_failure=$(psql_gate -t -A <<'SQL'
+\getenv runtime_role INGESTION_RUNTIME_ROLE
+SELECT pg_catalog.count(*)
+FROM pg_catalog.pg_class AS relation
+JOIN pg_catalog.pg_namespace AS namespace
+  ON namespace.oid = relation.relnamespace
+CROSS JOIN LATERAL pg_catalog.aclexplode(relation.relacl) AS acl
+JOIN pg_catalog.pg_roles AS role ON role.oid = acl.grantee
+WHERE namespace.nspname = 'public'
+  AND relation.relname = 'source_types'
+  AND role.rolname = :'runtime_role'
+  AND acl.privilege_type = 'SELECT';
+SQL
+  )
+  if [ "$direct_acl_after_failure" != "1" ]; then
+    echo "::error::A failed reconciliation did not roll back direct member ACL removal"
+    return 1
+  fi
+
+  psql_gate <<'SQL'
+\getenv runtime_role INGESTION_RUNTIME_ROLE
+ALTER ROLE :"runtime_role" NOCREATEDB;
+SQL
+  reconcile_with_legacy
+  direct_acl_after_reconcile=$(psql_gate -t -A <<'SQL'
+\getenv runtime_role INGESTION_RUNTIME_ROLE
+SELECT pg_catalog.count(*)
+FROM pg_catalog.pg_class AS relation
+JOIN pg_catalog.pg_namespace AS namespace
+  ON namespace.oid = relation.relnamespace
+CROSS JOIN LATERAL pg_catalog.aclexplode(relation.relacl) AS acl
+JOIN pg_catalog.pg_roles AS role ON role.oid = acl.grantee
+WHERE namespace.nspname = 'public'
+  AND relation.relname = 'source_types'
+  AND role.rolname = :'runtime_role'
+  AND acl.privilege_type = 'SELECT';
+SQL
+  )
+  if [ "$direct_acl_after_reconcile" != "0" ]; then
+    echo "::error::A successful reconciliation left direct member ACL drift"
+    return 1
+  fi
+}
+
 run_inherited_creator_fixture() {
   local version=$1
   echo "Starting inherited large-object creator fixture..."
@@ -1369,6 +1427,10 @@ dedicated_proof_gate() {
   legacy_capabilities_before=$(legacy_capability_snapshot)
   reconcile_with_legacy
   assert_legacy_capabilities_unchanged "during initial hardening"
+  assert_legacy_parent_path_preserved
+
+  run_member_attribute_rejection_fixture
+  assert_legacy_capabilities_unchanged "across member attribute rejection"
   assert_legacy_parent_path_preserved
 
   inject_runtime_privilege_drift

@@ -1529,14 +1529,24 @@ DECLARE
         ELSE 'MEMBER'
     END;
 BEGIN
+    IF EXISTS (
+        SELECT 1
+          FROM pg_temp.ingestion_runtime_roles AS runtime_role
+          JOIN pg_catalog.pg_roles AS role
+            ON role.oid = runtime_role.oid
+         WHERE role.rolsuper
+            OR role.rolcreatedb
+            OR role.rolcreaterole
+            OR role.rolreplication
+            OR role.rolbypassrls
+            OR NOT role.rolinherit
+    ) THEN
+        RAISE EXCEPTION
+            'app ingestion closure has unsafe role attributes';
+    END IF;
+
     SELECT
         rolcanlogin,
-        rolsuper,
-        rolinherit,
-        rolcreatedb,
-        rolcreaterole,
-        rolreplication,
-        rolbypassrls,
         rolconnlimit,
         rolpassword
       INTO role_state
@@ -1544,16 +1554,10 @@ BEGIN
      WHERE rolname = 'app_ingestion_runtime';
     IF NOT FOUND
        OR role_state.rolcanlogin
-       OR role_state.rolsuper
-       OR NOT role_state.rolinherit
-       OR role_state.rolcreatedb
-       OR role_state.rolcreaterole
-       OR role_state.rolreplication
-       OR role_state.rolbypassrls
        OR role_state.rolconnlimit <> -1
        OR role_state.rolpassword IS NOT NULL THEN
         RAISE EXCEPTION
-            'app_ingestion_runtime has unsafe role attributes';
+            'app_ingestion_runtime has unsafe group attributes';
     END IF;
 
     IF EXISTS (
