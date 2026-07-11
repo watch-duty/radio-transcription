@@ -349,28 +349,19 @@ async def run_online_target_inference(
         location=vertex.resource_location(target_model, default_location),
     )
     max_attempts = max(1, max_retries)
-    config = vertex.types.GenerateContentConfig(
-        system_instruction=system_prompt,
-        safety_settings=vertex.GEMINI_SAFETY_SETTINGS,
-        temperature=float(vertex.GEMINI_GENERATION_CONFIG["temperature"]),
-        max_output_tokens=int(
-            vertex.GEMINI_GENERATION_CONFIG["max_output_tokens"]
-        ),
-        http_options=vertex.types.HttpOptions(
-            retry_options=vertex.types.HttpRetryOptions(
-                attempts=max_attempts,
-                initial_delay=2.0,
-                max_delay=60.0,
-                exp_base=2.0,
-                jitter=1.0,
-                http_status_codes=[408, 429, 500, 502, 503, 504],
-            )
-        ),
+    retry_http_options = vertex.types.HttpOptions(
+        retry_options=vertex.types.HttpRetryOptions(
+            attempts=max_attempts,
+            initial_delay=2.0,
+            max_delay=60.0,
+            exp_base=2.0,
+            jitter=1.0,
+            http_status_codes=[408, 429, 500, 502, 503, 504],
+        )
     )
     lock = asyncio.Lock()
     snapshot_upload_lock = asyncio.Lock()
     batch_size = max(1, concurrency)
-    semaphore = asyncio.Semaphore(batch_size)
     progress = {
         "done": len(completed),
         "since_sync": 0,
@@ -384,22 +375,25 @@ async def run_online_target_inference(
             index: Position of the audio URI and its aligned history.
             audio_uri: GCS URI of the audio segment to transcribe.
         """
-        if audio_uri in completed:
-            return
-        async with semaphore:
-            request = vertex.build_request(
-                audio_uri,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                history=history_list[index],
-                history_mode=prior_context_mode,
-            )["request"]
-            prediction, error = await _generate_response(
-                client=client,
-                model_id=target_model,
-                contents=request["contents"],
-                config=config,
-            )
+        request = vertex.build_request(
+            audio_uri,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            history=history_list[index],
+            history_mode=prior_context_mode,
+        )["request"]
+        config = vertex.types.GenerateContentConfig(
+            system_instruction=request["systemInstruction"],
+            safety_settings=request["safetySettings"],
+            http_options=retry_http_options,
+            **request["generationConfig"],
+        )
+        prediction, error = await _generate_response(
+            client=client,
+            model_id=target_model,
+            contents=request["contents"],
+            config=config,
+        )
         out_row = {
             "audio_filepath": audio_uri,
             "pred_text": prediction,

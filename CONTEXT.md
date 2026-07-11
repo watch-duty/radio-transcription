@@ -98,9 +98,11 @@ tune` can resume polling the same paid job after a local process exit.
 
 ### Eval Artifact
 
-Evaluation outputs that let maintainers inspect or recalculate model quality,
-including local `wer_summary.{json,md}`, ledger rows, and GCS paths to raw
-Vertex batch inference results.
+Evaluation outputs that let maintainers inspect or recalculate the quality of
+the one `[eval.model]` target owned by a prepared round. Each evaluation writes
+one local and GCS `wer_summary.{json,md}` report containing one target, together
+with target-labeled raw provider or online prediction artifacts and a normalized
+inference-manifest URI.
 
 ### Normalized Inference Manifest
 

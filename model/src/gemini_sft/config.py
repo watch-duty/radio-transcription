@@ -196,7 +196,7 @@ class RunConfig:
             Resolved run state. Training-only artifact URIs are omitted when
             the config has no training manifest pair.
         """
-        record = {
+        record: dict[str, typing.Any] = {
             "round_id": self.round_id,
             "inference_dataset_slug": self.inference_dataset_slug,
             "eval_manifest_uri": self.eval_manifest_uri,
@@ -735,15 +735,21 @@ def _eval_execution_config(
             "eval.execution.limit",
             default=None,
         ),
-        concurrency=_optional_positive_int(
-            raw_execution,
-            "eval.execution.concurrency",
-            default=16,
+        concurrency=typing.cast(
+            "int",
+            _optional_positive_int(
+                raw_execution,
+                "eval.execution.concurrency",
+                default=16,
+            ),
         ),
-        max_retries=_optional_positive_int(
-            raw_execution,
-            "eval.execution.max_retries",
-            default=3,
+        max_retries=typing.cast(
+            "int",
+            _optional_positive_int(
+                raw_execution,
+                "eval.execution.max_retries",
+                default=3,
+            ),
         ),
     )
 
@@ -764,15 +770,21 @@ def _config_eval_execution_config(
             "limit",
             default=None,
         ),
-        concurrency=_optional_config_positive_int(
-            raw_execution,
-            "concurrency",
-            default=16,
+        concurrency=typing.cast(
+            "int",
+            _optional_config_positive_int(
+                raw_execution,
+                "concurrency",
+                default=16,
+            ),
         ),
-        max_retries=_optional_config_positive_int(
-            raw_execution,
-            "max_retries",
-            default=3,
+        max_retries=typing.cast(
+            "int",
+            _optional_config_positive_int(
+                raw_execution,
+                "max_retries",
+                default=3,
+            ),
         ),
     )
 

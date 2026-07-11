@@ -102,8 +102,8 @@ def prepare_run(
     Raises:
         google_exceptions.GoogleAPIError: If a GCS operation fails.
         OSError: If local or GCS artifacts cannot be read or written.
-        TypeError: If strict manifest parsing finds a non-object row.
-        ValueError: If canonical validation or preparation invariants fail.
+        ValueError: If strict parsing, canonical validation, or preparation
+            invariants fail.
     """
     if (
         run_cfg.train_manifest_uri is None
@@ -194,8 +194,8 @@ def _prepare_eval_run(
     Raises:
         google_exceptions.GoogleAPIError: If a GCS operation fails.
         OSError: If a local or GCS artifact cannot be read or written.
-        TypeError: If strict manifest parsing finds a non-object row.
-        ValueError: If the eval manifest or target is invalid.
+        ValueError: If strict parsing, the eval manifest, or the target is
+            invalid.
     """
     run_dir = artifacts_lib.local_run_dir(results_dir, run_cfg.round_id)
     artifacts = _prepare_eval_artifacts(run_cfg, storage_client, run_dir)
@@ -236,8 +236,8 @@ def _prepare_eval_artifacts(
     Raises:
         google_exceptions.GoogleAPIError: If the source download fails.
         OSError: If a local or GCS artifact cannot be read or written.
-        TypeError: If strict manifest parsing finds a non-object row.
-        ValueError: If the eval manifest or target is invalid.
+        ValueError: If strict parsing, the eval manifest, or the target is
+            invalid.
     """
     if run_cfg.eval_model is None:
         msg = "eval-only prepare requires one [eval.model] target"
@@ -281,8 +281,8 @@ def prepare_artifacts(
     Raises:
         google_exceptions.GoogleAPIError: If a source download fails.
         OSError: If a local artifact cannot be read or written.
-        TypeError: If strict parsing finds a non-object manifest row.
-        ValueError: If training manifests or generated examples are invalid.
+        ValueError: If strict parsing, training manifests, or generated
+            examples are invalid.
     """
     if (
         run_cfg.train_manifest_uri is None

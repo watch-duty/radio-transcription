@@ -13,6 +13,7 @@ class EvalTargetArtifactPaths:
         input_uri: Batch request JSONL URI.
         output_uri: Prefix for raw batch prediction output.
         batch_metadata_uri: Batch request-identity sidecar URI.
+        batch_job_metadata_uri: Submitted batch-job identity sidecar URI.
         online_predictions_uri: Online prediction JSONL URI.
         online_metadata_uri: Online request-identity sidecar URI.
     """
@@ -20,6 +21,7 @@ class EvalTargetArtifactPaths:
     input_uri: str
     output_uri: str
     batch_metadata_uri: str
+    batch_job_metadata_uri: str
     online_predictions_uri: str
     online_metadata_uri: str
 
@@ -67,6 +69,7 @@ def eval_target_artifact_paths(
         input_uri=f"{target_prefix}/input.jsonl",
         output_uri=f"{target_prefix}/output/",
         batch_metadata_uri=f"{target_prefix}/batch_predictions.meta.json",
+        batch_job_metadata_uri=f"{target_prefix}/batch_job.meta.json",
         online_predictions_uri=f"{target_prefix}/online_predictions.jsonl",
         online_metadata_uri=f"{target_prefix}/online_predictions.meta.json",
     )

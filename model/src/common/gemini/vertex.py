@@ -137,6 +137,7 @@ def parse_batch_output(
 
     Raises:
         TypeError: If ``lines`` is one string instead of an iterable of rows.
+        ValueError: If successful rows repeat an identifiable audio URI.
     """
     if isinstance(lines, str):
         msg = (
@@ -160,6 +161,9 @@ def parse_batch_output(
         uri = _extract_request_audio_uri(obj["request"])
         if not uri:
             continue
+        if uri in result:
+            msg = f"duplicate audio URI in batch output: {uri}"
+            raise ValueError(msg)
         result[uri] = _extract_prediction_text(obj.get("response"))
     return result
 
@@ -489,6 +493,7 @@ def submit_batch_inference(
     location: str,
     poll_interval: int = 300,
     timeout_hours: float = 24.0,
+    on_submitted: collections.abc.Callable[[str], None] | None = None,
 ) -> str:
     """Submit a Vertex AI batch inference job and poll until a terminal state.
 
@@ -501,7 +506,10 @@ def submit_batch_inference(
         poll_interval: Seconds between state-poll requests (default 300, or
             5 minutes).
         timeout_hours: Max wall-clock hours to poll before raising TimeoutError
-            (default 24) -- guards against an indefinite hang on an API/network stall.
+            (default 24) -- guards against an indefinite hang on an API or
+            network stall.
+        on_submitted: Optional callback invoked with the durable job resource
+            name before polling starts.
 
     Returns:
         Resolved batch output location (GCS URI string).
@@ -531,7 +539,58 @@ def submit_batch_inference(
         input_uri=input_uri,
         output_uri=output_uri,
     )
-    logger.info(f"Submitted batch inference job: {batch_job.name}")
+    job_name = getattr(batch_job, "name", None)
+    if not isinstance(job_name, str) or not job_name.strip():
+        msg = "Batch inference job returned no durable job name."
+        raise RuntimeError(msg)
+    logger.info(f"Submitted batch inference job: {job_name}")
+    if on_submitted is not None:
+        on_submitted(job_name)
+    return poll_batch_inference_job(
+        job_name,
+        project=project,
+        location=batch_location,
+        output_uri=output_uri,
+        poll_interval=poll_interval,
+        timeout_hours=timeout_hours,
+    )
+
+
+def poll_batch_inference_job(
+    name: str,
+    *,
+    project: str,
+    location: str,
+    output_uri: str,
+    poll_interval: int = 300,
+    timeout_hours: float = 24.0,
+) -> str:
+    """Poll an existing Vertex batch inference job to a terminal state.
+
+    Args:
+        name: Durable Vertex batch job resource name.
+        project: GCP project that owns the batch job.
+        location: Fallback Vertex location when ``name`` has no region.
+        output_uri: Requested GCS output URI used when the job omits one.
+        poll_interval: Seconds between state-poll requests.
+        timeout_hours: Maximum wall-clock hours to wait for completion.
+
+    Returns:
+        Resolved batch output location as a GCS URI string.
+
+    Raises:
+        ImportError: If the ``[vertex]`` extra is not installed.
+        RuntimeError: If polling repeatedly fails or the job ends
+            unsuccessfully.
+        TimeoutError: If no terminal state is reached within ``timeout_hours``.
+    """
+    _require_vertex()
+    job_location = resource_location(name, location) or location
+    client = genai.Client(
+        vertexai=True,
+        project=project,
+        location=job_location,
+    )
 
     last_state: str | None = None
     state: str = ""
@@ -539,23 +598,24 @@ def submit_batch_inference(
     consecutive_get_errors = 0
     while True:
         try:
-            cur = client.batches.get(name=batch_job.name)
+            cur = client.batches.get(name=name)
         except Exception as e:
             consecutive_get_errors += 1
             if time.monotonic() >= deadline:
                 msg = (
-                    f"Batch job {batch_job.name} could not be fetched before "
-                    f"the {timeout_hours}h timeout elapsed (last state: {state or 'unknown'})."
+                    f"Batch job {name} could not be fetched before the "
+                    f"{timeout_hours}h timeout elapsed (last state: "
+                    f"{state or 'unknown'})."
                 )
                 raise TimeoutError(msg) from e
             if consecutive_get_errors > _POLL_GET_RETRY_LIMIT:
                 msg = (
-                    f"Could not fetch batch job {batch_job.name} after "
+                    f"Could not fetch batch job {name} after "
                     f"{_POLL_GET_RETRY_LIMIT} retries."
                 )
                 raise RuntimeError(msg) from e
             logger.warning(
-                f"Transient error fetching batch job {batch_job.name}; retrying "
+                f"Transient error fetching batch job {name}; retrying "
                 f"({consecutive_get_errors}/{_POLL_GET_RETRY_LIMIT}): {e}"
             )
             time.sleep(_POLL_GET_RETRY_SLEEP_SECONDS)
@@ -569,7 +629,7 @@ def submit_batch_inference(
             break
         if time.monotonic() >= deadline:
             msg = (
-                f"Batch job {batch_job.name} did not reach a terminal state "
+                f"Batch job {name} did not reach a terminal state "
                 f"within {timeout_hours}h (last state: {state})."
             )
             raise TimeoutError(msg)

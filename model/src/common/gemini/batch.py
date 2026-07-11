@@ -20,6 +20,7 @@ if typing.TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 BatchSubmitFn = collections.abc.Callable[..., str]
+BatchPollFn = collections.abc.Callable[..., str]
 
 
 class BatchPredictionMap(dict[str, str]):
@@ -32,7 +33,7 @@ class BatchPredictionMap(dict[str, str]):
     output_uri: str
 
 
-def run_batch_audio_inference(
+def run_batch_audio_inference(  # noqa: PLR0911, PLR0912, PLR0915
     *,
     storage_client: storage.Client,
     run_gcs_prefix: str,
@@ -51,6 +52,7 @@ def run_batch_audio_inference(
     ]
     | None = None,
     submit_fn: BatchSubmitFn = vertex.submit_batch_inference,
+    poll_fn: BatchPollFn = vertex.poll_batch_inference_job,
 ) -> BatchPredictionMap | None:
     """Run resumable Gemini batch inference for one evaluation target.
 
@@ -72,11 +74,12 @@ def run_batch_audio_inference(
         histories: Prior turns aligned one-for-one with ``audio_uris``. Empty
             histories are used when omitted.
         submit_fn: Batch submission callable, injectable for tests.
+        poll_fn: Existing-job polling callable, injectable for tests.
 
     Returns:
         Parsed predictions with their raw output URI, or ``None`` when the
         input has duplicate audio URIs, submission fails, output is missing,
-        or output contains duplicate or unexpected audio URIs.
+        or output contains no successful, duplicate, or unexpected audio URIs.
 
     Raises:
         TypeError: If reusable output metadata lacks an object identity.
@@ -110,38 +113,36 @@ def run_batch_audio_inference(
     paths = eval_artifacts.eval_target_artifact_paths(run_gcs_prefix, label)
     batch_output_gcs = paths.output_uri
     metadata_uri = paths.batch_metadata_uri
+    job_metadata_uri = paths.batch_job_metadata_uri
     with tempfile.TemporaryDirectory() as tmp:
-        metadata_path = (
-            pathlib.Path(tmp) / f"batch_predictions_{label}.meta.json"
-        )
+        tmp_dir = pathlib.Path(tmp)
+        metadata_path = tmp_dir / f"batch_predictions_{label}.meta.json"
+        job_metadata_path = tmp_dir / f"batch_job_{label}.meta.json"
         pred_blobs = _list_batch_prediction_blobs(
             storage_client,
             batch_output_gcs,
         )
-        if pred_blobs:
+        has_completion_metadata = gcs_utils.blob_exists(
+            storage_client,
+            metadata_uri,
+        )
+        has_job_metadata = gcs_utils.blob_exists(
+            storage_client,
+            job_metadata_uri,
+        )
+        reused_completed_output = bool(pred_blobs and has_completion_metadata)
+        if reused_completed_output:
             _validate_reusable_batch_output(
                 storage_client=storage_client,
                 metadata_uri=metadata_uri,
                 metadata_path=metadata_path,
                 request_identity_payload=identity,
             )
-        batch_input_gcs, batch_output_gcs = build_batch_jsonl(
-            storage_client=storage_client,
-            run_gcs_prefix=run_gcs_prefix,
-            label=label,
-            audio_uris=audio_uris,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            histories=history_list,
-            history_mode=prior_context_mode,
-            tmp_dir=pathlib.Path(tmp),
-        )
-        if pred_blobs:
             preds = _load_batch_predictions(
                 storage_client=storage_client,
                 output_uri=batch_output_gcs,
                 label=label,
-                tmp_dir=pathlib.Path(tmp),
+                tmp_dir=tmp_dir,
                 pred_blobs=pred_blobs,
             )
             if preds is None:
@@ -152,7 +153,60 @@ def run_batch_audio_inference(
                 label,
                 batch_output_gcs,
             )
+        elif has_job_metadata:
+            job_name = _load_batch_job_name(
+                storage_client=storage_client,
+                metadata_uri=job_metadata_uri,
+                metadata_path=job_metadata_path,
+                request_identity_payload=identity,
+            )
+            try:
+                output_loc = poll_fn(
+                    name=job_name,
+                    project=gcp_project,
+                    location=location,
+                    output_uri=batch_output_gcs,
+                )
+            except (RuntimeError, TimeoutError) as exc:
+                logger.exception(
+                    "[%s] Batch inference failed: %s",
+                    label,
+                    exc,
+                )
+                return None
+            preds = _load_batch_predictions(
+                storage_client=storage_client,
+                output_uri=output_loc,
+                label=label,
+                tmp_dir=tmp_dir,
+            )
+            if preds is None:
+                return None
+        elif pred_blobs:
+            msg = f"batch prediction metadata missing: {metadata_uri}"
+            raise ValueError(msg)
         else:
+            batch_input_gcs, batch_output_gcs = build_batch_jsonl(
+                storage_client=storage_client,
+                run_gcs_prefix=run_gcs_prefix,
+                label=label,
+                audio_uris=audio_uris,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                histories=history_list,
+                history_mode=prior_context_mode,
+                tmp_dir=tmp_dir,
+            )
+
+            def record_submitted_job(job_name: str) -> None:
+                _write_batch_job_metadata(
+                    storage_client=storage_client,
+                    metadata_uri=job_metadata_uri,
+                    metadata_path=job_metadata_path,
+                    request_identity_payload=identity,
+                    job_name=job_name,
+                )
+
             try:
                 output_loc = submit_fn(
                     input_uri=batch_input_gcs,
@@ -160,6 +214,7 @@ def run_batch_audio_inference(
                     model=model_id,
                     project=gcp_project,
                     location=location,
+                    on_submitted=record_submitted_job,
                 )
             except (RuntimeError, TimeoutError) as exc:
                 logger.exception("[%s] Batch inference failed: %s", label, exc)
@@ -169,7 +224,7 @@ def run_batch_audio_inference(
                 storage_client=storage_client,
                 output_uri=output_loc,
                 label=label,
-                tmp_dir=pathlib.Path(tmp),
+                tmp_dir=tmp_dir,
             )
             if preds is None:
                 return None
@@ -185,7 +240,7 @@ def run_batch_audio_inference(
             )
             return None
 
-        if not pred_blobs:
+        if not reused_completed_output:
             request_identity.write_metadata(metadata_path, identity)
             gcs_utils.upload_local_file(
                 storage_client,
@@ -318,8 +373,21 @@ def _load_batch_predictions(
         gcs_utils.download_blob_to_file(
             storage_client, out_bucket, blob.name, str(local_path)
         )
-        with local_path.open(encoding="utf-8") as handle:
-            parsed = vertex.parse_batch_output(handle)
+        parsed: dict[str, str] = {}
+        parse_error: str | None = None
+        try:
+            with local_path.open(encoding="utf-8") as handle:
+                parsed = vertex.parse_batch_output(handle)
+        except ValueError as exc:
+            parse_error = str(exc)
+        if parse_error is not None:
+            logger.error(
+                "[%s] invalid or duplicate batch output shard %s: %s",
+                label,
+                blob.name,
+                parse_error,
+            )
+            return None
         duplicate_audio_uris = set(preds) & set(parsed)
         if duplicate_audio_uris:
             preview = ", ".join(sorted(duplicate_audio_uris)[:3])
@@ -330,6 +398,12 @@ def _load_batch_predictions(
             )
             return None
         preds.update(parsed)
+    if not preds:
+        logger.error(
+            "[%s] batch output contained no successful predictions.",
+            label,
+        )
+        return None
     return preds
 
 
@@ -349,6 +423,91 @@ def _list_batch_prediction_blobs(
     ]
 
 
+def _write_batch_job_metadata(
+    *,
+    storage_client: storage.Client,
+    metadata_uri: str,
+    metadata_path: pathlib.Path,
+    request_identity_payload: dict[str, typing.Any],
+    job_name: str,
+) -> None:
+    """Persist a submitted batch job name with its request identity.
+
+    Args:
+        storage_client: Client used to upload the durable metadata sidecar.
+        metadata_uri: GCS destination for the metadata sidecar.
+        metadata_path: Local path used to stage the metadata sidecar.
+        request_identity_payload: Request identity associated with the job.
+        job_name: Submitted Vertex batch job resource name.
+
+    Returns:
+        None.
+
+    Raises:
+        OSError: If the local metadata sidecar cannot be written.
+        ValueError: If ``job_name`` is empty.
+    """
+    if not isinstance(job_name, str) or not job_name.strip():
+        msg = "batch job metadata requires a non-empty job_name"
+        raise ValueError(msg)
+    payload = request_identity.metadata_payload(request_identity_payload)
+    payload["job_name"] = job_name
+    metadata_path.write_text(
+        json.dumps(payload, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    gcs_utils.upload_local_file(
+        storage_client,
+        metadata_path,
+        metadata_uri,
+    )
+
+
+def _load_batch_job_name(
+    *,
+    storage_client: storage.Client,
+    metadata_uri: str,
+    metadata_path: pathlib.Path,
+    request_identity_payload: dict[str, typing.Any],
+) -> str:
+    """Load a non-empty job resource name from durable metadata.
+
+    Args:
+        storage_client: Client used to download the durable metadata sidecar.
+        metadata_uri: GCS source for the metadata sidecar.
+        metadata_path: Local path used to stage the metadata sidecar.
+        request_identity_payload: Request identity required for reuse.
+
+    Returns:
+        The stored non-empty Vertex batch job resource name.
+
+    Raises:
+        OSError: If the local metadata sidecar cannot be read.
+        TypeError: If the metadata or stored request identity is not an object.
+        ValueError: If metadata is malformed, identity differs, or the stored
+            job name is empty.
+    """
+    gcs_utils.download_gcs_uri(storage_client, metadata_uri, metadata_path)
+    existing_identity = request_identity.load_metadata_identity(
+        metadata_path,
+        error_message="batch job request identity mismatch",
+    )
+    request_identity.validate_exact_identity(
+        existing_identity,
+        request_identity_payload,
+        "batch job request identity mismatch",
+    )
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    if not isinstance(metadata, dict):
+        msg = "batch job metadata must be an object"
+        raise TypeError(msg)
+    job_name = metadata.get("job_name")
+    if not isinstance(job_name, str) or not job_name.strip():
+        msg = "batch job metadata requires a non-empty job_name"
+        raise ValueError(msg)
+    return job_name
+
+
 def _validate_reusable_batch_output(
     *,
     storage_client: storage.Client,
@@ -356,6 +515,22 @@ def _validate_reusable_batch_output(
     metadata_path: pathlib.Path,
     request_identity_payload: dict[str, typing.Any],
 ) -> None:
+    """Validate completion metadata before reusing batch output.
+
+    Args:
+        storage_client: Client used to inspect and download completion metadata.
+        metadata_uri: GCS source for the completion metadata sidecar.
+        metadata_path: Local path used to stage the metadata sidecar.
+        request_identity_payload: Request identity required for reuse.
+
+    Returns:
+        None.
+
+    Raises:
+        OSError: If the local metadata sidecar cannot be read.
+        TypeError: If completion metadata has an invalid object shape.
+        ValueError: If metadata is missing or its request identity differs.
+    """
     if not gcs_utils.blob_exists(storage_client, metadata_uri):
         msg = f"batch prediction metadata missing: {metadata_uri}"
         raise ValueError(msg)

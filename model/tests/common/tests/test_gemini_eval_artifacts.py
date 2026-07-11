@@ -35,6 +35,10 @@ class TestGeminiEvalArtifacts(unittest.TestCase):
             "batch_predictions.meta.json",
         )
         self.assertEqual(
+            paths.batch_job_metadata_uri,
+            "gs://bucket/sft/runs/run-a/evals/checkpoint_6/batch_job.meta.json",
+        )
+        self.assertEqual(
             paths.online_predictions_uri,
             "gs://bucket/sft/runs/run-a/evals/checkpoint_6/"
             "online_predictions.jsonl",

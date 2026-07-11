@@ -50,8 +50,11 @@ validation. Conversion to `CanonicalRow` preserves unknown keys inside
   aggregated `ValueError` when issues are present.
 - `canonical_row_identity(...)` returns `(example_id, segment_id)` for a
   canonical row.
-- `load_manifest()` loads local JSON arrays or JSONL files and fails loudly on
-  missing or malformed files. It does not coerce row values.
+- `load_manifest()` leniently loads local JSON arrays or JSONL files for
+  exploratory use. It skips malformed rows and returns an empty list for
+  missing or unreadable files.
+- `load_manifest_strict()` is the fail-loud local loader used by packaged
+  workflows; it rejects malformed content without coercing row values.
 - `rows_from_manifest()` is a compatibility converter: it derives a missing
   `example_id` from the audio filename, defaults a missing `segment_id` to
   `"001"` and a missing `offset` to `0.0`, then validates and returns typed

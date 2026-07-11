@@ -622,6 +622,32 @@ class TestParseBatchOutput(unittest.TestCase):
             {"gs://bucket/a.flac": "engine 41"},
         )
 
+    def test_rejects_duplicate_audio_uri_within_one_iterable(self) -> None:
+        output = {
+            "request": {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "fileData": {
+                                    "fileUri": "gs://bucket/a.flac",
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "response": {
+                "candidates": [{"content": {"parts": [{"text": "engine 41"}]}}]
+            },
+        }
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "duplicate audio URI in batch output: gs://bucket/a.flac",
+        ):
+            vertex.parse_batch_output([json.dumps(output), json.dumps(output)])
+
     def test_parses_snake_case_request_echo(self) -> None:
         output = {
             "request": {
@@ -733,6 +759,80 @@ class TestParseBatchOutput(unittest.TestCase):
 
 class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
     """Batch inference returns the destination GCS URI."""
+
+    @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_notifies_submitted_job_before_polling(self, mock_genai) -> None:
+        job_name = "projects/p/locations/us/batchPredictionJobs/1"
+        mock_batch_job = unittest.mock.MagicMock()
+        mock_batch_job.name = job_name
+        mock_cur = unittest.mock.MagicMock()
+        mock_cur.state.name = "JOB_STATE_SUCCEEDED"
+        mock_cur.dest.gcs_uri = "gs://bucket/output/"
+        events: list[str] = []
+
+        def get_job(*, name: str) -> object:
+            self.assertEqual(name, job_name)
+            events.append("poll")
+            return mock_cur
+
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.return_value = mock_batch_job
+        mock_client.batches.get.side_effect = get_job
+        mock_genai.Client.return_value = mock_client
+
+        result = vertex.submit_batch_inference(
+            input_uri="gs://bucket/input.jsonl",
+            output_uri="gs://bucket/output/",
+            model="gemini-2.5-flash",
+            project="p",
+            location="us-central1",
+            on_submitted=lambda name: events.append(f"submitted:{name}"),
+        )
+
+        self.assertEqual(result, "gs://bucket/output/")
+        self.assertEqual(events, [f"submitted:{job_name}", "poll"])
+        self.assertEqual(
+            mock_genai.Client.call_args_list,
+            [
+                unittest.mock.call(
+                    vertexai=True,
+                    project="p",
+                    location="us-central1",
+                ),
+                unittest.mock.call(
+                    vertexai=True,
+                    project="p",
+                    location="us",
+                ),
+            ],
+        )
+
+    @unittest.mock.patch("common.gemini.vertex.genai")
+    def test_rejects_missing_durable_job_name_before_polling(
+        self, mock_genai
+    ) -> None:
+        mock_batch_job = unittest.mock.MagicMock()
+        mock_batch_job.name = None
+        mock_client = unittest.mock.MagicMock()
+        mock_client.batches.create.return_value = mock_batch_job
+        mock_genai.Client.return_value = mock_client
+        on_submitted = unittest.mock.MagicMock()
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "Batch inference job returned no durable job name",
+        ):
+            vertex.submit_batch_inference(
+                input_uri="gs://bucket/input.jsonl",
+                output_uri="gs://bucket/output/",
+                model="gemini-2.5-flash",
+                project="p",
+                location="us-central1",
+                on_submitted=on_submitted,
+            )
+
+        on_submitted.assert_not_called()
+        mock_client.batches.get.assert_not_called()
 
     @unittest.mock.patch("common.gemini.vertex.genai")
     def test_submission_api_error_is_normalized(self, mock_genai) -> None:
@@ -897,8 +997,12 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
             location="us-central1",
         )
 
-        mock_genai.Client.assert_called_once_with(
-            vertexai=True, project="p", location="us"
+        self.assertEqual(
+            mock_genai.Client.call_args_list,
+            [
+                unittest.mock.call(vertexai=True, project="p", location="us"),
+                unittest.mock.call(vertexai=True, project="p", location="us"),
+            ],
         )
 
     @unittest.mock.patch("common.gemini.vertex.genai")
@@ -924,8 +1028,12 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
             location="us-central1",
         )
 
-        mock_genai.Client.assert_called_once_with(
-            vertexai=True, project="p", location="us"
+        self.assertEqual(
+            mock_genai.Client.call_args_list,
+            [
+                unittest.mock.call(vertexai=True, project="p", location="us"),
+                unittest.mock.call(vertexai=True, project="p", location="us"),
+            ],
         )
 
 

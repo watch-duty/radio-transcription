@@ -1775,8 +1775,9 @@ class TestEvaluateRun(unittest.TestCase):
             output_uri = sft_eval_fixtures.batch_output_uri(
                 run_cfg.paths.gcs_prefix
             )
+            prediction_uri = f"{output_uri}predictions.jsonl"
             storage.put(
-                f"{output_uri}predictions.jsonl",
+                prediction_uri,
                 "\n".join(
                     [
                         json.dumps(
@@ -1859,6 +1860,13 @@ class TestEvaluateRun(unittest.TestCase):
                     ],
                 ],
             )
+            prediction_output = storage.get(prediction_uri)
+            storage.store.pop(fake_gcs.split_gcs(prediction_uri))
+
+            def submit_batch(**_: object) -> str:
+                storage.put(prediction_uri, prediction_output)
+                return output_uri
+
             args = argparse.Namespace(config=str(cfg_path))
 
             with (
@@ -1868,7 +1876,7 @@ class TestEvaluateRun(unittest.TestCase):
                 unittest.mock.patch.object(
                     evaluate_module,
                     "submit_batch_inference",
-                    return_value=output_uri,
+                    side_effect=submit_batch,
                 ),
                 _patched_eval_scoring(),
             ):
@@ -2198,8 +2206,9 @@ class TestEvaluateRun(unittest.TestCase):
             output_uri = sft_eval_fixtures.batch_output_uri(
                 run_cfg.paths.gcs_prefix
             )
+            prediction_uri = f"{output_uri}predictions.jsonl"
             storage.put(
-                f"{output_uri}predictions.jsonl",
+                prediction_uri,
                 json.dumps(
                     {
                         "request": {
@@ -2244,6 +2253,12 @@ class TestEvaluateRun(unittest.TestCase):
                     ]
                 ],
             )
+            prediction_output = storage.get(prediction_uri)
+            storage.store.pop(fake_gcs.split_gcs(prediction_uri))
+
+            def submit_batch(**_: object) -> str:
+                storage.put(prediction_uri, prediction_output)
+                return output_uri
 
             with (
                 unittest.mock.patch.object(
@@ -2252,7 +2267,7 @@ class TestEvaluateRun(unittest.TestCase):
                 unittest.mock.patch.object(
                     evaluate_module,
                     "submit_batch_inference",
-                    return_value=output_uri,
+                    side_effect=submit_batch,
                 ),
                 _patched_eval_scoring(),
             ):
@@ -2818,6 +2833,70 @@ max_retries = 1
         download_manifest.assert_called_once()
         run_online.assert_awaited_once()
         batch.assert_not_called()
+
+    def test_eval_all_online_failures_skip_reports_and_durable_success(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = pathlib.Path(tmp_s)
+            storage = fake_gcs.FakeStorageClient()
+            cfg_path = _write_config_file(
+                tmp,
+                eval_label="checkpoint_6",
+                eval_model="projects/p/locations/us/endpoints/123",
+            )
+            run_cfg = config_module.load_run_config(cfg_path)
+            config = run_cfg.to_record_dict()
+            storage.put(run_cfg.paths.config_uri, json.dumps(config))
+            online_preds = _online_prediction_map(
+                {},
+                run_gcs_prefix=run_cfg.paths.gcs_prefix,
+                label="checkpoint_6",
+                error_count=1,
+            )
+            args = argparse.Namespace(config=str(cfg_path))
+
+            with (
+                unittest.mock.patch.object(
+                    evaluate_module.storage, "Client", return_value=storage
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "download_jsonl_manifest_strict",
+                    return_value=[
+                        _row("gs://audio/eval.flac", "eval transcript")
+                    ],
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module,
+                    "run_online_target_inference",
+                    unittest.mock.AsyncMock(return_value=online_preds),
+                ),
+                unittest.mock.patch.object(
+                    evaluate_module, "RESULTS_DIR", tmp / "results"
+                ),
+                _patched_eval_scoring(),
+            ):
+                rc = evaluate_module.evaluate(args)
+
+            manifest_module = evaluate_module.inference_manifest
+            manifest_path = manifest_module.build_inference_manifest_blob_path(
+                inference_dataset_slug="echo/eval",
+                model_family_slug="gemini_3_1_flash_lite",
+                run_id=run_cfg.round_id,
+                artifact_label="checkpoint_6",
+            )
+            normalized_uri = f"gs://{run_cfg.gcs_bucket}/{manifest_path}"
+            summary = sft_eval_fixtures.summary_artifacts(
+                run_cfg.paths.gcs_prefix
+            )
+            durable = json.loads(storage.get(run_cfg.paths.config_uri))
+
+            self.assertEqual(rc, 1)
+            self.assertFalse(storage.has(normalized_uri))
+            self.assertFalse(storage.has(summary["summary_json_uri"]))
+            self.assertFalse(storage.has(summary["summary_markdown_uri"]))
+            self.assertNotIn("last_eval_at", durable)
 
     def test_online_unresolved_error_scores_as_missing_empty_hypothesis(
         self,

@@ -891,14 +891,21 @@ class TestMergePredictionMatching(unittest.TestCase):
         self.assertIs(result, gt)
 
 
-class TestLoadManifestFailLoud(unittest.TestCase):
-    """Local manifest loading preserves input and fails loudly."""
+class TestLoadManifestLenient(unittest.TestCase):
+    """Local exploratory loading skips bad input and normalizes transcripts."""
 
-    def test_missing_file_raises(self) -> None:
-        with self.assertRaises(FileNotFoundError):
-            manifest_lib.load_manifest("./nonexistent_manifest.jsonl")
+    def test_missing_file_returns_empty(self) -> None:
+        rows = manifest_lib.load_manifest("./nonexistent_manifest.jsonl")
 
-    def test_non_string_text_value_is_preserved(self) -> None:
+        self.assertEqual(rows, [])
+
+    def test_unreadable_path_returns_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            rows = manifest_lib.load_manifest(tmp_s)
+
+        self.assertEqual(rows, [])
+
+    def test_non_string_text_value_is_coerced(self) -> None:
         fd, path = tempfile.mkstemp(suffix=".jsonl")
         try:
             with os.fdopen(fd, "w") as f:
@@ -909,7 +916,7 @@ class TestLoadManifestFailLoud(unittest.TestCase):
         finally:
             pathlib.Path(path).unlink()
 
-        self.assertEqual(rows[0]["text"], 123)
+        self.assertEqual(rows[0]["text"], "123")
 
 
 class TestParseManifestText(unittest.TestCase):
@@ -1286,7 +1293,7 @@ class TestStrictCanonicalRowsFromManifest(unittest.TestCase):
 
 
 class TestLoadManifestBoundaries(unittest.TestCase):
-    """Local manifest loading fails on malformed JSON/JSONL boundaries."""
+    """Local exploratory loading retains valid rows at parse boundaries."""
 
     def test_json_array_is_loaded_without_canonical_validation(self) -> None:
         fd, path = tempfile.mkstemp(suffix=".json")
@@ -1313,13 +1320,14 @@ class TestLoadManifestBoundaries(unittest.TestCase):
 
         self.assertEqual(rows, [{"audio_filepath": "local/audio.mp3"}])
 
-    def test_malformed_jsonl_rows_raise(self) -> None:
+    def test_malformed_jsonl_rows_are_skipped(self) -> None:
         fd, path = tempfile.mkstemp(suffix=".jsonl")
         try:
             with os.fdopen(fd, "w") as f:
                 f.write("{bad json}\n")
                 f.write(json.dumps({"audio_filepath": "local/audio.mp3"}))
-            with self.assertRaises(ValueError):
-                manifest_lib.load_manifest(path)
+            rows = manifest_lib.load_manifest(path)
         finally:
             pathlib.Path(path).unlink()
+
+        self.assertEqual(rows, [{"audio_filepath": "local/audio.mp3"}])

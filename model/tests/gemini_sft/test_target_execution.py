@@ -479,6 +479,142 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
     @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
     @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
+    def test_each_online_config_uses_its_exact_request_payload(
+        self, mock_genai, mock_types
+    ) -> None:
+        class Response:
+            text = "recognized"
+
+        request_payloads = {
+            "gs://audio/1.flac": {
+                "request": {
+                    "contents": [
+                        {
+                            "role": "user",
+                            "parts": [
+                                {
+                                    "fileData": {
+                                        "fileUri": "gs://audio/1.flac",
+                                        "mimeType": "audio/flac",
+                                    }
+                                }
+                            ],
+                        }
+                    ],
+                    "systemInstruction": {
+                        "role": "system",
+                        "parts": [{"text": "system one"}],
+                    },
+                    "generationConfig": {
+                        "temperature": 0.1,
+                        "max_output_tokens": 111,
+                    },
+                    "safetySettings": [
+                        {
+                            "category": "HARM_CATEGORY_HARASSMENT",
+                            "threshold": "BLOCK_LOW_AND_ABOVE",
+                        }
+                    ],
+                }
+            },
+            "gs://audio/2.flac": {
+                "request": {
+                    "contents": [
+                        {
+                            "role": "user",
+                            "parts": [
+                                {
+                                    "fileData": {
+                                        "fileUri": "gs://audio/2.flac",
+                                        "mimeType": "audio/flac",
+                                    }
+                                }
+                            ],
+                        }
+                    ],
+                    "systemInstruction": {
+                        "role": "system",
+                        "parts": [{"text": "system two"}],
+                    },
+                    "generationConfig": {
+                        "temperature": 0.2,
+                        "max_output_tokens": 222,
+                    },
+                    "safetySettings": [
+                        {
+                            "category": "HARM_CATEGORY_HATE_SPEECH",
+                            "threshold": "BLOCK_MEDIUM_AND_ABOVE",
+                        }
+                    ],
+                }
+            },
+        }
+        calls = []
+
+        async def generate_content(**kwargs):
+            calls.append(kwargs)
+            return Response()
+
+        def build_request(audio_uri: str, **_: object) -> dict:
+            return request_payloads[audio_uri]
+
+        mock_client = unittest.mock.MagicMock()
+        mock_client.aio.models.generate_content = generate_content
+        mock_genai.Client.return_value = mock_client
+        mock_types.HttpRetryOptions.side_effect = lambda **kwargs: kwargs
+        retry_http_options = unittest.mock.sentinel.retry_http_options
+        mock_types.HttpOptions.return_value = retry_http_options
+        mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
+
+        with unittest.mock.patch.object(
+            target_execution.vertex,
+            "build_request",
+            side_effect=build_request,
+        ):
+            asyncio.run(
+                target_execution.run_online_target_inference(
+                    storage_client=self.storage,
+                    run_gcs_prefix="gs://bucket/run",
+                    project="project",
+                    default_location="us-central1",
+                    target_label="checkpoint_6",
+                    target_model=(
+                        "projects/p/locations/us-central1/endpoints/123"
+                    ),
+                    audio_uris=list(request_payloads),
+                    histories=[[], []],
+                    system_prompt="shared system",
+                    user_prompt="shared user",
+                    prior_context_count=8,
+                    prior_context_mode="text_turns",
+                    eval_manifest_uri="gs://data/eval.jsonl",
+                    local_dir=self.local_dir,
+                    concurrency=2,
+                    max_retries=3,
+                )
+            )
+
+        self.assertEqual(mock_types.GenerateContentConfig.call_count, 2)
+        mock_types.HttpRetryOptions.assert_called_once()
+        mock_types.HttpOptions.assert_called_once()
+        calls_by_audio_uri = {
+            call["contents"][-1]["parts"][-1]["fileData"]["fileUri"]: call
+            for call in calls
+        }
+        for audio_uri, wrapped_payload in request_payloads.items():
+            request = wrapped_payload["request"]
+            self.assertEqual(
+                calls_by_audio_uri[audio_uri]["config"],
+                {
+                    "system_instruction": request["systemInstruction"],
+                    **request["generationConfig"],
+                    "safety_settings": request["safetySettings"],
+                    "http_options": retry_http_options,
+                },
+            )
+
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
     def test_worker_pool_schedules_at_most_concurrency_workers(
         self, mock_genai, mock_types
     ) -> None:

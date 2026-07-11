@@ -223,6 +223,14 @@ def evaluate_run(  # noqa: PLR0915
                 max_retries=eval_execution.max_retries,
             )
         )
+        if not preds:
+            logger.error(
+                "Online inference produced no successful predictions for "
+                "target %s; unresolved errors=%s.",
+                target.label,
+                preds.error_count,
+            )
+            return 1
         raw_output_uri = None
         online_predictions_uri = preds.online_predictions_uri
         metadata = {
@@ -307,11 +315,6 @@ def evaluate_run(  # noqa: PLR0915
         RESULTS_DIR / run_cfg.round_id / "wer_summary.md",
     )
     return 0
-
-
-PredictionMap = (
-    gemini_batch.BatchPredictionMap | target_execution.OnlinePredictionMap
-)
 
 
 def _validate_local_eval_config_matches_durable(
@@ -433,7 +436,7 @@ def batch_infer(
     prior_context_mode: str,
     eval_manifest_uri: str,
     histories: list[typing.Any] | None = None,
-) -> PredictionMap | None:
+) -> gemini_batch.BatchPredictionMap | None:
     """Build, submit, download, and parse one batch inference target.
 
     Args:

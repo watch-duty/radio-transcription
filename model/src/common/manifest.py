@@ -12,8 +12,8 @@ Exports:
   strict_canonical_rows_from_manifest — validate and convert strict rows
   parse_manifest_text           — lenient JSON array/JSONL text parser
   parse_manifest_text_strict    — fail-loud JSON array/JSONL text parser
-  load_manifest                 — load a JSON array or JSONL manifest from local disk
-  load_manifest_strict          — load and normalize without skipping rows
+  load_manifest                 — lenient local JSON array/JSONL loader
+  load_manifest_strict          — fail-loud local manifest loader
   merge_predictions_to_manifest — URI-first prediction merge onto GT rows
 """
 
@@ -830,66 +830,40 @@ def _normalize_manifest_rows(
 
 
 def load_manifest(path: str) -> list[dict[str, Any]]:
-    """Loads a manifest file (JSON array or JSONL) from the local filesystem.
+    """Leniently load a local JSON array or JSONL manifest.
 
     Args:
         path: Local filesystem path to a .json (array) or .jsonl manifest.
 
     Returns:
-        List of row dicts. Empty files return an empty list so callers can
-        report split-specific empty-manifest errors.
-
-    Raises:
-        FileNotFoundError: If ``path`` does not exist.
-        OSError: If ``path`` cannot be read.
-        ValueError: If JSON or JSONL content is malformed.
+        Parsed and normalized object rows. Invalid rows are skipped. Missing
+        or unreadable files produce an empty list.
     """
     manifest_path = Path(path)
-    if not manifest_path.exists():
-        raise FileNotFoundError(path)
-    with manifest_path.open(encoding="utf-8-sig") as f:
-        first_non_whitespace = ""
-        while True:
-            char = f.read(1)
-            if not char:
-                return []
-            if not char.isspace():
-                first_non_whitespace = char
-                break
-
-        f.seek(0)
-        if first_non_whitespace == "[":
-            content = f.read().strip()
-            try:
-                data = json.loads(content)
-            except json.JSONDecodeError as e:
-                msg = f"Failed to parse JSON array in {path}: {e}"
-                raise ValueError(msg) from e
-            if not isinstance(data, list) or not all(
-                isinstance(row, dict) for row in data
-            ):
-                msg = f"Expected a JSON array of objects in {path!r}"
-                raise ValueError(msg)
-            return data
-
-        data: list[dict[str, Any]] = []
-        for i, obj_str in enumerate(f, start=1):
-            if not obj_str or obj_str.isspace():
-                continue
-            try:
-                obj = json.loads(obj_str)
-            except json.JSONDecodeError as exc:
-                msg = f"Malformed JSON at line {i} in {path}"
-                raise ValueError(msg) from exc
-            if not isinstance(obj, dict):
-                msg = f"Expected JSON object at line {i} in {path}"
-                raise ValueError(msg)  # noqa: TRY004
-            data.append(obj)
-    return data
+    try:
+        if not manifest_path.exists():
+            logger.error("Manifest path not found: %s", path)
+            return []
+        content = manifest_path.read_text(encoding="utf-8-sig")
+    except OSError as exc:
+        logger.exception("Could not read manifest %s: %s", path, exc)
+        return []
+    return parse_manifest_text(content, source=path)
 
 
 def load_manifest_strict(path: str) -> list[dict[str, Any]]:
-    """Load and normalize a local manifest without skipping invalid rows."""
+    """Load and normalize a local manifest without skipping invalid rows.
+
+    Args:
+        path: Local filesystem path to a JSON array or JSONL manifest.
+
+    Returns:
+        Parsed and normalized object rows, or an empty list for an empty file.
+
+    Raises:
+        OSError: If ``path`` cannot be read.
+        ValueError: If JSON is malformed or any parsed row is not an object.
+    """
     content = Path(path).read_text(encoding="utf-8-sig")
     return parse_manifest_text_strict(content, source=path)
 

@@ -7,7 +7,13 @@ import unittest
 
 import fake_gcs
 import sft_eval_fixtures
-from common.gemini import batch, context, eval_artifacts, vertex
+from common.gemini import (
+    batch,
+    context,
+    eval_artifacts,
+    request_identity,
+    vertex,
+)
 
 
 class TestGeminiBatchInference(unittest.TestCase):
@@ -221,9 +227,11 @@ class TestGeminiBatchInference(unittest.TestCase):
         self,
     ) -> None:
         storage = fake_gcs.FakeStorageClient()
-        output_uri = sft_eval_fixtures.batch_output_uri(
-            "gs://bucket/sft/runs/run-a"
-        )
+        run_gcs_prefix = "gs://bucket/sft/runs/run-a"
+        input_uri = sft_eval_fixtures.batch_input_uri(run_gcs_prefix)
+        output_uri = sft_eval_fixtures.batch_output_uri(run_gcs_prefix)
+        original_input = '{"request":"existing"}\n'
+        storage.put(input_uri, original_input)
         storage.put(
             f"{output_uri}prediction-model-1/predictions.jsonl",
             sft_eval_fixtures.vertex_batch_output("gs://audio/a.flac", "copy")
@@ -231,13 +239,13 @@ class TestGeminiBatchInference(unittest.TestCase):
         )
         sft_eval_fixtures.put_batch_metadata(
             storage,
-            run_gcs_prefix="gs://bucket/sft/runs/run-a",
+            run_gcs_prefix=run_gcs_prefix,
         )
         calls: list[dict[str, object]] = []
 
         preds = batch.run_batch_audio_inference(
             storage_client=storage,
-            run_gcs_prefix="gs://bucket/sft/runs/run-a",
+            run_gcs_prefix=run_gcs_prefix,
             gcp_project="project",
             location="us-central1",
             model_id="gemini-3.1-flash-lite",
@@ -254,6 +262,8 @@ class TestGeminiBatchInference(unittest.TestCase):
         self.assertEqual(preds, {"gs://audio/a.flac": "copy"})
         self.assertEqual(preds.output_uri, output_uri)
         self.assertEqual(calls, [])
+        self.assertEqual(storage.get(input_uri), original_input)
+        self.assertNotIn(input_uri, storage.uploads)
 
     def test_reuse_rejects_duplicate_prediction_uri_across_blobs(self) -> None:
         storage = fake_gcs.FakeStorageClient()
@@ -427,6 +437,155 @@ class TestGeminiBatchInference(unittest.TestCase):
             )
         )
 
+    def test_timeout_resumes_job_without_submit_or_input_rewrite(self) -> None:
+        storage = fake_gcs.FakeStorageClient()
+        run_gcs_prefix = "gs://bucket/sft/runs/run-a"
+        paths = eval_artifacts.eval_target_artifact_paths(
+            run_gcs_prefix, "base"
+        )
+        job_name = "projects/p/locations/us/batchPredictionJobs/123"
+        prediction_uri = f"{paths.output_uri}job/predictions.jsonl"
+
+        def submit_then_timeout(**kwargs: object) -> str:
+            callback = kwargs.get("on_submitted")
+            if callback is not None:
+                if not callable(callback):
+                    self.fail("on_submitted must be callable")
+                callback(job_name)
+            storage.put(
+                prediction_uri,
+                json.dumps({"status": {"code": 13}}) + "\n",
+            )
+            raise TimeoutError
+
+        first_result = batch.run_batch_audio_inference(
+            storage_client=storage,
+            run_gcs_prefix=run_gcs_prefix,
+            gcp_project="project",
+            location="us-central1",
+            model_id="gemini-3.1-flash-lite",
+            label="base",
+            audio_uris=["gs://audio/a.flac"],
+            system_prompt="sys",
+            user_prompt="user",
+            **sft_eval_fixtures.batch_identity_kwargs(),
+            submit_fn=submit_then_timeout,
+        )
+
+        self.assertIsNone(first_result)
+        self.assertTrue(storage.has(paths.batch_job_metadata_uri))
+        job_metadata = json.loads(storage.get(paths.batch_job_metadata_uri))
+        self.assertEqual(job_metadata["job_name"], job_name)
+        self.assertIn("request_identity", job_metadata)
+        self.assertFalse(storage.has(paths.batch_metadata_uri))
+        original_input = storage.get(paths.input_uri)
+        input_uploads = storage.uploads.count(paths.input_uri)
+        poll_calls: list[dict[str, object]] = []
+
+        def poll_saved_job(**kwargs: object) -> str:
+            poll_calls.append(kwargs)
+            storage.put(
+                prediction_uri,
+                sft_eval_fixtures.vertex_batch_output(
+                    "gs://audio/a.flac", "copy"
+                )
+                + "\n",
+            )
+            return paths.output_uri
+
+        def unexpected_submit(**_: object) -> str:
+            self.fail("saved batch job must be polled without resubmission")
+
+        preds = batch.run_batch_audio_inference(
+            storage_client=storage,
+            run_gcs_prefix=run_gcs_prefix,
+            gcp_project="project",
+            location="us-central1",
+            model_id="gemini-3.1-flash-lite",
+            label="base",
+            audio_uris=["gs://audio/a.flac"],
+            system_prompt="sys",
+            user_prompt="user",
+            **sft_eval_fixtures.batch_identity_kwargs(),
+            submit_fn=unexpected_submit,
+            poll_fn=poll_saved_job,
+        )
+
+        self.assertEqual(preds, {"gs://audio/a.flac": "copy"})
+        self.assertEqual(
+            poll_calls,
+            [
+                {
+                    "name": job_name,
+                    "project": "project",
+                    "location": "us-central1",
+                    "output_uri": paths.output_uri,
+                }
+            ],
+        )
+        self.assertEqual(storage.get(paths.input_uri), original_input)
+        self.assertEqual(storage.uploads.count(paths.input_uri), input_uploads)
+        self.assertTrue(storage.has(paths.batch_metadata_uri))
+        self.assertTrue(storage.has(paths.batch_job_metadata_uri))
+
+    def test_saved_job_identity_mismatch_fails_before_submit_or_poll(
+        self,
+    ) -> None:
+        storage = fake_gcs.FakeStorageClient()
+        run_gcs_prefix = "gs://bucket/sft/runs/run-a"
+        paths = eval_artifacts.eval_target_artifact_paths(
+            run_gcs_prefix, "base"
+        )
+        stale_identity = request_identity.build_gemini_eval_request_identity(
+            target_label="base",
+            model="gemini-3.1-flash-lite",
+            eval_manifest_uri="gs://data/eval.jsonl",
+            audio_uris=["gs://audio/a.flac"],
+            system_prompt="stale system prompt",
+            user_prompt="user",
+            prior_context_count=0,
+            prior_context_mode="text_turns",
+        )
+        job_metadata = request_identity.metadata_payload(stale_identity)
+        job_metadata["job_name"] = (
+            "projects/p/locations/us/batchPredictionJobs/123"
+        )
+        storage.put(
+            paths.batch_job_metadata_uri,
+            json.dumps(job_metadata, sort_keys=True) + "\n",
+        )
+        calls: list[str] = []
+
+        def unexpected_submit(**_: object) -> str:
+            calls.append("submit")
+            return paths.output_uri
+
+        def unexpected_poll(**_: object) -> str:
+            calls.append("poll")
+            return paths.output_uri
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "batch job request identity mismatch",
+        ):
+            batch.run_batch_audio_inference(
+                storage_client=storage,
+                run_gcs_prefix=run_gcs_prefix,
+                gcp_project="project",
+                location="us-central1",
+                model_id="gemini-3.1-flash-lite",
+                label="base",
+                audio_uris=["gs://audio/a.flac"],
+                system_prompt="sys",
+                user_prompt="user",
+                **sft_eval_fixtures.batch_identity_kwargs(),
+                submit_fn=unexpected_submit,
+                poll_fn=unexpected_poll,
+            )
+
+        self.assertEqual(calls, [])
+        self.assertFalse(storage.has(paths.input_uri))
+
     def test_new_batch_rejects_extra_uri_before_marking_reusable(self) -> None:
         storage = fake_gcs.FakeStorageClient()
         run_gcs_prefix = "gs://bucket/sft/runs/run-a"
@@ -464,6 +623,73 @@ class TestGeminiBatchInference(unittest.TestCase):
                 )
             )
         )
+
+    def test_new_batch_rejects_zero_successful_predictions(self) -> None:
+        storage = fake_gcs.FakeStorageClient()
+        run_gcs_prefix = "gs://bucket/sft/runs/run-a"
+        paths = eval_artifacts.eval_target_artifact_paths(
+            run_gcs_prefix, "base"
+        )
+
+        def submit_with_only_error_rows(**_: object) -> str:
+            storage.put(
+                f"{paths.output_uri}predictions.jsonl",
+                json.dumps({"status": {"code": 13}}) + "\n",
+            )
+            return paths.output_uri
+
+        preds = batch.run_batch_audio_inference(
+            storage_client=storage,
+            run_gcs_prefix=run_gcs_prefix,
+            gcp_project="project",
+            location="us-central1",
+            model_id="gemini-3.1-flash-lite",
+            label="base",
+            audio_uris=["gs://audio/a.flac"],
+            system_prompt="sys",
+            user_prompt="user",
+            **sft_eval_fixtures.batch_identity_kwargs(),
+            submit_fn=submit_with_only_error_rows,
+        )
+
+        self.assertIsNone(preds)
+        self.assertFalse(storage.has(paths.batch_metadata_uri))
+
+    def test_new_batch_rejects_duplicate_uri_within_one_shard(self) -> None:
+        storage = fake_gcs.FakeStorageClient()
+        run_gcs_prefix = "gs://bucket/sft/runs/run-a"
+        paths = eval_artifacts.eval_target_artifact_paths(
+            run_gcs_prefix, "base"
+        )
+        audio_uri = "gs://audio/a.flac"
+
+        def submit_with_duplicate_rows(**_: object) -> str:
+            rows = [
+                sft_eval_fixtures.vertex_batch_output(audio_uri, "first"),
+                sft_eval_fixtures.vertex_batch_output(audio_uri, "second"),
+            ]
+            storage.put(
+                f"{paths.output_uri}predictions.jsonl",
+                "\n".join(rows) + "\n",
+            )
+            return paths.output_uri
+
+        preds = batch.run_batch_audio_inference(
+            storage_client=storage,
+            run_gcs_prefix=run_gcs_prefix,
+            gcp_project="project",
+            location="us-central1",
+            model_id="gemini-3.1-flash-lite",
+            label="base",
+            audio_uris=[audio_uri],
+            system_prompt="sys",
+            user_prompt="user",
+            **sft_eval_fixtures.batch_identity_kwargs(),
+            submit_fn=submit_with_duplicate_rows,
+        )
+
+        self.assertIsNone(preds)
+        self.assertFalse(storage.has(paths.batch_metadata_uri))
 
     def test_run_batch_audio_inference_rejects_duplicate_audio_uris(
         self,
