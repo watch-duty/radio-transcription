@@ -18,51 +18,13 @@ import {
 // first. We trim it ourselves per-append via SourceBuffer.appendWindowStart.
 const AAC_ENCODER_PRIMING_SAMPLES = 1024;
 
-// Even with priming/padding trimmed exactly, a segment boundary is a hard cut between two
-// independently sourced/encoded clips — their content simply isn't continuous with itself,
-// so the seam can still be audible against a steady background (verified by ear: a splice
-// built from nothing but accurate trims, no masking, was still identifiable). We soften it
-// with a brief gain dip centered on the splice, scheduled on the existing GainNode.
-//
-// Shape: a Tukey-style window — true silence held across a short flat center, with cosine
-// tapers on either side (never an abrupt on/off). An earlier version dipped only partway
-// (50% of normal gain) with a single-point cosine minimum; A/B listening against real spliced
-// segments found that a full dip held across a short plateau masks the seam meaningfully
-// better, since a broadband click's energy isn't fully suppressed by a dip that only reaches
-// silence at one instant — the samples immediately around that instant still leak through.
-const DECLICK_HALF_WIDTH_SECONDS = 0.012; // 24ms total width
-const DECLICK_FLAT_FRACTION = 0.33; // fraction of the total width held at true silence
-const DECLICK_CURVE_POINTS = 33;
-// Boundaries are scheduled from the periodic 'timeupdate' event rather than a tighter loop, so
-// this needs enough slack that a boundary is never checked for the first time after it's due.
-const DECLICK_LOOKAHEAD_SECONDS = 0.5;
-
-interface DeclickController {
-  context: AudioContext;
-  gain: GainNode;
-  getGain: () => number;
-}
-
-/** baseGain -> silence -> baseGain, with a flat silent center (DECLICK_FLAT_FRACTION of the
- * total width) and smooth cosine tapers on either side. */
-function buildDeclickCurve(baseGain: number): Float32Array {
-  const curve = new Float32Array(DECLICK_CURVE_POINTS);
-  const taperFraction = (1 - DECLICK_FLAT_FRACTION) / 2;
-  for (let i = 0; i < DECLICK_CURVE_POINTS; i++) {
-    const t = i / (DECLICK_CURVE_POINTS - 1); // 0..1 across the whole window
-    let envelope: number;
-    if (t < taperFraction) {
-      envelope = 0.5 * (1 + Math.cos(Math.PI * (t / taperFraction))); // 1 -> 0
-    } else if (t > 1 - taperFraction) {
-      const u = (t - (1 - taperFraction)) / taperFraction;
-      envelope = 0.5 * (1 - Math.cos(Math.PI * u)); // 0 -> 1
-    } else {
-      envelope = 0; // flat silent center
-    }
-    curve[i] = baseGain * envelope;
-  }
-  return curve;
-}
+// A segment boundary is a hard cut between two independently sourced/encoded clips, so even
+// with priming/padding trimmed exactly, the seam can still be faintly audible against a steady
+// background. We deliberately don't mask this with a gain dip: doing so would risk muting a
+// fragment of real speech whenever VAD misclassifies (or only partially classifies) a segment
+// as non-speech — a worse failure than a faint splice artifact for a dispatch-audio tool. See
+// the "declick" commits removed in this PR's history for the masking approach that was tried
+// and deliberately reverted for this reason.
 
 declare global {
   interface Window {
@@ -255,9 +217,7 @@ class MseSequenceSession implements PlaybackController {
   private hasCalledEndOfStream = false;
   private hasAppendedInitSegment = false;
   private audioTimescale: number | null = null;
-  private pendingDeclickBoundaries: number[] = [];
   private onFallback?: (session: PlaybackController) => void;
-  private declick?: DeclickController;
 
   private listeners: {
     play: () => void;
@@ -271,14 +231,12 @@ class MseSequenceSession implements PlaybackController {
     audio: HTMLAudioElement,
     speed: number,
     options: SequenceOptions,
-    onFallback?: (session: PlaybackController) => void,
-    declick?: DeclickController
+    onFallback?: (session: PlaybackController) => void
   ) {
     this.audio = audio;
     this.speed = speed;
     this.options = options;
     this.onFallback = onFallback;
-    this.declick = declick;
     this.lastEnqueuedSegmentId = options.initialSegmentId;
     this.currentActiveSegmentId = options.initialSegmentId;
     this.enqueuedSegmentIds.add(options.initialSegmentId);
@@ -509,10 +467,6 @@ class MseSequenceSession implements PlaybackController {
           groupStartTime + declaredDurationSamples / this.audioTimescale;
       }
 
-      if (!isFirstAppend) {
-        this.pendingDeclickBoundaries.push(startTime);
-      }
-
       this.inFlightAppend = { segmentId: next.segmentId, startTime };
       this.sourceBuffer.appendBuffer(bufferToAppend);
     } catch (err) {
@@ -608,48 +562,8 @@ class MseSequenceSession implements PlaybackController {
     }
   }
 
-  // Scheduled from 'timeupdate' rather than a tighter loop: the automation curve, once
-  // scheduled, fires at sample-accurate AudioContext time regardless of how often we check —
-  // the check cadence only affects how far ahead we predict the media-time-to-context-time
-  // mapping, and DECLICK_LOOKAHEAD_SECONDS gives that plenty of slack.
-  private scheduleDueDeclicks(): void {
-    if (!this.declick || this.pendingDeclickBoundaries.length === 0) return;
-
-    const { context, gain, getGain } = this.declick;
-    const rate = this.speed || 1;
-    const mediaNow = this.audio.currentTime;
-    const contextNow = context.currentTime;
-
-    this.pendingDeclickBoundaries = this.pendingDeclickBoundaries.filter(
-      (boundary) => {
-        const timeUntil = boundary - mediaNow;
-        if (timeUntil > DECLICK_LOOKAHEAD_SECONDS) return true; // not due yet
-        if (timeUntil < -DECLICK_HALF_WIDTH_SECONDS) return false; // missed the window
-
-        const targetContextTime = contextNow + timeUntil / rate;
-        const curveStart = Math.max(
-          contextNow,
-          targetContextTime - DECLICK_HALF_WIDTH_SECONDS
-        );
-        try {
-          gain.gain.setValueCurveAtTime(
-            buildDeclickCurve(getGain()),
-            curveStart,
-            DECLICK_HALF_WIDTH_SECONDS * 2
-          );
-        } catch {
-          // Two boundaries scheduled close enough together to overlap in AudioContext time;
-          // skip masking this one rather than throwing out of a 'timeupdate' handler.
-        }
-        return false;
-      }
-    );
-  }
-
   private handleTimeUpdate = (): void => {
-    if (this.isUnloaded) return;
-    this.scheduleDueDeclicks();
-    if (this.segmentTimeline.length === 0) return;
+    if (this.isUnloaded || this.segmentTimeline.length === 0) return;
 
     const currentTime = this.audio.currentTime;
     for (let i = 0; i < this.segmentTimeline.length; i++) {
@@ -777,7 +691,6 @@ export class WebAudioPlayer {
   private activeListeners: GraphListeners | null = null;
   private activeSession: PlaybackController | null = null;
   private speed = 1;
-  private currentGain = dbToGain(DEFAULT_VOLUME_DB);
 
   constructor(context: AudioContext) {
     this.context = context;
@@ -803,9 +716,8 @@ export class WebAudioPlayer {
   }
 
   setVolumeDb(db: number): void {
-    this.currentGain = dbToGain(db);
     this.gain.gain.linearRampToValueAtTime(
-      this.currentGain,
+      dbToGain(db),
       this.context.currentTime + RAMP_SECONDS
     );
   }
@@ -884,11 +796,6 @@ export class WebAudioPlayer {
         options,
         (fallback) => {
           this.activeSession = fallback;
-        },
-        {
-          context: this.context,
-          gain: this.gain,
-          getGain: () => this.currentGain,
         }
       );
       this.activeSession = session;

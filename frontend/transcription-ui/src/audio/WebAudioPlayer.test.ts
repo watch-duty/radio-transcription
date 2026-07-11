@@ -8,11 +8,7 @@ import {
   gainToDb,
   snapVolumeToDefault,
 } from './WebAudioPlayer';
-import {
-  DEFAULT_VOLUME_DB,
-  VOLUME_MAX_DB,
-  VOLUME_MIN_DB,
-} from './audioSettings';
+import { VOLUME_MAX_DB, VOLUME_MIN_DB } from './audioSettings';
 
 describe('audioMath', () => {
   describe('dbToGain', () => {
@@ -637,7 +633,11 @@ describe('WebAudioPlayer', () => {
     );
   });
 
-  it('softens each segment boundary with a flat-bottomed, smoothly-tapered gain dip', async () => {
+  it('never applies a gain dip at segment boundaries', async () => {
+    // Masking a splice with a gain dip was tried and deliberately reverted: it risks muting a
+    // fragment of real speech whenever VAD misclassifies (or only partially classifies) a
+    // segment as non-speech, which is worse for a dispatch-audio tool than a faint splice
+    // artifact. This guards against silently reintroducing it.
     stubMseGlobals();
     stubFetchForTwoSegments(createFmp4File(16000), createFmp4File(16000));
 
@@ -664,33 +664,14 @@ describe('WebAudioPlayer', () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // seg-2's boundary: startTime = 1 + 1024/16000 (matches the priming-trim test above). Move
-    // playback to just inside the declick lookahead window and fire 'timeupdate', which is
-    // what schedules the dip.
+    // seg-2's boundary: startTime = 1 + 1024/16000 (matches the priming-trim test above).
     const boundary = 1 + 1024 / 16000;
     lastAudio.currentTime = boundary - 0.2;
     lastContext.currentTime = 10;
     lastAudio.emit('timeupdate');
+    lastAudio.currentTime = boundary;
+    lastAudio.emit('timeupdate');
 
-    const gainParam = lastContext.gain.gain;
-    expect(gainParam.setValueCurveAtTime).toHaveBeenCalledTimes(1);
-    const [curve, curveStart, duration] =
-      gainParam.setValueCurveAtTime.mock.calls[0];
-
-    const baseGain = dbToGain(DEFAULT_VOLUME_DB);
-    expect(duration).toBeCloseTo(0.024); // 2 * 12ms half-width
-    expect(curveStart).toBeCloseTo(10.2 - 0.012); // targetContextTime - half-width
-    expect(curve).toHaveLength(33);
-    expect(curve[0]).toBeCloseTo(baseGain); // no dip at the leading edge
-    expect(curve[32]).toBeCloseTo(baseGain); // no dip at the trailing edge
-    // Flat silent center: ~33% of the total width, centered — indices 11-21 of 33.
-    for (let i = 11; i <= 21; i++) {
-      expect(curve[i]).toBeCloseTo(0);
-    }
-    // Smooth (non-abrupt) taper on the way in and out of the flat center.
-    expect(curve[5]).toBeGreaterThan(0);
-    expect(curve[5]).toBeLessThan(baseGain);
-    expect(curve[27]).toBeGreaterThan(0);
-    expect(curve[27]).toBeLessThan(baseGain);
+    expect(lastContext.gain.gain.setValueCurveAtTime).not.toHaveBeenCalled();
   });
 });
