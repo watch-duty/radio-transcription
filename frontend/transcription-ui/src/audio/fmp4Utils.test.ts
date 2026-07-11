@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 
-import { inspectMp4Boxes, splitFmp4 } from './fmp4Utils';
+import { inspectMp4Boxes, parseAudioTimescale, splitFmp4 } from './fmp4Utils';
 
 function createBox(type: string, payloadSize: number): ArrayBuffer {
   const size = 8 + payloadSize;
@@ -23,6 +23,29 @@ function concatBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
     offset += b.byteLength;
   }
   return result.buffer;
+}
+
+function createContainerBox(
+  type: string,
+  children: ArrayBuffer[]
+): ArrayBuffer {
+  const payload = concatBuffers(children);
+  const box = createBox(type, payload.byteLength);
+  new Uint8Array(box).set(new Uint8Array(payload), 8);
+  return box;
+}
+
+function createMdhdBox(timescale: number, version: 0 | 1 = 0): ArrayBuffer {
+  const fieldSize = version === 1 ? 8 : 4;
+  // version(1) + flags(3) + creation(fieldSize) + modification(fieldSize) + timescale(4)
+  // + duration(fieldSize) + language(2) + pre_defined(2)
+  const payloadSize = 4 + fieldSize * 2 + 4 + fieldSize + 2 + 2;
+  const box = createBox('mdhd', payloadSize);
+  const view = new DataView(box);
+  view.setUint8(8, version);
+  const timescaleOffset = 8 + 4 + fieldSize * 2; // skip version/flags + creation + modification
+  view.setUint32(timescaleOffset, timescale, false);
+  return box;
 }
 
 describe('splitFmp4', () => {
@@ -86,6 +109,26 @@ describe('splitFmp4', () => {
     expect(mediaSegment.byteLength).toBe(50);
   });
 
+  it('drops a trailing mfra box from the media segment', () => {
+    // Matches real ffmpeg `frag_keyframe+empty_moov+default_base_moof` output: each
+    // independently-encoded segment file ends with its own mfra, which must not be fed
+    // to the decoder as if it were part of the next segment's moof+mdat.
+    const ftyp = createBox('ftyp', 16);
+    const moov = createBox('moov', 100);
+    const moof = createBox('moof', 50);
+    const mdat = createBox('mdat', 200);
+    const mfra = createBox('mfra', 40);
+
+    const fullBuffer = concatBuffers([ftyp, moov, moof, mdat, mfra]);
+    const { initSegment, mediaSegment } = splitFmp4(fullBuffer);
+
+    expect(initSegment?.byteLength).toBe(ftyp.byteLength + moov.byteLength);
+    expect(mediaSegment.byteLength).toBe(moof.byteLength + mdat.byteLength);
+
+    const boxesInMediaSegment = inspectMp4Boxes(mediaSegment);
+    expect(boxesInMediaSegment).toEqual(['moof', 'mdat']);
+  });
+
   it('inspectMp4Boxes lists top-level box types in order', () => {
     const ftyp = createBox('ftyp', 16);
     const moov = createBox('moov', 100);
@@ -95,5 +138,29 @@ describe('splitFmp4', () => {
     const buffer = concatBuffers([ftyp, moov, moof, mdat]);
     const boxes = inspectMp4Boxes(buffer);
     expect(boxes).toEqual(['ftyp', 'moov', 'moof', 'mdat']);
+  });
+});
+
+describe('parseAudioTimescale', () => {
+  function buildInitSegment(mdhd: ArrayBuffer): ArrayBuffer {
+    const mdia = createContainerBox('mdia', [mdhd]);
+    const trak = createContainerBox('trak', [mdia]);
+    const moov = createContainerBox('moov', [trak]);
+    return concatBuffers([createBox('ftyp', 16), moov]);
+  }
+
+  it('reads the timescale from a version-0 mdhd box', () => {
+    const initSegment = buildInitSegment(createMdhdBox(16000, 0));
+    expect(parseAudioTimescale(initSegment)).toBe(16000);
+  });
+
+  it('reads the timescale from a version-1 (64-bit fields) mdhd box', () => {
+    const initSegment = buildInitSegment(createMdhdBox(44100, 1));
+    expect(parseAudioTimescale(initSegment)).toBe(44100);
+  });
+
+  it('returns null when moov/trak/mdia/mdhd is absent', () => {
+    const buffer = concatBuffers([createBox('ftyp', 16), createBox('moov', 4)]);
+    expect(parseAudioTimescale(buffer)).toBeNull();
   });
 });

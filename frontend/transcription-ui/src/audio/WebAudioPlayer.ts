@@ -3,7 +3,15 @@ import {
   VOLUME_MIN_DB,
   VOLUME_SNAP_DB,
 } from './audioSettings';
-import { inspectMp4Boxes, splitFmp4 } from './fmp4Utils';
+import { inspectMp4Boxes, parseAudioTimescale, splitFmp4 } from './fmp4Utils';
+
+// ffmpeg's native AAC-LC encoder ("-c:a aac") has a fixed one-frame MDCT lookahead delay of
+// 1024 samples before it emits real audio. AudioProcessor.transcode_to_m4a encodes each
+// segment independently, and the `frag_keyframe+empty_moov` flags needed for MSE prevent
+// ffmpeg from writing a trimming edit list (MSE 'sequence' mode ignores edit lists regardless),
+// so that priming plays back as an audible artifact at the start of every segment after the
+// first. We trim it ourselves per-append via SourceBuffer.appendWindowStart.
+const AAC_ENCODER_PRIMING_SAMPLES = 1024;
 
 declare global {
   interface Window {
@@ -195,6 +203,7 @@ class MseSequenceSession implements PlaybackController {
   private isPrefetching = false;
   private hasCalledEndOfStream = false;
   private hasAppendedInitSegment = false;
+  private audioTimescale: number | null = null;
   private onFallback?: (session: PlaybackController) => void;
 
   private listeners: {
@@ -384,18 +393,42 @@ class MseSequenceSession implements PlaybackController {
 
     const next = this.appendQueue[0];
     try {
-      let bufferToAppend = next.buffer;
-      if (!this.hasAppendedInitSegment) {
+      const { initSegment, mediaSegment } = splitFmp4(next.buffer);
+      let bufferToAppend = mediaSegment;
+      const isFirstAppend = !this.hasAppendedInitSegment;
+      if (isFirstAppend) {
         this.hasAppendedInitSegment = true;
-      } else {
-        const { mediaSegment } = splitFmp4(next.buffer);
-        bufferToAppend = mediaSegment;
+        this.audioTimescale = initSegment
+          ? parseAudioTimescale(initSegment)
+          : null;
+        // The first append needs ftyp+moov ahead of its own moof+mdat; since
+        // splitFmp4 trims any trailing box (e.g. mfra) off mediaSegment, the two
+        // pieces are still contiguous slices of the original buffer.
+        bufferToAppend = initSegment
+          ? next.buffer.slice(
+              0,
+              initSegment.byteLength + mediaSegment.byteLength
+            )
+          : mediaSegment;
       }
 
-      const startTime =
+      const groupStartTime =
         this.segmentTimeline.length > 0
           ? this.segmentTimeline[this.segmentTimeline.length - 1].endTime
           : 0;
+
+      // Trim this segment's leading AAC encoder priming so it doesn't play back as an
+      // audible artifact right after the previous segment's real audio ends. The recorded
+      // start time reflects where real audio actually begins, keeping getCurrentTime()/
+      // setCurrentTime() accurate for this segment.
+      const primingSeconds =
+        !isFirstAppend && this.audioTimescale
+          ? AAC_ENCODER_PRIMING_SAMPLES / this.audioTimescale
+          : 0;
+      const startTime = groupStartTime + primingSeconds;
+      if (primingSeconds > 0) {
+        this.sourceBuffer.appendWindowStart = startTime;
+      }
 
       this.inFlightAppend = { segmentId: next.segmentId, startTime };
       this.sourceBuffer.appendBuffer(bufferToAppend);
