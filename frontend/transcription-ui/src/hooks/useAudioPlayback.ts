@@ -126,35 +126,41 @@ export function useAudioPlayback({
       }
 
       if (!currentAudio.current) {
-        currentAudio.current = player.load(getAudioUrl(audioUri), {
-          onPlay: () => {
-            setIsAudioPlaying(true);
-            isAudioPlayingRef.current = true;
-          },
-          onPause: () => {
-            setIsAudioPlaying(false);
-            isAudioPlayingRef.current = false;
-          },
-          onError: () => {
-            setIsAudioPlaying(false);
-            isAudioPlayingRef.current = false;
-          },
-          onEnd: () => {
-            const next = getNextContinuousSegment(
-              audioSegmentsRef.current ?? [],
-              rawAudioSegmentsRef.current ?? [],
-              segmentId
-            );
-
-            if (next) {
-              // Transition and play the next segment synchronously to bypass background tab throttling
-              togglePlay(next.id, next.uri);
-            } else {
+        currentAudio.current = player.loadSequence({
+          initialSegmentId: segmentId,
+          initialUri: getAudioUrl(audioUri),
+          callbacks: {
+            onPlay: () => {
+              setIsAudioPlaying(true);
+              isAudioPlayingRef.current = true;
+            },
+            onPause: () => {
+              setIsAudioPlaying(false);
+              isAudioPlayingRef.current = false;
+            },
+            onError: () => {
+              setIsAudioPlaying(false);
+              isAudioPlayingRef.current = false;
+            },
+            onSegmentChange: (activeSegmentId: string) => {
+              setCurrentlyPlayingSegmentId(activeSegmentId);
+              currentlyPlayingSegmentIdRef.current = activeSegmentId;
+              onPlaySegment(activeSegmentId);
+            },
+            onEnd: (lastSegmentId: string) => {
               setIsAudioPlaying(false);
               isAudioPlayingRef.current = false;
               currentAudio.current = null;
-              onPlaybackEndedRef.current?.(segmentId);
-            }
+              onPlaybackEndedRef.current?.(lastSegmentId);
+            },
+          },
+          getNextSegment: (currentId: string) => {
+            const next = getNextContinuousSegment(
+              audioSegmentsRef.current ?? [],
+              rawAudioSegmentsRef.current ?? [],
+              currentId
+            );
+            return next ? { id: next.id, uri: getAudioUrl(next.uri) } : null;
           },
         });
       }
