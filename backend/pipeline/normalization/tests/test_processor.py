@@ -9,6 +9,7 @@ from google.protobuf.duration_pb2 import Duration
 from google.protobuf.timestamp_pb2 import Timestamp
 
 from backend.pipeline.common.constants import GCS_DOWNLOAD_TIMEOUT_SEC
+from backend.pipeline.normalization.audio_processor import TranscodeResult
 from backend.pipeline.normalization.processor import (
     NormalizationEventProcessor,
 )
@@ -48,9 +49,7 @@ class NormalizationEventProcessorTest(unittest.TestCase):
     @patch("backend.pipeline.normalization.audio_processor.AudioProcessor")
     @patch("backend.pipeline.common.storage.gcs_uploader.GCSAudioUploader")
     def test_process_event_source_flac_success(
-        self,
-        mock_uploader_cls: MagicMock,
-        mock_processor_cls: MagicMock,
+        self, mock_uploader_cls: MagicMock, mock_processor_cls: MagicMock
     ) -> None:
         """Verifies that if the source is FLAC, we copy FLAC directly and transcode to M4A."""
         # Setup mocks
@@ -59,9 +58,8 @@ class NormalizationEventProcessorTest(unittest.TestCase):
 
         # Mock processor output
         mock_processor.transcode_to_m4a.return_value = b"fake-m4a-data"
-        mock_processor.transcode_to_mono_flac.return_value = (
-            b"fake-mono-flac-data"
-        )
+        # Simulate MONO
+        mock_processor.is_mono.return_value = True
 
         # Mock GCS download
         mock_blob = MagicMock()
@@ -143,18 +141,16 @@ class NormalizationEventProcessorTest(unittest.TestCase):
             timeout=GCS_DOWNLOAD_TIMEOUT_SEC
         )
 
-        # Verify we copied FLAC directly (no transcode_to_flac called)
-        mock_processor.transcode_to_flac.assert_not_called()
+        # Verify we copied FLAC directly (no transcode_derivatives called)
+        mock_processor.transcode_derivatives.assert_not_called()
 
         # Verify audio processor was called to transcode FLAC to M4A
         mock_processor.transcode_to_m4a.assert_called_once_with(
             b"fake-flac-data"
         )
 
-        # Verify audio processor was called to transcode FLAC to mono FLAC
-        mock_processor.transcode_to_mono_flac.assert_called_once_with(
-            b"fake-flac-data"
-        )
+        mock_processor.is_mono.assert_called_once_with(b"fake-flac-data")
+        mock_processor.downmix_to_mono.assert_not_called()
 
         # Verify uploader was called with correct bytes
         mock_uploader.upload_bytes.assert_any_call(
@@ -168,12 +164,6 @@ class NormalizationEventProcessorTest(unittest.TestCase):
             bucket_name=self.canonical_bucket,
             destination_path="playback/feed-2222/1970/01/01/tx-1111.m4a",
             content_type="audio/mp4",
-        )
-        mock_uploader.upload_bytes.assert_any_call(
-            data=b"fake-mono-flac-data",
-            bucket_name=self.canonical_bucket,
-            destination_path="ephemeral/transcription/feed-2222/1970/01/01/tx-1111.flac",
-            content_type="audio/flac",
         )
 
         # Verify database persist was called with correct payload including external_audio_segment_id
@@ -196,20 +186,19 @@ class NormalizationEventProcessorTest(unittest.TestCase):
     @patch("backend.pipeline.normalization.audio_processor.AudioProcessor")
     @patch("backend.pipeline.common.storage.gcs_uploader.GCSAudioUploader")
     def test_process_event_source_m4a_success(
-        self,
-        mock_uploader_cls: MagicMock,
-        mock_processor_cls: MagicMock,
+        self, mock_uploader_cls: MagicMock, mock_processor_cls: MagicMock
     ) -> None:
-        """Verifies that if the source is M4A, we copy M4A directly and transcode to FLAC."""
+        """Verifies that if the source is M4A, we transcode via transcode_derivatives to guarantee fMP4."""
         # Setup mocks
         mock_processor = mock_processor_cls.return_value
         mock_uploader = mock_uploader_cls.return_value
 
         # Mock processor output
-        mock_processor.transcode_to_flac.return_value = b"fake-flac-data"
-        mock_processor.transcode_to_mono_flac.return_value = (
-            b"fake-mono-flac-data"
+        mock_processor.transcode_derivatives.return_value = TranscodeResult(
+            flac_bytes=b"fake-flac-data", m4a_bytes=b"fake-fmp4-data"
         )
+        mock_processor.is_mono.return_value = False
+        mock_processor.downmix_to_mono.return_value = b"fake-mono-flac-data"
 
         # Mock GCS download
         mock_blob = MagicMock()
@@ -281,16 +270,14 @@ class NormalizationEventProcessorTest(unittest.TestCase):
         # Run process_event
         processor.process_event(cloud_event)
 
-        # Verify we copied M4A directly (no transcode_to_m4a called)
-        mock_processor.transcode_to_m4a.assert_not_called()
-
-        # Verify audio processor was called to transcode M4A to FLAC
-        mock_processor.transcode_to_flac.assert_called_once_with(
+        # Verify we called transcode_derivatives to produce both FLAC and fMP4 M4A
+        mock_processor.transcode_derivatives.assert_called_once_with(
             b"fake-m4a-data"
         )
 
-        # Verify audio processor was called to transcode FLAC to mono FLAC
-        mock_processor.transcode_to_mono_flac.assert_called_once_with(
+        # Verify audio processor was called to check and downmix FLAC to mono
+        mock_processor.is_mono.assert_called_once_with(b"fake-flac-data")
+        mock_processor.downmix_to_mono.assert_called_once_with(
             b"fake-flac-data"
         )
 
@@ -302,7 +289,7 @@ class NormalizationEventProcessorTest(unittest.TestCase):
             content_type="audio/flac",
         )
         mock_uploader.upload_bytes.assert_any_call(
-            data=b"fake-m4a-data",
+            data=b"fake-fmp4-data",
             bucket_name=self.canonical_bucket,
             destination_path="playback/feed-2222/1970/01/01/tx-1111.m4a",
             content_type="audio/mp4",
@@ -330,9 +317,7 @@ class NormalizationEventProcessorTest(unittest.TestCase):
     @patch("backend.pipeline.normalization.audio_processor.AudioProcessor")
     @patch("backend.pipeline.common.storage.gcs_uploader.GCSAudioUploader")
     def test_process_event_source_wav_success(
-        self,
-        mock_uploader_cls: MagicMock,
-        mock_processor_cls: MagicMock,
+        self, mock_uploader_cls: MagicMock, mock_processor_cls: MagicMock
     ) -> None:
         """Verifies that if the source is WAV, we transcode to BOTH FLAC and M4A."""
         # Setup mocks
@@ -340,11 +325,12 @@ class NormalizationEventProcessorTest(unittest.TestCase):
         mock_uploader = mock_uploader_cls.return_value
 
         # Mock processor output
-        mock_processor.transcode_to_flac.return_value = b"fake-flac-data"
-        mock_processor.transcode_to_m4a.return_value = b"fake-m4a-data"
-        mock_processor.transcode_to_mono_flac.return_value = (
-            b"fake-mono-flac-data"
+        mock_processor.transcode_derivatives.return_value = TranscodeResult(
+            flac_bytes=b"fake-flac-data",
+            m4a_bytes=b"fake-m4a-data",
         )
+        mock_processor.is_mono.return_value = False
+        mock_processor.downmix_to_mono.return_value = b"fake-mono-flac-data"
 
         # Mock GCS download
         mock_blob = MagicMock()
@@ -416,16 +402,14 @@ class NormalizationEventProcessorTest(unittest.TestCase):
         # Run process_event
         processor.process_event(cloud_event)
 
-        # Verify we transcoded to both FLAC and M4A from raw bytes
-        mock_processor.transcode_to_flac.assert_called_once_with(
-            b"fake-wav-data"
-        )
-        mock_processor.transcode_to_m4a.assert_called_once_with(
+        # Verify we transcoded to both FLAC and M4A from raw bytes using transcode_derivatives
+        mock_processor.transcode_derivatives.assert_called_once_with(
             b"fake-wav-data"
         )
 
         # Verify audio processor was called to transcode FLAC to mono FLAC
-        mock_processor.transcode_to_mono_flac.assert_called_once_with(
+        mock_processor.is_mono.assert_called_once_with(b"fake-flac-data")
+        mock_processor.downmix_to_mono.assert_called_once_with(
             b"fake-flac-data"
         )
 
@@ -524,7 +508,7 @@ class NormalizationEventProcessorTest(unittest.TestCase):
         processor.process_event(cloud_event)
 
         # Transcoding to mono FLAC should NOT be called
-        mock_processor.transcode_to_mono_flac.assert_not_called()
+        mock_processor.downmix_to_mono.assert_not_called()
 
         # Should only upload to lossless and playback, NOT ephemeral
         self.assertEqual(mock_uploader.upload_bytes.call_count, 2)
@@ -616,7 +600,8 @@ class NormalizationEventProcessorTest(unittest.TestCase):
         """Wires mocks for a FLAC/SPEECH segment; returns processor + event."""
         mock_processor = mock_processor_cls.return_value
         mock_processor.transcode_to_m4a.return_value = b"fake-m4a-data"
-        mock_processor.transcode_to_mono_flac.return_value = b"fake-mono-flac"
+        mock_processor.is_mono.return_value = False
+        mock_processor.downmix_to_mono.return_value = b"fake-mono-flac-data"
 
         mock_blob = MagicMock()
         mock_blob.download_as_bytes.return_value = b"fake-flac-data"

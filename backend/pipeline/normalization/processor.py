@@ -89,7 +89,7 @@ class NormalizationEventProcessor:
             gcs_client=self.gcs_client,
         )
 
-    def process_event(self, cloud_event: CloudEvent) -> None:
+    def process_event(self, cloud_event: CloudEvent) -> None:  # noqa: PLR0915
         """Main entrypoint triggered on Pub/Sub claim message push delivery."""
         record_pipeline_stage("normalization", "start")
         try:
@@ -129,9 +129,11 @@ class NormalizationEventProcessor:
                 raw_audio_bytes = self._download_raw_audio(raw_audio_uri)
 
                 # 2. Transcode into lossless FLAC and playback M4A derivatives
-                flac_bytes, m4a_bytes = self._transcode_audio(
+                transcoded = self._transcode_audio(
                     raw_audio_uri, raw_audio_bytes
                 )
+                flac_bytes = transcoded.flac_bytes
+                m4a_bytes = transcoded.m4a_bytes
 
                 # 3. Upload lossless FLAC and playback M4A to GCS canonical bucket
                 dt = datetime.datetime.fromtimestamp(
@@ -168,20 +170,28 @@ class NormalizationEventProcessor:
                     segmented_audio.audio_classification
                     == SegmentedAudio.AUDIO_CLASSIFICATION_SPEECH
                 ):
-                    mono_flac_bytes = (
-                        self.audio_processor.transcode_to_mono_flac(flac_bytes)
-                    )
-                    mono_flac_path = f"ephemeral/transcription/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
-                    transcription_audio_uri = self.audio_uploader.upload_bytes(
-                        data=mono_flac_bytes,
-                        bucket_name=self.canonical_audio_bucket,
-                        destination_path=mono_flac_path,
-                        content_type="audio/flac",
-                    )
-                    logger.info(
-                        "Uploaded ephemeral transcription audio to %s",
-                        transcription_audio_uri,
-                    )
+                    if self.audio_processor.is_mono(flac_bytes):
+                        transcription_audio_uri = canonical_audio_uri
+                        logger.info(
+                            "Audio is already mono. Bypassing ephemeral transcription upload."
+                        )
+                    else:
+                        mono_flac_bytes = self.audio_processor.downmix_to_mono(
+                            flac_bytes
+                        )
+                        mono_flac_path = f"ephemeral/transcription/{feed_id}/{dt:%Y/%m/%d}/{segment_id}.flac"
+                        transcription_audio_uri = (
+                            self.audio_uploader.upload_bytes(
+                                data=mono_flac_bytes,
+                                bucket_name=self.canonical_audio_bucket,
+                                destination_path=mono_flac_path,
+                                content_type="audio/flac",
+                            )
+                        )
+                        logger.info(
+                            "Uploaded ephemeral transcription audio to %s",
+                            transcription_audio_uri,
+                        )
 
                 # 4. Persist audio segment metadata record to AlloyDB database
                 self._persist_segment(
@@ -248,19 +258,17 @@ class NormalizationEventProcessor:
 
     def _transcode_audio(
         self, raw_audio_uri: str, raw_audio_bytes: bytes
-    ) -> tuple[bytes, bytes]:
-        """Transcodes raw bytes into lossless FLAC and streaming M4A derivatives."""
+    ) -> audio_processor.TranscodeResult:
+        """Transcodes raw bytes into lossless FLAC and streaming fMP4 derivatives."""
         lower_uri = raw_audio_uri.lower()
         if lower_uri.endswith(".flac"):
-            flac_bytes = raw_audio_bytes
-            m4a_bytes = self.audio_processor.transcode_to_m4a(flac_bytes)
-        elif lower_uri.endswith(".m4a"):
-            m4a_bytes = raw_audio_bytes
-            flac_bytes = self.audio_processor.transcode_to_flac(m4a_bytes)
-        else:
-            flac_bytes = self.audio_processor.transcode_to_flac(raw_audio_bytes)
-            m4a_bytes = self.audio_processor.transcode_to_m4a(raw_audio_bytes)
-        return flac_bytes, m4a_bytes
+            return audio_processor.TranscodeResult(
+                flac_bytes=raw_audio_bytes,
+                m4a_bytes=self.audio_processor.transcode_to_m4a(
+                    raw_audio_bytes
+                ),
+            )
+        return self.audio_processor.transcode_derivatives(raw_audio_bytes)
 
     def _download_raw_audio(self, raw_audio_uri: str) -> bytes:
         """Downloads raw audio bytes from GCS staging."""

@@ -9,7 +9,22 @@
 # =============================================================================
 
 locals {
-  registry_host = split("/", var.container_image)[0]
+  registry_host  = split("/", var.container_image)[0]
+  vm_health_port = 8080
+  # Current container-MIG topology runs two worker containers per VM. Each
+  # worker exposes container /healthz on host port vm_health_port + index, so
+  # worker 1 is :8081 and worker 2 is :8082. The VM Health agent itself
+  # listens on vm_health_port (:8080). Keep this as an internal local until a
+  # deployment needs a different per-VM worker count.
+  worker_indices = [1, 2]
+  vm_health_worker_endpoints = join(",", [
+    for worker_index in local.worker_indices :
+    "http://127.0.0.1:${local.vm_health_port + worker_index}/healthz"
+  ])
+  worker_systemd_after_units = join(" ", [
+    for worker_index in local.worker_indices :
+    "${var.name_prefix}@${worker_index}.service"
+  ])
 
   # Docker --env-file format: KEY=VALUE per line, no quoting needed.
   # Values are taken literally — safe for special chars like $ ' " \
@@ -41,7 +56,7 @@ data "google_compute_zones" "available" {
 # -----------------------------------------------------------------------------
 
 resource "google_compute_instance_template" "this" {
-  # name_prefix generates unique names (e.g. "icecast-collector-prod-abc123")
+  # name_prefix generates unique names (e.g. "ingestion-collector-prod-abc123")
   # required for create_before_destroy lifecycle
   name_prefix  = "${var.name_prefix}-"
   project      = var.project_id
@@ -71,12 +86,16 @@ resource "google_compute_instance_template" "this" {
   metadata = {
     google-logging-enabled = "true"
     user-data = templatefile("${path.module}/cloud_config.yaml.tftpl", {
-      service_name       = var.name_prefix
-      registry_host      = local.registry_host
-      container_image    = var.container_image
-      env_file_content   = local.env_file_content
-      enable_autohealing = var.enable_autohealing
-      tmpfs_mounts       = var.tmpfs_mounts
+      service_name               = var.name_prefix
+      registry_host              = local.registry_host
+      container_image            = var.container_image
+      env_file_content           = local.env_file_content
+      enable_autohealing         = var.enable_autohealing
+      tmpfs_mounts               = var.tmpfs_mounts
+      vm_health_port             = local.vm_health_port
+      worker_indices             = local.worker_indices
+      vm_health_worker_endpoints = local.vm_health_worker_endpoints
+      worker_systemd_after_units = local.worker_systemd_after_units
     })
   }
 
@@ -107,7 +126,7 @@ resource "google_compute_health_check" "this" {
   unhealthy_threshold = 3 # 3 consecutive failures = 90s minimum; up to 120s from problem onset
 
   http_health_check {
-    port         = 8080
+    port         = local.vm_health_port
     request_path = "/healthz"
   }
 }

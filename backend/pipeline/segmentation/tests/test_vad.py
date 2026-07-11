@@ -129,6 +129,32 @@ class TestVadEngine(unittest.TestCase):
         )
         self.assertEqual(segments, [])
 
+    def test_denoise_boundary_and_empty_arrays(self) -> None:
+        """Verifies that VoiceActivityDetector.denoise() correctly handles empty arrays and very short boundaries (e.g., T=1 frame) without bounds-check errors."""
+        empty_array = np.array([], dtype=np.float32)
+        out_empty = self.vad.denoise(empty_array)
+        self.assertEqual(len(out_empty), 0)
+        self.assertEqual(out_empty.dtype, np.float32)
+
+        # Very short audio (512 samples -> exactly 1 STFT frame at hop_length=256)
+        short_array = (
+            np.random.default_rng(42).normal(0, 0.1, 512).astype(np.float32)
+        )
+        out_short = self.vad.denoise(short_array)
+        self.assertEqual(out_short.shape, short_array.shape)
+        self.assertEqual(out_short.dtype, np.float32)
+
+    def test_denoise_signal_integrity_on_reference_chunk(self) -> None:
+        """Directly exercises VoiceActivityDetector.denoise() on a real audio snippet to verify signal integrity and output dimensions."""
+        audio_path = Path(__file__).parent / "test_data" / "test_stress.flac"
+        audio_data, _ = load_audio(audio_path)
+        chunk = audio_data[: 16000 * 1]  # 1 second chunk
+        denoised = self.vad.denoise(chunk)
+        self.assertEqual(denoised.shape, chunk.shape)
+        self.assertEqual(denoised.dtype, np.float32)
+        self.assertGreater(np.max(np.abs(denoised)), 1e-4)
+        self.assertLess(np.max(np.abs(denoised)), 1.0)
+
     def test_synthetic_tone_rejection(self) -> None:
         """Verifies that synthetic tone (constant sine wave) is rejected by the neural VAD."""
         t = np.linspace(0, 1.0, 16000, endpoint=False)
@@ -257,6 +283,19 @@ class TestVadEngine(unittest.TestCase):
                 (13.0, 14.2),
             ],
             baseline_f1=0.850,
+        )
+
+    def test_integration_cajon_pass_trailing_file(self) -> None:
+        """Integration test to verify VAD performance on test_cajon_pass_trailing.flac (trailing scanner speech)."""
+        self._run_integration_test(
+            "test_cajon_pass_trailing.flac",
+            [
+                (1.878, 5.697),
+                (11.230, 15.151),
+                (25.565, 34.590),
+                (35.489, 36.387),
+            ],
+            baseline_f1=0.045,
         )
 
     def test_integration_dispatch_amador_file(self) -> None:

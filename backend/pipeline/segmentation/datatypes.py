@@ -1,5 +1,6 @@
 """Domain objects and strongly-typed dataclasses for the transcription pipeline."""
 
+import concurrent.futures
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -34,6 +35,25 @@ SegmentationRawDlqOutput = tuple[Literal["segmentation_dlq"], dict[str, Any]]
 
 TimeRange = bp_state.TimeRangeProto
 BufferedChunk = bp_state.BufferedChunkProto
+
+
+@dataclass(frozen=True)
+class AudioSignal:
+    """Represents an in-memory decoded audio signal."""
+
+    samples: np.ndarray
+    sample_rate: int
+
+    @property
+    def duration_seconds(self) -> float:
+        return (
+            len(self.samples) / float(self.sample_rate)
+            if self.sample_rate > 0
+            else 0.0
+        )
+
+
+AudioFutureMap = dict[str, concurrent.futures.Future[AudioSignal]]
 
 
 @dataclass(frozen=True)

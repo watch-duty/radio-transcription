@@ -1,10 +1,27 @@
 import RelativeTimeFormat from 'relative-time-format';
 import en from 'relative-time-format/locale/en';
 
+import { type AudioSegment } from '@transcription/common';
+
 export const MAX_WINDOW_DURATION_MS = 15 * 60 * 1000; // 15 minutes
+
+// Span of the 24h timeline overview (mini-map), and the amount the list eagerly
+// preloads to back it.
+export const TIMELINE_RANGE_DURATION_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 RelativeTimeFormat.addLocale(en);
 const rtf = new RelativeTimeFormat('en');
+
+// Newest loaded segment's end. Scan rather than read segments[0] — the list is
+// sorted by start time, not end. Null when there are no segments.
+export function getLiveEdgeMs(segments: AudioSegment[]): number | null {
+  let liveEdgeMs = -Infinity;
+  for (const segment of segments) {
+    const end = new Date(segment.endTimestamp).getTime();
+    if (end > liveEdgeMs) liveEdgeMs = end;
+  }
+  return liveEdgeMs === -Infinity ? null : liveEdgeMs;
+}
 
 // 24-hour HH:MM (optionally :SS), locale-independent, for the timeline playhead.
 export function formatClockTime(
@@ -16,6 +33,14 @@ export function formatClockTime(
     minute: '2-digit',
     ...(includeSeconds && { second: '2-digit' }),
     hour12: false,
+  });
+}
+
+// Short month/day, e.g. "Jun 26" — the timeline overview's day-boundary labels.
+export function formatMonthDay(timestamp: number): string {
+  return new Date(timestamp).toLocaleDateString([], {
+    month: 'short',
+    day: 'numeric',
   });
 }
 
@@ -64,18 +89,45 @@ export function getRelativeTimeString(
   return rtf.format(-diffDays, 'day');
 }
 
-export function formatDuration(seconds: number): string {
+export function formatDuration(
+  seconds: number,
+  showSeconds: boolean = true
+): string {
   if (seconds < 1) {
-    return '<1 sec';
+    return showSeconds ? '<1 sec' : '<1 min';
   }
   const roundedSeconds = Math.round(seconds);
   if (roundedSeconds < 60) {
-    return `${roundedSeconds} sec`;
+    return showSeconds ? `${roundedSeconds} sec` : '<1 min';
   }
   const minutes = Math.floor(roundedSeconds / 60);
-  const remainingSeconds = roundedSeconds % 60;
-  if (remainingSeconds === 0) {
-    return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+
+  if (!showSeconds) {
+    if (hours === 0) {
+      return `${minutes} min`;
+    }
+    if (remainingMinutes === 0) {
+      return `${hours} hr`;
+    }
+    return `${hours} hr ${remainingMinutes} min`;
   }
-  return `${minutes} min ${remainingSeconds} sec`;
+
+  const remainingSeconds = roundedSeconds % 60;
+  if (hours === 0) {
+    if (remainingSeconds === 0) {
+      return `${minutes} min`;
+    }
+    return `${minutes} min ${remainingSeconds} sec`;
+  }
+
+  const parts = [`${hours} hr`];
+  if (remainingMinutes > 0) {
+    parts.push(`${remainingMinutes} min`);
+  }
+  if (remainingSeconds > 0) {
+    parts.push(`${remainingSeconds} sec`);
+  }
+  return parts.join(' ');
 }

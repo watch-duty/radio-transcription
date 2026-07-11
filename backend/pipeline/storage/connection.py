@@ -62,7 +62,8 @@ async def create_pool(
         "database": db_name,
         "min_size": min_size,
         "max_size": max_size,
-        "statement_cache_size": 0,  # Required for PgBouncer transaction-mode pooling.
+        # Required for PgBouncer transaction-mode pooling.
+        "statement_cache_size": 0,
         # DB-01: `idle_in_transaction_session_timeout = 30000` (30s) is enforced
         # server-side via AlloyDB cluster `database_flags`, NOT via asyncpg
         # `server_settings` — see radio-transcription-deployment/terraform/
@@ -109,7 +110,8 @@ async def create_pool_from_settings(
     """
     Create an asyncpg connection pool using an AlloyDBSettings object.
 
-    If no settings object is provided, it defaults to loading from environment variables.
+    If no settings object is provided, it defaults to loading from environment
+    variables.
     """
     if settings is None:
         settings = AlloyDBSettings()

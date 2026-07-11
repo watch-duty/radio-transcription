@@ -2359,6 +2359,78 @@ class DlqTaggingTest(unittest.TestCase):
         self.assertEqual(flush_request.sample_rate, 8000)
 
     @patch(
+        "backend.pipeline.segmentation.transforms.stitcher_engine.audio_processor.SegmentationAudioProcessor"
+    )
+    def test_stale_flush_missing_context_flags_for_non_speech(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that a stale flush on a non-speech (silence) transmission sets both
+        missing_prior_context and missing_post_context to False in the FlushRequest.
+        """
+        mock_processor_inst = mock_audio_processor.return_value
+        # No speech segments -> AUDIO_CLASSIFICATION_OTHER
+        chunk_data = AudioChunkData(
+            start_ms=100000,
+            audio=np.zeros(16000 * 3, dtype=np.int16),
+            speech_segments=[],
+            gcs_uri="gs://bucket/silent_chunk.flac",
+            duration_ms=3000,
+            sample_rate=16000,
+        )
+        mock_processor_inst.download_audio_and_detect.return_value = chunk_data
+
+        fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
+            self._make_fn_and_states(OrderedStitchAudioFn)
+        )
+        fn.setup()
+
+        metadata = ChunkMetadata(
+            gcs_uri="gs://bucket/silent_chunk.flac",
+            session_id="test-session-silent",
+            duration_ms=3000,
+        )
+        list(
+            fn.process(
+                element=("test-feed", metadata),
+                timestamp=Timestamp(100),
+                transmission_context_state=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
+                out_of_order_buffer_state=mock_state_buffer,
+                gap_timer_event=MagicMock(),
+                gap_timer_event_v2=MagicMock(),
+                gap_timer_proc=MagicMock(),
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        # Simulate an upstream gap prior to this chunk setting missing_prior_context = True in state
+        active_ctx = mock_state_context.read()
+        self.assertIsNotNone(active_ctx)
+        active_ctx = replace(active_ctx, missing_prior_context=True)
+        mock_state_context.write(active_ctx)
+
+        outputs = list(
+            fn.handle_stale_transmission_event(
+                key="test-feed",
+                transmission_context=mock_state_context,
+                last_start_ms_state=mock_last_start_ms,
+                out_of_order_buffer_state=mock_state_buffer,
+                stale_timer_event=MagicMock(),
+                stale_timer_proc=MagicMock(),
+            )
+        )
+
+        self.assertEqual(len(outputs), 1)
+        _feed_id, flush_request = outputs[0]
+        self.assertEqual(
+            flush_request.audio_classification,
+            AudioClassification.AUDIO_CLASSIFICATION_OTHER,
+        )
+        self.assertFalse(flush_request.missing_prior_context)
+        self.assertFalse(flush_request.missing_post_context)
+
+    @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
     )
     def test_no_trace_or_session_leak_after_stale_flush(

@@ -272,7 +272,10 @@ class FeedStore:
         try:
             source_type = SourceType(row["source_type"])
         except ValueError as e:
-            msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
+            msg = (
+                f"Unknown source type {row['source_type']!r} "
+                f"for feed {row['id']}"
+            )
             raise ValueError(msg) from e
         try:
             status = FeedStatus(row["status"])
@@ -335,7 +338,10 @@ class FeedStore:
         try:
             source_type = SourceType(row["source_type"])
         except ValueError as e:
-            msg = f"Unknown source type {row['source_type']!r} for feed {row['id']}"
+            msg = (
+                f"Unknown source type {row['source_type']!r} "
+                f"for feed {row['id']}"
+            )
             raise ValueError(msg) from e
         status_reason_raw = row["status_reason"]
         tags_raw = row.get("tags")
@@ -383,14 +389,15 @@ class FeedStore:
         Args:
             feed_id: UUID of the feed to update.
             worker_id: UUID of the worker holding the lease.
-            new_gcs_path: The GCS object path of the last successfully written file.
+            new_gcs_path: The GCS object path of the last successfully written
+                file.
             fencing_token: The fencing token received at lease acquisition.
             last_bookmark_time: Timestamp bookmark for the last processed audio.
             actor_id: Causal actor for audited runtime recovery.
 
         Returns:
-            ``True`` if the update succeeded (lease still held), ``False`` if the
-            lease was lost.
+            ``True`` if the update succeeded (lease still held), ``False`` if
+            the lease was lost.
 
         """
         row = await self._pool.fetchrow(
@@ -660,7 +667,8 @@ class FeedStore:
         limits: dict[SourceType, int],
     ) -> list[LeasedFeed]:
         """
-        Batch-acquire unclaimed feeds via the per-type UNION ALL MATERIALIZED CTE.
+        Batch-acquire unclaimed feeds via the per-type UNION ALL MATERIALIZED
+        CTE.
 
         Each branch is independently capped by its per-type LIMIT so adversarial
         heap clustering (e.g. a batch of newly-added bcfy_feeds landing
@@ -716,7 +724,8 @@ class FeedStore:
 
         Args:
             worker_id: UUID of the worker requesting leases.
-            abandonment_window_sec: Seconds before a heartbeat is considered stale.
+            abandonment_window_sec: Seconds before a heartbeat is considered
+                stale.
             limits: Per-type recovery LIMIT keyed by ``SourceType``.
                 Types absent from the dict are passed as 0 (their CTE
                 branch returns no rows). Types present but not in this
@@ -1146,7 +1155,8 @@ class FeedStore:
             order: The sort order by occurred_at (ASC or DESC).
 
         Returns:
-            A PaginatedFeedAuditEvents object containing history events, next_token, and total.
+            A PaginatedFeedAuditEvents object containing history events,
+            next_token, and total.
 
         Raises:
             ValueError: If limit is less than 1 or if next_token is invalid.
@@ -1188,17 +1198,30 @@ class FeedStore:
             id_key="feed_revision",
         )
 
-        events = [
-            FeedAuditEvent(
-                id=row["id"],
-                feed_id=row["feed_id"],
-                action=row["action"],
-                actor_id=row["actor_id"],
-                occurred_at=row["occurred_at"],
-                feed_revision=row["feed_revision"],
-                before_values=row["before_values"],
-                after_values=row["after_values"],
+        events = []
+        for row in rows:
+            before_values_raw = row["before_values"]
+            before_values = (
+                json.loads(before_values_raw)
+                if isinstance(before_values_raw, str)
+                else before_values_raw
             )
-            for row in rows
-        ]
+            after_values_raw = row["after_values"]
+            after_values = (
+                json.loads(after_values_raw)
+                if isinstance(after_values_raw, str)
+                else after_values_raw
+            )
+            events.append(
+                FeedAuditEvent(
+                    id=row["id"],
+                    feed_id=row["feed_id"],
+                    action=row["action"],
+                    actor_id=row["actor_id"],
+                    occurred_at=row["occurred_at"],
+                    feed_revision=row["feed_revision"],
+                    before_values=before_values,
+                    after_values=after_values,
+                )
+            )
         return PaginatedFeedAuditEvents(events, new_next_token, total)

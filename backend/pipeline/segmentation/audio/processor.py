@@ -9,6 +9,7 @@ import av
 import numpy as np
 from google.cloud import storage
 
+from backend.pipeline.common import tracing_utils
 from backend.pipeline.common.constants import MS_PER_SECOND, SAMPLE_RATE_HZ
 from backend.pipeline.schema_types import streaming_state as bp_state
 from backend.pipeline.segmentation import storage as audio_storage
@@ -18,7 +19,10 @@ from backend.pipeline.segmentation.constants import (
     MONO_CHANNEL_COUNT,
     PRIMARY_AUDIO_STREAM_INDEX,
 )
-from backend.pipeline.segmentation.datatypes import AudioChunkData
+from backend.pipeline.segmentation.datatypes import (
+    AudioChunkData,
+    AudioSignal,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -82,21 +86,46 @@ class SegmentationAudioProcessor:
             self.vad = active_vad_factory(self.vad_config)
         self.vad.setup()
 
+    def fetch_and_decode_audio(
+        self, gcs_path: str, trace_attrs: dict[str, str] | None = None
+    ) -> AudioSignal:
+        """Downloads audio bytes from GCS and decodes them to an AudioSignal.
+
+        Args:
+            gcs_path: The Google Cloud Storage URI (e.g., 'gs://bucket/object').
+            trace_attrs: Optional dictionary of trace attributes (e.g., traceparent).
+                Retained for backwards compatibility with legacy callers.
+
+        Returns:
+            An AudioSignal object containing the decoded PCM samples and sample rate.
+        """
+        tracer = tracing_utils.get_tracer(__name__)
+        with tracer.start_as_current_span("fetch_and_decode_audio"):
+            with self.fetcher.download_audio_to_memory(gcs_path) as in_mem_file:
+                in_mem_file.seek(0)
+                samples, sr = self._decode_audio_in_memory(in_mem_file)
+                return AudioSignal(samples=samples, sample_rate=sr)
+
     def download_audio_and_detect(
         self,
         gcs_path: str,
         start_ms: int,
         duration_ms: int | None = None,
         prior_audio: bytes | None = None,
+        *,
+        prefetched_audio: AudioSignal | None = None,
     ) -> AudioChunkData:
-        """Downloads audio bytes from GCS and runs the speech segment detection natively."""
-        with self.fetcher.download_audio_to_memory(gcs_path) as in_mem_file:
-            in_mem_file.seek(0)
-            samples, sr = self._decode_audio_in_memory(in_mem_file)
+        """Downloads audio bytes from GCS (or uses pre-fetched decoded samples) and runs speech segment detection natively."""
+        if prefetched_audio is not None:
+            audio_signal = prefetched_audio
+        else:
+            audio_signal = self.fetch_and_decode_audio(gcs_path)
+
+        samples, sr = audio_signal.samples, audio_signal.sample_rate
 
         # Safeguard: Reject extremely long audio files (e.g. >300s) to prevent memory exhaustion
         # and Windmill timeouts at the engine level.
-        duration_sec = len(samples) / sr
+        duration_sec = audio_signal.duration_seconds
         if duration_sec > MAX_AUDIO_CHUNK_DURATION_SEC:
             feed_name, segment_id = _parse_feed_and_segment_from_gcs_path(
                 gcs_path

@@ -1,7 +1,7 @@
 import { defineConfig, loadEnv, mergeConfig } from 'vite';
 import type { UserConfig } from 'vite';
 
-import react from '@vitejs/plugin-react-swc';
+import react from '@vitejs/plugin-react';
 
 import { mockAuthPlugin } from './mockAuthPlugin';
 
@@ -28,7 +28,6 @@ export default defineConfig(({ mode }) => {
         '@mui/icons-material',
         '@mui/material/styles',
         '@tanstack/react-query',
-        'howler',
         'react-virtuoso',
         '@wavesurfer/react',
       ],

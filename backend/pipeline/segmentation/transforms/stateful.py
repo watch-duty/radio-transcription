@@ -90,6 +90,7 @@ per-chunk processing or external I/O latency increases significantly in the
 future, this value should be reduced accordingly.
 """
 
+import concurrent.futures
 import logging as std_logging
 import time
 from collections.abc import Iterable, Iterator
@@ -118,6 +119,7 @@ from backend.pipeline.segmentation import datatypes, log_helper
 from backend.pipeline.segmentation.audio import vad
 from backend.pipeline.segmentation.constants import (
     MAX_CHUNKS_PER_WINDMILL_BUNDLE,
+    SHARED_DOWNLOAD_POOL_SIZE,
     WINDMILL_TIMER_MIN_ADVANCE_SECS,
 )
 from backend.pipeline.segmentation.state import sequence_buffer
@@ -597,12 +599,13 @@ class OrderedStitchAudioFn(beam.DoFn):
     2. Exactly-Once ML FSM Protection: Pub/Sub fundamentally only guarantees `At-Least-Once Delivery`. Any transient
        network blip or VM preemption forces Pub/Sub to actively re-deliver un-acked duplicates. Our isolated Beam
        SequenceBuffer beautifully filters duplicate frames, entirely preventing false positive VAD speech boundaries.
-    3. Bounded Micro-Batch Self-Chaining: When unrolling multi-day incident backlogs, emissions are clamped to
-       `MAX_CHUNKS_PER_WINDMILL_BUNDLE` (10 chunks) and an Event-Time recursive timer is re-armed to open fresh worker
-       bundles. This proves our worker heartbeats to central Windmill servers every ~3-4 seconds, entirely avoiding
-       300-second bundle lease evictions ("poison pills") while ensuring perfectly smooth downstream side-input join checkpointing.
+    3. Bounded Self-Chaining Drains: When unrolling out-of-order backlogs, emissions are
+       clamped to `MAX_CHUNKS_PER_WINDMILL_BUNDLE` (25 chunks) and a watermark timer is
+       re-armed to open fresh bundles, preventing 300-second bundle lease evictions
+       while reducing intermediate timer queuing delays during catch-up.
     """
 
+    SHARED_THREADPOOL_HANDLE = Shared()
     processed_in_bundle: int
 
     # --- State Specs ---
@@ -707,6 +710,16 @@ class OrderedStitchAudioFn(beam.DoFn):
         )
         self.engine.processor.vad = shared_vad
         self.engine.processor.gcs_client = shared_gcs
+
+        def _create_executor() -> concurrent.futures.ThreadPoolExecutor:
+            return concurrent.futures.ThreadPoolExecutor(
+                max_workers=SHARED_DOWNLOAD_POOL_SIZE
+            )
+
+        self._executor = self.SHARED_THREADPOOL_HANDLE.acquire(
+            _create_executor, tag="shared_download_thread_pool"
+        )
+        self.engine.executor = self._executor
         self.engine.setup()
 
     def start_bundle(self) -> None:
@@ -1048,6 +1061,9 @@ class OrderedStitchAudioFn(beam.DoFn):
         active_feed_metadata = curr_context.feed_metadata
         active_traceparent = curr_context.traceparent
         active_baggage = curr_context.baggage
+        task_logger = _get_task_logger(
+            feed_id, active_session_id, "ordered-stitcher"
+        )
 
         results = []
         with tracing_utils.with_tracer_context(
@@ -1135,6 +1151,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                     )
 
                     previous_expected_ts = new_expected
+                    prefetched_futures = self.engine.prefetch_audio_futures(
+                        elements_to_emit, task_logger
+                    )
 
                     for chunk in elements_to_emit:
                         curr_context = (
@@ -1160,6 +1179,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 timer_manager=timer_manager,
                                 previous_expected_ts=previous_expected_ts,
                                 is_backfill=is_backfill,
+                                prefetched_futures=prefetched_futures,
                             )
                         )
                         results.extend(outputs)
@@ -1213,6 +1233,9 @@ class OrderedStitchAudioFn(beam.DoFn):
         active_feed_metadata = curr_context.feed_metadata
         active_traceparent = curr_context.traceparent
         active_baggage = curr_context.baggage
+        task_logger = _get_task_logger(
+            feed_id, active_session_id, "ordered-stitcher"
+        )
 
         results = []
         with tracing_utils.with_tracer_context(
@@ -1224,7 +1247,7 @@ class OrderedStitchAudioFn(beam.DoFn):
 
             # Cap the drain based on our remaining bundle capacity.
             # In a fresh timer-activated bundle, processed_in_bundle starts at 0, so
-            # we can drain up to the full MAX_CHUNKS_PER_WINDMILL_BUNDLE (5 chunks).
+            # we can drain up to the full MAX_CHUNKS_PER_WINDMILL_BUNDLE (25 chunks).
             new_expected_next_ts, new_buffer_elements, elements_to_emit = (
                 seq_buf.drain_ready_elements(
                     expected_next_ts=curr_context.expected_next_chunk_start_ms,
@@ -1278,6 +1301,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                 # Assume backfill under backlog
                 is_backfill = True
                 previous_expected_ts = curr_context.expected_next_chunk_start_ms
+                prefetched_futures = self.engine.prefetch_audio_futures(
+                    elements_to_emit, task_logger
+                )
 
                 for chunk in elements_to_emit:
                     # Fetch current state context
@@ -1304,6 +1330,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                             timer_manager=timer_manager,
                             previous_expected_ts=previous_expected_ts,
                             is_backfill=is_backfill,
+                            prefetched_futures=prefetched_futures,
                         )
                     )
                     results.extend(outputs)

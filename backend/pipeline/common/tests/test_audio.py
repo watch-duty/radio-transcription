@@ -231,6 +231,76 @@ class TestAudioUtils(unittest.TestCase):
         self.assertGreaterEqual(duration_ms, 7200)
         self.assertLessEqual(duration_ms, 7800)
 
+    @patch("subprocess.run")
+    def test_probe_audio_metadata_stream_duration_fallback_for_fmp4(
+        self, mock_run: MagicMock
+    ) -> None:
+        """Test stream duration fallback when container format duration is N/A (e.g. fragmented M4A)."""
+        mock_result = MagicMock()
+        mock_result.stdout = (
+            b'{"format": {"duration": "N/A", "format_name": "mov,mp4,m4a,3gp,3g2,mj2"}, '
+            b'"streams": [{"codec_type": "audio", "duration": "12.345000"}]}'
+        )
+        mock_run.return_value = mock_result
+
+        duration, mime = audio_helper.probe_audio_metadata(
+            b"dummy fmp4", input_format="m4a"
+        )
+        self.assertEqual(duration, 12345)
+        self.assertEqual(mime, audio_helper.models.AudioMimeType.MP4)
+        command = mock_run.call_args.args[0]
+        self.assertIn("-f", command)
+        self.assertIn("m4a", command)
+
+    @patch("backend.pipeline.common.audio.tempfile.NamedTemporaryFile")
+    @patch("subprocess.run")
+    def test_probe_audio_metadata_both_format_and_stream_duration_unusable_raises(
+        self, mock_run: MagicMock, mock_temp_file: MagicMock
+    ) -> None:
+        """Test that probe_audio_metadata raises CalledProcessError with verbose probe when duration is missing everywhere."""
+        temp_file = _NamedTemporaryFileStub()
+        mock_temp_file.return_value = temp_file
+
+        def _run_side_effect(command, **_kwargs):
+            if "-show_format" in command:
+                return MagicMock(
+                    stdout="verbose-probe-stdout", stderr="verbose-probe-stderr"
+                )
+            res = MagicMock()
+            res.stdout = (
+                b'{"format": {"duration": "N/A", "format_name": "mov,mp4,m4a,3gp,3g2,mj2"}, '
+                b'"streams": [{"codec_type": "audio", "duration": "N/A"}]}'
+            )
+            res.args = command
+            return res
+
+        mock_run.side_effect = _run_side_effect
+
+        with self.assertRaises(subprocess.CalledProcessError) as ctx:
+            audio_helper.probe_audio_metadata(b"dummy fmp4", input_format="m4a")
+
+        self.assertEqual(ctx.exception.returncode, 1)
+        self.assertIn(
+            b"ffprobe returned N/A for duration", ctx.exception.stderr
+        )
+        self.assertIn(b"STDOUT:\nverbose-probe-stdout", ctx.exception.stderr)
+
+    @patch("subprocess.run")
+    def test_probe_audio_metadata_nonstandard_zero_string_fallback(
+        self, mock_run: MagicMock
+    ) -> None:
+        """Test that non-standard zero strings like '0.00' trigger stream fallback."""
+        mock_result = MagicMock()
+        mock_result.stdout = (
+            b'{"format": {"duration": "0.00", "format_name": "mov,mp4,m4a,3gp,3g2,mj2"}, '
+            b'"streams": [{"codec_type": "audio", "duration": "8.500000"}]}'
+        )
+        mock_run.return_value = mock_result
+
+        duration, mime = audio_helper.probe_audio_metadata(b"dummy fmp4")
+        self.assertEqual(duration, 8500)
+        self.assertEqual(mime, audio_helper.models.AudioMimeType.MP4)
+
 
 if __name__ == "__main__":
     unittest.main()

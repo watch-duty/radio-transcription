@@ -8,6 +8,7 @@ from typing import Any
 import asyncpg
 import pytest
 import requests
+from google.cloud import storage
 
 FEEDS_API_HOST = os.environ.get("FEEDS_API_HOST", "localhost:8089")
 _TEST_ACTOR_HEADERS = {"X-WD-Actor-Id": "user:google:e2e-admin@example.com"}
@@ -118,10 +119,22 @@ def create_test_echo_feed() -> Generator[tuple[str, str]]:
         tuple[str, str]: A tuple containing (feed_id, source_feed_id).
     """
     feed_name = f"integration-test-echo-feed-{uuid.uuid4()}"
+    source_feed_id = f"src-{uuid.uuid4()}"
+    bucket_name = os.environ.get(
+        "ECHO_RECORDINGS_BUCKET", "echo-recordings-test"
+    )
+
+    # Create a dummy keep file to simulate GCS directory presence
+    # before creating the feed
+    gcs_client = storage.Client()
+    bucket = gcs_client.bucket(bucket_name)
+    blob = bucket.blob(f"{source_feed_id}/.keep")
+    blob.upload_from_string("")
+
     payload = {
         "name": feed_name,
         "source_type": "echo",
-        "source_feed_id": f"src-{uuid.uuid4()}",
+        "source_feed_id": source_feed_id,
     }
     gen = _create_and_cleanup_feed(payload)
     feed_id, _ = next(gen)
@@ -131,6 +144,11 @@ def create_test_echo_feed() -> Generator[tuple[str, str]]:
         try:
             next(gen)
         except StopIteration:
+            pass
+        # Clean up GCS keep file and dummy folder
+        try:
+            blob.delete()
+        except Exception:  # noqa: S110
             pass
 
 
