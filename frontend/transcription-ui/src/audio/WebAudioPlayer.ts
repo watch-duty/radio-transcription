@@ -412,7 +412,7 @@ class MseSequenceSession implements PlaybackController {
 
     // We're about to append while 'ended' (see comment above); let a future empty queue
     // re-trigger endOfStream() once appendBuffer() brings the MediaSource back to 'open'.
-    if (this.mediaSource.readyState === 'ended') {
+    if (this.mediaSource?.readyState === 'ended') {
       this.hasCalledEndOfStream = false;
     }
 
