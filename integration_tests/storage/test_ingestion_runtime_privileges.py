@@ -672,11 +672,37 @@ async def _assert_denied(
         await runtime_pool.execute(statement)
 
 
+async def _public_has_direct_select_on_feeds(
+    runtime_pool: asyncpg.Pool,
+) -> bool:
+    """Return whether PUBLIC has a direct SELECT ACL on ``feeds``."""
+    result = await runtime_pool.fetchval(
+        """
+        SELECT COALESCE(
+            pg_catalog.bool_or(
+                acl.grantee = 0
+                AND acl.privilege_type = 'SELECT'
+            ),
+            FALSE
+        )
+        FROM pg_catalog.pg_class AS relation
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+        LEFT JOIN LATERAL pg_catalog.aclexplode(relation.relacl) AS acl
+          ON TRUE
+        WHERE namespace.nspname = 'public'
+          AND relation.relname = 'feeds'
+        """
+    )
+    assert isinstance(result, bool)
+    return result
+
+
 async def test_every_forbidden_runtime_action_is_denied(
     runtime_pool: asyncpg.Pool,
     privilege_fixtures: _PrivilegeFixtures,
 ) -> None:
-    """Probe forbidden DML, DDL, role, sequence, and function actions."""
+    """Probe forbidden DML, DDL, ACL, role, sequence, and function actions."""
     statements = (
         "INSERT INTO public.ingestion_leases DEFAULT VALUES",
         "DELETE FROM public.ingestion_leases WHERE FALSE",
@@ -705,9 +731,15 @@ async def test_every_forbidden_runtime_action_is_denied(
         f"CREATE TEMPORARY TABLE {_fixture_identifier('runtime_temp_denied')} "
         "(id integer)",
         f"CREATE SCHEMA {_fixture_identifier('runtime_schema_denied')}",
-        "GRANT SELECT ON public.feeds TO PUBLIC",
         "SET ROLE postgres",
         f"CREATE ROLE {_fixture_identifier('runtime_role_denied')}",
     )
     for statement in statements:
         await _assert_denied(runtime_pool, statement)
+
+    # PostgreSQL reports a warning, not an error, when a role without grant
+    # options tries to grant a privilege it merely holds. Prove the operation
+    # is ineffective by comparing the direct PUBLIC ACL before and after it.
+    assert await _public_has_direct_select_on_feeds(runtime_pool) is False
+    await runtime_pool.execute("GRANT SELECT ON public.feeds TO PUBLIC")
+    assert await _public_has_direct_select_on_feeds(runtime_pool) is False
