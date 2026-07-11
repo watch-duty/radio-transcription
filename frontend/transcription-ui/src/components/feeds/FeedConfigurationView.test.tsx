@@ -1155,7 +1155,7 @@ describe('FeedConfigurationView', () => {
     // The alert should not be in the document since we are in register mode (not editing)
     expect(
       screen.queryByText(
-        'Updating timezone requires a manual deactivate and reset in order to take effect.'
+        'After updating the timezone, please deactivate and reset the feed.'
       )
     ).not.toBeInTheDocument();
   });
@@ -1234,7 +1234,7 @@ describe('FeedConfigurationView', () => {
 
     expect(
       screen.getByText(
-        'Updating timezone requires a manual deactivate and reset in order to take effect.'
+        'After updating the timezone, please deactivate and reset the feed.'
       )
     ).toBeInTheDocument();
   });
