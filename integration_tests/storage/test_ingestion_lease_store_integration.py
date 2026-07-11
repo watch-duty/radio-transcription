@@ -2,7 +2,7 @@
 
 This module deliberately owns an external PostgreSQL fixture.  It must not
 request the shared AlloyDB Omni fixtures because CI runs it against explicit
-PostgreSQL 15 and 16 services.  Lease identities are permanent tombstones, so
+supported PostgreSQL services.  Lease identities are permanent tombstones, so
 every test creates unique identities and leaves them in place.
 """
 
@@ -28,6 +28,7 @@ pytestmark = pytest.mark.asyncio(loop_scope="module")
 
 _ACTOR_ID = "service_account:gcp:ingestion-lease-integration"
 _BASE_CURSOR = datetime.datetime(2026, 7, 10, 12, 0, tzinfo=datetime.UTC)
+_SUPPORTED_POSTGRES_MAJORS = frozenset({"15", "16", "17"})
 _TIMEOUT_SECONDS = 10.0
 _SOURCE_TYPE = feed_store.SourceType.BCFY_CALLS
 
@@ -57,8 +58,11 @@ async def ingestion_lease_pool() -> collections.abc.AsyncIterator[asyncpg.Pool]:
     try:
         expected_major = os.environ.get("EXPECTED_POSTGRES_MAJOR")
         if expected_major is not None:
-            if expected_major not in {"15", "16"}:
-                pytest.fail("EXPECTED_POSTGRES_MAJOR must be 15 or 16")
+            if expected_major not in _SUPPORTED_POSTGRES_MAJORS:
+                pytest.fail(
+                    "EXPECTED_POSTGRES_MAJOR must be one of the supported "
+                    "PostgreSQL services"
+                )
             version_num = await pool.fetchval("SHOW server_version_num")
             actual_major = int(version_num) // 10000
             assert actual_major == int(expected_major), (

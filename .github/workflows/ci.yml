@@ -670,7 +670,7 @@ jobs:
 
           echo "PostgreSQL $server_major schema compatibility and recovery checks passed."
 
-  # Matrix expansion changes check context names; confirm both version-qualified
+  # Matrix expansion changes check context names; confirm all version-qualified
   # ingestion-lease-storage-postgres checks in branch protection before merge.
   ingestion-lease-storage-postgres:
     needs: [setup]
@@ -680,7 +680,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        postgres-version: ["15", "16"]
+        postgres-version: ["15", "16", "17"]
     services:
       postgres:
         image: postgres:${{ matrix.postgres-version }}-alpine
