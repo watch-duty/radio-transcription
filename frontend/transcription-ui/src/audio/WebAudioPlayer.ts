@@ -367,12 +367,23 @@ class MseSequenceSession implements PlaybackController {
   }
 
   private processQueue(): void {
+    // 'ended' is not fatal here: per the MSE spec, appendBuffer() on an 'ended' MediaSource
+    // automatically transitions it back to 'open' and resumes normally — this is the built-in
+    // recovery path for when checkEndOfStream() below decided the sequence was done, but a new
+    // segment shows up shortly after (e.g. playback caught up to the head of a still-live feed).
+    // Only 'closed' (the <audio> element's src was reset/detached) is truly unrecoverable.
+    const sourceBufferDetached =
+      !!this.mediaSource &&
+      !!this.sourceBuffer &&
+      !Array.from(this.mediaSource.sourceBuffers).includes(this.sourceBuffer);
+    const mediaSourceUsable =
+      !!this.mediaSource && this.mediaSource.readyState !== 'closed';
+
     if (
       this.isUnloaded ||
       !this.sourceBuffer ||
-      !this.mediaSource ||
-      this.mediaSource.readyState !== 'open' ||
-      !Array.from(this.mediaSource.sourceBuffers).includes(this.sourceBuffer) ||
+      !mediaSourceUsable ||
+      sourceBufferDetached ||
       this.sourceBuffer.updating ||
       this.appendQueue.length === 0
     ) {
@@ -386,11 +397,7 @@ class MseSequenceSession implements PlaybackController {
         this.appendQueue.length > 0 &&
         !this.isUnloaded &&
         this.mediaSource &&
-        (this.mediaSource.readyState !== 'open' ||
-          (this.sourceBuffer &&
-            !Array.from(this.mediaSource.sourceBuffers).includes(
-              this.sourceBuffer
-            )))
+        (!mediaSourceUsable || sourceBufferDetached)
       ) {
         const audioErr = this.audio.error;
         console.warn(
@@ -401,6 +408,12 @@ class MseSequenceSession implements PlaybackController {
         this.options.callbacks.onError?.();
       }
       return;
+    }
+
+    // We're about to append while 'ended' (see comment above); let a future empty queue
+    // re-trigger endOfStream() once appendBuffer() brings the MediaSource back to 'open'.
+    if (this.mediaSource.readyState === 'ended') {
+      this.hasCalledEndOfStream = false;
     }
 
     const next = this.appendQueue[0];

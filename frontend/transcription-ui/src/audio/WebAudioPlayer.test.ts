@@ -235,11 +235,17 @@ class MockSourceBuffer {
   timestampOffsetAtCall: number[] = [];
   appendWindowStartAtCall: number[] = [];
   appendWindowEndAtCall: number[] = [];
+  mediaSource: MockMediaSource | null = null;
   addEventListener = (type: string, cb: () => void) => {
     (this.listeners[type] ??= []).push(cb);
   };
   removeEventListener = vi.fn();
   appendBuffer = vi.fn(() => {
+    // Mirrors the real MSE spec: appendBuffer() on an 'ended' MediaSource transitions it
+    // back to 'open' rather than throwing (see the "prepare append algorithm").
+    if (this.mediaSource?.readyState === 'ended') {
+      this.mediaSource.readyState = 'open';
+    }
     // Capture synchronously, since these are mutated in place before the next call — reading
     // them later wouldn't reflect what was in effect at append time.
     this.timestampOffsetAtCall.push(this.timestampOffset);
@@ -266,11 +272,14 @@ class MockMediaSource {
   }
   addSourceBuffer = vi.fn(() => {
     const sb = new MockSourceBuffer();
+    sb.mediaSource = this;
     this.sourceBuffers.push(sb);
     lastSourceBuffer = sb;
     return sb;
   });
-  endOfStream = vi.fn();
+  endOfStream = vi.fn(() => {
+    this.readyState = 'ended';
+  });
   addEventListener = (type: string, cb: () => void) => {
     (this.listeners[type] ??= []).push(cb);
   };
@@ -631,6 +640,77 @@ describe('WebAudioPlayer', () => {
     expect(lastSourceBuffer.appendWindowEndAtCall[1]).toBeCloseTo(
       seg2GroupStart + 1024 / 16000
     );
+  });
+
+  it('recovers when a new segment polls in after prematurely calling endOfStream', async () => {
+    // Reproduces a real race on live feeds: playback catches up to the last *locally known*
+    // segment, checkEndOfStream() (reasonably, given what it knows) decides the sequence is
+    // over and calls mediaSource.endOfStream() — but a new segment then polls in while the
+    // still-buffered backlog is playing out. Per the MSE spec, appendBuffer() on an 'ended'
+    // MediaSource transitions it back to 'open' automatically rather than throwing; the
+    // player must let that recovery happen instead of treating 'ended' as fatal.
+    stubMseGlobals();
+    let seg3Available = false;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve({
+          ok: true,
+          arrayBuffer: () => Promise.resolve(createFmp4File(16000)),
+        })
+      )
+    );
+
+    const player = new WebAudioPlayer(new AudioContext());
+    const onError = vi.fn();
+    const getNextSegment = vi.fn((currentId: string) => {
+      if (currentId === 'seg-1') {
+        return { id: 'seg-2', uri: 'https://example.com/seg-2.m4a' };
+      }
+      if (currentId === 'seg-2' && seg3Available) {
+        return { id: 'seg-3', uri: 'https://example.com/seg-3.m4a' };
+      }
+      return null;
+    });
+
+    player.loadSequence({
+      initialSegmentId: 'seg-1',
+      initialUri: 'https://example.com/seg-1.m4a',
+      callbacks: { onError },
+      getNextSegment,
+    });
+
+    MockMediaSource.current!.emit('sourceopen');
+
+    // seg-1 and seg-2 append; with no seg-3 known yet, checkEndOfStream() fires and the
+    // MediaSource transitions to 'ended'. (It may fire more than once along the way — a
+    // prefetch can be discovered, checked again before its fetch resolves, and recovered —
+    // what matters is where it lands once seg-2 has fully appended.)
+    await vi.waitFor(() =>
+      expect(lastSourceBuffer.appendBuffer).toHaveBeenCalledTimes(2)
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(MockMediaSource.current!.endOfStream).toHaveBeenCalled();
+    expect(MockMediaSource.current!.readyState).toBe('ended');
+
+    // A poll now surfaces seg-3. Cross into seg-2's buffered range (still playing out) to
+    // trigger the prefetch check that discovers it — matching the reported stack trace of
+    // fetchAndEnqueue -> processQueue landing on an 'ended' MediaSource.
+    seg3Available = true;
+    lastAudio.currentTime = 1.5;
+    lastAudio.emit('timeupdate');
+
+    await vi.waitFor(() =>
+      expect(lastSourceBuffer.appendBuffer).toHaveBeenCalledTimes(3)
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // seg-3 appended successfully despite the MediaSource being 'ended' beforehand — the
+    // regression this test guards against is processQueue() aborting/unloading here instead.
+    expect(onError).not.toHaveBeenCalled();
+    // No seg-4 is ever made available, so once seg-3 finishes appending, checkEndOfStream()
+    // correctly (and separately) decides the sequence really is over again.
+    expect(MockMediaSource.current!.readyState).toBe('ended');
   });
 
   it('never applies a gain dip at segment boundaries', async () => {
