@@ -559,6 +559,15 @@ class TestChildMutationQueryContract(unittest.TestCase):
         ):
             self.assertNotIn(legacy_authority, sql)
 
+    def test_child_queries_match_existing_feed_timestamp_shape(self) -> None:
+        for query in (
+            ingestion_lease_queries.LOCK_CHILD_FEEDS_SQL,
+            ingestion_lease_queries.APPLY_ADMITTED_PROGRESS_SQL,
+            ingestion_lease_queries.APPLY_SOURCE_OBSERVATIONS_SQL,
+            ingestion_lease_queries.APPLY_FEED_FAILURES_SQL,
+        ):
+            self.assertNotRegex(_normalized_sql(query), r"\bupdated_at\b")
+
     def test_progress_and_observation_are_static_monotonic_rowsets(
         self,
     ) -> None:

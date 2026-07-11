@@ -377,8 +377,7 @@ async def _fetch_feed(pool: asyncpg.Pool, feed_id: uuid.UUID) -> asyncpg.Record:
             status_reason,
             status_reason_detail,
             status_reason_updated_at,
-            audit_revision,
-            updated_at
+            audit_revision
         FROM public.feeds
         WHERE id = $1
         """,
@@ -1021,8 +1020,7 @@ async def _deactivate_with_lease_lock(
             await connection.execute(
                 """
                 UPDATE public.feeds
-                SET status = 'deactivated'::public.feed_status,
-                    updated_at = NOW()
+                SET status = 'deactivated'::public.feed_status
                 WHERE id = $1
                 """,
                 feed_id,
@@ -1062,8 +1060,7 @@ async def test_deactivation_races_and_revision_is_not_fence(  # noqa: PLR0915
                     await blocker.execute(
                         """
                         UPDATE public.feeds
-                        SET status = 'deactivated'::public.feed_status,
-                            updated_at = NOW()
+                        SET status = 'deactivated'::public.feed_status
                         WHERE id = $1
                         """,
                         member.feed_id,

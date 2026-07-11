@@ -137,7 +137,6 @@ def _child_row(
         "status_reason_updated_at": None,
         "audit_revision": 0,
         "created_at": _NOW,
-        "updated_at": _NOW,
     }
     row.update(overrides)
     return row

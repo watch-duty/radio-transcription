@@ -629,8 +629,7 @@ SELECT
     status_reason_detail,
     status_reason_updated_at,
     audit_revision,
-    created_at,
-    updated_at
+    created_at
 FROM public.feeds
 WHERE id = ANY($1::uuid[])
 ORDER BY id
@@ -714,8 +713,7 @@ updated AS (
             ELSE feeds.status_reason_updated_at
         END,
         audit_revision = feeds.audit_revision
-            + CASE WHEN input.clear_lifecycle THEN 1 ELSE 0 END,
-        updated_at = NOW()
+            + CASE WHEN input.clear_lifecycle THEN 1 ELSE 0 END
     FROM input
     WHERE feeds.id = input.feed_id
       AND feeds.status IN (
@@ -748,8 +746,7 @@ updated AS (
         feeds.status_reason_detail,
         feeds.status_reason_updated_at,
         feeds.audit_revision,
-        feeds.created_at,
-        feeds.updated_at
+        feeds.created_at
 )
 SELECT *
 FROM updated
@@ -818,8 +815,7 @@ updated AS (
             ELSE feeds.status_reason_updated_at
         END,
         audit_revision = feeds.audit_revision
-            + CASE WHEN input.clear_lifecycle THEN 1 ELSE 0 END,
-        updated_at = NOW()
+            + CASE WHEN input.clear_lifecycle THEN 1 ELSE 0 END
     FROM input
     WHERE feeds.id = input.feed_id
       AND feeds.status IN (
@@ -850,8 +846,7 @@ updated AS (
         feeds.status_reason_detail,
         feeds.status_reason_updated_at,
         feeds.audit_revision,
-        feeds.created_at,
-        feeds.updated_at
+        feeds.created_at
 )
 SELECT *
 FROM updated
@@ -936,8 +931,7 @@ updated AS (
                 THEN NOW()
             ELSE feeds.status_reason_updated_at
         END,
-        audit_revision = feeds.audit_revision + 1,
-        updated_at = NOW()
+        audit_revision = feeds.audit_revision + 1
     FROM input
     WHERE feeds.id = input.feed_id
       AND feeds.status IN (
@@ -968,8 +962,7 @@ updated AS (
         feeds.status_reason_detail,
         feeds.status_reason_updated_at,
         feeds.audit_revision,
-        feeds.created_at,
-        feeds.updated_at
+        feeds.created_at
 )
 SELECT *
 FROM updated
