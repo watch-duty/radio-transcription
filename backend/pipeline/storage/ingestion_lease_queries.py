@@ -859,6 +859,163 @@ ORDER BY caller_ordinal
 """
 
 
+APPLY_FEED_FAILURES_SQL = """\
+WITH input AS MATERIALIZED (
+    SELECT
+        input_values.feed_id,
+        input_values.cursor,
+        input_values.write_cursor,
+        input_values.is_budgeted,
+        input_values.failure_threshold,
+        input_values.backoff_max_sec,
+        input_values.backoff_base_sec,
+        input_values.retry_after,
+        input_values.status_reason,
+        input_values.status_reason_detail,
+        input_values.caller_ordinal,
+        input_values.row_ordinal
+    FROM UNNEST(
+        $1::uuid[],
+        $2::timestamptz[],
+        $3::boolean[],
+        $4::boolean[],
+        $5::integer[],
+        $6::integer[],
+        $7::integer[],
+        $8::timestamptz[],
+        $9::text[],
+        $10::text[],
+        $11::bigint[]
+    ) WITH ORDINALITY AS input_values(
+        feed_id,
+        cursor,
+        write_cursor,
+        is_budgeted,
+        failure_threshold,
+        backoff_max_sec,
+        backoff_base_sec,
+        retry_after,
+        status_reason,
+        status_reason_detail,
+        caller_ordinal,
+        row_ordinal
+    )
+),
+updated AS (
+    UPDATE public.feeds AS feeds
+    SET last_bookmark_time = CASE
+            WHEN input.write_cursor
+                THEN GREATEST(feeds.last_bookmark_time, input.cursor)
+            ELSE feeds.last_bookmark_time
+        END,
+        status = CASE
+            WHEN input.is_budgeted
+             AND feeds.failure_count + 1 >= input.failure_threshold
+                THEN 'quarantined'::public.feed_status
+            ELSE 'failing'::public.feed_status
+        END,
+        failure_count = CASE
+            WHEN input.is_budgeted THEN feeds.failure_count + 1
+            ELSE 0
+        END,
+        retry_after = CASE
+            WHEN NOT input.is_budgeted THEN input.retry_after
+            WHEN feeds.failure_count + 1 >= input.failure_threshold THEN NULL
+            ELSE NOW()
+                + LEAST(
+                    input.backoff_max_sec * INTERVAL '1 second',
+                    input.backoff_base_sec * INTERVAL '1 second'
+                        * POWER(2, feeds.failure_count)
+                )
+                + (RANDOM() * INTERVAL '10 seconds')
+        END,
+        status_reason = input.status_reason,
+        status_reason_detail = input.status_reason_detail,
+        status_reason_updated_at = CASE
+            WHEN feeds.status_reason IS DISTINCT FROM input.status_reason
+                THEN NOW()
+            ELSE feeds.status_reason_updated_at
+        END,
+        audit_revision = feeds.audit_revision + 1,
+        updated_at = NOW()
+    FROM input
+    WHERE feeds.id = input.feed_id
+      AND feeds.status IN (
+          'active'::public.feed_status,
+          'failing'::public.feed_status
+      )
+      AND (
+          input.cursor IS NULL
+          OR (
+              input.write_cursor
+              AND (
+                  feeds.last_bookmark_time IS NULL
+                  OR input.cursor > feeds.last_bookmark_time
+              )
+          )
+      )
+    RETURNING
+        input.caller_ordinal,
+        feeds.id,
+        feeds.name,
+        feeds.source_type,
+        feeds.status::text AS status,
+        feeds.last_processed_filename,
+        feeds.last_bookmark_time,
+        feeds.failure_count,
+        feeds.retry_after,
+        feeds.status_reason,
+        feeds.status_reason_detail,
+        feeds.status_reason_updated_at,
+        feeds.audit_revision,
+        feeds.created_at,
+        feeds.updated_at
+)
+SELECT *
+FROM updated
+ORDER BY caller_ordinal
+"""
+
+
+FINALIZE_LEASE_RECOVERY_SQL = """\
+UPDATE public.ingestion_leases AS leases
+SET failure_count = 0,
+    retry_after = NULL,
+    status_reason = NULL,
+    status_reason_detail = NULL,
+    status_reason_updated_at = NULL,
+    audit_revision = leases.audit_revision + 1,
+    updated_at = NOW()
+WHERE source_type = $1
+  AND lease_key = $2
+  AND status = 'active'::public.feed_status
+  AND worker_id = $3
+  AND fencing_token = $4
+  AND (
+      failure_count <> 0
+      OR retry_after IS NOT NULL
+      OR status_reason IS NOT NULL
+      OR status_reason_detail IS NOT NULL
+      OR status_reason_updated_at IS NOT NULL
+  )
+RETURNING
+    source_type,
+    lease_key,
+    status::text AS status,
+    worker_id,
+    fencing_token,
+    last_heartbeat,
+    failure_count,
+    retry_after,
+    status_reason,
+    status_reason_detail,
+    status_reason_updated_at,
+    audit_revision,
+    membership_revision,
+    updated_at
+"""
+
+
 LOAD_CHILD_AUDIT_PROPERTIES_SQL = """\
 SELECT
     fp.feed_id,

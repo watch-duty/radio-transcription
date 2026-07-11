@@ -465,20 +465,39 @@ class TestChildMutationQueryContract(unittest.TestCase):
             ],
             ["member", "cursor"],
         )
+        self.assertEqual(
+            [
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.FeedFailureTransition
+                )
+            ],
+            [
+                "member",
+                "action",
+                "status_reason",
+                "reason",
+                "completion_cursor",
+            ],
+        )
         child_mutation_value = ingestion_lease_store.ChildMutation.__value__
         self.assertEqual(
             set(typing.get_args(child_mutation_value)),
             {
                 ingestion_lease_store.AdmittedAudioProgress,
                 ingestion_lease_store.SourceObservation,
+                ingestion_lease_store.FeedFailureTransition,
             },
         )
         for value_type in (
             ingestion_lease_store.AdmittedAudioProgress,
             ingestion_lease_store.SourceObservation,
+            ingestion_lease_store.FeedFailureTransition,
             ingestion_lease_store.NoLeaseEffect,
+            ingestion_lease_store.FinalizeLeaseRecovery,
             ingestion_lease_store.ChildMutationBatch,
             ingestion_lease_store.ChildMutationResult,
+            ingestion_lease_store.LeaseLifecycleResult,
             ingestion_lease_store.BatchCommitted,
         ):
             self.assertTrue(dataclasses.is_dataclass(value_type))
@@ -491,6 +510,13 @@ class TestChildMutationQueryContract(unittest.TestCase):
         }
         self.assertNotIn("membership_revision", command_fields)
         self.assertNotIn("eligible", command_fields)
+        self.assertEqual(
+            set(typing.get_args(ingestion_lease_store.LeaseEffect.__value__)),
+            {
+                ingestion_lease_store.NoLeaseEffect,
+                ingestion_lease_store.FinalizeLeaseRecovery,
+            },
+        )
 
     def test_child_result_vocabularies_are_exhaustive(self) -> None:
         self.assertEqual(
@@ -573,6 +599,67 @@ class TestChildMutationQueryContract(unittest.TestCase):
         self.assertIn("INSERT INTO public.feed_audit_events", audit_sql)
         self.assertIn("feed_audit_event_payload_sql", query_source)
         self.assertNotIn("feed_audit_event_scalar_sql", query_source)
+
+    def test_failure_rowset_is_cursor_guarded_and_policy_closed(self) -> None:
+        sql = _normalized_sql(ingestion_lease_queries.APPLY_FEED_FAILURES_SQL)
+
+        self.assertIn("UNNEST(", sql)
+        self.assertIn("WITH ORDINALITY", sql)
+        self.assertIn("GREATEST(feeds.last_bookmark_time, input.cursor)", sql)
+        self.assertIn(
+            "feeds.status IN ( 'active'::public.feed_status, "
+            "'failing'::public.feed_status )",
+            sql,
+        )
+        self.assertIn("input.is_budgeted", sql)
+        self.assertIn("failure_count = CASE", sql)
+        self.assertIn("THEN feeds.failure_count + 1", sql)
+        self.assertIn("ELSE 0", sql)
+        self.assertIn("input.retry_after", sql)
+        self.assertIn("RANDOM() * INTERVAL '10 seconds'", sql)
+        self.assertIn("audit_revision = feeds.audit_revision + 1", sql)
+        for legacy_authority in (
+            "worker_id",
+            "fencing_token",
+            "last_heartbeat",
+        ):
+            self.assertNotIn(legacy_authority, sql)
+
+    def test_lease_recovery_clears_evidence_under_exact_grant(self) -> None:
+        sql = _normalized_sql(
+            ingestion_lease_queries.FINALIZE_LEASE_RECOVERY_SQL
+        )
+        set_clause = sql.split("SET", 1)[1].split("WHERE", 1)[0]
+
+        self.assertIn("source_type = $1", sql)
+        self.assertIn("lease_key = $2", sql)
+        self.assertIn("worker_id = $3", sql)
+        self.assertIn("fencing_token = $4", sql)
+        self.assertIn("status = 'active'::public.feed_status", sql)
+        self.assertIn("failure_count = 0", set_clause)
+        self.assertIn("retry_after = NULL", set_clause)
+        self.assertIn("status_reason = NULL", set_clause)
+        self.assertIn("status_reason_detail = NULL", set_clause)
+        self.assertIn("status_reason_updated_at = NULL", set_clause)
+        self.assertIn("audit_revision = leases.audit_revision + 1", set_clause)
+        self.assertNotIn("worker_id =", set_clause)
+        self.assertNotIn("fencing_token =", set_clause)
+        self.assertNotIn("last_heartbeat =", set_clause)
+
+    def test_child_store_has_no_retry_or_runtime_policy_dependency(
+        self,
+    ) -> None:
+        store_source = pathlib.Path(
+            "backend/pipeline/storage/ingestion_lease_store.py"
+        ).read_text()
+
+        self.assertNotIn(
+            "backend.pipeline.ingestion.failure_policy", store_source
+        )
+        self.assertNotIn("40P01", store_source)
+        self.assertNotIn("40001", store_source)
+        self.assertNotIn("while True", store_source)
+        self.assertNotIn("@retry", store_source)
 
 
 class TestMembershipSnapshotContract(unittest.TestCase):
