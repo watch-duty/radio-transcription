@@ -637,7 +637,7 @@ describe('WebAudioPlayer', () => {
     );
   });
 
-  it('softens each segment boundary with a smooth, shallow gain-curve dip', async () => {
+  it('softens each segment boundary with a flat-bottomed, smoothly-tapered gain dip', async () => {
     stubMseGlobals();
     stubFetchForTwoSegments(createFmp4File(16000), createFmp4File(16000));
 
@@ -683,6 +683,14 @@ describe('WebAudioPlayer', () => {
     expect(curve).toHaveLength(33);
     expect(curve[0]).toBeCloseTo(baseGain); // no dip at the leading edge
     expect(curve[32]).toBeCloseTo(baseGain); // no dip at the trailing edge
-    expect(curve[16]).toBeCloseTo(baseGain * 0.5); // dips to 50%, never to silence, at center
+    // Flat silent center: ~33% of the total width, centered — indices 11-21 of 33.
+    for (let i = 11; i <= 21; i++) {
+      expect(curve[i]).toBeCloseTo(0);
+    }
+    // Smooth (non-abrupt) taper on the way in and out of the flat center.
+    expect(curve[5]).toBeGreaterThan(0);
+    expect(curve[5]).toBeLessThan(baseGain);
+    expect(curve[27]).toBeGreaterThan(0);
+    expect(curve[27]).toBeLessThan(baseGain);
   });
 });

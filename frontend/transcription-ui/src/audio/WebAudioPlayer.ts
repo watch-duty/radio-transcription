@@ -22,11 +22,17 @@ const AAC_ENCODER_PRIMING_SAMPLES = 1024;
 // independently sourced/encoded clips — their content simply isn't continuous with itself,
 // so the seam can still be audible against a steady background (verified by ear: a splice
 // built from nothing but accurate trims, no masking, was still identifiable). We soften it
-// with a brief, shallow, smoothly-curved gain dip centered on the splice — not a full mute,
-// just enough to blur the seam — scheduled on the existing GainNode.
-const DECLICK_DEPTH = 0.5; // dip to 50% of normal gain at the very center, never to silence
-const DECLICK_HALF_WIDTH_SECONDS = 0.012; // ~24ms total, wide enough to feel smooth not abrupt
-const DECLICK_CURVE_POINTS = 33; // odd count so the curve has an exact center sample
+// with a brief gain dip centered on the splice, scheduled on the existing GainNode.
+//
+// Shape: a Tukey-style window — true silence held across a short flat center, with cosine
+// tapers on either side (never an abrupt on/off). An earlier version dipped only partway
+// (50% of normal gain) with a single-point cosine minimum; A/B listening against real spliced
+// segments found that a full dip held across a short plateau masks the seam meaningfully
+// better, since a broadband click's energy isn't fully suppressed by a dip that only reaches
+// silence at one instant — the samples immediately around that instant still leak through.
+const DECLICK_HALF_WIDTH_SECONDS = 0.012; // 24ms total width
+const DECLICK_FLAT_FRACTION = 0.33; // fraction of the total width held at true silence
+const DECLICK_CURVE_POINTS = 33;
 // Boundaries are scheduled from the periodic 'timeupdate' event rather than a tighter loop, so
 // this needs enough slack that a boundary is never checked for the first time after it's due.
 const DECLICK_LOOKAHEAD_SECONDS = 0.5;
@@ -37,14 +43,23 @@ interface DeclickController {
   getGain: () => number;
 }
 
-/** A raised-cosine (Hann-shaped) dip from baseGain down to baseGain*(1-DECLICK_DEPTH) and
- * back, so the duck fades in/out smoothly rather than snapping like a linear ramp would. */
+/** baseGain -> silence -> baseGain, with a flat silent center (DECLICK_FLAT_FRACTION of the
+ * total width) and smooth cosine tapers on either side. */
 function buildDeclickCurve(baseGain: number): Float32Array {
   const curve = new Float32Array(DECLICK_CURVE_POINTS);
+  const taperFraction = (1 - DECLICK_FLAT_FRACTION) / 2;
   for (let i = 0; i < DECLICK_CURVE_POINTS; i++) {
-    const t = (i / (DECLICK_CURVE_POINTS - 1)) * 2 - 1; // -1..1
-    const dip = 0.5 * (1 + Math.cos(Math.PI * t)); // 0 at the edges, 1 at the center
-    curve[i] = baseGain * (1 - DECLICK_DEPTH * dip);
+    const t = i / (DECLICK_CURVE_POINTS - 1); // 0..1 across the whole window
+    let envelope: number;
+    if (t < taperFraction) {
+      envelope = 0.5 * (1 + Math.cos(Math.PI * (t / taperFraction))); // 1 -> 0
+    } else if (t > 1 - taperFraction) {
+      const u = (t - (1 - taperFraction)) / taperFraction;
+      envelope = 0.5 * (1 - Math.cos(Math.PI * u)); // 0 -> 1
+    } else {
+      envelope = 0; // flat silent center
+    }
+    curve[i] = baseGain * envelope;
   }
   return curve;
 }
