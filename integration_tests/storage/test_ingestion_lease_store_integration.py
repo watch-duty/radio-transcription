@@ -79,16 +79,33 @@ def _unique_digits() -> str:
     return str(uuid.uuid4().int)
 
 
-def _member_for_sid(
+def _forged_member_for_sid(
     feed_id: uuid.UUID,
     sid: str,
     group_id: str,
 ) -> ingestion_lease_store.LeaseMemberIdentity:
+    """Construct an unsealed identity only for negative forgery proofs."""
     return ingestion_lease_store.LeaseMemberIdentity(
         feed_id=feed_id,
         source_type=_SOURCE_TYPE,
         source_feed_id=f"{sid}-{group_id}",
         sid=sid,
+        group_id=group_id,
+    )
+
+
+def _issued_member_for_grant(
+    grant: ingestion_lease_store.LeaseGrant,
+    feed_id: uuid.UUID,
+    group_id: str,
+) -> ingestion_lease_store.LeaseMemberIdentity:
+    """Issue a fixture identity with the same capability as its exact grant."""
+    return ingestion_lease_store._issue_member_identity(
+        grant,
+        feed_id=feed_id,
+        source_type=grant.source_type,
+        source_feed_id=f"{grant.lease_key}-{group_id}",
+        sid=grant.lease_key,
         group_id=group_id,
     )
 
@@ -165,7 +182,7 @@ async def _insert_lease(
 
 async def _insert_member(
     pool: asyncpg.Pool,
-    sid: str,
+    grant: ingestion_lease_store.LeaseGrant,
     *,
     status: str = "active",
     cursor: datetime.datetime | None = None,
@@ -176,6 +193,7 @@ async def _insert_member(
     group_id: str | None = None,
 ) -> ingestion_lease_store.LeaseMemberIdentity:
     """Insert one unique Feed and maintained Calls membership tuple."""
+    sid = grant.lease_key
     feed_id = uuid.uuid4()
     if group_id is None:
         group_id = _unique_digits()
@@ -253,7 +271,7 @@ async def _insert_member(
                 sid,
                 group_id,
             )
-    return _member_for_sid(feed_id, sid, group_id)
+    return _issued_member_for_grant(grant, feed_id, group_id)
 
 
 async def _claim_exact(
@@ -361,17 +379,21 @@ async def _fetch_lease(pool: asyncpg.Pool, sid: str) -> asyncpg.Record:
     row = await pool.fetchrow(
         """
         SELECT
+            source_type,
+            lease_key,
             status::text AS status,
             worker_id,
             fencing_token,
             last_heartbeat,
             failure_count,
             retry_after,
+            unclaimed_since,
             status_reason,
             status_reason_detail,
             status_reason_updated_at,
             audit_revision,
             membership_revision,
+            created_at,
             updated_at
         FROM public.ingestion_leases
         WHERE source_type = 'bcfy_calls' AND lease_key = $1
@@ -386,15 +408,24 @@ async def _fetch_feed(pool: asyncpg.Pool, feed_id: uuid.UUID) -> asyncpg.Record:
     row = await pool.fetchrow(
         """
         SELECT
+            id,
+            name,
+            source_type,
             status::text AS status,
+            worker_id,
+            fencing_token,
+            last_heartbeat,
             last_processed_filename,
             last_bookmark_time,
             failure_count,
             retry_after,
+            unclaimed_since,
+            quarantine_reason,
             status_reason,
             status_reason_detail,
             status_reason_updated_at,
-            audit_revision
+            audit_revision,
+            created_at
         FROM public.feeds
         WHERE id = $1
         """,
@@ -410,7 +441,17 @@ async def _audit_rows(
 ) -> list[asyncpg.Record]:
     return await pool.fetch(
         """
-        SELECT action, feed_revision, before_values, after_values
+        SELECT
+            action,
+            feed_revision,
+            before_values,
+            after_values,
+            (before_values ->> 'status') AS before_status,
+            (after_values ->> 'status') AS after_status,
+            (before_values ->> 'failure_count')::integer
+                AS before_failure_count,
+            (after_values ->> 'failure_count')::integer
+                AS after_failure_count
         FROM public.feed_audit_events
         WHERE feed_id = $1
         ORDER BY feed_revision
@@ -465,7 +506,18 @@ async def _assert_old_grant_rejected(
     old_grant: ingestion_lease_store.LeaseGrant,
     member: ingestion_lease_store.LeaseMemberIdentity,
 ) -> None:
-    before = await _fetch_feed(pool, member.feed_id)
+    lease_before = dict(await _fetch_lease(pool, old_grant.lease_key))
+    feed_before = dict(await _fetch_feed(pool, member.feed_id))
+    finalized_failure = await store.finalize_failure(
+        old_grant,
+        ingestion_lease_store.BudgetedFailure(),
+        feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        actor_id=_ACTOR_ID,
+        reason="stale grant must not finalize failure",
+    )
+    lease_after_finalized_failure = dict(
+        await _fetch_lease(pool, old_grant.lease_key)
+    )
     heartbeat = await store.renew_heartbeats((old_grant,))
     release = await store.release(old_grant)
     child = await _commit(
@@ -473,7 +525,8 @@ async def _assert_old_grant_rejected(
         old_grant,
         _batch(_observation(member, _BASE_CURSOR + datetime.timedelta(days=1))),
     )
-    after = await _fetch_feed(pool, member.feed_id)
+    lease_after = dict(await _fetch_lease(pool, old_grant.lease_key))
+    feed_after = dict(await _fetch_feed(pool, member.feed_id))
 
     assert heartbeat[0].disposition is not (
         ingestion_lease_store.LeaseOperationDisposition.APPLIED
@@ -481,8 +534,20 @@ async def _assert_old_grant_rejected(
     assert release.disposition is not (
         ingestion_lease_store.LeaseOperationDisposition.APPLIED
     )
+    assert finalized_failure.disposition is not (
+        ingestion_lease_store.LeaseOperationDisposition.APPLIED
+    )
+    assert (
+        finalized_failure.effect
+        is ingestion_lease_store.LeaseFailureEffect.NONE
+    )
+    assert finalized_failure.before_snapshot is not None
+    assert finalized_failure.after_snapshot is not None
+    assert finalized_failure.before_snapshot == finalized_failure.after_snapshot
+    assert lease_after_finalized_failure == lease_before
     assert isinstance(child, ingestion_lease_store.GrantRejected)
-    assert dict(after) == dict(before)
+    assert lease_after == lease_before
+    assert feed_after == feed_before
 
 
 async def test_competing_primary_claims_increment_fence_once(
@@ -534,11 +599,11 @@ async def test_generation_changes_reject_every_old_grant(
     transition: str,
 ) -> None:
     sid = _unique_digits()
-    member = await _insert_member(ingestion_lease_pool, sid)
     await _insert_lease(ingestion_lease_pool, sid)
     store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
     first_owner = uuid.uuid4()
     old_grant = await _claim_exact(store, sid, first_owner)
+    member = await _insert_member(ingestion_lease_pool, old_grant)
 
     if transition in {"neutral_release_reclaim", "same_worker_reacquisition"}:
         released = await store.release(old_grant)
@@ -680,10 +745,10 @@ async def test_child_and_grant_transition_linearize_both_orders(  # noqa: PLR091
     scenario: str,
 ) -> None:
     sid = _unique_digits()
-    member = await _insert_member(ingestion_lease_pool, sid)
     await _insert_lease(ingestion_lease_pool, sid)
     store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
     old_grant = await _claim_exact(store, sid, uuid.uuid4())
+    member = await _insert_member(ingestion_lease_pool, old_grant)
     target_cursor = _BASE_CURSOR + datetime.timedelta(minutes=1)
     child_task: asyncio.Task[object] | None = None
     transition_task: asyncio.Task[object] | None = None
@@ -843,49 +908,68 @@ async def test_child_and_grant_transition_linearize_both_orders(  # noqa: PLR091
     ) == dict(durable_before_stale_retry)
 
 
-async def test_reverse_overlapping_feed_sets_do_not_deadlock(
+async def test_reverse_overlapping_feed_sets_do_not_deadlock(  # noqa: PLR0915
     ingestion_lease_pool: asyncpg.Pool,
 ) -> None:
-    first_sid = _unique_digits()
-    await _insert_lease(ingestion_lease_pool, first_sid)
+    sid = _unique_digits()
+    await _insert_lease(ingestion_lease_pool, sid)
     store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
-    first_grant = await _claim_exact(store, first_sid, uuid.uuid4())
-
-    second_sid = _unique_digits()
-    await _insert_lease(ingestion_lease_pool, second_sid)
-    second_grant = await _claim_exact(store, second_sid, uuid.uuid4())
-
-    first_member = await _insert_member(ingestion_lease_pool, first_sid)
-    second_member = await _insert_member(ingestion_lease_pool, first_sid)
+    grant = await _claim_exact(store, sid, uuid.uuid4())
+    first_member = await _insert_member(ingestion_lease_pool, grant)
+    second_member = await _insert_member(ingestion_lease_pool, grant)
     ordered_members = sorted(
         (first_member, second_member),
         key=lambda member: member.feed_id.int,
     )
     low_member, high_member = ordered_members
-    second_low = _member_for_sid(
+
+    forged_sid = _unique_digits()
+    await _insert_lease(ingestion_lease_pool, forged_sid)
+    forged_grant = await _claim_exact(store, forged_sid, uuid.uuid4())
+    forged_member = _forged_member_for_sid(
         low_member.feed_id,
-        second_sid,
+        forged_sid,
         low_member.group_id,
     )
-    second_high = _member_for_sid(
-        high_member.feed_id,
-        second_sid,
-        high_member.group_id,
+    forged_lease_before = dict(
+        await _fetch_lease(ingestion_lease_pool, forged_sid)
     )
+    feed_before_forgery = dict(
+        await _fetch_feed(ingestion_lease_pool, low_member.feed_id)
+    )
+    audit_before_forgery = await _audit_rows(
+        ingestion_lease_pool,
+        low_member.feed_id,
+    )
+    checkout_forbidden_pool = mock.Mock(spec=asyncpg.Pool)
+    forged_store = ingestion_lease_store.IngestionLeaseStore(
+        typing.cast("asyncpg.Pool", checkout_forbidden_pool)
+    )
+    with pytest.raises(
+        ValueError,
+        match="binding was not issued by authoritative membership loading",
+    ):
+        await _commit(
+            forged_store,
+            forged_grant,
+            _batch(_progress(forged_member, _BASE_CURSOR)),
+        )
+    checkout_forbidden_pool.acquire.assert_not_called()
+    assert (
+        dict(await _fetch_lease(ingestion_lease_pool, forged_sid))
+        == forged_lease_before
+    )
+    assert (
+        dict(await _fetch_feed(ingestion_lease_pool, low_member.feed_id))
+        == feed_before_forgery
+    )
+    assert (
+        await _audit_rows(ingestion_lease_pool, low_member.feed_id)
+        == audit_before_forgery
+    )
+
     first_cursor = _BASE_CURSOR + datetime.timedelta(minutes=1)
     second_cursor = _BASE_CURSOR + datetime.timedelta(minutes=2)
-    barrier = asyncio.Barrier(3)
-
-    async def _run(
-        grant: ingestion_lease_store.LeaseGrant,
-        batch: ingestion_lease_store.ChildMutationBatch,
-    ) -> (
-        ingestion_lease_store.GrantRejected
-        | ingestion_lease_store.BatchCommitted
-    ):
-        await barrier.wait()
-        return await _commit(store, grant, batch)
-
     first_task: asyncio.Task[object] | None = None
     second_task: asyncio.Task[object] | None = None
     async with ingestion_lease_pool.acquire() as blocker:
@@ -899,28 +983,46 @@ async def test_reverse_overlapping_feed_sets_do_not_deadlock(
                 low_member.feed_id,
             )
             first_task = asyncio.create_task(
-                _run(
-                    first_grant,
+                _commit(
+                    store,
+                    grant,
                     _batch(
                         _progress(high_member, first_cursor),
                         _progress(low_member, first_cursor),
                     ),
                 )
             )
-            second_task = asyncio.create_task(
-                _run(
-                    second_grant,
-                    _batch(
-                        _progress(second_low, second_cursor),
-                        _progress(second_high, second_cursor),
-                    ),
-                )
-            )
-            await barrier.wait()
             await _wait_for_blocked_query(
                 ingestion_lease_pool,
                 "FROM public.feeds",
-                minimum=2,
+            )
+
+            async with ingestion_lease_pool.acquire() as verifier:
+                async with verifier.transaction(isolation="read_committed"):
+                    lockable_high_feed = await verifier.fetchval(
+                        """
+                        SELECT id
+                        FROM public.feeds
+                        WHERE id = $1
+                        FOR NO KEY UPDATE NOWAIT
+                        """,
+                        high_member.feed_id,
+                    )
+                    assert lockable_high_feed == high_member.feed_id
+
+            second_task = asyncio.create_task(
+                _commit(
+                    store,
+                    grant,
+                    _batch(
+                        _progress(low_member, second_cursor),
+                        _progress(high_member, second_cursor),
+                    ),
+                )
+            )
+            await _wait_for_blocked_query(
+                ingestion_lease_pool,
+                "FROM public.ingestion_leases",
             )
             await transaction.commit()
             transaction_open = False
@@ -943,6 +1045,18 @@ async def test_reverse_overlapping_feed_sets_do_not_deadlock(
         low_member.feed_id,
         high_member.feed_id,
     ]
+    assert [child.cursor_effect for child in first_result.children] == [
+        ingestion_lease_store.CursorEffect.INITIALIZED,
+        ingestion_lease_store.CursorEffect.INITIALIZED,
+    ]
+    assert [child.cursor_effect for child in second_result.children] == [
+        ingestion_lease_store.CursorEffect.ADVANCED,
+        ingestion_lease_store.CursorEffect.ADVANCED,
+    ]
+    assert all(
+        child.disposition is ingestion_lease_store.ChildDisposition.APPLIED
+        for child in first_result.children + second_result.children
+    )
     for member in ordered_members:
         row = await _fetch_feed(ingestion_lease_pool, member.feed_id)
         assert row["last_bookmark_time"] == second_cursor
@@ -955,24 +1069,28 @@ async def test_selective_child_dispositions_commit_valid_siblings(
     await _insert_lease(ingestion_lease_pool, sid)
     store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
     grant = await _claim_exact(store, sid, uuid.uuid4())
-    progress_member = await _insert_member(ingestion_lease_pool, sid)
-    observation_member = await _insert_member(ingestion_lease_pool, sid)
+    progress_member = await _insert_member(ingestion_lease_pool, grant)
+    observation_member = await _insert_member(ingestion_lease_pool, grant)
     deactivated_member = await _insert_member(
         ingestion_lease_pool,
-        sid,
+        grant,
         status="deactivated",
     )
     quarantined_member = await _insert_member(
         ingestion_lease_pool,
-        sid,
+        grant,
         status="quarantined",
     )
     unclaimed_member = await _insert_member(
         ingestion_lease_pool,
-        sid,
+        grant,
         status="unclaimed",
     )
-    missing_member = _member_for_sid(uuid.uuid4(), sid, _unique_digits())
+    missing_member = _issued_member_for_grant(
+        grant,
+        uuid.uuid4(),
+        _unique_digits(),
+    )
     cursor = _BASE_CURSOR + datetime.timedelta(minutes=3)
 
     result = await _commit(
@@ -1052,9 +1170,9 @@ async def test_deactivation_races_and_revision_is_not_fence(  # noqa: PLR0915
 
     for transition_first in (False, True):
         sid = _unique_digits()
-        member = await _insert_member(ingestion_lease_pool, sid)
         await _insert_lease(ingestion_lease_pool, sid)
         grant = await _claim_exact(store, sid, uuid.uuid4())
+        member = await _insert_member(ingestion_lease_pool, grant)
         child_task: asyncio.Task[object] | None = None
         admin_task: asyncio.Task[object] | None = None
 
@@ -1202,9 +1320,12 @@ async def test_deactivation_races_and_revision_is_not_fence(  # noqa: PLR0915
         )
 
     revision_sid = _unique_digits()
-    revision_member = await _insert_member(ingestion_lease_pool, revision_sid)
     await _insert_lease(ingestion_lease_pool, revision_sid)
     revision_grant = await _claim_exact(store, revision_sid, uuid.uuid4())
+    revision_member = await _insert_member(
+        ingestion_lease_pool,
+        revision_grant,
+    )
     before_snapshot = await store.load_membership(revision_grant)
     assert isinstance(
         before_snapshot,
@@ -1331,12 +1452,12 @@ async def test_cursor_matrix_is_independent_from_lifecycle(
     grant = await _claim_exact(store, sid, uuid.uuid4())
     clean_member = await _insert_member(
         ingestion_lease_pool,
-        sid,
+        grant,
         cursor=current,
     )
     failing_member = await _insert_member(
         ingestion_lease_pool,
-        sid,
+        grant,
         status="failing",
         cursor=current,
         failure_count=2,
@@ -1346,7 +1467,7 @@ async def test_cursor_matrix_is_independent_from_lifecycle(
     )
     deactivated_member = await _insert_member(
         ingestion_lease_pool,
-        sid,
+        grant,
         status="deactivated",
         cursor=current,
         failure_count=2,
@@ -1428,7 +1549,7 @@ async def test_cursor_matrix_is_independent_from_lifecycle(
     "boundary_kind",
     ["budgeted_failure", "non_budgeted_failure", "finalized_recovery"],
 )
-async def test_boundary_retry_does_not_double_charge(
+async def test_boundary_retry_does_not_double_charge(  # noqa: PLR0915
     ingestion_lease_pool: asyncpg.Pool,
     boundary_kind: str,
 ) -> None:
@@ -1450,11 +1571,12 @@ async def test_boundary_retry_does_not_double_charge(
     store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
     grant = await _claim_exact(store, sid, uuid.uuid4())
     cursor = _BASE_CURSOR + datetime.timedelta(minutes=5)
+    requested_retry_after: datetime.datetime | None = None
 
     if boundary_kind == "finalized_recovery":
         member = await _insert_member(
             ingestion_lease_pool,
-            sid,
+            grant,
             status="failing",
             cursor=_BASE_CURSOR,
             failure_count=2,
@@ -1471,15 +1593,28 @@ async def test_boundary_retry_does_not_double_charge(
     else:
         member = await _insert_member(
             ingestion_lease_pool,
-            sid,
+            grant,
+            status="failing",
             cursor=_BASE_CURSOR,
+            failure_count=4,
+            retry_after=datetime.datetime.now(datetime.UTC)
+            + datetime.timedelta(minutes=1),
+            status_reason=(
+                feed_store.FeedStatusReason.SOURCE_UNREACHABLE.value
+            ),
         )
+        failure = _failure(
+            member,
+            cursor,
+            budgeted=boundary_kind == "budgeted_failure",
+        )
+        if isinstance(
+            failure.action,
+            ingestion_lease_store.NonBudgetedFailure,
+        ):
+            requested_retry_after = failure.action.retry_after
         batch = _batch(
-            _failure(
-                member,
-                cursor,
-                budgeted=boundary_kind == "budgeted_failure",
-            )
+            failure,
         )
 
     first = await _commit(store, grant, batch)
@@ -1520,12 +1655,48 @@ async def test_boundary_retry_does_not_double_charge(
         assert feed_after_first["failure_count"] == 0
         assert lease_after_first["failure_count"] == 0
     else:
-        assert second.children[0].disposition is (
-            ingestion_lease_store.ChildDisposition.ACCEPTED_NOOP
-        )
-        expected_failure_count = 1 if boundary_kind == "budgeted_failure" else 0
-        assert feed_after_first["failure_count"] == expected_failure_count
+        assert feed_after_first["audit_revision"] == 1
+        assert [event["feed_revision"] for event in events_after_first] == [1]
+        assert events_after_first[0]["before_status"] == "failing"
+        assert events_after_first[0]["before_failure_count"] == 4
         assert lease_after_first["audit_revision"] == 0
+        if boundary_kind == "budgeted_failure":
+            assert second.children[0].disposition is (
+                ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE
+            )
+            assert first.children[0].lifecycle_effect is (
+                ingestion_lease_store.LifecycleEffect.QUARANTINED
+            )
+            assert feed_after_first["status"] == "quarantined"
+            assert feed_after_first["failure_count"] == 5
+            assert feed_after_first["retry_after"] is None
+            assert events_after_first[0]["after_status"] == "quarantined"
+            assert events_after_first[0]["after_failure_count"] == 5
+            assert feed_after_first["status_reason"] == (
+                feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID.value
+            )
+            assert [event["action"] for event in events_after_first] == [
+                "feed.quarantined"
+            ]
+        else:
+            assert second.children[0].disposition is (
+                ingestion_lease_store.ChildDisposition.ACCEPTED_NOOP
+            )
+            assert first.children[0].lifecycle_effect is (
+                ingestion_lease_store.LifecycleEffect.FAILURE_RECORDED
+            )
+            assert requested_retry_after is not None
+            assert feed_after_first["status"] == "failing"
+            assert feed_after_first["failure_count"] == 0
+            assert feed_after_first["retry_after"] == requested_retry_after
+            assert events_after_first[0]["after_status"] == "failing"
+            assert events_after_first[0]["after_failure_count"] == 0
+            assert feed_after_first["status_reason"] == (
+                feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR.value
+            )
+            assert [event["action"] for event in events_after_first] == [
+                "feed.failure_reported"
+            ]
 
 
 async def _insert_conflicting_audit_event(
@@ -1569,12 +1740,12 @@ async def test_audit_failure_rolls_back_batch_and_lease_effect(
     grant = await _claim_exact(store, sid, uuid.uuid4())
     audited_member = await _insert_member(
         ingestion_lease_pool,
-        sid,
+        grant,
         status="failing",
         failure_count=2,
         status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE.value,
     )
-    sibling_member = await _insert_member(ingestion_lease_pool, sid)
+    sibling_member = await _insert_member(ingestion_lease_pool, grant)
     await _insert_conflicting_audit_event(
         ingestion_lease_pool,
         audited_member.feed_id,
@@ -1620,17 +1791,62 @@ async def test_audit_failure_rolls_back_batch_and_lease_effect(
     )
 
 
-async def test_cancellation_while_blocked_rolls_back_without_notification(
+async def test_cancellation_while_blocked_rolls_back_without_notification(  # noqa: PLR0915
     ingestion_lease_pool: asyncpg.Pool,
 ) -> None:
     sid = _unique_digits()
-    member = await _insert_member(ingestion_lease_pool, sid)
-    await _insert_lease(ingestion_lease_pool, sid)
+    retry_after = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
+        minutes=1
+    )
+    await _insert_lease(
+        ingestion_lease_pool,
+        sid,
+        failure_count=2,
+        retry_after=retry_after,
+        status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE.value,
+        audit_revision=4,
+    )
     store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
     grant = await _claim_exact(store, sid, uuid.uuid4())
+    member = await _insert_member(
+        ingestion_lease_pool,
+        grant,
+        status="failing",
+        failure_count=2,
+        retry_after=retry_after,
+        status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE.value,
+        audit_revision=3,
+    )
     lease_before = dict(await _fetch_lease(ingestion_lease_pool, sid))
     feed_before = dict(await _fetch_feed(ingestion_lease_pool, member.feed_id))
+    audit_before = await _audit_rows(ingestion_lease_pool, member.feed_id)
+    assert lease_before["failure_count"] == 2
+    assert lease_before["audit_revision"] == 4
+    assert feed_before["status"] == "failing"
+    assert feed_before["failure_count"] == 2
+    assert feed_before["audit_revision"] == 3
+    assert audit_before == []
     child_task: asyncio.Task[object] | None = None
+    lease_effect_applied = asyncio.Event()
+    original_apply_lease_effect = store._apply_lease_effect
+
+    async def _observe_lease_effect(
+        connection: asyncpg.Connection,
+        effect_grant: ingestion_lease_store.LeaseGrant,
+        effect: ingestion_lease_store.LeaseEffect,
+        before_snapshot: ingestion_lease_store.LeaseSnapshot,
+    ) -> ingestion_lease_store.LeaseLifecycleResult:
+        result = await original_apply_lease_effect(
+            connection,
+            effect_grant,
+            effect,
+            before_snapshot,
+        )
+        assert result.effect is (
+            ingestion_lease_store.LeaseLifecycleEffect.RECOVERED
+        )
+        lease_effect_applied.set()
+        return result
 
     async with ingestion_lease_pool.acquire() as blocker:
         transaction = blocker.transaction(isolation="read_committed")
@@ -1638,29 +1854,75 @@ async def test_cancellation_while_blocked_rolls_back_without_notification(
         try:
             await transaction.start()
             transaction_open = True
-            await blocker.fetchval(
-                "SELECT id FROM public.feeds WHERE id = $1 FOR UPDATE",
-                member.feed_id,
+            await blocker.execute(
+                "LOCK TABLE public.feed_properties IN ACCESS EXCLUSIVE MODE"
             )
-            with mock.patch(
-                "backend.pipeline.storage.ingestion_lease_store."
-                "feed_change_notifications.emit_feed_change_notification"
-            ) as emit:
+            with (
+                mock.patch.object(
+                    store,
+                    "_apply_lease_effect",
+                    side_effect=_observe_lease_effect,
+                ) as apply_lease_effect,
+                mock.patch(
+                    "backend.pipeline.storage.ingestion_lease_store."
+                    "feed_change_notifications.emit_feed_change_notification"
+                ) as emit,
+            ):
                 child_task = asyncio.create_task(
                     _commit(
                         store,
                         grant,
-                        _batch(_progress(member, _BASE_CURSOR)),
+                        _batch(
+                            _progress(member, _BASE_CURSOR),
+                            lease_effect=(
+                                ingestion_lease_store.FinalizeLeaseRecovery()
+                            ),
+                        ),
                     )
                 )
                 await _wait_for_blocked_query(
                     ingestion_lease_pool,
-                    "FROM public.feeds",
+                    "FROM public.feed_properties",
                 )
+                await asyncio.wait_for(
+                    lease_effect_applied.wait(),
+                    timeout=_TIMEOUT_SECONDS,
+                )
+                apply_lease_effect.assert_awaited_once()
+                blocked_backend_xid = await ingestion_lease_pool.fetchval(
+                    """
+                    SELECT activity.backend_xid::text
+                    FROM pg_catalog.pg_stat_activity AS activity
+                    WHERE activity.datname = current_database()
+                      AND activity.pid <> pg_backend_pid()
+                      AND activity.wait_event_type = 'Lock'
+                      AND pg_catalog.strpos(
+                          activity.query,
+                          'FROM public.feed_properties'
+                      ) > 0
+                    LIMIT 1
+                    """
+                )
+                assert blocked_backend_xid is not None
+
                 child_task.cancel()
                 with pytest.raises(asyncio.CancelledError):
                     await child_task
 
+                remaining_waiters = await ingestion_lease_pool.fetchval(
+                    """
+                    SELECT COUNT(*)
+                    FROM pg_catalog.pg_stat_activity AS activity
+                    WHERE activity.datname = current_database()
+                      AND activity.pid <> pg_backend_pid()
+                      AND activity.wait_event_type = 'Lock'
+                      AND pg_catalog.strpos(
+                          activity.query,
+                          'FROM public.feed_properties'
+                      ) > 0
+                    """
+                )
+                assert remaining_waiters == 0
                 async with ingestion_lease_pool.acquire() as verifier:
                     async with verifier.transaction(isolation="read_committed"):
                         await verifier.execute("SET LOCAL lock_timeout = '2s'")
@@ -1675,18 +1937,58 @@ async def test_cancellation_while_blocked_rolls_back_without_notification(
                             sid,
                         )
                         assert locked_sid == sid
+                        locked_feed_id = await verifier.fetchval(
+                            """
+                            SELECT id
+                            FROM public.feeds
+                            WHERE id = $1
+                            FOR NO KEY UPDATE
+                            """,
+                            member.feed_id,
+                        )
+                        assert locked_feed_id == member.feed_id
+
+                assert (
+                    dict(await _fetch_lease(ingestion_lease_pool, sid))
+                    == lease_before
+                )
+                assert (
+                    dict(
+                        await _fetch_feed(
+                            ingestion_lease_pool,
+                            member.feed_id,
+                        )
+                    )
+                    == feed_before
+                )
+                assert (
+                    await _audit_rows(
+                        ingestion_lease_pool,
+                        member.feed_id,
+                    )
+                    == audit_before
+                )
                 emit.assert_not_called()
         finally:
             if transaction_open:
                 await transaction.rollback()
             await _cancel_tasks(child_task)
 
+    async with ingestion_lease_pool.acquire() as verifier:
+        async with verifier.transaction(isolation="read_committed"):
+            await verifier.execute("SET LOCAL lock_timeout = '2s'")
+            await verifier.execute(
+                "LOCK TABLE public.feed_properties IN ACCESS EXCLUSIVE MODE"
+            )
+
     assert dict(await _fetch_lease(ingestion_lease_pool, sid)) == lease_before
     assert (
         dict(await _fetch_feed(ingestion_lease_pool, member.feed_id))
         == feed_before
     )
-    assert await _audit_rows(ingestion_lease_pool, member.feed_id) == []
+    assert (
+        await _audit_rows(ingestion_lease_pool, member.feed_id) == audit_before
+    )
 
 
 async def test_notification_runs_after_commit_visibility(
@@ -1698,7 +2000,7 @@ async def test_notification_runs_after_commit_visibility(
     grant = await _claim_exact(store, sid, uuid.uuid4())
     member = await _insert_member(
         ingestion_lease_pool,
-        sid,
+        grant,
         status="failing",
         failure_count=2,
         status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE.value,
@@ -1755,7 +2057,7 @@ async def test_notification_runs_after_commit_visibility(
 
             rollback_member = await _insert_member(
                 ingestion_lease_pool,
-                sid,
+                grant,
                 status="failing",
                 failure_count=2,
                 status_reason=(
@@ -1784,11 +2086,11 @@ async def test_clean_paths_do_not_touch_feed_properties(
     await _insert_lease(ingestion_lease_pool, sid)
     store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
     grant = await _claim_exact(store, sid, uuid.uuid4())
-    progress_member = await _insert_member(ingestion_lease_pool, sid)
-    observation_member = await _insert_member(ingestion_lease_pool, sid)
+    progress_member = await _insert_member(ingestion_lease_pool, grant)
+    observation_member = await _insert_member(ingestion_lease_pool, grant)
     recovery_member = await _insert_member(
         ingestion_lease_pool,
-        sid,
+        grant,
         status="failing",
         failure_count=2,
         status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE.value,
