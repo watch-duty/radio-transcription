@@ -33,6 +33,8 @@ def generate_segment_id(
     feed_or_session_id: str,
     unique_suffix: str,
 ) -> str:
-    """Generates a deterministic UUID5 using feed/session and a unique identifier suffix."""
+    """Generates a deterministic UUID5 using feed/session and a unique
+    identifier suffix.
+    """
     deterministic_id = f"{feed_or_session_id}_{unique_suffix}"
     return str(uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id))

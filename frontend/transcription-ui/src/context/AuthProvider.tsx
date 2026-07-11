@@ -71,8 +71,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
         if (isExpiredOrSoon) {
           isRefreshingRef.current = true;
-          const newToken = await authSession();
-          setToken(newToken);
+          try {
+            const newToken = await authSession();
+            setToken(newToken);
+          } catch (error) {
+            setToken(null);
+            throw error;
+          }
         }
       } catch (error) {
         console.error(
@@ -105,10 +110,14 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
           refreshed = true;
         } catch (error) {
           console.error('Refresh token failed:', error);
-          // Wait before trying again.
-          await new Promise((resolve) =>
-            setTimeout(resolve, REFRESH_TOKEN_FAILURE_DELAY)
-          );
+          if (attempts >= MAX_REFRESH_ATTEMPTS) {
+            setToken(null);
+          } else {
+            // Wait before trying again.
+            await new Promise((resolve) =>
+              setTimeout(resolve, REFRESH_TOKEN_FAILURE_DELAY)
+            );
+          }
         }
       }
     }, REFRESH_TOKEN_INTERVAL);

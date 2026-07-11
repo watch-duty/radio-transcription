@@ -126,7 +126,10 @@ class EvaluationServiceContainer:
             logger.info("Initializing EvaluationEventProcessor...")
             output_topic = os.environ.get("RULES_EVALUATION_RESULTS_TOPIC")
             if not output_topic:
-                msg = "RULES_EVALUATION_RESULTS_TOPIC environment variable is not set."
+                msg = (
+                    "RULES_EVALUATION_RESULTS_TOPIC environment variable "
+                    "is not set."
+                )
                 raise ValueError(msg)
 
             self._processor = EvaluationEventProcessor(

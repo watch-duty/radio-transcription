@@ -245,9 +245,8 @@ def download_jsonl_manifest_strict(
         Parsed manifest object rows in their original order.
 
     Raises:
-        TypeError: If a JSONL row is not an object.
-        ValueError: If the manifest contains malformed JSON or has an invalid
-            JSON-array shape.
+        ValueError: If the manifest contains malformed JSON, a non-object row,
+            or an invalid JSON-array shape.
     """
     bucket_name, blob_path = parse_gcs_uri(gcs_manifest_uri)
     content = (

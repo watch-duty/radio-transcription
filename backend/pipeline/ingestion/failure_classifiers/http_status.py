@@ -61,7 +61,9 @@ def classify_http_status(
     *,
     policy: HTTPStatusPolicy = DEFAULT_HTTP_STATUS_POLICY,
 ) -> feed_store.FeedStatusReason | None:
-    """Classify terminal HTTP status evidence using an explicit source policy."""
+    """Classify terminal HTTP status evidence using an explicit source
+    policy.
+    """
     if 100 <= status < 400:
         return None
 

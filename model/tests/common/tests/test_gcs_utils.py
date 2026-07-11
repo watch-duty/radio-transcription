@@ -162,7 +162,7 @@ class TestGcsObjectHelpers(unittest.TestCase):
         storage = fake_gcs.FakeStorageClient()
         storage.put(
             "gs://bucket/manifest/eval.jsonl",
-            '{"audio_filepath": "gs://b/a.flac", "text": null}\n'
+            '\ufeff{"audio_filepath": "gs://b/a.flac", "text": null}\n'
             "{bad json}\n"
             '["not", "an", "object"]\n'
             '{"audio_filepath": "gs://b/b.flac", "text": "line\\nbreak"}',
@@ -194,6 +194,21 @@ class TestGcsObjectHelpers(unittest.TestCase):
             r"gs://bucket/manifest/eval.jsonl: malformed JSON at line 2",
         ):
             gcs_utils_lib.download_jsonl_manifest_strict(storage, uri)
+
+    def test_strict_manifest_download_accepts_utf8_bom(self) -> None:
+        storage = fake_gcs.FakeStorageClient()
+        uri = "gs://bucket/manifest/eval.jsonl"
+        storage.put(
+            uri,
+            '\ufeff{"audio_filepath":"gs://b/a.flac","text":"ok"}\n',
+        )
+
+        rows = gcs_utils_lib.download_jsonl_manifest_strict(storage, uri)
+
+        self.assertEqual(
+            rows,
+            [{"audio_filepath": "gs://b/a.flac", "text": "ok"}],
+        )
 
     def test_upload_and_download_local_text_artifacts(self) -> None:
         storage = fake_gcs.FakeStorageClient()
