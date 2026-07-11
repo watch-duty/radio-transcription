@@ -96,3 +96,21 @@ def test_ci_requires_the_expected_membership_preflight_rejection() -> None:
         "Unexpected or unhealthy membership-index relation in public",
     ):
         assert token in workflow
+
+
+def test_membership_index_catalog_name_arrays_use_text_elements() -> None:
+    for path in (
+        "terraform/modules/alloydb/sql/ingestion/"
+        "035_feed_properties_bcfy_calls_membership_index_preflight.sql",
+        "terraform/modules/alloydb/sql/ingestion/"
+        "037_feed_properties_bcfy_calls_membership_index_postflight.sql",
+        "terraform/modules/alloydb/sql/ci/phase_1_schema_contract.sql",
+    ):
+        sql = _normalized_sql(path)
+
+        for projection in (
+            "key_attribute.attname::TEXT AS key_name",
+            "opclass.opcname::TEXT AS opclass_name",
+            "opclass_namespace.nspname::TEXT AS opclass_schema",
+        ):
+            assert projection in sql
