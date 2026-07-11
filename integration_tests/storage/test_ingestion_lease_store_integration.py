@@ -415,11 +415,11 @@ async def _wait_for_blocked_query(
             waiter_count = await pool.fetchval(
                 """
                 SELECT COUNT(*)
-                FROM pg_catalog.pg_stat_activity
-                WHERE datname = current_database()
-                  AND pid <> pg_backend_pid()
-                  AND wait_event_type = 'Lock'
-                  AND pg_catalog.position($1 IN query) > 0
+                FROM pg_catalog.pg_stat_activity AS activity
+                WHERE activity.datname = current_database()
+                  AND activity.pid <> pg_backend_pid()
+                  AND activity.wait_event_type = 'Lock'
+                  AND pg_catalog.strpos(activity.query, $1) > 0
                 """,
                 query_fragment,
             )
