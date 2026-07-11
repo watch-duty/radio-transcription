@@ -1,28 +1,12 @@
-"""Tests for common.manifest.
-
-Covers:
-  - merge_predictions_to_manifest: fail-loud (re-raise) on unexpected error
-  - merge_predictions_to_manifest: happy-path offset-tolerant merge
-  - load_manifest: [] on missing input; non-string text fields coerced
-"""
+"""Tests for canonical manifest validation, conversion, loading, and merging."""
 
 import json
 import os
+import pathlib
 import tempfile
 import unittest
-from pathlib import Path
 
-from common.manifest import (
-    CanonicalManifestIssue,
-    CanonicalRow,
-    canonical_row_identity,
-    is_scoreable_manifest_entry,
-    load_manifest,
-    merge_predictions_to_manifest,
-    require_canonical_manifest,
-    rows_from_manifest,
-    validate_canonical_manifest,
-)
+from common import manifest as manifest_lib
 
 
 def _canonical_row(**overrides: object) -> dict[str, object]:
@@ -33,6 +17,13 @@ def _canonical_row(**overrides: object) -> dict[str, object]:
         "duration": 1.25,
         "example_id": "example",
         "segment_id": "001",
+        "split": "train",
+        "dataset": {"name": "echo", "family": "radio"},
+        "source_audio": {
+            "audio_filepath": "gs://bucket/source/example.mp3",
+            "offset": 12.5,
+            "duration": 1.25,
+        },
     }
     row.update(overrides)
     return row
@@ -43,7 +34,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
 
     def assertHasIssue(
         self,
-        issues: list[CanonicalManifestIssue],
+        issues: list[manifest_lib.CanonicalManifestIssue],
         code: str,
         field: str,
     ) -> None:
@@ -57,37 +48,34 @@ class TestCanonicalManifestValidation(unittest.TestCase):
     def test_valid_row_with_optional_metadata_returns_no_issues(self) -> None:
         row = _canonical_row(
             audio_filepath="gs://bucket/audio/example.FLAC",
-            split="train",
-            lang="en",
-            dataset={
-                "name": "watch-duty",
-                "family": "radio",
-                "extra": {"ignored": True},
-            },
-            source_audio={
-                "audio_filepath": "raw/source.wav",
-                "offset": 0,
-                "duration": 12.5,
-                "extra": "ignored",
-            },
-            audio_processing={
-                "masked_categories": ["pii", "address"],
-                "extra": "ignored",
-            },
-            pred_text_gemini="prediction fields are tolerated",
-            unknown_row_key={"ignored": True},
         )
 
-        issues = validate_canonical_manifest([row], expected_split="train")
+        issues = manifest_lib.validate_canonical_manifest(
+            [row], expected_split="train"
+        )
+
+        self.assertEqual(issues, [])
+
+    def test_valid_core_row_without_optional_metadata_returns_no_issues(
+        self,
+    ) -> None:
+        row = _canonical_row()
+        row.pop("split")
+        row.pop("dataset")
+        row.pop("source_audio")
+
+        issues = manifest_lib.validate_canonical_manifest(
+            [row], expected_split="train"
+        )
 
         self.assertEqual(issues, [])
 
     def test_empty_manifest_is_invalid(self) -> None:
-        issues = validate_canonical_manifest([])
+        issues = manifest_lib.validate_canonical_manifest([])
 
         self.assertTrue(any(issue.code == "empty_manifest" for issue in issues))
         with self.assertRaisesRegex(ValueError, "empty_manifest"):
-            require_canonical_manifest([])
+            manifest_lib.require_canonical_manifest([])
 
     def test_required_field_failures_report_code_and_field(self) -> None:
         cases = [
@@ -105,6 +93,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             ("missing segment_id", "segment_id", None, "missing_required"),
             ("blank segment_id", "segment_id", " ", "blank_required"),
             ("missing offset", "offset", None, "missing_required"),
+            ("negative offset", "offset", -1, "invalid_offset"),
             ("non-numeric offset", "offset", "start", "invalid_offset"),
             ("bool offset", "offset", True, "invalid_offset"),
             ("missing duration", "duration", None, "missing_required"),
@@ -121,7 +110,9 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 else:
                     row[field] = value
 
-                issues = validate_canonical_manifest([row])
+                issues = manifest_lib.validate_canonical_manifest(
+                    [row], expected_split="train"
+                )
 
                 self.assertHasIssue(issues, expected_code, field)
 
@@ -135,7 +126,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
 
         for audio_filepath, name in cases:
             with self.subTest(name=name):
-                issues = validate_canonical_manifest(
+                issues = manifest_lib.validate_canonical_manifest(
                     [_canonical_row(audio_filepath=audio_filepath)]
                 )
 
@@ -145,7 +136,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                     "audio_filepath",
                 )
 
-        duplicate_audio_issues = validate_canonical_manifest(
+        duplicate_audio_issues = manifest_lib.validate_canonical_manifest(
             [
                 _canonical_row(
                     audio_filepath="gs://bucket/audio/dup.flac",
@@ -165,7 +156,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             "audio_filepath",
         )
 
-        duplicate_identity_issues = validate_canonical_manifest(
+        duplicate_identity_issues = manifest_lib.validate_canonical_manifest(
             [
                 _canonical_row(
                     audio_filepath="gs://bucket/audio/a.flac",
@@ -185,6 +176,23 @@ class TestCanonicalManifestValidation(unittest.TestCase):
             "example_id,segment_id",
         )
 
+    def test_unstripped_audio_uri_is_invalid(self) -> None:
+        row = _canonical_row(
+            audio_filepath="  gs://bucket/audio/example.flac  ",
+        )
+
+        issues = manifest_lib.validate_canonical_manifest([row])
+
+        self.assertEqual(
+            [(issue.code, issue.field) for issue in issues],
+            [("unstripped_audio_filepath", "audio_filepath")],
+        )
+        with self.assertRaisesRegex(
+            ValueError,
+            "audio_filepath must not contain leading or trailing whitespace",
+        ):
+            manifest_lib.require_canonical_manifest([row])
+
     def test_optional_metadata_failures_report_code_and_field(self) -> None:
         cases = [
             ("blank split", {"split": " "}, "invalid_metadata", "split"),
@@ -194,12 +202,17 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 "split_mismatch",
                 "split",
             ),
-            ("blank lang", {"lang": " "}, "invalid_metadata", "lang"),
             (
                 "malformed dataset",
                 {"dataset": []},
                 "invalid_metadata",
                 "dataset",
+            ),
+            (
+                "blank dataset name",
+                {"dataset": {"name": " ", "family": "radio"}},
+                "invalid_metadata",
+                "dataset.name",
             ),
             (
                 "malformed source_audio",
@@ -208,16 +221,34 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 "source_audio",
             ),
             (
-                "malformed audio_processing",
-                {"audio_processing": []},
+                "blank source audio filepath",
+                {
+                    "source_audio": {
+                        "audio_filepath": " ",
+                        "offset": 0,
+                        "duration": 1.0,
+                    }
+                },
                 "invalid_metadata",
-                "audio_processing",
+                "source_audio.audio_filepath",
+            ),
+            (
+                "invalid source audio offset",
+                {
+                    "source_audio": {
+                        "audio_filepath": "gs://bucket/source/example.mp3",
+                        "offset": "bad",
+                        "duration": 1.0,
+                    }
+                },
+                "invalid_metadata",
+                "source_audio.offset",
             ),
         ]
 
         for name, overrides, expected_code, expected_field in cases:
             with self.subTest(name=name):
-                issues = validate_canonical_manifest(
+                issues = manifest_lib.validate_canonical_manifest(
                     [_canonical_row(**overrides)],
                     expected_split="train",
                 )
@@ -228,17 +259,62 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                     expected_field,
                 )
 
-    def test_unknown_and_prediction_enriched_fields_are_ignored(
-        self,
-    ) -> None:
-        row = _canonical_row(
-            pred_text_whisper="already scored",
-            unknown_future_field={"ignored": True},
+    def test_explicit_null_optional_metadata_is_absent(self) -> None:
+        issues = manifest_lib.validate_canonical_manifest(
+            [
+                _canonical_row(
+                    split=None,
+                    dataset={
+                        "name": None,
+                        "family": None,
+                    },
+                    source_audio={
+                        "audio_filepath": None,
+                        "offset": None,
+                        "duration": None,
+                    },
+                )
+            ],
+            expected_split="train",
         )
 
-        issues = validate_canonical_manifest([row])
-
         self.assertEqual(issues, [])
+
+    def test_prediction_and_unknown_fields_are_tolerated(self) -> None:
+        for field in ("pred_text_whisper", "unknown_future_field"):
+            with self.subTest(field=field):
+                issues = manifest_lib.validate_canonical_manifest(
+                    [_canonical_row(**{field: "not canonical"})]
+                )
+                self.assertEqual(issues, [])
+
+    def test_unknown_nested_fields_are_tolerated(self) -> None:
+        dataset_issues = manifest_lib.validate_canonical_manifest(
+            [
+                _canonical_row(
+                    dataset={
+                        "name": "echo",
+                        "family": "radio",
+                        "extra": "not canonical",
+                    }
+                )
+            ]
+        )
+        self.assertEqual(dataset_issues, [])
+
+        source_issues = manifest_lib.validate_canonical_manifest(
+            [
+                _canonical_row(
+                    source_audio={
+                        "audio_filepath": "gs://bucket/source/example.mp3",
+                        "offset": 0,
+                        "duration": 1.0,
+                        "extra": "not canonical",
+                    }
+                )
+            ]
+        )
+        self.assertEqual(source_issues, [])
 
     def test_invalid_rows_return_structured_issues(self) -> None:
         rows = [
@@ -248,14 +324,12 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 offset=True,
                 duration=0,
                 split="eval",
-                lang="",
                 dataset={"name": " ", "family": 42},
                 source_audio={
                     "audio_filepath": "",
                     "offset": False,
                     "duration": 0,
                 },
-                audio_processing={"masked_categories": ["ok", "", 42]},
             ),
             {
                 "audio_filepath": "gs://bucket/audio/other.flac",
@@ -263,15 +337,27 @@ class TestCanonicalManifestValidation(unittest.TestCase):
                 "duration": 1.0,
                 "example_id": "example",
                 "segment_id": "001",
+                "split": "train",
+                "dataset": {"name": "echo", "family": "radio"},
+                "source_audio": {
+                    "audio_filepath": "gs://bucket/source/other.mp3",
+                    "offset": 0,
+                    "duration": 1.0,
+                },
             },
             _canonical_row(audio_filepath="gs://bucket/audio/other.flac"),
         ]
 
-        issues = validate_canonical_manifest(rows, expected_split="train")
+        issues = manifest_lib.validate_canonical_manifest(
+            rows, expected_split="train"
+        )
         codes = {issue.code for issue in issues}
 
         self.assertTrue(
-            all(isinstance(issue, CanonicalManifestIssue) for issue in issues)
+            all(
+                isinstance(issue, manifest_lib.CanonicalManifestIssue)
+                for issue in issues
+            )
         )
         self.assertIn("missing_required", codes)
         self.assertIn("blank_required", codes)
@@ -311,7 +397,9 @@ class TestCanonicalManifestValidation(unittest.TestCase):
         rows = [_canonical_row(text=" ", split="eval")]
 
         with self.assertRaisesRegex(ValueError, "blank_required") as ctx:
-            require_canonical_manifest(rows, expected_split="train")
+            manifest_lib.require_canonical_manifest(
+                rows, expected_split="train"
+            )
 
         message = str(ctx.exception)
         self.assertIn("split_mismatch", message)
@@ -330,7 +418,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
 
         for expected_code, field, value in cases:
             with self.subTest(field=field, value=value):
-                issues = validate_canonical_manifest(
+                issues = manifest_lib.validate_canonical_manifest(
                     [_canonical_row(**{field: value})]
                 )
 
@@ -352,7 +440,7 @@ class TestCanonicalManifestValidation(unittest.TestCase):
         for field, value in cases:
             parent, child = field.split(".")
             with self.subTest(field=field, value=value):
-                issues = validate_canonical_manifest(
+                issues = manifest_lib.validate_canonical_manifest(
                     [
                         _canonical_row(
                             **{
@@ -375,14 +463,14 @@ class TestCanonicalManifestValidation(unittest.TestCase):
 
 
 class TestCanonicalRowIdentity(unittest.TestCase):
-    """Row identity is public and stable for dict rows and CanonicalRow."""
+    """Row identity is public and stable for dict and typed rows."""
 
     def test_identity_from_dict_and_canonical_row_is_stripped(self) -> None:
-        dict_identity = canonical_row_identity(
+        dict_identity = manifest_lib.canonical_row_identity(
             {"example_id": " example ", "segment_id": " 001 "}
         )
-        typed_identity = canonical_row_identity(
-            CanonicalRow(
+        typed_identity = manifest_lib.canonical_row_identity(
+            manifest_lib.CanonicalRow(
                 audio_filepath="gs://bucket/audio/example.flac",
                 example_id="typed-example",
                 segment_id="002",
@@ -397,25 +485,43 @@ class TestCanonicalRowIdentity(unittest.TestCase):
 
     def test_identity_missing_or_blank_fields_raise(self) -> None:
         with self.assertRaisesRegex(ValueError, "segment_id"):
-            canonical_row_identity({"example_id": "example"})
+            manifest_lib.canonical_row_identity({"example_id": "example"})
         with self.assertRaisesRegex(ValueError, "example_id"):
-            canonical_row_identity({"example_id": " ", "segment_id": "001"})
+            manifest_lib.canonical_row_identity(
+                {"example_id": " ", "segment_id": "001"}
+            )
 
 
-class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
-    """merge_predictions_to_manifest must raise on unexpected error, never return []."""
+class TestMergePredictionValidation(unittest.TestCase):
+    """Malformed prediction and ground-truth rows are rejected."""
+
+    def test_rejects_negative_offset_tolerance_before_mutating(self) -> None:
+        ground_truth = [
+            {
+                "audio_filepath": "gs://bucket/clip.flac",
+                "offset": 0.0,
+                "pred_text_gemini": "existing",
+            }
+        ]
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "offset_tolerance must be non-negative",
+        ):
+            manifest_lib.merge_predictions_to_manifest(
+                ground_truth,
+                [],
+                "gemini",
+                offset_tolerance=-0.1,
+            )
+
+        self.assertEqual(ground_truth[0]["pred_text_gemini"], "existing")
 
     def test_raises_on_malformed_prediction_offset(self) -> None:
-        """A prediction whose offset cannot be cast to float raises ValueError.
-
-        The internal ``float(pred.get("offset", 0.0))`` call throws when the
-        offset is a non-numeric string.  The function must propagate the
-        exception rather than swallowing it and returning [].
-        """
+        """A prediction with a non-numeric offset raises ValueError."""
         ground_truth = [
             {"audio_filepath": "gs://bucket/clip.flac", "offset": 0.0}
         ]
-        # Non-numeric offset triggers float() ValueError inside the try block
         bad_predictions = [
             {
                 "audio_filepath": "gs://bucket/clip.flac",
@@ -425,70 +531,100 @@ class TestMergePredictionsToManifestFailLoud(unittest.TestCase):
         ]
 
         with self.assertRaises(ValueError):
-            merge_predictions_to_manifest(
+            manifest_lib.merge_predictions_to_manifest(
                 ground_truth, bad_predictions, "gemini"
             )
 
     def test_prediction_missing_audio_filepath_raises(self) -> None:
-        """A prediction without `audio_filepath` fails loud, not silently merges to ""."""
+        """A prediction requires a non-blank audio_filepath."""
         gt = [{"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "g"}]
         preds = [{"offset": 1.0, "text": "p"}]  # no audio_filepath
         with self.assertRaises(ValueError):
-            merge_predictions_to_manifest(gt, preds, "m")
+            manifest_lib.merge_predictions_to_manifest(gt, preds, "m")
+
+    def test_prediction_null_or_blank_audio_filepath_raises(self) -> None:
+        gt = [{"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "g"}]
+        for audio_filepath in (None, " "):
+            with self.subTest(audio_filepath=audio_filepath):
+                preds = [
+                    {
+                        "audio_filepath": audio_filepath,
+                        "offset": 1.0,
+                        "text": "p",
+                    }
+                ]
+                with self.assertRaisesRegex(ValueError, "audio_filepath"):
+                    manifest_lib.merge_predictions_to_manifest(gt, preds, "m")
 
     def test_prediction_missing_offset_raises(self) -> None:
-        """A prediction without `offset` fails loud, not silently defaults to 0.0."""
+        """A prediction requires an offset."""
         gt = [{"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "g"}]
         preds = [{"audio_filepath": "gs://b/a.flac", "text": "p"}]  # no offset
         with self.assertRaises(ValueError):
-            merge_predictions_to_manifest(gt, preds, "m")
+            manifest_lib.merge_predictions_to_manifest(gt, preds, "m")
+
+    def test_prediction_bool_or_non_finite_offset_raises(self) -> None:
+        gt = [{"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "g"}]
+        for offset in (True, False, float("nan"), float("inf"), "nan", "inf"):
+            with self.subTest(offset=offset):
+                preds = [
+                    {
+                        "audio_filepath": "gs://b/a.flac",
+                        "offset": offset,
+                        "text": "p",
+                    }
+                ]
+                with self.assertRaisesRegex(ValueError, "offset"):
+                    manifest_lib.merge_predictions_to_manifest(gt, preds, "m")
+
+    def test_prediction_negative_offset_raises(self) -> None:
+        gt = [{"audio_filepath": "gs://b/a.flac", "offset": -1.0, "text": "g"}]
+        preds = [
+            {
+                "audio_filepath": "gs://b/a.flac",
+                "offset": -1.0,
+                "text": "p",
+            }
+        ]
+
+        with self.assertRaisesRegex(ValueError, "negative 'offset'"):
+            manifest_lib.merge_predictions_to_manifest(gt, preds, "m")
 
     def test_raises_on_missing_ground_truth_offset(self) -> None:
-        """A GT row missing 'offset' raises — symmetric to the predictions side.
-
-        Silently defaulting to 0.0 would let a malformed manifest bind every
-        row missing an offset to whichever prediction sits at 0.0.
-        """
+        """A ground-truth row requires an offset."""
         gt = [{"audio_filepath": "gs://b/a.flac"}]  # no 'offset' key
         with self.assertRaises(ValueError):
-            merge_predictions_to_manifest(gt, [], "gemini")
+            manifest_lib.merge_predictions_to_manifest(gt, [], "gemini")
+
+    def test_ground_truth_bool_or_non_finite_offset_raises(self) -> None:
+        for offset in (True, False, float("nan"), float("inf"), "nan", "inf"):
+            with self.subTest(offset=offset):
+                gt = [{"audio_filepath": "gs://b/a.flac", "offset": offset}]
+                with self.assertRaisesRegex(ValueError, "offset"):
+                    manifest_lib.merge_predictions_to_manifest(gt, [], "gemini")
+
+    def test_ground_truth_negative_offset_raises(self) -> None:
+        gt = [{"audio_filepath": "gs://b/a.flac", "offset": -1.0}]
+
+        with self.assertRaisesRegex(ValueError, "negative 'offset'"):
+            manifest_lib.merge_predictions_to_manifest(gt, [], "gemini")
 
     def test_raises_on_missing_ground_truth_audio_filepath(self) -> None:
         """A GT row missing 'audio_filepath' raises — symmetric to predictions."""
         gt = [{"offset": 1.0}]  # no 'audio_filepath' key
         with self.assertRaises(ValueError):
-            merge_predictions_to_manifest(gt, [], "gemini")
+            manifest_lib.merge_predictions_to_manifest(gt, [], "gemini")
 
-    def test_does_not_return_empty_list_on_error(self) -> None:
-        """Verify the old silent-failure path (return []) is gone."""
-        ground_truth = [
-            {"audio_filepath": "gs://bucket/clip.flac", "offset": 0.0}
-        ]
-        bad_predictions = [
-            {
-                "audio_filepath": "gs://bucket/clip.flac",
-                "offset": "not-a-number",
-                "text": "hi",
-            }
-        ]
-
-        result = None
-        raised = False
-        try:
-            result = merge_predictions_to_manifest(
-                ground_truth, bad_predictions, "gemini"
-            )
-        except Exception:
-            raised = True
-
-        self.assertTrue(raised, "Expected an exception but none was raised")
-        self.assertIsNone(
-            result, "Function must not return a value when it raises"
-        )
+    def test_ground_truth_null_or_blank_audio_filepath_raises(self) -> None:
+        for audio_filepath in (None, " "):
+            with self.subTest(audio_filepath=audio_filepath):
+                gt = [{"audio_filepath": audio_filepath, "offset": 1.0}]
+                with self.assertRaisesRegex(ValueError, "audio_filepath"):
+                    manifest_lib.merge_predictions_to_manifest(gt, [], "gemini")
 
 
-class TestMergePredictionsHappyPath(unittest.TestCase):
-    """Sanity-check the normal merge path is unaffected by the re-raise change."""
+class TestMergePredictionMatching(unittest.TestCase):
+    """Prediction matching uses URI, identity, and offset constraints."""
 
     def test_matched_prediction_written_to_gt_row(self) -> None:
         gt = [
@@ -502,14 +638,36 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             }
         ]
 
-        result = merge_predictions_to_manifest(gt, preds, "whisper")
+        result = manifest_lib.merge_predictions_to_manifest(
+            gt, preds, "whisper"
+        )
 
         self.assertEqual(result[0]["pred_text_whisper"], "predicted")
 
-    def test_prediction_without_identity_matches_exact_uri_and_offset(
+    def test_audio_filepath_match_strips_whitespace(self) -> None:
+        gt = [
+            {
+                "audio_filepath": " gs://b/a.flac ",
+                "offset": 1.0,
+                "text": "gold",
+            }
+        ]
+        preds = [
+            {
+                "audio_filepath": "gs://b/a.flac ",
+                "offset": 1.0,
+                "text": "prediction",
+            }
+        ]
+
+        result = manifest_lib.merge_predictions_to_manifest(gt, preds, "m")
+
+        self.assertEqual(result[0]["pred_text_m"], "prediction")
+
+    def test_prediction_without_identity_matches_by_uri_and_offset(
         self,
     ) -> None:
-        """Older predictions without identity still match by exact URI."""
+        """Identity is optional when URI and offset identify the row."""
         gt = [
             {
                 "audio_filepath": "gs://b/a.flac",
@@ -523,16 +681,13 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             {
                 "audio_filepath": "gs://b/a.flac",
                 "offset": 1.0,
-                "text": "legacy prediction",
+                "text": "prediction",
             }
         ]
 
-        result = merge_predictions_to_manifest(gt, preds, "legacy")
+        result = manifest_lib.merge_predictions_to_manifest(gt, preds, "m")
 
-        self.assertEqual(
-            result[0]["pred_text_legacy"],
-            "legacy prediction",
-        )
+        self.assertEqual(result[0]["pred_text_m"], "prediction")
 
     def test_binds_closest_of_multiple_in_tolerance_candidates(self) -> None:
         """When several predictions are within tolerance, the nearest wins."""
@@ -560,7 +715,9 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             },
         ]
 
-        result = merge_predictions_to_manifest(gt, preds, "whisper")
+        result = manifest_lib.merge_predictions_to_manifest(
+            gt, preds, "whisper"
+        )
 
         self.assertEqual(result[0]["pred_text_whisper"], "closer")
         self.assertEqual(result[1]["pred_text_whisper"], "first")
@@ -572,7 +729,7 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
 
         The naive ``str(None)`` is the four-letter word "None", which would
         otherwise score as a real-looking prediction token against the ground
-        truth. Mirror load_manifest's None-to-empty coercion.
+        truth.
         """
         gt = [
             {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "gold"}
@@ -581,7 +738,7 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": None}
         ]
 
-        result = merge_predictions_to_manifest(gt, preds, "m")
+        result = manifest_lib.merge_predictions_to_manifest(gt, preds, "m")
 
         self.assertEqual(result[0]["pred_text_m"], "")
 
@@ -599,7 +756,9 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             {"audio_filepath": "gs://b/a.flac", "offset": 1.18, "text": "only"},
         ]
 
-        result = merge_predictions_to_manifest(gt, preds, "whisper")
+        result = manifest_lib.merge_predictions_to_manifest(
+            gt, preds, "whisper"
+        )
 
         # 1.18 is nearer 1.2 than 1.0, so row 1 binds it; row 0 stays blank.
         self.assertNotIn("pred_text_whisper", result[0])
@@ -641,7 +800,9 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             },
         ]
 
-        result = merge_predictions_to_manifest(gt, preds, "whisper")
+        result = manifest_lib.merge_predictions_to_manifest(
+            gt, preds, "whisper"
+        )
 
         self.assertEqual(result[0]["pred_text_whisper"], "pred A")
         self.assertEqual(result[1]["pred_text_whisper"], "pred B")
@@ -669,13 +830,13 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
         ]
 
         with self.assertRaisesRegex(ValueError, "unmatched prediction"):
-            merge_predictions_to_manifest(gt, preds, "whisper")
+            manifest_lib.merge_predictions_to_manifest(gt, preds, "whisper")
 
     def test_stale_pred_text_field_is_cleared_on_rerun(self) -> None:
         """Re-running clears a stale pred_text_{model_key} when no new prediction matches.
 
         Without this, a re-run that fails to produce a prediction for some
-        row leaves the OLD prediction in place — and downstream WER scores
+        row leaves the previous prediction in place, and downstream WER scores
         the missing output as a successful prediction.
         """
         gt = [
@@ -687,7 +848,7 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "p1"},
             {"audio_filepath": "gs://b/a.flac", "offset": 9.0, "text": "p2"},
         ]
-        merge_predictions_to_manifest(gt, preds_v1, "m")
+        manifest_lib.merge_predictions_to_manifest(gt, preds_v1, "m")
         self.assertEqual(gt[0]["pred_text_m"], "p1")
         self.assertEqual(gt[1]["pred_text_m"], "p2")
 
@@ -699,7 +860,7 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
                 "text": "p1_new",
             },
         ]
-        merge_predictions_to_manifest(gt, preds_v2, "m")
+        manifest_lib.merge_predictions_to_manifest(gt, preds_v2, "m")
         self.assertEqual(gt[0]["pred_text_m"], "p1_new")
         self.assertNotIn(
             "pred_text_m",
@@ -707,7 +868,7 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
             "stale prediction must be cleared on re-run",
         )
 
-    def test_unmatched_prediction_leaves_field_absent(self) -> None:
+    def test_offset_mismatch_raises_unmatched_prediction(self) -> None:
         gt = [
             {"audio_filepath": "gs://b/a.flac", "offset": 1.0, "text": "gold"}
         ]
@@ -720,177 +881,442 @@ class TestMergePredictionsHappyPath(unittest.TestCase):
         ]
 
         with self.assertRaisesRegex(ValueError, "unmatched prediction"):
-            merge_predictions_to_manifest(gt, preds, "whisper")
+            manifest_lib.merge_predictions_to_manifest(gt, preds, "whisper")
 
     def test_returns_same_list_object(self) -> None:
         """Result is the ground_truth list mutated in place."""
         gt = [{"audio_filepath": "gs://b/a.flac", "offset": 0.0, "text": "x"}]
-        result = merge_predictions_to_manifest(gt, [], "m")
+        result = manifest_lib.merge_predictions_to_manifest(gt, [], "m")
 
         self.assertIs(result, gt)
 
 
-class TestLoadManifestEmptyReturns(unittest.TestCase):
-    """load_manifest still returns [] for bad inputs — these paths are intentional."""
+class TestLoadManifestLenient(unittest.TestCase):
+    """Local exploratory loading skips bad input and normalizes transcripts."""
 
     def test_missing_file_returns_empty(self) -> None:
-        result = load_manifest("./nonexistent_manifest.jsonl")
+        rows = manifest_lib.load_manifest("./nonexistent_manifest.jsonl")
 
-        self.assertEqual(result, [])
+        self.assertEqual(rows, [])
 
+    def test_unreadable_path_returns_empty(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            rows = manifest_lib.load_manifest(tmp_s)
 
-class TestLoadManifestMalformedRows(unittest.TestCase):
-    """load_manifest tolerates rows whose `text` field is not a string."""
+        self.assertEqual(rows, [])
 
-    def test_non_string_text_is_coerced(self) -> None:
-        """A row with a non-string `text` is str()-cast, not crashed."""
+    def test_non_string_text_value_is_coerced(self) -> None:
         fd, path = tempfile.mkstemp(suffix=".jsonl")
         try:
             with os.fdopen(fd, "w") as f:
                 f.write(
                     json.dumps({"audio_filepath": "gs://b/a.flac", "text": 123})
                 )
-            rows = load_manifest(path)
+            rows = manifest_lib.load_manifest(path)
         finally:
-            Path(path).unlink()
+            pathlib.Path(path).unlink()
 
         self.assertEqual(rows[0]["text"], "123")
 
-    def test_falsy_non_string_text_is_coerced(self) -> None:
-        """Falsy non-string text (0, False, None) is coerced to a string."""
-        rows_in = [
-            {"audio_filepath": "gs://b/a.flac", "text": 0},
-            {"audio_filepath": "gs://b/b.flac", "text": False},
-            {"audio_filepath": "gs://b/c.flac", "text": None},
-        ]
-        fd, path = tempfile.mkstemp(suffix=".jsonl")
-        try:
-            with os.fdopen(fd, "w") as f:
-                f.write("\n".join(json.dumps(row) for row in rows_in))
-            rows = load_manifest(path)
-        finally:
-            Path(path).unlink()
 
-        # 0 / False are str()-cast; a null text becomes "" (absent transcript).
-        self.assertEqual([r["text"] for r in rows], ["0", "False", ""])
-        for row in rows:
-            self.assertIsInstance(row["text"], str)
+class TestParseManifestText(unittest.TestCase):
+    """The shared text parsers expose explicit lenient and strict APIs."""
+
+    def test_jsonl_parser_skips_bad_lines_and_normalizes_text(self) -> None:
+        rows = manifest_lib.parse_manifest_text(
+            "\n".join(
+                [
+                    json.dumps(
+                        {
+                            "audio_filepath": "gs://b/a.flac",
+                            "text": None,
+                        }
+                    ),
+                    "{bad json}",
+                    json.dumps(["not", "an", "object"]),
+                    json.dumps(
+                        {
+                            "audio_filepath": "gs://b/b.flac",
+                            "text": "line\nbreak",
+                        }
+                    ),
+                ]
+            ),
+            source="inline.jsonl",
+        )
+
+        self.assertEqual(
+            rows,
+            [
+                {"audio_filepath": "gs://b/a.flac", "text": ""},
+                {"audio_filepath": "gs://b/b.flac", "text": "line break"},
+            ],
+        )
+
+    def test_json_array_parser_uses_same_text_normalization(self) -> None:
+        rows = manifest_lib.parse_manifest_text(
+            json.dumps(
+                [
+                    {"audio_filepath": "gs://b/a.flac", "text": 123},
+                    {"audio_filepath": "gs://b/b.flac", "text": "x\ry"},
+                ]
+            ),
+            source="inline.json",
+        )
+
+        self.assertEqual(
+            [row["text"] for row in rows],
+            ["123", "x y"],
+        )
+
+    def test_strict_jsonl_parser_rejects_malformed_line(self) -> None:
+        content = '{"audio_filepath":"gs://b/a.flac","text":"ok"}\n{bad json}'
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"inline.jsonl: malformed JSON at line 2",
+        ):
+            manifest_lib.parse_manifest_text_strict(
+                content,
+                source="inline.jsonl",
+            )
+
+    def test_strict_jsonl_parser_rejects_non_object_line(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            r"inline.jsonl: expected JSON object at line 1",
+        ):
+            manifest_lib.parse_manifest_text_strict(
+                '"not an object"\n',
+                source="inline.jsonl",
+            )
+
+    def test_strict_parser_preserves_invalid_text_for_validation(self) -> None:
+        rows = manifest_lib.parse_manifest_text_strict(
+            json.dumps([_canonical_row(text=123)]),
+            source="inline.json",
+        )
+
+        self.assertEqual(rows[0]["text"], 123)
+        with self.assertRaisesRegex(
+            ValueError,
+            r"blank_required \(row 0, field text\)",
+        ):
+            manifest_lib.strict_canonical_rows_from_manifest(rows)
+
+    def test_strict_local_loader_rejects_partially_malformed_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            path = pathlib.Path(tmp_s) / "eval.jsonl"
+            path.write_text(
+                '{"audio_filepath":"gs://b/a.flac","text":"ok"}\n{bad json}\n',
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                r"eval.jsonl: malformed JSON at line 2",
+            ):
+                manifest_lib.load_manifest_strict(str(path))
 
 
-class TestRowsFromManifestNullSafe(unittest.TestCase):
-    """rows_from_manifest tolerates explicit null offset/duration (no TypeError)."""
+class TestRowsFromManifestConversion(unittest.TestCase):
+    """Row conversion maps valid values and fills compatibility defaults."""
 
-    def test_explicit_null_offset_duration_default_to_zero(self) -> None:
-        rows = rows_from_manifest(
+    def test_row_maps_core_and_optional_fields(self) -> None:
+        rows = manifest_lib.rows_from_manifest([_canonical_row()])
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].offset, 0.0)
+        self.assertEqual(rows[0].duration, 1.25)
+        self.assertEqual(rows[0].example_id, "example")
+        self.assertEqual(rows[0].segment_id, "001")
+        self.assertEqual(rows[0].split, "train")
+        self.assertEqual(rows[0].dataset["name"], "echo")
+        self.assertEqual(
+            rows[0].source_audio["audio_filepath"],
+            "gs://bucket/source/example.mp3",
+        )
+
+    def test_optional_metadata_unknown_keys_are_preserved(self) -> None:
+        rows = manifest_lib.rows_from_manifest(
+            [
+                _canonical_row(
+                    dataset={
+                        "name": " echo ",
+                        "family": " radio ",
+                        "custom": {"priority": 1},
+                    },
+                    source_audio={
+                        "audio_filepath": " gs://bucket/source/example.mp3 ",
+                        "offset": 1,
+                        "duration": 2,
+                        "sample_rate_hz": 44100,
+                    },
+                )
+            ]
+        )
+
+        self.assertEqual(rows[0].dataset["name"], "echo")
+        self.assertEqual(rows[0].dataset["family"], "radio")
+        self.assertEqual(rows[0].dataset["custom"], {"priority": 1})
+        self.assertEqual(
+            rows[0].source_audio["audio_filepath"],
+            "gs://bucket/source/example.mp3",
+        )
+        self.assertEqual(rows[0].source_audio["offset"], 1.0)
+        self.assertEqual(rows[0].source_audio["duration"], 2.0)
+        self.assertEqual(rows[0].source_audio["sample_rate_hz"], 44100)
+
+    def test_unknown_only_optional_metadata_is_preserved(self) -> None:
+        rows = manifest_lib.rows_from_manifest(
+            [
+                _canonical_row(
+                    dataset={"custom_dataset_key": "echo"},
+                    source_audio={"sample_rate_hz": 44100},
+                )
+            ]
+        )
+
+        self.assertEqual(rows[0].dataset, {"custom_dataset_key": "echo"})
+        self.assertEqual(rows[0].source_audio, {"sample_rate_hz": 44100})
+
+    def test_known_null_optional_metadata_is_absent_in_rows(self) -> None:
+        rows = manifest_lib.rows_from_manifest(
+            [
+                _canonical_row(
+                    split=None,
+                    dataset={"name": None, "family": None},
+                    source_audio={
+                        "audio_filepath": None,
+                        "offset": None,
+                        "duration": None,
+                    },
+                )
+            ]
+        )
+
+        self.assertIsNone(rows[0].split)
+        self.assertIsNone(rows[0].dataset)
+        self.assertIsNone(rows[0].source_audio)
+
+    def test_unknown_metadata_is_preserved_with_known_null_fields(
+        self,
+    ) -> None:
+        rows = manifest_lib.rows_from_manifest(
+            [
+                _canonical_row(
+                    dataset={
+                        "name": None,
+                        "family": None,
+                        "custom_dataset_key": "echo",
+                    },
+                    source_audio={
+                        "audio_filepath": None,
+                        "offset": None,
+                        "duration": None,
+                        "sample_rate_hz": 44100,
+                    },
+                )
+            ]
+        )
+
+        self.assertEqual(rows[0].dataset, {"custom_dataset_key": "echo"})
+        self.assertEqual(rows[0].source_audio, {"sample_rate_hz": 44100})
+
+    def test_core_row_maps_optional_fields_to_none(self) -> None:
+        row = _canonical_row()
+        row.pop("split")
+        row.pop("dataset")
+        row.pop("source_audio")
+
+        rows = manifest_lib.rows_from_manifest([row])
+
+        self.assertIsNone(rows[0].split)
+        self.assertIsNone(rows[0].dataset)
+        self.assertIsNone(rows[0].source_audio)
+
+    def test_missing_identity_and_offset_are_derived_or_defaulted(
+        self,
+    ) -> None:
+        rows = manifest_lib.rows_from_manifest(
             [
                 {
                     "audio_filepath": "gs://b/a.flac",
                     "text": "hello",
-                    "offset": None,
-                    "duration": None,
+                    "duration": 2.0,
                 }
             ]
         )
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0].offset, 0.0)
-        self.assertEqual(rows[0].duration, 0.0)
+
         self.assertEqual(rows[0].example_id, "a")
         self.assertEqual(rows[0].segment_id, "001")
+        self.assertEqual(rows[0].offset, 0.0)
+        self.assertEqual(rows[0].duration, 2.0)
+
+    def test_missing_duration_still_fails(self) -> None:
+        with self.assertRaisesRegex(ValueError, "duration"):
+            manifest_lib.rows_from_manifest(
+                [
+                    {
+                        "audio_filepath": "gs://b/a.flac",
+                        "text": "hello",
+                    }
+                ]
+            )
 
 
 class TestScoreableManifestEntry(unittest.TestCase):
     def test_requires_audio_filepath_and_non_blank_text(self) -> None:
         self.assertTrue(
-            is_scoreable_manifest_entry(
+            manifest_lib.is_scoreable_manifest_entry(_canonical_row())
+        )
+        self.assertTrue(
+            manifest_lib.is_scoreable_manifest_entry(
+                {
+                    **_canonical_row(),
+                    "pred_text_gemini": "derived prediction",
+                }
+            )
+        )
+        self.assertTrue(
+            manifest_lib.is_scoreable_manifest_entry(
                 {"audio_filepath": "gs://b/a.flac", "text": "hello"}
             )
         )
+        self.assertTrue(
+            manifest_lib.is_scoreable_manifest_entry(
+                {**_canonical_row(), "unexpected": "not scoreable"}
+            )
+        )
         self.assertFalse(
-            is_scoreable_manifest_entry(
+            manifest_lib.is_scoreable_manifest_entry(
                 {"audio_filepath": "gs://b/a.flac", "text": ""}
             )
         )
         self.assertFalse(
-            is_scoreable_manifest_entry(
+            manifest_lib.is_scoreable_manifest_entry(
                 {"audio_filepath": "gs://b/a.flac", "text": "   "}
             )
         )
         self.assertFalse(
-            is_scoreable_manifest_entry(
+            manifest_lib.is_scoreable_manifest_entry(
                 {"audio_filepath": "gs://b/a.flac", "text": None}
             )
         )
-        self.assertFalse(is_scoreable_manifest_entry({"text": "hello"}))
+        self.assertFalse(
+            manifest_lib.is_scoreable_manifest_entry({"text": "hello"})
+        )
 
 
 class TestRowsFromManifestRequiredFields(unittest.TestCase):
-    """rows_from_manifest fails loudly for required compatibility fields."""
+    """Row conversion rejects invalid required string fields."""
 
     def test_missing_audio_filepath_raises_with_row_context(self) -> None:
-        with self.assertRaisesRegex(ValueError, "row 0.*audio_filepath"):
-            rows_from_manifest([{"text": "hello"}])
+        row = _canonical_row()
+        row.pop("audio_filepath")
+        with self.assertRaisesRegex(ValueError, "audio_filepath"):
+            manifest_lib.rows_from_manifest([row])
 
     def test_blank_audio_filepath_raises_with_row_context(self) -> None:
-        with self.assertRaisesRegex(ValueError, "row 0.*audio_filepath"):
-            rows_from_manifest([{"audio_filepath": "  ", "text": "hello"}])
-
-    def test_missing_text_raises_with_row_context(self) -> None:
-        with self.assertRaisesRegex(ValueError, "row 0.*text"):
-            rows_from_manifest([{"audio_filepath": "gs://b/a.flac"}])
-
-    def test_blank_text_raises_with_row_context(self) -> None:
-        with self.assertRaisesRegex(ValueError, "row 0.*text"):
-            rows_from_manifest(
-                [{"audio_filepath": "gs://b/a.flac", "text": "  "}]
+        with self.assertRaisesRegex(ValueError, "audio_filepath"):
+            manifest_lib.rows_from_manifest(
+                [_canonical_row(audio_filepath="  ")]
             )
 
+    def test_missing_text_raises_with_row_context(self) -> None:
+        row = _canonical_row()
+        row.pop("text")
+        with self.assertRaisesRegex(ValueError, "text"):
+            manifest_lib.rows_from_manifest([row])
+
+    def test_blank_text_raises_with_row_context(self) -> None:
+        with self.assertRaisesRegex(ValueError, "text"):
+            manifest_lib.rows_from_manifest([_canonical_row(text="  ")])
+
+    def test_non_string_text_raises_value_error_with_row_context(self) -> None:
+        with self.assertRaisesRegex(ValueError, "text must be a string"):
+            manifest_lib.rows_from_manifest([_canonical_row(text=123)])
+
+    def test_blank_identity_fields_are_not_derived(self) -> None:
+        with self.assertRaisesRegex(ValueError, "example_id"):
+            manifest_lib.rows_from_manifest([_canonical_row(example_id="  ")])
+        with self.assertRaisesRegex(ValueError, "segment_id"):
+            manifest_lib.rows_from_manifest([_canonical_row(segment_id="  ")])
+
     def test_required_string_values_are_stripped(self) -> None:
-        rows = rows_from_manifest(
+        rows = manifest_lib.rows_from_manifest(
             [
-                {
-                    "audio_filepath": " gs://b/a.flac ",
-                    "text": " hello ",
-                }
+                _canonical_row(
+                    audio_filepath=" gs://b/a.flac ",
+                    text=" hello ",
+                    example_id=" example ",
+                    segment_id=" 001 ",
+                    split=" train ",
+                    dataset={"name": " echo ", "family": " radio "},
+                    source_audio={
+                        "audio_filepath": " gs://bucket/source/example.mp3 ",
+                        "offset": 1,
+                        "duration": 2,
+                    },
+                )
             ]
         )
 
         self.assertEqual(rows[0].audio_filepath, "gs://b/a.flac")
         self.assertEqual(rows[0].text, "hello")
-
-    def test_strict_canonical_rules_remain_outside_row_conversion(self) -> None:
-        rows = rows_from_manifest(
-            [
-                {
-                    "audio_filepath": "local/audio.mp3",
-                    "text": "hello",
-                    "offset": -1,
-                    "duration": -2,
-                },
-                {
-                    "audio_filepath": "local/audio.mp3",
-                    "text": "duplicate audio allowed here",
-                    "offset": 0,
-                    "duration": 0,
-                },
-            ]
+        self.assertEqual(rows[0].example_id, "example")
+        self.assertEqual(rows[0].dataset["name"], "echo")
+        self.assertEqual(
+            rows[0].source_audio["audio_filepath"],
+            "gs://bucket/source/example.mp3",
         )
 
-        self.assertEqual(len(rows), 2)
-        self.assertEqual(rows[0].audio_filepath, "local/audio.mp3")
-        self.assertEqual(rows[0].duration, -2.0)
+
+class TestStrictCanonicalRowsFromManifest(unittest.TestCase):
+    """Strict canonical conversion remains one shared workflow boundary."""
+
+    def test_validates_before_converting_to_canonical_rows(self) -> None:
+        source_rows = [_canonical_row(split="eval")]
+
+        entries, rows = manifest_lib.strict_canonical_rows_from_manifest(
+            source_rows,
+            expected_split="eval",
+            source="eval.jsonl",
+        )
+
+        self.assertIs(entries, source_rows)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(
+            rows[0].audio_filepath,
+            "gs://bucket/audio/example.flac",
+        )
 
 
-class TestLoadManifestLenientBoundaries(unittest.TestCase):
-    """load_manifest remains a lenient parser, not a strict validator."""
+class TestLoadManifestBoundaries(unittest.TestCase):
+    """Local exploratory loading retains valid rows at parse boundaries."""
 
-    def test_json_array_is_loaded_without_strict_validation(self) -> None:
+    def test_json_array_is_loaded_without_canonical_validation(self) -> None:
         fd, path = tempfile.mkstemp(suffix=".json")
         try:
             with os.fdopen(fd, "w") as f:
                 json.dump([{"audio_filepath": "local/audio.mp3"}], f)
-            rows = load_manifest(path)
+            rows = manifest_lib.load_manifest(path)
         finally:
-            Path(path).unlink()
+            pathlib.Path(path).unlink()
+
+        self.assertEqual(rows, [{"audio_filepath": "local/audio.mp3"}])
+
+    def test_json_array_with_utf8_bom_is_loaded(self) -> None:
+        fd, path = tempfile.mkstemp(suffix=".json")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(
+                    "\ufeff"
+                    + json.dumps([{"audio_filepath": "local/audio.mp3"}])
+                )
+            rows = manifest_lib.load_manifest(path)
+        finally:
+            pathlib.Path(path).unlink()
 
         self.assertEqual(rows, [{"audio_filepath": "local/audio.mp3"}])
 
@@ -900,8 +1326,8 @@ class TestLoadManifestLenientBoundaries(unittest.TestCase):
             with os.fdopen(fd, "w") as f:
                 f.write("{bad json}\n")
                 f.write(json.dumps({"audio_filepath": "local/audio.mp3"}))
-            rows = load_manifest(path)
+            rows = manifest_lib.load_manifest(path)
         finally:
-            Path(path).unlink()
+            pathlib.Path(path).unlink()
 
         self.assertEqual(rows, [{"audio_filepath": "local/audio.mp3"}])

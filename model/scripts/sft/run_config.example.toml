@@ -9,8 +9,8 @@ round_id = "YYYY-MM-DD-short-description"
 dataset = "dataset-version-name"
 inference_dataset_slug = "echo/eval"
 
-# These are canonical manifests. `prepare` derives Gemini SFT JSONL for train
-# and validation, while eval stays held out for `gemini-sft eval`.
+# These are canonical JSONL manifests. `prepare` derives Gemini SFT JSONL for
+# train and validation, while eval stays held out for `gemini-sft eval`.
 train_manifest_uri = "gs://your-bucket/path/manifests/canonical/train.jsonl"
 validation_manifest_uri = "gs://your-bucket/path/manifests/canonical/validation.jsonl"
 eval_manifest_uri = "gs://your-bucket/path/manifests/canonical/eval.jsonl"

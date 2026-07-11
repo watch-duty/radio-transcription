@@ -50,14 +50,15 @@ editable model package install.
 The unified strict train/eval input contract used before provider-specific
 model input conversion. Each row is row-per-audio-segment JSONL with required
 `audio_filepath`, `text`, `offset`, `duration`, `example_id`, and `segment_id`
-fields. Strict `audio_filepath` values are model-ready `gs://...flac` clip
-URIs, and `(example_id, segment_id)` is the logical row identity, unique within
-one manifest.
+fields. Optional metadata may include `split`, `dataset`, and `source_audio`;
+when present, `dataset.name`, `dataset.family`,
+`source_audio.audio_filepath`, `source_audio.offset`, and
+`source_audio.duration` are validated.
 
-Optional shallow metadata may include `split`, `lang`, `dataset`,
-`source_audio`, and `audio_processing`. Strict validation through
-`validate_canonical_manifest(...)` ignores unknown row fields, unknown metadata
-keys, and prediction-enriched fields such as `pred_text_*`. See
+Strict `audio_filepath` values are model-ready `gs://...flac` clip URIs, and
+`(example_id, segment_id)` must be unique within one manifest. Strict
+validation tolerates unknown row-level fields, unknown keys inside optional
+metadata objects, and prediction-enriched fields such as `pred_text_*`. See
 `model/data/manifests/README.md` for the detailed contract.
 
 ### Train, Validation, And Eval Splits
@@ -97,9 +98,11 @@ tune` can resume polling the same paid job after a local process exit.
 
 ### Eval Artifact
 
-Evaluation outputs that let maintainers inspect or recalculate model quality,
-including local `wer_summary.{json,md}`, ledger rows, and GCS paths to raw
-Vertex batch inference results.
+Evaluation outputs that let maintainers inspect or recalculate the quality of
+the one `[eval.model]` target owned by a prepared round. Each evaluation writes
+one local and GCS `wer_summary.{json,md}` report containing one target, together
+with target-labeled raw provider or online prediction artifacts and a normalized
+inference-manifest URI.
 
 ### Normalized Inference Manifest
 
