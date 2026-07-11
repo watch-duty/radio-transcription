@@ -244,3 +244,13 @@ class ScheduleStaleTimerAction(StateMachineAction):
     """Action emitted to adjust Beam Watermark timers for dead-transmission recovery."""
 
     deadline_ms: int
+
+
+@dataclass(frozen=True)
+class StitcherChunkResult:
+    """Structured output returned after processing and stitching a chronological chunk."""
+
+    outputs: list[tuple[str, FlushRequest] | tuple[str, dict[str, Any]]]
+    next_context: TransmissionContext
+    next_expected_ts: int
+    next_last_start_ms: int | None

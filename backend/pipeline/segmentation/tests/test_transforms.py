@@ -672,6 +672,8 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 element=element,
                 timestamp=timestamp,
                 transmission_context_state=transmission_context_state,  # type: ignore
+                last_start_ms_state=MockValueState(None),  # type: ignore
+                out_of_order_buffer_state=MockBagState(),  # type: ignore
                 gap_timer_event=gap_timer_event,
                 gap_timer_event_v2=MagicMock(),
                 gap_timer_proc=gap_timer_proc,

@@ -873,14 +873,6 @@ class OrderedStitchAudioFn(beam.DoFn):
                     curr_context, prior_audio_tail=None, sample_rate=None
                 )
 
-            # Commit sequence context updates
-            _write_transmission_context(
-                transmission_context_state,
-                curr_context,
-                last_start_ms_state,
-                out_of_order_buffer_state,
-            )
-
             # Delegate chunk elements to the execution engine
             if elements_to_emit:
                 timer_manager = StaleTimerManager(
@@ -893,36 +885,38 @@ class OrderedStitchAudioFn(beam.DoFn):
                 )
 
                 previous_expected_ts = initial_expected_ts
-                for i, chunk in enumerate(elements_to_emit):
-                    curr_context = (
-                        transmission_context_state.read()
-                        or datatypes.IdleFeedState()
-                    )
-                    if isinstance(curr_context, datatypes.IdleFeedState):
-                        curr_context = datatypes.ActiveStitchingState(
-                            session_id=metadata.session_id,
-                            feed_metadata=metadata.feed_metadata,
-                            out_of_order_buffer=[],
-                            order_timer_active=curr_context.order_timer_active,
-                            traceparent=metadata.traceparent,
-                            baggage=metadata.baggage,
-                        )
-                    outputs, next_expected_ts = (
-                        self.engine.process_ordering_chunk(
-                            chunk=chunk,
-                            feed_id=feed_id,
-                            curr_context=curr_context,
-                            transmission_context_state=transmission_context_state,
-                            last_start_ms_state=last_start_ms_state,
-                            timer_manager=timer_manager,
-                            previous_expected_ts=previous_expected_ts,
-                            is_backfill=is_backfill,
-                            clear_buffer=(session_changed and i == 0),
-                        )
-                    )
-                    results.extend(outputs)
-                    previous_expected_ts = next_expected_ts
-                    self.processed_in_bundle += 1
+                last_start_ms = last_start_ms_state.read()
+                (
+                    outputs,
+                    curr_context,
+                    last_start_ms,
+                ) = self._execute_bundle_chunks(
+                    elements_to_emit=elements_to_emit,
+                    feed_id=feed_id,
+                    curr_context=curr_context,
+                    last_start_ms=last_start_ms,
+                    timer_manager=timer_manager,
+                    previous_expected_ts=previous_expected_ts,
+                    is_backfill=is_backfill,
+                    session_changed=session_changed,
+                    active_session_id=metadata.session_id,
+                    active_feed_metadata=metadata.feed_metadata,
+                    active_traceparent=metadata.traceparent,
+                    active_baggage=metadata.baggage,
+                    increment_processed=True,
+                )
+                results.extend(outputs)
+
+                if last_start_ms is not None:
+                    last_start_ms_state.write(last_start_ms)
+
+            # Commit sequence context updates
+            _write_transmission_context(
+                transmission_context_state,
+                curr_context,
+                last_start_ms_state,
+                out_of_order_buffer_state,
+            )
 
         yield from self._yield_tagged_outputs(results)
 
@@ -1018,6 +1012,72 @@ class OrderedStitchAudioFn(beam.DoFn):
             timer_type="processing",
         )
 
+    def _execute_bundle_chunks(
+        self,
+        elements_to_emit: list[datatypes.BufferedChunk],
+        feed_id: str,
+        curr_context: datatypes.TransmissionContext,
+        last_start_ms: int | None,
+        timer_manager: Any,
+        previous_expected_ts: int | None,
+        *,
+        is_backfill: bool,
+        session_changed: bool = False,
+        active_session_id: str | None = None,
+        active_feed_metadata: datatypes.FeedMetadata | None = None,
+        active_traceparent: str | None = None,
+        active_baggage: str | None = None,
+        increment_processed: bool = True,
+    ) -> tuple[
+        list[tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput],
+        datatypes.TransmissionContext,
+        int | None,
+    ]:
+        """Processes and stitches a batch of chunks for a feed in local memory."""
+        results: list[
+            tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
+        ] = []
+        task_logger = _get_task_logger(
+            feed_id,
+            curr_context.session_id
+            if isinstance(curr_context, datatypes.ActiveStitchingState)
+            else active_session_id,
+            "transcription-stitcher",
+        )
+        prefetched_futures = self.engine.prefetch_audio_futures(
+            elements_to_emit, task_logger
+        )
+        for i, chunk in enumerate(elements_to_emit):
+            if isinstance(curr_context, datatypes.IdleFeedState):
+                curr_context = datatypes.ActiveStitchingState(
+                    session_id=active_session_id or "unknown",
+                    feed_metadata=active_feed_metadata
+                    or datatypes.FeedMetadata(feed_name=feed_id),
+                    out_of_order_buffer=[],
+                    order_timer_active=curr_context.order_timer_active,
+                    traceparent=active_traceparent,
+                    baggage=active_baggage,
+                )
+            chunk_res = self.engine.process_ordering_chunk(
+                chunk=chunk,
+                feed_id=feed_id,
+                curr_context=curr_context,
+                last_start_ms=last_start_ms,
+                timer_manager=timer_manager,
+                previous_expected_ts=previous_expected_ts,
+                is_backfill=is_backfill,
+                clear_buffer=(session_changed and i == 0),
+                prefetched_futures=prefetched_futures,
+            )
+            results.extend(chunk_res.outputs)
+            curr_context = chunk_res.next_context
+            previous_expected_ts = chunk_res.next_expected_ts
+            last_start_ms = chunk_res.next_last_start_ms
+            if increment_processed:
+                self.processed_in_bundle += 1
+
+        return results, curr_context, last_start_ms
+
     def _handle_gap_timeout_common(  # noqa: PLR0912, PLR0915
         self,
         key_str: str,
@@ -1061,9 +1121,6 @@ class OrderedStitchAudioFn(beam.DoFn):
         active_feed_metadata = curr_context.feed_metadata
         active_traceparent = curr_context.traceparent
         active_baggage = curr_context.baggage
-        task_logger = _get_task_logger(
-            feed_id, active_session_id, "ordered-stitcher"
-        )
 
         results = []
         with tracing_utils.with_tracer_context(
@@ -1151,40 +1208,31 @@ class OrderedStitchAudioFn(beam.DoFn):
                     )
 
                     previous_expected_ts = new_expected
-                    prefetched_futures = self.engine.prefetch_audio_futures(
-                        elements_to_emit, task_logger
+                    last_start_ms = last_start_ms_state.read()
+                    (
+                        outputs,
+                        curr_context,
+                        last_start_ms,
+                    ) = self._execute_bundle_chunks(
+                        elements_to_emit=elements_to_emit,
+                        feed_id=feed_id,
+                        curr_context=curr_context,
+                        last_start_ms=last_start_ms,
+                        timer_manager=timer_manager,
+                        previous_expected_ts=previous_expected_ts,
+                        is_backfill=is_backfill,
+                        session_changed=False,
+                        active_session_id=active_session_id,
+                        active_feed_metadata=active_feed_metadata,
+                        active_traceparent=active_traceparent,
+                        active_baggage=active_baggage,
+                        increment_processed=False,
                     )
+                    results.extend(outputs)
 
-                    for chunk in elements_to_emit:
-                        curr_context = (
-                            transmission_context_state.read()
-                            or datatypes.IdleFeedState()
-                        )
-                        if isinstance(curr_context, datatypes.IdleFeedState):
-                            curr_context = datatypes.ActiveStitchingState(
-                                session_id=active_session_id,
-                                feed_metadata=active_feed_metadata,
-                                out_of_order_buffer=[],
-                                order_timer_active=curr_context.order_timer_active,
-                                traceparent=active_traceparent,
-                                baggage=active_baggage,
-                            )
-                        outputs, next_expected_ts = (
-                            self.engine.process_ordering_chunk(
-                                chunk=chunk,
-                                feed_id=feed_id,
-                                curr_context=curr_context,
-                                transmission_context_state=transmission_context_state,
-                                last_start_ms_state=last_start_ms_state,
-                                timer_manager=timer_manager,
-                                previous_expected_ts=previous_expected_ts,
-                                is_backfill=is_backfill,
-                                prefetched_futures=prefetched_futures,
-                            )
-                        )
-                        results.extend(outputs)
-                        previous_expected_ts = next_expected_ts
-            else:
+                    if last_start_ms is not None:
+                        last_start_ms_state.write(last_start_ms)
+
                 _write_transmission_context(
                     transmission_context_state,
                     curr_context,
@@ -1233,9 +1281,6 @@ class OrderedStitchAudioFn(beam.DoFn):
         active_feed_metadata = curr_context.feed_metadata
         active_traceparent = curr_context.traceparent
         active_baggage = curr_context.baggage
-        task_logger = _get_task_logger(
-            feed_id, active_session_id, "ordered-stitcher"
-        )
 
         results = []
         with tracing_utils.with_tracer_context(
@@ -1286,13 +1331,6 @@ class OrderedStitchAudioFn(beam.DoFn):
                 expected_next_chunk_start_ms=new_expected_next_ts,
                 order_timer_active=len(new_buffer_elements) > 0,
             )
-            _write_transmission_context(
-                transmission_context_state,
-                curr_context,
-                last_start_ms_state,
-                out_of_order_buffer_state,
-            )
-
             if elements_to_emit:
                 timer_manager = StaleTimerManager(
                     stale_timer_event, stale_timer_proc, self.stitch_config
@@ -1301,41 +1339,37 @@ class OrderedStitchAudioFn(beam.DoFn):
                 # Assume backfill under backlog
                 is_backfill = True
                 previous_expected_ts = curr_context.expected_next_chunk_start_ms
-                prefetched_futures = self.engine.prefetch_audio_futures(
-                    elements_to_emit, task_logger
+                last_start_ms = last_start_ms_state.read()
+                (
+                    outputs,
+                    curr_context,
+                    last_start_ms,
+                ) = self._execute_bundle_chunks(
+                    elements_to_emit=elements_to_emit,
+                    feed_id=feed_id,
+                    curr_context=curr_context,
+                    last_start_ms=last_start_ms,
+                    timer_manager=timer_manager,
+                    previous_expected_ts=previous_expected_ts,
+                    is_backfill=is_backfill,
+                    session_changed=False,
+                    active_session_id=active_session_id,
+                    active_feed_metadata=active_feed_metadata,
+                    active_traceparent=active_traceparent,
+                    active_baggage=active_baggage,
+                    increment_processed=True,
                 )
+                results.extend(outputs)
 
-                for chunk in elements_to_emit:
-                    # Fetch current state context
-                    curr_context = (
-                        transmission_context_state.read()
-                        or datatypes.IdleFeedState()
-                    )
-                    if isinstance(curr_context, datatypes.IdleFeedState):
-                        curr_context = datatypes.ActiveStitchingState(
-                            session_id=active_session_id,
-                            feed_metadata=active_feed_metadata,
-                            out_of_order_buffer=[],
-                            order_timer_active=curr_context.order_timer_active,
-                            traceparent=active_traceparent,
-                            baggage=active_baggage,
-                        )
-                    outputs, next_expected_ts = (
-                        self.engine.process_ordering_chunk(
-                            chunk=chunk,
-                            feed_id=feed_id,
-                            curr_context=curr_context,
-                            transmission_context_state=transmission_context_state,
-                            last_start_ms_state=last_start_ms_state,
-                            timer_manager=timer_manager,
-                            previous_expected_ts=previous_expected_ts,
-                            is_backfill=is_backfill,
-                            prefetched_futures=prefetched_futures,
-                        )
-                    )
-                    results.extend(outputs)
-                    previous_expected_ts = next_expected_ts
-                    self.processed_in_bundle += 1
+                if last_start_ms is not None:
+                    last_start_ms_state.write(last_start_ms)
+
+            _write_transmission_context(
+                transmission_context_state,
+                curr_context,
+                last_start_ms_state,
+                out_of_order_buffer_state,
+            )
 
         yield from self._yield_tagged_outputs(results)
 
