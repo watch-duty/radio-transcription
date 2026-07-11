@@ -5,8 +5,10 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import enum
+import hmac
 import json
 import logging
+import secrets
 import typing
 import uuid
 
@@ -25,6 +27,10 @@ if typing.TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+_MEMBER_BINDING_KEY = secrets.token_bytes(32)
+_MEMBER_BINDING_VERSION = "lease-member-identity-v1"
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -225,15 +231,75 @@ class LeaseFailureResult:
             raise ValueError(msg)
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True)
 class LeaseMemberIdentity:
     """Immutable Feed/source/SID/group binding from membership loading."""
+
+    __slots__ = (
+        "_binding_proof",
+        "feed_id",
+        "group_id",
+        "sid",
+        "source_feed_id",
+        "source_type",
+    )
 
     feed_id: uuid.UUID
     source_type: feed_store.SourceType
     source_feed_id: str
     sid: str
     group_id: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_binding_proof", b"")
+
+
+def _member_binding_proof(
+    grant: LeaseGrant,
+    identity: LeaseMemberIdentity,
+) -> bytes:
+    payload = json.dumps(
+        (
+            _MEMBER_BINDING_VERSION,
+            grant.source_type.value,
+            grant.lease_key,
+            str(grant.owner_worker_id),
+            grant.fencing_token,
+            str(identity.feed_id),
+            identity.source_type.value,
+            identity.source_feed_id,
+            identity.sid,
+            identity.group_id,
+        ),
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    return hmac.digest(_MEMBER_BINDING_KEY, payload, "sha256")
+
+
+def _issue_member_identity(
+    grant: LeaseGrant,
+    *,
+    feed_id: uuid.UUID,
+    source_type: feed_store.SourceType,
+    source_feed_id: str,
+    sid: str,
+    group_id: str,
+) -> LeaseMemberIdentity:
+    """Issue one opaque binding after authoritative membership loading."""
+    identity = LeaseMemberIdentity(
+        feed_id=feed_id,
+        source_type=source_type,
+        source_feed_id=source_feed_id,
+        sid=sid,
+        group_id=group_id,
+    )
+    object.__setattr__(
+        identity,
+        "_binding_proof",
+        _member_binding_proof(grant, identity),
+    )
+    return identity
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -572,6 +638,17 @@ def _require_member_binding(
         raise ValueError(msg)
     if value.source_feed_id != f"{value.sid}-{value.group_id}":
         msg = "child member source_feed_id does not match SID-group identity"
+        raise ValueError(msg)
+    expected_proof = _member_binding_proof(grant, value)
+    binding_proof = object.__getattribute__(value, "_binding_proof")
+    if not isinstance(binding_proof, bytes) or not hmac.compare_digest(
+        binding_proof,
+        expected_proof,
+    ):
+        msg = (
+            "child member binding was not issued by authoritative "
+            "membership loading"
+        )
         raise ValueError(msg)
     return value
 
@@ -1069,7 +1146,8 @@ def _membership_identity_from_row(
             MembershipInvariantReason.SOURCE_MISMATCH,
             "Feed and property source bindings do not match the Lease",
         )
-    return LeaseMemberIdentity(
+    return _issue_member_identity(
+        grant,
         feed_id=feed_id,
         source_type=property_source,
         source_feed_id=source_feed_id,
@@ -1227,7 +1305,7 @@ def _plan_child_mutation(
         if needs_update
         else ChildDisposition.ACCEPTED_NOOP
     )
-    if status is feed_store.FeedStatus.DEACTIVATED:
+    if status is feed_store.FeedStatus.DEACTIVATED and needs_update:
         disposition = ChildDisposition.APPLIED_AFTER_DEACTIVATION
     audit_action = None
     if lifecycle_effect is LifecycleEffect.RECOVERED:
