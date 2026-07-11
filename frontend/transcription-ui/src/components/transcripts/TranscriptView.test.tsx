@@ -190,7 +190,8 @@ const audioEngineMock = vi.hoisted(() => ({
   lastCallbacks: null as {
     onPlay?: () => void;
     onPause?: () => void;
-    onEnd?: () => void;
+    onSegmentChange?: (segmentId: string) => void;
+    onEnd?: (lastSegmentId?: string) => void;
     onError?: () => void;
   } | null,
 }));
