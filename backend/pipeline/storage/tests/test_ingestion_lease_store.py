@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import datetime
 import unittest
 import uuid
@@ -100,6 +102,80 @@ def _member_row(**overrides: object) -> dict[str, object]:
     }
     row.update(overrides)
     return row
+
+
+def _member_identity(
+    feed_id: uuid.UUID,
+    *,
+    sid: str = "123",
+    group_id: str = "45",
+) -> ingestion_lease_store.LeaseMemberIdentity:
+    return ingestion_lease_store.LeaseMemberIdentity(
+        feed_id=feed_id,
+        source_type=feed_store.SourceType.BCFY_CALLS,
+        source_feed_id=f"{sid}-{group_id}",
+        sid=sid,
+        group_id=group_id,
+    )
+
+
+def _child_row(
+    feed_id: uuid.UUID,
+    **overrides: object,
+) -> dict[str, object]:
+    row: dict[str, object] = {
+        "id": feed_id,
+        "name": f"Feed {feed_id}",
+        "source_type": "bcfy_calls",
+        "status": "active",
+        "last_processed_filename": None,
+        "last_bookmark_time": None,
+        "failure_count": 0,
+        "retry_after": None,
+        "status_reason": None,
+        "status_reason_detail": None,
+        "status_reason_updated_at": None,
+        "audit_revision": 0,
+        "created_at": _NOW,
+        "updated_at": _NOW,
+    }
+    row.update(overrides)
+    return row
+
+
+def _audit_property_row(
+    feed_id: uuid.UUID,
+    **overrides: object,
+) -> dict[str, object]:
+    row: dict[str, object] = {
+        "feed_id": feed_id,
+        "source_feed_id": "123-45",
+        "tags": [],
+    }
+    row.update(overrides)
+    return row
+
+
+def _child_audit_payload(
+    feed_id: uuid.UUID,
+    *,
+    caller_ordinal: int,
+) -> dict[str, object]:
+    return {
+        "caller_ordinal": caller_ordinal,
+        "feed_audit_event": {
+            "event_type": "radio_transcription.feed_change_notification",
+            "schema_version": 1,
+            "event_id": uuid.uuid4(),
+            "action": "feed.recovered",
+            "occurred_at": _NOW,
+            "actor_id": "service_account:gcp:collector",
+            "feed_id": feed_id,
+            "feed_revision": 1,
+            "before_values": {"status": "failing"},
+            "after_values": {"status": "active"},
+        },
+    }
 
 
 class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
@@ -1015,6 +1091,523 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
             result,
             ingestion_lease_store.MembershipInvariantViolation,
         )
+
+
+class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
+    """Tests for the one-attempt fenced child transaction."""
+
+    def _progress(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        cursor: datetime.datetime | None = _NOW,
+        path: str = "gs://bucket/audio.flac",
+    ) -> ingestion_lease_store.AdmittedAudioProgress:
+        return ingestion_lease_store.AdmittedAudioProgress(
+            _member_identity(feed_id),
+            path,
+            cursor,
+        )
+
+    async def test_precheckout_validation_rejects_bad_batch_shapes(
+        self,
+    ) -> None:
+        feed_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000001")
+        malformed_member = dataclasses.replace(
+            _member_identity(feed_id),
+            source_feed_id="123-999",
+        )
+        invalid_batches = (
+            ingestion_lease_store.ChildMutationBatch(
+                (
+                    self._progress(feed_id),
+                    ingestion_lease_store.SourceObservation(
+                        _member_identity(feed_id),
+                        _NOW,
+                    ),
+                ),
+                ingestion_lease_store.NoLeaseEffect(),
+            ),
+            ingestion_lease_store.ChildMutationBatch(
+                (
+                    ingestion_lease_store.AdmittedAudioProgress(
+                        malformed_member,
+                        "gs://bucket/audio.flac",
+                        _NOW,
+                    ),
+                ),
+                ingestion_lease_store.NoLeaseEffect(),
+            ),
+            ingestion_lease_store.ChildMutationBatch(
+                (
+                    ingestion_lease_store.AdmittedAudioProgress(
+                        _member_identity(feed_id),
+                        "",
+                        _NOW,
+                    ),
+                ),
+                ingestion_lease_store.NoLeaseEffect(),
+            ),
+            ingestion_lease_store.ChildMutationBatch(
+                (
+                    ingestion_lease_store.SourceObservation(
+                        _member_identity(feed_id),
+                        datetime.datetime(2026, 7, 10),
+                    ),
+                ),
+                ingestion_lease_store.NoLeaseEffect(),
+            ),
+        )
+
+        for case_index, batch in enumerate(invalid_batches):
+            with self.subTest(case_index=case_index):
+                pool = connection_util.make_mock_pool(transaction=True)
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+                with self.assertRaises((TypeError, ValueError)):
+                    await store.commit_child_mutations(
+                        _grant(),
+                        batch,
+                        actor_id="service_account:gcp:collector",
+                    )
+                pool.acquire.assert_not_called()
+
+        for actor_id in ("", "has space", "x" * 513):
+            pool = connection_util.make_mock_pool(transaction=True)
+            store = ingestion_lease_store.IngestionLeaseStore(pool)
+            with self.assertRaises(ValueError):
+                await store.commit_child_mutations(
+                    _grant(),
+                    ingestion_lease_store.ChildMutationBatch(
+                        (self._progress(feed_id),),
+                        ingestion_lease_store.NoLeaseEffect(),
+                    ),
+                    actor_id=actor_id,
+                )
+            pool.acquire.assert_not_called()
+
+    def test_cursor_and_lifecycle_effects_are_independent(self) -> None:
+        feed_id = uuid.UUID("77777777-0000-0000-0000-000000000070")
+        earlier = _NOW - datetime.timedelta(seconds=1)
+        later = _NOW + datetime.timedelta(seconds=1)
+        cursor_cases = (
+            (None, _NOW, ingestion_lease_store.CursorEffect.INITIALIZED),
+            (_NOW, later, ingestion_lease_store.CursorEffect.ADVANCED),
+            (_NOW, _NOW, ingestion_lease_store.CursorEffect.EQUAL),
+            (_NOW, earlier, ingestion_lease_store.CursorEffect.REGRESSIVE),
+            (_NOW, None, ingestion_lease_store.CursorEffect.ABSENT),
+        )
+
+        for current, requested, expected in cursor_cases:
+            with self.subTest(expected=expected.value):
+                clean_plan = ingestion_lease_store._plan_child_mutation(
+                    0,
+                    ingestion_lease_store.SourceObservation(
+                        _member_identity(feed_id),
+                        requested,
+                    ),
+                    _child_row(feed_id, last_bookmark_time=current),
+                )
+                self.assertIs(clean_plan.cursor_effect, expected)
+                self.assertIs(
+                    clean_plan.lifecycle_effect,
+                    ingestion_lease_store.LifecycleEffect.NONE,
+                )
+
+                failing_plan = ingestion_lease_store._plan_child_mutation(
+                    0,
+                    ingestion_lease_store.SourceObservation(
+                        _member_identity(feed_id),
+                        requested,
+                    ),
+                    _child_row(
+                        feed_id,
+                        status="failing",
+                        failure_count=2,
+                        status_reason="source_unreachable",
+                        last_bookmark_time=current,
+                    ),
+                )
+                self.assertIs(failing_plan.cursor_effect, expected)
+                self.assertIs(
+                    failing_plan.lifecycle_effect,
+                    ingestion_lease_store.LifecycleEffect.RECOVERED,
+                )
+                self.assertTrue(failing_plan.needs_update)
+
+    async def test_empty_batch_still_locks_and_validates_grant(self) -> None:
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row()
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.commit_child_mutations(
+            _grant(),
+            ingestion_lease_store.ChildMutationBatch(
+                (),
+                ingestion_lease_store.NoLeaseEffect(),
+            ),
+            actor_id="service_account:gcp:collector",
+        )
+
+        self.assertIsInstance(result, ingestion_lease_store.BatchCommitted)
+        self.assertEqual(result.children, ())
+        connection.fetchrow.assert_awaited_once_with(
+            ingestion_lease_queries.LOCK_LEASE_SQL,
+            "bcfy_calls",
+            "123",
+        )
+        connection.fetch.assert_not_awaited()
+        connection.transaction.assert_called_once_with(
+            isolation="read_committed"
+        )
+
+    async def test_rejected_grant_executes_no_child_or_audit_query(
+        self,
+    ) -> None:
+        cases = (
+            (
+                None,
+                ingestion_lease_store.GrantRejectionReason.MISSING,
+            ),
+            (
+                _lease_row(worker_id=_OTHER_OWNER_ID),
+                ingestion_lease_store.GrantRejectionReason.OWNER_MISMATCH,
+            ),
+            (
+                _lease_row(fencing_token=8),
+                ingestion_lease_store.GrantRejectionReason.FENCE_MISMATCH,
+            ),
+            (
+                _lease_row(status="unclaimed"),
+                ingestion_lease_store.GrantRejectionReason.STATUS_INELIGIBLE,
+            ),
+        )
+        feed_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000002")
+
+        for lease_row, reason in cases:
+            with self.subTest(reason=reason.value):
+                pool = connection_util.make_mock_pool(transaction=True)
+                connection = pool.acquired_connection
+                connection.fetchrow.return_value = lease_row
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+                result = await store.commit_child_mutations(
+                    _grant(),
+                    ingestion_lease_store.ChildMutationBatch(
+                        (self._progress(feed_id),),
+                        ingestion_lease_store.NoLeaseEffect(),
+                    ),
+                    actor_id="service_account:gcp:collector",
+                )
+
+                self.assertIsInstance(
+                    result,
+                    ingestion_lease_store.GrantRejected,
+                )
+                self.assertIs(result.reason, reason)
+                connection.fetch.assert_not_awaited()
+
+    async def test_sorted_lock_and_scrambled_dml_return_caller_order(
+        self,
+    ) -> None:
+        first_id = uuid.UUID("ffffffff-0000-0000-0000-000000000001")
+        second_id = uuid.UUID("11111111-0000-0000-0000-000000000002")
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row()
+        connection.fetch.side_effect = [
+            [_child_row(first_id), _child_row(second_id)],
+            [
+                _child_row(
+                    second_id,
+                    caller_ordinal=1,
+                    last_processed_filename="gs://bucket/second.flac",
+                    last_bookmark_time=_NOW,
+                ),
+                _child_row(
+                    first_id,
+                    caller_ordinal=0,
+                    last_processed_filename="gs://bucket/first.flac",
+                    last_bookmark_time=_NOW,
+                ),
+            ],
+        ]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+        batch = ingestion_lease_store.ChildMutationBatch(
+            (
+                self._progress(first_id, path="gs://bucket/first.flac"),
+                self._progress(second_id, path="gs://bucket/second.flac"),
+            ),
+            ingestion_lease_store.NoLeaseEffect(),
+        )
+
+        result = await store.commit_child_mutations(
+            _grant(),
+            batch,
+            actor_id="service_account:gcp:collector",
+        )
+
+        self.assertIsInstance(result, ingestion_lease_store.BatchCommitted)
+        self.assertEqual(
+            [child.feed_id for child in result.children],
+            [first_id, second_id],
+        )
+        lock_args = connection.fetch.await_args_list[0].args
+        self.assertIs(
+            lock_args[0], ingestion_lease_queries.LOCK_CHILD_FEEDS_SQL
+        )
+        self.assertEqual(lock_args[1], [second_id, first_id])
+        self.assertTrue(
+            all(
+                child.disposition
+                is ingestion_lease_store.ChildDisposition.APPLIED
+                for child in result.children
+            )
+        )
+
+    async def test_expected_missing_and_status_races_are_selective(
+        self,
+    ) -> None:
+        valid_id = uuid.UUID("11111111-0000-0000-0000-000000000010")
+        missing_id = uuid.UUID("22222222-0000-0000-0000-000000000020")
+        quarantined_id = uuid.UUID("33333333-0000-0000-0000-000000000030")
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row()
+        connection.fetch.side_effect = [
+            [
+                _child_row(valid_id),
+                _child_row(quarantined_id, status="quarantined"),
+            ],
+            [
+                _child_row(
+                    valid_id,
+                    caller_ordinal=0,
+                    last_bookmark_time=_NOW,
+                    last_processed_filename="gs://bucket/audio.flac",
+                )
+            ],
+        ]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+        batch = ingestion_lease_store.ChildMutationBatch(
+            (
+                self._progress(valid_id),
+                ingestion_lease_store.SourceObservation(
+                    _member_identity(missing_id),
+                    _NOW,
+                ),
+                ingestion_lease_store.SourceObservation(
+                    _member_identity(quarantined_id),
+                    _NOW,
+                ),
+            ),
+            ingestion_lease_store.NoLeaseEffect(),
+        )
+
+        result = await store.commit_child_mutations(
+            _grant(),
+            batch,
+            actor_id="service_account:gcp:collector",
+        )
+
+        self.assertEqual(
+            [child.disposition for child in result.children],
+            [
+                ingestion_lease_store.ChildDisposition.APPLIED,
+                ingestion_lease_store.ChildDisposition.MISSING,
+                ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE,
+            ],
+        )
+        self.assertEqual(connection.fetch.await_count, 2)
+
+    async def test_deactivated_progress_clears_without_audit(self) -> None:
+        feed_id = uuid.UUID("44444444-0000-0000-0000-000000000040")
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row()
+        connection.fetch.side_effect = [
+            [
+                _child_row(
+                    feed_id,
+                    status="deactivated",
+                    failure_count=2,
+                    status_reason="source_unreachable",
+                )
+            ],
+            [
+                _child_row(
+                    feed_id,
+                    caller_ordinal=0,
+                    status="deactivated",
+                    last_bookmark_time=_NOW,
+                    last_processed_filename="gs://bucket/audio.flac",
+                    audit_revision=1,
+                )
+            ],
+        ]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.commit_child_mutations(
+            _grant(),
+            ingestion_lease_store.ChildMutationBatch(
+                (self._progress(feed_id),),
+                ingestion_lease_store.NoLeaseEffect(),
+            ),
+            actor_id="service_account:gcp:collector",
+        )
+
+        child = result.children[0]
+        self.assertIs(
+            child.disposition,
+            ingestion_lease_store.ChildDisposition.APPLIED_AFTER_DEACTIVATION,
+        )
+        self.assertIs(
+            child.lifecycle_effect,
+            ingestion_lease_store.LifecycleEffect.CLEARED_WHILE_DEACTIVATED,
+        )
+        self.assertEqual(connection.fetch.await_count, 2)
+
+    async def test_recovery_audit_notifies_after_transaction_and_checkout(
+        self,
+    ) -> None:
+        feed_id = uuid.UUID("55555555-0000-0000-0000-000000000050")
+        payload_row = _child_audit_payload(feed_id, caller_ordinal=0)
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row()
+        connection.fetch.side_effect = [
+            [
+                _child_row(
+                    feed_id,
+                    status="failing",
+                    failure_count=2,
+                    status_reason="source_unreachable",
+                )
+            ],
+            [
+                _child_row(
+                    feed_id,
+                    caller_ordinal=0,
+                    status="active",
+                    last_bookmark_time=_NOW,
+                    last_processed_filename="gs://bucket/audio.flac",
+                    audit_revision=1,
+                )
+            ],
+            [_audit_property_row(feed_id)],
+            [payload_row],
+        ]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        with mock.patch(
+            "backend.pipeline.storage.ingestion_lease_store."
+            "feed_change_notifications.emit_feed_change_notification"
+        ) as emit:
+            emit.side_effect = lambda _payload: (
+                pool.transaction_context.__aexit__.assert_awaited_once(),
+                pool.acquire_context.__aexit__.assert_awaited_once(),
+            )
+            result = await store.commit_child_mutations(
+                _grant(),
+                ingestion_lease_store.ChildMutationBatch(
+                    (self._progress(feed_id),),
+                    ingestion_lease_store.NoLeaseEffect(),
+                ),
+                actor_id="service_account:gcp:collector",
+            )
+
+        self.assertIs(
+            result.children[0].lifecycle_effect,
+            ingestion_lease_store.LifecycleEffect.RECOVERED,
+        )
+        emit.assert_called_once_with(payload_row["feed_audit_event"])
+        self.assertIs(
+            connection.fetch.await_args_list[2].args[0],
+            ingestion_lease_queries.LOAD_CHILD_AUDIT_PROPERTIES_SQL,
+        )
+        self.assertIs(
+            connection.fetch.await_args_list[3].args[0],
+            ingestion_lease_queries.INSERT_CHILD_AUDIT_EVENTS_SQL,
+        )
+
+    async def test_database_error_and_cancellation_escape_without_notification(
+        self,
+    ) -> None:
+        feed_id = uuid.UUID("66666666-0000-0000-0000-000000000060")
+        for error in (
+            RuntimeError("database failed"),
+            asyncio.CancelledError(),
+        ):
+            with self.subTest(error=type(error).__name__):
+                pool = connection_util.make_mock_pool(transaction=True)
+                connection = pool.acquired_connection
+                connection.fetchrow.return_value = _lease_row()
+                connection.fetch.side_effect = [
+                    [_child_row(feed_id)],
+                    error,
+                ]
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+                with mock.patch(
+                    "backend.pipeline.storage.ingestion_lease_store."
+                    "feed_change_notifications."
+                    "emit_feed_change_notification"
+                ) as emit:
+                    with self.assertRaises(type(error)):
+                        await store.commit_child_mutations(
+                            _grant(),
+                            ingestion_lease_store.ChildMutationBatch(
+                                (self._progress(feed_id),),
+                                ingestion_lease_store.NoLeaseEffect(),
+                            ),
+                            actor_id="service_account:gcp:collector",
+                        )
+
+                emit.assert_not_called()
+                self.assertEqual(connection.fetch.await_count, 2)
+                exit_args = pool.transaction_context.__aexit__.await_args.args
+                self.assertIs(exit_args[0], type(error))
+
+    async def test_statement_fanout_is_independent_of_feed_count(self) -> None:
+        observed_fetch_counts = []
+        for feed_count in (1, 100):
+            feed_ids = [uuid.UUID(int=index + 1) for index in range(feed_count)]
+            pool = connection_util.make_mock_pool(transaction=True)
+            connection = pool.acquired_connection
+            connection.fetchrow.return_value = _lease_row()
+            connection.fetch.side_effect = [
+                [_child_row(feed_id) for feed_id in reversed(feed_ids)],
+                [
+                    _child_row(
+                        feed_id,
+                        caller_ordinal=index,
+                        last_bookmark_time=_NOW,
+                        last_processed_filename=f"gs://bucket/{index}.flac",
+                    )
+                    for index, feed_id in enumerate(feed_ids)
+                ],
+            ]
+            store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+            result = await store.commit_child_mutations(
+                _grant(),
+                ingestion_lease_store.ChildMutationBatch(
+                    tuple(
+                        self._progress(
+                            feed_id,
+                            path=f"gs://bucket/{index}.flac",
+                        )
+                        for index, feed_id in enumerate(feed_ids)
+                    ),
+                    ingestion_lease_store.NoLeaseEffect(),
+                ),
+                actor_id="service_account:gcp:collector",
+            )
+
+            self.assertEqual(len(result.children), feed_count)
+            observed_fetch_counts.append(connection.fetch.await_count)
+
+        self.assertEqual(observed_fetch_counts, [2, 2])
 
 
 if __name__ == "__main__":

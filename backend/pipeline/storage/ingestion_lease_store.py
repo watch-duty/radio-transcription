@@ -5,11 +5,14 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import enum
+import json
 import logging
 import typing
 import uuid
 
 from backend.pipeline.storage import (
+    feed_audit_sql,
+    feed_change_notifications,
     feed_lifecycle,
     feed_store,
     ingestion_lease_queries,
@@ -234,6 +237,87 @@ class LeaseMemberIdentity:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class AdmittedAudioProgress:
+    """Successful progress for work admitted under the current grant."""
+
+    member: LeaseMemberIdentity
+    last_processed_filename: str
+    cursor: datetime.datetime | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SourceObservation:
+    """Successful source boundary observation for one immutable member."""
+
+    member: LeaseMemberIdentity
+    cursor: datetime.datetime | None
+
+
+type ChildMutation = AdmittedAudioProgress | SourceObservation
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class NoLeaseEffect:
+    """Explicit request to retain all current Lease lifecycle evidence."""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ChildMutationBatch:
+    """Closed immutable child commands and their parent Lease effect."""
+
+    mutations: tuple[ChildMutation, ...]
+    lease_effect: NoLeaseEffect
+
+
+class ChildDisposition(enum.StrEnum):
+    """Selective disposition of one requested child mutation."""
+
+    APPLIED = "applied"
+    APPLIED_AFTER_DEACTIVATION = "applied_after_deactivation"
+    ACCEPTED_NOOP = "accepted_noop"
+    MISSING = "missing"
+    STATUS_INELIGIBLE = "status_ineligible"
+
+
+class CursorEffect(enum.StrEnum):
+    """Relationship between a requested and durable Feed cursor."""
+
+    INITIALIZED = "initialized"
+    ADVANCED = "advanced"
+    EQUAL = "equal"
+    REGRESSIVE = "regressive"
+    ABSENT = "absent"
+
+
+class LifecycleEffect(enum.StrEnum):
+    """Independent Feed lifecycle effect of a child mutation."""
+
+    NONE = "none"
+    RECOVERED = "recovered"
+    CLEARED_WHILE_DEACTIVATED = "cleared_while_deactivated"
+    FAILURE_RECORDED = "failure_recorded"
+    QUARANTINED = "quarantined"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ChildMutationResult:
+    """Caller-correlated selective result for one Feed command."""
+
+    feed_id: uuid.UUID
+    disposition: ChildDisposition
+    cursor_effect: CursorEffect
+    lifecycle_effect: LifecycleEffect
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class BatchCommitted:
+    """Committed parent effect and caller-ordered child results."""
+
+    lease_effect: NoLeaseEffect
+    children: tuple[ChildMutationResult, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class LeaseMember:
     """Eligible child Feed state attached to an immutable identity."""
 
@@ -274,6 +358,45 @@ class MembershipInvariantViolation:
     grant: LeaseGrant
     reason: MembershipInvariantReason
     detail: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PlannedChildMutation:
+    """Private, database-derived execution plan for one child command."""
+
+    caller_ordinal: int
+    mutation: ChildMutation
+    before_row: collections.abc.Mapping | None
+    disposition: ChildDisposition
+    cursor_effect: CursorEffect
+    lifecycle_effect: LifecycleEffect
+    write_cursor: bool = False
+    write_path: bool = False
+    clear_lifecycle: bool = False
+    audit_action: str | None = None
+
+    @property
+    def feed_id(self) -> uuid.UUID:
+        """Return the command's immutable Feed UUID."""
+        return self.mutation.member.feed_id
+
+    @property
+    def needs_update(self) -> bool:
+        """Whether this command requires a write-hot Feed update."""
+        return self.write_cursor or self.write_path or self.clear_lifecycle
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ChildAuditRowset:
+    """Private parallel arrays for one rowset-safe Feed audit insert."""
+
+    feed_ids: tuple[uuid.UUID, ...]
+    actions: tuple[str, ...]
+    actors: tuple[str, ...]
+    revisions: tuple[int, ...]
+    before_values: tuple[str, ...]
+    after_values: tuple[str, ...]
+    caller_ordinals: tuple[int, ...]
 
 
 def _require_source_type(value: object) -> feed_store.SourceType:
@@ -348,6 +471,309 @@ def _require_reason_detail(value: object) -> str | None:
         msg = "reason must be a string or None"
         raise TypeError(msg)
     return feed_lifecycle.status_reason_detail_storage_value(value)
+
+
+def _require_utc_cursor(
+    value: object,
+    *,
+    field_name: str = "cursor",
+) -> datetime.datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, datetime.datetime):
+        msg = f"{field_name} must be a datetime or None"
+        raise TypeError(msg)
+    if value.utcoffset() != datetime.timedelta(0):
+        msg = f"{field_name} must be UTC-aware"
+        raise ValueError(msg)
+    return value
+
+
+def _require_member_binding(
+    grant: LeaseGrant,
+    value: object,
+) -> LeaseMemberIdentity:
+    if not isinstance(value, LeaseMemberIdentity):
+        msg = "child member must be a LeaseMemberIdentity"
+        raise TypeError(msg)
+    if not isinstance(value.feed_id, uuid.UUID):
+        msg = "child member feed_id must be a UUID"
+        raise TypeError(msg)
+    if not isinstance(value.source_type, feed_store.SourceType):
+        msg = "child member source_type must be a SourceType"
+        raise TypeError(msg)
+    for field_name, field_value in (
+        ("sid", value.sid),
+        ("group_id", value.group_id),
+    ):
+        if (
+            not isinstance(field_value, str)
+            or not field_value
+            or not field_value.isascii()
+            or not field_value.isdigit()
+        ):
+            msg = f"child member {field_name} must contain ASCII digits"
+            raise ValueError(msg)
+    if not isinstance(value.source_feed_id, str):
+        msg = "child member source_feed_id must be a string"
+        raise TypeError(msg)
+    if value.source_type is not grant.source_type:
+        msg = "child member source type does not match the Lease grant"
+        raise ValueError(msg)
+    if value.sid != grant.lease_key:
+        msg = "child member SID does not match the Lease key"
+        raise ValueError(msg)
+    if value.source_feed_id != f"{value.sid}-{value.group_id}":
+        msg = "child member source_feed_id does not match SID-group identity"
+        raise ValueError(msg)
+    return value
+
+
+def _require_parallel_cardinality(
+    rowset_name: str,
+    *columns: collections.abc.Sequence[object],
+) -> None:
+    lengths = {len(column) for column in columns}
+    if len(lengths) > 1:
+        msg = f"{rowset_name} rowset columns have different cardinalities"
+        raise ValueError(msg)
+
+
+def _require_child_batch(
+    grant: LeaseGrant,
+    value: object,
+) -> ChildMutationBatch:
+    if type(value) is not ChildMutationBatch:
+        msg = "batch must be a ChildMutationBatch"
+        raise TypeError(msg)
+    batch = value
+    if not isinstance(batch.mutations, tuple):
+        msg = "batch mutations must be an immutable tuple"
+        raise TypeError(msg)
+    if type(batch.lease_effect) is not NoLeaseEffect:
+        msg = "lease_effect must be NoLeaseEffect"
+        raise TypeError(msg)
+
+    seen_feed_ids: set[uuid.UUID] = set()
+    progress_commands: list[AdmittedAudioProgress] = []
+    observation_commands: list[SourceObservation] = []
+    for mutation in batch.mutations:
+        if type(mutation) not in (AdmittedAudioProgress, SourceObservation):
+            msg = f"unsupported child mutation {type(mutation).__name__}"
+            raise TypeError(msg)
+        member = _require_member_binding(grant, mutation.member)
+        if member.feed_id in seen_feed_ids:
+            msg = f"duplicate Feed UUID {member.feed_id}"
+            raise ValueError(msg)
+        seen_feed_ids.add(member.feed_id)
+        _require_utc_cursor(mutation.cursor)
+        if isinstance(mutation, AdmittedAudioProgress):
+            if (
+                not isinstance(mutation.last_processed_filename, str)
+                or not mutation.last_processed_filename.strip()
+            ):
+                msg = "last_processed_filename must be nonempty"
+                raise ValueError(msg)
+            progress_commands.append(mutation)
+        else:
+            observation_commands.append(mutation)
+
+    _require_parallel_cardinality(
+        "admitted progress",
+        tuple(command.member.feed_id for command in progress_commands),
+        tuple(command.last_processed_filename for command in progress_commands),
+        tuple(command.cursor for command in progress_commands),
+    )
+    _require_parallel_cardinality(
+        "source observation",
+        tuple(command.member.feed_id for command in observation_commands),
+        tuple(command.cursor for command in observation_commands),
+    )
+    return batch
+
+
+def _child_feed_id_from_row(row: collections.abc.Mapping) -> uuid.UUID:
+    feed_id = row["id"]
+    if not isinstance(feed_id, uuid.UUID):
+        msg = "child Feed row contains a non-UUID id"
+        raise TypeError(msg)
+    return feed_id
+
+
+def _child_source_type_from_row(
+    row: collections.abc.Mapping,
+) -> feed_store.SourceType:
+    value = row["source_type"]
+    try:
+        return feed_store.SourceType(value)
+    except ValueError as error:
+        msg = f"Unknown child Feed source type {value!r}"
+        raise ValueError(msg) from error
+
+
+def _cursor_effect(
+    current: datetime.datetime | None,
+    requested: datetime.datetime | None,
+) -> CursorEffect:
+    if requested is None:
+        return CursorEffect.ABSENT
+    if current is None:
+        return CursorEffect.INITIALIZED
+    if requested > current:
+        return CursorEffect.ADVANCED
+    if requested == current:
+        return CursorEffect.EQUAL
+    return CursorEffect.REGRESSIVE
+
+
+def _has_dirty_child_lifecycle(
+    status: feed_store.FeedStatus,
+    row: collections.abc.Mapping,
+) -> bool:
+    return (
+        status is feed_store.FeedStatus.FAILING
+        or row["failure_count"] != 0
+        or row["retry_after"] is not None
+        or row["status_reason"] is not None
+        or row["status_reason_detail"] is not None
+    )
+
+
+def _select_recovery_audit_action(
+    status: feed_store.FeedStatus,
+    row: collections.abc.Mapping,
+) -> str | None:
+    effective_abnormal = status is feed_store.FeedStatus.FAILING or (
+        status is feed_store.FeedStatus.ACTIVE
+        and (row["failure_count"] > 0 or row["status_reason"] is not None)
+    )
+    return "feed.recovered" if effective_abnormal else None
+
+
+def _json_compatible(value: object) -> object:
+    if isinstance(value, datetime.datetime):
+        return value.isoformat()
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, enum.Enum):
+        return value.value
+    msg = f"unsupported Feed audit JSON value {type(value).__name__}"
+    raise TypeError(msg)
+
+
+def _tags_from_property(value: object) -> object:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parsed = json.loads(value)
+        if not isinstance(parsed, list):
+            msg = "Feed audit tags must be a JSON array"
+            raise TypeError(msg)
+        return parsed
+    if isinstance(value, list):
+        return value
+    msg = "Feed audit tags must be a JSON array"
+    raise TypeError(msg)
+
+
+def _child_audit_snapshot(
+    row: collections.abc.Mapping,
+    property_row: collections.abc.Mapping,
+) -> str:
+    source = dict(row)
+    source["source_feed_id"] = property_row["source_feed_id"]
+    source["tags"] = _tags_from_property(property_row["tags"])
+    snapshot = {
+        key: source[column]
+        for key, column in feed_audit_sql.AUDITED_FEED_STATE_FIELDS
+    }
+    return json.dumps(
+        snapshot,
+        default=_json_compatible,
+        separators=(",", ":"),
+    )
+
+
+def _audit_properties_by_id(
+    expected_feed_ids: set[uuid.UUID],
+    rows: collections.abc.Sequence[collections.abc.Mapping],
+) -> dict[uuid.UUID, collections.abc.Mapping]:
+    properties_by_id: dict[uuid.UUID, collections.abc.Mapping] = {}
+    for row in rows:
+        feed_id = row["feed_id"]
+        if not isinstance(feed_id, uuid.UUID):
+            msg = "Feed audit property row has a non-UUID id"
+            raise TypeError(msg)
+        if feed_id not in expected_feed_ids or feed_id in properties_by_id:
+            msg = "Feed audit properties returned an unexpected row"
+            raise ValueError(msg)
+        properties_by_id[feed_id] = row
+    if set(properties_by_id) != expected_feed_ids:
+        msg = "Feed audit properties are missing an actual candidate"
+        raise ValueError(msg)
+    return properties_by_id
+
+
+def _build_child_audit_rowset(
+    candidates: collections.abc.Sequence[_PlannedChildMutation],
+    updated_by_ordinal: dict[int, collections.abc.Mapping],
+    properties_by_id: dict[uuid.UUID, collections.abc.Mapping],
+    actor_id: str,
+) -> _ChildAuditRowset:
+    feed_ids: list[uuid.UUID] = []
+    actions: list[str] = []
+    revisions: list[int] = []
+    before_values: list[str] = []
+    after_values: list[str] = []
+    caller_ordinals: list[int] = []
+    for plan in sorted(candidates, key=lambda item: item.caller_ordinal):
+        before_row = plan.before_row
+        after_row = updated_by_ordinal.get(plan.caller_ordinal)
+        if before_row is None or after_row is None:
+            msg = "Feed audit candidate lacks before or after state"
+            raise ValueError(msg)
+        property_row = properties_by_id[plan.feed_id]
+        if property_row["source_feed_id"] != (
+            plan.mutation.member.source_feed_id
+        ):
+            msg = "Feed audit property identity does not match the member"
+            raise ValueError(msg)
+        before_revision = before_row["audit_revision"]
+        after_revision = after_row["audit_revision"]
+        if (
+            not isinstance(before_revision, int)
+            or not isinstance(after_revision, int)
+            or after_revision != before_revision + 1
+        ):
+            msg = "Feed audit revision did not advance exactly once"
+            raise ValueError(msg)
+        feed_ids.append(plan.feed_id)
+        actions.append(typing.cast("str", plan.audit_action))
+        revisions.append(after_revision)
+        before_values.append(_child_audit_snapshot(before_row, property_row))
+        after_values.append(_child_audit_snapshot(after_row, property_row))
+        caller_ordinals.append(plan.caller_ordinal)
+
+    actors = [actor_id] * len(feed_ids)
+    _require_parallel_cardinality(
+        "child audit",
+        feed_ids,
+        actions,
+        actors,
+        revisions,
+        before_values,
+        after_values,
+        caller_ordinals,
+    )
+    return _ChildAuditRowset(
+        feed_ids=tuple(feed_ids),
+        actions=tuple(actions),
+        actors=tuple(actors),
+        revisions=tuple(revisions),
+        before_values=tuple(before_values),
+        after_values=tuple(after_values),
+        caller_ordinals=tuple(caller_ordinals),
+    )
 
 
 def _source_type_from_row(
@@ -500,6 +926,151 @@ def _member_from_row(
         status_reason_detail=row["status_reason_detail"],
         audit_revision=row["audit_revision"],
     )
+
+
+def _locked_children_by_id(
+    requested_feed_ids: set[uuid.UUID],
+    rows: collections.abc.Sequence[collections.abc.Mapping],
+) -> dict[uuid.UUID, collections.abc.Mapping]:
+    by_id: dict[uuid.UUID, collections.abc.Mapping] = {}
+    for row in rows:
+        feed_id = _child_feed_id_from_row(row)
+        if feed_id not in requested_feed_ids or feed_id in by_id:
+            msg = "child Feed lock returned an unexpected or duplicate row"
+            raise ValueError(msg)
+        _child_source_type_from_row(row)
+        _status_from_row(row)
+        _status_reason_from_row(row)
+        by_id[feed_id] = row
+    return by_id
+
+
+def _plan_child_mutation(
+    caller_ordinal: int,
+    mutation: ChildMutation,
+    before_row: collections.abc.Mapping | None,
+) -> _PlannedChildMutation:
+    if before_row is None:
+        return _PlannedChildMutation(
+            caller_ordinal=caller_ordinal,
+            mutation=mutation,
+            before_row=None,
+            disposition=ChildDisposition.MISSING,
+            cursor_effect=CursorEffect.ABSENT,
+            lifecycle_effect=LifecycleEffect.NONE,
+        )
+
+    status = _status_from_row(before_row)
+    source_type = _child_source_type_from_row(before_row)
+    cursor_effect = _cursor_effect(
+        before_row["last_bookmark_time"],
+        mutation.cursor,
+    )
+    if source_type is not mutation.member.source_type:
+        return _PlannedChildMutation(
+            caller_ordinal=caller_ordinal,
+            mutation=mutation,
+            before_row=before_row,
+            disposition=ChildDisposition.STATUS_INELIGIBLE,
+            cursor_effect=cursor_effect,
+            lifecycle_effect=LifecycleEffect.NONE,
+        )
+
+    is_progress = isinstance(mutation, AdmittedAudioProgress)
+    allowed_statuses = (
+        (
+            feed_store.FeedStatus.ACTIVE,
+            feed_store.FeedStatus.FAILING,
+            feed_store.FeedStatus.DEACTIVATED,
+        )
+        if is_progress
+        else (
+            feed_store.FeedStatus.ACTIVE,
+            feed_store.FeedStatus.FAILING,
+        )
+    )
+    if status not in allowed_statuses:
+        return _PlannedChildMutation(
+            caller_ordinal=caller_ordinal,
+            mutation=mutation,
+            before_row=before_row,
+            disposition=ChildDisposition.STATUS_INELIGIBLE,
+            cursor_effect=cursor_effect,
+            lifecycle_effect=LifecycleEffect.NONE,
+        )
+
+    write_cursor = cursor_effect in (
+        CursorEffect.INITIALIZED,
+        CursorEffect.ADVANCED,
+    )
+    clear_lifecycle = _has_dirty_child_lifecycle(status, before_row)
+    lifecycle_effect = LifecycleEffect.NONE
+    if clear_lifecycle:
+        lifecycle_effect = (
+            LifecycleEffect.CLEARED_WHILE_DEACTIVATED
+            if status is feed_store.FeedStatus.DEACTIVATED
+            else LifecycleEffect.RECOVERED
+        )
+
+    write_path = False
+    if isinstance(mutation, AdmittedAudioProgress):
+        write_path = write_cursor or (
+            mutation.cursor is None
+            and before_row["last_processed_filename"]
+            != mutation.last_processed_filename
+        )
+
+    needs_update = write_cursor or write_path or clear_lifecycle
+    disposition = (
+        ChildDisposition.APPLIED
+        if needs_update
+        else ChildDisposition.ACCEPTED_NOOP
+    )
+    if status is feed_store.FeedStatus.DEACTIVATED:
+        disposition = ChildDisposition.APPLIED_AFTER_DEACTIVATION
+    audit_action = None
+    if lifecycle_effect is LifecycleEffect.RECOVERED:
+        audit_action = _select_recovery_audit_action(status, before_row)
+    return _PlannedChildMutation(
+        caller_ordinal=caller_ordinal,
+        mutation=mutation,
+        before_row=before_row,
+        disposition=disposition,
+        cursor_effect=cursor_effect,
+        lifecycle_effect=lifecycle_effect,
+        write_cursor=write_cursor,
+        write_path=write_path,
+        clear_lifecycle=clear_lifecycle,
+        audit_action=audit_action,
+    )
+
+
+def _updated_children_by_ordinal(
+    expected: collections.abc.Sequence[_PlannedChildMutation],
+    rows: collections.abc.Sequence[collections.abc.Mapping],
+) -> dict[int, collections.abc.Mapping]:
+    expected_by_ordinal = {
+        plan.caller_ordinal: plan.feed_id for plan in expected
+    }
+    rows_by_ordinal: dict[int, collections.abc.Mapping] = {}
+    for row in rows:
+        ordinal = row["caller_ordinal"]
+        if (
+            not isinstance(ordinal, int)
+            or ordinal not in expected_by_ordinal
+            or ordinal in rows_by_ordinal
+            or _child_feed_id_from_row(row) != expected_by_ordinal[ordinal]
+        ):
+            msg = "child DML returned an unexpected or duplicate row"
+            raise ValueError(msg)
+        _child_source_type_from_row(row)
+        _status_from_row(row)
+        _status_reason_from_row(row)
+        rows_by_ordinal[ordinal] = row
+    if set(rows_by_ordinal) != set(expected_by_ordinal):
+        msg = "child DML did not return every locked eligible Feed"
+        raise ValueError(msg)
+    return rows_by_ordinal
 
 
 class IngestionLeaseStore:
@@ -901,3 +1472,251 @@ class IngestionLeaseStore:
             members=tuple(members),
             excluded_count=excluded_count,
         )
+
+    async def commit_child_mutations(
+        self,
+        grant: LeaseGrant,
+        batch: ChildMutationBatch,
+        *,
+        actor_id: str,
+    ) -> GrantRejected | BatchCommitted:
+        """Commit one closed child batch beneath an exact active Lease.
+
+        The method makes one explicit READ COMMITTED transaction attempt. It
+        performs no storage retry and emits buffered Feed notifications only
+        after both the transaction and acquired connection exit normally.
+
+        Args:
+            grant: Complete immutable Lease ownership generation.
+            batch: Closed, globally de-duplicated child commands.
+            actor_id: Durable audit actor identity.
+
+        Returns:
+            A batch-level grant rejection or caller-ordered committed results.
+
+        Raises:
+            TypeError: If a command uses an unsupported or malformed type.
+            ValueError: If command identity, cursor, or rowset data is invalid.
+        """
+        grant = _require_grant(grant)
+        actor_id = _require_actor_id(actor_id)
+        batch = _require_child_batch(grant, batch)
+        target_feed_ids = sorted(
+            (mutation.member.feed_id for mutation in batch.mutations),
+            key=lambda feed_id: feed_id.int,
+        )
+        notification_payloads: dict[int, object] = {}
+
+        async with self._pool.acquire() as connection:
+            async with connection.transaction(isolation="read_committed"):
+                lease_row = await connection.fetchrow(
+                    ingestion_lease_queries.LOCK_LEASE_SQL,
+                    grant.source_type.value,
+                    grant.lease_key,
+                )
+                rejection = self._grant_rejection(grant, lease_row)
+                if rejection is not None:
+                    return rejection
+
+                locked_rows = []
+                if target_feed_ids:
+                    locked_rows = await connection.fetch(
+                        ingestion_lease_queries.LOCK_CHILD_FEEDS_SQL,
+                        target_feed_ids,
+                    )
+                locked_by_id = _locked_children_by_id(
+                    set(target_feed_ids),
+                    locked_rows,
+                )
+                plans = tuple(
+                    _plan_child_mutation(
+                        caller_ordinal,
+                        mutation,
+                        locked_by_id.get(mutation.member.feed_id),
+                    )
+                    for caller_ordinal, mutation in enumerate(batch.mutations)
+                )
+
+                updated_by_ordinal: dict[int, collections.abc.Mapping] = {}
+                progress_updates = tuple(
+                    plan
+                    for plan in plans
+                    if isinstance(plan.mutation, AdmittedAudioProgress)
+                    and plan.needs_update
+                )
+                observation_updates = tuple(
+                    plan
+                    for plan in plans
+                    if isinstance(plan.mutation, SourceObservation)
+                    and plan.needs_update
+                )
+                if progress_updates:
+                    rows = await self._apply_admitted_progress(
+                        connection,
+                        progress_updates,
+                    )
+                    updated_by_ordinal.update(
+                        _updated_children_by_ordinal(progress_updates, rows)
+                    )
+                if observation_updates:
+                    rows = await self._apply_source_observations(
+                        connection,
+                        observation_updates,
+                    )
+                    updated_by_ordinal.update(
+                        _updated_children_by_ordinal(observation_updates, rows)
+                    )
+
+                notification_payloads = await self._write_child_audits(
+                    connection,
+                    plans,
+                    updated_by_ordinal,
+                    actor_id,
+                )
+                children = tuple(
+                    ChildMutationResult(
+                        feed_id=plan.feed_id,
+                        disposition=plan.disposition,
+                        cursor_effect=plan.cursor_effect,
+                        lifecycle_effect=plan.lifecycle_effect,
+                    )
+                    for plan in plans
+                )
+                committed = BatchCommitted(
+                    lease_effect=batch.lease_effect,
+                    children=children,
+                )
+
+        for caller_ordinal in sorted(notification_payloads):
+            feed_change_notifications.emit_feed_change_notification(
+                notification_payloads[caller_ordinal]
+            )
+        return committed
+
+    async def _apply_admitted_progress(
+        self,
+        connection: asyncpg.Connection,
+        plans: tuple[_PlannedChildMutation, ...],
+    ) -> collections.abc.Sequence[collections.abc.Mapping]:
+        """Apply one static admitted-progress rowset."""
+        feed_ids = [plan.feed_id for plan in plans]
+        paths = [
+            typing.cast(
+                "AdmittedAudioProgress",
+                plan.mutation,
+            ).last_processed_filename
+            for plan in plans
+        ]
+        cursors = [plan.mutation.cursor for plan in plans]
+        write_cursors = [plan.write_cursor for plan in plans]
+        write_paths = [plan.write_path for plan in plans]
+        clear_lifecycle = [plan.clear_lifecycle for plan in plans]
+        caller_ordinals = [plan.caller_ordinal for plan in plans]
+        _require_parallel_cardinality(
+            "admitted progress",
+            feed_ids,
+            paths,
+            cursors,
+            write_cursors,
+            write_paths,
+            clear_lifecycle,
+            caller_ordinals,
+        )
+        return await connection.fetch(
+            ingestion_lease_queries.APPLY_ADMITTED_PROGRESS_SQL,
+            feed_ids,
+            paths,
+            cursors,
+            write_cursors,
+            write_paths,
+            clear_lifecycle,
+            caller_ordinals,
+        )
+
+    async def _apply_source_observations(
+        self,
+        connection: asyncpg.Connection,
+        plans: tuple[_PlannedChildMutation, ...],
+    ) -> collections.abc.Sequence[collections.abc.Mapping]:
+        """Apply one static source-observation rowset."""
+        feed_ids = [plan.feed_id for plan in plans]
+        cursors = [plan.mutation.cursor for plan in plans]
+        write_cursors = [plan.write_cursor for plan in plans]
+        clear_lifecycle = [plan.clear_lifecycle for plan in plans]
+        caller_ordinals = [plan.caller_ordinal for plan in plans]
+        _require_parallel_cardinality(
+            "source observation",
+            feed_ids,
+            cursors,
+            write_cursors,
+            clear_lifecycle,
+            caller_ordinals,
+        )
+        return await connection.fetch(
+            ingestion_lease_queries.APPLY_SOURCE_OBSERVATIONS_SQL,
+            feed_ids,
+            cursors,
+            write_cursors,
+            clear_lifecycle,
+            caller_ordinals,
+        )
+
+    async def _write_child_audits(
+        self,
+        connection: asyncpg.Connection,
+        plans: tuple[_PlannedChildMutation, ...],
+        updated_by_ordinal: dict[int, collections.abc.Mapping],
+        actor_id: str,
+    ) -> dict[int, object]:
+        """Insert actual child audit candidates as one canonical rowset."""
+        candidates = tuple(
+            plan for plan in plans if plan.audit_action is not None
+        )
+        if not candidates:
+            return {}
+
+        sorted_feed_ids = sorted(
+            (plan.feed_id for plan in candidates),
+            key=lambda feed_id: feed_id.int,
+        )
+        property_rows = await connection.fetch(
+            ingestion_lease_queries.LOAD_CHILD_AUDIT_PROPERTIES_SQL,
+            sorted_feed_ids,
+        )
+        properties_by_id = _audit_properties_by_id(
+            set(sorted_feed_ids),
+            property_rows,
+        )
+        rowset = _build_child_audit_rowset(
+            candidates,
+            updated_by_ordinal,
+            properties_by_id,
+            actor_id,
+        )
+        audit_rows = await connection.fetch(
+            ingestion_lease_queries.INSERT_CHILD_AUDIT_EVENTS_SQL,
+            rowset.feed_ids,
+            rowset.actions,
+            rowset.actors,
+            rowset.revisions,
+            rowset.before_values,
+            rowset.after_values,
+            rowset.caller_ordinals,
+        )
+        payloads: dict[int, object] = {}
+        expected_ordinals = set(rowset.caller_ordinals)
+        for row in audit_rows:
+            caller_ordinal = row["caller_ordinal"]
+            if (
+                not isinstance(caller_ordinal, int)
+                or caller_ordinal not in expected_ordinals
+                or caller_ordinal in payloads
+                or row["feed_audit_event"] is None
+            ):
+                msg = "Feed audit insert returned an unexpected row"
+                raise ValueError(msg)
+            payloads[caller_ordinal] = row["feed_audit_event"]
+        if set(payloads) != expected_ordinals:
+            msg = "Feed audit insert did not return every candidate"
+            raise ValueError(msg)
+        return payloads

@@ -6,6 +6,7 @@ import dataclasses
 import datetime
 import inspect
 import pathlib
+import typing
 import unittest
 import uuid
 
@@ -438,6 +439,140 @@ class TestLeaseFailureContract(unittest.TestCase):
         self.assertNotIn(
             "SYSTEM_RUNTIME_CONFIGURATION_INVALID", production_text
         )
+
+
+class TestChildMutationQueryContract(unittest.TestCase):
+    """Contracts for the Lease-fenced child transaction primitives."""
+
+    def test_child_commands_and_results_are_closed_immutable_values(
+        self,
+    ) -> None:
+        self.assertEqual(
+            [
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.AdmittedAudioProgress
+                )
+            ],
+            ["member", "last_processed_filename", "cursor"],
+        )
+        self.assertEqual(
+            [
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.SourceObservation
+                )
+            ],
+            ["member", "cursor"],
+        )
+        child_mutation_value = ingestion_lease_store.ChildMutation.__value__
+        self.assertEqual(
+            set(typing.get_args(child_mutation_value)),
+            {
+                ingestion_lease_store.AdmittedAudioProgress,
+                ingestion_lease_store.SourceObservation,
+            },
+        )
+        for value_type in (
+            ingestion_lease_store.AdmittedAudioProgress,
+            ingestion_lease_store.SourceObservation,
+            ingestion_lease_store.NoLeaseEffect,
+            ingestion_lease_store.ChildMutationBatch,
+            ingestion_lease_store.ChildMutationResult,
+            ingestion_lease_store.BatchCommitted,
+        ):
+            self.assertTrue(dataclasses.is_dataclass(value_type))
+            self.assertTrue(hasattr(value_type, "__slots__"))
+
+        command_fields = {
+            field.name
+            for command_type in typing.get_args(child_mutation_value)
+            for field in dataclasses.fields(command_type)
+        }
+        self.assertNotIn("membership_revision", command_fields)
+        self.assertNotIn("eligible", command_fields)
+
+    def test_child_result_vocabularies_are_exhaustive(self) -> None:
+        self.assertEqual(
+            {value.value for value in ingestion_lease_store.ChildDisposition},
+            {
+                "applied",
+                "applied_after_deactivation",
+                "accepted_noop",
+                "missing",
+                "status_ineligible",
+            },
+        )
+        self.assertEqual(
+            {value.value for value in ingestion_lease_store.CursorEffect},
+            {"initialized", "advanced", "equal", "regressive", "absent"},
+        )
+        self.assertEqual(
+            {value.value for value in ingestion_lease_store.LifecycleEffect},
+            {
+                "none",
+                "recovered",
+                "cleared_while_deactivated",
+                "failure_recorded",
+                "quarantined",
+            },
+        )
+
+    def test_child_feed_lock_is_sorted_and_uses_one_lock_strength(self) -> None:
+        sql = _normalized_sql(ingestion_lease_queries.LOCK_CHILD_FEEDS_SQL)
+
+        self.assertIn("WHERE id = ANY($1::uuid[])", sql)
+        self.assertIn("ORDER BY id", sql)
+        self.assertIn("FOR NO KEY UPDATE", sql)
+        for legacy_authority in (
+            "worker_id",
+            "fencing_token",
+            "last_heartbeat",
+        ):
+            self.assertNotIn(legacy_authority, sql)
+
+    def test_progress_and_observation_are_static_monotonic_rowsets(
+        self,
+    ) -> None:
+        for query in (
+            ingestion_lease_queries.APPLY_ADMITTED_PROGRESS_SQL,
+            ingestion_lease_queries.APPLY_SOURCE_OBSERVATIONS_SQL,
+        ):
+            sql = _normalized_sql(query)
+            self.assertIn("UNNEST(", sql)
+            self.assertIn("WITH ORDINALITY", sql)
+            self.assertIn("GREATEST(", sql)
+            self.assertRegex(
+                sql,
+                r"last_bookmark_time IS NULL\s+OR\s+"
+                r"input\.cursor > feeds\.last_bookmark_time",
+            )
+            self.assertNotIn("feed_properties", sql)
+            self.assertNotIn("membership_revision", sql)
+            self.assertNotIn("worker_id", sql)
+            self.assertNotIn("fencing_token", sql)
+            self.assertNotIn("last_heartbeat", sql)
+
+    def test_audit_enrichment_is_conditional_sorted_and_rowset_safe(
+        self,
+    ) -> None:
+        properties_sql = _normalized_sql(
+            ingestion_lease_queries.LOAD_CHILD_AUDIT_PROPERTIES_SQL
+        )
+        audit_sql = _normalized_sql(
+            ingestion_lease_queries.INSERT_CHILD_AUDIT_EVENTS_SQL
+        )
+        query_source = pathlib.Path(
+            "backend/pipeline/storage/ingestion_lease_queries.py"
+        ).read_text()
+
+        self.assertIn("WHERE fp.feed_id = ANY($1::uuid[])", properties_sql)
+        self.assertIn("ORDER BY fp.feed_id", properties_sql)
+        self.assertIn("UNNEST(", audit_sql)
+        self.assertIn("WITH ORDINALITY", audit_sql)
+        self.assertIn("INSERT INTO public.feed_audit_events", audit_sql)
+        self.assertIn("feed_audit_event_payload_sql", query_source)
+        self.assertNotIn("feed_audit_event_scalar_sql", query_source)
 
 
 class TestMembershipSnapshotContract(unittest.TestCase):
