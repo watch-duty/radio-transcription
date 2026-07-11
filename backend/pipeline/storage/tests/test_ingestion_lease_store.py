@@ -186,10 +186,14 @@ class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
         store = ingestion_lease_store.IngestionLeaseStore(pool)
 
         invalid_calls = (
-            store.claim_unclaimed("bcfy_calls", _OWNER_ID, 1),
+            store.claim_unclaimed(
+                "bcfy_calls",  # ty: ignore[invalid-argument-type]
+                _OWNER_ID,
+                1,
+            ),
             store.claim_unclaimed(
                 feed_store.SourceType.BCFY_CALLS,
-                "worker",
+                "worker",  # ty: ignore[invalid-argument-type]
                 1,
             ),
             store.claim_unclaimed(
@@ -240,7 +244,7 @@ class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
                         feed_store.SourceType.BCFY_CALLS,
                         _OWNER_ID,
                         1,
-                        abandonment_after,
+                        abandonment_after,  # ty: ignore[invalid-argument-type]
                     )
 
         pool.fetch.assert_not_awaited()
@@ -268,7 +272,10 @@ class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
         store = ingestion_lease_store.IngestionLeaseStore(pool)
 
         with self.assertRaises(TypeError):
-            await store.release(_grant(), cause="shutdown")
+            await store.release(
+                _grant(),
+                cause="shutdown",  # ty: ignore[invalid-argument-type]
+            )
 
         pool.fetchrow.assert_not_awaited()
 
@@ -508,7 +515,7 @@ class TestSharedGrantRejection(unittest.TestCase):
                 self.assertIsNotNone(result)
                 assert result is not None
                 self.assertIs(result.reason, reason)
-                self.assertIsInstance(
+                assert isinstance(
                     result.snapshot,
                     ingestion_lease_store.LeaseSnapshot,
                 )
@@ -541,6 +548,7 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
                 result.disposition,
                 ingestion_lease_store.LeaseOperationDisposition.APPLIED,
             )
+            assert result.snapshot is not None
             self.assertIsNone(result.snapshot.last_heartbeat)
             observed_args.append(pool.fetchrow.await_args.args)
 
@@ -569,6 +577,7 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
             result.disposition,
             ingestion_lease_store.LeaseOperationDisposition.STATUS_INELIGIBLE,
         )
+        assert result.snapshot is not None
         self.assertEqual(result.snapshot.status, feed_store.FeedStatus.FAILING)
         self.assertEqual(result.snapshot.failure_count, 2)
 
@@ -627,7 +636,9 @@ class TestLeaseFailureActionValidation(unittest.IsolatedAsyncioTestCase):
         for case_index, retry_after in enumerate(cases):
             with self.subTest(case_index=case_index):
                 with self.assertRaises((TypeError, ValueError)):
-                    ingestion_lease_store.NonBudgetedFailure(retry_after)
+                    ingestion_lease_store.NonBudgetedFailure(
+                        retry_after,  # ty: ignore[invalid-argument-type]
+                    )
 
     async def test_finalize_rejects_invalid_actor_and_reason_before_pool(
         self,
@@ -650,7 +661,7 @@ class TestLeaseFailureActionValidation(unittest.IsolatedAsyncioTestCase):
             await store.finalize_failure(
                 _grant(),
                 action,
-                "source_unreachable",
+                "source_unreachable",  # ty: ignore[invalid-argument-type]
                 actor_id="service_account:gcp:collector",
             )
 
@@ -684,6 +695,8 @@ class TestFinalizeLeaseFailure(unittest.IsolatedAsyncioTestCase):
             result.effect,
             ingestion_lease_store.LeaseFailureEffect.FAILURE_RECORDED,
         )
+        assert result.before_snapshot is not None
+        assert result.after_snapshot is not None
         self.assertEqual(result.before_snapshot.failure_count, 2)
         self.assertEqual(result.after_snapshot.failure_count, 3)
         self.assertEqual(
@@ -723,6 +736,7 @@ class TestFinalizeLeaseFailure(unittest.IsolatedAsyncioTestCase):
             result.effect,
             ingestion_lease_store.LeaseFailureEffect.QUARANTINED,
         )
+        assert result.after_snapshot is not None
         self.assertIsNone(result.after_snapshot.retry_after)
 
     async def test_non_budgeted_failure_resets_count_and_uses_retry_time(
@@ -744,6 +758,7 @@ class TestFinalizeLeaseFailure(unittest.IsolatedAsyncioTestCase):
             actor_id="service_account:gcp:collector",
         )
 
+        assert result.after_snapshot is not None
         self.assertEqual(result.after_snapshot.failure_count, 0)
         self.assertEqual(result.after_snapshot.retry_after, retry_after)
         args = pool.fetchrow.await_args.args
@@ -1066,6 +1081,8 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
         first = await store.load_membership(grant)
         second = await store.load_membership(grant)
 
+        assert isinstance(first, ingestion_lease_store.MembershipSnapshot)
+        assert isinstance(second, ingestion_lease_store.MembershipSnapshot)
         self.assertEqual(first.grant, second.grant)
         self.assertEqual(first.membership_revision, 4)
         self.assertEqual(second.membership_revision, 5)
@@ -1156,7 +1173,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 (
                     ingestion_lease_store.FeedFailureTransition(
                         member=_member_identity(feed_id),
-                        action="budgeted",
+                        action="budgeted",  # ty: ignore[invalid-argument-type]
                         status_reason=(
                             feed_store.FeedStatusReason.SOURCE_UNREACHABLE
                         ),
@@ -1287,7 +1304,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             actor_id="service_account:gcp:collector",
         )
 
-        self.assertIsInstance(result, ingestion_lease_store.BatchCommitted)
+        assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertEqual(result.children, ())
         connection.fetchrow.assert_awaited_once_with(
             ingestion_lease_queries.LOCK_LEASE_SQL,
@@ -1338,7 +1355,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     actor_id="service_account:gcp:collector",
                 )
 
-                self.assertIsInstance(
+                assert isinstance(
                     result,
                     ingestion_lease_store.GrantRejected,
                 )
@@ -1385,7 +1402,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             actor_id="service_account:gcp:collector",
         )
 
-        self.assertIsInstance(result, ingestion_lease_store.BatchCommitted)
+        assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertEqual(
             [child.feed_id for child in result.children],
             [first_id, second_id],
@@ -1448,6 +1465,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             actor_id="service_account:gcp:collector",
         )
 
+        assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertEqual(
             [child.disposition for child in result.children],
             [
@@ -1494,6 +1512,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             actor_id="service_account:gcp:collector",
         )
 
+        assert isinstance(result, ingestion_lease_store.BatchCommitted)
         child = result.children[0]
         self.assertIs(
             child.disposition,
@@ -1554,6 +1573,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 actor_id="service_account:gcp:collector",
             )
 
+        assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertIs(
             result.children[0].lifecycle_effect,
             ingestion_lease_store.LifecycleEffect.RECOVERED,
@@ -1635,6 +1655,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     actor_id="service_account:gcp:collector",
                 )
 
+                assert isinstance(result, ingestion_lease_store.BatchCommitted)
                 child = result.children[0]
                 self.assertIs(child.cursor_effect, expected_effect)
                 self.assertIs(
@@ -1685,6 +1706,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             actor_id="service_account:gcp:collector",
         )
 
+        assert isinstance(result, ingestion_lease_store.BatchCommitted)
         child = result.children[0]
         self.assertIs(
             child.cursor_effect,
@@ -1742,6 +1764,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             actor_id="service_account:gcp:collector",
         )
 
+        assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertIs(
             result.children[0].lifecycle_effect,
             ingestion_lease_store.LifecycleEffect.QUARANTINED,
@@ -1800,6 +1823,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             actor_id="service_account:gcp:collector",
         )
 
+        assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertIs(
             result.children[0].lifecycle_effect,
             ingestion_lease_store.LifecycleEffect.FAILURE_RECORDED,
@@ -1831,6 +1855,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     actor_id="service_account:gcp:collector",
                 )
 
+                assert isinstance(result, ingestion_lease_store.BatchCommitted)
                 self.assertIs(
                     result.children[0].disposition,
                     ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE,
@@ -1877,6 +1902,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 actor_id="service_account:gcp:collector",
             )
 
+        assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertIs(
             result.lease_effect.effect,
             ingestion_lease_store.LeaseLifecycleEffect.RECOVERED,
@@ -1912,6 +1938,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             actor_id="service_account:gcp:collector",
         )
 
+        assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertIs(
             result.lease_effect.effect,
             ingestion_lease_store.LeaseLifecycleEffect.NONE,
@@ -1935,6 +1962,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             actor_id="service_account:gcp:collector",
         )
 
+        assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertIs(
             result.lease_effect.effect,
             ingestion_lease_store.LeaseLifecycleEffect.NONE,
@@ -2043,6 +2071,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 actor_id="service_account:gcp:collector",
             )
 
+            assert isinstance(result, ingestion_lease_store.BatchCommitted)
             self.assertEqual(len(result.children), feed_count)
             observed_fetch_counts.append(connection.fetch.await_count)
 

@@ -1172,7 +1172,7 @@ def _plan_child_mutation(
         CursorEffect.ADVANCED,
     )
     if is_failure:
-        failure = typing.cast("FeedFailureTransition", mutation)
+        failure = mutation
         charge_failure = failure.completion_cursor is None or write_cursor
         if not charge_failure:
             return _PlannedChildMutation(
@@ -1841,15 +1841,13 @@ class IngestionLeaseStore:
         plans: tuple[_PlannedChildMutation, ...],
     ) -> collections.abc.Sequence[collections.abc.Mapping]:
         """Apply one static admitted-progress rowset."""
-        feed_ids = [plan.feed_id for plan in plans]
-        paths = [
-            typing.cast(
-                "AdmittedAudioProgress",
-                plan.mutation,
-            ).last_processed_filename
+        mutations = [
+            typing.cast("AdmittedAudioProgress", plan.mutation)
             for plan in plans
         ]
-        cursors = [plan.mutation.cursor for plan in plans]
+        feed_ids = [plan.feed_id for plan in plans]
+        paths = [mutation.last_processed_filename for mutation in mutations]
+        cursors = [mutation.cursor for mutation in mutations]
         write_cursors = [plan.write_cursor for plan in plans]
         write_paths = [plan.write_path for plan in plans]
         clear_lifecycle = [plan.clear_lifecycle for plan in plans]
@@ -1881,8 +1879,11 @@ class IngestionLeaseStore:
         plans: tuple[_PlannedChildMutation, ...],
     ) -> collections.abc.Sequence[collections.abc.Mapping]:
         """Apply one static source-observation rowset."""
+        mutations = [
+            typing.cast("SourceObservation", plan.mutation) for plan in plans
+        ]
         feed_ids = [plan.feed_id for plan in plans]
-        cursors = [plan.mutation.cursor for plan in plans]
+        cursors = [mutation.cursor for mutation in mutations]
         write_cursors = [plan.write_cursor for plan in plans]
         clear_lifecycle = [plan.clear_lifecycle for plan in plans]
         caller_ordinals = [plan.caller_ordinal for plan in plans]
