@@ -137,7 +137,7 @@ async def _insert_lease(
             $6,
             $7,
             CASE WHEN $2 = 'unclaimed' THEN NOW() ELSE NULL END,
-            $8,
+            $8::TEXT,
             CASE WHEN $8 IS NULL THEN NULL ELSE 'fixture failure' END,
             $9,
             $10,
@@ -204,7 +204,7 @@ async def _insert_member(
                     $4,
                     $5,
                     $6,
-                    $7,
+                    $7::TEXT,
                     CASE WHEN $7 IS NULL THEN NULL ELSE 'fixture failure' END,
                     $8,
                     $9
