@@ -11,6 +11,25 @@ from backend.pipeline.common.storage.mock_cache_provider import MockCacheProvide
 MockCacheProvider
 _.get_value
 
+# Phase 2 intentionally exposes the Lease storage surface for Phase 3 runtime
+# wiring. Vulture excludes its unit and integration tests, so keep only this
+# dormant public API and its planned release telemetry causes allowlisted.
+from backend.pipeline.storage.ingestion_lease_store import (
+    IngestionLeaseStore,
+    LeaseReleaseCause,
+)
+IngestionLeaseStore.claim_unclaimed
+IngestionLeaseStore.claim_recoverable
+IngestionLeaseStore.renew_heartbeats
+IngestionLeaseStore.release
+IngestionLeaseStore.finalize_failure
+IngestionLeaseStore.load_membership
+IngestionLeaseStore.commit_child_mutations
+LeaseReleaseCause.SHUTDOWN
+LeaseReleaseCause.REBALANCE
+LeaseReleaseCause.CANCELLATION
+LeaseReleaseCause.ABANDONMENT
+
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation
 # and schema reflection, which Vulture cannot trace through direct Python
 # references.
