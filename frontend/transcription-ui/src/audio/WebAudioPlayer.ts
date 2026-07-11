@@ -293,7 +293,6 @@ class MseSequenceSession implements PlaybackController {
 
   private handleSourceEnded = (): void => {
     if (this.isUnloaded) return;
-    console.debug('MSE MediaSource ended.');
   };
 
   private handleSourceOpen = (): void => {
@@ -454,9 +453,6 @@ class MseSequenceSession implements PlaybackController {
           : startTime;
 
       this.segmentTimeline.push({ segmentId, startTime, endTime });
-      console.info(
-        `[MSE] Appended segment '${segmentId}' | Buffered range: [${startTime.toFixed(3)}s -> ${endTime.toFixed(3)}s] (duration: ${(endTime - startTime).toFixed(3)}s)`
-      );
       this.inFlightAppend = null;
       this.appendQueue.shift();
     }
