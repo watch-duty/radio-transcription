@@ -669,3 +669,84 @@ jobs:
           fi
 
           echo "PostgreSQL $server_major schema compatibility and recovery checks passed."
+
+  # Matrix expansion changes check context names; confirm both version-qualified
+  # ingestion-lease-storage-postgres checks in branch protection before merge.
+  ingestion-lease-storage-postgres:
+    needs: [setup]
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres-version: ["15", "16"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres-version }}-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 100
+      - name: Install mise, install tools
+        uses: jdx/mise-action@v3
+      - name: Cache uv dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/uv
+          key: ${{ runner.os }}-uv-${{ hashFiles('**/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
+      - name: Install dependencies
+        run: uv sync
+      - name: Apply ingestion schema once
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: postgres
+        working-directory: terraform/modules/alloydb/sql/ingestion
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+
+          server_version_num=$(psql -v ON_ERROR_STOP=1 -t -A \
+            -c "SHOW server_version_num")
+          if [[ ! "$server_version_num" =~ ^[0-9]+$ ]]; then
+            echo "::error::Unexpected server_version_num: $server_version_num"
+            exit 1
+          fi
+          server_major=$((server_version_num / 10000))
+          expected_server_major="${{ matrix.postgres-version }}"
+          if [ "$server_major" -ne "$expected_server_major" ]; then
+            echo "::error::PostgreSQL server major $server_major does not match matrix value $expected_server_major"
+            exit 1
+          fi
+
+          for migration in *.sql; do
+            case "$migration" in
+              *pg_cron*)
+                echo "Skipping $migration (pg_cron extension unavailable)"
+                continue;;
+            esac
+            echo "Applying $migration..."
+            psql -v ON_ERROR_STOP=1 -f "$migration"
+          done
+      - name: Run serial ingestion Lease storage proofs
+        env:
+          INGESTION_LEASE_TEST_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+          INGESTION_LEASE_EXTERNAL_POSTGRES_REQUIRED: "1"
+          EXPECTED_POSTGRES_MAJOR: ${{ matrix.postgres-version }}
+        run: uv run python -m pytest integration_tests/storage/test_ingestion_lease_store_integration.py -q -n 0
