@@ -159,6 +159,8 @@ BEGIN
           FROM pg_catalog.pg_parameter_acl AS parameter_acl
         UNION
         SELECT 'session_replication_role'::TEXT
+        UNION
+        SELECT 'lo_compat_privileges'::TEXT
          ORDER BY parname
     LOOP
         EXECUTE pg_catalog.format(
@@ -247,15 +249,24 @@ BEGIN
             ON parameter.name =
                pg_catalog.split_part(configuration.setting, '=', 1)
          WHERE role_setting.setrole = 0::OID
-           AND role_setting.setdatabase = (
-                   SELECT database.oid
-                     FROM pg_catalog.pg_database AS database
-                    WHERE database.datname = pg_catalog.current_database()
+           AND role_setting.setdatabase IN (
+                   0::OID,
+                   (
+                       SELECT database.oid
+                         FROM pg_catalog.pg_database AS database
+                        WHERE database.datname = pg_catalog.current_database()
+                   )
                )
            AND parameter.context IN ('superuser', 'superuser-backend')
          ORDER BY setdatabase, rolname NULLS FIRST, parameter_name
     LOOP
-        IF unsafe_setting.database_wide THEN
+        IF unsafe_setting.database_wide
+           AND unsafe_setting.setdatabase = 0::OID THEN
+            EXECUTE pg_catalog.format(
+                'ALTER ROLE ALL RESET %I',
+                unsafe_setting.parameter_name
+            );
+        ELSIF unsafe_setting.database_wide THEN
             EXECUTE pg_catalog.format(
                 'ALTER DATABASE %I RESET %I',
                 pg_catalog.current_database(),
@@ -278,6 +289,79 @@ BEGIN
     END LOOP;
 END
 $unsafe_role_settings$;
+
+-- PostgreSQL grants PUBLIC EXECUTE on these three built-in large-object
+-- creators. Repository inventory found no legacy ingestion use; the postgres
+-- owner/administrator retains EXECUTE while no non-admin role is re-granted it.
+REVOKE EXECUTE ON FUNCTION
+    pg_catalog.lo_create(oid),
+    pg_catalog.lo_creat(integer),
+    pg_catalog.lo_from_bytea(oid, bytea)
+    FROM PUBLIC CASCADE;
+
+DO $large_object_acl_revoke$
+DECLARE
+    runtime_grantee RECORD;
+    large_object RECORD;
+BEGIN
+    FOR runtime_grantee IN
+        WITH RECURSIVE runtime_roles AS (
+            SELECT role.oid, role.rolname
+              FROM pg_catalog.pg_roles AS role
+             WHERE role.rolname = 'app_ingestion_runtime'
+            UNION
+            SELECT member.oid, member.rolname
+              FROM runtime_roles AS parent
+              JOIN pg_catalog.pg_auth_members AS membership
+                ON membership.roleid = parent.oid
+              JOIN pg_catalog.pg_roles AS member
+                ON member.oid = membership.member
+        )
+        SELECT rolname FROM runtime_roles ORDER BY oid
+    LOOP
+        EXECUTE pg_catalog.format(
+            'REVOKE EXECUTE ON FUNCTION '
+            'pg_catalog.lo_create(oid), '
+            'pg_catalog.lo_creat(integer), '
+            'pg_catalog.lo_from_bytea(oid, bytea) '
+            'FROM %I CASCADE',
+            runtime_grantee.rolname
+        );
+    END LOOP;
+
+    FOR large_object IN
+        SELECT object.oid
+          FROM pg_catalog.pg_largeobject_metadata AS object
+         ORDER BY object.oid
+    LOOP
+        EXECUTE pg_catalog.format(
+            'REVOKE SELECT, UPDATE ON LARGE OBJECT %s FROM PUBLIC CASCADE',
+            large_object.oid
+        );
+        FOR runtime_grantee IN
+            WITH RECURSIVE runtime_roles AS (
+                SELECT role.oid, role.rolname
+                  FROM pg_catalog.pg_roles AS role
+                 WHERE role.rolname = 'app_ingestion_runtime'
+                UNION
+                SELECT member.oid, member.rolname
+                  FROM runtime_roles AS parent
+                  JOIN pg_catalog.pg_auth_members AS membership
+                    ON membership.roleid = parent.oid
+                  JOIN pg_catalog.pg_roles AS member
+                    ON member.oid = membership.member
+            )
+            SELECT rolname FROM runtime_roles ORDER BY oid
+        LOOP
+            EXECUTE pg_catalog.format(
+                'REVOKE SELECT, UPDATE ON LARGE OBJECT %s FROM %I CASCADE',
+                large_object.oid,
+                runtime_grantee.rolname
+            );
+        END LOOP;
+    END LOOP;
+END
+$large_object_acl_revoke$;
 
 DO $database_revoke$
 BEGIN
@@ -595,6 +679,8 @@ BEGIN
               FROM pg_catalog.pg_parameter_acl AS parameter_acl
             UNION
             SELECT 'session_replication_role'::TEXT
+            UNION
+            SELECT 'lo_compat_privileges'::TEXT
         )
         SELECT 1
           FROM runtime_roles AS runtime_role
@@ -709,11 +795,14 @@ BEGIN
                    )
                    OR (
                        role_setting.setrole = 0::OID
-                       AND role_setting.setdatabase = (
-                           SELECT database.oid
-                             FROM pg_catalog.pg_database AS database
-                            WHERE database.datname =
-                                  pg_catalog.current_database()
+                       AND role_setting.setdatabase IN (
+                           0::OID,
+                           (
+                               SELECT database.oid
+                                 FROM pg_catalog.pg_database AS database
+                                WHERE database.datname =
+                                      pg_catalog.current_database()
+                           )
                        )
                    )
                )
@@ -728,6 +817,156 @@ BEGIN
         THEN 'SET'
         ELSE 'MEMBER'
     END;
+
+    IF EXISTS (
+        WITH RECURSIVE runtime_roles AS (
+            SELECT role.oid
+              FROM pg_catalog.pg_roles AS role
+             WHERE role.rolname = 'app_ingestion_runtime'
+            UNION
+            SELECT member.oid
+              FROM runtime_roles AS parent
+              JOIN pg_catalog.pg_auth_members AS membership
+                ON membership.roleid = parent.oid
+              JOIN pg_catalog.pg_roles AS member
+                ON member.oid = membership.member
+        )
+        SELECT 1
+          FROM pg_catalog.pg_proc AS procedure
+          CROSS JOIN runtime_roles AS runtime_role
+         WHERE procedure.oid IN (
+                   'pg_catalog.lo_create(oid)'::pg_catalog.regprocedure,
+                   'pg_catalog.lo_creat(integer)'::pg_catalog.regprocedure,
+                   'pg_catalog.lo_from_bytea(oid, bytea)'::pg_catalog.regprocedure
+               )
+           AND (
+               pg_catalog.has_function_privilege(
+                   runtime_role.oid,
+                   procedure.oid,
+                   'EXECUTE'
+               )
+               OR pg_catalog.has_function_privilege(
+                   runtime_role.oid,
+                   procedure.oid,
+                   'EXECUTE WITH GRANT OPTION'
+               )
+           )
+        UNION ALL
+        SELECT 1
+          FROM pg_catalog.pg_proc AS procedure
+          CROSS JOIN LATERAL pg_catalog.aclexplode(
+              COALESCE(
+                  procedure.proacl,
+                  pg_catalog.acldefault('f'::"char", procedure.proowner)
+              )
+          ) AS acl
+         WHERE procedure.oid IN (
+                   'pg_catalog.lo_create(oid)'::pg_catalog.regprocedure,
+                   'pg_catalog.lo_creat(integer)'::pg_catalog.regprocedure,
+                   'pg_catalog.lo_from_bytea(oid, bytea)'::pg_catalog.regprocedure
+               )
+           AND acl.privilege_type = 'EXECUTE'
+           AND (
+               acl.grantee = 0::OID
+               OR EXISTS (
+                   SELECT 1
+                     FROM runtime_roles AS runtime_role
+                    WHERE acl.grantee = runtime_role.oid
+                       OR (
+                           acl.grantee <> 0::OID
+                           AND (
+                               pg_catalog.pg_has_role(
+                                   runtime_role.oid,
+                                   acl.grantee,
+                                   'USAGE'
+                               )
+                               OR pg_catalog.pg_has_role(
+                                   runtime_role.oid,
+                                   acl.grantee,
+                                   set_role_membership_mode
+                               )
+                           )
+                       )
+               )
+           )
+    ) THEN
+        RAISE EXCEPTION
+            'app ingestion member can execute a large-object creator';
+    END IF;
+
+    IF EXISTS (
+        WITH RECURSIVE runtime_roles AS (
+            SELECT role.oid
+              FROM pg_catalog.pg_roles AS role
+             WHERE role.rolname = 'app_ingestion_runtime'
+            UNION
+            SELECT member.oid
+              FROM runtime_roles AS parent
+              JOIN pg_catalog.pg_auth_members AS membership
+                ON membership.roleid = parent.oid
+              JOIN pg_catalog.pg_roles AS member
+                ON member.oid = membership.member
+        )
+        SELECT 1
+          FROM pg_catalog.pg_largeobject_metadata AS large_object
+         WHERE EXISTS (
+                   SELECT 1
+                     FROM runtime_roles AS runtime_role
+                    WHERE large_object.lomowner = runtime_role.oid
+                       OR pg_catalog.pg_has_role(
+                           runtime_role.oid,
+                           large_object.lomowner,
+                           'USAGE'
+                       )
+                       OR pg_catalog.pg_has_role(
+                           runtime_role.oid,
+                           large_object.lomowner,
+                           set_role_membership_mode
+                       )
+               )
+            OR EXISTS (
+                   SELECT 1
+                     FROM pg_catalog.aclexplode(
+                         COALESCE(
+                             large_object.lomacl,
+                             pg_catalog.acldefault(
+                                 'L'::"char",
+                                 large_object.lomowner
+                             )
+                         )
+                     ) AS acl
+                    WHERE (
+                              acl.privilege_type IN ('SELECT', 'UPDATE')
+                              OR acl.is_grantable
+                          )
+                      AND (
+                          acl.grantee = 0::OID
+                          OR EXISTS (
+                              SELECT 1
+                                FROM runtime_roles AS runtime_role
+                               WHERE acl.grantee = runtime_role.oid
+                                  OR (
+                                      acl.grantee <> 0::OID
+                                      AND (
+                                          pg_catalog.pg_has_role(
+                                              runtime_role.oid,
+                                              acl.grantee,
+                                              'USAGE'
+                                          )
+                                          OR pg_catalog.pg_has_role(
+                                              runtime_role.oid,
+                                              acl.grantee,
+                                              set_role_membership_mode
+                                          )
+                                      )
+                                  )
+                          )
+                      )
+               )
+    ) THEN
+        RAISE EXCEPTION
+            'app ingestion member has a large-object capability';
+    END IF;
 
     IF EXISTS (
         WITH RECURSIVE runtime_roles AS (

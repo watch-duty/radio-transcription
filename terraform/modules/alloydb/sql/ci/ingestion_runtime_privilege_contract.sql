@@ -174,6 +174,11 @@ BEGIN
             FROM pg_catalog.pg_parameter_acl AS parameter_acl
             CROSS JOIN LATERAL
                 pg_catalog.aclexplode(parameter_acl.paracl) AS acl
+          UNION ALL
+          SELECT acl.grantee
+            FROM pg_catalog.pg_largeobject_metadata AS large_object
+            CROSS JOIN LATERAL
+                pg_catalog.aclexplode(large_object.lomacl) AS acl
       ) AS direct_acl
      WHERE direct_acl.grantee = runtime_role_oid;
     IF unexpected_count <> 0 THEN
@@ -199,6 +204,8 @@ BEGIN
               FROM pg_catalog.pg_parameter_acl AS parameter_acl
             UNION
             SELECT 'session_replication_role'::TEXT
+            UNION
+            SELECT 'lo_compat_privileges'::TEXT
         )
         SELECT 1
           FROM runtime_roles AS runtime_role
@@ -311,11 +318,14 @@ BEGIN
                    )
                    OR (
                        role_setting.setrole = 0::OID
-                       AND role_setting.setdatabase = (
-                           SELECT database.oid
-                             FROM pg_catalog.pg_database AS database
-                            WHERE database.datname =
-                                  pg_catalog.current_database()
+                       AND role_setting.setdatabase IN (
+                           0::OID,
+                           (
+                               SELECT database.oid
+                                 FROM pg_catalog.pg_database AS database
+                                WHERE database.datname =
+                                      pg_catalog.current_database()
+                           )
                        )
                    )
                )
@@ -324,9 +334,10 @@ BEGIN
         RAISE EXCEPTION
             'runtime member has an unsafe role parameter default';
     END IF;
-    IF pg_catalog.current_setting('session_replication_role') <> 'origin' THEN
+    IF pg_catalog.current_setting('session_replication_role') <> 'origin'
+       OR pg_catalog.current_setting('lo_compat_privileges') <> 'off' THEN
         RAISE EXCEPTION
-            'contract session_replication_role must remain origin';
+            'contract unsafe session setting survived reconciliation';
     END IF;
 
     set_role_membership_mode := CASE
@@ -334,6 +345,156 @@ BEGIN
         THEN 'SET'
         ELSE 'MEMBER'
     END;
+
+    IF EXISTS (
+        WITH RECURSIVE runtime_roles AS (
+            SELECT role.oid
+              FROM pg_catalog.pg_roles AS role
+             WHERE role.rolname = 'app_ingestion_runtime'
+            UNION
+            SELECT member.oid
+              FROM runtime_roles AS parent
+              JOIN pg_catalog.pg_auth_members AS membership
+                ON membership.roleid = parent.oid
+              JOIN pg_catalog.pg_roles AS member
+                ON member.oid = membership.member
+        )
+        SELECT 1
+          FROM pg_catalog.pg_proc AS procedure
+          CROSS JOIN runtime_roles AS runtime_role
+         WHERE procedure.oid IN (
+                   'pg_catalog.lo_create(oid)'::pg_catalog.regprocedure,
+                   'pg_catalog.lo_creat(integer)'::pg_catalog.regprocedure,
+                   'pg_catalog.lo_from_bytea(oid, bytea)'::pg_catalog.regprocedure
+               )
+           AND (
+               pg_catalog.has_function_privilege(
+                   runtime_role.oid,
+                   procedure.oid,
+                   'EXECUTE'
+               )
+               OR pg_catalog.has_function_privilege(
+                   runtime_role.oid,
+                   procedure.oid,
+                   'EXECUTE WITH GRANT OPTION'
+               )
+           )
+        UNION ALL
+        SELECT 1
+          FROM pg_catalog.pg_proc AS procedure
+          CROSS JOIN LATERAL pg_catalog.aclexplode(
+              COALESCE(
+                  procedure.proacl,
+                  pg_catalog.acldefault('f'::"char", procedure.proowner)
+              )
+          ) AS acl
+         WHERE procedure.oid IN (
+                   'pg_catalog.lo_create(oid)'::pg_catalog.regprocedure,
+                   'pg_catalog.lo_creat(integer)'::pg_catalog.regprocedure,
+                   'pg_catalog.lo_from_bytea(oid, bytea)'::pg_catalog.regprocedure
+               )
+           AND acl.privilege_type = 'EXECUTE'
+           AND (
+               acl.grantee = 0::OID
+               OR EXISTS (
+                   SELECT 1
+                     FROM runtime_roles AS runtime_role
+                    WHERE acl.grantee = runtime_role.oid
+                       OR (
+                           acl.grantee <> 0::OID
+                           AND (
+                               pg_catalog.pg_has_role(
+                                   runtime_role.oid,
+                                   acl.grantee,
+                                   'USAGE'
+                               )
+                               OR pg_catalog.pg_has_role(
+                                   runtime_role.oid,
+                                   acl.grantee,
+                                   set_role_membership_mode
+                               )
+                           )
+                       )
+               )
+           )
+    ) THEN
+        RAISE EXCEPTION
+            'runtime member can execute a large-object creator';
+    END IF;
+
+    IF EXISTS (
+        WITH RECURSIVE runtime_roles AS (
+            SELECT role.oid
+              FROM pg_catalog.pg_roles AS role
+             WHERE role.rolname = 'app_ingestion_runtime'
+            UNION
+            SELECT member.oid
+              FROM runtime_roles AS parent
+              JOIN pg_catalog.pg_auth_members AS membership
+                ON membership.roleid = parent.oid
+              JOIN pg_catalog.pg_roles AS member
+                ON member.oid = membership.member
+        )
+        SELECT 1
+          FROM pg_catalog.pg_largeobject_metadata AS large_object
+         WHERE EXISTS (
+                   SELECT 1
+                     FROM runtime_roles AS runtime_role
+                    WHERE large_object.lomowner = runtime_role.oid
+                       OR pg_catalog.pg_has_role(
+                           runtime_role.oid,
+                           large_object.lomowner,
+                           'USAGE'
+                       )
+                       OR pg_catalog.pg_has_role(
+                           runtime_role.oid,
+                           large_object.lomowner,
+                           set_role_membership_mode
+                       )
+               )
+            OR EXISTS (
+                   SELECT 1
+                     FROM pg_catalog.aclexplode(
+                         COALESCE(
+                             large_object.lomacl,
+                             pg_catalog.acldefault(
+                                 'L'::"char",
+                                 large_object.lomowner
+                             )
+                         )
+                     ) AS acl
+                    WHERE (
+                              acl.privilege_type IN ('SELECT', 'UPDATE')
+                              OR acl.is_grantable
+                          )
+                      AND (
+                          acl.grantee = 0::OID
+                          OR EXISTS (
+                              SELECT 1
+                                FROM runtime_roles AS runtime_role
+                               WHERE acl.grantee = runtime_role.oid
+                                  OR (
+                                      acl.grantee <> 0::OID
+                                      AND (
+                                          pg_catalog.pg_has_role(
+                                              runtime_role.oid,
+                                              acl.grantee,
+                                              'USAGE'
+                                          )
+                                          OR pg_catalog.pg_has_role(
+                                              runtime_role.oid,
+                                              acl.grantee,
+                                              set_role_membership_mode
+                                          )
+                                      )
+                                  )
+                          )
+                      )
+               )
+    ) THEN
+        RAISE EXCEPTION
+            'runtime member has a large-object capability';
+    END IF;
 
     IF EXISTS (
         WITH RECURSIVE runtime_roles AS (

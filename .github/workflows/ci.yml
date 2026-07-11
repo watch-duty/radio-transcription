@@ -768,6 +768,7 @@ jobs:
           legacy_role="ci_ingestion_legacy_${{ matrix.postgres-version }}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
           creator_role="ci_ingestion_creator_${{ matrix.postgres-version }}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
           ownership_fixture="ci_runtime_owned_collation_${{ matrix.postgres-version }}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          large_object_fixture=""
           runtime_password=$(openssl rand -hex 32)
           legacy_password=$(openssl rand -hex 32)
           admin_dsn="postgresql://postgres:postgres@localhost:5432/postgres"
@@ -783,6 +784,7 @@ jobs:
           export INGESTION_LEGACY_ROLE="$legacy_role"
           export INGESTION_RUNTIME_CREATOR_ROLE="$creator_role"
           export INGESTION_OWNERSHIP_FIXTURE="$ownership_fixture"
+          export INGESTION_LARGE_OBJECT_FIXTURE="$large_object_fixture"
           export INGESTION_RUNTIME_PASSWORD="$runtime_password"
           export INGESTION_LEGACY_PASSWORD="$legacy_password"
 
@@ -791,6 +793,22 @@ jobs:
             trap - EXIT
             set +e
             cleanup_status=0
+
+            if ! psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          ALTER ROLE ALL RESET session_replication_role;
+          SQL
+            then
+              echo "::error::Failed to remove the global-all-role parameter drift"
+              cleanup_status=1
+            fi
+
+            if ! psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          ALTER ROLE ALL RESET lo_compat_privileges;
+          SQL
+            then
+              echo "::error::Failed to remove the global large-object compatibility drift"
+              cleanup_status=1
+            fi
 
             if ! psql -X -v ON_ERROR_STOP=1 <<'SQL'
           ALTER DATABASE postgres RESET session_replication_role;
@@ -807,6 +825,25 @@ jobs:
             then
               echo "::error::Failed to remove the ownership drift fixture"
               cleanup_status=1
+            fi
+
+            if [ -n "$large_object_fixture" ]; then
+              if [[ ! "$large_object_fixture" =~ ^[0-9]+$ ]]; then
+                echo "::error::Invalid large-object cleanup identity: $large_object_fixture"
+                cleanup_status=1
+              else
+                export INGESTION_LARGE_OBJECT_FIXTURE="$large_object_fixture"
+                if ! psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          \getenv large_object_fixture INGESTION_LARGE_OBJECT_FIXTURE
+          SELECT pg_catalog.lo_unlink(large_object.oid)
+          FROM pg_catalog.pg_largeobject_metadata AS large_object
+          WHERE large_object.oid = :large_object_fixture::oid;
+          SQL
+                then
+                  echo "::error::Failed to unlink the large-object drift fixture"
+                  cleanup_status=1
+                fi
+              fi
             fi
 
             for role_name in "$runtime_role" "$legacy_role" "$creator_role"; do
@@ -897,12 +934,27 @@ jobs:
           SQL
           unset INGESTION_RUNTIME_PASSWORD INGESTION_LEGACY_PASSWORD
 
+          large_object_fixture=$(psql -X -v ON_ERROR_STOP=1 -t -A \
+            -c "SELECT pg_catalog.lo_from_bytea(0, decode('00', 'hex'))")
+          if [[ ! "$large_object_fixture" =~ ^[0-9]+$ ]]; then
+            echo "::error::Unexpected large-object fixture identity: $large_object_fixture"
+            exit 1
+          fi
+          export INGESTION_LARGE_OBJECT_FIXTURE="$large_object_fixture"
+
           echo "Starting parameter/default-ACL drift recovery fixture..."
           psql -X -v ON_ERROR_STOP=1 <<'SQL'
           \getenv runtime_role INGESTION_RUNTIME_ROLE
           \getenv creator_role INGESTION_RUNTIME_CREATOR_ROLE
+          \getenv large_object_fixture INGESTION_LARGE_OBJECT_FIXTURE
           GRANT SET, ALTER SYSTEM ON PARAMETER session_replication_role
               TO PUBLIC, app_ingestion_runtime, :"runtime_role";
+          GRANT SET, ALTER SYSTEM ON PARAMETER lo_compat_privileges
+              TO PUBLIC, app_ingestion_runtime, :"runtime_role";
+          ALTER ROLE ALL
+              SET session_replication_role = replica;
+          ALTER ROLE ALL
+              SET lo_compat_privileges = on;
           ALTER ROLE :"runtime_role"
               SET session_replication_role = replica;
           ALTER ROLE :"runtime_role" IN DATABASE postgres
@@ -933,6 +985,22 @@ jobs:
           ALTER DEFAULT PRIVILEGES FOR ROLE :"creator_role" IN SCHEMA public
               GRANT ALL PRIVILEGES ON TYPES
               TO PUBLIC, app_ingestion_runtime, :"runtime_role";
+          GRANT EXECUTE ON FUNCTION
+              pg_catalog.lo_create(oid),
+              pg_catalog.lo_creat(integer),
+              pg_catalog.lo_from_bytea(oid, bytea)
+              TO PUBLIC;
+          GRANT EXECUTE ON FUNCTION
+              pg_catalog.lo_create(oid),
+              pg_catalog.lo_creat(integer),
+              pg_catalog.lo_from_bytea(oid, bytea)
+              TO app_ingestion_runtime, :"runtime_role"
+              WITH GRANT OPTION;
+          GRANT SELECT, UPDATE ON LARGE OBJECT :large_object_fixture
+              TO PUBLIC;
+          GRANT SELECT, UPDATE ON LARGE OBJECT :large_object_fixture
+              TO app_ingestion_runtime, :"runtime_role"
+              WITH GRANT OPTION;
           SQL
 
           echo "Starting SET-ROLE-only default-ACL fixture..."

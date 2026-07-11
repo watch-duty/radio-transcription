@@ -26,6 +26,7 @@ _LEGACY_DSN_ENV = "INGESTION_LEGACY_TEST_DSN"
 _RUNTIME_ROLE_ENV = "INGESTION_RUNTIME_ROLE"
 _LEGACY_ROLE_ENV = "INGESTION_LEGACY_ROLE"
 _CREATOR_ROLE_ENV = "INGESTION_RUNTIME_CREATOR_ROLE"
+_LARGE_OBJECT_FIXTURE_ENV = "INGESTION_LARGE_OBJECT_FIXTURE"
 _REQUIRED_ENV = "INGESTION_RUNTIME_EXTERNAL_POSTGRES_REQUIRED"
 _SOURCE_TYPE = feed_store.SourceType.BCFY_CALLS
 _ACTOR_ID = "service_account:gcp:ingestion-runtime-privilege-test"
@@ -43,6 +44,18 @@ _EXPECTED_LEGACY_TABLE_PRIVILEGES = {
     "feed_properties": frozenset({"SELECT", "UPDATE"}),
     "feed_audit_events": frozenset({"SELECT", "INSERT"}),
 }
+_LARGE_OBJECT_CREATION_SIGNATURES = frozenset(
+    {
+        "lo_create(oid)",
+        "lo_creat(integer)",
+        "lo_from_bytea(oid,bytea)",
+    }
+)
+_LARGE_OBJECT_CREATION_PROBES = (
+    "SELECT pg_catalog.lo_create(0)",
+    "SELECT pg_catalog.lo_creat(0)",
+    "SELECT pg_catalog.lo_from_bytea(0, decode('00', 'hex'))",
+)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -79,6 +92,13 @@ def _configured_identifier(name: str) -> str:
     if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value) is None:
         pytest.fail(f"{name} must be a simple PostgreSQL identifier")
     return value
+
+
+def _configured_oid(name: str) -> int:
+    value = _configured_value(name)
+    if re.fullmatch(r"[0-9]+", value) is None or int(value) <= 0:
+        pytest.fail(f"{name} must be a positive PostgreSQL OID")
+    return int(value)
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
@@ -132,6 +152,121 @@ async def _role_name(pool: asyncpg.Pool) -> str:
     role = await pool.fetchval("SELECT current_user")
     assert isinstance(role, str)
     return role
+
+
+async def _large_object_creation_privileges(
+    admin_pool: asyncpg.Pool,
+    role: str,
+) -> list[asyncpg.Record]:
+    return await admin_pool.fetch(
+        """
+        SELECT
+            procedure.oid::pg_catalog.regprocedure::text AS signature,
+            pg_catalog.has_function_privilege(
+                $1,
+                procedure.oid,
+                'EXECUTE'
+            ) AS allowed,
+            pg_catalog.has_function_privilege(
+                $1,
+                procedure.oid,
+                'EXECUTE WITH GRANT OPTION'
+            ) AS grantable
+        FROM pg_catalog.pg_proc AS procedure
+        WHERE procedure.oid IN (
+            'pg_catalog.lo_create(oid)'::pg_catalog.regprocedure,
+            'pg_catalog.lo_creat(integer)'::pg_catalog.regprocedure,
+            'pg_catalog.lo_from_bytea(oid, bytea)'::pg_catalog.regprocedure
+        )
+        ORDER BY procedure.oid::pg_catalog.regprocedure::text
+        """,
+        role,
+    )
+
+
+async def _large_object_capabilities(
+    admin_pool: asyncpg.Pool,
+    role: str,
+) -> list[asyncpg.Record]:
+    server_version = int(await admin_pool.fetchval("SHOW server_version_num"))
+    set_role_membership_mode = "SET" if server_version >= 160000 else "MEMBER"
+    return await admin_pool.fetch(
+        """
+        SELECT
+            large_object.oid,
+            privilege.name,
+            pg_catalog.pg_has_role(
+                $1,
+                large_object.lomowner,
+                'USAGE'
+            ) OR pg_catalog.pg_has_role(
+                $1,
+                large_object.lomowner,
+                $2
+            ) AS owner_capability,
+            COALESCE(
+                pg_catalog.bool_or(
+                    acl.privilege_type = privilege.name
+                    AND CASE
+                        WHEN acl.grantee = 0::oid THEN TRUE
+                        ELSE pg_catalog.pg_has_role(
+                            $1,
+                            acl.grantee,
+                            'USAGE'
+                        ) OR pg_catalog.pg_has_role(
+                            $1,
+                            acl.grantee,
+                            $2
+                        )
+                    END
+                ),
+                FALSE
+            ) AS allowed,
+            COALESCE(
+                pg_catalog.bool_or(
+                    acl.privilege_type = privilege.name
+                    AND acl.is_grantable
+                    AND CASE
+                        WHEN acl.grantee = 0::oid THEN TRUE
+                        ELSE pg_catalog.pg_has_role(
+                            $1,
+                            acl.grantee,
+                            'USAGE'
+                        ) OR pg_catalog.pg_has_role(
+                            $1,
+                            acl.grantee,
+                            $2
+                        )
+                    END
+                ),
+                FALSE
+            ) AS grantable
+        FROM pg_catalog.pg_largeobject_metadata AS large_object
+        CROSS JOIN (VALUES ('SELECT'), ('UPDATE')) AS privilege(name)
+        LEFT JOIN LATERAL pg_catalog.aclexplode(
+            COALESCE(
+                large_object.lomacl,
+                pg_catalog.acldefault('L'::"char", large_object.lomowner)
+            )
+        ) AS acl ON TRUE
+        GROUP BY large_object.oid, large_object.lomowner, privilege.name
+        ORDER BY large_object.oid, privilege.name
+        """,
+        role,
+        set_role_membership_mode,
+    )
+
+
+async def _assert_no_large_object_capabilities(
+    admin_pool: asyncpg.Pool,
+    role: str,
+) -> None:
+    capabilities = await _large_object_capabilities(admin_pool, role)
+    assert capabilities, "CI must provide an existing large object"
+    assert not any(
+        row["owner_capability"] or row["allowed"] or row["grantable"]
+        for row in capabilities
+    )
 
 
 async def _assert_admin_connection(
@@ -435,6 +570,51 @@ async def test_limited_login_identities_are_isolated(
         )
         == "origin"
     )
+    assert (
+        await runtime_pool.fetchval(
+            "SELECT pg_catalog.current_setting('lo_compat_privileges')"
+        )
+        == "off"
+    )
+    assert (
+        await legacy_pool.fetchval(
+            "SELECT pg_catalog.current_setting('lo_compat_privileges')"
+        )
+        == "off"
+    )
+
+    for limited_role in (runtime_role, legacy_role):
+        creation_privileges = await _large_object_creation_privileges(
+            admin_pool,
+            limited_role,
+        )
+        assert {row["signature"] for row in creation_privileges} == (
+            _LARGE_OBJECT_CREATION_SIGNATURES
+        )
+        assert not any(row["allowed"] for row in creation_privileges)
+        assert not any(row["grantable"] for row in creation_privileges)
+
+    admin_creation_privileges = await _large_object_creation_privileges(
+        admin_pool,
+        admin_role,
+    )
+    assert {row["signature"] for row in admin_creation_privileges} == (
+        _LARGE_OBJECT_CREATION_SIGNATURES
+    )
+    assert all(row["allowed"] for row in admin_creation_privileges)
+    assert all(row["grantable"] for row in admin_creation_privileges)
+
+    large_object_fixture = _configured_oid(_LARGE_OBJECT_FIXTURE_ENV)
+    large_object_owner = await admin_pool.fetchval(
+        """
+        SELECT owner.rolname
+        FROM pg_catalog.pg_largeobject_metadata AS large_object
+        JOIN pg_catalog.pg_roles AS owner ON owner.oid = large_object.lomowner
+        WHERE large_object.oid = $1::oid
+        """,
+        large_object_fixture,
+    )
+    assert large_object_owner == admin_role
 
     rows = await admin_pool.fetch(
         """
@@ -770,6 +950,8 @@ async def test_runtime_effective_privileges_are_the_exact_contract(
     )
     assert unsafe_parameter_grants == 0
 
+    await _assert_no_large_object_capabilities(admin_pool, runtime_role)
+
     owned_objects = await admin_pool.fetchval(
         """
         SELECT pg_catalog.count(*)
@@ -1011,6 +1193,8 @@ async def test_legacy_feed_store_runs_through_separate_limited_pool(
             FROM pg_catalog.pg_parameter_acl AS parameter_acl
             UNION
             SELECT 'session_replication_role'::text
+            UNION
+            SELECT 'lo_compat_privileges'::text
         )
         SELECT pg_catalog.count(*)
         FROM privileged_parameters AS parameter
@@ -1024,6 +1208,8 @@ async def test_legacy_feed_store_runs_through_separate_limited_pool(
         legacy_role,
     )
     assert unsafe_parameter_grants == 0
+
+    await _assert_no_large_object_capabilities(admin_pool, legacy_role)
 
     eligible = await admin_pool.fetch(
         """
@@ -1186,6 +1372,38 @@ async def _assert_denied(
         await runtime_pool.execute(statement)
 
 
+async def _assert_large_object_creation_denied(
+    admin_pool: asyncpg.Pool,
+    runtime_pool: asyncpg.Pool,
+    statement: str,
+) -> None:
+    """Roll back every creator probe and defensively unlink any survivor."""
+    unexpected_oid: int | None = None
+    denied = False
+    try:
+        async with runtime_pool.acquire() as connection:
+            transaction = connection.transaction()
+            await transaction.start()
+            try:
+                try:
+                    unexpected_oid = await connection.fetchval(statement)
+                except asyncpg.InsufficientPrivilegeError:
+                    denied = True
+            finally:
+                await transaction.rollback()
+    finally:
+        if unexpected_oid is not None:
+            await admin_pool.fetch(
+                """
+                SELECT pg_catalog.lo_unlink(large_object.oid)
+                FROM pg_catalog.pg_largeobject_metadata AS large_object
+                WHERE large_object.oid = $1::oid
+                """,
+                unexpected_oid,
+            )
+    assert denied, f"large-object creator unexpectedly succeeded: {statement}"
+
+
 async def _public_has_direct_select_on_feeds(
     runtime_pool: asyncpg.Pool,
 ) -> bool:
@@ -1213,6 +1431,7 @@ async def _public_has_direct_select_on_feeds(
 
 
 async def test_every_forbidden_runtime_action_is_denied(
+    admin_pool: asyncpg.Pool,
     runtime_pool: asyncpg.Pool,
     privilege_fixtures: _PrivilegeFixtures,
 ) -> None:
@@ -1246,11 +1465,32 @@ async def test_every_forbidden_runtime_action_is_denied(
         "(id integer)",
         f"CREATE SCHEMA {_fixture_identifier('runtime_schema_denied')}",
         "SET session_replication_role = replica",
+        "SET lo_compat_privileges = on",
         "SET ROLE postgres",
         f"CREATE ROLE {_fixture_identifier('runtime_role_denied')}",
     )
     for statement in statements:
         await _assert_denied(runtime_pool, statement)
+
+    large_objects_before = {
+        row["oid"]
+        for row in await admin_pool.fetch(
+            "SELECT oid FROM pg_catalog.pg_largeobject_metadata ORDER BY oid"
+        )
+    }
+    for statement in _LARGE_OBJECT_CREATION_PROBES:
+        await _assert_large_object_creation_denied(
+            admin_pool,
+            runtime_pool,
+            statement,
+        )
+    large_objects_after = {
+        row["oid"]
+        for row in await admin_pool.fetch(
+            "SELECT oid FROM pg_catalog.pg_largeobject_metadata ORDER BY oid"
+        )
+    }
+    assert large_objects_after == large_objects_before
 
     # PostgreSQL reports a warning, not an error, when a role without grant
     # options tries to grant a privilege it merely holds. Prove the operation

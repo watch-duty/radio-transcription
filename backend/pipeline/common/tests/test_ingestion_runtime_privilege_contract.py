@@ -176,10 +176,17 @@ def test_parameter_and_ownership_boundaries_use_complete_catalogs() -> None:
         assert "pg_catalog.pg_parameter_acl" in sql
         assert "pg_catalog.pg_db_role_setting" in sql
         assert "REVOKE SET, ALTER SYSTEM ON PARAMETER" in sql
+        assert "ALTER ROLE ALL RESET %I" in sql
         assert "ALTER ROLE %I RESET %I" in sql
         assert "ALTER ROLE %I IN DATABASE %I RESET %I" in sql
         assert "ALTER DATABASE %I RESET %I" in sql
+        assert re.search(
+            r"role_setting\.setrole = 0::OID\s+"
+            r"AND role_setting\.setdatabase IN \(\s*0::OID,",
+            sql,
+        )
         assert "session_replication_role" in sql
+        assert "lo_compat_privileges" in sql
         assert "pg_catalog.has_parameter_privilege" in sql
 
     for sql in (bootstrap, reconcile, contract):
@@ -189,9 +196,80 @@ def test_parameter_and_ownership_boundaries_use_complete_catalogs() -> None:
         assert "pg_catalog.has_parameter_privilege" in sql
         assert "pg_catalog.pg_db_role_setting" in sql
         assert "session_replication_role" in sql
+        assert "lo_compat_privileges" in sql
 
     assert "pg_catalog.pg_parameter_acl" in contract
     assert "pg_catalog.aclexplode(parameter_acl.paracl)" in contract
+
+
+def test_large_object_creation_and_existing_acl_surfaces_are_closed() -> None:
+    bootstrap = _normalized_sql(_BOOTSTRAP_PATH)
+    reconcile = _normalized_sql(_RECONCILE_PATH)
+    contract = _normalized_sql(_CONTRACT_PATH)
+    combined = f"{bootstrap} {reconcile} {contract}"
+
+    creation_signatures = (
+        "pg_catalog.lo_create(oid)",
+        "pg_catalog.lo_creat(integer)",
+        "pg_catalog.lo_from_bytea(oid, bytea)",
+    )
+    exact_public_revoke = (
+        "REVOKE EXECUTE ON FUNCTION "
+        f"{', '.join(creation_signatures)} FROM PUBLIC CASCADE;"
+    )
+    for sql in (bootstrap, reconcile):
+        assert exact_public_revoke in sql
+        assert "REVOKE SELECT, UPDATE ON LARGE OBJECT" in sql
+        for signature in creation_signatures:
+            assert signature in sql
+
+    for sql in (bootstrap, reconcile, contract):
+        assert "pg_catalog.pg_largeobject_metadata" in sql
+        assert "large_object.lomowner" in sql
+        assert "large_object.lomacl" in sql
+        assert re.search(r"pg_catalog\.acldefault\(\s*'L'", sql)
+        assert "pg_catalog.aclexplode" in sql
+        assert "acl.is_grantable" in sql
+
+        creator_start = sql.index(
+            "FROM pg_catalog.pg_proc AS procedure CROSS JOIN runtime_roles"
+        )
+        creator_end = sql.index(
+            "large-object creator'",
+            creator_start,
+        )
+        creator_assertion = sql[creator_start:creator_end]
+        assert "acl.grantee = runtime_role.oid" in creator_assertion
+        assert "acl.grantee = 0::OID" in creator_assertion
+        assert "'USAGE'" in creator_assertion
+        assert "set_role_membership_mode" in creator_assertion
+
+        acl_start = sql.index(
+            "FROM pg_catalog.pg_largeobject_metadata AS large_object",
+            creator_end,
+        )
+        acl_end = sql.index("large-object capability'", acl_start)
+        acl_assertion = sql[acl_start:acl_end]
+        for reachability_contract in (
+            "large_object.lomowner = runtime_role.oid",
+            "pg_catalog.pg_has_role( runtime_role.oid, "
+            "large_object.lomowner, 'USAGE' )",
+            "pg_catalog.pg_has_role( runtime_role.oid, "
+            "large_object.lomowner, set_role_membership_mode )",
+            "acl.grantee = runtime_role.oid",
+            "pg_catalog.pg_has_role( runtime_role.oid, acl.grantee, 'USAGE' )",
+            "pg_catalog.pg_has_role( runtime_role.oid, acl.grantee, "
+            "set_role_membership_mode )",
+        ):
+            assert reachability_contract in acl_assertion
+
+    assert not re.search(
+        r"REVOKE\s+(?:EXECUTE|ALL(?:\s+PRIVILEGES)?)\s+ON\s+ALL\s+"
+        r"(?:FUNCTIONS|PROCEDURES|ROUTINES)\s+"
+        r"IN\s+SCHEMA\s+pg_catalog",
+        combined,
+        flags=re.IGNORECASE,
+    )
 
 
 def test_every_public_schema_creator_has_all_default_acl_classes_normalized() -> (
@@ -259,6 +337,92 @@ def test_database_contract_checks_effective_rights_and_every_object_class() -> (
     assert "type_relation.relkind = 'c'" in sql
 
 
+def _assert_workflow_large_object_contract(workflow: str) -> None:
+    for token in (
+        "INGESTION_LARGE_OBJECT_FIXTURE",
+        "GRANT SELECT, UPDATE ON LARGE OBJECT",
+        "pg_catalog.lo_unlink",
+        "ALTER ROLE ALL RESET lo_compat_privileges",
+    ):
+        assert token in workflow
+    for creation_routine in (
+        "pg_catalog.lo_create(oid)",
+        "pg_catalog.lo_creat(integer)",
+        "pg_catalog.lo_from_bytea(oid, bytea)",
+    ):
+        assert creation_routine in workflow
+    for global_setting_drift in (
+        "ALTER ROLE ALL\n              SET session_replication_role = replica;",
+        "ALTER ROLE ALL\n              SET lo_compat_privileges = on;",
+    ):
+        assert global_setting_drift in workflow
+
+    cleanup_start = workflow.index("cleanup_ephemeral_roles()")
+    cleanup_end = workflow.index("trap cleanup_ephemeral_roles EXIT")
+    cleanup = workflow[cleanup_start:cleanup_end]
+    guarded_psql_blocks = [
+        match.group(1)
+        for match in re.finditer(
+            r"if ! psql -X -v ON_ERROR_STOP=1 <<'SQL'\n"
+            r"(.*?)\n\s*SQL\n\s*then",
+            cleanup,
+            flags=re.DOTALL,
+        )
+    ]
+    cleanup_operations = (
+        "ALTER ROLE ALL RESET session_replication_role;",
+        "ALTER ROLE ALL RESET lo_compat_privileges;",
+        "SELECT pg_catalog.lo_unlink(large_object.oid)",
+    )
+    operation_blocks = [
+        next(
+            index
+            for index, block in enumerate(guarded_psql_blocks)
+            if operation in block
+        )
+        for operation in cleanup_operations
+    ]
+    assert len(set(operation_blocks)) == len(cleanup_operations)
+
+    fixture_start = workflow.index("large_object_fixture=$(psql", cleanup_end)
+    fixture_end = workflow.index(
+        'echo "Starting parameter/default-ACL drift recovery fixture..."',
+        fixture_start,
+    )
+    fixture_setup = workflow[fixture_start:fixture_end]
+    assignment = (
+        "large_object_fixture=$(psql -X -v ON_ERROR_STOP=1 -t -A \\\n"
+        '            -c "SELECT pg_catalog.lo_from_bytea(0, '
+        "decode('00', 'hex'))\")"
+    )
+    assert assignment in fixture_setup
+    validation = 'if [[ ! "$large_object_fixture" =~ ^[0-9]+$ ]]; then'
+    export = 'export INGESTION_LARGE_OBJECT_FIXTURE="$large_object_fixture"'
+    assert fixture_setup.index(assignment) < fixture_setup.index(validation)
+    assert fixture_setup.index(validation) < fixture_setup.index("exit 1")
+    assert fixture_setup.index("exit 1") < fixture_setup.index(export)
+    assert fixture_setup.count(export) == 1
+
+
+def _assert_integration_large_object_contract(integration_test: str) -> None:
+    assert "SET lo_compat_privileges = on" in integration_test
+    for creation_probe in (
+        "SELECT pg_catalog.lo_create(0)",
+        "SELECT pg_catalog.lo_creat(0)",
+        "SELECT pg_catalog.lo_from_bytea(0, decode('00', 'hex'))",
+    ):
+        assert creation_probe in integration_test
+    for token in (
+        "pg_catalog.pg_largeobject_metadata",
+        "large_object.lomowner",
+        "large_object.lomacl",
+        "acl.is_grantable",
+        "transaction.rollback()",
+        "pg_catalog.lo_unlink",
+    ):
+        assert token in integration_test
+
+
 def test_ci_uses_isolated_admin_runtime_legacy_and_creator_identities() -> None:
     workflow = _read(".github/workflows/ci.yml")
     integration_test = _read(
@@ -282,8 +446,10 @@ def test_ci_uses_isolated_admin_runtime_legacy_and_creator_identities() -> None:
         "DROP OWNED BY",
         "Starting SET-ROLE-only default-ACL fixture",
         "ALTER DATABASE postgres",
+        "ALTER ROLE ALL",
     ):
         assert token in workflow
+    _assert_workflow_large_object_contract(workflow)
     trap_index = workflow.index("trap cleanup_ephemeral_roles EXIT")
     setup_begin = workflow.index("BEGIN;", trap_index)
     runtime_create = workflow.index('CREATE ROLE :"runtime_role"', setup_begin)
@@ -312,6 +478,27 @@ def test_ci_uses_isolated_admin_runtime_legacy_and_creator_identities() -> None:
     )
     drop_role = workflow.index('DROP ROLE :"cleanup_role";', cleanup_start)
     assert cleanup_start < drop_owned < drop_role < trap_index
+    assert (
+        cleanup_start
+        < workflow.index(
+            "ALTER ROLE ALL RESET session_replication_role;",
+            cleanup_start,
+        )
+        < trap_index
+    )
+    assert (
+        cleanup_start
+        < workflow.index(
+            "ALTER ROLE ALL RESET lo_compat_privileges;",
+            cleanup_start,
+        )
+        < trap_index
+    )
+    assert (
+        cleanup_start
+        < workflow.index("pg_catalog.lo_unlink", cleanup_start)
+        < drop_owned
+    )
     assert "DROP ROLE IF EXISTS" not in workflow
     assert (
         ">/dev/null"
@@ -329,6 +516,7 @@ def test_ci_uses_isolated_admin_runtime_legacy_and_creator_identities() -> None:
     assert "future_type" in integration_test
     assert "SET session_replication_role = replica" in integration_test
     assert "current_setting('session_replication_role')" in integration_test
+    _assert_integration_large_object_contract(integration_test)
     assert (
         "claim_unclaimed(\n        _SOURCE_TYPE,\n        privilege_fixtures.lease_owner,\n        1,"
         in integration_test
