@@ -7,7 +7,7 @@ DECLARE
     expected_relation RECORD;
     actual_relation RECORD;
     actual_type RECORD;
-    owned_object_count BIGINT;
+    role_oid OID;
 BEGIN
     PERFORM pg_catalog.set_config(
         'search_path',
@@ -78,23 +78,8 @@ BEGIN
             'public.feed_status must remain owned by postgres';
     END IF;
 
-    SELECT
-        (SELECT pg_catalog.count(*)
-           FROM pg_catalog.pg_database AS database
-          WHERE database.datdba = role.oid)
-      + (SELECT pg_catalog.count(*)
-           FROM pg_catalog.pg_namespace AS namespace
-          WHERE namespace.nspowner = role.oid)
-      + (SELECT pg_catalog.count(*)
-           FROM pg_catalog.pg_class AS relation
-          WHERE relation.relowner = role.oid)
-      + (SELECT pg_catalog.count(*)
-           FROM pg_catalog.pg_proc AS procedure
-          WHERE procedure.proowner = role.oid)
-      + (SELECT pg_catalog.count(*)
-           FROM pg_catalog.pg_type AS type
-          WHERE type.typowner = role.oid)
-      INTO owned_object_count
+    SELECT role.oid
+      INTO role_oid
       FROM pg_catalog.pg_roles AS role
      WHERE role.rolname = 'app_ingestion_runtime';
 
@@ -102,7 +87,27 @@ BEGIN
         RAISE EXCEPTION
             'missing expected ingestion privilege role app_ingestion_runtime';
     END IF;
-    IF owned_object_count <> 0 THEN
+    IF EXISTS (
+        WITH RECURSIVE runtime_roles AS (
+            SELECT role.oid
+              FROM pg_catalog.pg_roles AS role
+             WHERE role.rolname = 'app_ingestion_runtime'
+            UNION
+            SELECT member.oid
+              FROM runtime_roles AS parent
+              JOIN pg_catalog.pg_auth_members AS membership
+                ON membership.roleid = parent.oid
+              JOIN pg_catalog.pg_roles AS member
+                ON member.oid = membership.member
+        )
+        SELECT 1
+          FROM pg_catalog.pg_shdepend AS dependency
+          JOIN runtime_roles AS owner
+            ON owner.oid = dependency.refobjid
+         WHERE dependency.refclassid =
+                   'pg_catalog.pg_authid'::pg_catalog.regclass
+           AND dependency.deptype = 'o'
+    ) THEN
         RAISE EXCEPTION
             'app_ingestion_runtime must not own database objects';
     END IF;
@@ -141,6 +146,138 @@ BEGIN
     END LOOP;
 END
 $memberships$;
+
+-- Parameter ACLs are cluster-shared. Remove every explicit privileged-GUC
+-- grant from PUBLIC and the complete app member closure before postconditions.
+DO $parameter_acl_revoke$
+DECLARE
+    parameter_state RECORD;
+    runtime_grantee RECORD;
+BEGIN
+    FOR parameter_state IN
+        SELECT parameter_acl.parname
+          FROM pg_catalog.pg_parameter_acl AS parameter_acl
+        UNION
+        SELECT 'session_replication_role'::TEXT
+         ORDER BY parname
+    LOOP
+        EXECUTE pg_catalog.format(
+            'REVOKE SET, ALTER SYSTEM ON PARAMETER %I FROM PUBLIC CASCADE',
+            parameter_state.parname
+        );
+        FOR runtime_grantee IN
+            WITH RECURSIVE runtime_roles AS (
+                SELECT role.oid, role.rolname
+                  FROM pg_catalog.pg_roles AS role
+                 WHERE role.rolname = 'app_ingestion_runtime'
+                UNION
+                SELECT member.oid, member.rolname
+                  FROM runtime_roles AS parent
+                  JOIN pg_catalog.pg_auth_members AS membership
+                    ON membership.roleid = parent.oid
+                  JOIN pg_catalog.pg_roles AS member
+                    ON member.oid = membership.member
+            )
+            SELECT rolname FROM runtime_roles ORDER BY oid
+        LOOP
+            EXECUTE pg_catalog.format(
+                'REVOKE SET, ALTER SYSTEM ON PARAMETER %I FROM %I CASCADE',
+                parameter_state.parname,
+                runtime_grantee.rolname
+            );
+        END LOOP;
+    END LOOP;
+END
+$parameter_acl_revoke$;
+
+-- Role/database defaults can apply a SUSET parameter during login even when
+-- the role has no SET ACL. Clear those defaults across the complete current
+-- member closure before granting application rights.
+DO $unsafe_role_settings$
+DECLARE
+    unsafe_setting RECORD;
+BEGIN
+    FOR unsafe_setting IN
+        WITH RECURSIVE runtime_roles AS (
+            SELECT role.oid, role.rolname
+              FROM pg_catalog.pg_roles AS role
+             WHERE role.rolname = 'app_ingestion_runtime'
+            UNION
+            SELECT member.oid, member.rolname
+              FROM runtime_roles AS parent
+              JOIN pg_catalog.pg_auth_members AS membership
+                ON membership.roleid = parent.oid
+              JOIN pg_catalog.pg_roles AS member
+                ON member.oid = membership.member
+        )
+        SELECT
+            runtime_role.rolname,
+            role_setting.setdatabase,
+            pg_catalog.split_part(configuration.setting, '=', 1)
+                AS parameter_name,
+            FALSE AS database_wide
+          FROM runtime_roles AS runtime_role
+          JOIN pg_catalog.pg_db_role_setting AS role_setting
+            ON role_setting.setrole = runtime_role.oid
+          CROSS JOIN LATERAL
+            unnest(role_setting.setconfig) AS configuration(setting)
+          JOIN pg_catalog.pg_settings AS parameter
+            ON parameter.name =
+               pg_catalog.split_part(configuration.setting, '=', 1)
+         WHERE role_setting.setdatabase IN (
+                   0::OID,
+                   (
+                       SELECT database.oid
+                         FROM pg_catalog.pg_database AS database
+                        WHERE database.datname = pg_catalog.current_database()
+                   )
+               )
+           AND parameter.context IN ('superuser', 'superuser-backend')
+        UNION ALL
+        SELECT
+            NULL::NAME AS rolname,
+            role_setting.setdatabase,
+            pg_catalog.split_part(configuration.setting, '=', 1)
+                AS parameter_name,
+            TRUE AS database_wide
+          FROM pg_catalog.pg_db_role_setting AS role_setting
+          CROSS JOIN LATERAL
+            unnest(role_setting.setconfig) AS configuration(setting)
+          JOIN pg_catalog.pg_settings AS parameter
+            ON parameter.name =
+               pg_catalog.split_part(configuration.setting, '=', 1)
+         WHERE role_setting.setrole = 0::OID
+           AND role_setting.setdatabase = (
+                   SELECT database.oid
+                     FROM pg_catalog.pg_database AS database
+                    WHERE database.datname = pg_catalog.current_database()
+               )
+           AND parameter.context IN ('superuser', 'superuser-backend')
+         ORDER BY setdatabase, rolname NULLS FIRST, parameter_name
+    LOOP
+        IF unsafe_setting.database_wide THEN
+            EXECUTE pg_catalog.format(
+                'ALTER DATABASE %I RESET %I',
+                pg_catalog.current_database(),
+                unsafe_setting.parameter_name
+            );
+        ELSIF unsafe_setting.setdatabase = 0::OID THEN
+            EXECUTE pg_catalog.format(
+                'ALTER ROLE %I RESET %I',
+                unsafe_setting.rolname,
+                unsafe_setting.parameter_name
+            );
+        ELSE
+            EXECUTE pg_catalog.format(
+                'ALTER ROLE %I IN DATABASE %I RESET %I',
+                unsafe_setting.rolname,
+                pg_catalog.current_database(),
+                unsafe_setting.parameter_name
+            );
+        END IF;
+    END LOOP;
+END
+$unsafe_role_settings$;
 
 DO $database_revoke$
 BEGIN
@@ -207,40 +344,131 @@ BEGIN
 END
 $type_revoke$;
 
--- Global revokes remove built-in function/type PUBLIC defaults; scoped revokes
--- also remove explicit public-schema additions.
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres
-    REVOKE ALL PRIVILEGES ON TABLES FROM app_ingestion_runtime;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres
-    REVOKE ALL PRIVILEGES ON TABLES FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres
-    REVOKE ALL PRIVILEGES ON SEQUENCES FROM app_ingestion_runtime;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres
-    REVOKE ALL PRIVILEGES ON SEQUENCES FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres
-    REVOKE ALL PRIVILEGES ON ROUTINES FROM app_ingestion_runtime;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres
-    REVOKE EXECUTE ON ROUTINES FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres
-    REVOKE ALL PRIVILEGES ON TYPES FROM app_ingestion_runtime;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres
-    REVOKE USAGE ON TYPES FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-    REVOKE ALL PRIVILEGES ON TABLES FROM app_ingestion_runtime;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-    REVOKE ALL PRIVILEGES ON TABLES FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-    REVOKE ALL PRIVILEGES ON SEQUENCES FROM app_ingestion_runtime;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-    REVOKE ALL PRIVILEGES ON SEQUENCES FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-    REVOKE ALL PRIVILEGES ON ROUTINES FROM app_ingestion_runtime;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-    REVOKE EXECUTE ON ROUTINES FROM PUBLIC;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-    REVOKE ALL PRIVILEGES ON TYPES FROM app_ingestion_runtime;
-ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public
-    REVOKE USAGE ON TYPES FROM PUBLIC;
+-- Normalize global and public-scoped defaults for every role that can create
+-- in public. Existing pg_catalog built-ins are deliberately untouched.
+DO $creator_default_acl_revoke$
+DECLARE
+    creator_role RECORD;
+    runtime_grantee RECORD;
+BEGIN
+    FOR creator_role IN
+        SELECT role.oid, role.rolname
+          FROM pg_catalog.pg_roles AS role
+         WHERE pg_catalog.has_schema_privilege(
+                   role.oid,
+                   'public',
+                   'CREATE'
+               )
+         ORDER BY role.oid
+    LOOP
+        EXECUTE pg_catalog.format(
+            'ALTER DEFAULT PRIVILEGES FOR ROLE %I '
+            'REVOKE ALL PRIVILEGES ON TABLES FROM PUBLIC CASCADE',
+            creator_role.rolname
+        );
+        EXECUTE pg_catalog.format(
+            'ALTER DEFAULT PRIVILEGES FOR ROLE %I '
+            'REVOKE ALL PRIVILEGES ON SEQUENCES FROM PUBLIC CASCADE',
+            creator_role.rolname
+        );
+        EXECUTE pg_catalog.format(
+            'ALTER DEFAULT PRIVILEGES FOR ROLE %I '
+            'REVOKE ALL PRIVILEGES ON ROUTINES FROM PUBLIC CASCADE',
+            creator_role.rolname
+        );
+        EXECUTE pg_catalog.format(
+            'ALTER DEFAULT PRIVILEGES FOR ROLE %I '
+            'REVOKE ALL PRIVILEGES ON TYPES FROM PUBLIC CASCADE',
+            creator_role.rolname
+        );
+        EXECUTE pg_catalog.format(
+            'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public '
+            'REVOKE ALL PRIVILEGES ON TABLES FROM PUBLIC CASCADE',
+            creator_role.rolname
+        );
+        EXECUTE pg_catalog.format(
+            'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public '
+            'REVOKE ALL PRIVILEGES ON SEQUENCES FROM PUBLIC CASCADE',
+            creator_role.rolname
+        );
+        EXECUTE pg_catalog.format(
+            'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public '
+            'REVOKE ALL PRIVILEGES ON ROUTINES FROM PUBLIC CASCADE',
+            creator_role.rolname
+        );
+        EXECUTE pg_catalog.format(
+            'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public '
+            'REVOKE ALL PRIVILEGES ON TYPES FROM PUBLIC CASCADE',
+            creator_role.rolname
+        );
+
+        FOR runtime_grantee IN
+            WITH RECURSIVE runtime_roles AS (
+                SELECT role.oid, role.rolname
+                  FROM pg_catalog.pg_roles AS role
+                 WHERE role.rolname = 'app_ingestion_runtime'
+                UNION
+                SELECT member.oid, member.rolname
+                  FROM runtime_roles AS parent
+                  JOIN pg_catalog.pg_auth_members AS membership
+                    ON membership.roleid = parent.oid
+                  JOIN pg_catalog.pg_roles AS member
+                    ON member.oid = membership.member
+            )
+            SELECT rolname FROM runtime_roles ORDER BY oid
+        LOOP
+            EXECUTE pg_catalog.format(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE %I '
+                'REVOKE ALL PRIVILEGES ON TABLES FROM %I CASCADE',
+                creator_role.rolname,
+                runtime_grantee.rolname
+            );
+            EXECUTE pg_catalog.format(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE %I '
+                'REVOKE ALL PRIVILEGES ON SEQUENCES FROM %I CASCADE',
+                creator_role.rolname,
+                runtime_grantee.rolname
+            );
+            EXECUTE pg_catalog.format(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE %I '
+                'REVOKE ALL PRIVILEGES ON ROUTINES FROM %I CASCADE',
+                creator_role.rolname,
+                runtime_grantee.rolname
+            );
+            EXECUTE pg_catalog.format(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE %I '
+                'REVOKE ALL PRIVILEGES ON TYPES FROM %I CASCADE',
+                creator_role.rolname,
+                runtime_grantee.rolname
+            );
+            EXECUTE pg_catalog.format(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public '
+                'REVOKE ALL PRIVILEGES ON TABLES FROM %I CASCADE',
+                creator_role.rolname,
+                runtime_grantee.rolname
+            );
+            EXECUTE pg_catalog.format(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public '
+                'REVOKE ALL PRIVILEGES ON SEQUENCES FROM %I CASCADE',
+                creator_role.rolname,
+                runtime_grantee.rolname
+            );
+            EXECUTE pg_catalog.format(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public '
+                'REVOKE ALL PRIVILEGES ON ROUTINES FROM %I CASCADE',
+                creator_role.rolname,
+                runtime_grantee.rolname
+            );
+            EXECUTE pg_catalog.format(
+                'ALTER DEFAULT PRIVILEGES FOR ROLE %I IN SCHEMA public '
+                'REVOKE ALL PRIVILEGES ON TYPES FROM %I CASCADE',
+                creator_role.rolname,
+                runtime_grantee.rolname
+            );
+        END LOOP;
+    END LOOP;
+END
+$creator_default_acl_revoke$;
 
 DO $database_grant$
 BEGIN
@@ -265,7 +493,6 @@ DECLARE
     role_oid OID;
     role_state RECORD;
     parent_count BIGINT;
-    default_table_grant_count BIGINT;
     table_privileges TEXT[] := ARRAY[
         'SELECT',
         'INSERT',
@@ -283,6 +510,8 @@ DECLARE
     ];
     privilege_state RECORD;
     expected_allowed BOOLEAN;
+    settable_parameter_grant BOOLEAN;
+    set_role_membership_mode TEXT;
 BEGIN
     SELECT
         oid,
@@ -323,25 +552,265 @@ BEGIN
             'app_ingestion_runtime retains an inherited parent role';
     END IF;
 
-    SELECT pg_catalog.count(*)
-      INTO default_table_grant_count
-      FROM pg_catalog.pg_default_acl AS defaults
-      CROSS JOIN LATERAL pg_catalog.aclexplode(defaults.defaclacl) AS acl
-     WHERE defaults.defaclobjtype = 'r'
-       AND acl.grantee IN (0::OID, role_oid)
-       AND acl.privilege_type IN (
-           'SELECT',
-           'INSERT',
-           'UPDATE',
-           'DELETE',
-           'TRUNCATE',
-           'REFERENCES',
-           'TRIGGER',
-           'MAINTAIN'
-       );
-    IF default_table_grant_count <> 0 THEN
+    IF EXISTS (
+        WITH RECURSIVE runtime_roles AS (
+            SELECT role.oid
+              FROM pg_catalog.pg_roles AS role
+             WHERE role.rolname = 'app_ingestion_runtime'
+            UNION
+            SELECT member.oid
+              FROM runtime_roles AS parent
+              JOIN pg_catalog.pg_auth_members AS membership
+                ON membership.roleid = parent.oid
+              JOIN pg_catalog.pg_roles AS member
+                ON member.oid = membership.member
+        )
+        SELECT 1
+          FROM pg_catalog.pg_shdepend AS dependency
+          JOIN runtime_roles AS owner
+            ON owner.oid = dependency.refobjid
+         WHERE dependency.refclassid =
+                   'pg_catalog.pg_authid'::pg_catalog.regclass
+           AND dependency.deptype = 'o'
+    ) THEN
         RAISE EXCEPTION
-            'future tables expose DML to app_ingestion_runtime or PUBLIC';
+            'app_ingestion_runtime must not own database objects';
+    END IF;
+
+    IF EXISTS (
+        WITH RECURSIVE runtime_roles AS (
+            SELECT role.oid
+              FROM pg_catalog.pg_roles AS role
+             WHERE role.rolname = 'app_ingestion_runtime'
+            UNION
+            SELECT member.oid
+              FROM runtime_roles AS parent
+              JOIN pg_catalog.pg_auth_members AS membership
+                ON membership.roleid = parent.oid
+              JOIN pg_catalog.pg_roles AS member
+                ON member.oid = membership.member
+        ),
+        privileged_parameters AS (
+            SELECT parameter_acl.parname
+              FROM pg_catalog.pg_parameter_acl AS parameter_acl
+            UNION
+            SELECT 'session_replication_role'::TEXT
+        )
+        SELECT 1
+          FROM runtime_roles AS runtime_role
+          CROSS JOIN privileged_parameters AS parameter
+          CROSS JOIN (VALUES ('SET'), ('ALTER SYSTEM')) AS access(privilege)
+         WHERE pg_catalog.has_parameter_privilege(
+                   runtime_role.oid,
+                   parameter.parname,
+                   access.privilege
+               )
+    ) THEN
+        RAISE EXCEPTION
+            'app ingestion member has a privileged parameter grant';
+    END IF;
+
+    IF pg_catalog.current_setting('server_version_num')::INTEGER >= 160000 THEN
+        EXECUTE $parameter_set_query$
+            WITH RECURSIVE runtime_roles AS (
+                SELECT role.oid
+                  FROM pg_catalog.pg_roles AS role
+                 WHERE role.rolname = 'app_ingestion_runtime'
+                UNION
+                SELECT member.oid
+                  FROM runtime_roles AS parent
+                  JOIN pg_catalog.pg_auth_members AS membership
+                    ON membership.roleid = parent.oid
+                  JOIN pg_catalog.pg_roles AS member
+                    ON member.oid = membership.member
+            )
+            SELECT EXISTS (
+                SELECT 1
+                  FROM runtime_roles AS runtime_role
+                  CROSS JOIN pg_catalog.pg_parameter_acl AS parameter_acl
+                  CROSS JOIN LATERAL
+                    pg_catalog.aclexplode(parameter_acl.paracl) AS acl
+                 WHERE acl.grantee <> 0::OID
+                   AND pg_catalog.pg_has_role(
+                       runtime_role.oid,
+                       acl.grantee,
+                       'SET'
+                   )
+            )
+        $parameter_set_query$
+        INTO settable_parameter_grant;
+    ELSE
+        WITH RECURSIVE runtime_roles AS (
+            SELECT role.oid
+              FROM pg_catalog.pg_roles AS role
+             WHERE role.rolname = 'app_ingestion_runtime'
+            UNION
+            SELECT member.oid
+              FROM runtime_roles AS parent
+              JOIN pg_catalog.pg_auth_members AS membership
+                ON membership.roleid = parent.oid
+              JOIN pg_catalog.pg_roles AS member
+                ON member.oid = membership.member
+        )
+        SELECT EXISTS (
+            SELECT 1
+              FROM runtime_roles AS runtime_role
+              CROSS JOIN pg_catalog.pg_parameter_acl AS parameter_acl
+              CROSS JOIN LATERAL
+                pg_catalog.aclexplode(parameter_acl.paracl) AS acl
+             WHERE acl.grantee <> 0::OID
+               AND pg_catalog.pg_has_role(
+                   runtime_role.oid,
+                   acl.grantee,
+                   'MEMBER'
+               )
+        )
+        INTO settable_parameter_grant;
+    END IF;
+    IF settable_parameter_grant THEN
+        RAISE EXCEPTION
+            'app ingestion member can SET ROLE to a parameter grantee';
+    END IF;
+
+    IF EXISTS (
+        WITH RECURSIVE runtime_roles AS (
+            SELECT role.oid
+              FROM pg_catalog.pg_roles AS role
+             WHERE role.rolname = 'app_ingestion_runtime'
+            UNION
+            SELECT member.oid
+              FROM runtime_roles AS parent
+              JOIN pg_catalog.pg_auth_members AS membership
+                ON membership.roleid = parent.oid
+              JOIN pg_catalog.pg_roles AS member
+                ON member.oid = membership.member
+        )
+        SELECT 1
+          FROM pg_catalog.pg_db_role_setting AS role_setting
+          CROSS JOIN LATERAL
+            unnest(role_setting.setconfig) AS configuration(setting)
+          JOIN pg_catalog.pg_settings AS parameter
+            ON parameter.name =
+               pg_catalog.split_part(configuration.setting, '=', 1)
+         WHERE (
+                   (
+                       role_setting.setrole IN (
+                           SELECT runtime_role.oid FROM runtime_roles AS runtime_role
+                       )
+                       AND role_setting.setdatabase IN (
+                           0::OID,
+                           (
+                               SELECT database.oid
+                                 FROM pg_catalog.pg_database AS database
+                                WHERE database.datname =
+                                      pg_catalog.current_database()
+                           )
+                       )
+                   )
+                   OR (
+                       role_setting.setrole = 0::OID
+                       AND role_setting.setdatabase = (
+                           SELECT database.oid
+                             FROM pg_catalog.pg_database AS database
+                            WHERE database.datname =
+                                  pg_catalog.current_database()
+                       )
+                   )
+               )
+           AND parameter.context IN ('superuser', 'superuser-backend')
+    ) THEN
+        RAISE EXCEPTION
+            'app ingestion member has an unsafe role parameter default';
+    END IF;
+
+    set_role_membership_mode := CASE
+        WHEN pg_catalog.current_setting('server_version_num')::INTEGER >= 160000
+        THEN 'SET'
+        ELSE 'MEMBER'
+    END;
+
+    IF EXISTS (
+        WITH RECURSIVE runtime_roles AS (
+            SELECT role.oid
+              FROM pg_catalog.pg_roles AS role
+             WHERE role.rolname = 'app_ingestion_runtime'
+            UNION
+            SELECT member.oid
+              FROM runtime_roles AS parent
+              JOIN pg_catalog.pg_auth_members AS membership
+                ON membership.roleid = parent.oid
+              JOIN pg_catalog.pg_roles AS member
+                ON member.oid = membership.member
+        ),
+        creators AS (
+            SELECT role.oid
+              FROM pg_catalog.pg_roles AS role
+             WHERE pg_catalog.has_schema_privilege(
+                       role.oid,
+                       'public',
+                       'CREATE'
+                   )
+        ),
+        object_classes(defacl_type, acldefault_type) AS (
+            VALUES
+                ('r'::"char", 'r'::"char"),
+                ('S'::"char", 's'::"char"),
+                ('f'::"char", 'f'::"char"),
+                ('T'::"char", 'T'::"char")
+        ),
+        future_acl AS (
+            SELECT
+                creator.oid AS creator_oid,
+                object_class.defacl_type,
+                COALESCE(
+                    global_acl.defaclacl,
+                    pg_catalog.acldefault(
+                        object_class.acldefault_type,
+                        creator.oid
+                    )
+                ) || COALESCE(
+                    schema_acl.defaclacl,
+                    '{}'::pg_catalog.aclitem[]
+                ) AS acl
+              FROM creators AS creator
+              CROSS JOIN object_classes AS object_class
+              LEFT JOIN pg_catalog.pg_default_acl AS global_acl
+                ON global_acl.defaclrole = creator.oid
+               AND global_acl.defaclnamespace = 0
+               AND global_acl.defaclobjtype = object_class.defacl_type
+              LEFT JOIN pg_catalog.pg_default_acl AS schema_acl
+                ON schema_acl.defaclrole = creator.oid
+               AND schema_acl.defaclnamespace =
+                       'public'::pg_catalog.regnamespace
+               AND schema_acl.defaclobjtype = object_class.defacl_type
+        )
+        SELECT 1
+          FROM future_acl
+          CROSS JOIN LATERAL pg_catalog.aclexplode(future_acl.acl) AS acl
+         WHERE acl.grantee = 0::OID
+            OR EXISTS (
+                SELECT 1
+                  FROM runtime_roles AS runtime_role
+                 WHERE acl.grantee = runtime_role.oid
+                    OR (
+                        acl.grantee <> 0::OID
+                        AND pg_catalog.pg_has_role(
+                            runtime_role.oid,
+                            acl.grantee,
+                            'USAGE'
+                        )
+                    ) OR (
+                        acl.grantee <> 0::OID
+                        AND pg_catalog.pg_has_role(
+                            runtime_role.oid,
+                            acl.grantee,
+                            set_role_membership_mode
+                        )
+                    )
+            )
+    ) THEN
+        RAISE EXCEPTION
+            'future public objects expose PUBLIC or an app ingestion member';
     END IF;
 
     IF pg_catalog.current_setting('server_version_num')::INTEGER >= 170000 THEN

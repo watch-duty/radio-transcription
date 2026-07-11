@@ -132,18 +132,13 @@ def test_scripts_forbid_future_dml_schema_create_sequences_and_functions() -> (
         rf"GRANT (?:ALL|CREATE)[^;]*ON SCHEMA [^;]*TO {_ROLE}",
         combined,
     )
-    assert "ALTER DEFAULT PRIVILEGES FOR ROLE postgres" in combined
-    assert f"REVOKE ALL PRIVILEGES ON TABLES FROM {_ROLE}" in combined
-    assert (
-        "ALTER DEFAULT PRIVILEGES FOR ROLE postgres "
-        "REVOKE EXECUTE ON ROUTINES FROM PUBLIC;"
-    ) in combined
-    assert (
-        "ALTER DEFAULT PRIVILEGES FOR ROLE postgres "
-        "REVOKE USAGE ON TYPES FROM PUBLIC;"
-    ) in combined
-    assert "REVOKE EXECUTE ON ROUTINES FROM PUBLIC" in combined
-    assert "REVOKE USAGE ON TYPES FROM PUBLIC" in combined
+    assert "DO $creator_default_acl_revoke$" in combined
+    assert "ALTER DEFAULT PRIVILEGES FOR ROLE %I" in combined
+    for object_class in ("TABLES", "SEQUENCES", "ROUTINES", "TYPES"):
+        assert f"REVOKE ALL PRIVILEGES ON {object_class} FROM %I" in combined
+        assert (
+            f"REVOKE ALL PRIVILEGES ON {object_class} FROM PUBLIC" in combined
+        )
 
 
 def test_reconciliation_fails_closed_and_keeps_postgres_ownership() -> None:
@@ -172,6 +167,59 @@ def test_reconciliation_fails_closed_and_keeps_postgres_ownership() -> None:
     assert "type_relation.relkind = 'c'" in sql
 
 
+def test_parameter_and_ownership_boundaries_use_complete_catalogs() -> None:
+    bootstrap = _normalized_sql(_BOOTSTRAP_PATH)
+    reconcile = _normalized_sql(_RECONCILE_PATH)
+    contract = _normalized_sql(_CONTRACT_PATH)
+
+    for sql in (bootstrap, reconcile):
+        assert "pg_catalog.pg_parameter_acl" in sql
+        assert "pg_catalog.pg_db_role_setting" in sql
+        assert "REVOKE SET, ALTER SYSTEM ON PARAMETER" in sql
+        assert "ALTER ROLE %I RESET %I" in sql
+        assert "ALTER ROLE %I IN DATABASE %I RESET %I" in sql
+        assert "ALTER DATABASE %I RESET %I" in sql
+        assert "session_replication_role" in sql
+        assert "pg_catalog.has_parameter_privilege" in sql
+
+    for sql in (bootstrap, reconcile, contract):
+        assert "pg_catalog.pg_shdepend" in sql
+        assert "'pg_catalog.pg_authid'::pg_catalog.regclass" in sql
+        assert "dependency.deptype = 'o'" in sql
+        assert "pg_catalog.has_parameter_privilege" in sql
+        assert "pg_catalog.pg_db_role_setting" in sql
+        assert "session_replication_role" in sql
+
+    assert "pg_catalog.pg_parameter_acl" in contract
+    assert "pg_catalog.aclexplode(parameter_acl.paracl)" in contract
+
+
+def test_every_public_schema_creator_has_all_default_acl_classes_normalized() -> (
+    None
+):
+    bootstrap = _normalized_sql(_BOOTSTRAP_PATH)
+    reconcile = _normalized_sql(_RECONCILE_PATH)
+    contract = _normalized_sql(_CONTRACT_PATH)
+
+    for sql in (bootstrap, reconcile):
+        assert "pg_catalog.has_schema_privilege" in sql
+        assert "SELECT role.oid, role.rolname" in sql
+        assert "'public', 'CREATE'" in sql
+        assert "ALTER DEFAULT PRIVILEGES FOR ROLE %I" in sql
+        for object_class in ("TABLES", "SEQUENCES", "ROUTINES", "TYPES"):
+            assert f"ON {object_class} FROM PUBLIC" in sql
+            assert f"ON {object_class} FROM %I" in sql
+        assert "set_role_membership_mode" in sql
+        assert "'SET'" in sql
+        assert "'MEMBER'" in sql
+
+    assert "pg_catalog.pg_default_acl" in contract
+    assert "pg_catalog.acldefault" in contract
+    assert "defaults.defaclobjtype IN ('r', 'S', 'f', 'T')" in contract
+    assert "pg_catalog.has_schema_privilege" in contract
+    assert "set_role_membership_mode" in contract
+
+
 def test_database_contract_checks_effective_rights_and_every_object_class() -> (
     None
 ):
@@ -196,6 +244,8 @@ def test_database_contract_checks_effective_rights_and_every_object_class() -> (
         "pg_catalog.pg_proc",
         "pg_catalog.pg_type",
         "pg_catalog.pg_default_acl",
+        "pg_catalog.pg_parameter_acl",
+        "pg_catalog.pg_shdepend",
     ):
         assert catalog in sql
     assert "PUBLIC/inherited effective privilege" in sql
