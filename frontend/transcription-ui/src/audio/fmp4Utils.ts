@@ -143,3 +143,55 @@ export function parseAudioTimescale(initSegment: ArrayBuffer): number | null {
   const timescale = view.getUint32(timescaleOffset, false);
   return timescale > 0 ? timescale : null;
 }
+
+const TRUN_FLAG_DATA_OFFSET = 0x000001;
+const TRUN_FLAG_FIRST_SAMPLE_FLAGS = 0x000004;
+const TRUN_FLAG_SAMPLE_DURATION = 0x000100;
+const TRUN_FLAG_SAMPLE_SIZE = 0x000200;
+const TRUN_FLAG_SAMPLE_FLAGS = 0x000400;
+const TRUN_FLAG_SAMPLE_CTO = 0x000800;
+
+/**
+ * Sums the per-sample durations declared in a media segment's `moof > traf > trun` box, in
+ * the track's timescale units. ffmpeg writes an accurate (short) duration for a fragment's
+ * final sample when it doesn't fill a whole AAC frame, even though the frame itself still
+ * decodes to a full 1024 samples — this is how a compliant player is meant to know to
+ * truncate that trailing padding rather than play it. Returns null if `trun` is absent or
+ * doesn't carry explicit per-sample durations (no default-duration fallback to `tfhd`/`trex`
+ * is implemented, since this backend's ffmpeg output always writes them explicitly).
+ */
+export function parseTrunTotalDuration(
+  mediaSegment: ArrayBuffer
+): number | null {
+  const trun = findBoxPath(mediaSegment, ['moof', 'traf', 'trun']);
+  if (!trun) return null;
+
+  const view = new DataView(mediaSegment);
+  const payloadStart = trun.offset + trun.headerSize;
+  if (payloadStart + 8 > mediaSegment.byteLength) return null;
+
+  const flags = view.getUint32(payloadStart, false) & 0x00ffffff;
+  if (!(flags & TRUN_FLAG_SAMPLE_DURATION)) return null;
+
+  const sampleCount = view.getUint32(payloadStart + 4, false);
+  let offset = payloadStart + 8;
+  if (flags & TRUN_FLAG_DATA_OFFSET) offset += 4;
+  if (flags & TRUN_FLAG_FIRST_SAMPLE_FLAGS) offset += 4;
+
+  const fieldsPerSample =
+    1 +
+    (flags & TRUN_FLAG_SAMPLE_SIZE ? 1 : 0) +
+    (flags & TRUN_FLAG_SAMPLE_FLAGS ? 1 : 0) +
+    (flags & TRUN_FLAG_SAMPLE_CTO ? 1 : 0);
+  if (offset + sampleCount * fieldsPerSample * 4 > mediaSegment.byteLength) {
+    return null;
+  }
+
+  let totalDuration = 0;
+  for (let i = 0; i < sampleCount; i++) {
+    totalDuration += view.getUint32(offset, false);
+    offset += fieldsPerSample * 4;
+  }
+
+  return totalDuration;
+}

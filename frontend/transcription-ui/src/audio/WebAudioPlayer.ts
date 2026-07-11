@@ -3,7 +3,12 @@ import {
   VOLUME_MIN_DB,
   VOLUME_SNAP_DB,
 } from './audioSettings';
-import { inspectMp4Boxes, parseAudioTimescale, splitFmp4 } from './fmp4Utils';
+import {
+  inspectMp4Boxes,
+  parseAudioTimescale,
+  parseTrunTotalDuration,
+  splitFmp4,
+} from './fmp4Utils';
 
 // ffmpeg's native AAC-LC encoder ("-c:a aac") has a fixed one-frame MDCT lookahead delay of
 // 1024 samples before it emits real audio. AudioProcessor.transcode_to_m4a encodes each
@@ -445,9 +450,26 @@ class MseSequenceSession implements PlaybackController {
           ? AAC_ENCODER_PRIMING_SAMPLES / this.audioTimescale
           : 0;
       const startTime = groupStartTime + primingSeconds;
+
+      // Reset to a wide-open window first: appendWindowStart can never exceed the *current*
+      // appendWindowEnd (or vice versa) without throwing, and appendWindowEnd carries over
+      // from the previous (shorter) append otherwise.
+      this.sourceBuffer.appendWindowEnd = Infinity;
       if (primingSeconds > 0) {
         this.sourceBuffer.appendWindowStart = startTime;
       }
+
+      // Trim this segment's own trailing AAC padding too. ffmpeg's trun box declares an
+      // accurate (short) duration for a fragment's final sample when it doesn't fill a whole
+      // 1024-sample frame, even though the frame still decodes to the full 1024 samples —
+      // without enforcing that declared duration, the padding plays as extra, undeclared audio
+      // immediately before the next segment's (already leading-trimmed) real content begins.
+      const declaredDurationSamples = parseTrunTotalDuration(mediaSegment);
+      if (declaredDurationSamples !== null && this.audioTimescale) {
+        this.sourceBuffer.appendWindowEnd =
+          startTime + declaredDurationSamples / this.audioTimescale;
+      }
+
       if (!isFirstAppend) {
         this.pendingDeclickBoundaries.push(startTime);
       }

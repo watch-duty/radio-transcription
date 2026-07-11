@@ -187,18 +187,41 @@ function createMdhdBox(timescale: number): ArrayBuffer {
   new DataView(box).setUint32(8 + 4 + 4 * 2, timescale, false);
   return box;
 }
+// flags: data_offset_present(0x1) + sample_duration_present(0x100) + sample_size_present(0x200)
+function createTrunBox(sampleDurations: number[]): ArrayBuffer {
+  const flags = 0x000301;
+  const box = createBox('trun', 4 + 4 + 4 + sampleDurations.length * 8);
+  const view = new DataView(box);
+  view.setUint32(8, flags, false);
+  view.setUint32(12, sampleDurations.length, false);
+  view.setInt32(16, 0, false); // data_offset
+  let offset = 20;
+  for (const duration of sampleDurations) {
+    view.setUint32(offset, duration, false);
+    view.setUint32(offset + 4, 0, false); // sample_size (unused by the SUT)
+    offset += 8;
+  }
+  return box;
+}
 // Mirrors real ffmpeg `frag_keyframe+empty_moov+default_base_moof` output shape:
-// ftyp+moov(with mdhd timescale)+moof+mdat+mfra, one independent file per segment.
-function createFmp4File(timescale: number): ArrayBuffer {
+// ftyp+moov(with mdhd timescale)+moof(traf/trun)+mdat+mfra, one independent file per segment.
+// `trunDurations` defaults to a single full 1024-sample frame (no trailing padding to trim).
+function createFmp4File(
+  timescale: number,
+  trunDurations: number[] = [1024]
+): ArrayBuffer {
   const moov = createContainerBox('moov', [
     createContainerBox('trak', [
       createContainerBox('mdia', [createMdhdBox(timescale)]),
     ]),
   ]);
+  const moof = createContainerBox('moof', [
+    createContainerBox('traf', [createTrunBox(trunDurations)]),
+  ]);
   return concatBuffers([
     createBox('ftyp', 8),
     moov,
-    createBox('moof', 20),
+    moof,
     createBox('mdat', 100),
     createBox('mfra', 16),
   ]);
@@ -213,14 +236,16 @@ class MockSourceBuffer {
   buffered = { length: 1, end: () => this.bufferedEnd };
   listeners: Record<string, Array<() => void>> = {};
   appendWindowStartAtCall: number[] = [];
+  appendWindowEndAtCall: number[] = [];
   addEventListener = (type: string, cb: () => void) => {
     (this.listeners[type] ??= []).push(cb);
   };
   removeEventListener = vi.fn();
   appendBuffer = vi.fn(() => {
-    // Capture synchronously, since appendWindowStart is mutated in place before the
-    // next call — reading it later wouldn't reflect what was in effect at append time.
+    // Capture synchronously, since appendWindowStart/End are mutated in place before the
+    // next call — reading them later wouldn't reflect what was in effect at append time.
     this.appendWindowStartAtCall.push(this.appendWindowStart);
+    this.appendWindowEndAtCall.push(this.appendWindowEnd);
     this.bufferedEnd += 1;
     setTimeout(() => {
       (this.listeners['updateend'] ?? []).forEach((f) => f());
@@ -610,6 +635,51 @@ describe('WebAudioPlayer', () => {
     expect(gainParam.linearRampToValueAtTime).toHaveBeenCalledWith(
       baseGain,
       expect.closeTo(10.208, 5)
+    );
+  });
+
+  it('trims trailing AAC padding via appendWindowEnd using the trun-declared duration', async () => {
+    stubMseGlobals();
+    // seg-1's last frame is short by 80 samples (matches real ffmpeg output where the final
+    // AAC frame doesn't fill a whole 1024-sample block); seg-2 has no trailing padding.
+    stubFetchForTwoSegments(
+      createFmp4File(16000, [1024, 1024, 944]),
+      createFmp4File(16000, [1024])
+    );
+
+    const player = new WebAudioPlayer(new AudioContext());
+    const getNextSegment = vi
+      .fn()
+      .mockReturnValueOnce({
+        id: 'seg-2',
+        uri: 'https://example.com/seg-2.m4a',
+      })
+      .mockReturnValue(null);
+
+    player.loadSequence({
+      initialSegmentId: 'seg-1',
+      initialUri: 'https://example.com/seg-1.m4a',
+      callbacks: {},
+      getNextSegment,
+    });
+
+    MockMediaSource.current!.emit('sourceopen');
+
+    await vi.waitFor(() =>
+      expect(lastSourceBuffer.appendBuffer).toHaveBeenCalledTimes(2)
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // seg-1 starts at 0 and its trun declares 1024+1024+944 = 2992 samples of real duration,
+    // so its appendWindowEnd should truncate the extra 80-sample (5ms) pad rather than let it
+    // play as part of the buffered range.
+    expect(lastSourceBuffer.appendWindowEndAtCall[0]).toBeCloseTo(2992 / 16000);
+    // seg-2 starts after seg-1's *buffered* end (the mock's bufferedEnd, unrelated to the
+    // declared trun duration) plus the priming trim, and has no padding of its own to trim,
+    // so its own trun-declared duration (1024 samples) sets the window end just past that.
+    const seg2Start = 1 + 1024 / 16000;
+    expect(lastSourceBuffer.appendWindowEndAtCall[1]).toBeCloseTo(
+      seg2Start + 1024 / 16000
     );
   });
 });

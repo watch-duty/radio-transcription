@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 
-import { inspectMp4Boxes, parseAudioTimescale, splitFmp4 } from './fmp4Utils';
+import {
+  inspectMp4Boxes,
+  parseAudioTimescale,
+  parseTrunTotalDuration,
+  splitFmp4,
+} from './fmp4Utils';
 
 function createBox(type: string, payloadSize: number): ArrayBuffer {
   const size = 8 + payloadSize;
@@ -45,6 +50,46 @@ function createMdhdBox(timescale: number, version: 0 | 1 = 0): ArrayBuffer {
   view.setUint8(8, version);
   const timescaleOffset = 8 + 4 + fieldSize * 2; // skip version/flags + creation + modification
   view.setUint32(timescaleOffset, timescale, false);
+  return box;
+}
+
+// flags: data_offset_present(0x1) + sample_duration_present(0x100) + sample_size_present(0x200)
+const TRUN_FLAGS_DURATION_AND_SIZE = 0x000301;
+
+function createTrunBox(
+  sampleDurations: number[],
+  flags = TRUN_FLAGS_DURATION_AND_SIZE
+): ArrayBuffer {
+  const hasDataOffset = Boolean(flags & 0x000001);
+  const hasSampleDuration = Boolean(flags & 0x000100);
+  const hasSampleSize = Boolean(flags & 0x000200);
+  const fieldsPerSample = (hasSampleDuration ? 1 : 0) + (hasSampleSize ? 1 : 0);
+
+  const payloadSize =
+    4 + // version + flags
+    4 + // sample_count
+    (hasDataOffset ? 4 : 0) +
+    sampleDurations.length * fieldsPerSample * 4;
+  const box = createBox('trun', payloadSize);
+  const view = new DataView(box);
+  view.setUint32(8, flags, false); // version(0) + flags
+  view.setUint32(12, sampleDurations.length, false);
+
+  let offset = 16;
+  if (hasDataOffset) {
+    view.setInt32(offset, 0, false);
+    offset += 4;
+  }
+  for (const duration of sampleDurations) {
+    if (hasSampleDuration) {
+      view.setUint32(offset, duration, false);
+      offset += 4;
+    }
+    if (hasSampleSize) {
+      view.setUint32(offset, 0, false);
+      offset += 4;
+    }
+  }
   return box;
 }
 
@@ -162,5 +207,39 @@ describe('parseAudioTimescale', () => {
   it('returns null when moov/trak/mdia/mdhd is absent', () => {
     const buffer = concatBuffers([createBox('ftyp', 16), createBox('moov', 4)]);
     expect(parseAudioTimescale(buffer)).toBeNull();
+  });
+});
+
+describe('parseTrunTotalDuration', () => {
+  function buildMediaSegment(trun: ArrayBuffer): ArrayBuffer {
+    const traf = createContainerBox('traf', [trun]);
+    const moof = createContainerBox('moof', [traf]);
+    return concatBuffers([moof, createBox('mdat', 32)]);
+  }
+
+  it('sums declared per-sample durations, matching real ffmpeg output where the final AAC frame is shorter than 1024 samples', () => {
+    // Mirrors the real backend's trun: full 1024-sample frames, with a short final sample
+    // representing the true (un-padded) remainder of the segment's audio.
+    const durations = [1024, 1024, 1024, 1024, 944];
+    const mediaSegment = buildMediaSegment(createTrunBox(durations));
+    expect(parseTrunTotalDuration(mediaSegment)).toBe(
+      durations.reduce((a, b) => a + b, 0)
+    );
+  });
+
+  it('returns null when trun has no explicit per-sample durations', () => {
+    const flagsWithoutDuration = 0x000201; // data_offset + sample_size only
+    const mediaSegment = buildMediaSegment(
+      createTrunBox([1024, 1024], flagsWithoutDuration)
+    );
+    expect(parseTrunTotalDuration(mediaSegment)).toBeNull();
+  });
+
+  it('returns null when moof/traf/trun is absent', () => {
+    const mediaSegment = concatBuffers([
+      createBox('moof', 8),
+      createBox('mdat', 32),
+    ]);
+    expect(parseTrunTotalDuration(mediaSegment)).toBeNull();
   });
 });
