@@ -861,6 +861,9 @@ class OrderedStitchAudioFn(beam.DoFn):
         deferred_drain_timer.set(
             timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
         )
+        curr_context = (
+            transmission_context_state.read() or datatypes.IdleFeedState()
+        )
         if not curr_context.order_timer_active:
             curr_context = replace(curr_context, order_timer_active=True)
         _write_transmission_context(
@@ -1026,7 +1029,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                             traceparent=metadata.traceparent,
                             baggage=metadata.baggage,
                         )
-                    outputs, next_expected_ts = (
+                    outputs, curr_context, next_expected_ts = (
                         self.engine.process_ordering_chunk(
                             chunk=chunk,
                             feed_id=feed_id,
@@ -1285,6 +1288,10 @@ class OrderedStitchAudioFn(beam.DoFn):
 
                     for i, chunk in enumerate(elements_to_emit):
                         if i > 0 and self._is_bundle_budget_exhausted():
+                            curr_context = (
+                                transmission_context_state.read()
+                                or datatypes.IdleFeedState()
+                            )
                             for remaining_chunk in elements_to_emit[i:]:
                                 out_of_order_buffer_state.add(remaining_chunk)
                             if not curr_context.order_timer_active:
@@ -1321,7 +1328,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 traceparent=active_traceparent,
                                 baggage=active_baggage,
                             )
-                        outputs, next_expected_ts = (
+                        outputs, curr_context, next_expected_ts = (
                             self.engine.process_ordering_chunk(
                                 chunk=chunk,
                                 feed_id=feed_id,
@@ -1399,9 +1406,10 @@ class OrderedStitchAudioFn(beam.DoFn):
             # Cap the drain based on our remaining bundle capacity.
             # In a fresh timer-activated bundle, processed_in_bundle starts at 0, so
             # we can drain up to the full MAX_CHUNKS_PER_WINDMILL_BUNDLE (300 chunks).
+            initial_expected_ts = curr_context.expected_next_chunk_start_ms
             new_expected_next_ts, new_buffer_elements, elements_to_emit = (
                 seq_buf.drain_ready_elements(
-                    expected_next_ts=curr_context.expected_next_chunk_start_ms,
+                    expected_next_ts=initial_expected_ts,
                     buffer_elements=buffer_elements,
                     epsilon_ms=trans_constants.DEFAULT_FLOAT_TOLERANCE_MS,
                     max_emit=trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
@@ -1459,7 +1467,7 @@ class OrderedStitchAudioFn(beam.DoFn):
 
                 # Assume backfill under backlog
                 is_backfill = True
-                previous_expected_ts = curr_context.expected_next_chunk_start_ms
+                previous_expected_ts = initial_expected_ts
                 prefetched_futures = self.engine.prefetch_audio_futures(
                     elements_to_emit, task_logger
                 )
@@ -1490,7 +1498,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                             traceparent=active_traceparent,
                             baggage=active_baggage,
                         )
-                    outputs, next_expected_ts = (
+                    outputs, curr_context, next_expected_ts = (
                         self.engine.process_ordering_chunk(
                             chunk=chunk,
                             feed_id=feed_id,

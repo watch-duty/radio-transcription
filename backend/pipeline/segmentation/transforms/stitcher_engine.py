@@ -183,6 +183,7 @@ class StitcherEngine:
         prefetched_futures: AudioFutureMap | None = None,
     ) -> tuple[
         list[tuple[str, datatypes.FlushRequest] | tuple[str, dict[str, Any]]],
+        datatypes.TransmissionContext,
         int,
     ]:
         """Stitches a single element after session validation and OOO buffer restoral.
@@ -202,6 +203,7 @@ class StitcherEngine:
         Returns:
             A tuple of:
                 - A list of elements to emit (FlushRequest or TaggedOutput DLQ).
+                - The updated transmission context.
                 - The next expected sequence timestamp.
         """
         task_logger = _get_task_logger(
@@ -240,7 +242,7 @@ class StitcherEngine:
             transmission_context_state.clear()
         else:
             transmission_context_state.write(new_context)
-        return chunk_outputs, next_expected_ts
+        return chunk_outputs, new_context, next_expected_ts
 
     def handle_stale_transmission(
         self,
