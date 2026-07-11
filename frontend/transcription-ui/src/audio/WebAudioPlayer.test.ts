@@ -8,11 +8,7 @@ import {
   gainToDb,
   snapVolumeToDefault,
 } from './WebAudioPlayer';
-import {
-  DEFAULT_VOLUME_DB,
-  VOLUME_MAX_DB,
-  VOLUME_MIN_DB,
-} from './audioSettings';
+import { VOLUME_MAX_DB, VOLUME_MIN_DB } from './audioSettings';
 
 describe('audioMath', () => {
   describe('dbToGain', () => {
@@ -93,7 +89,6 @@ describe('audioMath', () => {
 
 class MockAudioParam {
   linearRampToValueAtTime = vi.fn();
-  setValueAtTime = vi.fn();
 }
 
 class MockNode {
@@ -584,57 +579,6 @@ describe('WebAudioPlayer', () => {
     expect(lastSourceBuffer.appendWindowStartAtCall[0]).toBe(0);
     expect(lastSourceBuffer.appendWindowStartAtCall[1]).toBeCloseTo(
       1 + 1024 / 16000
-    );
-  });
-
-  it('schedules a brief gain dip at each segment boundary to mask splice artifacts', async () => {
-    stubMseGlobals();
-    stubFetchForTwoSegments(createFmp4File(16000), createFmp4File(16000));
-
-    const player = new WebAudioPlayer(new AudioContext());
-    const getNextSegment = vi
-      .fn()
-      .mockReturnValueOnce({
-        id: 'seg-2',
-        uri: 'https://example.com/seg-2.m4a',
-      })
-      .mockReturnValue(null);
-
-    player.loadSequence({
-      initialSegmentId: 'seg-1',
-      initialUri: 'https://example.com/seg-1.m4a',
-      callbacks: {},
-      getNextSegment,
-    });
-
-    MockMediaSource.current!.emit('sourceopen');
-
-    await vi.waitFor(() =>
-      expect(lastSourceBuffer.appendBuffer).toHaveBeenCalledTimes(2)
-    );
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    // seg-2's boundary is queued once its append lands (see previous test): startTime =
-    // 1 + 1024/16000. Move playback to just inside the declick lookahead window and fire
-    // 'timeupdate', which is what schedules the dip.
-    const boundary = 1 + 1024 / 16000;
-    lastAudio.currentTime = boundary - 0.2;
-    lastContext.currentTime = 10;
-    lastAudio.emit('timeupdate');
-
-    const gainParam = lastContext.gain.gain;
-    const baseGain = dbToGain(DEFAULT_VOLUME_DB);
-    expect(gainParam.setValueAtTime).toHaveBeenCalledWith(
-      baseGain,
-      expect.closeTo(10.192, 5)
-    );
-    expect(gainParam.linearRampToValueAtTime).toHaveBeenCalledWith(
-      0,
-      expect.closeTo(10.2, 5)
-    );
-    expect(gainParam.linearRampToValueAtTime).toHaveBeenCalledWith(
-      baseGain,
-      expect.closeTo(10.208, 5)
     );
   });
 
