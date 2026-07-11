@@ -421,6 +421,12 @@ class MseSequenceSession implements PlaybackController {
           ? this.segmentTimeline[this.segmentTimeline.length - 1].endTime
           : 0;
 
+      // Explicitly anchor this append's timeline position rather than relying on 'sequence'
+      // mode's automatic continue-from-previous-append-end behavior, which may be derived from
+      // the previous segment's raw (untrimmed) decoded length rather than what its
+      // appendWindowEnd trim actually kept — silently reintroducing the padding as a gap.
+      this.sourceBuffer.timestampOffset = groupStartTime;
+
       // Trim this segment's leading AAC encoder priming so it doesn't play back as an
       // audible artifact right after the previous segment's real audio ends. The recorded
       // start time reflects where real audio actually begins, keeping getCurrentTime()/
@@ -444,10 +450,13 @@ class MseSequenceSession implements PlaybackController {
       // 1024-sample frame, even though the frame still decodes to the full 1024 samples —
       // without enforcing that declared duration, the padding plays as extra, undeclared audio
       // immediately before the next segment's (already leading-trimmed) real content begins.
+      // This duration is measured from the segment's own internal t=0 — i.e. from
+      // groupStartTime (where timestampOffset anchors it), not startTime, which is already
+      // shifted forward by this same segment's own leading-priming trim above.
       const declaredDurationSamples = parseTrunTotalDuration(mediaSegment);
       if (declaredDurationSamples !== null && this.audioTimescale) {
         this.sourceBuffer.appendWindowEnd =
-          startTime + declaredDurationSamples / this.audioTimescale;
+          groupStartTime + declaredDurationSamples / this.audioTimescale;
       }
 
       this.inFlightAppend = { segmentId: next.segmentId, startTime };

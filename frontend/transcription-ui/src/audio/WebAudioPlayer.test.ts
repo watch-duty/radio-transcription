@@ -224,12 +224,14 @@ function createFmp4File(
 
 class MockSourceBuffer {
   mode = '';
+  timestampOffset = 0;
   appendWindowStart = 0;
   appendWindowEnd = Infinity;
   updating = false;
   bufferedEnd = 0;
   buffered = { length: 1, end: () => this.bufferedEnd };
   listeners: Record<string, Array<() => void>> = {};
+  timestampOffsetAtCall: number[] = [];
   appendWindowStartAtCall: number[] = [];
   appendWindowEndAtCall: number[] = [];
   addEventListener = (type: string, cb: () => void) => {
@@ -237,8 +239,9 @@ class MockSourceBuffer {
   };
   removeEventListener = vi.fn();
   appendBuffer = vi.fn(() => {
-    // Capture synchronously, since appendWindowStart/End are mutated in place before the
-    // next call — reading them later wouldn't reflect what was in effect at append time.
+    // Capture synchronously, since these are mutated in place before the next call — reading
+    // them later wouldn't reflect what was in effect at append time.
+    this.timestampOffsetAtCall.push(this.timestampOffset);
     this.appendWindowStartAtCall.push(this.appendWindowStart);
     this.appendWindowEndAtCall.push(this.appendWindowEnd);
     this.bufferedEnd += 1;
@@ -614,16 +617,18 @@ describe('WebAudioPlayer', () => {
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
 
-    // seg-1 starts at 0 and its trun declares 1024+1024+944 = 2992 samples of real duration,
-    // so its appendWindowEnd should truncate the extra 80-sample (5ms) pad rather than let it
-    // play as part of the buffered range.
+    // seg-1's timestampOffset anchors it at 0 (the very start), and its trun declares
+    // 1024+1024+944 = 2992 samples of real duration, so its appendWindowEnd should truncate
+    // the extra 80-sample (5ms) pad rather than let it play as part of the buffered range.
+    expect(lastSourceBuffer.timestampOffsetAtCall[0]).toBe(0);
     expect(lastSourceBuffer.appendWindowEndAtCall[0]).toBeCloseTo(2992 / 16000);
-    // seg-2 starts after seg-1's *buffered* end (the mock's bufferedEnd, unrelated to the
-    // declared trun duration) plus the priming trim, and has no padding of its own to trim,
-    // so its own trun-declared duration (1024 samples) sets the window end just past that.
-    const seg2Start = 1 + 1024 / 16000;
+    // seg-2 is anchored at seg-1's *buffered* end (the mock's bufferedEnd, unrelated to the
+    // declared trun duration) — NOT at its own priming-trimmed start — since its trun-declared
+    // duration (1024 samples) is measured from that same anchor, not from the leading trim.
+    const seg2GroupStart = 1;
+    expect(lastSourceBuffer.timestampOffsetAtCall[1]).toBe(seg2GroupStart);
     expect(lastSourceBuffer.appendWindowEndAtCall[1]).toBeCloseTo(
-      seg2Start + 1024 / 16000
+      seg2GroupStart + 1024 / 16000
     );
   });
 });
