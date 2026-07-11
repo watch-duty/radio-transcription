@@ -18,6 +18,37 @@ import {
 // first. We trim it ourselves per-append via SourceBuffer.appendWindowStart.
 const AAC_ENCODER_PRIMING_SAMPLES = 1024;
 
+// Even with priming/padding trimmed exactly, a segment boundary is a hard cut between two
+// independently sourced/encoded clips — their content simply isn't continuous with itself,
+// so the seam can still be audible against a steady background (verified by ear: a splice
+// built from nothing but accurate trims, no masking, was still identifiable). We soften it
+// with a brief, shallow, smoothly-curved gain dip centered on the splice — not a full mute,
+// just enough to blur the seam — scheduled on the existing GainNode.
+const DECLICK_DEPTH = 0.5; // dip to 50% of normal gain at the very center, never to silence
+const DECLICK_HALF_WIDTH_SECONDS = 0.012; // ~24ms total, wide enough to feel smooth not abrupt
+const DECLICK_CURVE_POINTS = 33; // odd count so the curve has an exact center sample
+// Boundaries are scheduled from the periodic 'timeupdate' event rather than a tighter loop, so
+// this needs enough slack that a boundary is never checked for the first time after it's due.
+const DECLICK_LOOKAHEAD_SECONDS = 0.5;
+
+interface DeclickController {
+  context: AudioContext;
+  gain: GainNode;
+  getGain: () => number;
+}
+
+/** A raised-cosine (Hann-shaped) dip from baseGain down to baseGain*(1-DECLICK_DEPTH) and
+ * back, so the duck fades in/out smoothly rather than snapping like a linear ramp would. */
+function buildDeclickCurve(baseGain: number): Float32Array {
+  const curve = new Float32Array(DECLICK_CURVE_POINTS);
+  for (let i = 0; i < DECLICK_CURVE_POINTS; i++) {
+    const t = (i / (DECLICK_CURVE_POINTS - 1)) * 2 - 1; // -1..1
+    const dip = 0.5 * (1 + Math.cos(Math.PI * t)); // 0 at the edges, 1 at the center
+    curve[i] = baseGain * (1 - DECLICK_DEPTH * dip);
+  }
+  return curve;
+}
+
 declare global {
   interface Window {
     webkitAudioContext?: typeof AudioContext;
@@ -209,7 +240,9 @@ class MseSequenceSession implements PlaybackController {
   private hasCalledEndOfStream = false;
   private hasAppendedInitSegment = false;
   private audioTimescale: number | null = null;
+  private pendingDeclickBoundaries: number[] = [];
   private onFallback?: (session: PlaybackController) => void;
+  private declick?: DeclickController;
 
   private listeners: {
     play: () => void;
@@ -223,12 +256,14 @@ class MseSequenceSession implements PlaybackController {
     audio: HTMLAudioElement,
     speed: number,
     options: SequenceOptions,
-    onFallback?: (session: PlaybackController) => void
+    onFallback?: (session: PlaybackController) => void,
+    declick?: DeclickController
   ) {
     this.audio = audio;
     this.speed = speed;
     this.options = options;
     this.onFallback = onFallback;
+    this.declick = declick;
     this.lastEnqueuedSegmentId = options.initialSegmentId;
     this.currentActiveSegmentId = options.initialSegmentId;
     this.enqueuedSegmentIds.add(options.initialSegmentId);
@@ -459,6 +494,10 @@ class MseSequenceSession implements PlaybackController {
           groupStartTime + declaredDurationSamples / this.audioTimescale;
       }
 
+      if (!isFirstAppend) {
+        this.pendingDeclickBoundaries.push(startTime);
+      }
+
       this.inFlightAppend = { segmentId: next.segmentId, startTime };
       this.sourceBuffer.appendBuffer(bufferToAppend);
     } catch (err) {
@@ -554,8 +593,48 @@ class MseSequenceSession implements PlaybackController {
     }
   }
 
+  // Scheduled from 'timeupdate' rather than a tighter loop: the automation curve, once
+  // scheduled, fires at sample-accurate AudioContext time regardless of how often we check —
+  // the check cadence only affects how far ahead we predict the media-time-to-context-time
+  // mapping, and DECLICK_LOOKAHEAD_SECONDS gives that plenty of slack.
+  private scheduleDueDeclicks(): void {
+    if (!this.declick || this.pendingDeclickBoundaries.length === 0) return;
+
+    const { context, gain, getGain } = this.declick;
+    const rate = this.speed || 1;
+    const mediaNow = this.audio.currentTime;
+    const contextNow = context.currentTime;
+
+    this.pendingDeclickBoundaries = this.pendingDeclickBoundaries.filter(
+      (boundary) => {
+        const timeUntil = boundary - mediaNow;
+        if (timeUntil > DECLICK_LOOKAHEAD_SECONDS) return true; // not due yet
+        if (timeUntil < -DECLICK_HALF_WIDTH_SECONDS) return false; // missed the window
+
+        const targetContextTime = contextNow + timeUntil / rate;
+        const curveStart = Math.max(
+          contextNow,
+          targetContextTime - DECLICK_HALF_WIDTH_SECONDS
+        );
+        try {
+          gain.gain.setValueCurveAtTime(
+            buildDeclickCurve(getGain()),
+            curveStart,
+            DECLICK_HALF_WIDTH_SECONDS * 2
+          );
+        } catch {
+          // Two boundaries scheduled close enough together to overlap in AudioContext time;
+          // skip masking this one rather than throwing out of a 'timeupdate' handler.
+        }
+        return false;
+      }
+    );
+  }
+
   private handleTimeUpdate = (): void => {
-    if (this.isUnloaded || this.segmentTimeline.length === 0) return;
+    if (this.isUnloaded) return;
+    this.scheduleDueDeclicks();
+    if (this.segmentTimeline.length === 0) return;
 
     const currentTime = this.audio.currentTime;
     for (let i = 0; i < this.segmentTimeline.length; i++) {
@@ -683,6 +762,7 @@ export class WebAudioPlayer {
   private activeListeners: GraphListeners | null = null;
   private activeSession: PlaybackController | null = null;
   private speed = 1;
+  private currentGain = dbToGain(DEFAULT_VOLUME_DB);
 
   constructor(context: AudioContext) {
     this.context = context;
@@ -708,8 +788,9 @@ export class WebAudioPlayer {
   }
 
   setVolumeDb(db: number): void {
+    this.currentGain = dbToGain(db);
     this.gain.gain.linearRampToValueAtTime(
-      dbToGain(db),
+      this.currentGain,
       this.context.currentTime + RAMP_SECONDS
     );
   }
@@ -788,6 +869,11 @@ export class WebAudioPlayer {
         options,
         (fallback) => {
           this.activeSession = fallback;
+        },
+        {
+          context: this.context,
+          gain: this.gain,
+          getGain: () => this.currentGain,
         }
       );
       this.activeSession = session;

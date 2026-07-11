@@ -8,7 +8,11 @@ import {
   gainToDb,
   snapVolumeToDefault,
 } from './WebAudioPlayer';
-import { VOLUME_MAX_DB, VOLUME_MIN_DB } from './audioSettings';
+import {
+  DEFAULT_VOLUME_DB,
+  VOLUME_MAX_DB,
+  VOLUME_MIN_DB,
+} from './audioSettings';
 
 describe('audioMath', () => {
   describe('dbToGain', () => {
@@ -89,6 +93,7 @@ describe('audioMath', () => {
 
 class MockAudioParam {
   linearRampToValueAtTime = vi.fn();
+  setValueCurveAtTime = vi.fn();
 }
 
 class MockNode {
@@ -630,5 +635,54 @@ describe('WebAudioPlayer', () => {
     expect(lastSourceBuffer.appendWindowEndAtCall[1]).toBeCloseTo(
       seg2GroupStart + 1024 / 16000
     );
+  });
+
+  it('softens each segment boundary with a smooth, shallow gain-curve dip', async () => {
+    stubMseGlobals();
+    stubFetchForTwoSegments(createFmp4File(16000), createFmp4File(16000));
+
+    const player = new WebAudioPlayer(new AudioContext());
+    const getNextSegment = vi
+      .fn()
+      .mockReturnValueOnce({
+        id: 'seg-2',
+        uri: 'https://example.com/seg-2.m4a',
+      })
+      .mockReturnValue(null);
+
+    player.loadSequence({
+      initialSegmentId: 'seg-1',
+      initialUri: 'https://example.com/seg-1.m4a',
+      callbacks: {},
+      getNextSegment,
+    });
+
+    MockMediaSource.current!.emit('sourceopen');
+
+    await vi.waitFor(() =>
+      expect(lastSourceBuffer.appendBuffer).toHaveBeenCalledTimes(2)
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // seg-2's boundary: startTime = 1 + 1024/16000 (matches the priming-trim test above). Move
+    // playback to just inside the declick lookahead window and fire 'timeupdate', which is
+    // what schedules the dip.
+    const boundary = 1 + 1024 / 16000;
+    lastAudio.currentTime = boundary - 0.2;
+    lastContext.currentTime = 10;
+    lastAudio.emit('timeupdate');
+
+    const gainParam = lastContext.gain.gain;
+    expect(gainParam.setValueCurveAtTime).toHaveBeenCalledTimes(1);
+    const [curve, curveStart, duration] =
+      gainParam.setValueCurveAtTime.mock.calls[0];
+
+    const baseGain = dbToGain(DEFAULT_VOLUME_DB);
+    expect(duration).toBeCloseTo(0.024); // 2 * 12ms half-width
+    expect(curveStart).toBeCloseTo(10.2 - 0.012); // targetContextTime - half-width
+    expect(curve).toHaveLength(33);
+    expect(curve[0]).toBeCloseTo(baseGain); // no dip at the leading edge
+    expect(curve[32]).toBeCloseTo(baseGain); // no dip at the trailing edge
+    expect(curve[16]).toBeCloseTo(baseGain * 0.5); // dips to 50%, never to silence, at center
   });
 });
