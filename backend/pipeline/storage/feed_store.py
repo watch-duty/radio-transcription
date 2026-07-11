@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import datetime
 import enum
 import json
 import logging
-from dataclasses import dataclass
+import uuid
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
 import asyncpg
@@ -28,8 +30,7 @@ from backend.pipeline.storage.pagination_utils import (
 )
 
 if TYPE_CHECKING:
-    import datetime
-    import uuid
+    import collections.abc
     from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
@@ -133,6 +134,62 @@ class FeedStatusReason(enum.StrEnum):
         return _status_reason_owner(self.value)
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class FeedGrant:
+    """Complete immutable authority for one Feed ownership generation."""
+
+    feed_id: uuid.UUID
+    owner_worker_id: uuid.UUID
+    fencing_token: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.feed_id, uuid.UUID):
+            msg = "feed_id must be a UUID"
+            raise TypeError(msg)
+        if not isinstance(self.owner_worker_id, uuid.UUID):
+            msg = "owner_worker_id must be a UUID"
+            raise TypeError(msg)
+        if isinstance(self.fencing_token, bool) or not isinstance(
+            self.fencing_token,
+            int,
+        ):
+            msg = "fencing_token must be an integer"
+            raise TypeError(msg)
+        if self.fencing_token < 0:
+            msg = "fencing_token must be nonnegative"
+            raise ValueError(msg)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FeedHeartbeatSnapshot:
+    """Closed mutable Feed state observed outside grant identity."""
+
+    status: FeedStatus
+    last_heartbeat: datetime.datetime | None
+    failure_count: int
+    status_reason: FeedStatusReason | None
+
+
+class FeedGrantOperationDisposition(enum.StrEnum):
+    """Closed outcomes for exact-grant Feed heartbeat operations."""
+
+    APPLIED = "applied"
+    ACCEPTED_NOOP = "accepted_noop"
+    MISSING = "missing"
+    OWNER_MISMATCH = "owner_mismatch"
+    FENCE_MISMATCH = "fence_mismatch"
+    STATUS_INELIGIBLE = "status_ineligible"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FeedGrantHeartbeatResult:
+    """Caller-correlated result for one exact Feed grant heartbeat."""
+
+    grant: FeedGrant
+    disposition: FeedGrantOperationDisposition
+    snapshot: FeedHeartbeatSnapshot | None
+
+
 class LeasedFeed(TypedDict):
     """Feed details returned after a successful lease acquisition."""
 
@@ -188,7 +245,7 @@ class Feed(TypedDict):
     last_speech_segment_timestamp: datetime.datetime | None
 
 
-@dataclass
+@dataclasses.dataclass
 class PaginatedFeeds:
     feeds: list[Feed]
     next_token: str | None
@@ -206,7 +263,7 @@ class FeedAuditEvent(TypedDict):
     after_values: dict
 
 
-@dataclass
+@dataclasses.dataclass
 class PaginatedFeedAuditEvents:
     audit_events: list[FeedAuditEvent]
     next_token: str | None
@@ -218,6 +275,57 @@ def _require_actor_id(actor_id: str | None) -> str:
         msg = "actor_id is required for audited feed lifecycle writes"
         raise ValueError(msg)
     return actor_id
+
+
+def _require_feed_grant(value: object) -> FeedGrant:
+    if not isinstance(value, FeedGrant):
+        msg = "grant must be a FeedGrant"
+        raise TypeError(msg)
+    return value
+
+
+def _feed_heartbeat_snapshot_from_row(
+    row: collections.abc.Mapping[str, object],
+) -> FeedHeartbeatSnapshot:
+    try:
+        status = FeedStatus(row["status"])
+    except (KeyError, TypeError, ValueError) as error:
+        msg = "Feed heartbeat row contains an invalid status"
+        raise ValueError(msg) from error
+
+    last_heartbeat = row["last_heartbeat"]
+    if last_heartbeat is not None and not isinstance(
+        last_heartbeat,
+        datetime.datetime,
+    ):
+        msg = "Feed heartbeat row contains an invalid last_heartbeat"
+        raise ValueError(msg)
+
+    failure_count = row["failure_count"]
+    if (
+        isinstance(failure_count, bool)
+        or not isinstance(failure_count, int)
+        or failure_count < 0
+    ):
+        msg = "Feed heartbeat row contains an invalid failure_count"
+        raise ValueError(msg)
+
+    status_reason_raw = row["status_reason"]
+    if status_reason_raw is None:
+        status_reason = None
+    else:
+        try:
+            status_reason = FeedStatusReason(status_reason_raw)
+        except (TypeError, ValueError) as error:
+            msg = "Feed heartbeat row contains an invalid status_reason"
+            raise ValueError(msg) from error
+
+    return FeedHeartbeatSnapshot(
+        status=status,
+        last_heartbeat=last_heartbeat,
+        failure_count=failure_count,
+        status_reason=status_reason,
+    )
 
 
 class FeedStore:
@@ -489,6 +597,153 @@ class FeedStore:
             )
             for row in rows
         ]
+
+    async def renew_grant_heartbeats(
+        self,
+        grants: collections.abc.Sequence[FeedGrant],
+    ) -> tuple[FeedGrantHeartbeatResult, ...]:
+        """Renew complete active Feed grants in exact caller order.
+
+        Args:
+            grants: Complete Feed grants to renew. A Feed identity may appear
+                at most once, even with a different owner or fence.
+
+        Returns:
+            One exact, caller-correlated result for every input grant.
+
+        Raises:
+            TypeError: If an input is not a ``FeedGrant``.
+            ValueError: If input identities repeat or the database result is
+                malformed, incomplete, duplicated, or miscorrelated.
+        """
+        grants = tuple(grants)
+        feed_ids: set[uuid.UUID] = set()
+        for candidate in grants:
+            grant = _require_feed_grant(candidate)
+            if grant.feed_id in feed_ids:
+                msg = f"duplicate Feed identity {grant.feed_id}"
+                raise ValueError(msg)
+            feed_ids.add(grant.feed_id)
+        if not grants:
+            return ()
+
+        ordered = sorted(
+            enumerate(grants),
+            key=lambda item: item[1].feed_id.int,
+        )
+        rows = await self._pool.fetch(
+            feed_queries.RENEW_GRANT_HEARTBEATS_SQL,
+            [grant.feed_id for _, grant in ordered],
+            [grant.owner_worker_id for _, grant in ordered],
+            [grant.fencing_token for _, grant in ordered],
+            [ordinal for ordinal, _ in ordered],
+        )
+
+        expected_by_ordinal = dict(enumerate(grants))
+        rows_by_ordinal: dict[
+            int,
+            collections.abc.Mapping[str, object],
+        ] = {}
+        for row in rows:
+            try:
+                caller_ordinal = row["caller_ordinal"]
+                returned_feed_id = row["feed_id"]
+            except (KeyError, TypeError) as error:
+                msg = "Feed heartbeat returned a malformed row"
+                raise ValueError(msg) from error
+            if (
+                isinstance(caller_ordinal, bool)
+                or not isinstance(caller_ordinal, int)
+                or caller_ordinal not in expected_by_ordinal
+                or caller_ordinal in rows_by_ordinal
+                or returned_feed_id
+                != expected_by_ordinal[caller_ordinal].feed_id
+            ):
+                msg = "Feed heartbeat returned an unexpected or duplicate row"
+                raise ValueError(msg)
+            rows_by_ordinal[caller_ordinal] = row
+
+        if set(rows_by_ordinal) != set(expected_by_ordinal):
+            msg = "Feed heartbeat did not return every caller input"
+            raise ValueError(msg)
+
+        return tuple(
+            self._grant_heartbeat_result(
+                grant,
+                rows_by_ordinal[ordinal],
+            )
+            for ordinal, grant in enumerate(grants)
+        )
+
+    def _grant_heartbeat_result(
+        self,
+        grant: FeedGrant,
+        row: collections.abc.Mapping[str, object],
+    ) -> FeedGrantHeartbeatResult:
+        """Classify one validated caller-correlated heartbeat row."""
+        applied = row.get("applied")
+        if not isinstance(applied, bool):
+            msg = "Feed heartbeat row contains an invalid applied flag"
+            raise TypeError(msg)
+
+        status_raw = row.get("status")
+        if status_raw is None:
+            if applied or any(
+                row.get(field) is not None
+                for field in (
+                    "worker_id",
+                    "fencing_token",
+                    "last_heartbeat",
+                    "failure_count",
+                    "status_reason",
+                )
+            ):
+                msg = "missing Feed heartbeat row contains current state"
+                raise ValueError(msg)
+            return FeedGrantHeartbeatResult(
+                grant=grant,
+                disposition=FeedGrantOperationDisposition.MISSING,
+                snapshot=None,
+            )
+
+        snapshot = _feed_heartbeat_snapshot_from_row(row)
+        worker_id = row.get("worker_id")
+        if worker_id is not None and not isinstance(worker_id, uuid.UUID):
+            msg = "Feed heartbeat row contains an invalid worker_id"
+            raise ValueError(msg)
+        fencing_token = row.get("fencing_token")
+        if fencing_token is not None and (
+            isinstance(fencing_token, bool)
+            or not isinstance(fencing_token, int)
+            or fencing_token < 0
+        ):
+            msg = "Feed heartbeat row contains an invalid fencing_token"
+            raise ValueError(msg)
+
+        exact_active = (
+            snapshot.status is FeedStatus.ACTIVE
+            and worker_id == grant.owner_worker_id
+            and fencing_token == grant.fencing_token
+        )
+        if applied:
+            if not exact_active:
+                msg = "Feed heartbeat applied without exact active authority"
+                raise ValueError(msg)
+            disposition = FeedGrantOperationDisposition.APPLIED
+        elif snapshot.status is not FeedStatus.ACTIVE:
+            disposition = FeedGrantOperationDisposition.STATUS_INELIGIBLE
+        elif worker_id != grant.owner_worker_id:
+            disposition = FeedGrantOperationDisposition.OWNER_MISMATCH
+        elif fencing_token != grant.fencing_token:
+            disposition = FeedGrantOperationDisposition.FENCE_MISMATCH
+        else:
+            disposition = FeedGrantOperationDisposition.ACCEPTED_NOOP
+
+        return FeedGrantHeartbeatResult(
+            grant=grant,
+            disposition=disposition,
+            snapshot=snapshot,
+        )
 
     async def report_feed_failure(
         self,

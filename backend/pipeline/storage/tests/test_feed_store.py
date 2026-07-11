@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import dataclasses
 import datetime
 import inspect
 import json
@@ -162,6 +164,44 @@ def _sql_without_comments(text: str) -> str:
 
 def _normalized_sql(text: str) -> str:
     return " ".join(_sql_without_comments(text).split())
+
+
+def _grant_heartbeat_row(
+    grant: feed_store.FeedGrant,
+    *,
+    caller_ordinal: int = 0,
+    applied: bool = False,
+    status: str | None = "active",
+    worker_id: uuid.UUID | None = None,
+    fencing_token: int | None = None,
+    last_heartbeat: datetime.datetime | None = None,
+    failure_count: int | None = 0,
+    status_reason: str | None = None,
+    feed_id: uuid.UUID | None = None,
+) -> dict[str, object]:
+    """Build one exact Feed heartbeat SQL result row."""
+    if status is None:
+        worker_id = None
+        fencing_token = None
+        last_heartbeat = None
+        failure_count = None
+        status_reason = None
+    else:
+        if worker_id is None:
+            worker_id = grant.owner_worker_id
+        if fencing_token is None:
+            fencing_token = grant.fencing_token
+    return {
+        "caller_ordinal": caller_ordinal,
+        "feed_id": feed_id or grant.feed_id,
+        "status": status,
+        "worker_id": worker_id,
+        "fencing_token": fencing_token,
+        "last_heartbeat": last_heartbeat,
+        "failure_count": failure_count,
+        "status_reason": status_reason,
+        "applied": applied,
+    }
 
 
 class TestTransactionMockPool(unittest.IsolatedAsyncioTestCase):
@@ -1183,6 +1223,278 @@ class TestRenewHeartbeatsBatchDiagnostic(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(renewed[0]["id"], _FEED_ID)
         self.assertEqual(len(not_renewed), 1)
         self.assertEqual(not_renewed[0]["current_status"], "unclaimed")
+
+
+class TestFeedGrantHeartbeatValues(unittest.TestCase):
+    """Tests for immutable complete Feed heartbeat values."""
+
+    def test_feed_grant_has_only_complete_identity_fields(self) -> None:
+        grant = feed_store.FeedGrant(_FEED_ID, _WORKER_ID, 7)
+
+        self.assertEqual(
+            tuple(field.name for field in dataclasses.fields(grant)),
+            ("feed_id", "owner_worker_id", "fencing_token"),
+        )
+        self.assertFalse(hasattr(grant, "__dict__"))
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            grant.fencing_token = 8  # ty: ignore[invalid-assignment]
+
+    def test_feed_grant_rejects_invalid_identity_types(self) -> None:
+        cases = (
+            ("not-a-uuid", _WORKER_ID, 1),
+            (_FEED_ID, "not-a-uuid", 1),
+            (_FEED_ID, _WORKER_ID, True),
+            (_FEED_ID, _WORKER_ID, "1"),
+            (_FEED_ID, _WORKER_ID, -1),
+        )
+
+        for feed_id, owner_worker_id, fencing_token in cases:
+            with self.subTest(
+                feed_id=feed_id,
+                owner_worker_id=owner_worker_id,
+                fencing_token=fencing_token,
+            ):
+                with self.assertRaises((TypeError, ValueError)):
+                    feed_store.FeedGrant(
+                        cast("uuid.UUID", feed_id),
+                        cast("uuid.UUID", owner_worker_id),
+                        cast("int", fencing_token),
+                    )
+
+    def test_heartbeat_disposition_is_exactly_closed(self) -> None:
+        self.assertEqual(
+            {item.value for item in feed_store.FeedGrantOperationDisposition},
+            {
+                "applied",
+                "accepted_noop",
+                "missing",
+                "owner_mismatch",
+                "fence_mismatch",
+                "status_ineligible",
+            },
+        )
+
+
+class TestFeedGrantHeartbeatSql(unittest.TestCase):
+    """Static contract for the exact Feed heartbeat query."""
+
+    def test_query_is_static_parameterized_and_caller_ordered(self) -> None:
+        sql = _normalized_sql(feed_queries.RENEW_GRANT_HEARTBEATS_SQL)
+
+        for fragment in (
+            "UNNEST(",
+            "$1::uuid[]",
+            "$2::uuid[]",
+            "$3::bigint[]",
+            "$4::bigint[]",
+            "WITH ORDINALITY",
+            "caller_ordinal",
+            "FOR NO KEY UPDATE OF feeds",
+            "status = 'active'::feed_status",
+            "current_state.worker_id = current_state.owner_worker_id",
+            "current_state.fencing_token =",
+            "LEFT JOIN current_state",
+            "ORDER BY input.caller_ordinal",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, sql)
+
+        tree = ast.parse(pathlib.Path(feed_queries.__file__).read_text())
+        assignment = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name)
+                and target.id == "RENEW_GRANT_HEARTBEATS_SQL"
+                for target in node.targets
+            )
+        )
+        self.assertIsInstance(assignment.value, ast.Constant)
+
+    def test_query_only_updates_existing_heartbeat_state(self) -> None:
+        sql = _normalized_sql(feed_queries.RENEW_GRANT_HEARTBEATS_SQL)
+
+        self.assertIn("SET last_heartbeat = NOW()", sql)
+        for forbidden in (
+            "CREATE ",
+            "ALTER ",
+            "DROP ",
+            "TRUNCATE ",
+            "CREATE INDEX",
+            "fencing_token + 1",
+            "failure_count =",
+            "status_reason =",
+            "SET status =",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, sql)
+
+
+class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
+    """Tests for exact, caller-correlated Feed grant heartbeats."""
+
+    async def test_empty_input_returns_before_pool_checkout(self) -> None:
+        pool = make_mock_pool()
+        store = FeedStore(pool)
+
+        result = await store.renew_grant_heartbeats(())
+
+        self.assertEqual(result, ())
+        pool.fetch.assert_not_awaited()
+
+    async def test_invalid_and_duplicate_input_fail_before_checkout(
+        self,
+    ) -> None:
+        first = feed_store.FeedGrant(_FEED_ID, _WORKER_ID, 1)
+        duplicate = feed_store.FeedGrant(_FEED_ID, uuid.uuid4(), 9)
+
+        for grants, expected_error in (
+            ((cast("feed_store.FeedGrant", object()),), TypeError),
+            ((first, duplicate), ValueError),
+        ):
+            with self.subTest(expected_error=expected_error.__name__):
+                pool = make_mock_pool()
+                store = FeedStore(pool)
+                with self.assertRaises(expected_error):
+                    await store.renew_grant_heartbeats(grants)
+                pool.fetch.assert_not_awaited()
+
+    async def test_sorted_lock_arrays_retain_original_caller_ordinals(
+        self,
+    ) -> None:
+        high = feed_store.FeedGrant(_FEED_ID_B, _WORKER_ID, 4)
+        low = feed_store.FeedGrant(_FEED_ID, _WORKER_ID, 3)
+        now = datetime.datetime(2026, 7, 11, tzinfo=datetime.UTC)
+        rows = [
+            _grant_heartbeat_row(
+                high,
+                caller_ordinal=0,
+                applied=False,
+                last_heartbeat=now,
+            ),
+            _grant_heartbeat_row(
+                low,
+                caller_ordinal=1,
+                applied=True,
+                last_heartbeat=now,
+            ),
+        ]
+        pool = make_mock_pool(fetch_result=rows)
+        store = FeedStore(pool)
+
+        result = await store.renew_grant_heartbeats((high, low))
+
+        self.assertEqual([item.grant for item in result], [high, low])
+        self.assertIs(
+            result[0].disposition,
+            feed_store.FeedGrantOperationDisposition.ACCEPTED_NOOP,
+        )
+        self.assertIs(
+            result[1].disposition,
+            feed_store.FeedGrantOperationDisposition.APPLIED,
+        )
+        args = pool.fetch.await_args.args
+        self.assertIs(args[0], feed_queries.RENEW_GRANT_HEARTBEATS_SQL)
+        self.assertEqual(args[1], [_FEED_ID, _FEED_ID_B])
+        self.assertEqual(args[2], [_WORKER_ID, _WORKER_ID])
+        self.assertEqual(args[3], [3, 4])
+        self.assertEqual(args[4], [1, 0])
+
+    async def test_every_storage_disposition_is_typed(self) -> None:
+        grant = feed_store.FeedGrant(_FEED_ID, _WORKER_ID, 7)
+        other_worker = uuid.uuid4()
+        now = datetime.datetime(2026, 7, 11, tzinfo=datetime.UTC)
+        cases = (
+            (
+                _grant_heartbeat_row(
+                    grant,
+                    applied=True,
+                    last_heartbeat=now,
+                ),
+                feed_store.FeedGrantOperationDisposition.APPLIED,
+            ),
+            (
+                _grant_heartbeat_row(grant, last_heartbeat=now),
+                feed_store.FeedGrantOperationDisposition.ACCEPTED_NOOP,
+            ),
+            (
+                _grant_heartbeat_row(grant, status=None),
+                feed_store.FeedGrantOperationDisposition.MISSING,
+            ),
+            (
+                _grant_heartbeat_row(grant, worker_id=other_worker),
+                feed_store.FeedGrantOperationDisposition.OWNER_MISMATCH,
+            ),
+            (
+                _grant_heartbeat_row(grant, fencing_token=8),
+                feed_store.FeedGrantOperationDisposition.FENCE_MISMATCH,
+            ),
+            (
+                _grant_heartbeat_row(
+                    grant,
+                    status="deactivated",
+                    failure_count=2,
+                    status_reason="source_offline",
+                ),
+                feed_store.FeedGrantOperationDisposition.STATUS_INELIGIBLE,
+            ),
+        )
+
+        for row, expected in cases:
+            with self.subTest(expected=expected.value):
+                pool = make_mock_pool(fetch_result=[row])
+                store = FeedStore(pool)
+
+                result = await store.renew_grant_heartbeats((grant,))
+
+                self.assertEqual(len(result), 1)
+                self.assertIs(result[0].grant, grant)
+                self.assertIs(result[0].disposition, expected)
+                if expected is feed_store.FeedGrantOperationDisposition.MISSING:
+                    self.assertIsNone(result[0].snapshot)
+                else:
+                    self.assertIsNotNone(result[0].snapshot)
+
+    async def test_malformed_correlation_fails_closed(self) -> None:
+        grant = feed_store.FeedGrant(_FEED_ID, _WORKER_ID, 7)
+        valid = _grant_heartbeat_row(grant)
+        wrong_identity = _grant_heartbeat_row(
+            grant,
+            feed_id=_FEED_ID_B,
+        )
+        unknown = _grant_heartbeat_row(grant, caller_ordinal=8)
+        malformed = dict(valid)
+        del malformed["caller_ordinal"]
+        cases = (
+            [],
+            [valid, valid],
+            [valid, _grant_heartbeat_row(grant, caller_ordinal=1)],
+            [wrong_identity],
+            [unknown],
+            [malformed],
+        )
+
+        for rows in cases:
+            with self.subTest(rows=rows):
+                pool = make_mock_pool(fetch_result=rows)
+                store = FeedStore(pool)
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "heartbeat",
+                ):
+                    await store.renew_grant_heartbeats((grant,))
+
+    async def test_database_exception_propagates_without_retry(self) -> None:
+        grant = feed_store.FeedGrant(_FEED_ID, _WORKER_ID, 7)
+        pool = make_mock_pool()
+        pool.fetch.side_effect = RuntimeError("database unavailable")
+        store = FeedStore(pool)
+
+        with self.assertRaisesRegex(RuntimeError, "database unavailable"):
+            await store.renew_grant_heartbeats((grant,))
+
+        pool.fetch.assert_awaited_once()
 
 
 class TestReportFeedFailure(unittest.IsolatedAsyncioTestCase):

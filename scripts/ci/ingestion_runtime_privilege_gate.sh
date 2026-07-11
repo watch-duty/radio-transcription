@@ -1464,6 +1464,13 @@ dedicated_proof_gate() {
     uv run python -m pytest \
       integration_tests/storage/test_ingestion_lease_store_integration.py \
       -q -n 0
+
+  INGESTION_FEED_TEST_DSN="$admin_dsn" \
+  INGESTION_FEED_EXTERNAL_POSTGRES_REQUIRED=1 \
+  EXPECTED_POSTGRES_MAJOR="$EXPECTED_POSTGRES_MAJOR" \
+    uv run python -m pytest \
+      integration_tests/storage/test_feed_grant_heartbeat_integration.py \
+      -q -n 0
 }
 
 case "${1:-}" in
