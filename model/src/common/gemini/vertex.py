@@ -161,10 +161,13 @@ def parse_batch_output(
         uri = _extract_request_audio_uri(obj["request"])
         if not uri:
             continue
+        prediction_text = _extract_prediction_text(obj.get("response"))
+        if prediction_text is None:
+            continue
         if uri in result:
             msg = f"duplicate audio URI in batch output: {uri}"
             raise ValueError(msg)
-        result[uri] = _extract_prediction_text(obj.get("response"))
+        result[uri] = prediction_text
     return result
 
 
@@ -206,20 +209,29 @@ def _extract_request_audio_uri(
     return audio_uri
 
 
-def _extract_prediction_text(response: typing.Any) -> str:
+def _extract_prediction_text(response: typing.Any) -> str | None:
+    """Extract prediction text from a structurally successful response.
+
+    Args:
+        response: Parsed Vertex batch response value.
+
+    Returns:
+        The first text part, including an explicit empty string, or ``None``
+        when no prediction text is present.
+    """
     if not isinstance(response, dict):
-        return ""
+        return None
     first_candidate = _first_dict(response.get("candidates"))
     content = first_candidate.get("content", {}) if first_candidate else {}
     if not isinstance(content, dict):
-        return ""
+        return None
     parts = content.get("parts", [])
     if not isinstance(parts, list):
-        return ""
+        return None
     for part in parts:
         if isinstance(part, dict) and isinstance(part.get("text"), str):
             return part["text"]
-    return ""
+    return None
 
 
 def _first_dict(

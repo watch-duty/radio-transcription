@@ -720,6 +720,50 @@ class TestParseBatchOutput(unittest.TestCase):
 
         self.assertEqual(vertex.parse_batch_output(lines), {})
 
+    def test_skips_request_echo_without_response(self) -> None:
+        output = {
+            "request": {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "fileData": {
+                                    "fileUri": "gs://bucket/a.flac",
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+
+        self.assertEqual(vertex.parse_batch_output([json.dumps(output)]), {})
+
+    def test_preserves_explicit_empty_prediction_text(self) -> None:
+        output = {
+            "request": {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "fileData": {
+                                    "fileUri": "gs://bucket/a.flac",
+                                }
+                            }
+                        ]
+                    }
+                ]
+            },
+            "response": {
+                "candidates": [{"content": {"parts": [{"text": ""}]}}]
+            },
+        }
+
+        self.assertEqual(
+            vertex.parse_batch_output([json.dumps(output)]),
+            {"gs://bucket/a.flac": ""},
+        )
+
     def test_rejects_single_string_to_avoid_character_iteration(self) -> None:
         with self.assertRaisesRegex(TypeError, "iterable of JSONL lines"):
             vertex.parse_batch_output("{}")
