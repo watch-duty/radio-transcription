@@ -220,6 +220,18 @@ async def _insert_member(
                 status_reason_updated_at,
                 audit_revision,
             )
+            restored_cursor = await connection.fetchrow(
+                """
+                UPDATE public.feeds
+                SET last_bookmark_time = $2
+                WHERE id = $1
+                RETURNING last_bookmark_time
+                """,
+                feed_id,
+                cursor,
+            )
+            assert restored_cursor is not None
+            assert restored_cursor["last_bookmark_time"] == cursor
             await connection.execute(
                 """
                 INSERT INTO public.feed_properties (
