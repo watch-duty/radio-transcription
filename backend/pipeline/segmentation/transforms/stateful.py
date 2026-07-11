@@ -851,7 +851,6 @@ class OrderedStitchAudioFn(beam.DoFn):
         out_of_order_buffer_state: Any,
         deferred_drain_timer: Any,
         timestamp: Timestamp,
-        curr_context: datatypes.TransmissionContext,
         transmission_context_state: Any,
         last_start_ms_state: Any,
     ) -> None:
@@ -1011,7 +1010,6 @@ class OrderedStitchAudioFn(beam.DoFn):
                             out_of_order_buffer_state,
                             deferred_drain_timer,
                             timestamp,
-                            curr_context,
                             transmission_context_state,
                             last_start_ms_state,
                         )
@@ -1479,7 +1477,6 @@ class OrderedStitchAudioFn(beam.DoFn):
                             out_of_order_buffer_state,
                             deferred_drain_timer,
                             timestamp,
-                            curr_context,
                             transmission_context_state,
                             last_start_ms_state,
                         )
