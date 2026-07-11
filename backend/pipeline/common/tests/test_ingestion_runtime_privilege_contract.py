@@ -78,9 +78,7 @@ def test_bootstrap_normalizes_a_non_login_role_without_touching_worker() -> (
     assert wrapper.startswith("BEGIN;")
     assert wrapper.endswith("COMMIT;")
     assert f"CREATE ROLE {_ROLE}" in sql
-    assert (
-        f"ALTER ROLE {_ROLE} NOLOGIN INHERIT CONNECTION LIMIT -1" in sql
-    )
+    assert f"ALTER ROLE {_ROLE} NOLOGIN INHERIT CONNECTION LIMIT -1" in sql
     normalized_role = sql[
         sql.index(f"ALTER ROLE {_ROLE} NOLOGIN") : sql.index(
             f"ALTER ROLE {_ROLE} PASSWORD NULL"
