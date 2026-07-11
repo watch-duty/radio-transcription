@@ -8,7 +8,11 @@ import {
   gainToDb,
   snapVolumeToDefault,
 } from './WebAudioPlayer';
-import { VOLUME_MAX_DB, VOLUME_MIN_DB } from './audioSettings';
+import {
+  DEFAULT_VOLUME_DB,
+  VOLUME_MAX_DB,
+  VOLUME_MIN_DB,
+} from './audioSettings';
 
 describe('audioMath', () => {
   describe('dbToGain', () => {
@@ -89,6 +93,7 @@ describe('audioMath', () => {
 
 class MockAudioParam {
   linearRampToValueAtTime = vi.fn();
+  setValueAtTime = vi.fn();
 }
 
 class MockNode {
@@ -150,6 +155,129 @@ class MockAudio {
   emit(type: string) {
     (this.listeners[type] ?? []).forEach((f) => f());
   }
+}
+
+function createBox(type: string, payloadSize: number): ArrayBuffer {
+  const size = 8 + payloadSize;
+  const buffer = new ArrayBuffer(size);
+  const view = new DataView(buffer);
+  view.setUint32(0, size, false);
+  for (let i = 0; i < 4; i++) view.setUint8(4 + i, type.charCodeAt(i));
+  return buffer;
+}
+function concatBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
+  const total = buffers.reduce((acc, b) => acc + b.byteLength, 0);
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const b of buffers) {
+    result.set(new Uint8Array(b), offset);
+    offset += b.byteLength;
+  }
+  return result.buffer;
+}
+function createContainerBox(type: string, children: ArrayBuffer[]) {
+  const payload = concatBuffers(children);
+  const box = createBox(type, payload.byteLength);
+  new Uint8Array(box).set(new Uint8Array(payload), 8);
+  return box;
+}
+function createMdhdBox(timescale: number): ArrayBuffer {
+  const payloadSize = 4 + 4 * 2 + 4 + 4 + 2 + 2; // version-0 field layout
+  const box = createBox('mdhd', payloadSize);
+  new DataView(box).setUint32(8 + 4 + 4 * 2, timescale, false);
+  return box;
+}
+// Mirrors real ffmpeg `frag_keyframe+empty_moov+default_base_moof` output shape:
+// ftyp+moov(with mdhd timescale)+moof+mdat+mfra, one independent file per segment.
+function createFmp4File(timescale: number): ArrayBuffer {
+  const moov = createContainerBox('moov', [
+    createContainerBox('trak', [
+      createContainerBox('mdia', [createMdhdBox(timescale)]),
+    ]),
+  ]);
+  return concatBuffers([
+    createBox('ftyp', 8),
+    moov,
+    createBox('moof', 20),
+    createBox('mdat', 100),
+    createBox('mfra', 16),
+  ]);
+}
+
+class MockSourceBuffer {
+  mode = '';
+  appendWindowStart = 0;
+  appendWindowEnd = Infinity;
+  updating = false;
+  bufferedEnd = 0;
+  buffered = { length: 1, end: () => this.bufferedEnd };
+  listeners: Record<string, Array<() => void>> = {};
+  appendWindowStartAtCall: number[] = [];
+  addEventListener = (type: string, cb: () => void) => {
+    (this.listeners[type] ??= []).push(cb);
+  };
+  removeEventListener = vi.fn();
+  appendBuffer = vi.fn(() => {
+    // Capture synchronously, since appendWindowStart is mutated in place before the
+    // next call — reading it later wouldn't reflect what was in effect at append time.
+    this.appendWindowStartAtCall.push(this.appendWindowStart);
+    this.bufferedEnd += 1;
+    setTimeout(() => {
+      (this.listeners['updateend'] ?? []).forEach((f) => f());
+    }, 0);
+  });
+  abort = vi.fn();
+}
+
+let lastSourceBuffer: MockSourceBuffer;
+
+class MockMediaSource {
+  static current: MockMediaSource | undefined;
+  readyState = 'open';
+  listeners: Record<string, Array<() => void>> = {};
+  sourceBuffers: MockSourceBuffer[] = [];
+  static isTypeSupported = vi.fn(() => true);
+  constructor() {
+    MockMediaSource.current = this;
+  }
+  addSourceBuffer = vi.fn(() => {
+    const sb = new MockSourceBuffer();
+    this.sourceBuffers.push(sb);
+    lastSourceBuffer = sb;
+    return sb;
+  });
+  endOfStream = vi.fn();
+  addEventListener = (type: string, cb: () => void) => {
+    (this.listeners[type] ??= []).push(cb);
+  };
+  removeEventListener = vi.fn();
+  emit(type: string) {
+    (this.listeners[type] ?? []).forEach((f) => f());
+  }
+}
+
+function stubMseGlobals() {
+  vi.stubGlobal('MediaSource', MockMediaSource);
+  vi.stubGlobal('URL', {
+    createObjectURL: vi.fn(() => 'blob:mock-media-source'),
+    revokeObjectURL: vi.fn(),
+  });
+}
+
+function stubFetchForTwoSegments(
+  seg1Bytes: ArrayBuffer,
+  seg2Bytes: ArrayBuffer
+) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn((url: string) => {
+      const buffer = url.includes('seg-2') ? seg2Bytes : seg1Bytes;
+      return Promise.resolve({
+        ok: true,
+        arrayBuffer: () => Promise.resolve(buffer),
+      });
+    })
+  );
 }
 
 let lastContext: MockAudioContext;
@@ -399,123 +527,8 @@ describe('WebAudioPlayer', () => {
   });
 
   it("trims each subsequent segment's AAC encoder priming via appendWindowStart", async () => {
-    function createBox(type: string, payloadSize: number): ArrayBuffer {
-      const size = 8 + payloadSize;
-      const buffer = new ArrayBuffer(size);
-      const view = new DataView(buffer);
-      view.setUint32(0, size, false);
-      for (let i = 0; i < 4; i++) view.setUint8(4 + i, type.charCodeAt(i));
-      return buffer;
-    }
-    function concatBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
-      const total = buffers.reduce((acc, b) => acc + b.byteLength, 0);
-      const result = new Uint8Array(total);
-      let offset = 0;
-      for (const b of buffers) {
-        result.set(new Uint8Array(b), offset);
-        offset += b.byteLength;
-      }
-      return result.buffer;
-    }
-    function createContainerBox(type: string, children: ArrayBuffer[]) {
-      const payload = concatBuffers(children);
-      const box = createBox(type, payload.byteLength);
-      new Uint8Array(box).set(new Uint8Array(payload), 8);
-      return box;
-    }
-    function createMdhdBox(timescale: number): ArrayBuffer {
-      const payloadSize = 4 + 4 * 2 + 4 + 4 + 2 + 2; // version-0 field layout
-      const box = createBox('mdhd', payloadSize);
-      new DataView(box).setUint32(8 + 4 + 4 * 2, timescale, false);
-      return box;
-    }
-    // Mirrors real ffmpeg `frag_keyframe+empty_moov+default_base_moof` output shape:
-    // ftyp+moov(with mdhd timescale)+moof+mdat+mfra, one independent file per segment.
-    function createFmp4File(timescale: number): ArrayBuffer {
-      const moov = createContainerBox('moov', [
-        createContainerBox('trak', [
-          createContainerBox('mdia', [createMdhdBox(timescale)]),
-        ]),
-      ]);
-      return concatBuffers([
-        createBox('ftyp', 8),
-        moov,
-        createBox('moof', 20),
-        createBox('mdat', 100),
-        createBox('mfra', 16),
-      ]);
-    }
-
-    class MockSourceBuffer {
-      mode = '';
-      appendWindowStart = 0;
-      appendWindowEnd = Infinity;
-      updating = false;
-      bufferedEnd = 0;
-      buffered = { length: 1, end: () => this.bufferedEnd };
-      listeners: Record<string, Array<() => void>> = {};
-      appendWindowStartAtCall: number[] = [];
-      addEventListener = (type: string, cb: () => void) => {
-        (this.listeners[type] ??= []).push(cb);
-      };
-      removeEventListener = vi.fn();
-      appendBuffer = vi.fn(() => {
-        // Capture synchronously, since appendWindowStart is mutated in place before the
-        // next call — reading it later wouldn't reflect what was in effect at append time.
-        this.appendWindowStartAtCall.push(this.appendWindowStart);
-        this.bufferedEnd += 1;
-        setTimeout(() => {
-          (this.listeners['updateend'] ?? []).forEach((f) => f());
-        }, 0);
-      });
-      abort = vi.fn();
-    }
-
-    let lastSourceBuffer: MockSourceBuffer;
-
-    class MockMediaSource {
-      static current: MockMediaSource | undefined;
-      readyState = 'open';
-      listeners: Record<string, Array<() => void>> = {};
-      sourceBuffers: MockSourceBuffer[] = [];
-      static isTypeSupported = vi.fn(() => true);
-      constructor() {
-        MockMediaSource.current = this;
-      }
-      addSourceBuffer = vi.fn(() => {
-        const sb = new MockSourceBuffer();
-        this.sourceBuffers.push(sb);
-        lastSourceBuffer = sb;
-        return sb;
-      });
-      endOfStream = vi.fn();
-      addEventListener = (type: string, cb: () => void) => {
-        (this.listeners[type] ??= []).push(cb);
-      };
-      removeEventListener = vi.fn();
-      emit(type: string) {
-        (this.listeners[type] ?? []).forEach((f) => f());
-      }
-    }
-
-    vi.stubGlobal('MediaSource', MockMediaSource);
-    vi.stubGlobal('URL', {
-      createObjectURL: vi.fn(() => 'blob:mock-media-source'),
-      revokeObjectURL: vi.fn(),
-    });
-
-    const seg1Bytes = createFmp4File(16000);
-    const seg2Bytes = createFmp4File(16000);
-    vi.stubGlobal(
-      'fetch',
-      vi.fn((url: string) => {
-        const buffer = url.includes('seg-2') ? seg2Bytes : seg1Bytes;
-        return Promise.resolve({
-          ok: true,
-          arrayBuffer: () => Promise.resolve(buffer),
-        });
-      })
-    );
+    stubMseGlobals();
+    stubFetchForTwoSegments(createFmp4File(16000), createFmp4File(16000));
 
     const player = new WebAudioPlayer(new AudioContext());
     const getNextSegment = vi
@@ -546,6 +559,57 @@ describe('WebAudioPlayer', () => {
     expect(lastSourceBuffer.appendWindowStartAtCall[0]).toBe(0);
     expect(lastSourceBuffer.appendWindowStartAtCall[1]).toBeCloseTo(
       1 + 1024 / 16000
+    );
+  });
+
+  it('schedules a brief gain dip at each segment boundary to mask splice artifacts', async () => {
+    stubMseGlobals();
+    stubFetchForTwoSegments(createFmp4File(16000), createFmp4File(16000));
+
+    const player = new WebAudioPlayer(new AudioContext());
+    const getNextSegment = vi
+      .fn()
+      .mockReturnValueOnce({
+        id: 'seg-2',
+        uri: 'https://example.com/seg-2.m4a',
+      })
+      .mockReturnValue(null);
+
+    player.loadSequence({
+      initialSegmentId: 'seg-1',
+      initialUri: 'https://example.com/seg-1.m4a',
+      callbacks: {},
+      getNextSegment,
+    });
+
+    MockMediaSource.current!.emit('sourceopen');
+
+    await vi.waitFor(() =>
+      expect(lastSourceBuffer.appendBuffer).toHaveBeenCalledTimes(2)
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // seg-2's boundary is queued once its append lands (see previous test): startTime =
+    // 1 + 1024/16000. Move playback to just inside the declick lookahead window and fire
+    // 'timeupdate', which is what schedules the dip.
+    const boundary = 1 + 1024 / 16000;
+    lastAudio.currentTime = boundary - 0.2;
+    lastContext.currentTime = 10;
+    lastAudio.emit('timeupdate');
+
+    const gainParam = lastContext.gain.gain;
+    const baseGain = dbToGain(DEFAULT_VOLUME_DB);
+    expect(gainParam.setValueAtTime).toHaveBeenCalledWith(
+      baseGain,
+      expect.closeTo(10.192, 5)
+    );
+    expect(gainParam.linearRampToValueAtTime).toHaveBeenCalledWith(
+      0,
+      expect.closeTo(10.2, 5)
+    );
+    expect(gainParam.linearRampToValueAtTime).toHaveBeenCalledWith(
+      baseGain,
+      expect.closeTo(10.208, 5)
     );
   });
 });
