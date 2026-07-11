@@ -829,15 +829,13 @@ BEGIN
 END
 $legacy_lo_compat_and_replication_preserve$;
 
--- Normalize the dormant role itself and remove every role it could inherit.
+-- Normalize attributes an AlloyDB administrator may change. Dangerous
+-- SUPERUSER/REPLICATION/BYPASSRLS attributes are verified by the fail-closed
+-- postcondition below; redundantly setting them is forbidden on AlloyDB,
+-- whose built-in postgres login is not a PostgreSQL SUPERUSER.
 ALTER ROLE app_ingestion_runtime
     NOLOGIN
-    NOSUPERUSER
-    NOCREATEDB
-    NOCREATEROLE
     INHERIT
-    NOREPLICATION
-    NOBYPASSRLS
     CONNECTION LIMIT -1;
 ALTER ROLE app_ingestion_runtime PASSWORD NULL;
 ALTER ROLE app_ingestion_runtime RESET ALL;

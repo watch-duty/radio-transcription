@@ -79,9 +79,19 @@ def test_bootstrap_normalizes_a_non_login_role_without_touching_worker() -> (
     assert wrapper.endswith("COMMIT;")
     assert f"CREATE ROLE {_ROLE}" in sql
     assert (
-        f"ALTER ROLE {_ROLE} NOLOGIN NOSUPERUSER NOCREATEDB "
-        "NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS"
-    ) in sql
+        f"ALTER ROLE {_ROLE} NOLOGIN INHERIT CONNECTION LIMIT -1" in sql
+    )
+    normalized_role = sql[
+        sql.index(f"ALTER ROLE {_ROLE} NOLOGIN") : sql.index(
+            f"ALTER ROLE {_ROLE} PASSWORD NULL"
+        )
+    ]
+    for superuser_only_attribute in (
+        "NOSUPERUSER",
+        "NOREPLICATION",
+        "NOBYPASSRLS",
+    ):
+        assert superuser_only_attribute not in normalized_role
     assert f"ALTER ROLE {_ROLE} PASSWORD NULL" in sql
     assert "FROM pg_catalog.pg_auth_members" in sql
     assert "REVOKE %I FROM %I" in sql
