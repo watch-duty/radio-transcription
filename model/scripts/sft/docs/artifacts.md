@@ -25,7 +25,8 @@ Every prepared round includes:
 Training rounds additionally include `status.json`, canonical train and
 validation manifests, `model_inputs/gemini/{train,validation}.jsonl`,
 `preflight/report.json`, `tuning/status.json`, and `evals/README.txt`. Eval-only
-rounds intentionally omit those training-only artifacts.
+rounds set `config.json` status to `eval_prepared` and intentionally omit those
+training-only artifacts, including the root `status.json`.
 
 Successful evaluations add:
 
