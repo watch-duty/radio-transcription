@@ -103,15 +103,21 @@ the one `[eval.model]` target owned by a prepared round. Each evaluation writes
 one local and GCS `wer_summary.{json,md}` report containing one target, together
 with target-labeled raw provider or online prediction artifacts and a normalized
 inference-manifest URI.
+### Online Prediction Attempt
+
+A raw online endpoint eval record for one audio URI. It may contain a
+successful transcript or an execution error. Only successful attempts become
+prediction records in normalized inference manifests.
 
 ### Normalized Inference Manifest
 
 A scorer-ready eval artifact that preserves canonical manifest rows and adds
 model prediction fields. It requires reference transcription text on every row;
 a single row owns a single inference input; prediction records must belong to
-that manifest's rows. A `pred_text_*` field is present only when a prediction
-record existed for that row, and an empty string value means the prediction
-record existed and contained empty text.
+that manifest's rows. A `pred_text_*` field is present only when a successful
+prediction record existed for that row. An empty string value means the provider
+successfully returned empty text. Missing provider outputs and unresolved online
+errors omit the field and are scored as empty hypotheses in eval reports.
 
 ## Ingestion Context
 
