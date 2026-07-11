@@ -259,7 +259,7 @@ def test_database_contract_checks_effective_rights_and_every_object_class() -> (
     assert "type_relation.relkind = 'c'" in sql
 
 
-def test_ci_uses_separate_masked_admin_and_runtime_connections() -> None:
+def test_ci_uses_isolated_admin_runtime_legacy_and_creator_identities() -> None:
     workflow = _read(".github/workflows/ci.yml")
     integration_test = _read(
         "integration_tests/storage/test_ingestion_runtime_privileges.py"
@@ -268,21 +268,103 @@ def test_ci_uses_separate_masked_admin_and_runtime_connections() -> None:
     for token in (
         "INGESTION_RUNTIME_ADMIN_DSN",
         "INGESTION_RUNTIME_TEST_DSN",
+        "INGESTION_LEGACY_TEST_DSN",
         "INGESTION_RUNTIME_EXTERNAL_POSTGRES_REQUIRED",
+        "INGESTION_RUNTIME_ROLE",
+        "INGESTION_LEGACY_ROLE",
+        "INGESTION_RUNTIME_CREATOR_ROLE",
         "::add-mask::",
         "app_ingestion_runtime",
         "ingestion_runtime_privilege_contract.sql",
         "Starting column-ACL drift recovery fixture",
+        "Starting parameter/default-ACL drift recovery fixture",
         "GRANT SELECT (slug)",
+        "DROP OWNED BY",
+        "Starting SET-ROLE-only default-ACL fixture",
+        "ALTER DATABASE postgres",
     ):
         assert token in workflow
+    trap_index = workflow.index("trap cleanup_ephemeral_roles EXIT")
+    setup_begin = workflow.index("BEGIN;", trap_index)
+    runtime_create = workflow.index('CREATE ROLE :"runtime_role"', setup_begin)
+    setup_commit = workflow.index("COMMIT;", runtime_create)
+    assert trap_index < setup_begin < runtime_create < setup_commit
+    assert (
+        workflow.index('CREATE ROLE :"legacy_role"', runtime_create)
+        < setup_commit
+    )
+    assert (
+        workflow.index('CREATE ROLE :"creator_role"', runtime_create)
+        < setup_commit
+    )
+    for exact_grant in (
+        'GRANT CONNECT ON DATABASE postgres TO :"legacy_role";',
+        'GRANT USAGE ON SCHEMA public TO :"legacy_role";',
+        'GRANT USAGE ON TYPE public.feed_status TO :"legacy_role";',
+        'GRANT SELECT, UPDATE ON TABLE public.feeds TO :"legacy_role";',
+        'GRANT SELECT, UPDATE ON TABLE public.feed_properties TO :"legacy_role";',
+        'GRANT SELECT, INSERT ON TABLE public.feed_audit_events TO :"legacy_role";',
+    ):
+        assert setup_begin < workflow.index(exact_grant) < setup_commit
+    cleanup_start = workflow.index("cleanup_ephemeral_roles()")
+    drop_owned = workflow.index(
+        'DROP OWNED BY :"cleanup_role" CASCADE;', cleanup_start
+    )
+    drop_role = workflow.index('DROP ROLE :"cleanup_role";', cleanup_start)
+    assert cleanup_start < drop_owned < drop_role < trap_index
+    assert "DROP ROLE IF EXISTS" not in workflow
+    assert (
+        ">/dev/null"
+        not in workflow[workflow.index("cleanup_ephemeral_roles") :]
+    )
     assert "statement_cache_size=0" in integration_test
     assert "admin_pool" in integration_test
     assert "runtime_pool" in integration_test
+    assert "legacy_pool" in integration_test
     assert "INGESTION_RUNTIME_ROLE" in integration_test
+    assert "INGESTION_LEGACY_ROLE" in integration_test
+    assert "INGESTION_RUNTIME_CREATOR_ROLE" in integration_test
     assert "has_column_privilege" in integration_test
     assert "if server_version >= 160000" in integration_test
+    assert "future_type" in integration_test
+    assert "SET session_replication_role = replica" in integration_test
+    assert "current_setting('session_replication_role')" in integration_test
     assert (
-        "async def privilege_fixtures(\n    admin_pool: asyncpg.Pool,\n)"
-    ) in integration_test
+        "claim_unclaimed(\n        _SOURCE_TYPE,\n        privilege_fixtures.lease_owner,\n        1,"
+        in integration_test
+    )
+    assert "1000" not in integration_test
+    assert (
+        "Lease table must be empty before the privilege suite"
+        in integration_test
+    )
+    assert "permanent Lease tombstone" in integration_test
+    fixture_signature = integration_test[
+        integration_test.index(
+            "async def privilege_fixtures("
+        ) : integration_test.index(
+            ") -> collections.abc.AsyncIterator[_PrivilegeFixtures]:",
+            integration_test.index("async def privilege_fixtures("),
+        )
+    ]
+    assert "admin_pool: asyncpg.Pool" in fixture_signature
+    assert "runtime_pool" not in fixture_signature
+    assert "legacy_pool" not in fixture_signature
     assert "fixture construction must use the admin pool" in integration_test
+    guard_start = integration_test.index("async def _privilege_fixture_guard(")
+    guard_armed = integration_test.index(
+        "try:\n        yield fixtures", guard_start
+    )
+    setup_start = integration_test.index("async def privilege_fixtures(")
+    assert guard_start < guard_armed < setup_start
+    assert (
+        "legacy_store = feed_store.FeedStore(\n        legacy_pool"
+        in integration_test
+    )
+    for legacy_operation in (
+        "legacy_store.acquire_feeds_batch(",
+        "legacy_store.update_feed_progress(",
+        "legacy_store.list_feed_history_records(",
+        "legacy_store.release_feed(",
+    ):
+        assert legacy_operation in integration_test

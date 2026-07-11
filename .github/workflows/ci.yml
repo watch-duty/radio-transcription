@@ -765,18 +765,100 @@ jobs:
           set -euo pipefail
 
           runtime_role="ci_ingestion_runtime_${{ matrix.postgres-version }}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          legacy_role="ci_ingestion_legacy_${{ matrix.postgres-version }}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          creator_role="ci_ingestion_creator_${{ matrix.postgres-version }}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
+          ownership_fixture="ci_runtime_owned_collation_${{ matrix.postgres-version }}_${GITHUB_RUN_ID}_${GITHUB_RUN_ATTEMPT}"
           runtime_password=$(openssl rand -hex 32)
+          legacy_password=$(openssl rand -hex 32)
           admin_dsn="postgresql://postgres:postgres@localhost:5432/postgres"
           runtime_dsn="postgresql://${runtime_role}:${runtime_password}@localhost:5432/postgres"
+          legacy_dsn="postgresql://${legacy_role}:${legacy_password}@localhost:5432/postgres"
           echo "::add-mask::$runtime_password"
+          echo "::add-mask::$legacy_password"
           echo "::add-mask::$admin_dsn"
           echo "::add-mask::$runtime_dsn"
+          echo "::add-mask::$legacy_dsn"
 
           export INGESTION_RUNTIME_ROLE="$runtime_role"
+          export INGESTION_LEGACY_ROLE="$legacy_role"
+          export INGESTION_RUNTIME_CREATOR_ROLE="$creator_role"
+          export INGESTION_OWNERSHIP_FIXTURE="$ownership_fixture"
           export INGESTION_RUNTIME_PASSWORD="$runtime_password"
+          export INGESTION_LEGACY_PASSWORD="$legacy_password"
+
+          cleanup_ephemeral_roles() {
+            original_status=$?
+            trap - EXIT
+            set +e
+            cleanup_status=0
+
+            if ! psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          ALTER DATABASE postgres RESET session_replication_role;
+          SQL
+            then
+              echo "::error::Failed to remove the database parameter drift"
+              cleanup_status=1
+            fi
+
+            if ! psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          \getenv ownership_fixture INGESTION_OWNERSHIP_FIXTURE
+          DROP COLLATION IF EXISTS public.:"ownership_fixture";
+          SQL
+            then
+              echo "::error::Failed to remove the ownership drift fixture"
+              cleanup_status=1
+            fi
+
+            for role_name in "$runtime_role" "$legacy_role" "$creator_role"; do
+              export CLEANUP_ROLE="$role_name"
+              role_exists=$(psql -X -v ON_ERROR_STOP=1 -t -A <<'SQL'
+          \getenv cleanup_role CLEANUP_ROLE
+          SELECT pg_catalog.count(*)
+          FROM pg_catalog.pg_roles
+          WHERE rolname = :'cleanup_role';
+          SQL
+              )
+              if [ "$role_exists" = "0" ]; then
+                continue
+              fi
+              if [ "$role_exists" != "1" ]; then
+                echo "::error::Unexpected role lookup result for $role_name: $role_exists"
+                cleanup_status=1
+                continue
+              fi
+              if ! psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          \getenv cleanup_role CLEANUP_ROLE
+          DROP OWNED BY :"cleanup_role" CASCADE;
+          SQL
+              then
+                echo "::error::DROP OWNED failed for $role_name"
+                cleanup_status=1
+              fi
+              if ! psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          \getenv cleanup_role CLEANUP_ROLE
+          DROP ROLE :"cleanup_role";
+          SQL
+              then
+                echo "::error::DROP ROLE failed for $role_name"
+                cleanup_status=1
+              fi
+            done
+            unset CLEANUP_ROLE
+
+            if [ "$cleanup_status" -ne 0 ]; then
+              exit "$cleanup_status"
+            fi
+            exit "$original_status"
+          }
+          trap cleanup_ephemeral_roles EXIT
+
           psql -X -v ON_ERROR_STOP=1 <<'SQL'
           \getenv runtime_role INGESTION_RUNTIME_ROLE
+          \getenv legacy_role INGESTION_LEGACY_ROLE
+          \getenv creator_role INGESTION_RUNTIME_CREATOR_ROLE
           \getenv runtime_password INGESTION_RUNTIME_PASSWORD
+          \getenv legacy_password INGESTION_LEGACY_PASSWORD
+          BEGIN;
           CREATE ROLE :"runtime_role"
               LOGIN
               NOSUPERUSER
@@ -786,18 +868,165 @@ jobs:
               NOREPLICATION
               NOBYPASSRLS
               PASSWORD :'runtime_password';
+          CREATE ROLE :"legacy_role"
+              LOGIN
+              NOSUPERUSER
+              NOCREATEDB
+              NOCREATEROLE
+              INHERIT
+              NOREPLICATION
+              NOBYPASSRLS
+              PASSWORD :'legacy_password';
+          CREATE ROLE :"creator_role"
+              NOLOGIN
+              NOSUPERUSER
+              NOCREATEDB
+              NOCREATEROLE
+              INHERIT
+              NOREPLICATION
+              NOBYPASSRLS;
           GRANT app_ingestion_runtime TO :"runtime_role";
+          GRANT CONNECT ON DATABASE postgres TO :"legacy_role";
+          GRANT USAGE ON SCHEMA public TO :"legacy_role";
+          GRANT USAGE ON TYPE public.feed_status TO :"legacy_role";
+          GRANT SELECT, UPDATE ON TABLE public.feeds TO :"legacy_role";
+          GRANT SELECT, UPDATE ON TABLE public.feed_properties TO :"legacy_role";
+          GRANT SELECT, INSERT ON TABLE public.feed_audit_events TO :"legacy_role";
+          GRANT CREATE ON SCHEMA public TO :"creator_role";
+          COMMIT;
           SQL
-          unset INGESTION_RUNTIME_PASSWORD
+          unset INGESTION_RUNTIME_PASSWORD INGESTION_LEGACY_PASSWORD
 
-          cleanup_runtime_role() {
-            set +e
-            psql -X -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
+          echo "Starting parameter/default-ACL drift recovery fixture..."
+          psql -X -v ON_ERROR_STOP=1 <<'SQL'
           \getenv runtime_role INGESTION_RUNTIME_ROLE
-          DROP ROLE IF EXISTS :"runtime_role";
+          \getenv creator_role INGESTION_RUNTIME_CREATOR_ROLE
+          GRANT SET, ALTER SYSTEM ON PARAMETER session_replication_role
+              TO PUBLIC, app_ingestion_runtime, :"runtime_role";
+          ALTER ROLE :"runtime_role"
+              SET session_replication_role = replica;
+          ALTER ROLE :"runtime_role" IN DATABASE postgres
+              SET session_replication_role = replica;
+          ALTER DATABASE postgres
+              SET session_replication_role = replica;
+          ALTER DEFAULT PRIVILEGES FOR ROLE :"creator_role"
+              GRANT ALL PRIVILEGES ON TABLES
+              TO PUBLIC, app_ingestion_runtime, :"runtime_role";
+          ALTER DEFAULT PRIVILEGES FOR ROLE :"creator_role"
+              GRANT ALL PRIVILEGES ON SEQUENCES
+              TO PUBLIC, app_ingestion_runtime, :"runtime_role";
+          ALTER DEFAULT PRIVILEGES FOR ROLE :"creator_role"
+              GRANT ALL PRIVILEGES ON ROUTINES
+              TO PUBLIC, app_ingestion_runtime, :"runtime_role";
+          ALTER DEFAULT PRIVILEGES FOR ROLE :"creator_role"
+              GRANT ALL PRIVILEGES ON TYPES
+              TO PUBLIC, app_ingestion_runtime, :"runtime_role";
+          ALTER DEFAULT PRIVILEGES FOR ROLE :"creator_role" IN SCHEMA public
+              GRANT ALL PRIVILEGES ON TABLES
+              TO PUBLIC, app_ingestion_runtime, :"runtime_role";
+          ALTER DEFAULT PRIVILEGES FOR ROLE :"creator_role" IN SCHEMA public
+              GRANT ALL PRIVILEGES ON SEQUENCES
+              TO PUBLIC, app_ingestion_runtime, :"runtime_role";
+          ALTER DEFAULT PRIVILEGES FOR ROLE :"creator_role" IN SCHEMA public
+              GRANT ALL PRIVILEGES ON ROUTINES
+              TO PUBLIC, app_ingestion_runtime, :"runtime_role";
+          ALTER DEFAULT PRIVILEGES FOR ROLE :"creator_role" IN SCHEMA public
+              GRANT ALL PRIVILEGES ON TYPES
+              TO PUBLIC, app_ingestion_runtime, :"runtime_role";
           SQL
-          }
-          trap cleanup_runtime_role EXIT
+
+          echo "Starting SET-ROLE-only default-ACL fixture..."
+          server_version_num=$(psql -X -v ON_ERROR_STOP=1 -t -A \
+            -c "SHOW server_version_num")
+          if [ "$server_version_num" -ge 160000 ]; then
+            psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          \getenv runtime_role INGESTION_RUNTIME_ROLE
+          \getenv creator_role INGESTION_RUNTIME_CREATOR_ROLE
+          GRANT :"creator_role" TO :"runtime_role"
+              WITH INHERIT FALSE, SET TRUE;
+          SQL
+          else
+            psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          \getenv runtime_role INGESTION_RUNTIME_ROLE
+          \getenv creator_role INGESTION_RUNTIME_CREATOR_ROLE
+          ALTER ROLE :"runtime_role" NOINHERIT;
+          GRANT :"creator_role" TO :"runtime_role";
+          SQL
+          fi
+          set +e
+          set_role_rejection_output=$(
+            psql -X -v ON_ERROR_STOP=1 \
+              -f "$GITHUB_WORKSPACE/terraform/modules/alloydb/sql/privileges/999_ingestion_runtime_reconcile.sql" \
+              2>&1
+          )
+          set_role_rejection_status=$?
+          set -e
+          if [ "$set_role_rejection_status" -eq 0 ]; then
+            echo "::error::Reconciliation accepted a SET-ROLE-only default ACL"
+            exit 1
+          fi
+          if [ "$set_role_rejection_status" -ne 3 ]; then
+            echo "::error::SET-ROLE default-ACL fixture failed outside the SQL contract"
+            echo "$set_role_rejection_output"
+            exit 1
+          fi
+          if [[ "$set_role_rejection_output" != *"future public objects expose PUBLIC or an app ingestion member"* ]]; then
+            echo "::error::SET-ROLE default-ACL fixture produced the wrong diagnostic"
+            echo "$set_role_rejection_output"
+            exit 1
+          fi
+          psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          \getenv runtime_role INGESTION_RUNTIME_ROLE
+          \getenv creator_role INGESTION_RUNTIME_CREATOR_ROLE
+          REVOKE :"creator_role" FROM :"runtime_role";
+          SQL
+          if [ "$server_version_num" -lt 160000 ]; then
+            psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          \getenv runtime_role INGESTION_RUNTIME_ROLE
+          ALTER ROLE :"runtime_role" INHERIT;
+          SQL
+          fi
+
+          echo "Starting fail-closed ownership dependency fixture..."
+          psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          \getenv ownership_fixture INGESTION_OWNERSHIP_FIXTURE
+          BEGIN;
+          GRANT CREATE ON SCHEMA public TO app_ingestion_runtime;
+          SET ROLE app_ingestion_runtime;
+          CREATE COLLATION public.:"ownership_fixture" FROM "C";
+          RESET ROLE;
+          REVOKE CREATE ON SCHEMA public FROM app_ingestion_runtime;
+          COMMIT;
+          SQL
+          set +e
+          ownership_rejection_output=$(
+            psql -X -v ON_ERROR_STOP=1 \
+              -f "$GITHUB_WORKSPACE/terraform/modules/alloydb/sql/privileges/999_ingestion_runtime_reconcile.sql" \
+              2>&1
+          )
+          ownership_rejection_status=$?
+          set -e
+          if [ "$ownership_rejection_status" -eq 0 ]; then
+            echo "::error::Reconciliation accepted an app-owned collation"
+            exit 1
+          fi
+          if [ "$ownership_rejection_status" -ne 3 ]; then
+            echo "::error::Ownership fixture failed outside the SQL contract"
+            echo "$ownership_rejection_output"
+            exit 1
+          fi
+          if [[ "$ownership_rejection_output" != *"app_ingestion_runtime must not own database objects"* ]]; then
+            echo "::error::Ownership fixture produced the wrong diagnostic"
+            echo "$ownership_rejection_output"
+            exit 1
+          fi
+          psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          \getenv ownership_fixture INGESTION_OWNERSHIP_FIXTURE
+          DROP COLLATION public.:"ownership_fixture";
+          SQL
+
+          psql -X -v ON_ERROR_STOP=1 \
+            -f "$GITHUB_WORKSPACE/terraform/modules/alloydb/sql/privileges/999_ingestion_runtime_reconcile.sql"
 
           psql -X -v ON_ERROR_STOP=1 \
             -v runtime_role="$runtime_role" \
@@ -805,6 +1034,7 @@ jobs:
 
           INGESTION_RUNTIME_ADMIN_DSN="$admin_dsn" \
           INGESTION_RUNTIME_TEST_DSN="$runtime_dsn" \
+          INGESTION_LEGACY_TEST_DSN="$legacy_dsn" \
           INGESTION_RUNTIME_EXTERNAL_POSTGRES_REQUIRED="1" \
           uv run python -m pytest \
             integration_tests/storage/test_ingestion_runtime_privileges.py \

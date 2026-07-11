@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import os
+import re
 import uuid
 from typing import TYPE_CHECKING
 
@@ -21,15 +22,25 @@ pytestmark = pytest.mark.asyncio(loop_scope="module")
 
 _ADMIN_DSN_ENV = "INGESTION_RUNTIME_ADMIN_DSN"
 _RUNTIME_DSN_ENV = "INGESTION_RUNTIME_TEST_DSN"
+_LEGACY_DSN_ENV = "INGESTION_LEGACY_TEST_DSN"
 _RUNTIME_ROLE_ENV = "INGESTION_RUNTIME_ROLE"
+_LEGACY_ROLE_ENV = "INGESTION_LEGACY_ROLE"
+_CREATOR_ROLE_ENV = "INGESTION_RUNTIME_CREATOR_ROLE"
 _REQUIRED_ENV = "INGESTION_RUNTIME_EXTERNAL_POSTGRES_REQUIRED"
 _SOURCE_TYPE = feed_store.SourceType.BCFY_CALLS
 _ACTOR_ID = "service_account:gcp:ingestion-runtime-privilege-test"
+_LEGACY_ACTOR_ID = "service_account:gcp:legacy-ingestion-compatibility-test"
 _CURSOR = datetime.datetime(2026, 7, 10, 12, 0, tzinfo=datetime.UTC)
 _EXPECTED_TABLE_PRIVILEGES = {
     "ingestion_leases": frozenset({"SELECT", "UPDATE"}),
     "feeds": frozenset({"SELECT", "UPDATE"}),
     "feed_properties": frozenset({"SELECT"}),
+    "feed_audit_events": frozenset({"SELECT", "INSERT"}),
+}
+_EXPECTED_LEGACY_TABLE_PRIVILEGES = {
+    "feeds": frozenset({"SELECT", "UPDATE"}),
+    # FeedStore's audited progress query locks the joined property row.
+    "feed_properties": frozenset({"SELECT", "UPDATE"}),
     "feed_audit_events": frozenset({"SELECT", "INSERT"}),
 }
 
@@ -47,6 +58,7 @@ class _PrivilegeFixtures:
     future_table: str
     sequence: str
     function: str
+    future_type: str
 
 
 def _configured_value(name: str) -> str:
@@ -60,6 +72,13 @@ def _configured_value(name: str) -> str:
 
 def _dsn(name: str) -> str:
     return _configured_value(name)
+
+
+def _configured_identifier(name: str) -> str:
+    value = _configured_value(name)
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value) is None:
+        pytest.fail(f"{name} must be a simple PostgreSQL identifier")
+    return value
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
@@ -94,6 +113,21 @@ async def runtime_pool() -> collections.abc.AsyncIterator[asyncpg.Pool]:
         await pool.close()
 
 
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def legacy_pool() -> collections.abc.AsyncIterator[asyncpg.Pool]:
+    """Create the limited compatibility pool for legacy Feed operations."""
+    pool = await asyncpg.create_pool(
+        dsn=_dsn(_LEGACY_DSN_ENV),
+        min_size=2,
+        max_size=4,
+        statement_cache_size=0,
+    )
+    try:
+        yield pool
+    finally:
+        await pool.close()
+
+
 async def _role_name(pool: asyncpg.Pool) -> str:
     role = await pool.fetchval("SELECT current_user")
     assert isinstance(role, str)
@@ -102,10 +136,10 @@ async def _role_name(pool: asyncpg.Pool) -> str:
 
 async def _assert_admin_connection(
     connection: asyncpg.Connection,
-    runtime_role: str,
+    limited_roles: frozenset[str],
 ) -> None:
     current_role = await connection.fetchval("SELECT current_user")
-    assert current_role != runtime_role, (
+    assert current_role not in limited_roles, (
         "fixture construction must use the admin pool"
     )
 
@@ -115,16 +149,16 @@ def _fixture_identifier(prefix: str) -> str:
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
-async def privilege_fixtures(
+async def _privilege_fixture_guard(
     admin_pool: asyncpg.Pool,
 ) -> collections.abc.AsyncIterator[_PrivilegeFixtures]:
-    """Create and remove unique fixtures exclusively through the admin pool."""
-    runtime_role = _configured_value(_RUNTIME_ROLE_ENV)
-    sid = str(uuid.uuid4().int)
-    group_id = str(uuid.uuid4().int)
+    """Arm durable cleanup before the dependent fixture starts setup."""
+    runtime_role = _configured_identifier(_RUNTIME_ROLE_ENV)
+    legacy_role = _configured_identifier(_LEGACY_ROLE_ENV)
+    limited_roles = frozenset({runtime_role, legacy_role})
     fixtures = _PrivilegeFixtures(
-        sid=sid,
-        group_id=group_id,
+        sid=str(uuid.uuid4().int),
+        group_id=str(uuid.uuid4().int),
         lease_owner=uuid.uuid4(),
         member_feed_id=uuid.uuid4(),
         legacy_feed_id=uuid.uuid4(),
@@ -132,11 +166,120 @@ async def privilege_fixtures(
         future_table=_fixture_identifier("runtime_future_table"),
         sequence=_fixture_identifier("runtime_sequence"),
         function=_fixture_identifier("runtime_function"),
+        future_type=_fixture_identifier("runtime_type"),
     )
 
+    try:
+        yield fixtures
+    finally:
+        async with admin_pool.acquire() as connection:
+            await _assert_admin_connection(connection, limited_roles)
+
+            # Tombstone the Lease first in its own transaction. If later object
+            # cleanup fails, the unique candidate can never remain claimable.
+            async with connection.transaction(isolation="read_committed"):
+                lease_before = await connection.fetchrow(
+                    """
+                    SELECT fencing_token
+                    FROM public.ingestion_leases
+                    WHERE source_type = 'bcfy_calls' AND lease_key = $1
+                    """,
+                    fixtures.sid,
+                )
+                if lease_before is not None:
+                    update_result = await connection.execute(
+                        """
+                        UPDATE public.ingestion_leases
+                        SET status = 'deactivated'::public.feed_status,
+                            worker_id = NULL,
+                            last_heartbeat = NULL,
+                            retry_after = NULL,
+                            unclaimed_since = NULL,
+                            updated_at = NOW()
+                        WHERE source_type = 'bcfy_calls' AND lease_key = $1
+                        """,
+                        fixtures.sid,
+                    )
+                    assert update_result == "UPDATE 1"
+                    tombstone = await connection.fetchrow(
+                        """
+                        SELECT
+                            source_type,
+                            lease_key,
+                            status::text AS status,
+                            worker_id,
+                            last_heartbeat,
+                            retry_after,
+                            unclaimed_since,
+                            fencing_token
+                        FROM public.ingestion_leases
+                        WHERE source_type = 'bcfy_calls' AND lease_key = $1
+                        """,
+                        fixtures.sid,
+                    )
+                    assert tombstone is not None
+                    assert tuple(tombstone.values()) == (
+                        "bcfy_calls",
+                        fixtures.sid,
+                        "deactivated",
+                        None,
+                        None,
+                        None,
+                        None,
+                        lease_before["fencing_token"],
+                    ), (
+                        "fixture cleanup must retain the permanent Lease tombstone"
+                    )
+
+            async with connection.transaction(isolation="read_committed"):
+                await connection.execute(
+                    "DELETE FROM public.feed_audit_events "
+                    "WHERE feed_id = ANY($1::uuid[])",
+                    [fixtures.member_feed_id, fixtures.legacy_feed_id],
+                )
+                await connection.execute(
+                    "DELETE FROM public.feeds WHERE id = ANY($1::uuid[])",
+                    [fixtures.member_feed_id, fixtures.legacy_feed_id],
+                )
+                await connection.execute(
+                    f"DROP TYPE IF EXISTS public.{fixtures.future_type}"
+                )
+                await connection.execute(
+                    f"DROP FUNCTION IF EXISTS public.{fixtures.function}()"
+                )
+                await connection.execute(
+                    f"DROP SEQUENCE IF EXISTS public.{fixtures.sequence}"
+                )
+                await connection.execute(
+                    f"DROP TABLE IF EXISTS public.{fixtures.future_table}"
+                )
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def privilege_fixtures(
+    admin_pool: asyncpg.Pool,
+    _privilege_fixture_guard: _PrivilegeFixtures,
+) -> collections.abc.AsyncIterator[_PrivilegeFixtures]:
+    """Create unique fixtures exclusively through the admin setup pool."""
+    runtime_role = _configured_identifier(_RUNTIME_ROLE_ENV)
+    legacy_role = _configured_identifier(_LEGACY_ROLE_ENV)
+    creator_role = _configured_identifier(_CREATOR_ROLE_ENV)
+    limited_roles = frozenset({runtime_role, legacy_role})
+    fixtures = _privilege_fixture_guard
+    sid = fixtures.sid
+    group_id = fixtures.group_id
+
     async with admin_pool.acquire() as connection:
-        await _assert_admin_connection(connection, runtime_role)
+        await _assert_admin_connection(connection, limited_roles)
         async with connection.transaction(isolation="read_committed"):
+            lease_count = await connection.fetchval(
+                "SELECT pg_catalog.count(*) FROM public.ingestion_leases"
+            )
+            if lease_count != 0:
+                pytest.fail(
+                    "Lease table must be empty before the privilege suite; "
+                    f"found {lease_count} rows"
+                )
             await connection.execute(
                 """
                 INSERT INTO public.feeds (
@@ -205,23 +348,40 @@ async def privilege_fixtures(
                     name,
                     source_type,
                     status,
-                    worker_id,
-                    last_heartbeat,
-                    fencing_token
+                    failure_count,
+                    status_reason,
+                    status_reason_detail,
+                    status_reason_updated_at,
+                    audit_revision,
+                    unclaimed_since
                 ) VALUES (
                     $1,
                     $2,
                     'bcfy_calls',
-                    'active'::public.feed_status,
-                    $3,
+                    'unclaimed'::public.feed_status,
+                    1,
+                    'source_unreachable',
+                    'legacy compatibility fixture failure',
                     NOW(),
-                    11
+                    0,
+                    NOW()
                 )
                 """,
                 fixtures.legacy_feed_id,
                 f"Runtime privilege legacy {uuid.uuid4().hex}",
-                fixtures.legacy_worker_id,
             )
+            await connection.execute(
+                """
+                INSERT INTO public.feed_properties (
+                    feed_id,
+                    source_feed_id,
+                    source_type
+                ) VALUES ($1, $2, 'bcfy_calls')
+                """,
+                fixtures.legacy_feed_id,
+                f"legacy-{uuid.uuid4().hex}",
+            )
+            await connection.execute(f"SET LOCAL ROLE {creator_role}")
             await connection.execute(
                 f"CREATE TABLE public.{fixtures.future_table} "
                 "(id integer PRIMARY KEY)"
@@ -233,58 +393,53 @@ async def privilege_fixtures(
                 f"CREATE FUNCTION public.{fixtures.function}() "
                 "RETURNS integer LANGUAGE sql IMMUTABLE AS 'SELECT 1'"
             )
+            await connection.execute(
+                f"CREATE TYPE public.{fixtures.future_type} AS ENUM ('fixture')"
+            )
 
-    try:
-        yield fixtures
-    finally:
-        async with admin_pool.acquire() as connection:
-            await _assert_admin_connection(connection, runtime_role)
-            async with connection.transaction(isolation="read_committed"):
-                await connection.execute(
-                    "DELETE FROM public.feed_audit_events WHERE feed_id = $1",
-                    fixtures.member_feed_id,
-                )
-                await connection.execute(
-                    "DELETE FROM public.feeds WHERE id = ANY($1::uuid[])",
-                    [fixtures.member_feed_id, fixtures.legacy_feed_id],
-                )
-                await connection.execute(
-                    """
-                    UPDATE public.ingestion_leases
-                    SET status = 'deactivated'::public.feed_status,
-                        worker_id = NULL,
-                        last_heartbeat = NULL,
-                        retry_after = NULL,
-                        unclaimed_since = NULL,
-                        updated_at = NOW()
-                    WHERE source_type = 'bcfy_calls' AND lease_key = $1
-                    """,
-                    fixtures.sid,
-                )
-                await connection.execute(
-                    f"DROP FUNCTION IF EXISTS public.{fixtures.function}()"
-                )
-                await connection.execute(
-                    f"DROP SEQUENCE IF EXISTS public.{fixtures.sequence}"
-                )
-                await connection.execute(
-                    f"DROP TABLE IF EXISTS public.{fixtures.future_table}"
-                )
+        eligible_leases = await connection.fetch(
+            """
+            SELECT lease_key, fencing_token
+            FROM public.ingestion_leases
+            WHERE source_type = 'bcfy_calls'
+              AND status = 'unclaimed'::public.feed_status
+            ORDER BY lease_key
+            """
+        )
+        assert [tuple(row.values()) for row in eligible_leases] == [(sid, 0)]
+
+    yield fixtures
 
 
-async def test_runtime_login_inherits_only_the_dedicated_group(
+async def test_limited_login_identities_are_isolated(
     admin_pool: asyncpg.Pool,
     runtime_pool: asyncpg.Pool,
+    legacy_pool: asyncpg.Pool,
 ) -> None:
     """Prove pool identities and the complete safe role-attribute boundary."""
     admin_role = await _role_name(admin_pool)
     runtime_role = await _role_name(runtime_pool)
-    assert admin_role != runtime_role
+    legacy_role = await _role_name(legacy_pool)
+    assert len({admin_role, runtime_role, legacy_role}) == 3
     assert runtime_role == _configured_value(_RUNTIME_ROLE_ENV)
+    assert legacy_role == _configured_value(_LEGACY_ROLE_ENV)
+    assert (
+        await runtime_pool.fetchval(
+            "SELECT pg_catalog.current_setting('session_replication_role')"
+        )
+        == "origin"
+    )
+    assert (
+        await legacy_pool.fetchval(
+            "SELECT pg_catalog.current_setting('session_replication_role')"
+        )
+        == "origin"
+    )
 
-    row = await admin_pool.fetchrow(
+    rows = await admin_pool.fetch(
         """
         SELECT
+            rolname,
             rolcanlogin,
             rolsuper,
             rolinherit,
@@ -293,20 +448,23 @@ async def test_runtime_login_inherits_only_the_dedicated_group(
             rolreplication,
             rolbypassrls
         FROM pg_catalog.pg_roles
-        WHERE rolname = $1
+        WHERE rolname = ANY($1::text[])
+        ORDER BY rolname
         """,
-        runtime_role,
+        [runtime_role, legacy_role],
     )
-    assert row is not None
-    assert dict(row) == {
-        "rolcanlogin": True,
-        "rolsuper": False,
-        "rolinherit": True,
-        "rolcreaterole": False,
-        "rolcreatedb": False,
-        "rolreplication": False,
-        "rolbypassrls": False,
-    }
+    assert {row["rolname"] for row in rows} == {runtime_role, legacy_role}
+    for row in rows:
+        assert dict(row) == {
+            "rolname": row["rolname"],
+            "rolcanlogin": True,
+            "rolsuper": False,
+            "rolinherit": True,
+            "rolcreaterole": False,
+            "rolcreatedb": False,
+            "rolreplication": False,
+            "rolbypassrls": False,
+        }
     memberships = await admin_pool.fetch(
         """
         SELECT parent.rolname, membership.admin_option
@@ -323,6 +481,16 @@ async def test_runtime_login_inherits_only_the_dedicated_group(
     assert [(row["rolname"], row["admin_option"]) for row in memberships] == [
         ("app_ingestion_runtime", False)
     ]
+    legacy_memberships = await admin_pool.fetchval(
+        """
+        SELECT pg_catalog.count(*)
+        FROM pg_catalog.pg_auth_members AS membership
+        JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member
+        WHERE member.rolname = $1
+        """,
+        legacy_role,
+    )
+    assert legacy_memberships == 0
     assert (
         await admin_pool.fetchval(
             "SELECT pg_catalog.pg_has_role($1, 'postgres', 'MEMBER')",
@@ -566,52 +734,385 @@ async def test_runtime_effective_privileges_are_the_exact_contract(
         is False
     )
 
+    direct_parameter_grants = await admin_pool.fetchval(
+        """
+        SELECT pg_catalog.count(*)
+        FROM pg_catalog.pg_parameter_acl AS parameter_acl
+        CROSS JOIN LATERAL pg_catalog.aclexplode(parameter_acl.paracl) AS acl
+        WHERE acl.grantee IN (
+            0::oid,
+            (SELECT oid FROM pg_catalog.pg_roles WHERE rolname = $1),
+            (SELECT oid FROM pg_catalog.pg_roles
+             WHERE rolname = 'app_ingestion_runtime')
+        )
+        """,
+        runtime_role,
+    )
+    assert direct_parameter_grants == 0
+
+    unsafe_parameter_grants = await admin_pool.fetchval(
+        """
+        SELECT pg_catalog.count(*)
+        FROM pg_catalog.pg_settings AS setting
+        WHERE (
+            (
+                setting.context IN ('superuser', 'superuser-backend')
+                OR setting.name = 'session_replication_role'
+            )
+            AND pg_catalog.has_parameter_privilege($1, setting.name, 'SET')
+        ) OR pg_catalog.has_parameter_privilege(
+            $1,
+            setting.name,
+            'ALTER SYSTEM'
+        )
+        """,
+        runtime_role,
+    )
+    assert unsafe_parameter_grants == 0
+
     owned_objects = await admin_pool.fetchval(
         """
-        SELECT
-            (SELECT pg_catalog.count(*)
-             FROM pg_catalog.pg_class
-             WHERE relowner = role.oid)
-          + (SELECT pg_catalog.count(*)
-             FROM pg_catalog.pg_proc
-             WHERE proowner = role.oid)
-          + (SELECT pg_catalog.count(*)
-             FROM pg_catalog.pg_type
-             WHERE typowner = role.oid)
-        FROM pg_catalog.pg_roles AS role
-        WHERE role.rolname = $1
+        SELECT pg_catalog.count(*)
+        FROM pg_catalog.pg_shdepend AS dependency
+        JOIN pg_catalog.pg_roles AS owner
+          ON owner.oid = dependency.refobjid
+        WHERE dependency.refclassid =
+              'pg_catalog.pg_authid'::pg_catalog.regclass
+          AND dependency.deptype = 'o'
+          AND owner.rolname IN ($1, 'app_ingestion_runtime')
         """,
         runtime_role,
     )
     assert owned_objects == 0
 
 
-async def test_real_legacy_and_lease_stores_run_through_runtime_pool(
+async def test_legacy_feed_store_runs_through_separate_limited_pool(
+    admin_pool: asyncpg.Pool,
+    legacy_pool: asyncpg.Pool,
+    privilege_fixtures: _PrivilegeFixtures,
+) -> None:
+    """Prove the minimal legacy Feed claim/progress/audit compatibility path."""
+    legacy_role = await _role_name(legacy_pool)
+    server_version = int(await admin_pool.fetchval("SHOW server_version_num"))
+    table_privileges = [
+        "SELECT",
+        "INSERT",
+        "UPDATE",
+        "DELETE",
+        "TRUNCATE",
+        "REFERENCES",
+        "TRIGGER",
+    ]
+    if server_version >= 170000:
+        table_privileges.append("MAINTAIN")
+    rows = await admin_pool.fetch(
+        """
+        SELECT
+            relation.relname,
+            privilege.name,
+            pg_catalog.has_table_privilege(
+                $1,
+                relation.oid,
+                privilege.name
+            ) AS allowed,
+            pg_catalog.has_table_privilege(
+                $1,
+                relation.oid,
+                privilege.name || ' WITH GRANT OPTION'
+            ) AS grantable
+        FROM pg_catalog.pg_class AS relation
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+        CROSS JOIN unnest($2::text[]) AS privilege(name)
+        WHERE namespace.nspname = 'public'
+          AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
+        ORDER BY relation.relname, privilege.name
+        """,
+        legacy_role,
+        table_privileges,
+    )
+    actual = {(row["relname"], row["name"]) for row in rows if row["allowed"]}
+    expected = {
+        (table, privilege)
+        for table, privileges in _EXPECTED_LEGACY_TABLE_PRIVILEGES.items()
+        for privilege in privileges
+    }
+    assert actual == expected
+    assert not any(row["grantable"] for row in rows)
+
+    column_privileges = ["SELECT", "INSERT", "UPDATE", "REFERENCES"]
+    column_rows = await admin_pool.fetch(
+        """
+        SELECT
+            relation.relname,
+            attribute.attname,
+            privilege.name,
+            pg_catalog.has_column_privilege(
+                $1,
+                relation.oid,
+                attribute.attnum,
+                privilege.name
+            ) AS allowed,
+            pg_catalog.has_column_privilege(
+                $1,
+                relation.oid,
+                attribute.attnum,
+                privilege.name || ' WITH GRANT OPTION'
+            ) AS grantable
+        FROM pg_catalog.pg_attribute AS attribute
+        JOIN pg_catalog.pg_class AS relation
+          ON relation.oid = attribute.attrelid
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+        CROSS JOIN unnest($2::text[]) AS privilege(name)
+        WHERE namespace.nspname = 'public'
+          AND relation.relkind IN ('r', 'p', 'v', 'm', 'f')
+          AND attribute.attnum > 0
+          AND NOT attribute.attisdropped
+        ORDER BY relation.relname, attribute.attnum, privilege.name
+        """,
+        legacy_role,
+        column_privileges,
+    )
+    for column_row in column_rows:
+        expected_allowed = column_row["name"] in (
+            _EXPECTED_LEGACY_TABLE_PRIVILEGES.get(
+                column_row["relname"],
+                frozenset(),
+            )
+        )
+        assert column_row["allowed"] is expected_allowed
+        assert column_row["grantable"] is False
+
+    assert (
+        await admin_pool.fetchval(
+            "SELECT pg_catalog.has_schema_privilege($1, 'public', 'CREATE')",
+            legacy_role,
+        )
+        is False
+    )
+    assert (
+        await admin_pool.fetchval(
+            "SELECT pg_catalog.has_database_privilege($1, current_database(), 'CONNECT')",
+            legacy_role,
+        )
+        is True
+    )
+    assert (
+        await admin_pool.fetchval(
+            "SELECT pg_catalog.has_database_privilege($1, current_database(), 'CONNECT WITH GRANT OPTION')",
+            legacy_role,
+        )
+        is False
+    )
+    for database_privilege in ("CREATE", "TEMPORARY"):
+        assert (
+            await admin_pool.fetchval(
+                "SELECT pg_catalog.has_database_privilege($1, current_database(), $2)",
+                legacy_role,
+                database_privilege,
+            )
+            is False
+        )
+    assert (
+        await admin_pool.fetchval(
+            "SELECT pg_catalog.has_schema_privilege($1, 'public', 'USAGE')",
+            legacy_role,
+        )
+        is True
+    )
+    assert (
+        await admin_pool.fetchval(
+            "SELECT pg_catalog.has_schema_privilege($1, 'public', 'USAGE WITH GRANT OPTION')",
+            legacy_role,
+        )
+        is False
+    )
+    assert (
+        await admin_pool.fetchval(
+            "SELECT pg_catalog.has_type_privilege($1, 'public.feed_status', 'USAGE')",
+            legacy_role,
+        )
+        is True
+    )
+    assert (
+        await admin_pool.fetchval(
+            "SELECT pg_catalog.has_type_privilege($1, 'public.feed_status', 'USAGE WITH GRANT OPTION')",
+            legacy_role,
+        )
+        is False
+    )
+    assert (
+        await admin_pool.fetchval(
+            """
+            SELECT NOT pg_catalog.bool_or(
+                pg_catalog.has_sequence_privilege(
+                    $1,
+                    relation.oid,
+                    privilege.name
+                )
+            )
+            FROM pg_catalog.pg_class AS relation
+            JOIN pg_catalog.pg_namespace AS namespace
+              ON namespace.oid = relation.relnamespace
+            CROSS JOIN unnest(
+                ARRAY['USAGE', 'SELECT', 'UPDATE']
+            ) AS privilege(name)
+            WHERE namespace.nspname = 'public'
+              AND relation.relkind = 'S'
+            """,
+            legacy_role,
+        )
+        is True
+    )
+    assert (
+        await admin_pool.fetchval(
+            """
+            SELECT NOT pg_catalog.bool_or(
+                pg_catalog.has_function_privilege($1, routine.oid, 'EXECUTE')
+            )
+            FROM pg_catalog.pg_proc AS routine
+            JOIN pg_catalog.pg_namespace AS namespace
+              ON namespace.oid = routine.pronamespace
+            WHERE namespace.nspname = 'public'
+            """,
+            legacy_role,
+        )
+        is True
+    )
+    legacy_type_privileges = await admin_pool.fetch(
+        """
+        SELECT
+            type.typname,
+            pg_catalog.has_type_privilege($1, type.oid, 'USAGE') AS allowed
+        FROM pg_catalog.pg_type AS type
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = type.typnamespace
+        LEFT JOIN pg_catalog.pg_class AS type_relation
+          ON type_relation.oid = type.typrelid
+        WHERE namespace.nspname = 'public'
+          AND type.typelem = 0
+          AND (
+              (type.typrelid = 0 AND type.typtype IN ('b', 'd', 'e', 'm', 'r'))
+              OR (type.typtype = 'c' AND type_relation.relkind = 'c')
+          )
+        ORDER BY type.typname
+        """,
+        legacy_role,
+    )
+    assert {
+        row["typname"] for row in legacy_type_privileges if row["allowed"]
+    } == {"feed_status"}
+
+    unsafe_parameter_grants = await admin_pool.fetchval(
+        """
+        WITH privileged_parameters AS (
+            SELECT parameter_acl.parname
+            FROM pg_catalog.pg_parameter_acl AS parameter_acl
+            UNION
+            SELECT 'session_replication_role'::text
+        )
+        SELECT pg_catalog.count(*)
+        FROM privileged_parameters AS parameter
+        CROSS JOIN (VALUES ('SET'), ('ALTER SYSTEM')) AS access(privilege)
+        WHERE pg_catalog.has_parameter_privilege(
+            $1,
+            parameter.parname,
+            access.privilege
+        )
+        """,
+        legacy_role,
+    )
+    assert unsafe_parameter_grants == 0
+
+    eligible = await admin_pool.fetch(
+        """
+        SELECT id, fencing_token
+        FROM public.feeds
+        WHERE source_type = 'bcfy_calls'
+          AND status = 'unclaimed'::public.feed_status
+        ORDER BY id
+        """
+    )
+    assert [(row["id"], row["fencing_token"]) for row in eligible] == [
+        (privilege_fixtures.legacy_feed_id, 0)
+    ]
+
+    legacy_store = feed_store.FeedStore(
+        legacy_pool,
+        claim_types=[_SOURCE_TYPE],
+    )
+    leased_feeds = await legacy_store.acquire_feeds_batch(
+        privilege_fixtures.legacy_worker_id,
+        {_SOURCE_TYPE: 1},
+    )
+    assert len(leased_feeds) == 1
+    leased = leased_feeds[0]
+    assert leased["id"] == privilege_fixtures.legacy_feed_id
+    assert leased["source_type"] is _SOURCE_TYPE
+    assert leased["fencing_token"] == 1
+
+    updated = await legacy_store.update_feed_progress(
+        privilege_fixtures.legacy_feed_id,
+        privilege_fixtures.legacy_worker_id,
+        f"gs://legacy-compatibility/{uuid.uuid4().hex}.flac",
+        leased["fencing_token"],
+        _CURSOR,
+        actor_id=_LEGACY_ACTOR_ID,
+    )
+    assert updated is True
+    history = await legacy_store.list_feed_history_records(
+        privilege_fixtures.legacy_feed_id,
+        limit=1,
+    )
+    assert history.total == 1
+    assert len(history.audit_events) == 1
+    assert history.audit_events[0]["action"] == "feed.recovered"
+    assert history.audit_events[0]["actor_id"] == _LEGACY_ACTOR_ID
+    assert history.audit_events[0]["feed_revision"] == 1
+
+    released = await legacy_store.release_feed(
+        privilege_fixtures.legacy_feed_id,
+        privilege_fixtures.legacy_worker_id,
+        leased["fencing_token"],
+    )
+    assert released is True
+
+
+async def test_real_lease_store_runs_through_runtime_pool(
+    admin_pool: asyncpg.Pool,
     runtime_pool: asyncpg.Pool,
     privilege_fixtures: _PrivilegeFixtures,
 ) -> None:
-    """Exercise the production legacy and fenced Lease store SQL."""
-    legacy_store = feed_store.FeedStore(runtime_pool)
-    released_legacy = await legacy_store.release_feed(
-        privilege_fixtures.legacy_feed_id,
-        privilege_fixtures.legacy_worker_id,
-        11,
+    """Exercise one exact fenced Lease without touching unrelated candidates."""
+    eligible = await admin_pool.fetch(
+        """
+        SELECT lease_key, fencing_token
+        FROM public.ingestion_leases
+        WHERE source_type = 'bcfy_calls'
+          AND status = 'unclaimed'::public.feed_status
+        ORDER BY lease_key
+        """
     )
-    assert released_legacy is True
+    assert [(row["lease_key"], row["fencing_token"]) for row in eligible] == [
+        (privilege_fixtures.sid, 0)
+    ]
 
     lease_store = ingestion_lease_store.IngestionLeaseStore(runtime_pool)
     claims = await lease_store.claim_unclaimed(
         _SOURCE_TYPE,
         privilege_fixtures.lease_owner,
-        1000,
+        1,
     )
-    matching = [
-        claim
-        for claim in claims
-        if claim.grant.lease_key == privilege_fixtures.sid
-    ]
-    assert len(matching) == 1
-    grant = matching[0].grant
+    assert len(claims) == 1
+    grant = claims[0].grant
+    assert grant == ingestion_lease_store.LeaseGrant(
+        source_type=_SOURCE_TYPE,
+        lease_key=privilege_fixtures.sid,
+        owner_worker_id=privilege_fixtures.lease_owner,
+        fencing_token=1,
+    )
+    assert claims[0].snapshot.status is feed_store.FeedStatus.ACTIVE
 
     membership = await lease_store.load_membership(grant)
     assert isinstance(membership, ingestion_lease_store.MembershipSnapshot)
@@ -662,6 +1163,19 @@ async def test_real_legacy_and_lease_stores_run_through_runtime_pool(
     assert released.disposition is (
         ingestion_lease_store.LeaseOperationDisposition.APPLIED
     )
+    durable_tombstone = await runtime_pool.fetchrow(
+        """
+        SELECT
+            status::text AS status,
+            worker_id,
+            fencing_token
+        FROM public.ingestion_leases
+        WHERE source_type = 'bcfy_calls' AND lease_key = $1
+        """,
+        privilege_fixtures.sid,
+    )
+    assert durable_tombstone is not None
+    assert tuple(durable_tombstone.values()) == ("unclaimed", None, 1)
 
 
 async def _assert_denied(
@@ -731,6 +1245,7 @@ async def test_every_forbidden_runtime_action_is_denied(
         f"CREATE TEMPORARY TABLE {_fixture_identifier('runtime_temp_denied')} "
         "(id integer)",
         f"CREATE SCHEMA {_fixture_identifier('runtime_schema_denied')}",
+        "SET session_replication_role = replica",
         "SET ROLE postgres",
         f"CREATE ROLE {_fixture_identifier('runtime_role_denied')}",
     )
