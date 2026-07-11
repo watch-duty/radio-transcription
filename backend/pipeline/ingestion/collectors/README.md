@@ -57,6 +57,39 @@ object-scoped and pipeline failures after a best-effort non-budgeted status
 recording attempt so one object cannot quarantine the feed or create a retry
 loop.
 
+## Runtime Control-Plane Contract
+
+VM collectors run inside `CollectorRuntime`; they should not claim feeds,
+renew leases, or build their own unbounded startup queues. Lease Admission is
+the runtime's pre-claim backpressure boundary: each lease-loop cycle limits the
+new primary plus recovery leases admitted before feed tasks are created.
+Collector code should assume it receives an already leased feed and should
+preserve the runtime's ownership of lease acquisition, fencing, heartbeat, and
+shutdown behavior.
+
+Collector startup work must avoid creating synchronous herds against shared
+external systems. If many feed tasks share a blocking dependency such as a
+credential lookup, token refresh, or source-control call, coordinate that work
+at the async level before entering the shared thread pool. A cache, cooperative
+`asyncio.Lock`, or per-source limiter is preferable to letting every feed task
+start the same blocking operation at once.
+
+Worker Health is the worker-local `/healthz` signal. It remains tied to the
+worker event loop and heartbeat freshness, so collector code should yield
+regularly, respect cancellation, and keep blocking work out of the event loop.
+Do not rely on VM Health to hide real worker stalls.
+
+VM Health is the VM-level same-image health agent used by the MIG health check.
+It probes all configured local Worker Health endpoints by HTTP status and
+protects the VM from immediate autohealing until every configured worker has
+been continuously unhealthy for 600 seconds. That hysteresis absorbs transient
+overload; it does not make worker-level stalls acceptable.
+
+Recovery acquisition remains primary-first for v1. If primary acquisition keeps
+filling the Lease Admission budget, recovery rows can wait behind continuous
+primary backlog. Treat that as an explicit residual risk and future tuning area,
+not as something an individual collector should work around locally.
+
 ## Status Reason Policy
 
 `feeds.status` remains lifecycle and scheduling state. `feeds.status_reason`

@@ -1,17 +1,14 @@
 import os
+import pathlib
 import subprocess
 import sys
+import typing
 import unittest
-from pathlib import Path
 
-from common.gemini.context import ContextTurn
-from common.gemini.tuning_data import (
-    build_audio_tuning_example,
-    validate_audio_tuning_example,
-)
+from common.gemini import context, tuning_data
 
 # model/src must be on PYTHONPATH in subprocess calls so `import common` resolves.
-_SRC_DIR = str(Path(__file__).resolve().parents[3] / "src")
+_SRC_DIR = str(pathlib.Path(__file__).resolve().parents[3] / "src")
 
 
 def _first_file_part(turn: dict) -> dict:
@@ -19,8 +16,14 @@ def _first_file_part(turn: dict) -> dict:
 
 
 class TestBuildExample(unittest.TestCase):
+    def test_public_annotations_resolve_at_runtime(self) -> None:
+        hints = typing.get_type_hints(tuning_data.build_audio_tuning_example)
+
+        self.assertIn("history", hints)
+        self.assertIn("return", hints)
+
     def test_round_trips_audio_uri(self) -> None:
-        example = build_audio_tuning_example(
+        example = tuning_data.build_audio_tuning_example(
             audio_uri="gs://bucket/seg001.flac",
             gt_text="Engine 41 copy",
             system_prompt="You are a transcriber.",
@@ -35,7 +38,7 @@ class TestBuildExample(unittest.TestCase):
         self.assertEqual(file_parts[0]["fileData"]["mimeType"], "audio/flac")
 
     def test_system_instruction_is_sibling_of_contents(self) -> None:
-        example = build_audio_tuning_example(
+        example = tuning_data.build_audio_tuning_example(
             "gs://b/s.flac", "copy", "sys", "user"
         )
         self.assertIn("systemInstruction", example)
@@ -45,7 +48,7 @@ class TestBuildExample(unittest.TestCase):
             self.assertNotIn("systemInstruction", turn)
 
     def test_contents_has_user_then_model_turns(self) -> None:
-        example = build_audio_tuning_example(
+        example = tuning_data.build_audio_tuning_example(
             "gs://b/s.flac", "copy", "sys", "user"
         )
         self.assertEqual(len(example["contents"]), 2)
@@ -53,7 +56,7 @@ class TestBuildExample(unittest.TestCase):
         self.assertEqual(example["contents"][1]["role"], "model")
 
     def test_model_turn_carries_ground_truth_text(self) -> None:
-        example = build_audio_tuning_example(
+        example = tuning_data.build_audio_tuning_example(
             audio_uri="gs://bucket/seg001.flac",
             gt_text="Engine 41 copy",
             system_prompt="You are a transcriber.",
@@ -64,7 +67,7 @@ class TestBuildExample(unittest.TestCase):
         )
 
     def test_user_turn_carries_user_prompt_text(self) -> None:
-        example = build_audio_tuning_example(
+        example = tuning_data.build_audio_tuning_example(
             audio_uri="gs://b/s.flac",
             gt_text="copy",
             system_prompt="sys",
@@ -78,14 +81,14 @@ class TestBuildExample(unittest.TestCase):
 
     def test_history_defaults_to_text_turn_model_pairs(self) -> None:
         user_prompt = "current prompt"
-        example = build_audio_tuning_example(
+        example = tuning_data.build_audio_tuning_example(
             audio_uri="gs://bucket/current.flac",
             gt_text="current text",
             system_prompt="sys",
             user_prompt=user_prompt,
             history=[
-                ContextTurn("gs://bucket/prev-1.flac", "first"),
-                ContextTurn("gs://bucket/prev-2.flac", "second"),
+                context.ContextTurn("gs://bucket/prev-1.flac", "first"),
+                context.ContextTurn("gs://bucket/prev-2.flac", "second"),
             ],
         )
 
@@ -93,12 +96,11 @@ class TestBuildExample(unittest.TestCase):
             [turn["role"] for turn in example["contents"]],
             ["user", "model", "user", "model", "user", "model"],
         )
-        audio_parts = [
-            part
-            for turn in example["contents"]
-            for part in turn["parts"]
-            if "fileData" in part
-        ]
+        audio_parts = []
+        for turn in example["contents"]:
+            for part in turn["parts"]:
+                if "fileData" in part:
+                    audio_parts.append(part)
         self.assertEqual(len(audio_parts), 1)
         self.assertEqual(
             audio_parts[0]["fileData"]["fileUri"],
@@ -118,14 +120,14 @@ class TestBuildExample(unittest.TestCase):
         )
 
     def test_transcript_history_mode_keeps_one_audio_part(self) -> None:
-        example = build_audio_tuning_example(
+        example = tuning_data.build_audio_tuning_example(
             audio_uri="gs://bucket/current.flac",
             gt_text="current text",
             system_prompt="sys",
             user_prompt="current prompt",
             history=[
-                ContextTurn("gs://bucket/prev-1.flac", "first"),
-                ContextTurn("gs://bucket/prev-2.flac", "second"),
+                context.ContextTurn("gs://bucket/prev-1.flac", "first"),
+                context.ContextTurn("gs://bucket/prev-2.flac", "second"),
             ],
             history_mode="transcript",
         )
@@ -146,20 +148,24 @@ class TestBuildExample(unittest.TestCase):
         self.assertIn("current prompt", user_text)
 
     def test_guarded_transcript_block_mode_uses_exact_template(self) -> None:
-        example = build_audio_tuning_example(
+        example = tuning_data.build_audio_tuning_example(
             audio_uri="gs://bucket/current.flac",
             gt_text="current text",
             system_prompt="sys",
             user_prompt="IMPORTANT: current prompt",
             history=[
-                ContextTurn("gs://bucket/prev-1.flac", " first   transcript "),
-                ContextTurn("gs://bucket/prev-2.flac", "second transcript"),
+                context.ContextTurn(
+                    "gs://bucket/prev-1.flac", " first   transcript "
+                ),
+                context.ContextTurn(
+                    "gs://bucket/prev-2.flac", "second transcript"
+                ),
             ],
             history_mode="guarded_transcript_block",
         )
 
         self.assertEqual(len(example["contents"]), 2)
-        self.assertTrue(validate_audio_tuning_example(example))
+        self.assertTrue(tuning_data.validate_audio_tuning_example(example))
         self.assertEqual(
             _first_file_part(example["contents"][0])["fileData"]["fileUri"],
             "gs://bucket/current.flac",
@@ -183,7 +189,7 @@ class TestBuildExample(unittest.TestCase):
     def test_guarded_transcript_block_mode_includes_no_history_sentence(
         self,
     ) -> None:
-        example = build_audio_tuning_example(
+        example = tuning_data.build_audio_tuning_example(
             audio_uri="gs://bucket/current.flac",
             gt_text="current text",
             system_prompt="sys",
@@ -211,14 +217,14 @@ class TestBuildExample(unittest.TestCase):
         self,
     ) -> None:
         user_prompt = "current prompt"
-        example = build_audio_tuning_example(
+        example = tuning_data.build_audio_tuning_example(
             audio_uri="gs://bucket/current.flac",
             gt_text="current text",
             system_prompt="sys",
             user_prompt=user_prompt,
             history=[
-                ContextTurn("gs://bucket/prev-1.flac", "first"),
-                ContextTurn("gs://bucket/prev-2.flac", "second"),
+                context.ContextTurn("gs://bucket/prev-1.flac", "first"),
+                context.ContextTurn("gs://bucket/prev-2.flac", "second"),
             ],
             history_mode="text_turns",
         )
@@ -227,12 +233,11 @@ class TestBuildExample(unittest.TestCase):
             [turn["role"] for turn in example["contents"]],
             ["user", "model", "user", "model", "user", "model"],
         )
-        audio_parts = [
-            part
-            for turn in example["contents"]
-            for part in turn["parts"]
-            if "fileData" in part
-        ]
+        audio_parts = []
+        for turn in example["contents"]:
+            for part in turn["parts"]:
+                if "fileData" in part:
+                    audio_parts.append(part)
         self.assertEqual(len(audio_parts), 1)
         self.assertEqual(
             audio_parts[0]["fileData"]["fileUri"],
@@ -253,79 +258,105 @@ class TestBuildExample(unittest.TestCase):
 
 class TestValidateExample(unittest.TestCase):
     def test_accepts_well_formed_example(self) -> None:
-        ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
-        self.assertTrue(validate_audio_tuning_example(ex))
+        ex = tuning_data.build_audio_tuning_example(
+            "gs://b/s.flac", "copy", "sys", "user"
+        )
+        self.assertTrue(tuning_data.validate_audio_tuning_example(ex))
 
     def test_rejects_missing_current_schema_fields(self) -> None:
         self.assertFalse(
-            validate_audio_tuning_example(
+            tuning_data.validate_audio_tuning_example(
                 {"input_text": "x", "output_text": "y"}
             )
         )
 
     def test_rejects_flat_prompt_response_shape(self) -> None:
         self.assertFalse(
-            validate_audio_tuning_example({"prompt": "x", "response": "y"})
+            tuning_data.validate_audio_tuning_example(
+                {"prompt": "x", "response": "y"}
+            )
         )
 
     def test_allows_provider_to_validate_file_uri_scheme(self) -> None:
-        ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
+        ex = tuning_data.build_audio_tuning_example(
+            "gs://b/s.flac", "copy", "sys", "user"
+        )
         _first_file_part(ex["contents"][0])["fileData"]["fileUri"] = (
             "s3://bucket/file.flac"
         )
-        self.assertTrue(validate_audio_tuning_example(ex))
+        self.assertTrue(tuning_data.validate_audio_tuning_example(ex))
 
     def test_allows_provider_to_validate_null_file_uri(self) -> None:
-        ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
+        ex = tuning_data.build_audio_tuning_example(
+            "gs://b/s.flac", "copy", "sys", "user"
+        )
         _first_file_part(ex["contents"][0])["fileData"]["fileUri"] = None
-        self.assertTrue(validate_audio_tuning_example(ex))
+        self.assertTrue(tuning_data.validate_audio_tuning_example(ex))
 
     def test_allows_provider_to_validate_mime_type(self) -> None:
-        ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
+        ex = tuning_data.build_audio_tuning_example(
+            "gs://b/s.flac", "copy", "sys", "user"
+        )
         _first_file_part(ex["contents"][0])["fileData"]["mimeType"] = (
             "audio/wav"
         )
-        self.assertTrue(validate_audio_tuning_example(ex))
+        self.assertTrue(tuning_data.validate_audio_tuning_example(ex))
 
     def test_rejects_empty_model_text(self) -> None:
-        ex = build_audio_tuning_example("gs://b/s.flac", "   ", "sys", "user")
-        self.assertFalse(validate_audio_tuning_example(ex))
+        ex = tuning_data.build_audio_tuning_example(
+            "gs://b/s.flac", "   ", "sys", "user"
+        )
+        self.assertFalse(tuning_data.validate_audio_tuning_example(ex))
+
+    def test_rejects_non_string_model_text(self) -> None:
+        for value in (123, ["copy"]):
+            with self.subTest(value=value):
+                ex = tuning_data.build_audio_tuning_example(
+                    "gs://b/s.flac", "copy", "sys", "user"
+                )
+                ex["contents"][-1]["parts"][0]["text"] = value
+
+                self.assertFalse(tuning_data.validate_audio_tuning_example(ex))
 
     def test_rejects_contents_with_wrong_turn_count(self) -> None:
-        ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
+        ex = tuning_data.build_audio_tuning_example(
+            "gs://b/s.flac", "copy", "sys", "user"
+        )
         # Remove the model turn so only one turn remains
         ex["contents"] = ex["contents"][:1]
-        self.assertFalse(validate_audio_tuning_example(ex))
+        self.assertFalse(tuning_data.validate_audio_tuning_example(ex))
 
     def test_allows_provider_to_validate_turn_order_and_roles(self) -> None:
-        ex = build_audio_tuning_example("gs://b/s.flac", "copy", "sys", "user")
+        ex = tuning_data.build_audio_tuning_example(
+            "gs://b/s.flac", "copy", "sys", "user"
+        )
         ex["contents"].insert(0, {"role": "unexpected", "parts": []})
 
-        self.assertTrue(validate_audio_tuning_example(ex))
+        self.assertTrue(tuning_data.validate_audio_tuning_example(ex))
 
     def test_accepts_well_formed_text_turn_history_turns(self) -> None:
-        ex = build_audio_tuning_example(
+        ex = tuning_data.build_audio_tuning_example(
             "gs://b/current.flac",
             "current",
             "sys",
             "user",
-            history=[ContextTurn("gs://b/prior.flac", "prior")],
+            history=[context.ContextTurn("gs://b/prior.flac", "prior")],
             history_mode="text_turns",
         )
 
-        self.assertTrue(validate_audio_tuning_example(ex))
+        self.assertTrue(tuning_data.validate_audio_tuning_example(ex))
 
     def test_rejects_empty_current_target_even_with_history(self) -> None:
-        ex = build_audio_tuning_example(
+        ex = tuning_data.build_audio_tuning_example(
             "gs://b/current.flac",
             "   ",
             "sys",
             "user",
-            history=[ContextTurn("gs://b/prior.flac", "prior")],
+            history=[context.ContextTurn("gs://b/prior.flac", "prior")],
             history_mode="text_turns",
         )
 
-        self.assertFalse(validate_audio_tuning_example(ex))
+        self.assertFalse(tuning_data.validate_audio_tuning_example(ex))
 
 
 class TestImportIsolation(unittest.TestCase):

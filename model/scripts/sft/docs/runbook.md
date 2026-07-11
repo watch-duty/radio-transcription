@@ -9,10 +9,11 @@ tags: [gemini-sft, operator-docs]
 
 ## Scope
 
-This is the canonical operator path for one Gemini SFT run: prepare the config,
-build Gemini SFT inputs, submit or resume Vertex tuning, run one configured eval
-target, inspect reports, run masked or unmasked evals as separate configs, and
-check generated artifacts before committing.
+This is the canonical operator path for Gemini SFT training and evaluation.
+Training rounds prepare Gemini inputs and may submit or resume Vertex tuning.
+Eval-only rounds prepare an existing publisher model, tuned endpoint, or
+checkpoint for one evaluation without rebuilding training inputs. Both paths
+use one immutable eval target per prepared round.
 
 The packaged eval contract supports one `[eval.model]` per config/run. Base,
 tuned endpoint, and checkpoint endpoint comparisons use separate configs or an
@@ -43,7 +44,7 @@ gs://BUCKET/sft/runs/ROUND_ID/
 Local `results/ROUND_ID/` is only a cache or mirror. Use GCS artifacts for
 resume, reuse, review, and handoff.
 
-## 1. Prepare A Placeholder Config
+## 1. Prepare A Config
 
 Use one config per run and one eval target per config:
 
@@ -73,31 +74,45 @@ model = "projects/PROJECT/locations/us-central1/endpoints/ENDPOINT_ID"
 ```
 
 To compare base, tuned, and checkpoint resources, create separate configs or
-use an external wrapper that invokes the CLI once per config.
+use an external wrapper that invokes the CLI once per config. The committed
+example contains training manifests and a publisher-model eval target. A
+training-only config may omit `[eval.model]`, but it cannot be evaluated.
+
+The tuned endpoint does not exist when its training round is prepared, and
+tuning never mutates the round's eval target. After tuning completes, create a
+new eval-only config with a new `round_id`, omit both `train_manifest_uri` and
+`validation_manifest_uri`, and set `[eval.model].model` to the endpoint or
+checkpoint resource. Run `prepare` again for that config before eval.
 
 ## 2. Build Gemini SFT Inputs
 
-`prepare` is the non-paid preflight and input-build step:
+`prepare` is the non-paid validation and input-build step:
 
 ```bash
 gemini-sft prepare --config /path/to/run.toml
 ```
 
-It copies canonical manifests into the run prefix, validates train/validation
-overlap, derives Gemini JSONL for train and validation, writes preflight output,
-and stores resolved prompts in durable GCS `config.json`.
+For a training round, it copies canonical manifests into the run prefix,
+validates split overlap, derives Gemini JSONL for train and validation, writes
+preflight output, and stores resolved prompts in durable GCS `config.json`. For
+an eval-only round, it validates and publishes only `run_config.toml`,
+`config.json`, and the canonical eval manifest.
 
-Durable inspection points after prepare:
+Every prepared round has these durable inspection points:
 
 - `config.json`
-- `status.json`
-- canonical manifests under `manifests/canonical/`
-- `model_inputs/gemini/*.jsonl`
+- `run_config.toml`
+- `manifests/canonical/eval.jsonl`
+
+Training rounds additionally have `status.json`, canonical train and validation
+manifests, `model_inputs/gemini/*.jsonl`, `preflight/report.json`,
+`tuning/status.json`, and `evals/README.txt`.
 
 ## 3. Submit Or Resume Vertex Tuning
 
-This is a paid Vertex operation. Before running it, confirm the expected tuning
-and run-state output prefix:
+This is a paid Vertex operation for training rounds. Eval-only rounds skip this
+step. Before running it, confirm the expected tuning and run-state output
+prefix:
 
 ```text
 gs://BUCKET/sft/runs/ROUND_ID/
@@ -135,6 +150,10 @@ Run eval for the single `[eval.model]` target in the config:
 gemini-sft eval --config /path/to/run.toml
 ```
 
+The round must already have been prepared with that target. To evaluate a tuned
+or checkpoint endpoint created by another round, use the separately prepared
+eval-only config from step 1.
+
 The local TOML must match the durable GCS `config.json` for eval-affecting
 fields, including `[eval.model]`, `[eval.execution].backend`,
 `[eval.execution].limit`, prompts, prior-context settings, base model, and eval
@@ -145,8 +164,12 @@ after `prepare` does not retarget a run; `eval` fails loudly on a mismatch. Use
 the matching prepared config, or create a separate prepared `round_id` for a
 different model or eval set.
 
-Batch eval runs write `evals/LABEL/input.jsonl`, `evals/LABEL/output/`, and
-`evals/LABEL/batch_predictions.meta.json`. Online endpoint eval runs write
+Batch eval runs write `evals/LABEL/input.jsonl`, `evals/LABEL/output/`,
+`evals/LABEL/batch_job.meta.json`, and
+`evals/LABEL/batch_predictions.meta.json`. The job sidecar is written before
+polling so an interrupted invocation can resume the same Vertex job; it is not
+a distributed submission lock. The prediction sidecar marks output reusable
+only after it has been loaded and validated. Online endpoint eval runs write
 `evals/LABEL/online_predictions.jsonl` and
 `evals/LABEL/online_predictions.meta.json`. Successful online rows are reused
 on resume. Errored rows are preserved for diagnosis but retried on the next
@@ -213,6 +236,7 @@ Any match must be unstaged unless the user explicitly asked to commit that
 generated artifact. Durable artifacts to inspect in GCS include `config.json`,
 `status.json`, canonical manifests, `model_inputs/gemini/*.jsonl`,
 `evals/LABEL/input.jsonl`, `evals/LABEL/output/`,
+`evals/LABEL/batch_job.meta.json`,
 `evals/LABEL/batch_predictions.meta.json`,
 `evals/LABEL/online_predictions.jsonl`,
 `evals/LABEL/online_predictions.meta.json`, normalized inference manifests, and

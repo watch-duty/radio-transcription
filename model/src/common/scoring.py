@@ -315,7 +315,7 @@ def empty_or_unintelligible_rate(hypotheses: list[str]) -> float:
     flagged = sum(
         1
         for h in hypotheses
-        if not h.strip() or h.strip() == "[UNINTELLIGIBLE]"
+        if not h.strip() or h.strip().upper() == "[UNINTELLIGIBLE]"
     )
     return round(100 * flagged / len(hypotheses), 2)
 

@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
-from dataclasses import dataclass, field
-from typing import Any
+import typing
 
-from common.scoring import (
-    compute_cer,
-    compute_wer,
-    empty_or_unintelligible_rate,
-    keyword_metrics,
-)
+from common import scoring
 
 REPORT_COLUMNS = (
     "target_label",
@@ -29,9 +24,17 @@ REPORT_COLUMNS = (
 )
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class ReportArtifacts:
-    """Artifact URIs that make a target's aggregate metrics reproducible."""
+    """Artifact URIs that make a target's aggregate metrics reproducible.
+
+    Attributes:
+        raw_output_uri: Raw batch-provider output location, when applicable.
+        online_predictions_uri: Online prediction-attempt cache location.
+        normalized_manifest_uri: Normalized inference manifest location.
+        summary_json_uri: Published JSON summary location.
+        summary_markdown_uri: Published Markdown summary location.
+    """
 
     raw_output_uri: str | None = None
     online_predictions_uri: str | None = None
@@ -40,9 +43,27 @@ class ReportArtifacts:
     summary_markdown_uri: str | None = None
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class TargetMetrics:
-    """Metrics and provenance for one evaluated model target."""
+    """Metrics and provenance for one evaluated model target.
+
+    Attributes:
+        target_label: Stable operator-facing label for the target.
+        model: Publisher model, tuned endpoint, or checkpoint endpoint.
+        wer: Word error rate percentage.
+        cer: Character error rate percentage.
+        keyword_accuracy: Occurrence-weighted keyword accuracy percentage.
+        empty_or_unintelligible_rate: Percentage of empty or explicitly
+            unintelligible hypotheses.
+        insertions: Word-level insertion count.
+        deletions: Word-level deletion count.
+        substitutions: Word-level substitution count.
+        total_reference_words: Number of words in the scoring denominator.
+        missing_prediction_count: Eval rows without successful predictions.
+        artifacts: URIs for reproducible evaluation artifacts.
+        keyword_metrics: Per-keyword occurrence and accuracy details.
+        metadata: Backend- or target-specific report metadata.
+    """
 
     target_label: str
     model: str
@@ -55,19 +76,30 @@ class TargetMetrics:
     substitutions: int
     total_reference_words: int
     missing_prediction_count: int
-    artifacts: ReportArtifacts = field(default_factory=ReportArtifacts)
-    keyword_metrics: list[dict[str, Any]] = field(default_factory=list)
-    metadata: dict[str, Any] = field(default_factory=dict)
+    artifacts: ReportArtifacts = dataclasses.field(
+        default_factory=ReportArtifacts
+    )
+    keyword_metrics: list[dict[str, typing.Any]] = dataclasses.field(
+        default_factory=list
+    )
+    metadata: dict[str, typing.Any] = dataclasses.field(default_factory=dict)
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class EvalReport:
-    """Structured report rendered to console, Markdown, and JSON."""
+    """Structured report rendered to console, Markdown, and JSON.
+
+    Attributes:
+        round_id: Stable identifier for the SFT run.
+        generated_at: ISO-formatted report generation timestamp.
+        target: Metrics and provenance for the evaluated target.
+        metadata: Run-level report metadata.
+    """
 
     round_id: str
     generated_at: str
     target: TargetMetrics
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, typing.Any] = dataclasses.field(default_factory=dict)
 
 
 def build_target_metrics(
@@ -75,11 +107,11 @@ def build_target_metrics(
     model: str,
     refs: list[str],
     hyps: list[str],
-    normalizer: Any,
+    normalizer: typing.Any,
     keywords: list[str],
     missing_prediction_count: int = 0,
     artifacts: ReportArtifacts | None = None,
-    metadata: dict[str, Any] | None = None,
+    metadata: dict[str, typing.Any] | None = None,
 ) -> TargetMetrics:
     """Build canonical metrics for one evaluated target.
 
@@ -96,10 +128,14 @@ def build_target_metrics(
 
     Returns:
         Canonical target metrics ready for JSON, Markdown, or console output.
+
+    Raises:
+        ImportError: If the optional scoring dependency is unavailable.
+        ValueError: If reference and hypothesis counts differ.
     """
-    wer_result = compute_wer(refs, hyps, normalizer=normalizer)
-    cer_result = compute_cer(refs, hyps, normalizer=normalizer)
-    keyword_rows = keyword_metrics(refs, hyps, keywords)
+    wer_result = scoring.compute_wer(refs, hyps, normalizer=normalizer)
+    cer_result = scoring.compute_cer(refs, hyps, normalizer=normalizer)
+    keyword_rows = scoring.keyword_metrics(refs, hyps, keywords)
     total_reference_words = (
         int(wer_result["hits"])
         + int(wer_result["substitutions"])
@@ -111,7 +147,7 @@ def build_target_metrics(
         wer=float(wer_result["wer"]),
         cer=float(cer_result["cer"]),
         keyword_accuracy=_overall_keyword_accuracy(keyword_rows),
-        empty_or_unintelligible_rate=empty_or_unintelligible_rate(hyps),
+        empty_or_unintelligible_rate=scoring.empty_or_unintelligible_rate(hyps),
         insertions=int(wer_result["insertions"]),
         deletions=int(wer_result["deletions"]),
         substitutions=int(wer_result["substitutions"]),
@@ -123,8 +159,15 @@ def build_target_metrics(
     )
 
 
-def report_to_dict(report: EvalReport) -> dict[str, Any]:
-    """Return a JSON-compatible dictionary for an eval report."""
+def report_to_dict(report: EvalReport) -> dict[str, typing.Any]:
+    """Return a JSON-compatible dictionary for an eval report.
+
+    Args:
+        report: Structured report to serialize.
+
+    Returns:
+        JSON-compatible report data with columns, metadata, and target metrics.
+    """
     return {
         "round_id": report.round_id,
         "generated_at": report.generated_at,
@@ -135,7 +178,14 @@ def report_to_dict(report: EvalReport) -> dict[str, Any]:
 
 
 def render_markdown_report(report: EvalReport) -> str:
-    """Render the shared report as Markdown."""
+    """Render the shared report as Markdown.
+
+    Args:
+        report: Structured report to render.
+
+    Returns:
+        Markdown containing the run heading and target metrics table.
+    """
     lines = [
         f"# Gemini SFT Eval Report - {report.round_id}",
         "",
@@ -148,11 +198,18 @@ def render_markdown_report(report: EvalReport) -> str:
 
 
 def render_console_report(report: EvalReport) -> str:
-    """Render the shared report for console output."""
+    """Render the shared report for console output.
+
+    Args:
+        report: Structured report to render.
+
+    Returns:
+        Markdown-style target metrics table suitable for console logging.
+    """
     return _render_target_table(report.target)
 
 
-def _target_to_dict(target: TargetMetrics) -> dict[str, Any]:
+def _target_to_dict(target: TargetMetrics) -> dict[str, typing.Any]:
     return {
         "target_label": target.target_label,
         "model": target.model,
@@ -195,19 +252,53 @@ def _render_target_row(target: TargetMetrics) -> str:
     return "| " + " | ".join(values) + " |"
 
 
-def _format_cell(value: Any) -> str:
+def _format_cell(value: typing.Any) -> str:
+    """Format a report value for one safe Markdown table cell.
+
+    Args:
+        value: Scalar or artifact mapping to render.
+
+    Returns:
+        A display string with stable float/empty formatting and escaped table
+        delimiters.
+    """
     if value is None:
-        return "n/a"
-    if isinstance(value, float):
-        return f"{value:.2f}"
-    if isinstance(value, dict):
+        rendered = "n/a"
+    elif isinstance(value, float):
+        rendered = f"{value:.2f}"
+    elif isinstance(value, dict):
         if not value:
-            return "n/a"
-        return json.dumps(value, sort_keys=True)
-    return str(value)
+            rendered = "n/a"
+        else:
+            rendered = json.dumps(value, sort_keys=True)
+    else:
+        rendered = str(value)
+    return _escape_markdown_cell(rendered)
 
 
-def _overall_keyword_accuracy(rows: list[dict[str, Any]]) -> float | None:
+def _escape_markdown_cell(value: str) -> str:
+    """Fold line breaks and escape Markdown table delimiters in one cell.
+
+    Args:
+        value: Preformatted cell text.
+
+    Returns:
+        Single-line text whose pipes cannot split the surrounding table.
+    """
+    return (
+        value.replace("\\r\\n", " ")
+        .replace("\\r", " ")
+        .replace("\\n", " ")
+        .replace("\r\n", " ")
+        .replace("\r", " ")
+        .replace("\n", " ")
+        .replace("|", "\\|")
+    )
+
+
+def _overall_keyword_accuracy(
+    rows: list[dict[str, typing.Any]],
+) -> float | None:
     total_occurrences = sum(row["occurrences"] for row in rows)
     if total_occurrences == 0:
         return None

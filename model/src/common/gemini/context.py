@@ -2,24 +2,27 @@
 
 from __future__ import annotations
 
+import collections
+import collections.abc
+import dataclasses
 import math
-from collections import defaultdict
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
+import typing
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class ContextTurn:
-    """One previous transcript with its source audio URI for provenance."""
+    """One previous transcript retained for evaluation context.
+
+    Attributes:
+        audio_uri: Source audio URI retained for provenance and identity.
+        text: Transcript text supplied as prior context.
+    """
 
     audio_uri: str
     text: str
 
 
-PRIOR_CONTEXT_MODES: Final = frozenset(
+PRIOR_CONTEXT_MODES: typing.Final = frozenset(
     {"text_turns", "transcript", "guarded_transcript_block"}
 )
 GUARDED_TRANSCRIPT_CONTEXT_HEADER = (
@@ -36,10 +39,19 @@ GUARDED_TRANSCRIPT_NO_HISTORY_TEXT = (
 
 
 def build_transcript_context_prompt(
-    history: Sequence[ContextTurn],
+    history: collections.abc.Sequence[ContextTurn],
     user_prompt: str,
 ) -> str:
-    """Return a user prompt with prior same-source transcripts as text context."""
+    """Prepend prior same-source transcripts to a user prompt.
+
+    Args:
+        history: Prior turns ordered from oldest to newest.
+        user_prompt: Instruction for the current audio turn.
+
+    Returns:
+        The original prompt when history is empty; otherwise, a prompt with a
+        numbered prior-transcript preamble.
+    """
     if not history:
         return user_prompt
     lines = [
@@ -55,18 +67,26 @@ def build_transcript_context_prompt(
 
 
 def build_guarded_transcript_context_prompt(
-    history: Sequence[ContextTurn],
+    history: collections.abc.Sequence[ContextTurn],
     user_prompt: str,
 ) -> str:
-    """Return a guarded prior-transcript block plus the current prompt."""
-    prior_context = (
-        "\n".join(
+    """Build a guarded prior-transcript block plus the current prompt.
+
+    Args:
+        history: Prior turns ordered from oldest to newest.
+        user_prompt: Instruction for the current audio turn.
+
+    Returns:
+        A prompt that marks prior transcripts as context only. When history is
+        empty, the guarded block contains an explicit no-history sentence.
+    """
+    if history:
+        prior_context = "\n".join(
             f"{index}. {' '.join(turn.text.split())}"
             for index, turn in enumerate(history, 1)
         )
-        if history
-        else GUARDED_TRANSCRIPT_NO_HISTORY_TEXT
-    )
+    else:
+        prior_context = GUARDED_TRANSCRIPT_NO_HISTORY_TEXT
     return (
         f"{GUARDED_TRANSCRIPT_CONTEXT_HEADER}\n{prior_context}\n\n{user_prompt}"
     )
@@ -78,6 +98,12 @@ def build_prior_text_user_turn(user_prompt: str) -> str:
     This intentionally reuses the current-turn prompt exactly. For the prior
     context SFT run that prompt is the manual-context notebook TURN_PROMPT; the
     only omitted prior-turn part is the audio.
+
+    Args:
+        user_prompt: Instruction reused for a prior text-only user turn.
+
+    Returns:
+        ``user_prompt`` unchanged.
     """
     return user_prompt
 
@@ -86,12 +112,25 @@ def build_transcription_contents(
     *,
     audio_uri: str,
     user_prompt: str,
-    history: Sequence[ContextTurn] | None = None,
+    history: collections.abc.Sequence[ContextTurn] | None = None,
     history_mode: str = "text_turns",
-) -> list[dict[str, Any]]:
-    """Return Gemini contents for prior context plus the current audio turn."""
+) -> list[dict[str, typing.Any]]:
+    """Build Gemini contents for prior context and the current audio turn.
+
+    Args:
+        audio_uri: GCS URI for the current FLAC audio segment.
+        user_prompt: Instruction for the current audio turn.
+        history: Prior turns ordered from oldest to newest.
+        history_mode: One of the modes in ``PRIOR_CONTEXT_MODES``.
+
+    Returns:
+        Gemini content dictionaries ending with the current user audio turn.
+
+    Raises:
+        ValueError: If ``history_mode`` is unsupported.
+    """
     history_mode = validate_history_mode(history_mode)
-    contents: list[dict[str, Any]] = []
+    contents: list[dict[str, typing.Any]] = []
     history_turns = list(history or ())
     if history_mode == "text_turns":
         for turn in history_turns:
@@ -130,7 +169,17 @@ def build_transcription_contents(
 
 
 def validate_history_mode(history_mode: str) -> str:
-    """Return a normalized history mode or raise ``ValueError``."""
+    """Normalize and validate a prior-context encoding mode.
+
+    Args:
+        history_mode: Candidate mode name.
+
+    Returns:
+        The stripped, lowercase mode name.
+
+    Raises:
+        ValueError: If the normalized name is not in ``PRIOR_CONTEXT_MODES``.
+    """
     mode = history_mode.strip().lower()
     if mode not in PRIOR_CONTEXT_MODES:
         msg = (
@@ -141,8 +190,15 @@ def validate_history_mode(history_mode: str) -> str:
     return mode
 
 
-def audio_file_data_part(audio_uri: str) -> dict[str, Any]:
-    """Return a Gemini audio file-data part in canonical camelCase JSON."""
+def audio_file_data_part(audio_uri: str) -> dict[str, typing.Any]:
+    """Build a Gemini audio file-data part in canonical camelCase JSON.
+
+    Args:
+        audio_uri: GCS URI for a FLAC audio segment.
+
+    Returns:
+        A ``fileData`` part with ``audio/flac`` MIME type and ``audio_uri``.
+    """
     return {
         "fileData": {
             "mimeType": "audio/flac",
@@ -152,7 +208,7 @@ def audio_file_data_part(audio_uri: str) -> dict[str, Any]:
 
 
 def build_context_histories(
-    rows: list[dict[str, Any]],
+    rows: list[dict[str, typing.Any]],
     *,
     max_turns: int,
 ) -> list[list[ContextTurn]]:
@@ -162,6 +218,17 @@ def build_context_histories(
     Histories are returned in the same order as ``rows``. A row enters future
     histories only when its transcript is non-empty and not the explicit
     ``[UNINTELLIGIBLE]`` sentinel, matching the manual-context notebook.
+
+    Args:
+        rows: Canonical or compatibility manifest rows in caller order.
+        max_turns: Maximum number of preceding turns retained per row.
+
+    Returns:
+        Histories aligned one-for-one with ``rows``, each ordered oldest to
+        newest.
+
+    Raises:
+        ValueError: If ``max_turns`` is negative.
     """
     if max_turns < 0:
         msg = "max_turns must be non-negative"
@@ -170,7 +237,7 @@ def build_context_histories(
     if max_turns == 0 or not rows:
         return histories
 
-    grouped_indices: dict[str, list[int]] = defaultdict(list)
+    grouped_indices: dict[str, list[int]] = collections.defaultdict(list)
     for index, row in enumerate(rows):
         grouped_indices[_episode_key(row, index)].append(index)
 
@@ -186,7 +253,17 @@ def build_context_histories(
     return histories
 
 
-def _episode_key(row: dict[str, Any], fallback_index: int) -> str:
+def _episode_key(row: dict[str, typing.Any], fallback_index: int) -> str:
+    """Return the best available same-source episode key for a row.
+
+    Args:
+        row: Canonical manifest row to group with related segments.
+        fallback_index: Stable row position used when no identity is available.
+
+    Returns:
+        The original recording URI when available, otherwise the first usable
+        row-level identity or a unique fallback key.
+    """
     value = row.get("original_audio_uri")
     if isinstance(value, str) and value.strip():
         return value.strip()
@@ -207,8 +284,17 @@ def _episode_key(row: dict[str, Any], fallback_index: int) -> str:
 
 
 def _row_sort_key(
-    row: dict[str, Any], fallback_index: int
+    row: dict[str, typing.Any], fallback_index: int
 ) -> tuple[float, int, str]:
+    """Return a deterministic chronological sort key for one manifest row.
+
+    Args:
+        row: Canonical manifest row within an episode group.
+        fallback_index: Stable row position used for missing offsets or order.
+
+    Returns:
+        A tuple of source offset, row order, and audio URI.
+    """
     offset = _numeric_value(row.get("original_offset"))
     if offset is None:
         source_audio = row.get("source_audio")
@@ -233,7 +319,7 @@ def _usable_history_text(text: str) -> bool:
     return bool(text) and text.strip() != "[UNINTELLIGIBLE]"
 
 
-def _numeric_value(value: Any) -> float | None:
+def _numeric_value(value: typing.Any) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)) and math.isfinite(float(value)):
@@ -248,7 +334,7 @@ def _numeric_value(value: Any) -> float | None:
     return None
 
 
-def _int_value(value: Any) -> int | None:
+def _int_value(value: typing.Any) -> int | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, int):

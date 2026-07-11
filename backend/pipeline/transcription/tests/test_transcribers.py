@@ -15,6 +15,10 @@ from backend.pipeline.transcription.transcribers.chirp import (
     GoogleChirpV3Transcriber,
 )
 from backend.pipeline.transcription.transcribers.factory import get_transcriber
+from backend.pipeline.transcription.transcribers.gemini import (
+    GeminiTranscriptionError,
+    GeminiTransientTranscriptionError,
+)
 
 BYTES_PER_SECOND_16KHZ_MONO = 16000 * 2
 
@@ -736,7 +740,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(info_logs), 1)
 
     async def test_gemini_transcriber_empty_response_other_reason(self) -> None:
-        """Verifies that other finish reasons (e.g. MAX_TOKENS) with no content return None and log at WARNING level."""
+        """Verifies that other finish reasons (e.g. MAX_TOKENS) with no content raise GeminiTranscriptionError."""
         with patch(
             "backend.pipeline.transcription.transcribers.gemini.genai.Client"
         ) as mock_client_cls:
@@ -760,25 +764,167 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             transcriber.setup()
 
-            with self.assertLogs(
-                "backend.pipeline.transcription.transcribers.gemini",
-                level="WARNING",
-            ) as log_capture:
-                transcript = await transcriber.transcribe(
+            with self.assertRaises(GeminiTranscriptionError) as context:
+                await transcriber.transcribe(
                     audio_data=b"\x00" * 100,
                     duration_ms=1000,
                 )
+            self.assertIn(
+                "Gemini response candidate had no content or parts",
+                str(context.exception),
+            )
 
-            self.assertIsNone(transcript)
-            # Verify it logged at WARNING level
-            warning_logs = [
-                record
-                for record in log_capture.records
-                if record.levelname == "WARNING"
-                and "Gemini response candidate had no content or parts"
-                in record.getMessage()
-            ]
-            self.assertEqual(len(warning_logs), 1)
+    async def test_gemini_transcriber_no_candidates(self) -> None:
+        """Verifies that empty candidates response raises GeminiTransientTranscriptionError."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_response.candidates = []
+            mock_response.prompt_feedback = None
+            mock_response.response_id = "test-id"
+            mock_response.sdk_http_response = None
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            with self.assertRaises(
+                GeminiTransientTranscriptionError
+            ) as context:
+                await transcriber.transcribe(
+                    audio_data=b"\x00" * 100,
+                    duration_ms=1000,
+                )
+            self.assertIn(
+                "Gemini response returned no candidates", str(context.exception)
+            )
+
+    async def test_gemini_transcriber_prompt_blocked_safety(self) -> None:
+        """Verifies that a prompt-level safety block raises a permanent GeminiTranscriptionError."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_response.candidates = []
+            mock_feedback = MagicMock()
+            mock_feedback.block_reason = "SAFETY"
+            mock_response.prompt_feedback = mock_feedback
+            mock_response.response_id = "test-id"
+            mock_response.sdk_http_response = None
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            with self.assertRaises(GeminiTranscriptionError) as context:
+                await transcriber.transcribe(
+                    audio_data=b"\x00" * 100,
+                    duration_ms=1000,
+                )
+            self.assertIn(
+                "Gemini prompt blocked. Block Reason: SAFETY",
+                str(context.exception),
+            )
+
+    async def test_gemini_transcriber_safety_block(self) -> None:
+        """Verifies that SAFETY finish reason raises GeminiTranscriptionError."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_finish_reason = MagicMock()
+            mock_finish_reason.name = "SAFETY"
+            mock_candidate.finish_reason = mock_finish_reason
+            mock_candidate.content = None
+            mock_candidate.finish_message = "blocked by safety settings"
+            mock_candidate.safety_ratings = []
+            mock_response.candidates = [mock_candidate]
+            mock_response.response_id = "test-id"
+            mock_response.sdk_http_response = None
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            with self.assertRaises(GeminiTranscriptionError) as context:
+                await transcriber.transcribe(
+                    audio_data=b"\x00" * 100,
+                    duration_ms=1000,
+                )
+            self.assertIn(
+                "finished with invalid reason: SAFETY", str(context.exception)
+            )
+
+    async def test_gemini_transcriber_transient_empty_response(self) -> None:
+        """Verifies that an empty response with no finish reason raises GeminiTransientTranscriptionError."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = None
+            mock_candidate.content = None
+            mock_response.candidates = [mock_candidate]
+            mock_response.response_id = "test-id"
+            mock_response.sdk_http_response = None
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            with self.assertRaises(
+                GeminiTransientTranscriptionError
+            ) as context:
+                await transcriber.transcribe(
+                    audio_data=b"\x00" * 100,
+                    duration_ms=1000,
+                )
+            self.assertIn(
+                "Incomplete response from Gemini (finish_reason: None).",
+                str(context.exception),
+            )
 
     def test_gemini_transcriber_setup(self) -> None:
         """Verifies that the Gemini transcriber initializes the GenAI client with correct options."""
@@ -801,7 +947,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             # Verify retry options are explicitly set to 5 attempts and timeout is default
             http_options = kwargs.get("http_options")
             self.assertIsNotNone(http_options)
-            self.assertEqual(http_options.timeout, 30000)
+            self.assertEqual(http_options.timeout, 120000)
             self.assertIsNotNone(http_options.retry_options)
             self.assertEqual(http_options.retry_options.attempts, 5)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -8,6 +9,7 @@ if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
+from google.cloud import storage
 
 from backend.pipeline.common.actor_identity import (
     is_well_formed_google_user_actor_id,
@@ -30,8 +32,18 @@ from backend.pipeline.storage.feed_store import (
 )
 from backend.pipeline.storage.pagination_utils import SortOrder
 
-from .models import Feed, FeedCreate, FeedUpdate, ListFeedsResponse, Tag
+from .echo_client import EchoClient
+from .models import (
+    Feed,
+    FeedCreate,
+    FeedUpdate,
+    ListFeedHistoryResponse,
+    ListFeedsResponse,
+    Tag,
+)
 from .service import FeedService
+
+logger = logging.getLogger(__name__)
 
 _INTERNAL_ACTOR_ID_HEADER = "X-WD-Actor-Id"
 
@@ -41,7 +53,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage the lifecycle of the AlloyDB connection pool."""
     pool = await create_pool_with_retry()
     store = FeedStore(pool)
-    app.state.feed_service = FeedService(store)
+
+    echo_client = None
+    try:
+        storage_client = storage.Client()
+        echo_client = EchoClient(storage_client)
+    except Exception as e:
+        logger.warning(
+            "Failed to initialize GCS client for Echo verification. "
+            "Echo validation will be disabled. Error: %s",
+            e,
+        )
+
+    app.state.feed_service = FeedService(store, echo_client=echo_client)
     yield
     await close_pool(pool)
 
@@ -121,6 +145,40 @@ async def get_feed(
             detail=f"Feed {feed_id} not found",
         )
     return feed
+
+
+@app.get(
+    "/v1/feeds/{feed_id}/history",
+    response_model=ListFeedHistoryResponse,
+    tags=["feeds"],
+)
+async def list_feed_history(
+    request: Request,
+    feed_id: str,
+    limit: int = 100,
+    next_token: str | None = None,
+    order: SortOrder = SortOrder.DESC,
+) -> ListFeedHistoryResponse:
+    """List state history for a specific feed with keyset pagination."""
+    service: FeedService = request.app.state.feed_service
+    try:
+        res = await service.list_feed_history(
+            feed_id=feed_id,
+            limit=limit,
+            next_token=next_token,
+            order=order,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+    if res is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Feed {feed_id} not found",
+        )
+    return res
 
 
 @app.put(

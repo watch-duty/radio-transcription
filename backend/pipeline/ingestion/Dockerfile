@@ -44,9 +44,9 @@ RUN apt-get update && \
 # MALLOC_ARENA_MAX=2 is a belt-and-suspenders fallback (only effective
 # if jemalloc fails to load — under normal operation it is a no-op since
 # jemalloc bypasses glibc malloc).
-RUN JEMALLOC_PATH="$(find /usr/lib -name libjemalloc.so.2 | head -1)" && \
+RUN JEMALLOC_PATH="$(find / -name "libjemalloc.so*" 2>/dev/null | head -1)" && \
     if [ -z "$JEMALLOC_PATH" ]; then \
-        echo "ERROR: libjemalloc.so.2 not found under /usr/lib — package install or path layout may have changed" >&2 && exit 1; \
+        echo "ERROR: libjemalloc.so not found on filesystem — package install or path layout may have changed" >&2 && exit 1; \
     fi && \
     ln -sf "$JEMALLOC_PATH" /usr/local/lib/libjemalloc.so.2
 ENV LD_PRELOAD=/usr/local/lib/libjemalloc.so.2
@@ -67,7 +67,9 @@ COPY --parents uv.lock pyproject.toml backend/pipeline/*/pyproject.toml backend/
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv
 ENV PATH="/app/.venv/bin:$PATH"
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev && uv pip install grpcio-tools
+    uv sync --frozen --no-dev && \
+    uv export --group build --locked -o build-requirements.txt && \
+    uv pip install -r build-requirements.txt
 
 COPY backend/ ./backend/
 COPY protos/ ./protos

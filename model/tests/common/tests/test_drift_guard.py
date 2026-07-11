@@ -1,23 +1,20 @@
-"""Drift guard for shared Gemini prompt/request plumbing."""
+"""Drift guards for shared Gemini plumbing and operator documentation."""
 
 from __future__ import annotations
 
 import ast
 import json
+import pathlib
 import re
 import subprocess
 import tempfile
 import unittest
-from pathlib import Path
 
-from common.gemini.prompts import (
-    GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
-    GEMINI_TRANSCRIBE_USER_PROMPT,
-)
+from common.gemini import prompts
+from gemini_sft import config as config_lib
 from gemini_sft import reporting
-from gemini_sft.config import load_run_config
 
-_MODEL_DIR = Path(__file__).resolve().parents[3]
+_MODEL_DIR = pathlib.Path(__file__).resolve().parents[3]
 _REPO_ROOT = _MODEL_DIR.parent
 _NOTEBOOK = _MODEL_DIR / "colabs" / "gemini_transcribe_audio.ipynb"
 _SRC_DIR = _MODEL_DIR / "src"
@@ -49,24 +46,33 @@ def _notebook_imports() -> set[tuple[str | None, str]]:
     return imports
 
 
-def _python_imports(path: Path) -> set[tuple[str | None, str]]:
+def _python_calls(path: pathlib.Path) -> set[tuple[str, str]]:
+    """Collect direct module-alias method calls from one Python source file.
+
+    Args:
+        path: Python source file to parse.
+
+    Returns:
+        Pairs containing the base name and called attribute.
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    imports: set[tuple[str | None, str]] = set()
+    calls: set[tuple[str, str]] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.ImportFrom):
-            for alias in node.names:
-                imports.add((node.module, alias.name))
-        elif isinstance(node, ast.Import):
-            for alias in node.names:
-                imports.add((None, alias.name))
-    return imports
+        if not isinstance(node, ast.Call):
+            continue
+        function = node.func
+        if not isinstance(function, ast.Attribute):
+            continue
+        if isinstance(function.value, ast.Name):
+            calls.add((function.value.id, function.attr))
+    return calls
 
 
 class TestDriftGuard(unittest.TestCase):
     def test_gemini_sft_config_defaults_to_runtime_common_prompts(self) -> None:
         """SFT config defaults must source prompts from common.gemini.prompts."""
         with tempfile.TemporaryDirectory() as tmp:
-            cfg_path = Path(tmp) / "run.toml"
+            cfg_path = pathlib.Path(tmp) / "run.toml"
             cfg_path.write_text(
                 """
 round_id = "round"
@@ -92,10 +98,16 @@ model = "gemini-3.1-flash-lite"
 """,
                 encoding="utf-8",
             )
-            cfg = load_run_config(cfg_path)
+            cfg = config_lib.load_run_config(cfg_path)
 
-        self.assertEqual(cfg.system_prompt, GEMINI_TRANSCRIBE_SYSTEM_PROMPT)
-        self.assertEqual(cfg.user_prompt, GEMINI_TRANSCRIBE_USER_PROMPT)
+        self.assertEqual(
+            cfg.system_prompt,
+            prompts.GEMINI_TRANSCRIBE_SYSTEM_PROMPT,
+        )
+        self.assertEqual(
+            cfg.user_prompt,
+            prompts.GEMINI_TRANSCRIBE_USER_PROMPT,
+        )
 
     def test_notebook_imports_canonical_prompt_symbols(self) -> None:
         """The eval notebook must import canonical prompt symbols from common.gemini."""
@@ -120,55 +132,46 @@ model = "gemini-3.1-flash-lite"
         )
 
     def test_packaged_eval_uses_shared_context_builder(self) -> None:
-        evaluate_imports = _python_imports(
-            _SRC_DIR / "gemini_sft" / "evaluate.py"
-        )
-        artifact_imports = _python_imports(
-            _SRC_DIR / "gemini_sft" / "artifacts.py"
-        )
+        """Packaged eval must call the shared context-history builder."""
+        evaluate_calls = _python_calls(_SRC_DIR / "gemini_sft" / "evaluate.py")
+        artifact_calls = _python_calls(_SRC_DIR / "gemini_sft" / "artifacts.py")
 
         self.assertIn(
-            ("gemini_sft.artifacts", "eval_rows_with_histories_from_entries"),
-            evaluate_imports,
+            ("artifacts_lib", "eval_rows_with_histories_from_entries"),
+            evaluate_calls,
         )
         self.assertIn(
-            ("common.gemini.context", "build_context_histories"),
-            artifact_imports,
+            ("context", "build_context_histories"),
+            artifact_calls,
         )
 
     def test_target_execution_uses_shared_vertex_request_helpers(self) -> None:
-        imports = _python_imports(
-            _SRC_DIR / "gemini_sft" / "target_execution.py"
-        )
+        """Online target execution must call shared Vertex helpers."""
+        calls = _python_calls(_SRC_DIR / "gemini_sft" / "target_execution.py")
 
-        self.assertIn(("common.gemini.vertex", "build_request"), imports)
-        self.assertIn(
-            ("common.gemini.vertex", "GEMINI_GENERATION_CONFIG"), imports
-        )
-        self.assertIn(
-            ("common.gemini.vertex", "GEMINI_SAFETY_SETTINGS"), imports
-        )
-        self.assertIn(("common.gemini.vertex", "resource_location"), imports)
+        self.assertIn(("vertex", "build_request"), calls)
+        self.assertIn(("vertex", "resource_location"), calls)
 
     def test_tuning_data_uses_shared_content_builder(self) -> None:
-        imports = _python_imports(
-            _SRC_DIR / "common" / "gemini" / "tuning_data.py"
-        )
+        """Tuning examples must call the shared content builder."""
+        calls = _python_calls(_SRC_DIR / "common" / "gemini" / "tuning_data.py")
 
         self.assertIn(
-            ("common.gemini.context", "build_transcription_contents"),
-            imports,
+            ("context", "build_transcription_contents"),
+            calls,
         )
 
     def test_vertex_request_uses_shared_content_builder(self) -> None:
-        imports = _python_imports(_SRC_DIR / "common" / "gemini" / "vertex.py")
+        """Batch requests must call the shared content builder."""
+        calls = _python_calls(_SRC_DIR / "common" / "gemini" / "vertex.py")
 
         self.assertIn(
-            ("common.gemini.context", "build_transcription_contents"),
-            imports,
+            ("context", "build_transcription_contents"),
+            calls,
         )
 
     def test_sft_example_config_uses_singular_eval_model(self) -> None:
+        """The committed example must expose one eval target and controls."""
         text = (_SCRIPTS_DIR / "sft" / "run_config.example.toml").read_text(
             encoding="utf-8"
         )
@@ -179,6 +182,7 @@ model = "gemini-3.1-flash-lite"
         self.assertIn("max_retries = 3", text)
 
     def test_sft_operator_metric_docs_track_report_columns(self) -> None:
+        """The metric glossary table must track public report columns."""
         text = (_SCRIPTS_DIR / "sft" / "docs" / "metrics.md").read_text(
             encoding="utf-8"
         )
@@ -198,9 +202,39 @@ model = "gemini-3.1-flash-lite"
 
         self.assertEqual(list(reporting.REPORT_COLUMNS), documented_columns)
 
+    def test_sft_operator_docs_cover_eval_only_and_batch_resume(self) -> None:
+        """Operator docs must cover eval-only and resumable batch flows."""
+        configs = (_SCRIPTS_DIR / "sft" / "docs" / "configs.md").read_text(
+            encoding="utf-8"
+        )
+        runbook = (_SCRIPTS_DIR / "sft" / "docs" / "runbook.md").read_text(
+            encoding="utf-8"
+        )
+        artifacts = (_SCRIPTS_DIR / "sft" / "docs" / "artifacts.md").read_text(
+            encoding="utf-8"
+        )
+        example = (_SCRIPTS_DIR / "sft" / "run_config.example.toml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("eval-only", configs)
+        self.assertIn("batch_job.meta.json", runbook)
+        self.assertIn("batch_job.meta.json", artifacts)
+        self.assertIn("Training rounds additionally", artifacts)
+        self.assertIn("prepared eval-only config", example)
+
+    def test_sft_metric_docs_describe_unintelligible_case_folding(self) -> None:
+        """The glossary must describe case-insensitive token matching."""
+        text = (_SCRIPTS_DIR / "sft" / "docs" / "metrics.md").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("case-insensitive", text)
+
     def test_sft_operator_hygiene_docs_and_gitignore_cover_local_artifacts(
         self,
     ) -> None:
+        """Docs and ignore rules must agree on local experiment artifacts."""
         hygiene_text = (_SCRIPTS_DIR / "sft" / "docs" / "hygiene.md").read_text(
             encoding="utf-8"
         )

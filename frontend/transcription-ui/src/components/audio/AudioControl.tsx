@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 import Forward5Icon from '@mui/icons-material/Forward5';
 import PauseIcon from '@mui/icons-material/PauseCircleFilledOutlined';
 import PlayArrowIcon from '@mui/icons-material/PlayCircleFilledOutlined';
@@ -5,8 +7,6 @@ import Replay5Icon from '@mui/icons-material/Replay5';
 import SkipNextIcon from '@mui/icons-material/SkipNext';
 import SkipPreviousIcon from '@mui/icons-material/SkipPrevious';
 import Box from '@mui/material/Box';
-import Checkbox from '@mui/material/Checkbox';
-import FormControlLabel from '@mui/material/FormControlLabel';
 import Icon, { type IconProps } from '@mui/material/Icon';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
@@ -20,10 +20,9 @@ export interface AudioControlProps {
   onFastForward: () => void;
   onFastRewind: () => void;
   onSkipTime: (offsetSeconds: number) => void;
-  playLatestAudio: boolean;
-  togglePlayLatestAudio: (checked: boolean) => void;
   disableControls?: boolean;
-  disableCheckbox?: boolean;
+  // Rendered just after the transport buttons (the audio-settings button).
+  settingsButton?: ReactNode;
   sx?: SxProps<Theme>;
 }
 
@@ -35,10 +34,8 @@ export function AudioControl({
   onFastForward,
   onFastRewind,
   onSkipTime,
-  playLatestAudio,
-  togglePlayLatestAudio,
   disableControls = false,
-  disableCheckbox = false,
+  settingsButton,
   sx,
 }: AudioControlProps) {
   return (
@@ -46,16 +43,12 @@ export function AudioControl({
       sx={{
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between',
+        justifyContent: 'center',
         width: '100%',
         mb: 2.5,
         ...sx,
       }}
     >
-      {/* Left spacer to balance the checkbox on the right */}
-      <Box sx={{ flex: 1, display: 'flex', justifyContent: 'flex-start' }} />
-
-      {/* Center: 7 control buttons */}
       <Box
         sx={{
           display: 'flex',
@@ -168,21 +161,9 @@ export function AudioControl({
             </IconButton>
           </span>
         </Tooltip>
-      </Box>
-
-      {/* Right side: Checkbox */}
-      <Box sx={{ flex: 1, display: 'flex', justifyContent: 'flex-end' }}>
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={playLatestAudio}
-              onChange={(e) => togglePlayLatestAudio(e.target.checked)}
-            />
-          }
-          label="Always play latest audio"
-          slotProps={{ typography: { variant: 'body2' } }}
-          disabled={disableCheckbox || disableControls}
-        />
+        {settingsButton && (
+          <Box sx={{ display: 'inline-flex', ml: 1 }}>{settingsButton}</Box>
+        )}
       </Box>
     </Box>
   );

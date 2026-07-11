@@ -1,28 +1,17 @@
 from __future__ import annotations
 
-import sys
+import pathlib
 import tempfile
 import unittest
-from pathlib import Path
 
-_SRC_DIR = str(Path(__file__).resolve().parents[2] / "src")
-if _SRC_DIR not in sys.path:
-    sys.path.insert(0, _SRC_DIR)
-
-from gemini_sft.config import (  # noqa: E402
-    RunConfigError,
-    load_eval_run_config,
-    load_run_config,
-    require_config_eval_execution,
-    require_config_eval_model,
-)
+from gemini_sft import config as config_module
 
 
 class TestRunConfig(unittest.TestCase):
-    def _write_config(self, body: str) -> Path:
+    def _write_config(self, body: str) -> pathlib.Path:
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        path = Path(tmp.name) / "run.toml"
+        path = pathlib.Path(tmp.name) / "run.toml"
         path.write_text(body, encoding="utf-8")
         return path
 
@@ -89,7 +78,9 @@ model = "{model}"
     def test_valid_minimal_toml_resolves_required_fields_and_paths(
         self,
     ) -> None:
-        cfg = load_run_config(self._write_config(self._valid_toml()))
+        cfg = config_module.load_run_config(
+            self._write_config(self._valid_toml())
+        )
 
         self.assertEqual(cfg.round_id, "round")
         self.assertEqual(cfg.inference_dataset_slug, "echo/eval")
@@ -111,14 +102,80 @@ model = "{model}"
     def test_missing_validation_manifest_uri_raises(self) -> None:
         body = self._valid_toml(validation_manifest_uri='""')
 
-        with self.assertRaisesRegex(RunConfigError, "validation_manifest_uri"):
-            load_run_config(self._write_config(body))
+        with self.assertRaisesRegex(
+            config_module.RunConfigError, "validation_manifest_uri"
+        ):
+            config_module.load_run_config(self._write_config(body))
+
+    def test_prepare_config_accepts_complete_training_pair(self) -> None:
+        cfg = config_module.load_prepare_run_config(
+            self._write_config(self._valid_toml())
+        )
+
+        self.assertIsNotNone(cfg.train_manifest_uri)
+        self.assertIsNotNone(cfg.validation_manifest_uri)
+        self.assertIn("gemini_train_uri", cfg.to_record_dict())
+
+    def test_prepare_config_accepts_eval_only_target(self) -> None:
+        body = self._without_manifest_lines(
+            self._valid_toml(
+                eval_section=self._eval_model_section(
+                    "checkpoint_6",
+                    "projects/p/locations/us-central1/endpoints/123",
+                )
+            ),
+            "train_manifest_uri",
+            "validation_manifest_uri",
+        )
+
+        cfg = config_module.load_prepare_run_config(self._write_config(body))
+        record = cfg.to_record_dict()
+
+        self.assertIsNone(cfg.train_manifest_uri)
+        self.assertIsNone(cfg.validation_manifest_uri)
+        self.assertEqual(cfg.eval_model.label, "checkpoint_6")
+        for key in (
+            "canonical_train_uri",
+            "canonical_validation_uri",
+            "gemini_train_uri",
+            "gemini_validation_uri",
+        ):
+            self.assertNotIn(key, record)
+
+    def test_prepare_config_rejects_partial_training_pair(self) -> None:
+        body = self._without_manifest_lines(
+            self._valid_toml(eval_section=self._eval_model_section()),
+            "validation_manifest_uri",
+        )
+
+        with self.assertRaisesRegex(
+            config_module.RunConfigError,
+            "both train_manifest_uri and validation_manifest_uri",
+        ):
+            config_module.load_prepare_run_config(self._write_config(body))
+
+    def test_prepare_config_requires_target_without_training_pair(
+        self,
+    ) -> None:
+        body = self._without_manifest_lines(
+            self._valid_toml(),
+            "train_manifest_uri",
+            "validation_manifest_uri",
+        )
+
+        with self.assertRaisesRegex(
+            config_module.RunConfigError,
+            r"eval-only prepare.*\[eval\.model\]",
+        ):
+            config_module.load_prepare_run_config(self._write_config(body))
 
     def test_sft_epoch_count_rejects_bool(self) -> None:
         body = self._valid_toml(epoch_count="true")
 
-        with self.assertRaisesRegex(RunConfigError, "epoch_count"):
-            load_run_config(self._write_config(body))
+        with self.assertRaisesRegex(
+            config_module.RunConfigError, "epoch_count"
+        ):
+            config_module.load_run_config(self._write_config(body))
 
     def test_eval_config_requires_explicit_eval_model(
         self,
@@ -130,10 +187,10 @@ model = "{model}"
         )
 
         with self.assertRaisesRegex(
-            RunConfigError,
+            config_module.RunConfigError,
             r"\[eval\.model\].*label.*model",
         ):
-            load_eval_run_config(self._write_config(body))
+            config_module.load_eval_run_config(self._write_config(body))
 
     def test_eval_config_with_model_allows_missing_training_manifests(
         self,
@@ -149,7 +206,7 @@ model = "{model}"
             "validation_manifest_uri",
         )
 
-        cfg = load_eval_run_config(self._write_config(body))
+        cfg = config_module.load_eval_run_config(self._write_config(body))
 
         self.assertIsNone(cfg.train_manifest_uri)
         self.assertIsNone(cfg.validation_manifest_uri)
@@ -203,10 +260,12 @@ model = "{model}"
             "validation_manifest_uri",
         )
 
-        unmasked_config = load_eval_run_config(
+        unmasked_config = config_module.load_eval_run_config(
             self._write_config(unmasked_body)
         )
-        masked_config = load_eval_run_config(self._write_config(masked_body))
+        masked_config = config_module.load_eval_run_config(
+            self._write_config(masked_body)
+        )
 
         self.assertEqual(unmasked_config.round_id, "round-unmasked")
         self.assertEqual(masked_config.round_id, "round-masked")
@@ -262,7 +321,7 @@ model = "{model}"
             )
         )
 
-        cfg = load_run_config(self._write_config(body))
+        cfg = config_module.load_run_config(self._write_config(body))
 
         self.assertEqual(
             cfg.eval_model.to_record_dict(),
@@ -274,7 +333,9 @@ model = "{model}"
         )
 
     def test_eval_execution_config_serializes_defaults(self) -> None:
-        cfg = load_run_config(self._write_config(self._valid_toml()))
+        cfg = config_module.load_run_config(
+            self._write_config(self._valid_toml())
+        )
 
         self.assertIsNone(cfg.eval_execution.backend)
         self.assertIsNone(cfg.eval_execution.limit)
@@ -306,7 +367,7 @@ model = "projects/p/locations/us-central1/endpoints/123"
             "validation_manifest_uri",
         )
 
-        cfg = load_eval_run_config(self._write_config(body))
+        cfg = config_module.load_eval_run_config(self._write_config(body))
 
         self.assertEqual(cfg.eval_execution.backend, "online")
         self.assertEqual(cfg.eval_execution.limit, 100)
@@ -347,8 +408,10 @@ model = "gemini-3.1-flash-lite"
 """
                 )
 
-                with self.assertRaisesRegex(RunConfigError, r"eval\.execution"):
-                    load_run_config(self._write_config(body))
+                with self.assertRaisesRegex(
+                    config_module.RunConfigError, r"eval\.execution"
+                ):
+                    config_module.load_run_config(self._write_config(body))
 
     def test_eval_config_rejects_non_string_optional_manifest_uri(self) -> None:
         body = self._valid_toml(
@@ -356,8 +419,10 @@ model = "gemini-3.1-flash-lite"
             eval_section=self._eval_model_section(),
         )
 
-        with self.assertRaisesRegex(RunConfigError, "train_manifest_uri"):
-            load_eval_run_config(self._write_config(body))
+        with self.assertRaisesRegex(
+            config_module.RunConfigError, "train_manifest_uri"
+        ):
+            config_module.load_eval_run_config(self._write_config(body))
 
     def test_eval_config_requires_eval_manifest_uri(self) -> None:
         body = self._without_manifest_lines(
@@ -365,8 +430,10 @@ model = "gemini-3.1-flash-lite"
             "eval_manifest_uri",
         )
 
-        with self.assertRaisesRegex(RunConfigError, "eval_manifest_uri"):
-            load_eval_run_config(self._write_config(body))
+        with self.assertRaisesRegex(
+            config_module.RunConfigError, "eval_manifest_uri"
+        ):
+            config_module.load_eval_run_config(self._write_config(body))
 
     def test_eval_model_target_rejects_invalid_labels(self) -> None:
         for label in (
@@ -383,9 +450,9 @@ model = "gemini-3.1-flash-lite"
                 )
 
                 with self.assertRaisesRegex(
-                    RunConfigError, r"eval\.model\.label"
+                    config_module.RunConfigError, r"eval\.model\.label"
                 ):
-                    load_run_config(self._write_config(body))
+                    config_module.load_run_config(self._write_config(body))
 
     def test_eval_model_target_rejects_invalid_model_strings(self) -> None:
         invalid_sections = {
@@ -409,9 +476,9 @@ model = 123
                 body = self._valid_toml(eval_section=eval_section)
 
                 with self.assertRaisesRegex(
-                    RunConfigError, r"eval\.model\.model"
+                    config_module.RunConfigError, r"eval\.model\.model"
                 ):
-                    load_run_config(self._write_config(body))
+                    config_module.load_run_config(self._write_config(body))
 
     def test_eval_model_target_rejects_non_table_entry(self) -> None:
         body = self._valid_toml(
@@ -421,8 +488,8 @@ model = "not-a-table"
 """
         )
 
-        with self.assertRaisesRegex(RunConfigError, "TOML table"):
-            load_run_config(self._write_config(body))
+        with self.assertRaisesRegex(config_module.RunConfigError, "TOML table"):
+            config_module.load_run_config(self._write_config(body))
 
     def test_eval_model_target_rejects_unsupported_fields(self) -> None:
         for field_name in ("type", "description"):
@@ -438,11 +505,13 @@ model = "gemini-3.1-flash-lite"
 """
                 )
 
-                with self.assertRaisesRegex(RunConfigError, field_name):
-                    load_run_config(self._write_config(body))
+                with self.assertRaisesRegex(
+                    config_module.RunConfigError, field_name
+                ):
+                    config_module.load_run_config(self._write_config(body))
 
     def test_require_config_eval_model_returns_valid_target(self) -> None:
-        target = require_config_eval_model(
+        target = config_module.require_config_eval_model(
             {
                 "eval_model": {
                     "label": "base",
@@ -462,7 +531,7 @@ model = "gemini-3.1-flash-lite"
             r"config\.json missing required eval_model.*"
             r"\[eval\.model\].*label.*model",
         ):
-            require_config_eval_model(
+            config_module.require_config_eval_model(
                 {
                     "base_model": "gemini-3.1-flash-lite",
                     "endpoint": "projects/p/locations/us/endpoints/123",
@@ -473,7 +542,7 @@ model = "gemini-3.1-flash-lite"
         for label in ("", ".", "..", "bad label", "nested/label", "base.jsonl"):
             with self.subTest(label=label):
                 with self.assertRaisesRegex(ValueError, "eval_model"):
-                    require_config_eval_model(
+                    config_module.require_config_eval_model(
                         {
                             "eval_model": {
                                 "label": label,
@@ -484,19 +553,21 @@ model = "gemini-3.1-flash-lite"
 
     def test_require_config_eval_model_rejects_empty_model(self) -> None:
         with self.assertRaisesRegex(ValueError, r"eval_model\.model"):
-            require_config_eval_model(
+            config_module.require_config_eval_model(
                 {"eval_model": {"label": "base", "model": "   "}}
             )
 
     def test_require_config_eval_model_rejects_non_object(self) -> None:
         with self.assertRaisesRegex(TypeError, "eval_model must be an object"):
-            require_config_eval_model({"eval_model": "not-an-object"})
+            config_module.require_config_eval_model(
+                {"eval_model": "not-an-object"}
+            )
 
     def test_require_config_eval_model_rejects_unsupported_fields(
         self,
     ) -> None:
         with self.assertRaisesRegex(ValueError, "unsupported: type"):
-            require_config_eval_model(
+            config_module.require_config_eval_model(
                 {
                     "eval_model": {
                         "label": "base",
@@ -507,7 +578,7 @@ model = "gemini-3.1-flash-lite"
             )
 
     def test_require_config_eval_execution_defaults_when_missing(self) -> None:
-        execution = require_config_eval_execution({})
+        execution = config_module.require_config_eval_execution({})
 
         self.assertIsNone(execution.backend)
         self.assertIsNone(execution.limit)
@@ -515,7 +586,7 @@ model = "gemini-3.1-flash-lite"
         self.assertEqual(execution.max_retries, 3)
 
     def test_require_config_eval_execution_returns_valid_config(self) -> None:
-        execution = require_config_eval_execution(
+        execution = config_module.require_config_eval_execution(
             {
                 "eval_execution": {
                     "backend": "batch",
@@ -549,7 +620,9 @@ model = "gemini-3.1-flash-lite"
                     (TypeError, ValueError),
                     "config.json field eval_execution",
                 ):
-                    require_config_eval_execution({"eval_execution": execution})
+                    config_module.require_config_eval_execution(
+                        {"eval_execution": execution}
+                    )
 
     def test_round_id_must_be_safe_single_path_component(self) -> None:
         for round_id in (
@@ -561,8 +634,10 @@ model = "gemini-3.1-flash-lite"
             with self.subTest(round_id=round_id):
                 body = self._valid_toml(round_id=f'"{round_id}"')
 
-                with self.assertRaisesRegex(RunConfigError, "round_id"):
-                    load_run_config(self._write_config(body))
+                with self.assertRaisesRegex(
+                    config_module.RunConfigError, "round_id"
+                ):
+                    config_module.load_run_config(self._write_config(body))
 
     def test_inference_dataset_slug_must_be_safe_relative_path(self) -> None:
         for slug in ("", "/absolute", "echo/../eval", "echo//eval"):
@@ -570,9 +645,9 @@ model = "gemini-3.1-flash-lite"
                 body = self._valid_toml(inference_dataset_slug=f'"{slug}"')
 
                 with self.assertRaisesRegex(
-                    RunConfigError, "inference_dataset_slug"
+                    config_module.RunConfigError, "inference_dataset_slug"
                 ):
-                    load_run_config(self._write_config(body))
+                    config_module.load_run_config(self._write_config(body))
 
     def test_inline_prompts_override_defaults(self) -> None:
         body = self._valid_toml(
@@ -583,7 +658,7 @@ user = "custom user"
 """
         )
 
-        cfg = load_run_config(self._write_config(body))
+        cfg = config_module.load_run_config(self._write_config(body))
 
         self.assertEqual(cfg.system_prompt, "custom system")
         self.assertEqual(cfg.user_prompt, "custom user")
@@ -597,7 +672,7 @@ prior_context_mode = "text_turns"
 """
         )
 
-        cfg = load_run_config(self._write_config(body))
+        cfg = config_module.load_run_config(self._write_config(body))
 
         self.assertEqual(cfg.prior_context_count, 8)
         self.assertEqual(cfg.prior_context_mode, "text_turns")
@@ -615,7 +690,7 @@ prior_context_mode = "guarded_transcript_block"
 """
         )
 
-        cfg = load_run_config(self._write_config(body))
+        cfg = config_module.load_run_config(self._write_config(body))
 
         self.assertEqual(cfg.prior_context_count, 8)
         self.assertEqual(cfg.prior_context_mode, "guarded_transcript_block")
@@ -634,8 +709,10 @@ prior_turn_count = {value}
 """
                 )
 
-                with self.assertRaisesRegex(RunConfigError, "prior_turn_count"):
-                    load_run_config(self._write_config(body))
+                with self.assertRaisesRegex(
+                    config_module.RunConfigError, "prior_turn_count"
+                ):
+                    config_module.load_run_config(self._write_config(body))
 
     def test_prompt_file_keys_are_rejected(self) -> None:
         body = self._valid_toml(
@@ -646,9 +723,9 @@ system_file = "system.txt"
         )
 
         with self.assertRaisesRegex(
-            RunConfigError, "intentionally not supported"
+            config_module.RunConfigError, "intentionally not supported"
         ):
-            load_run_config(self._write_config(body))
+            config_module.load_run_config(self._write_config(body))
 
     def test_at_file_prompt_values_are_rejected(self) -> None:
         body = self._valid_toml(
@@ -658,25 +735,27 @@ system = "@prompt.txt"
 """
         )
 
-        with self.assertRaisesRegex(RunConfigError, "@|inline"):
-            load_run_config(self._write_config(body))
+        with self.assertRaisesRegex(config_module.RunConfigError, "@|inline"):
+            config_module.load_run_config(self._write_config(body))
 
     def test_gcs_bucket_must_be_bucket_name(self) -> None:
         body = self._valid_toml(bucket='"gs://bucket/path"')
 
-        with self.assertRaisesRegex(RunConfigError, "bucket"):
-            load_run_config(self._write_config(body))
+        with self.assertRaisesRegex(config_module.RunConfigError, "bucket"):
+            config_module.load_run_config(self._write_config(body))
 
     def test_adapter_size_two_is_accepted(self) -> None:
-        cfg = load_run_config(
+        cfg = config_module.load_run_config(
             self._write_config(self._valid_toml(adapter_size='"TWO"'))
         )
 
         self.assertEqual(cfg.adapter_size, "TWO")
 
     def test_unknown_adapter_size_is_rejected(self) -> None:
-        with self.assertRaisesRegex(RunConfigError, "adapter_size"):
-            load_run_config(
+        with self.assertRaisesRegex(
+            config_module.RunConfigError, "adapter_size"
+        ):
+            config_module.load_run_config(
                 self._write_config(self._valid_toml(adapter_size='"THREE"'))
             )
 

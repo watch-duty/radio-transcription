@@ -1,4 +1,11 @@
+import { afterEach } from 'vitest';
+
 import '@testing-library/jest-dom/vitest';
+import { cleanup } from '@testing-library/react';
+
+afterEach(() => {
+  cleanup();
+});
 
 // JSDOM does not implement HTMLMediaElement methods (like play, pause, load)
 // since it lacks a media engine. Stub them to prevent 'Not implemented' console warnings.

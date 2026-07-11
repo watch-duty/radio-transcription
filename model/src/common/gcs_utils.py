@@ -1,14 +1,14 @@
 import json
 import logging
 import os
+import pathlib
 import tempfile
-from pathlib import Path
-from typing import Any
+import typing
 
 from google.cloud import storage
-from google.cloud.storage.retry import DEFAULT_RETRY
+from google.cloud.storage import retry as storage_retry
 
-from common.manifest import parse_manifest_text
+from common import manifest
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +44,8 @@ def blob_exists(
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
     if timeout is None:
-        return blob.exists(retry=DEFAULT_RETRY)
-    return blob.exists(retry=DEFAULT_RETRY, timeout=timeout)
+        return blob.exists(retry=storage_retry.DEFAULT_RETRY)
+    return blob.exists(retry=storage_retry.DEFAULT_RETRY, timeout=timeout)
 
 
 def gcs_uri_exists(storage_client: storage.Client, uri: str) -> bool:
@@ -74,7 +74,10 @@ def download_blob_to_file(
     """Downloads a blob from GCS to a local file with default retry policy."""
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
-    blob.download_to_filename(destination_file_name, retry=DEFAULT_RETRY)
+    blob.download_to_filename(
+        destination_file_name,
+        retry=storage_retry.DEFAULT_RETRY,
+    )
 
     logger.info(f"Downloaded {blob_path} to {destination_file_name}")
 
@@ -88,14 +91,19 @@ def upload_file_to_blob(
     """Uploads a local file to a GCS blob."""
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
-    blob.upload_from_filename(source_file_name, retry=DEFAULT_RETRY)
+    blob.upload_from_filename(
+        source_file_name,
+        retry=storage_retry.DEFAULT_RETRY,
+    )
     logger.info(
         f"File {source_file_name} uploaded to gs://{bucket_name}/{blob_path}."
     )
 
 
 def download_gcs_uri(
-    storage_client: storage.Client, uri: str, local_path: Path
+    storage_client: storage.Client,
+    uri: str,
+    local_path: pathlib.Path,
 ) -> None:
     """Download a GCS object to a local path."""
     bucket_name, blob_path = parse_gcs_uri(uri)
@@ -108,7 +116,7 @@ def download_gcs_uri(
 def download_gcs_directory(
     storage_client: storage.Client,
     gcs_uri: str,
-    local_dir: str | Path,
+    local_dir: str | pathlib.Path,
 ) -> None:
     """Downloads all blobs under a GCS prefix (directory) to a local directory.
 
@@ -119,6 +127,7 @@ def download_gcs_directory(
 
     Raises:
         FileNotFoundError: If no files are found under the specified GCS URI.
+        ValueError: If a blob name resolves outside ``local_dir``.
     """
     bucket_name, blob_prefix = parse_gcs_uri(gcs_uri)
     # Strip trailing slash for consistent prefix matching.
@@ -129,22 +138,31 @@ def download_gcs_directory(
         msg = f"No files found under {gcs_uri}"
         raise FileNotFoundError(msg)
 
-    Path(local_dir).mkdir(parents=True, exist_ok=True)
+    destination_root = pathlib.Path(local_dir).resolve()
+    destination_root.mkdir(parents=True, exist_ok=True)
     for blob in blobs:
         # Compute relative path within the directory.
         rel_path = blob.name[len(blob_prefix) :].lstrip("/")
         if not rel_path:
             continue
-        local_file = Path(local_dir) / rel_path
+        local_file = (destination_root / rel_path).resolve()
+        if not local_file.is_relative_to(destination_root):
+            msg = f"GCS blob path resolves outside destination: {blob.name}"
+            raise ValueError(msg)
         local_file.parent.mkdir(parents=True, exist_ok=True)
-        blob.download_to_filename(str(local_file), retry=DEFAULT_RETRY)
+        blob.download_to_filename(
+            str(local_file),
+            retry=storage_retry.DEFAULT_RETRY,
+        )
         logger.info(
             f"Downloaded gs://{bucket_name}/{blob.name} to {local_file}"
         )
 
 
 def upload_local_file(
-    storage_client: storage.Client, local_path: Path, gcs_uri: str
+    storage_client: storage.Client,
+    local_path: pathlib.Path,
+    gcs_uri: str,
 ) -> None:
     """Upload a local file to a GCS object."""
     bucket_name, blob_path = parse_gcs_uri(gcs_uri)
@@ -161,19 +179,21 @@ def upload_text(
     """Upload text directly to a GCS object."""
     bucket_name, blob_path = parse_gcs_uri(gcs_uri)
     storage_client.bucket(bucket_name).blob(blob_path).upload_from_string(
-        text, content_type=content_type, retry=DEFAULT_RETRY
+        text,
+        content_type=content_type,
+        retry=storage_retry.DEFAULT_RETRY,
     )
 
 
 def download_json_text(
     storage_client: storage.Client, gcs_uri: str
-) -> dict[str, Any]:
+) -> dict[str, typing.Any]:
     """Download a JSON object from GCS."""
     bucket_name, blob_path = parse_gcs_uri(gcs_uri)
     obj = json.loads(
         storage_client.bucket(bucket_name)
         .blob(blob_path)
-        .download_as_text(retry=DEFAULT_RETRY)
+        .download_as_text(retry=storage_retry.DEFAULT_RETRY)
     )
     if not isinstance(obj, dict):
         msg = f"Expected JSON object at {gcs_uri}"
@@ -183,13 +203,61 @@ def download_json_text(
 
 def download_jsonl_manifest(
     storage_client: storage.Client, gcs_manifest_uri: str
-) -> list[dict[str, Any]]:
-    """Downloads and parses a JSONL manifest from GCS."""
+) -> list[dict[str, typing.Any]]:
+    """Download and leniently parse a JSON array or JSONL manifest.
+
+    Args:
+        storage_client: Client used to download the GCS object.
+        gcs_manifest_uri: URI of the manifest object.
+
+    Returns:
+        Parsed object rows. Malformed JSONL rows are skipped by the lenient
+        parser.
+
+    Raises:
+        ValueError: If ``gcs_manifest_uri`` is not a valid GCS URI.
+    """
     bucket_name, blob_path = parse_gcs_uri(gcs_manifest_uri)
     bucket = storage_client.bucket(bucket_name)
     blob = bucket.blob(blob_path)
-    content = blob.download_as_text(retry=DEFAULT_RETRY)
-    manifest_entries = parse_manifest_text(content, source=gcs_manifest_uri)
+    content = blob.download_as_text(retry=storage_retry.DEFAULT_RETRY)
+    manifest_entries = manifest.parse_manifest_text(
+        content,
+        source=gcs_manifest_uri,
+    )
+    logger.info(
+        f"Downloaded {len(manifest_entries)} entries from {gcs_manifest_uri}"
+    )
+    return manifest_entries
+
+
+def download_jsonl_manifest_strict(
+    storage_client: storage.Client,
+    gcs_manifest_uri: str,
+) -> list[dict[str, typing.Any]]:
+    """Download and parse a GCS manifest without skipping invalid rows.
+
+    Args:
+        storage_client: Initialized GCS client used to download the object.
+        gcs_manifest_uri: URI of a JSON array or JSONL manifest in GCS.
+
+    Returns:
+        Parsed manifest object rows in their original order.
+
+    Raises:
+        ValueError: If the manifest contains malformed JSON, a non-object row,
+            or an invalid JSON-array shape.
+    """
+    bucket_name, blob_path = parse_gcs_uri(gcs_manifest_uri)
+    content = (
+        storage_client.bucket(bucket_name)
+        .blob(blob_path)
+        .download_as_text(retry=storage_retry.DEFAULT_RETRY)
+    )
+    manifest_entries = manifest.parse_manifest_text_strict(
+        content,
+        source=gcs_manifest_uri,
+    )
     logger.info(
         f"Downloaded {len(manifest_entries)} entries from {gcs_manifest_uri}"
     )
@@ -202,7 +270,7 @@ def upload_inference_results(
     project_name: str,
     model_name: str,
     experiment_name: str,
-    results_list: list[dict[str, Any]],
+    results_list: list[dict[str, typing.Any]],
 ) -> str:
     """Upload legacy Colab inference results to GCS.
 
@@ -218,7 +286,9 @@ def upload_inference_results(
     jsonl_content = "\n".join(json.dumps(row) for row in results_list) + "\n"
 
     blob.upload_from_string(
-        jsonl_content, content_type="application/jsonl", retry=DEFAULT_RETRY
+        jsonl_content,
+        content_type="application/jsonl",
+        retry=storage_retry.DEFAULT_RETRY,
     )
 
     logger.info(f"Uploaded results to gs://{bucket_name}/{blob_path}")
@@ -251,7 +321,7 @@ def download_to_scratch(
         ValueError: If ``gcs_uri`` does not start with ``gs://``.
     """
     bucket_name, blob_path = parse_gcs_uri(gcs_uri)
-    suffix = Path(blob_path).suffix or ".audio"
+    suffix = pathlib.Path(blob_path).suffix or ".audio"
     fd, local_path = tempfile.mkstemp(dir=scratch_dir, suffix=suffix)
     os.close(fd)
     download_blob_to_file(storage_client, bucket_name, blob_path, local_path)

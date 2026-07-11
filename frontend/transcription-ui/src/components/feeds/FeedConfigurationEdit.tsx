@@ -36,13 +36,17 @@ import { SourceType } from '@transcription/common';
 
 import { toSourceTypeString } from '../../utils/textUtils';
 import {
+  type TagKeyLimit,
   isValidTimezone,
+  tagAddError,
   validateFeedSourceId,
+  validateTags,
 } from '../../utils/validationUtils';
 import {
   ConfirmationDialog,
   type ConfirmationDialogProps,
 } from '../common/ConfirmationDialog';
+import { type TagRow, nextTagRowId } from './tagRows';
 
 const ALL_SOURCE_TYPES = Object.values(SourceType).map((value) => {
   return { value, label: toSourceTypeString(value) };
@@ -64,6 +68,27 @@ const ALL_TIMEZONES = Array.from(
 
   return a.localeCompare(b);
 });
+
+// Keys default to multi-value + free-text (e.g. `region` for multi-county
+// feeds); only exceptions need an entry here. `options` also renders a dropdown.
+interface TagKeyConfig extends TagKeyLimit {
+  valueLabel?: string; // dropdown label (defaults to "Value")
+}
+
+const TAG_KEY_CONFIG: Record<string, TagKeyConfig> = {
+  // system/timezone is currently only recognized by the Fire Notifications collector.
+  [SYSTEM_TIMEZONE]: {
+    maxValues: 1,
+    options: ALL_TIMEZONES,
+    // Accept any IANA zone (incl. aliases like US/Pacific) the dropdown omits, so
+    // editing a feed whose timezone was set outside this UI doesn't block saving.
+    validate: isValidTimezone,
+    valueLabel: 'Timezone',
+  },
+};
+
+const tagKeyConfig = (key: string): TagKeyConfig | undefined =>
+  TAG_KEY_CONFIG[key.trim()];
 
 export const DialogType = {
   Delete: 'delete',
@@ -114,13 +139,13 @@ interface FeedConfigurationEditProps {
   feedName: string;
   feedSourceType: SourceType;
   feedSourceId: string;
-  feedTags: Tag[];
+  feedTags: TagRow[];
   feedStatus?: FeedStatus;
   feedSubstatus?: BackendFeedStatus;
   setFeedName: (name: string) => void;
   setFeedSourceType: (sourceType: SourceType) => void;
   setFeedSourceId: (sourceFeedId: string) => void;
-  setFeedTags: (tags: Tag[]) => void;
+  setFeedTags: (tags: TagRow[]) => void;
   onCreateFeed: (payload: FeedCreate) => Promise<void>;
   onUpdateFeed: (payload: FeedUpdate) => Promise<void>;
   /** Callback triggered to hard delete the feed. If undefined, "Delete feed" is hidden from the actions menu. */
@@ -210,12 +235,10 @@ export function FeedConfigurationEdit({
     const trimmedVal = val.trim();
     setNewTagKey(val);
 
-    // Reset the tag value if the tag is intended to be a timezone since the possible
-    // values are enums.
-    if (trimmedVal === SYSTEM_TIMEZONE) {
-      if (!isValidTimezone(newTagValue)) {
-        setNewTagValue('');
-      }
+    // Clear the value when switching to an enum key whose current value isn't allowed.
+    const allowedOptions = tagKeyConfig(trimmedVal)?.options;
+    if (allowedOptions && !allowedOptions.includes(newTagValue)) {
+      setNewTagValue('');
     }
 
     setValidationErrors((prev) => {
@@ -266,16 +289,18 @@ export function FeedConfigurationEdit({
       return;
     }
 
-    // Prevent duplicate keys in tags list
-    if (feedTags.some((t) => t.key === key)) {
-      setValidationErrors((prev) => ({
-        ...prev,
-        tags: `A tag with key "${key}" already exists.`,
-      }));
+    const addError = tagAddError(
+      feedTags,
+      key,
+      value,
+      tagKeyConfig(key)?.maxValues
+    );
+    if (addError) {
+      setValidationErrors((prev) => ({ ...prev, tags: addError }));
       return;
     }
 
-    setFeedTags([...feedTags, { key, value }]);
+    setFeedTags([...feedTags, { id: nextTagRowId(), key, value }]);
     setNewTagKey('');
     setNewTagValue('');
     setValidationErrors((prev) => {
@@ -285,24 +310,30 @@ export function FeedConfigurationEdit({
     });
   };
 
-  const handleRemoveTag = (keyToRemove: string) => {
-    setFeedTags(feedTags.filter((tag) => tag.key !== keyToRemove));
+  const handleRemoveTag = (idToRemove: string) => {
+    setFeedTags(feedTags.filter((tag) => tag.id !== idToRemove));
   };
 
   const handleUpdateTag = (
-    index: number,
+    id: string,
     field: 'key' | 'value',
     newValue: string
   ) => {
-    const copy = [...feedTags];
-    copy[index] = { ...copy[index], [field]: newValue };
+    const updated = feedTags.map((tag) => {
+      if (tag.id !== id) return tag;
+      const next = { ...tag, [field]: newValue };
 
-    // Value needs to reset since only enums are allowed for timezone tags.
-    if (field === 'key' && newValue === SYSTEM_TIMEZONE) {
-      copy[index].value = '';
-    }
+      // Clear the value when switching to an enum key whose current value isn't allowed.
+      if (field === 'key') {
+        const allowedOptions = tagKeyConfig(newValue)?.options;
+        if (allowedOptions && !allowedOptions.includes(next.value)) {
+          next.value = '';
+        }
+      }
+      return next;
+    });
 
-    setFeedTags(copy);
+    setFeedTags(updated);
     setValidationErrors((prev) => {
       const copy = { ...prev };
       delete copy.tags;
@@ -326,51 +357,13 @@ export function FeedConfigurationEdit({
       errors.sourceFeedId = sourceIdError;
     }
 
-    // First check the in-progress tag inputs
-    const trimmedNewKey = inProgressTag.key.trim();
-    const trimmedNewValue = inProgressTag.value.trim();
-
-    const combinedTags = [...tagsToValidate];
-
-    // If there is something in the in-progress tag fields, validate it.
-    if (trimmedNewKey && trimmedNewValue) {
-      if (tagsToValidate.some((t) => t.key === trimmedNewKey)) {
-        errors.tags = `A tag with key "${trimmedNewKey}" already exists.`;
-      } else {
-        combinedTags.push({ key: trimmedNewKey, value: trimmedNewValue });
-      }
-    } else if (trimmedNewKey || trimmedNewValue) {
-      errors.tags = 'Both key and value must be populated to add a tag.';
-    }
-
-    // Validate timezone tag values
-    // NOTE: The SYSTEM_TIMEZONE tag is currently only recognized by the Fire Notifications collector.
-    for (const tag of combinedTags) {
-      if (tag.key.trim() === SYSTEM_TIMEZONE) {
-        const tzValue = tag.value.trim();
-        if (!isValidTimezone(tzValue)) {
-          errors.tags = `Invalid timezone. Please select a valid timezone from the list.`;
-          break;
-        }
-      }
-    }
-
-    // Verify tags data integrity across the combined set
-    const duplicateKeys = combinedTags.filter(
-      (tag, idx) => combinedTags.findIndex((t) => t.key === tag.key) !== idx
+    const tagError = validateTags(
+      tagsToValidate,
+      inProgressTag,
+      TAG_KEY_CONFIG
     );
-    if (duplicateKeys.length > 0) {
-      errors.tags = `Duplicate tag keys discovered: ${duplicateKeys
-        .map((d) => d.key)
-        .join(', ')}. Keys must be unique.`;
-    }
-
-    const blankTags = combinedTags.some(
-      (tag) => !tag.key.trim() || !tag.value.trim()
-    );
-    if (blankTags) {
-      errors.tags =
-        'Tag key and value inputs cannot be blank. Discard empty tag rows using the delete button.';
+    if (tagError) {
+      errors.tags = tagError;
     }
 
     return errors;
@@ -389,17 +382,27 @@ export function FeedConfigurationEdit({
 
     setValidationErrors({});
 
-    // Build the final tags array to submit. If there was a valid in-progress tag, include it.
+    // Build the final rows to submit. If there was a valid in-progress tag, include it.
     const trimmedNewKey = newTagKey.trim();
     const trimmedNewValue = newTagValue.trim();
-    const finalTags = [...feedTags];
+    const finalRows = [...feedTags];
     if (trimmedNewKey && trimmedNewValue) {
-      finalTags.push({ key: trimmedNewKey, value: trimmedNewValue });
+      finalRows.push({
+        id: nextTagRowId(),
+        key: trimmedNewKey,
+        value: trimmedNewValue,
+      });
       // Update state so the UI reflects the added tag and clears the inputs
-      setFeedTags(finalTags);
+      setFeedTags(finalRows);
       setNewTagKey('');
       setNewTagValue('');
     }
+
+    // Strip the client-side row id before sending to the API.
+    const finalTags: Tag[] = finalRows.map(({ key, value }) => ({
+      key,
+      value,
+    }));
 
     try {
       if (isEditing) {
@@ -424,6 +427,12 @@ export function FeedConfigurationEdit({
   };
 
   const dialogConfig = activeDialog ? DIALOG_CONFIG[activeDialog] : null;
+  const newTagConfig = tagKeyConfig(newTagKey);
+  const newTagValueLabel = newTagConfig?.valueLabel ?? 'Value';
+  const tagRows = feedTags.map((tag, index) => {
+    const config = tagKeyConfig(tag.key);
+    return { tag, index, config, valueLabel: config?.valueLabel ?? 'Value' };
+  });
 
   return (
     <Card
@@ -567,9 +576,19 @@ export function FeedConfigurationEdit({
                 searchability, grouping, and routing of notifications.
               </Typography>
               <Alert severity="info" sx={{ mb: 2 }}>
-                The system/timezone tag can be used to correct the timestamps.
+                The "system/timezone" tag can be used to correct the timestamps.
                 This is only supported in Fire Notification feeds.
               </Alert>
+              {isEditing &&
+                (newTagKey.trim() === SYSTEM_TIMEZONE ||
+                  feedTags.some(
+                    (tag) => tag.key.trim() === SYSTEM_TIMEZONE
+                  )) && (
+                  <Alert severity="warning" sx={{ mb: 2 }}>
+                    After updating the timezone, please deactivate and reset the
+                    feed.
+                  </Alert>
+                )}
 
               <Stack
                 direction="row"
@@ -586,22 +605,24 @@ export function FeedConfigurationEdit({
                   disabled={isSubmitting}
                   sx={{ flex: 1 }}
                 />
-                {newTagKey.trim() === SYSTEM_TIMEZONE ? (
+                {newTagConfig?.options ? (
                   <FormControl size="small" sx={{ flex: 1 }}>
-                    <InputLabel id="timezone-tag-label">Timezone</InputLabel>
+                    <InputLabel id="enum-tag-label">
+                      {newTagValueLabel}
+                    </InputLabel>
                     <Select
-                      labelId="timezone-tag-label"
-                      id="timezone-tag-dropdown"
+                      labelId="enum-tag-label"
+                      id="enum-tag-dropdown"
                       value={newTagValue}
-                      label="Timezone"
+                      label={newTagValueLabel}
                       onChange={(e) => handleValueChange(e.target.value)}
                       error={!!validationErrors.tags}
                       disabled={isSubmitting}
                       fullWidth
                     >
-                      {ALL_TIMEZONES.map((tz) => (
-                        <MenuItem key={tz} value={tz}>
-                          {tz}
+                      {newTagConfig.options.map((option) => (
+                        <MenuItem key={option} value={option}>
+                          {option}
                         </MenuItem>
                       ))}
                     </Select>
@@ -664,9 +685,9 @@ export function FeedConfigurationEdit({
                     No tags added.
                   </Typography>
                 ) : (
-                  feedTags.map((tag, index) => (
+                  tagRows.map(({ tag, index, config, valueLabel }) => (
                     <Stack
-                      key={index}
+                      key={tag.id}
                       direction="row"
                       spacing={1.5}
                       sx={{ alignItems: 'center' }}
@@ -677,30 +698,30 @@ export function FeedConfigurationEdit({
                         value={tag.key}
                         onChange={(e) => {
                           const newKey = e.target.value;
-                          handleUpdateTag(index, 'key', newKey);
+                          handleUpdateTag(tag.id, 'key', newKey);
                         }}
                         disabled={isSubmitting}
                         sx={{ flex: 1 }}
                       />
-                      {tag.key.trim() === SYSTEM_TIMEZONE ? (
+                      {config?.options ? (
                         <FormControl size="small" sx={{ flex: 1 }}>
-                          <InputLabel id={`timezone-tag-label-${index}`}>
-                            Timezone
+                          <InputLabel id={`enum-tag-label-${tag.id}`}>
+                            {valueLabel}
                           </InputLabel>
                           <Select
-                            labelId={`timezone-tag-label-${index}`}
-                            id={`timezone-tag-dropdown-${index}`}
+                            labelId={`enum-tag-label-${tag.id}`}
+                            id={`enum-tag-dropdown-${tag.id}`}
                             value={tag.value}
-                            label="Timezone"
+                            label={valueLabel}
                             onChange={(e) =>
-                              handleUpdateTag(index, 'value', e.target.value)
+                              handleUpdateTag(tag.id, 'value', e.target.value)
                             }
                             disabled={isSubmitting}
                             fullWidth
                           >
-                            {ALL_TIMEZONES.map((tz) => (
-                              <MenuItem key={tz} value={tz}>
-                                {tz}
+                            {config.options.map((option) => (
+                              <MenuItem key={option} value={option}>
+                                {option}
                               </MenuItem>
                             ))}
                           </Select>
@@ -711,7 +732,7 @@ export function FeedConfigurationEdit({
                           label="Value"
                           value={tag.value}
                           onChange={(e) =>
-                            handleUpdateTag(index, 'value', e.target.value)
+                            handleUpdateTag(tag.id, 'value', e.target.value)
                           }
                           disabled={isSubmitting}
                           sx={{ flex: 1 }}
@@ -719,10 +740,10 @@ export function FeedConfigurationEdit({
                       )}
                       <IconButton
                         size="small"
-                        onClick={() => handleRemoveTag(tag.key)}
+                        onClick={() => handleRemoveTag(tag.id)}
                         disabled={isSubmitting}
                         color="error"
-                        aria-label={`Remove tag ${tag.key}`}
+                        aria-label={`Remove tag ${index + 1}: ${tag.key}=${tag.value}`}
                       >
                         <DeleteIcon fontSize="small" />
                       </IconButton>

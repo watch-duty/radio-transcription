@@ -168,7 +168,8 @@ def _check_examples(
         ex_id = f"{split}[{i}]"
         if not validate_audio_tuning_example(ex):
             report.failures.append(
-                f"{ex_id}: failed validate_audio_tuning_example (missing wrapper fields or empty target)"
+                f"{ex_id}: failed validate_audio_tuning_example "
+                "(missing wrapper fields or empty target)"
             )
             if ex_id not in report.offending_ids:
                 report.offending_ids.append(ex_id)
@@ -207,7 +208,8 @@ def run_preflight(
     Checks:
     1. Non-empty train split (at least 1 example)
     2. If val provided: non-empty val split; disjoint train/val fileUris
-    3. Per-example: local target-text contract, estimated token cap, fileUri reachability
+    3. Per-example: local target-text contract, estimated token cap, and
+       fileUri reachability
     4. Duplicate fileUri detection in train set
     """
     report = PreflightReport()

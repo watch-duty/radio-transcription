@@ -17,7 +17,7 @@ The public row columns are the values in `REPORT_COLUMNS`.
 | `wer` | Word error rate percentage after the shared dispatch normalizer is applied to references and hypotheses. |
 | `cer` | Character error rate percentage after the same shared normalization pass. |
 | `keyword_accuracy` | Occurrence-weighted percentage of configured dispatch keywords found in the paired hypothesis when they appear in the reference. |
-| `empty_or_unintelligible_rate` | Percentage over all eval rows whose scored hypothesis is empty after stripping whitespace or exactly `[UNINTELLIGIBLE]`. Missing provider rows and unresolved online errors are scored as empty hypotheses and count in the numerator. |
+| `empty_or_unintelligible_rate` | Percentage over all eval rows whose scored hypothesis is empty after stripping whitespace or equals `[UNINTELLIGIBLE]` under a case-insensitive comparison. Missing provider rows and unresolved online errors are scored as empty hypotheses and count in the numerator. |
 | `insertions` | Word insertion count from the WER alignment. |
 | `deletions` | Word deletion count from the WER alignment. |
 | `substitutions` | Word substitution count from the WER alignment. |
@@ -31,9 +31,10 @@ Reports expose the evaluated row count as report metadata named
 ## Empty Output Metrics
 
 `empty_or_unintelligible_rate` is the metric for scored hypotheses that are
-empty after stripping whitespace or exactly `[UNINTELLIGIBLE]`. The scored
-hypothesis is either successful provider prediction text or the empty-string
-fallback used when no successful prediction exists.
+empty after stripping whitespace or equal `[UNINTELLIGIBLE]` under a
+case-insensitive comparison. The scored hypothesis is either successful
+provider prediction text or the empty-string fallback used when no successful
+prediction exists.
 
 Missing provider rows are scored as empty hypotheses for WER/CER so they remain
 in the WER/CER denominator. They also count in

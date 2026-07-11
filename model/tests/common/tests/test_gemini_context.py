@@ -1,9 +1,10 @@
+"""Tests for Gemini prior-context construction."""
+
 from __future__ import annotations
 
 import unittest
 
-from common.gemini import context as context_module
-from common.gemini.context import ContextTurn, build_context_histories
+from common.gemini import context
 
 
 class TestGeminiContextHistories(unittest.TestCase):
@@ -48,26 +49,26 @@ class TestGeminiContextHistories(unittest.TestCase):
             },
         ]
 
-        histories = build_context_histories(rows, max_turns=2)
+        histories = context.build_context_histories(rows, max_turns=2)
 
         self.assertEqual(
             histories[0],
-            [ContextTurn("gs://audio/source-a/001.flac", "first")],
+            [context.ContextTurn("gs://audio/source-a/001.flac", "first")],
         )
         self.assertEqual(histories[1], [])
         self.assertEqual(histories[2], [])
         self.assertEqual(
             histories[3],
             [
-                ContextTurn("gs://audio/source-a/001.flac", "first"),
-                ContextTurn("gs://audio/source-a/002.flac", "second"),
+                context.ContextTurn("gs://audio/source-a/001.flac", "first"),
+                context.ContextTurn("gs://audio/source-a/002.flac", "second"),
             ],
         )
         self.assertEqual(
             histories[4],
             [
-                ContextTurn("gs://audio/source-a/001.flac", "first"),
-                ContextTurn("gs://audio/source-a/002.flac", "second"),
+                context.ContextTurn("gs://audio/source-a/001.flac", "first"),
+                context.ContextTurn("gs://audio/source-a/002.flac", "second"),
             ],
         )
 
@@ -82,14 +83,14 @@ class TestGeminiContextHistories(unittest.TestCase):
             for i in range(5)
         ]
 
-        histories = build_context_histories(rows, max_turns=3)
+        histories = context.build_context_histories(rows, max_turns=3)
 
         self.assertEqual(
             histories[-1],
             [
-                ContextTurn("gs://audio/1.flac", "1"),
-                ContextTurn("gs://audio/2.flac", "2"),
-                ContextTurn("gs://audio/3.flac", "3"),
+                context.ContextTurn("gs://audio/1.flac", "1"),
+                context.ContextTurn("gs://audio/2.flac", "2"),
+                context.ContextTurn("gs://audio/3.flac", "3"),
             ],
         )
 
@@ -109,14 +110,14 @@ class TestGeminiContextHistories(unittest.TestCase):
             },
         ]
 
-        histories = build_context_histories(rows, max_turns=2)
+        histories = context.build_context_histories(rows, max_turns=2)
 
         self.assertEqual(histories, [[], []])
 
     def test_missing_episode_key_falls_back_to_unique_row_key(self) -> None:
         self.assertNotEqual(
-            context_module._episode_key({"text": "first"}, 0),
-            context_module._episode_key({"text": "second"}, 1),
+            context._episode_key({"text": "first"}, 0),
+            context._episode_key({"text": "second"}, 1),
         )
 
 

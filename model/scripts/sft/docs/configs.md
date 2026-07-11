@@ -22,6 +22,11 @@ The example uses placeholder values only. In particular:
 - Prompt overrides are inline strings only; prompt file fields are unsupported.
 - `[eval.model]` is singular, with exactly `label` and `model`.
 
+The full example prepares a training round whose configured eval target is the
+publisher model. A training-only prepare may omit `[eval.model]`, but that round
+cannot be passed to `gemini-sft eval`. After tuning produces an endpoint, prepare
+a separate eval-only round for that endpoint as described below.
+
 ## Prior Context Modes
 
 Use `[context]` to control prior same-source transcripts:
@@ -74,6 +79,20 @@ All three examples use the same `[eval.model]` table shape. The operator
 chooses the label used for the report row and artifact directory; the `model`
 value is the publisher model ID or Vertex endpoint resource that should be
 evaluated.
+
+## Eval-Only Target After Tuning
+
+Tuning never rewrites a prepared round's immutable `[eval.model]`. To evaluate
+the tuned endpoint or a checkpoint after it exists, copy the full config to a
+new file, use a new `round_id`, omit both `train_manifest_uri` and
+`validation_manifest_uri`, and set `[eval.model].model` to the endpoint resource.
+Keep `eval_manifest_uri`, `[gcp]`, `[sft]`, `[context]`, and `[prompts]` as needed.
+In an eval-only config, `sft.base_model` identifies the publisher model family
+used to name normalized prediction fields.
+
+Run `gemini-sft prepare` for this new config before `gemini-sft eval`. Eval-only
+preparation validates and publishes only the config and canonical eval manifest;
+it does not build tuning JSONL or submit a tuning job.
 
 ## Masked Eval Variant
 

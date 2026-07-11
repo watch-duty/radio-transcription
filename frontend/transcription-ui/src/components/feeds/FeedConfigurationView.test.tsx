@@ -212,24 +212,29 @@ describe('FeedConfigurationView', () => {
     expect(tagKeyInput).toHaveValue('');
     expect(tagValInput).toHaveValue('');
 
-    // Try adding duplicate key (should show warning)
+    // Adding a duplicate key now succeeds for multi-value keys (e.g. a feed
+    // covering multiple counties/agencies).
     fireEvent.change(tagKeyInput, { target: { value: 'agency' } });
     fireEvent.change(tagValInput, { target: { value: 'Sheriff' } });
     fireEvent.click(addTagBtn);
     expect(
-      screen.getByText('A tag with key "agency" already exists.')
+      screen.queryByText('A tag with key "agency" already exists.')
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /agency=CHP/ })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /agency=Sheriff/ })
     ).toBeInTheDocument();
 
-    // Delete tag using native delete button visual trigger
-    const deleteButton = screen.getByRole('button', {
-      name: 'Remove tag agency',
-    });
-    fireEvent.click(deleteButton);
-
-    // Verify tag inputs row is successfully removed
+    // Deleting one row removes only that row, not every row sharing the key.
+    fireEvent.click(screen.getByRole('button', { name: /agency=CHP/ }));
     expect(
-      screen.queryByRole('button', { name: 'Remove tag agency' })
+      screen.queryByRole('button', { name: /agency=CHP/ })
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: /agency=Sheriff/ })
+    ).toBeInTheDocument();
   });
 
   it('submits form successfully, registers feed in API, calls snackbar and clears state', async () => {
@@ -958,5 +963,279 @@ describe('FeedConfigurationView', () => {
       name: /Timezone/i,
     })[0];
     expect(addedTimezoneSelect).toHaveTextContent('UTC');
+  });
+
+  it('rejects a tag beyond its numberOfValues limit (system/timezone allows 1)', async () => {
+    renderView();
+
+    const addTagBtn = screen.getByRole('button', { name: 'Add Tag' });
+
+    // Add a first system/timezone tag.
+    fireEvent.change(screen.getByLabelText('Key'), {
+      target: { value: 'system/timezone' },
+    });
+    fireEvent.mouseDown(screen.getByRole('combobox', { name: /Timezone/i }));
+    fireEvent.click(screen.getAllByRole('option')[0]);
+    fireEvent.click(addTagBtn);
+
+    // Attempt a second one: the empty new-tag key input is the first Key field.
+    fireEvent.change(screen.getAllByLabelText('Key')[0], {
+      target: { value: 'system/timezone' },
+    });
+    fireEvent.mouseDown(
+      screen.getAllByRole('combobox', { name: /Timezone/i })[0]
+    );
+    fireEvent.click(screen.getAllByRole('option')[0]);
+    fireEvent.click(addTagBtn);
+
+    expect(
+      screen.getByText('The key "system/timezone" allows at most 1 value.')
+    ).toBeInTheDocument();
+  });
+
+  it('rejects an exact key+value duplicate tag', async () => {
+    renderView();
+
+    const tagKeyInput = screen.getByLabelText('Key');
+    const tagValInput = screen.getByLabelText('Value');
+    const addTagBtn = screen.getByRole('button', { name: 'Add Tag' });
+
+    const addRegion = (value: string) => {
+      fireEvent.change(tagKeyInput, { target: { value: 'region' } });
+      fireEvent.change(tagValInput, { target: { value } });
+      fireEvent.click(addTagBtn);
+    };
+
+    addRegion('elbert-CO_US');
+    // A different value for the same key is allowed (multi-county).
+    addRegion('denver-CO_US');
+    // An exact repeat is not.
+    addRegion('elbert-CO_US');
+
+    expect(
+      screen.getByText('The tag "region=elbert-CO_US" already exists.')
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: /region=/i })).toHaveLength(2);
+  });
+
+  it('submits multiple values for the same key (multi-county feed)', async () => {
+    const mockCreatedFeed = {
+      id: 'feed-99',
+      name: 'Multi-County Dispatch',
+      sourceType: SourceType.BCFY_CALLS,
+      sourceFeedId: '9988-77',
+      status: 'active' as FeedStatus,
+      substatus: 'active' as BackendFeedStatus,
+    };
+    vi.mocked(createFeed).mockResolvedValue(mockCreatedFeed);
+
+    renderView();
+
+    const formCard = screen.getByTestId('feed-config-card');
+
+    fireEvent.change(within(formCard).getByLabelText('Display Name'), {
+      target: { value: 'Multi-County Dispatch' },
+    });
+
+    const selectDropdown = within(formCard).getByRole('combobox', {
+      name: /Source Type/i,
+    });
+    fireEvent.mouseDown(selectDropdown);
+    const listbox = await screen.findByRole('listbox');
+    fireEvent.click(await within(listbox).findByText('Broadcastify Calls'));
+
+    fireEvent.change(within(formCard).getByLabelText('Source Feed ID'), {
+      target: { value: '9988-77' },
+    });
+
+    const addTagBtn = within(formCard).getByRole('button', { name: 'Add Tag' });
+    const addRegion = (value: string) => {
+      fireEvent.change(within(formCard).getAllByLabelText('Key')[0], {
+        target: { value: 'region' },
+      });
+      fireEvent.change(within(formCard).getAllByLabelText('Value')[0], {
+        target: { value },
+      });
+      fireEvent.click(addTagBtn);
+    };
+    addRegion('sonoma-CA_US');
+    addRegion('elbert-CO_US');
+
+    fireEvent.click(
+      within(formCard).getByRole('button', { name: /Register feed/i })
+    );
+
+    await waitFor(() => {
+      expect(createFeed).toHaveBeenCalledWith(
+        {
+          name: 'Multi-County Dispatch',
+          sourceType: SourceType.BCFY_CALLS,
+          sourceFeedId: '9988-77',
+          tags: [
+            { key: 'region', value: 'sonoma-CA_US' },
+            { key: 'region', value: 'elbert-CO_US' },
+          ],
+        },
+        'fake-jwt-token-xyz'
+      );
+    });
+  });
+
+  it('allows saving when a row is edited into a duplicate (only add-time dupes are blocked)', async () => {
+    vi.mocked(createFeed).mockResolvedValue({
+      id: 'feed-99',
+      name: 'Multi-County Dispatch',
+      sourceType: SourceType.BCFY_CALLS,
+      sourceFeedId: '9988-77',
+      status: 'active' as FeedStatus,
+      substatus: 'active' as BackendFeedStatus,
+    });
+
+    renderView();
+
+    const formCard = screen.getByTestId('feed-config-card');
+
+    fireEvent.change(within(formCard).getByLabelText('Display Name'), {
+      target: { value: 'Multi-County Dispatch' },
+    });
+    fireEvent.mouseDown(
+      within(formCard).getByRole('combobox', { name: /Source Type/i })
+    );
+    const listbox = await screen.findByRole('listbox');
+    fireEvent.click(await within(listbox).findByText('Broadcastify Calls'));
+    fireEvent.change(within(formCard).getByLabelText('Source Feed ID'), {
+      target: { value: '9988-77' },
+    });
+
+    const addTagBtn = within(formCard).getByRole('button', { name: 'Add Tag' });
+    const addRegion = (value: string) => {
+      fireEvent.change(within(formCard).getAllByLabelText('Key')[0], {
+        target: { value: 'region' },
+      });
+      fireEvent.change(within(formCard).getAllByLabelText('Value')[0], {
+        target: { value },
+      });
+      fireEvent.click(addTagBtn);
+    };
+    addRegion('sonoma-CA_US');
+    addRegion('elbert-CO_US');
+
+    // Value inputs: [0] = empty new-tag input, [1] = first row, [2] = second row.
+    // Editing the second row to collide with the first is not an add-time dup,
+    // so it is allowed through.
+    const valueInputs = within(formCard).getAllByLabelText('Value');
+    fireEvent.change(valueInputs[2], { target: { value: 'sonoma-CA_US' } });
+
+    fireEvent.click(
+      within(formCard).getByRole('button', { name: /Register feed/i })
+    );
+
+    await waitFor(() => {
+      expect(createFeed).toHaveBeenCalledWith(
+        {
+          name: 'Multi-County Dispatch',
+          sourceType: SourceType.BCFY_CALLS,
+          sourceFeedId: '9988-77',
+          tags: [
+            { key: 'region', value: 'sonoma-CA_US' },
+            { key: 'region', value: 'sonoma-CA_US' },
+          ],
+        },
+        'fake-jwt-token-xyz'
+      );
+    });
+  });
+
+  it('does not display the timezone update warning when registering a new feed even if system/timezone is entered', async () => {
+    renderView();
+
+    const tagKeyInput = screen.getByLabelText('Key');
+    fireEvent.change(tagKeyInput, { target: { value: 'system/timezone' } });
+
+    // The alert should not be in the document since we are in register mode (not editing)
+    expect(
+      screen.queryByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).not.toBeInTheDocument();
+  });
+
+  it('displays the timezone update warning when editing a feed that already has a timezone tag', async () => {
+    // Add system/timezone to mock feeds
+    const timezoneFeed: Feed = {
+      id: 'feed-3',
+      name: 'Timezone Fire Dispatch',
+      sourceType: SourceType.BCFY_FEEDS,
+      sourceFeedId: '44556',
+      status: 'active',
+      substatus: 'active',
+      tags: [{ key: 'system/timezone', value: 'America/Los_Angeles' }],
+    };
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [timezoneFeed],
+      total: 1,
+    });
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Timezone Fire Dispatch')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Timezone Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    // The alert should be in the document immediately
+    expect(
+      screen.getByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('displays the timezone update warning when typing or editing a tag key to system/timezone while editing a feed', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Marin Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const tagKeyInput = screen.getAllByLabelText('Key')[0];
+    fireEvent.change(tagKeyInput, { target: { value: 'system/timezone' } });
+
+    // Warning is displayed immediately upon typing
+    expect(
+      screen.getByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).toBeInTheDocument();
+
+    // Now test editing an existing row key
+    // Reset key input
+    fireEvent.change(tagKeyInput, { target: { value: '' } });
+    expect(
+      screen.queryByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).not.toBeInTheDocument();
+
+    // The first row key input is index 1 (index 0 is the new tag key input field)
+    const existingRowKeyInput = screen.getAllByLabelText('Key')[1];
+    fireEvent.change(existingRowKeyInput, {
+      target: { value: 'system/timezone' },
+    });
+
+    expect(
+      screen.getByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).toBeInTheDocument();
   });
 });

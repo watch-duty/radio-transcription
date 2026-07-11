@@ -25,7 +25,8 @@ ENV UV_COMPILE_BYTECODE=1
 # Install dependencies using uv sync directly into system python
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-workspace --package normalization-pipeline && \
-    uv pip install grpcio-tools
+    uv export --group build --locked -o build-requirements.txt && \
+    uv pip install -r build-requirements.txt
 
 ENV PYTHONPATH="/app"
 ENV PYTHONUNBUFFERED=1

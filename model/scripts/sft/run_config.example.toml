@@ -11,8 +11,8 @@ round_id = "YYYY-MM-DD-short-description"
 # gs://<bucket>/inference_manifests/echo/eval/<model>/<round_id>/base.jsonl
 inference_dataset_slug = "echo/eval"
 
-# These are canonical manifests. `prepare` derives Gemini SFT JSONL for train
-# and validation, while eval stays held out for `gemini-sft eval`.
+# These are canonical JSONL manifests. `prepare` derives Gemini SFT JSONL for
+# train and validation, while eval stays held out for `gemini-sft eval`.
 train_manifest_uri = "gs://your-bucket/path/manifests/canonical/train.jsonl"
 validation_manifest_uri = "gs://your-bucket/path/manifests/canonical/validation.jsonl"
 eval_manifest_uri = "gs://your-bucket/path/manifests/canonical/eval.jsonl"
@@ -49,7 +49,8 @@ prior_context_mode = "text_turns"
 label = "base"
 model = "gemini-3.1-flash-lite"
 
-# For a checkpoint or tuned endpoint, use the same table shape:
+# For a checkpoint or tuned endpoint, use the same table shape in a separately
+# prepared eval-only config with a new round_id and no train/validation manifests:
 # label = "checkpoint_6"
 # model = "projects/PROJECT/locations/us-central1/endpoints/ENDPOINT_ID"
 #

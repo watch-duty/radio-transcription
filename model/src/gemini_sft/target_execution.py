@@ -3,42 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+import typing
 
-from common.gcs_utils import (
-    blob_exists,
-    download_gcs_uri,
-    upload_local_file,
-    upload_text,
-)
+from common import gcs_utils
+from common.gemini import context, eval_artifacts, vertex
 from common.gemini import request_identity as request_identity_lib
-from common.gemini.eval_artifacts import (
-    online_prediction_metadata_uri,
-    online_prediction_uri,
-)
-from common.gemini.request_identity import (
-    build_gemini_eval_request_identity,
-    request_identity_hash,
-)
-from common.gemini.vertex import (
-    GEMINI_GENERATION_CONFIG,
-    GEMINI_SAFETY_SETTINGS,
-    build_request,
-    genai,
-    resource_location,
-    types,
-)
 
-if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterable, Sequence
-    from pathlib import Path
+if typing.TYPE_CHECKING:
+    import collections.abc
+    import pathlib
 
-    from common.gemini.context import ContextTurn
-
-    from gemini_sft.config import EvalExecutionConfig, EvalModelTarget
+    from gemini_sft import config
 
 LOGGER = logging.getLogger(__name__)
 
@@ -46,16 +24,34 @@ ONLINE_SYNC_EVERY = 100
 ONLINE_LOG_EVERY = 100
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class OnlineResumeState:
-    rows_by_audio_uri: dict[str, dict[str, Any]]
-    attempt_rows_by_audio_uri: dict[str, dict[str, Any]]
+    """Validated state restored from an online prediction cache.
+
+    Attributes:
+        rows_by_audio_uri: Successful reusable rows keyed by audio URI.
+        attempt_rows_by_audio_uri: Latest attempt rows keyed by audio URI.
+        error_count: Number of latest attempt rows that contain errors.
+        request_identity_hash: Hash of the validated request identity.
+    """
+
+    rows_by_audio_uri: dict[str, dict[str, typing.Any]]
+    attempt_rows_by_audio_uri: dict[str, dict[str, typing.Any]]
     error_count: int
     request_identity_hash: str
 
 
 class OnlinePredictionMap(dict[str, str]):
-    """Prediction map plus online artifact locations."""
+    """Successful predictions plus online artifact locations.
+
+    The mapping stores prediction text keyed by audio URI.
+
+    Attributes:
+        online_predictions_uri: GCS location of the prediction-attempt cache.
+        metadata_uri: GCS location of the request identity metadata.
+        error_count: Number of unresolved prediction errors.
+        request_identity_hash: Hash of the request identity for these results.
+    """
 
     def __init__(
         self,
@@ -74,29 +70,36 @@ class OnlinePredictionMap(dict[str, str]):
 
 
 def resolve_target_backend(
-    target: EvalModelTarget,
-    execution: EvalExecutionConfig,
+    target: config.EvalModelTarget,
+    execution: config.EvalExecutionConfig,
 ) -> str:
     """Return the backend to use for an eval target.
 
     Backend selection is intentionally offline and conservative. Full Vertex
     endpoint resources default to online generation; all other model strings
     default to batch unless the config-wide execution backend forces a choice.
+
+    Args:
+        target: Model target whose resource shape selects the default backend.
+        execution: Eval execution controls, including an optional override.
+
+    Returns:
+        ``"online"`` or ``"batch"`` for the target.
     """
     if execution.backend is not None:
         return execution.backend
-    if "/endpoints/" in target.model:
+    if target.is_endpoint:
         return "online"
     return "batch"
 
 
 async def _upload_local_file_async(
-    storage_client: Any,
-    local_path: Path,
+    storage_client: typing.Any,
+    local_path: pathlib.Path,
     gcs_uri: str,
 ) -> None:
     await asyncio.to_thread(
-        upload_local_file,
+        gcs_utils.upload_local_file,
         storage_client,
         local_path,
         gcs_uri,
@@ -104,12 +107,12 @@ async def _upload_local_file_async(
 
 
 async def _upload_text_async(
-    storage_client: Any,
+    storage_client: typing.Any,
     text: str,
     gcs_uri: str,
 ) -> None:
     await asyncio.to_thread(
-        upload_text,
+        gcs_utils.upload_text,
         storage_client,
         text,
         gcs_uri,
@@ -119,7 +122,7 @@ async def _upload_text_async(
 
 async def _upload_periodic_prediction_snapshot(
     *,
-    storage_client: Any,
+    storage_client: typing.Any,
     snapshot: str,
     predictions_uri: str,
     target_label: str,
@@ -142,32 +145,53 @@ async def _upload_periodic_prediction_snapshot(
 
 def load_existing_online_predictions(
     *,
-    storage_client: Any,
+    storage_client: typing.Any,
     predictions_uri: str,
     metadata_uri: str,
-    local_predictions_path: Path,
-    local_metadata_path: Path,
-    request_identity: dict[str, Any],
+    local_predictions_path: pathlib.Path,
+    local_metadata_path: pathlib.Path,
+    request_identity: dict[str, typing.Any],
 ) -> OnlineResumeState:
-    """Download and validate reusable online predictions, if present."""
-    if not blob_exists(storage_client, predictions_uri):
+    """Download and validate reusable online predictions, if present.
+
+    Args:
+        storage_client: Client used to inspect and download GCS artifacts.
+        predictions_uri: GCS URI of the online prediction cache.
+        metadata_uri: GCS URI of the request identity metadata.
+        local_predictions_path: Local destination for downloaded predictions.
+        local_metadata_path: Local destination for downloaded metadata.
+        request_identity: Identity expected for the current request set.
+
+    Returns:
+        Validated successful rows, latest attempts, errors, and identity hash.
+
+    Raises:
+        TypeError: If cached request identity metadata has an invalid shape.
+        ValueError: If metadata is missing, corrupt, or does not match the
+            current request identity.
+    """
+    if not gcs_utils.blob_exists(storage_client, predictions_uri):
         local_predictions_path.unlink(missing_ok=True)
         local_metadata_path.unlink(missing_ok=True)
         return OnlineResumeState(
             {},
             {},
             0,
-            request_identity_hash(request_identity),
+            request_identity_lib.request_identity_hash(request_identity),
         )
-    if not blob_exists(storage_client, metadata_uri):
+    if not gcs_utils.blob_exists(storage_client, metadata_uri):
         msg = (
             "online prediction metadata missing for existing predictions: "
             f"{metadata_uri}"
         )
         raise ValueError(msg)
 
-    download_gcs_uri(storage_client, predictions_uri, local_predictions_path)
-    download_gcs_uri(storage_client, metadata_uri, local_metadata_path)
+    gcs_utils.download_gcs_uri(
+        storage_client, predictions_uri, local_predictions_path
+    )
+    gcs_utils.download_gcs_uri(
+        storage_client, metadata_uri, local_metadata_path
+    )
     existing_identity = _load_metadata_identity(local_metadata_path)
     _validate_existing_identity(existing_identity, request_identity)
     rows = _load_prediction_rows(local_predictions_path)
@@ -176,16 +200,25 @@ def load_existing_online_predictions(
         _successful_prediction_rows(rows),
         rows,
         _online_error_count(rows),
-        request_identity_hash(existing_identity),
+        request_identity_lib.request_identity_hash(existing_identity),
     )
 
 
 async def _run_bounded_online_workers(
     *,
-    pending_items: Iterable[tuple[int, str]],
+    pending_items: collections.abc.Iterable[tuple[int, str]],
     worker_count: int,
-    process_one: Callable[[int, str], Awaitable[None]],
+    process_one: collections.abc.Callable[
+        [int, str], collections.abc.Awaitable[None]
+    ],
 ) -> None:
+    """Process pending items through a fixed-size rolling worker pool.
+
+    Args:
+        pending_items: Indexed audio URIs awaiting inference.
+        worker_count: Number of concurrent workers to start.
+        process_one: Coroutine callback invoked once for each pending item.
+    """
     pending = iter(pending_items)
 
     async def worker() -> None:
@@ -197,24 +230,54 @@ async def _run_bounded_online_workers(
 
 async def run_online_target_inference(
     *,
-    storage_client: Any,
+    storage_client: typing.Any,
     run_gcs_prefix: str,
     project: str,
     default_location: str,
     target_label: str,
     target_model: str,
-    audio_uris: Sequence[str],
-    histories: Sequence[Sequence[ContextTurn]],
+    audio_uris: collections.abc.Sequence[str],
+    histories: collections.abc.Sequence[
+        collections.abc.Sequence[context.ContextTurn]
+    ],
     system_prompt: str,
     user_prompt: str,
     prior_context_count: int,
     prior_context_mode: str,
     eval_manifest_uri: str,
-    local_dir: Path,
+    local_dir: pathlib.Path,
     concurrency: int,
     max_retries: int,
 ) -> OnlinePredictionMap:
-    """Run resumable online Gemini inference for one eval target."""
+    """Run resumable online Gemini inference for one eval target.
+
+    Args:
+        storage_client: Client used to read and publish GCS artifacts.
+        run_gcs_prefix: GCS prefix for the durable run artifacts.
+        project: Google Cloud project used for Vertex requests.
+        default_location: Vertex location used when the model has no location.
+        target_label: Stable artifact label for the evaluated target.
+        target_model: Publisher model or endpoint resource to invoke.
+        audio_uris: Ordered audio URIs to evaluate.
+        histories: Prior-context turns parallel to ``audio_uris``.
+        system_prompt: System instruction sent with every request.
+        user_prompt: Current-audio transcription prompt.
+        prior_context_count: Maximum prior turns encoded in request identity.
+        prior_context_mode: Strategy used to encode prior transcript context.
+        eval_manifest_uri: Canonical eval manifest used by this run.
+        local_dir: Directory for local prediction and metadata mirrors.
+        concurrency: Maximum concurrent online generation requests.
+        max_retries: Maximum SDK attempts for each generation request.
+
+    Returns:
+        Successful predictions with artifact URIs and unresolved error count.
+
+    Raises:
+        ImportError: If the optional Vertex SDK is unavailable.
+        TypeError: If cached request identity metadata has an invalid shape.
+        ValueError: If audio URIs are duplicated, histories are misaligned, or
+            cached predictions do not match the current request identity.
+    """
     audio_uri_list = list(audio_uris)
     if len(set(audio_uri_list)) != len(audio_uri_list):
         msg = (
@@ -227,15 +290,19 @@ async def run_online_target_inference(
         msg = "histories length must match audio_uris length"
         raise ValueError(msg)
 
-    predictions_uri = online_prediction_uri(run_gcs_prefix, target_label)
-    metadata_uri = online_prediction_metadata_uri(run_gcs_prefix, target_label)
+    predictions_uri = eval_artifacts.online_prediction_uri(
+        run_gcs_prefix, target_label
+    )
+    metadata_uri = eval_artifacts.online_prediction_metadata_uri(
+        run_gcs_prefix, target_label
+    )
     local_predictions_path = (
         local_dir / target_label / "online_predictions.jsonl"
     )
     local_metadata_path = (
         local_dir / target_label / "online_predictions.meta.json"
     )
-    identity = build_gemini_eval_request_identity(
+    identity = request_identity_lib.build_gemini_eval_request_identity(
         target_label=target_label,
         model=target_model,
         eval_manifest_uri=eval_manifest_uri,
@@ -244,6 +311,7 @@ async def run_online_target_inference(
         user_prompt=user_prompt,
         prior_context_count=prior_context_count,
         prior_context_mode=prior_context_mode,
+        histories=history_list,
     )
     resume = load_existing_online_predictions(
         storage_client=storage_client,
@@ -263,7 +331,9 @@ async def run_online_target_inference(
             attempt_rows,
             predictions_uri=predictions_uri,
             metadata_uri=metadata_uri,
-            request_identity_hash=request_identity_hash(identity),
+            request_identity_hash=request_identity_lib.request_identity_hash(
+                identity
+            ),
         )
 
     _require_vertex_sdk()
@@ -273,32 +343,25 @@ async def run_online_target_inference(
         local_metadata_path,
         metadata_uri,
     )
-    client = genai.Client(
+    client = vertex.genai.Client(
         vertexai=True,
         project=project,
-        location=resource_location(target_model, default_location),
+        location=vertex.resource_location(target_model, default_location),
     )
     max_attempts = max(1, max_retries)
-    config = types.GenerateContentConfig(
-        system_instruction=system_prompt,
-        safety_settings=GEMINI_SAFETY_SETTINGS,
-        temperature=float(GEMINI_GENERATION_CONFIG["temperature"]),
-        max_output_tokens=int(GEMINI_GENERATION_CONFIG["max_output_tokens"]),
-        http_options=types.HttpOptions(
-            retry_options=types.HttpRetryOptions(
-                attempts=max_attempts,
-                initial_delay=2.0,
-                max_delay=60.0,
-                exp_base=2.0,
-                jitter=1.0,
-                http_status_codes=[408, 429, 500, 502, 503, 504],
-            )
-        ),
+    retry_http_options = vertex.types.HttpOptions(
+        retry_options=vertex.types.HttpRetryOptions(
+            attempts=max_attempts,
+            initial_delay=2.0,
+            max_delay=60.0,
+            exp_base=2.0,
+            jitter=1.0,
+            http_status_codes=[408, 429, 500, 502, 503, 504],
+        )
     )
     lock = asyncio.Lock()
     snapshot_upload_lock = asyncio.Lock()
     batch_size = max(1, concurrency)
-    semaphore = asyncio.Semaphore(batch_size)
     progress = {
         "done": len(completed),
         "since_sync": 0,
@@ -306,22 +369,31 @@ async def run_online_target_inference(
     }
 
     async def process_one(index: int, audio_uri: str) -> None:
-        if audio_uri in completed:
-            return
-        async with semaphore:
-            request = build_request(
-                audio_uri,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                history=history_list[index],
-                history_mode=prior_context_mode,
-            )["request"]
-            prediction, error = await _generate_response(
-                client=client,
-                model_id=target_model,
-                contents=request["contents"],
-                config=config,
-            )
+        """Generate and durably record one pending audio prediction.
+
+        Args:
+            index: Position of the audio URI and its aligned history.
+            audio_uri: GCS URI of the audio segment to transcribe.
+        """
+        request = vertex.build_request(
+            audio_uri,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            history=history_list[index],
+            history_mode=prior_context_mode,
+        )["request"]
+        config = vertex.types.GenerateContentConfig(
+            system_instruction=request["systemInstruction"],
+            safety_settings=request["safetySettings"],
+            http_options=retry_http_options,
+            **request["generationConfig"],
+        )
+        prediction, error = await _generate_response(
+            client=client,
+            model_id=target_model,
+            contents=request["contents"],
+            config=config,
+        )
         out_row = {
             "audio_filepath": audio_uri,
             "pred_text": prediction,
@@ -376,11 +448,13 @@ async def run_online_target_inference(
         attempt_rows,
         predictions_uri=predictions_uri,
         metadata_uri=metadata_uri,
-        request_identity_hash=request_identity_hash(identity),
+        request_identity_hash=request_identity_lib.request_identity_hash(
+            identity
+        ),
     )
 
 
-def _load_metadata_identity(path: Path) -> dict[str, Any]:
+def _load_metadata_identity(path: pathlib.Path) -> dict[str, typing.Any]:
     return request_identity_lib.load_metadata_identity(
         path,
         error_message="online prediction request identity mismatch",
@@ -388,8 +462,8 @@ def _load_metadata_identity(path: Path) -> dict[str, Any]:
 
 
 def _validate_existing_identity(
-    existing_identity: dict[str, Any],
-    expected_identity: dict[str, Any],
+    existing_identity: dict[str, typing.Any],
+    expected_identity: dict[str, typing.Any],
 ) -> None:
     request_identity_lib.validate_prefix_identity(
         existing_identity,
@@ -399,8 +473,8 @@ def _validate_existing_identity(
 
 
 def _validate_existing_rows(
-    rows: dict[str, dict[str, Any]],
-    existing_identity: dict[str, Any],
+    rows: dict[str, dict[str, typing.Any]],
+    existing_identity: dict[str, typing.Any],
 ) -> None:
     existing_audio = set(existing_identity.get("audio_uris") or [])
     if all(audio_uri in existing_audio for audio_uri in rows):
@@ -409,8 +483,19 @@ def _validate_existing_rows(
     raise ValueError(msg)
 
 
-def _load_prediction_rows(path: Path) -> dict[str, dict[str, Any]]:
-    rows: dict[str, dict[str, Any]] = {}
+def _load_prediction_rows(
+    path: pathlib.Path,
+) -> dict[str, dict[str, typing.Any]]:
+    """Load the latest valid attempt row for every audio URI.
+
+    Args:
+        path: Local append-only online prediction log.
+
+    Returns:
+        Parsed rows keyed by audio URI. Later duplicate rows replace earlier
+        attempts, and malformed or non-object rows are skipped with a warning.
+    """
+    rows: dict[str, dict[str, typing.Any]] = {}
     if not path.exists():
         return rows
     with path.open(encoding="utf-8") as handle:
@@ -426,6 +511,12 @@ def _load_prediction_rows(path: Path) -> dict[str, dict[str, Any]]:
                     exc,
                 )
                 continue
+            if not isinstance(row, dict):
+                LOGGER.warning(
+                    "Skipping non-object online prediction row in %s",
+                    path,
+                )
+                continue
             audio_uri = str(row.get("audio_filepath") or "")
             if audio_uri:
                 rows[audio_uri] = row
@@ -433,8 +524,8 @@ def _load_prediction_rows(path: Path) -> dict[str, dict[str, Any]]:
 
 
 def _successful_prediction_rows(
-    rows: dict[str, dict[str, Any]],
-) -> dict[str, dict[str, Any]]:
+    rows: dict[str, dict[str, typing.Any]],
+) -> dict[str, dict[str, typing.Any]]:
     return {
         audio_uri: row
         for audio_uri, row in rows.items()
@@ -442,20 +533,35 @@ def _successful_prediction_rows(
     }
 
 
-def _online_error_count(rows: dict[str, dict[str, Any]]) -> int:
+def _online_error_count(rows: dict[str, dict[str, typing.Any]]) -> int:
     return sum(1 for row in rows.values() if row.get("error"))
 
 
 def _record_online_attempt(
     *,
-    completed: dict[str, dict[str, Any]],
-    attempt_rows: dict[str, dict[str, Any]],
+    completed: dict[str, dict[str, typing.Any]],
+    attempt_rows: dict[str, dict[str, typing.Any]],
     audio_uri: str,
-    row: dict[str, Any],
-    local_predictions_path: Path,
+    row: dict[str, typing.Any],
+    local_predictions_path: pathlib.Path,
     progress: dict[str, int],
     total_count: int,
-) -> tuple[list[dict[str, Any]] | None, bool]:
+) -> tuple[list[dict[str, typing.Any]] | None, bool]:
+    """Record one online attempt and advance snapshot/log counters.
+
+    Args:
+        completed: Successful rows keyed by audio URI, updated in place.
+        attempt_rows: Latest attempt per audio URI, updated in place.
+        audio_uri: URI identifying the attempted audio segment.
+        row: Prediction or error row produced by the attempt.
+        local_predictions_path: Append-only local attempt-log path.
+        progress: Mutable progress counters for completion, sync, and errors.
+        total_count: Total number of requested audio segments.
+
+    Returns:
+        A deduplicated snapshot when the sync threshold is reached and whether
+        progress should be logged.
+    """
     previous_error = bool(attempt_rows.get(audio_uri, {}).get("error"))
     attempt_rows[audio_uri] = row
     if row.get("error"):
@@ -479,22 +585,24 @@ def _record_online_attempt(
     return upload_rows, should_log
 
 
-def _append_prediction(path: Path, row: dict[str, Any]) -> None:
+def _append_prediction(path: pathlib.Path, row: dict[str, typing.Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(row, sort_keys=True) + "\n")
 
 
-def _prediction_rows_jsonl(rows: Iterable[dict[str, Any]]) -> str:
+def _prediction_rows_jsonl(
+    rows: collections.abc.Iterable[dict[str, typing.Any]],
+) -> str:
     return "".join(json.dumps(row, sort_keys=True) + "\n" for row in rows)
 
 
 async def _generate_response(
     *,
-    client: Any,
+    client: typing.Any,
     model_id: str,
-    contents: list[dict[str, Any]],
-    config: Any,
+    contents: list[dict[str, typing.Any]],
+    config: typing.Any,
 ) -> tuple[str, str | None]:
     try:
         response = await client.aio.models.generate_content(
@@ -509,7 +617,7 @@ async def _generate_response(
 
 
 def _prediction_map(
-    rows: dict[str, dict[str, Any]],
+    rows: dict[str, dict[str, typing.Any]],
     *,
     predictions_uri: str,
     metadata_uri: str,
@@ -528,7 +636,7 @@ def _prediction_map(
 
 
 def _require_vertex_sdk() -> None:
-    if genai is None or types is None:
+    if vertex.genai is None or vertex.types is None:
         msg = (
             "google-genai is required for online target inference. "
             "Install the model package with the [vertex] extra."

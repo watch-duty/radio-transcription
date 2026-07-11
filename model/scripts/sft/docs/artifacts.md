@@ -16,13 +16,19 @@ prefix is:
 gs://BUCKET/sft/runs/ROUND_ID/
 ```
 
-Durable run-level files include:
+Every prepared round includes:
 
 - `gs://BUCKET/sft/runs/ROUND_ID/run_config.toml`
 - `gs://BUCKET/sft/runs/ROUND_ID/config.json`
-- `gs://BUCKET/sft/runs/ROUND_ID/status.json`
-- `gs://BUCKET/sft/runs/ROUND_ID/manifests/canonical/{train,validation,eval}.jsonl`
-- `gs://BUCKET/sft/runs/ROUND_ID/model_inputs/gemini/{train,validation}.jsonl`
+- `gs://BUCKET/sft/runs/ROUND_ID/manifests/canonical/eval.jsonl`
+
+Training rounds additionally include `status.json`, canonical train and
+validation manifests, `model_inputs/gemini/{train,validation}.jsonl`,
+`preflight/report.json`, `tuning/status.json`, and `evals/README.txt`. Eval-only
+rounds intentionally omit those training-only artifacts.
+
+Successful evaluations add:
+
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/wer_summary.json`
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/wer_summary.md`
 
@@ -36,6 +42,7 @@ Batch and online eval backends write different provider-output artifacts:
 
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/input.jsonl`
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/output/`
+- `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/batch_job.meta.json`
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/batch_predictions.meta.json`
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/online_predictions.jsonl`
 - `gs://BUCKET/sft/runs/ROUND_ID/evals/LABEL/online_predictions.meta.json`
@@ -43,6 +50,12 @@ Batch and online eval backends write different provider-output artifacts:
 The online predictions JSONL is an attempt cache. It can include successful
 prediction rows and the latest errored attempt rows. Successful rows are reused
 on resume; errored rows are retried.
+
+For batch eval, `batch_job.meta.json` records the submitted Vertex job name and
+request identity before polling so an interrupted process can resume the same
+job. It is recovery state, not a distributed lock. The
+`batch_predictions.meta.json` completion sidecar is published only after usable
+output has been loaded and validated for reuse.
 
 The stable report inspection points are:
 
