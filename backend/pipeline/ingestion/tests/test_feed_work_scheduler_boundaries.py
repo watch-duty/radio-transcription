@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import datetime
 import importlib
 import typing
@@ -25,13 +26,14 @@ def _types() -> typing.Any:
 
 def _limits(
     *,
+    shard_count: int = 1,
     capacity: int = 8,
     workers: int = 1,
     high_water: int = 8,
     resume_at: int = 4,
 ) -> object:
     return _types()._SchedulerLimits(
-        shard_count=1,
+        shard_count=shard_count,
         capacity=capacity,
         workers_per_shard=workers,
         high_water=high_water,
@@ -102,6 +104,9 @@ class _ControlledCommitter:
         self.dispositions: dict[uuid.UUID, object] = {}
         self.override_result: object | None = None
         self.inspect: typing.Callable[[], None] | None = None
+        self.scripted_dispositions: collections.deque[object] = (
+            collections.deque()
+        )
 
     async def commit(
         self,
@@ -127,11 +132,17 @@ class _ControlledCommitter:
         if self.override_result is not None:
             return self.override_result
         scheduler_types = _types()
+        scripted = (
+            self.scripted_dispositions.popleft()
+            if boundaries and self.scripted_dispositions
+            else None
+        )
         return scheduler_types.BoundaryBatchCommitted(
             tuple(
                 scheduler_types.BoundaryResult(
                     boundary,
-                    self.dispositions.get(
+                    scripted
+                    or self.dispositions.get(
                         boundary.feed_id,
                         scheduler_types.BoundaryDisposition.COMMITTED,
                     ),
@@ -451,6 +462,233 @@ class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(snapshot.fatal)
         self.assertEqual(snapshot.held, 1)
         self.assertEqual(snapshot.flushing_boundaries, 1)
+        self.assertIsInstance(
+            await scheduler.close(),
+            feed_work_scheduler.Undrained,
+        )
+
+
+class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
+    async def test_501_boundaries_flush_prefixes_then_one_final(self) -> None:
+        committer = _ControlledCommitter()
+        committer.block_nonempty = True
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(
+                shard_count=8,
+                capacity=500,
+                workers=4,
+                high_water=400,
+                resume_at=299,
+            ),
+            _boundary_batch_size=100,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        relief_requested = asyncio.Event()
+        request_relief = lane._boundary_coordinator.request_relief
+
+        async def observe_relief() -> object:
+            relief_requested.set()
+            return await request_relief()
+
+        lane._boundary_coordinator.request_relief = observe_relief
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        feed_ids = tuple(uuid.UUID(int=(index + 1) * 8) for index in range(501))
+        boundaries = _TracingBoundaries(
+            _boundary(feed_id, index + 1)
+            for index, feed_id in enumerate(feed_ids)
+        )
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(),
+                boundaries=boundaries,
+                candidate=cursor.prepare(_SOURCE_TIME),
+            )
+        )
+        try:
+            await committer.wait_for_calls(1)
+            await asyncio.wait_for(relief_requested.wait(), timeout=1)
+            self.assertEqual(
+                lane._boundary_coordinator.requested_generation,
+                1,
+            )
+            snapshot = await scheduler._shards[0].snapshot()
+            self.assertEqual(snapshot.held, 400)
+            self.assertEqual(boundaries.pulled, list(feed_ids[:401]))
+            self.assertFalse(coverage.done())
+
+            committer.release.set()
+            receipt = await asyncio.wait_for(coverage, timeout=2)
+            self.assertEqual(cursor.accept(receipt), _SOURCE_TIME)
+            self.assertEqual(boundaries.pulled, list(feed_ids))
+            self.assertEqual(committer.final_calls, 1)
+            self.assertGreater(
+                sum(
+                    not final for _grant_value, _batch, final in committer.calls
+                ),
+                1,
+            )
+            self.assertTrue(
+                all(
+                    len(batch) <= 100
+                    for _grant_value, batch, _final in committer.calls
+                )
+            )
+            await asyncio.wait_for(scheduler._wait_for_idle(), timeout=1)
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+        finally:
+            committer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await lane.close()
+            await scheduler.close()
+
+    async def test_empty_page_still_awaits_final_logical_commit(self) -> None:
+        committer = _ControlledCommitter()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+
+        receipt = await lane.cover_page(
+            calls=(),
+            boundaries=(),
+            candidate=cursor.prepare(_SOURCE_TIME),
+        )
+
+        self.assertEqual(cursor.accept(receipt), _SOURCE_TIME)
+        self.assertEqual(committer.calls, [(grant, (), True)])
+        await lane.close()
+        await scheduler.close()
+
+    async def test_retryable_pressure_attempt_aborts_then_replay_succeeds(
+        self,
+    ) -> None:
+        scheduler_types = _types()
+        committer = _ControlledCommitter()
+        committer.block_nonempty = True
+        committer.scripted_dispositions.append(
+            scheduler_types.BoundaryDisposition.RETRYABLE
+        )
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(
+                capacity=500,
+                workers=4,
+                high_water=400,
+                resume_at=299,
+            ),
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        relief_requested = asyncio.Event()
+        request_relief = lane._boundary_coordinator.request_relief
+
+        async def observe_relief() -> object:
+            relief_requested.set()
+            return await request_relief()
+
+        lane._boundary_coordinator.request_relief = observe_relief
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        candidate = cursor.prepare(_SOURCE_TIME)
+        feed_ids = tuple(uuid.UUID(int=index + 1) for index in range(401))
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(),
+                boundaries=(
+                    _boundary(feed_id, index + 1)
+                    for index, feed_id in enumerate(feed_ids)
+                ),
+                candidate=candidate,
+            )
+        )
+        try:
+            await committer.wait_for_calls(1)
+            await asyncio.wait_for(relief_requested.wait(), timeout=1)
+            self.assertEqual(
+                lane._boundary_coordinator.requested_generation,
+                1,
+            )
+            self.assertEqual((await scheduler._snapshot()).held, 400)
+            committer.release.set()
+
+            with self.assertRaisesRegex(RuntimeError, "retryable"):
+                await asyncio.wait_for(coverage, timeout=1)
+            self.assertIs(cursor.outstanding_candidate, candidate)
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+            nonempty_attempts = [
+                batch
+                for _grant_value, batch, _final in committer.calls
+                if batch
+            ]
+            self.assertEqual(len(nonempty_attempts), 1)
+
+            replay = await asyncio.wait_for(
+                lane.cover_page(
+                    calls=(),
+                    boundaries=(
+                        _boundary(feed_id, index + 1)
+                        for index, feed_id in enumerate(feed_ids)
+                    ),
+                    candidate=candidate,
+                ),
+                timeout=2,
+            )
+            self.assertEqual(cursor.accept(replay), _SOURCE_TIME)
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+        finally:
+            committer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await lane.close()
+            await scheduler.close()
+
+    async def test_flusher_cancel_after_commit_start_returns_no_receipt(
+        self,
+    ) -> None:
+        committer = _ControlledCommitter()
+        committer.block_nonempty = True
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        candidate = cursor.prepare(_SOURCE_TIME)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(),
+                boundaries=(_boundary(uuid.UUID(int=1), 1),),
+                candidate=candidate,
+            )
+        )
+        await committer.wait_for_calls(1)
+        self.assertEqual((await scheduler._snapshot()).held, 1)
+
+        lane._boundary_coordinator.task.cancel()
+        committer.release.set()
+
+        with self.assertRaises(feed_work_scheduler.SchedulerIntegrityError):
+            await asyncio.wait_for(coverage, timeout=1)
+        self.assertIs(cursor.outstanding_candidate, candidate)
+        snapshot = await scheduler._snapshot()
+        self.assertTrue(snapshot.fatal)
+        self.assertEqual(snapshot.held, 0)
         self.assertIsInstance(
             await scheduler.close(),
             feed_work_scheduler.Undrained,
