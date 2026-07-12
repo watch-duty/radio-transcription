@@ -476,7 +476,10 @@ class TestSleepOrShutdown(unittest.IsolatedAsyncioTestCase):
             caps={},
         )
         scheduler = _ControlledProcessScheduler()
-        rt._feed_work_scheduler = scheduler
+        rt._feed_work_scheduler = cast(
+            "feed_work_scheduler.FeedWorkScheduler",
+            scheduler,
+        )
         failure = RuntimeError("idle fixed worker failed")
 
         waiting = asyncio.create_task(rt._sleep_or_shutdown(60.0))
@@ -497,7 +500,10 @@ class TestSleepOrShutdown(unittest.IsolatedAsyncioTestCase):
             caps={},
         )
         scheduler = _ControlledProcessScheduler()
-        rt._feed_work_scheduler = scheduler
+        rt._feed_work_scheduler = cast(
+            "feed_work_scheduler.FeedWorkScheduler",
+            scheduler,
+        )
         scheduler_failure = RuntimeError("scheduler worker failed first")
         supervisor_failure = grant_control.GrantControlIntegrityError(
             "supervisor also failed"
@@ -2045,7 +2051,6 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         )
         rt._gcs_client = mock.AsyncMock()
         rt._gcs_client.close.side_effect = lambda: order.append("gcs_close")
-        rt._memory_watchdog.join = mock.AsyncMock()
         heartbeat_pool.close.side_effect = lambda: order.append(
             "heartbeat_pool_close"
         )
@@ -2063,6 +2068,11 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
                 return_value=http_session,
             ),
             mock.patch.object(rt._memory_watchdog, "start"),
+            mock.patch.object(
+                rt._memory_watchdog,
+                "join",
+                new=mock.AsyncMock(),
+            ),
             mock.patch.object(rt, "_compose_supervisor") as compose,
             mock.patch(
                 "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry.configure"
@@ -2404,10 +2414,12 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         order: list[str] = []
         lane_opened = asyncio.Event()
         lane_closed = asyncio.Event()
-        received_resources: list[object] = []
+        received_resources: list[collector_runtime._SidRunnerResources] = []
         store_factory = mock.Mock(side_effect=(data_store, heartbeat_store))
 
-        def runner_factory(resources):
+        def runner_factory(
+            resources: collector_runtime._SidRunnerResources,
+        ) -> sid_runner.BcfyCallsSidRunner:
             received_resources.append(resources)
             return sid_runner.BcfyCallsSidRunner(resources.feed_work_scheduler)
 
@@ -2436,7 +2448,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
                 lane_closed.set()
                 return result
 
-            lane.close = recording_lane_close
+            cast("Any", lane).close = recording_lane_close
             lane_opened.set()
             return lane
 
@@ -2444,8 +2456,8 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             order.append("scheduler_close")
             return await original_scheduler_close()
 
-        scheduler.open_lane = recording_open_lane
-        scheduler.close = recording_scheduler_close
+        cast("Any", scheduler).open_lane = recording_open_lane
+        cast("Any", scheduler).close = recording_scheduler_close
         rt._compose_supervisor()
 
         await rt._supervisor.admit_cycle(_WORKER_ID)
@@ -2498,7 +2510,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
 
         data_store.release.side_effect = release
         rt._heartbeat_thread = None
-        rt._memory_watchdog.join = mock.AsyncMock()
+        cast("Any", rt._memory_watchdog).join = mock.AsyncMock()
         rt._pubsub_client = mock.AsyncMock()
         rt._pubsub_client.close.side_effect = lambda: order.append(
             "pubsub_close"
@@ -2560,14 +2572,17 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         )
         rt = self._configure_shutdown_runtime(result)
         scheduler = _ControlledProcessScheduler(order=order)
-        rt._feed_work_scheduler = scheduler
+        rt._feed_work_scheduler = cast(
+            "feed_work_scheduler.FeedWorkScheduler",
+            scheduler,
+        )
 
         async def shutdown(**_kwargs):
             order.append("supervisor_shutdown")
             return result
 
-        rt._supervisor.shutdown.side_effect = shutdown
-        rt._pubsub_client.close.side_effect = lambda: order.append(
+        cast("Any", rt._supervisor.shutdown).side_effect = shutdown
+        cast("Any", rt._pubsub_client.close).side_effect = lambda: order.append(
             "pubsub_close"
         )
 
@@ -2611,7 +2626,10 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
             )
         )
         scheduler = _ControlledProcessScheduler()
-        rt._feed_work_scheduler = scheduler
+        rt._feed_work_scheduler = cast(
+            "feed_work_scheduler.FeedWorkScheduler",
+            scheduler,
+        )
 
         with (
             mock.patch(
@@ -2651,7 +2669,10 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
                 feed_work_scheduler.LaneCloseReason.SCHEDULER_SHUTDOWN,
             )
         )
-        rt._feed_work_scheduler = scheduler
+        rt._feed_work_scheduler = cast(
+            "feed_work_scheduler.FeedWorkScheduler",
+            scheduler,
+        )
 
         with (
             self.assertRaisesRegex(
@@ -2666,10 +2687,10 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
             await rt._shutdown_sequence()
 
         self.assertEqual(scheduler.close_calls, 1)
-        rt._pubsub_client.close.assert_not_awaited()
-        rt._gcs_client.close.assert_not_awaited()
-        rt._http_session.close.assert_not_awaited()
-        rt._heartbeat_pool.close.assert_not_awaited()
+        cast("Any", rt._pubsub_client.close).assert_not_awaited()
+        cast("Any", rt._gcs_client.close).assert_not_awaited()
+        cast("Any", rt._http_session.close).assert_not_awaited()
+        cast("Any", rt._heartbeat_pool.close).assert_not_awaited()
         close_data_pool.assert_not_awaited()
 
     async def test_live_heartbeat_thread_fails_closed_before_resource_close(

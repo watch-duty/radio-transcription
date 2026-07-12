@@ -6,6 +6,7 @@ import asyncio
 import datetime
 import importlib
 import inspect
+import typing
 import unittest
 import uuid
 
@@ -63,7 +64,7 @@ class _TrackedEvent(asyncio.Event):
         self.cancelled_waiters = 0
         self.wait_entered = asyncio.Event()
 
-    async def wait(self) -> bool:
+    async def wait(self) -> typing.Literal[True]:
         self.active_waiters += 1
         self.wait_entered.set()
         try:
