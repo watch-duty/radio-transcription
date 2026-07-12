@@ -126,6 +126,17 @@ def _lease_claim(
     )
 
 
+def _payload_for_grant(
+    grant: feed_store.FeedGrant | ingestion_lease_store.LeaseGrant,
+) -> feed_store.LeasedFeed | ingestion_lease_store.LeaseSnapshot:
+    if isinstance(grant, feed_store.FeedGrant):
+        return _leased_feed(
+            grant.feed_id,
+            fencing_token=grant.fencing_token,
+        )
+    return _lease_snapshot()
+
+
 def _budgeted_decision() -> grant_control.BudgetedFailureDecision:
     return grant_control.BudgetedFailureDecision(
         failure_threshold=5,
@@ -207,6 +218,14 @@ class TestGrantControlVocabulary(unittest.TestCase):
                 inspect.signature(grant_control.GrantControl.claim).parameters
             ),
             ("self", "mode", "owner_worker_id", "limit"),
+        )
+        self.assertEqual(
+            tuple(
+                inspect.signature(
+                    grant_control.GrantControl.finalize
+                ).parameters
+            ),
+            ("self", "grant", "payload", "terminal"),
         )
 
     def test_run_context_owns_only_closed_signals_and_callback(self) -> None:
@@ -448,6 +467,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
 
                 result = await self.control.finalize(
                     grant,
+                    _payload_for_grant(grant),
                     grant_control.NeutralRelease(cause),
                 )
 
@@ -481,16 +501,19 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
         ):
             released = await self.control.finalize(
                 grant,
+                _payload_for_grant(grant),
                 grant_control.NeutralRelease(
                     grant_control.TerminalCause.SHUTDOWN
                 ),
             )
             budgeted = await self.control.finalize(
                 grant,
+                _payload_for_grant(grant),
                 _budgeted_decision(),
             )
             non_budgeted = await self.control.finalize(
                 grant,
+                _payload_for_grant(grant),
                 _non_budgeted_decision(),
             )
 
@@ -545,6 +568,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
 
         released = await self.control.finalize(
             grant,
+            _payload_for_grant(grant),
             grant_control.NeutralRelease(grant_control.TerminalCause.NORMAL),
         )
 
@@ -556,8 +580,184 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             "outcome unknown"
         )
         with self.assertRaisesRegex(RuntimeError, "outcome unknown"):
-            await self.control.finalize(grant, _budgeted_decision())
+            await self.control.finalize(
+                grant,
+                _payload_for_grant(grant),
+                _budgeted_decision(),
+            )
         self.data_store.report_feed_failure.assert_awaited_once()
+
+    async def test_quarantine_observer_runs_after_exact_commit(self) -> None:
+        async def observe(*_args: object) -> None:
+            self.data_store.report_feed_failure.assert_awaited_once()
+
+        observer = mock.AsyncMock(side_effect=observe)
+        control = feed_grant_control.FeedGrantControl(
+            self.data_store,
+            self.heartbeat_store,
+            self.caps,
+            _ABANDONMENT,
+            on_quarantined=observer,
+        )
+        grant = _feed_grant()
+        payload = _payload_for_grant(grant)
+        assert isinstance(payload, dict)
+        decision = _budgeted_decision()
+        self.data_store.report_feed_failure.return_value = "quarantined"
+
+        result = await control.finalize(grant, payload, decision)
+
+        self.assertIs(
+            result.disposition,
+            grant_control.FinalizeDisposition.APPLIED,
+        )
+        observer.assert_awaited_once_with(grant, payload, decision)
+
+    async def test_quarantine_observer_failure_is_non_authoritative(
+        self,
+    ) -> None:
+        msg = "observer unavailable"
+        observer = mock.AsyncMock(side_effect=RuntimeError(msg))
+        control = feed_grant_control.FeedGrantControl(
+            self.data_store,
+            self.heartbeat_store,
+            self.caps,
+            _ABANDONMENT,
+            on_quarantined=observer,
+        )
+        grant = _feed_grant()
+        payload = _payload_for_grant(grant)
+        assert isinstance(payload, dict)
+        self.data_store.report_feed_failure.return_value = "quarantined"
+
+        result = await control.finalize(
+            grant,
+            payload,
+            _budgeted_decision(),
+        )
+
+        self.assertIs(
+            result.disposition,
+            grant_control.FinalizeDisposition.APPLIED,
+        )
+        self.data_store.report_feed_failure.assert_awaited_once()
+
+    async def test_quarantine_observer_cancellation_is_non_authoritative(
+        self,
+    ) -> None:
+        observer = mock.AsyncMock(side_effect=asyncio.CancelledError)
+        control = feed_grant_control.FeedGrantControl(
+            self.data_store,
+            self.heartbeat_store,
+            self.caps,
+            _ABANDONMENT,
+            on_quarantined=observer,
+        )
+        grant = _feed_grant()
+        payload = _payload_for_grant(grant)
+        assert isinstance(payload, dict)
+        self.data_store.report_feed_failure.return_value = "quarantined"
+
+        result = await control.finalize(
+            grant,
+            payload,
+            _budgeted_decision(),
+        )
+
+        self.assertIs(
+            result.disposition,
+            grant_control.FinalizeDisposition.APPLIED,
+        )
+        observer.assert_awaited_once()
+
+    async def test_quarantine_observer_timeout_is_non_authoritative(
+        self,
+    ) -> None:
+        observer_started = asyncio.Event()
+        observer_cancelled = asyncio.Event()
+
+        async def observe(*_args: object) -> None:
+            observer_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                observer_cancelled.set()
+
+        observer = mock.AsyncMock(side_effect=observe)
+        control = feed_grant_control.FeedGrantControl(
+            self.data_store,
+            self.heartbeat_store,
+            self.caps,
+            _ABANDONMENT,
+            on_quarantined=observer,
+        )
+        grant = _feed_grant()
+        payload = _payload_for_grant(grant)
+        assert isinstance(payload, dict)
+        decision = _budgeted_decision()
+        self.data_store.report_feed_failure.return_value = "quarantined"
+
+        with mock.patch.object(
+            feed_grant_control,
+            "_QUARANTINE_OBSERVER_TIMEOUT_SEC",
+            0.01,
+        ):
+            result = await asyncio.wait_for(
+                control.finalize(grant, payload, decision),
+                timeout=1,
+            )
+
+        self.assertTrue(observer_started.is_set())
+        self.assertTrue(observer_cancelled.is_set())
+        self.assertIs(
+            result.disposition,
+            grant_control.FinalizeDisposition.APPLIED,
+        )
+        self.data_store.report_feed_failure.assert_awaited_once()
+        observer.assert_awaited_once_with(grant, payload, decision)
+
+    async def test_quarantine_observer_ignores_durable_failing(self) -> None:
+        observer = mock.AsyncMock()
+        control = feed_grant_control.FeedGrantControl(
+            self.data_store,
+            self.heartbeat_store,
+            self.caps,
+            _ABANDONMENT,
+            on_quarantined=observer,
+        )
+        grant = _feed_grant()
+        payload = _payload_for_grant(grant)
+        assert isinstance(payload, dict)
+        self.data_store.report_feed_failure.return_value = "failing"
+
+        await control.finalize(grant, payload, _budgeted_decision())
+
+        observer.assert_not_awaited()
+
+    async def test_non_budgeted_quarantine_is_rejected(self) -> None:
+        observer = mock.AsyncMock()
+        control = feed_grant_control.FeedGrantControl(
+            self.data_store,
+            self.heartbeat_store,
+            self.caps,
+            _ABANDONMENT,
+            on_quarantined=observer,
+        )
+        grant = _feed_grant()
+        payload = _payload_for_grant(grant)
+        assert isinstance(payload, dict)
+        self.data_store.release_non_budgeted_failure.return_value = (
+            "quarantined"
+        )
+
+        with self.assertRaises(grant_control.GrantControlIntegrityError):
+            await control.finalize(
+                grant,
+                payload,
+                _non_budgeted_decision(),
+            )
+
+        observer.assert_not_awaited()
 
 
 class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
@@ -760,6 +960,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
 
                 result = await self.control.finalize(
                     grant,
+                    _payload_for_grant(grant),
                     grant_control.NeutralRelease(cause),
                 )
 
@@ -805,12 +1006,14 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         ):
             budgeted = await self.control.finalize(
                 grant,
+                _payload_for_grant(grant),
                 _budgeted_decision(),
             )
             budgeted_call = self.data_store.finalize_failure.await_args
             self.data_store.finalize_failure.reset_mock()
             non_budgeted = await self.control.finalize(
                 grant,
+                _payload_for_grant(grant),
                 _non_budgeted_decision(),
             )
             non_budgeted_call = self.data_store.finalize_failure.await_args
@@ -897,6 +1100,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
 
                 result = await self.control.finalize(
                     grant,
+                    _payload_for_grant(grant),
                     grant_control.NeutralRelease(
                         grant_control.TerminalCause.NORMAL
                     ),
@@ -917,6 +1121,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(grant_control.GrantControlIntegrityError):
             await self.control.finalize(
                 grant,
+                _payload_for_grant(grant),
                 grant_control.NeutralRelease(
                     grant_control.TerminalCause.NORMAL
                 ),
@@ -929,7 +1134,11 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "outcome unknown"):
-            await self.control.finalize(grant, _budgeted_decision())
+            await self.control.finalize(
+                grant,
+                _payload_for_grant(grant),
+                _budgeted_decision(),
+            )
 
         self.data_store.finalize_failure.assert_awaited_once()
 

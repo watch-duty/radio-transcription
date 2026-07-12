@@ -1,9 +1,13 @@
 {
   "event": "feed_quarantined",
   "expected_keys": [
+    "authority_kind",
+    "domain_id",
     "event_type",
     "feed_id",
     "feed_name",
+    "profile",
+    "profile_digest",
     "reason",
     "status_reason",
     "source_type"

@@ -244,7 +244,7 @@ class _ErasedRegisteredDomain:
         typing.Awaitable[tuple[_ErasedHeartbeat, ...]],
     ]
     finalize: typing.Callable[
-        [object, grant_control.TerminalDecision],
+        [object, object, grant_control.TerminalDecision],
         typing.Awaitable[grant_control.FinalizeResult[object]],
     ]
     terminal_decision_for: typing.Callable[
@@ -399,12 +399,16 @@ def _erase_registered_domain[GrantT, PayloadT](  # noqa: PLR0915
 
     async def finalize(
         grant: object,
+        payload: object,
         terminal: grant_control.TerminalDecision,
     ) -> grant_control.FinalizeResult[object]:
         if not isinstance(grant, registered.grant_type):
             msg = "managed finalization grant failed its registered type"
             raise grant_control.GrantControlIntegrityError(msg)
-        result = await registered.control.finalize(grant, terminal)
+        if not registered.payload_validator(payload):
+            msg = "managed finalization payload failed validation"
+            raise grant_control.GrantControlIntegrityError(msg)
+        result = await registered.control.finalize(grant, payload, terminal)
         if not isinstance(result, grant_control.FinalizeResult):
             msg = "finalize returned an invalid result type"
             raise grant_control.GrantControlIntegrityError(msg)
@@ -1046,6 +1050,7 @@ class GrantSupervisor:
                     return _FinalizeEffect.SKIPPED
                 result = await managed.domain.finalize(
                     managed.grant,
+                    managed.payload,
                     decision,
                 )
         except asyncio.CancelledError:

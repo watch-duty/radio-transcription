@@ -145,6 +145,7 @@ class _ControlledControl[GrantT, PayloadT]:
         self.finalize_calls: list[
             tuple[GrantT, grant_control.TerminalDecision]
         ] = []
+        self.finalize_payloads: list[PayloadT] = []
         self.heartbeat_calls: list[tuple[GrantT, ...]] = []
         self.heartbeat_results: (
             tuple[grant_control.GrantHeartbeat[GrantT], ...] | None
@@ -202,9 +203,11 @@ class _ControlledControl[GrantT, PayloadT]:
     async def finalize(
         self,
         grant: GrantT,
+        payload: PayloadT,
         terminal: grant_control.TerminalDecision,
     ) -> grant_control.FinalizeResult[GrantT]:
         self.finalize_calls.append((grant, terminal))
+        self.finalize_payloads.append(payload)
         self.finalize_entered.set()
         self.finalize_active += 1
         self.max_finalize_active = max(
@@ -783,14 +786,18 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             feed_control.claim_calls,
             [
                 (grant_control.ClaimMode.PRIMARY, 1),
+                (grant_control.ClaimMode.RECOVERY, 1),
                 (grant_control.ClaimMode.PRIMARY, 1),
+                (grant_control.ClaimMode.RECOVERY, 1),
             ],
         )
         self.assertEqual(
             sid_control.claim_calls,
             [
                 (grant_control.ClaimMode.PRIMARY, 1),
+                (grant_control.ClaimMode.RECOVERY, 1),
                 (grant_control.ClaimMode.PRIMARY, 1),
+                (grant_control.ClaimMode.RECOVERY, 1),
             ],
         )
         primary_order = [
@@ -1376,8 +1383,9 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         ) = self._mixed(profile)
         feed_id = uuid.UUID(int=140)
         grant = feed_store.FeedGrant(feed_id, _OWNER_ID, 1)
+        payload = _leased_feed(feed_id)
         feed_control.results[grant_control.ClaimMode.PRIMARY] = (
-            _claim(grant, _leased_feed(feed_id)),
+            _claim(grant, payload),
         )
         feed_runner.outcome = grant_control.RunFailed(
             feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
@@ -1402,6 +1410,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         )
         await asyncio.wait_for(heartbeat_stopped.wait(), timeout=1)
         self.assertEqual(len(feed_control.finalize_calls), 1)
+        self.assertEqual(feed_control.finalize_payloads, [payload])
         self.assertIsInstance(
             feed_control.finalize_calls[0][1],
             grant_control.BudgetedFailureDecision,
@@ -1622,6 +1631,48 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             sid_control.finalize_calls[0][1],
             grant_control.NeutralRelease,
         )
+
+    async def test_heartbeat_stop_failure_prevents_exact_finalization(
+        self,
+    ) -> None:
+        profile = _profile(
+            process_cap=1,
+            feed_cap=1,
+            feed_budget=1,
+            domains=(grant_control.DomainId.FEED,),
+        )
+        (
+            supervisor,
+            feed_control,
+            feed_runner,
+            _sid_control,
+            _sid_runner,
+        ) = self._mixed(profile)
+        feed_id = uuid.UUID(int=151)
+        grant = feed_store.FeedGrant(feed_id, _OWNER_ID, 1)
+        feed_control.results[grant_control.ClaimMode.PRIMARY] = (
+            _claim(grant, _leased_feed(feed_id)),
+        )
+        feed_runner.wait_for_signal = "stop"
+        await supervisor.admit_cycle(_OWNER_ID)
+
+        async def stop_heartbeat() -> None:
+            msg = "heartbeat thread did not stop"
+            raise RuntimeError(msg)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "heartbeat thread did not stop",
+        ):
+            await supervisor.shutdown(
+                cooperative_grace_sec=30,
+                external_stop_deadline_sec=30,
+                stop_heartbeat_supervision=stop_heartbeat,
+            )
+
+        self.assertEqual(feed_control.finalize_calls, [])
+        self.assertEqual(supervisor._process_owned, 1)
+        self.assertFalse(supervisor._heartbeat_stopped.is_set())
 
     async def test_never_closed_child_is_undrained_and_never_released(
         self,

@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import time
+import types
 import unittest
-import uuid
 from typing import TYPE_CHECKING
 from unittest import mock
 
 from aiohttp.test_utils import AioHTTPTestCase
 
+from backend.pipeline.ingestion import (
+    grant_control,
+    grant_supervisor,
+    worker_profiles,
+)
 from backend.pipeline.ingestion.health_server import HealthState, build_app
 
 if TYPE_CHECKING:
@@ -27,6 +32,36 @@ def _fake_settings(
     return settings
 
 
+def _snapshot(
+    *,
+    feed_active: int = 0,
+    feed_retrying: int = 0,
+    feed_failing: int = 0,
+    sid_active: int | None = None,
+) -> grant_supervisor.SupervisorSnapshot:
+    """Build one immutable local health projection."""
+    counts = {
+        grant_control.DomainId.FEED: grant_supervisor.GrantCount(
+            active=feed_active,
+            retrying=feed_retrying,
+            durable_failing=feed_failing,
+        )
+    }
+    if sid_active is not None:
+        counts[grant_control.DomainId.SID] = grant_supervisor.GrantCount(
+            active=sid_active,
+            retrying=0,
+            durable_failing=0,
+        )
+    return grant_supervisor.SupervisorSnapshot(
+        profile=worker_profiles.LEGACY_PROFILE.name,
+        profile_digest=worker_profiles.profile_digest(
+            worker_profiles.LEGACY_PROFILE
+        ),
+        counts_by_domain=types.MappingProxyType(counts),
+    )
+
+
 class HealthzHandlerTests(AioHTTPTestCase):
     """
     Decision-matrix coverage for /healthz.
@@ -38,7 +73,7 @@ class HealthzHandlerTests(AioHTTPTestCase):
 
     async def get_application(self) -> web.Application:
         self.settings = _fake_settings()
-        self.state = HealthState()
+        self.state = HealthState(snapshot_provider=_snapshot)
         return build_app(self.settings, self.state)
 
     async def _get_healthz(self) -> tuple[int, dict]:
@@ -111,7 +146,7 @@ class HealthzHandlerTests(AioHTTPTestCase):
         now = time.monotonic()
         self.state.startup_time = now - 3600.0  # 1h uptime — well past grace
         self.state.last_heartbeat_tick = now - 2.0
-        # feed_tasks intentionally empty.
+        # The immutable snapshot intentionally reports zero Feed grants.
 
         status, body = await self._get_healthz()
 
@@ -124,24 +159,75 @@ class HealthzHandlerTests(AioHTTPTestCase):
         now = time.monotonic()
         self.state.startup_time = now - 400.0
         self.state.last_heartbeat_tick = now - 2.0
-        self.state.feed_tasks.update(
-            {
-                uuid.uuid4(): object(),
-                uuid.uuid4(): object(),
-                uuid.uuid4(): object(),
-            }
+        snapshot = _snapshot(
+            feed_active=3,
+            feed_retrying=1,
+            feed_failing=2,
         )
+        snapshot_provider = mock.Mock(return_value=snapshot)
+        self.state.snapshot_provider = snapshot_provider
 
         status, body = await self._get_healthz()
 
         self.assertEqual(status, 200)
         self.assertEqual(
             set(body.keys()),
-            {"status", "active_feeds", "last_heartbeat_age_sec"},
+            {
+                "status",
+                "active_feeds",
+                "last_heartbeat_age_sec",
+                "profile",
+                "profile_digest",
+                "grant_counts",
+            },
         )
         self.assertEqual(body["status"], "healthy")
         self.assertEqual(body["active_feeds"], 3)
+        snapshot_provider.assert_called_once_with()
         self.assertIsInstance(body["last_heartbeat_age_sec"], (int, float))
+        self.assertEqual(body["profile"], "legacy")
+        self.assertEqual(
+            body["profile_digest"],
+            worker_profiles.profile_digest(worker_profiles.LEGACY_PROFILE),
+        )
+        self.assertEqual(
+            body["grant_counts"],
+            {
+                "feed": {
+                    "authority_kind": "feed",
+                    "active": 3,
+                    "retrying": 1,
+                    "durable_failing": 2,
+                }
+            },
+        )
+        serialized = str(body)
+        for forbidden in (
+            "worker_id",
+            "fencing_token",
+            "authorization",
+            "signed_url",
+        ):
+            self.assertNotIn(forbidden, serialized.lower())
+
+    async def test_sid_counts_do_not_change_legacy_active_feeds(self) -> None:
+        now = time.monotonic()
+        self.state.startup_time = now - 400.0
+        self.state.last_heartbeat_tick = now - 2.0
+        self.state.snapshot_provider = lambda: _snapshot(
+            feed_active=2,
+            sid_active=9,
+        )
+
+        status, body = await self._get_healthz()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["active_feeds"], 2)
+        self.assertEqual(body["grant_counts"]["sid"]["active"], 9)
+        self.assertEqual(
+            body["grant_counts"]["sid"]["authority_kind"],
+            "sid_lease",
+        )
 
 
 if __name__ == "__main__":

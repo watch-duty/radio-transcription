@@ -2,13 +2,28 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
+import logging
 import typing
 import uuid
 from types import MappingProxyType
 
 from backend.pipeline.ingestion import grant_control
 from backend.pipeline.storage import feed_store
+
+logger = logging.getLogger(__name__)
+
+_QUARANTINE_OBSERVER_TIMEOUT_SEC = 2.0
+
+type QuarantineObserver = typing.Callable[
+    [
+        feed_store.FeedGrant,
+        feed_store.LeasedFeed,
+        grant_control.BudgetedFailureDecision,
+    ],
+    typing.Awaitable[None],
+]
 
 
 def _calculate_branch_limits(
@@ -69,6 +84,8 @@ class FeedGrantControl:
         heartbeat_store: feed_store.FeedStore,
         source_caps: typing.Mapping[feed_store.SourceType, int],
         abandonment_window: datetime.timedelta,
+        *,
+        on_quarantined: QuarantineObserver | None = None,
     ) -> None:
         caps: dict[feed_store.SourceType, int] = {}
         for source_type, cap in source_caps.items():
@@ -88,11 +105,43 @@ class FeedGrantControl:
         if abandonment_window <= datetime.timedelta(0):
             msg = "abandonment_window must be positive"
             raise ValueError(msg)
+        if on_quarantined is not None and not callable(on_quarantined):
+            msg = "on_quarantined must be callable"
+            raise TypeError(msg)
 
         self._data_store = data_store
         self._heartbeat_store = heartbeat_store
         self._source_caps = MappingProxyType(caps)
         self._abandonment_window = abandonment_window
+        self._on_quarantined = on_quarantined
+
+    async def _observe_quarantine(
+        self,
+        grant: feed_store.FeedGrant,
+        payload: feed_store.LeasedFeed,
+        terminal: grant_control.BudgetedFailureDecision,
+    ) -> None:
+        """Bound non-authoritative evidence after durable finalization."""
+        observer = self._on_quarantined
+        if observer is None:
+            return
+        try:
+            await asyncio.wait_for(
+                observer(grant, payload, terminal),
+                timeout=_QUARANTINE_OBSERVER_TIMEOUT_SEC,
+            )
+        except asyncio.CancelledError:
+            logger.warning(
+                "Quarantine observer cancelled after exact Feed finalization"
+            )
+        except TimeoutError:
+            logger.warning(
+                "Quarantine observer timed out after exact Feed finalization"
+            )
+        except Exception:
+            logger.exception(
+                "Quarantine observer failed after exact Feed finalization"
+            )
 
     async def claim(
         self,
@@ -222,12 +271,19 @@ class FeedGrantControl:
     async def finalize(
         self,
         grant: feed_store.FeedGrant,
+        payload: feed_store.LeasedFeed,
         terminal: grant_control.TerminalDecision,
     ) -> grant_control.FinalizeResult[feed_store.FeedGrant]:
         """Execute one exact Feed release or selected failure action."""
         if not isinstance(grant, feed_store.FeedGrant):
             msg = "grant must be a FeedGrant"
             raise TypeError(msg)
+        if (
+            payload["id"] != grant.feed_id
+            or payload["fencing_token"] != grant.fencing_token
+        ):
+            msg = "Feed finalization payload does not match its grant"
+            raise grant_control.GrantControlIntegrityError(msg)
 
         if isinstance(terminal, grant_control.NeutralRelease):
             applied = await self._data_store.release_feed(
@@ -280,6 +336,16 @@ class FeedGrantControl:
         ):
             msg = f"Feed failure returned unexpected status {status!r}"
             raise grant_control.GrantControlIntegrityError(msg)
+        if (
+            isinstance(terminal, grant_control.NonBudgetedFailureDecision)
+            and status == feed_store.FeedStatus.QUARANTINED.value
+        ):
+            msg = "Non-budgeted Feed finalization returned quarantined"
+            raise grant_control.GrantControlIntegrityError(msg)
+        if status == feed_store.FeedStatus.QUARANTINED.value and isinstance(
+            terminal, grant_control.BudgetedFailureDecision
+        ):
+            await self._observe_quarantine(grant, payload, terminal)
         return grant_control.FinalizeResult(
             grant,
             grant_control.FinalizeDisposition.APPLIED,

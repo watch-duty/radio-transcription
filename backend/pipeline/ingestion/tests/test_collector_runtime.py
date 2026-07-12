@@ -23,6 +23,7 @@ from backend.pipeline.ingestion import (
     feed_grant_control,
     grant_control,
     grant_supervisor,
+    source_runtime_specs,
     worker_profiles,
 )
 from backend.pipeline.ingestion.collector_runtime import (
@@ -36,8 +37,10 @@ from backend.pipeline.ingestion.models import (
     FeedFailure,
     SourceObservation,
 )
+from backend.pipeline.storage import ingestion_lease_store
 from backend.pipeline.storage.feed_store import (
     FeedGrant,
+    FeedStatus,
     FeedStatusReason,
     LeasedFeed,
     SourceType,
@@ -101,6 +104,25 @@ def _make_leased_feed(
         failure_count=0,
         status_reason=None,
         source_feed_id=str(feed_id),
+    )
+
+
+def _lease_snapshot(
+    *,
+    status: FeedStatus = FeedStatus.ACTIVE,
+) -> ingestion_lease_store.LeaseSnapshot:
+    now = datetime.datetime(2026, 7, 11, 12, 0, tzinfo=datetime.UTC)
+    return ingestion_lease_store.LeaseSnapshot(
+        status=status,
+        last_heartbeat=now,
+        failure_count=0,
+        retry_after=None,
+        status_reason=None,
+        status_reason_detail=None,
+        status_reason_updated_at=None,
+        audit_revision=1,
+        membership_revision=1,
+        updated_at=now,
     )
 
 
@@ -629,7 +651,8 @@ class TestLeasedFeedPayloadSupervisorBoundary(unittest.IsolatedAsyncioTestCase):
                 ),
             )
 
-        async def finalize(finalized_grant, terminal):
+        async def finalize(finalized_grant, finalized_payload, terminal):
+            assert finalized_payload is payload
             return grant_control.FinalizeResult(
                 finalized_grant,
                 grant_control.FinalizeDisposition.APPLIED,
@@ -1485,6 +1508,14 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(startup_payload["startup_jitter_max_sec"], 2.0)
         self.assertEqual(startup_payload["lease_admission_cycle_budget"], 20)
         self.assertEqual(startup_payload["max_feeds_per_worker"], 250)
+        self.assertEqual(startup_payload["profile"], "legacy")
+        self.assertEqual(
+            startup_payload["profile_digest"],
+            worker_profiles.profile_digest(
+                rt._collector_settings.worker_profile
+            ),
+        )
+        self.assertEqual(startup_payload["selected_domains"], ["feed"])
         self.assertIsInstance(startup_payload["process_id"], int)
 
     @mock.patch(
@@ -1574,6 +1605,287 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hb_settings.pool_max_size, 1)
 
 
+class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
+    """One runtime composes only profile-selected typed domains."""
+
+    @staticmethod
+    def _runtime(
+        profile: worker_profiles.WorkerProfile,
+        *,
+        sid_store_factory=None,
+        sid_runner_factory=None,
+    ) -> CollectorRuntime:
+        rt = CollectorRuntime(
+            capture_fn=mock.AsyncMock(),
+            settings=_make_settings(
+                worker_profile=profile,
+                caps=(
+                    source_runtime_specs.default_caps()
+                    if worker_profiles.allocation_for_domain(
+                        profile,
+                        grant_control.DomainId.FEED,
+                    )
+                    is not None
+                    else {}
+                ),
+            ),
+            sid_store_factory=sid_store_factory,
+            sid_runner_factory=sid_runner_factory,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._data_pool = mock.AsyncMock()
+        rt._heartbeat_pool = mock.AsyncMock()
+        rt._capture_resources = _default_resources()
+        return rt
+
+    async def test_feed_only_constructs_no_sid_dependencies(self) -> None:
+        sid_store_factory = mock.Mock()
+        sid_runner_factory = mock.Mock()
+        rt = self._runtime(
+            worker_profiles.LEGACY_PROFILE,
+            sid_store_factory=sid_store_factory,
+            sid_runner_factory=sid_runner_factory,
+        )
+
+        rt._compose_supervisor()
+
+        sid_store_factory.assert_not_called()
+        sid_runner_factory.assert_not_called()
+        self.assertEqual(
+            set(rt._supervisor.snapshot().counts_by_domain),
+            {grant_control.DomainId.FEED},
+        )
+        self.assertIn(SourceType.BCFY_CALLS, rt._store._claim_types)
+
+    async def test_sid_only_dormant_constructs_without_claims(self) -> None:
+        data_store = mock.AsyncMock(
+            spec=ingestion_lease_store.IngestionLeaseStore
+        )
+        heartbeat_store = mock.AsyncMock(
+            spec=ingestion_lease_store.IngestionLeaseStore
+        )
+        rt = self._runtime(worker_profiles.SID_DORMANT_PROFILE)
+
+        with mock.patch.object(
+            collector_runtime.ingestion_lease_store,
+            "IngestionLeaseStore",
+            side_effect=(data_store, heartbeat_store),
+        ) as store_factory:
+            rt._compose_supervisor()
+        await rt._supervisor.admit_cycle(_WORKER_ID)
+
+        self.assertEqual(
+            store_factory.call_args_list,
+            [mock.call(rt._data_pool), mock.call(rt._heartbeat_pool)],
+        )
+        data_store.claim_unclaimed.assert_not_awaited()
+        data_store.claim_recoverable.assert_not_awaited()
+        self.assertEqual(
+            set(rt._supervisor.snapshot().counts_by_domain),
+            {grant_control.DomainId.SID},
+        )
+
+    async def test_mixed_dormant_uses_one_supervisor_and_resource_set(
+        self,
+    ) -> None:
+        store_factory = mock.Mock(
+            side_effect=(mock.AsyncMock(), mock.AsyncMock())
+        )
+        rt = self._runtime(
+            worker_profiles.MIXED_DORMANT_PROFILE,
+            sid_store_factory=store_factory,
+        )
+
+        rt._compose_supervisor()
+
+        self.assertEqual(
+            set(rt._supervisor.snapshot().counts_by_domain),
+            {grant_control.DomainId.FEED, grant_control.DomainId.SID},
+        )
+        self.assertIn(SourceType.BCFY_CALLS, rt._store._claim_types)
+        self.assertIs(
+            rt._capture_resources.http_session,
+            rt._capture_resources.http_session,
+        )
+
+    async def test_claims_enabled_sid_requires_both_factories(self) -> None:
+        allocation = dataclasses.replace(
+            worker_profiles.SID_DORMANT_PROFILE.allocations[0],
+            claims_enabled=True,
+        )
+        profile = dataclasses.replace(
+            worker_profiles.SID_DORMANT_PROFILE,
+            name="sid-controlled-test",
+            allocations=(allocation,),
+        )
+        rt = self._runtime(profile)
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "requires controlled store and runner factories",
+        ):
+            rt._compose_supervisor()
+
+    async def test_quarantine_observer_adds_static_runtime_context(
+        self,
+    ) -> None:
+        rt = self._runtime(worker_profiles.LEGACY_PROFILE)
+        decision = grant_control.BudgetedFailureDecision(
+            failure_threshold=3,
+            backoff_base_sec=15,
+            backoff_max_sec=600,
+            status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            actor_id=_RUNTIME_ACTOR_ID,
+            reason="invalid configuration",
+        )
+
+        with mock.patch(
+            "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry.emit_quarantine_event",
+            new=mock.AsyncMock(),
+        ) as emit:
+            await rt._emit_feed_quarantine(
+                _make_feed_grant(),
+                _FEED,
+                decision,
+            )
+
+        emit.assert_awaited_once_with(
+            feed_id=str(_FEED_ID),
+            feed_name=_FEED["name"],
+            source_type=SourceType.BCFY_FEEDS.value,
+            reason="invalid configuration",
+            status_reason=(FeedStatusReason.SYSTEM_CONFIGURATION_INVALID.value),
+            profile="legacy",
+            profile_digest=worker_profiles.profile_digest(
+                worker_profiles.LEGACY_PROFILE
+            ),
+            domain_id="feed",
+            authority_kind="feed",
+        )
+
+    async def test_controlled_sid_full_runtime_lifecycle(self) -> None:
+        allocation = dataclasses.replace(
+            worker_profiles.SID_DORMANT_PROFILE.allocations[0],
+            claims_enabled=True,
+        )
+        profile = dataclasses.replace(
+            worker_profiles.SID_DORMANT_PROFILE,
+            name="sid-controlled-test",
+            allocations=(allocation,),
+        )
+        grant = ingestion_lease_store.LeaseGrant(
+            SourceType.BCFY_CALLS,
+            "123",
+            _WORKER_ID,
+            1,
+        )
+        active_snapshot = _lease_snapshot()
+        data_store = mock.AsyncMock(
+            spec=ingestion_lease_store.IngestionLeaseStore
+        )
+        heartbeat_store = mock.AsyncMock(
+            spec=ingestion_lease_store.IngestionLeaseStore
+        )
+        data_store.claim_unclaimed.return_value = (
+            ingestion_lease_store.LeaseClaim(grant, active_snapshot),
+        )
+        data_store.claim_recoverable.return_value = ()
+        heartbeat_store.renew_heartbeats.return_value = (
+            ingestion_lease_store.LeaseHeartbeatResult(
+                grant,
+                ingestion_lease_store.LeaseOperationDisposition.APPLIED,
+                active_snapshot,
+            ),
+        )
+        order: list[str] = []
+        child_closed = asyncio.Event()
+
+        class ControlledRunner:
+            def __init__(self) -> None:
+                self.started = asyncio.Event()
+
+            async def run(self, run_grant, payload, context):
+                self.started.set()
+
+                async def child() -> None:
+                    await context.stop_requested.wait()
+                    order.append("child_closed")
+                    child_closed.set()
+
+                child_task = asyncio.create_task(child())
+                await child_task
+                return grant_control.RunStopped(
+                    grant_control.TerminalCause.SHUTDOWN
+                )
+
+        runner = ControlledRunner()
+        store_factory = mock.Mock(side_effect=(data_store, heartbeat_store))
+        runner_factory = mock.Mock(return_value=runner)
+        rt = self._runtime(
+            profile,
+            sid_store_factory=store_factory,
+            sid_runner_factory=runner_factory,
+        )
+        rt._compose_supervisor()
+
+        await rt._supervisor.admit_cycle(_WORKER_ID)
+        await asyncio.wait_for(runner.started.wait(), timeout=1)
+        await rt._heartbeat_cycle()
+
+        snapshot = rt._health_state.snapshot_provider()
+        self.assertEqual(
+            snapshot.counts_by_domain[grant_control.DomainId.SID].active,
+            1,
+        )
+        heartbeat_store.renew_heartbeats.assert_awaited_once_with((grant,))
+        resources = runner_factory.call_args.args[0]
+        self.assertIs(resources.data_store, data_store)
+        self.assertIs(resources.heartbeat_store, heartbeat_store)
+        self.assertIs(resources.capture_resources, rt._capture_resources)
+        self.assertIs(resources.gcs_client, rt._gcs_client)
+        self.assertIs(resources.pubsub_client, rt._pubsub_client)
+        self.assertIs(resources.health_state, rt._health_state)
+        self.assertIs(resources.shutdown, rt._shutdown)
+
+        async def release(*_args, **_kwargs):
+            self.assertTrue(child_closed.is_set())
+            self.assertTrue(rt._thread_stop.is_set())
+            order.append("release")
+            return ingestion_lease_store.LeaseOperationResult(
+                ingestion_lease_store.LeaseOperationDisposition.APPLIED,
+                _lease_snapshot(status=FeedStatus.UNCLAIMED),
+            )
+
+        data_store.release.side_effect = release
+        rt._heartbeat_thread = None
+        rt._memory_watchdog.join = mock.AsyncMock()
+        rt._pubsub_client = mock.AsyncMock()
+        rt._pubsub_client.close.side_effect = lambda: order.append(
+            "pubsub_close"
+        )
+        rt._gcs_client = mock.AsyncMock()
+        rt._http_session = mock.AsyncMock()
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.close_pool",
+                new=mock.AsyncMock(),
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.asyncio.sleep",
+                new=mock.AsyncMock(),
+            ),
+        ):
+            await rt._shutdown_sequence()
+
+        data_store.release.assert_awaited_once_with(
+            grant,
+            cause=ingestion_lease_store.LeaseReleaseCause.SHUTDOWN,
+        )
+        self.assertLess(order.index("child_closed"), order.index("release"))
+        self.assertLess(order.index("release"), order.index("pubsub_close"))
+
+
 class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
     """Runtime shutdown delegates exact grant drain before resource close."""
 
@@ -1638,6 +1950,47 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         ) as close_data_pool:
             await rt._shutdown_sequence()
 
+        rt._pubsub_client.close.assert_not_awaited()
+        rt._gcs_client.close.assert_not_awaited()
+        rt._http_session.close.assert_not_awaited()
+        rt._heartbeat_pool.close.assert_not_awaited()
+        close_data_pool.assert_not_awaited()
+
+    async def test_live_heartbeat_thread_fails_closed_before_resource_close(
+        self,
+    ) -> None:
+        rt = self._configure_shutdown_runtime(
+            grant_supervisor.ShutdownResult(
+                finalized=0,
+                abandoned=0,
+                undrained=0,
+            )
+        )
+        heartbeat_thread = mock.Mock()
+        heartbeat_thread.is_alive.return_value = True
+        rt._heartbeat_thread = heartbeat_thread
+
+        async def shutdown(**kwargs: object) -> None:
+            stop_heartbeat = cast(
+                "Any",
+                kwargs["stop_heartbeat_supervision"],
+            )
+            await stop_heartbeat()
+
+        rt._supervisor.shutdown.side_effect = shutdown
+        with (
+            self.assertRaisesRegex(
+                RuntimeError,
+                "heartbeat thread did not stop",
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.close_pool",
+                new=mock.AsyncMock(),
+            ) as close_data_pool,
+        ):
+            await rt._shutdown_sequence()
+
+        heartbeat_thread.join.assert_called_once_with(timeout=5)
         rt._pubsub_client.close.assert_not_awaited()
         rt._gcs_client.close.assert_not_awaited()
         rt._http_session.close.assert_not_awaited()
@@ -2084,7 +2437,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
             rt._collector_settings.caps,
             datetime.timedelta(seconds=60),
         )
-        result = await control.finalize(_make_feed_grant(), decision)
+        result = await control.finalize(_make_feed_grant(), _FEED, decision)
 
         self.assertIs(
             result.disposition,
@@ -2154,7 +2507,7 @@ class TestFeedTerminalOwnership(unittest.IsolatedAsyncioTestCase):
             rt._collector_settings.caps,
             datetime.timedelta(seconds=60),
         )
-        result = await control.finalize(_make_feed_grant(), decision)
+        result = await control.finalize(_make_feed_grant(), _FEED, decision)
 
         self.assertIs(
             result.disposition,
@@ -2201,7 +2554,7 @@ class TestFeedTerminalOwnership(unittest.IsolatedAsyncioTestCase):
             rt._collector_settings.caps,
             datetime.timedelta(seconds=60),
         )
-        await control.finalize(_make_feed_grant(), decision)
+        await control.finalize(_make_feed_grant(), _FEED, decision)
 
         rt._store.report_feed_failure.assert_not_awaited()
         rt._store.release_non_budgeted_failure.assert_awaited_once()

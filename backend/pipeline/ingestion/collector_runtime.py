@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import dataclasses
 import datetime
 import logging
 import os
@@ -10,6 +11,7 @@ import signal
 import socket
 import threading
 import time
+import types
 import typing
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -37,6 +39,7 @@ from backend.pipeline.ingestion import (
     health_server,
     memory_watchdog,
     quarantine_telemetry,
+    sid_grant_control,
     status_reason_detail,
     worker_profiles,
 )
@@ -56,7 +59,7 @@ from backend.pipeline.ingestion.retry import (
 )
 from backend.pipeline.ingestion.router import resolve_topic_path
 from backend.pipeline.ingestion.slo_contract import EVENT_TYPE_CHUNK_INGESTED
-from backend.pipeline.storage import feed_lifecycle
+from backend.pipeline.storage import feed_lifecycle, ingestion_lease_store
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
@@ -272,6 +275,69 @@ def _feed_fencing_token(grant: FeedGrant) -> int:
     return grant.fencing_token
 
 
+def _is_lease_snapshot_payload(
+    value: object,
+) -> typing.TypeGuard[ingestion_lease_store.LeaseSnapshot]:
+    return isinstance(value, ingestion_lease_store.LeaseSnapshot)
+
+
+def _sid_authority(
+    grant: ingestion_lease_store.LeaseGrant,
+) -> grant_supervisor.SidAuthority:
+    return grant_supervisor.SidAuthority(
+        source_type=grant.source_type.value,
+        lease_key=grant.lease_key,
+    )
+
+
+def _sid_owner(grant: ingestion_lease_store.LeaseGrant) -> uuid.UUID:
+    return grant.owner_worker_id
+
+
+def _sid_fencing_token(grant: ingestion_lease_store.LeaseGrant) -> int:
+    return grant.fencing_token
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _SidRunnerResources:
+    """One controlled SID runner's view of shared runtime resources."""
+
+    data_store: ingestion_lease_store.IngestionLeaseStore
+    heartbeat_store: ingestion_lease_store.IngestionLeaseStore
+    capture_resources: CaptureResources
+    gcs_client: gcs_client.GcsClient
+    pubsub_client: pubsub_client.PubSubClient
+    health_state: HealthState
+    shutdown: asyncio.Event
+
+
+type _SidStoreFactory = Callable[
+    [asyncpg.Pool],
+    ingestion_lease_store.IngestionLeaseStore,
+]
+type _SidRunnerFactory = Callable[
+    [_SidRunnerResources],
+    grant_control.GrantRunner[
+        ingestion_lease_store.LeaseGrant,
+        ingestion_lease_store.LeaseSnapshot,
+    ],
+]
+
+
+class _DormantSidRunner:
+    """Fail closed if a claims-disabled Phase 3 SID registration ever runs."""
+
+    async def run(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        payload: ingestion_lease_store.LeaseSnapshot,
+        context: grant_control.RunContext,
+    ) -> grant_control.RunOutcome:
+        del grant, payload, context
+        msg = "Dormant Phase 3 SID runner must never be invoked"
+        raise grant_control.GrantControlIntegrityError(msg)
+
+
 class CollectorRuntime:
     """
     Generic runtime orchestrator for a fleet of async feed-processing tasks.
@@ -312,6 +378,9 @@ class CollectorRuntime:
         capture_fn: CaptureFn,
         settings: CollectorSettings | None = None,
         runtime_actor_id: str | None = None,
+        *,
+        sid_store_factory: _SidStoreFactory | None = None,
+        sid_runner_factory: _SidRunnerFactory | None = None,
     ) -> None:
         if settings is None:
             from backend.pipeline.ingestion.settings import CollectorSettings  # noqa: I001, PLC0415
@@ -319,6 +388,11 @@ class CollectorRuntime:
             settings = CollectorSettings()
         self._capture_fn = capture_fn
         self._collector_settings = settings
+        self._profile_digest = worker_profiles.profile_digest(
+            settings.worker_profile
+        )
+        self._sid_store_factory = sid_store_factory
+        self._sid_runner_factory = sid_runner_factory
         self._hostname = socket.gethostname()
         self._runtime_actor_id = (
             runtime_actor_id
@@ -347,6 +421,12 @@ class CollectorRuntime:
         self._heartbeat_thread: threading.Thread | None = None
         self._store: FeedStore = None  # type: ignore # set in _main()
         self._heartbeat_store: FeedStore = None  # type: ignore # set in _main()
+        self._sid_data_store: (
+            ingestion_lease_store.IngestionLeaseStore | None
+        ) = None
+        self._sid_heartbeat_store: (
+            ingestion_lease_store.IngestionLeaseStore | None
+        ) = None
         self._supervisor: grant_supervisor.GrantSupervisor = None  # type: ignore # set in _main()
         self._feed_runner: _FeedRunner = None  # type: ignore # set in _main()
         # aiohttp ClientSession is constructed in _main() because it
@@ -360,13 +440,35 @@ class CollectorRuntime:
         # Without this, the default limit of 100 means ~150 uploads always
         # queue at the 250-feed target, adding latency and event-loop overhead.
         self._gcs_client = gcs_client.GcsClient(
-            max_connections=self._collector_settings.max_feeds_per_worker,
+            max_connections=(
+                self._collector_settings.worker_profile.process_owned_cap
+            ),
         )
         self._pubsub_client = pubsub_client.PubSubClient()
-        # Plan 03-04-02 replaces this compatibility value with the immutable
-        # supervisor snapshot provider before the health listener starts.
-        self._health_state = HealthState(feed_tasks={})
+        self._health_state = HealthState(
+            snapshot_provider=self._health_snapshot,
+        )
         self._health_runner: web.AppRunner | None = None
+
+    def _health_snapshot(self) -> grant_supervisor.SupervisorSnapshot:
+        """Return one immutable local snapshot without control or DB I/O."""
+        if self._supervisor is not None:
+            return self._supervisor.snapshot()
+        profile = self._collector_settings.worker_profile
+        return grant_supervisor.SupervisorSnapshot(
+            profile=profile.name,
+            profile_digest=self._profile_digest,
+            counts_by_domain=types.MappingProxyType(
+                {
+                    allocation.domain_id: grant_supervisor.GrantCount(
+                        active=0,
+                        retrying=0,
+                        durable_failing=0,
+                    )
+                    for allocation in profile.allocations
+                }
+            ),
+        )
 
     # -- Entry point ------------------------------------------------------
 
@@ -386,6 +488,145 @@ class CollectorRuntime:
         )
         setup_tracing(service_name="ingestion-service", is_ingestion=True)
         asyncio.run(self._main(), loop_factory=uvloop.new_event_loop)
+
+    async def _emit_feed_quarantine(
+        self,
+        grant: FeedGrant,
+        payload: LeasedFeed,
+        decision: grant_control.BudgetedFailureDecision,
+    ) -> None:
+        """Emit observational evidence after exact durable quarantine."""
+        await quarantine_telemetry.emit_quarantine_event(
+            feed_id=str(grant.feed_id),
+            feed_name=payload["name"],
+            source_type=payload["source_type"].value,
+            reason=decision.reason or decision.status_reason.value,
+            status_reason=decision.status_reason.value,
+            profile=self._collector_settings.worker_profile.name,
+            profile_digest=self._profile_digest,
+            domain_id=grant_control.DomainId.FEED.value,
+            authority_kind=worker_profiles.AuthorityKind.FEED.value,
+        )
+
+    @staticmethod
+    def _sid_terminal_decision(
+        outcome: grant_control.RunOutcome,
+    ) -> grant_control.TerminalDecision:
+        """Select the only Phase 3 controlled SID terminal actions."""
+        if isinstance(outcome, grant_control.RunFailed):
+            msg = "Phase 3 controlled SID runner returned failure evidence"
+            raise grant_control.GrantControlIntegrityError(msg)
+        if isinstance(outcome, grant_control.RunStopped):
+            return grant_control.NeutralRelease(outcome.cause)
+        return grant_control.NeutralRelease(grant_control.TerminalCause.NORMAL)
+
+    def _compose_supervisor(self) -> None:
+        """Construct only selected typed domains over the shared resources."""
+        settings = self._collector_settings
+        registrations: list[object] = []
+        abandonment = datetime.timedelta(
+            seconds=settings.abandonment_window_sec
+        )
+        for allocation in settings.worker_profile.allocations:
+            if allocation.domain_id is grant_control.DomainId.FEED:
+                self._store = FeedStore(
+                    self._data_pool,
+                    claim_types=list(settings.caps.keys()),
+                )
+                self._heartbeat_store = FeedStore(
+                    self._heartbeat_pool,
+                    claim_types=list(settings.caps.keys()),
+                )
+                feed_control = feed_grant_control.FeedGrantControl(
+                    self._store,
+                    self._heartbeat_store,
+                    settings.caps,
+                    abandonment,
+                    on_quarantined=self._emit_feed_quarantine,
+                )
+                self._feed_runner = _FeedRunner(self)
+                registrations.append(
+                    grant_supervisor.RegisteredDomain(
+                        domain_id=grant_control.DomainId.FEED,
+                        authority_kind=worker_profiles.AuthorityKind.FEED,
+                        grant_type=FeedGrant,
+                        payload_validator=_is_leased_feed_payload,
+                        authority_of=_feed_authority,
+                        owner_of=_feed_owner,
+                        fencing_token_of=_feed_fencing_token,
+                        control=feed_control,
+                        runner=self._feed_runner,
+                        allocation=allocation,
+                        terminal_decision_for=self._feed_terminal_decision,
+                    )
+                )
+                continue
+
+            if allocation.domain_id is not grant_control.DomainId.SID:
+                msg = f"Unsupported runtime domain {allocation.domain_id}"
+                raise ValueError(msg)
+            if allocation.claims_enabled and (
+                self._sid_store_factory is None
+                or self._sid_runner_factory is None
+            ):
+                msg = (
+                    "Claims-enabled SID allocation requires controlled "
+                    "store and runner factories"
+                )
+                raise ValueError(msg)
+            store_factory = (
+                self._sid_store_factory
+                or ingestion_lease_store.IngestionLeaseStore
+            )
+            self._sid_data_store = store_factory(self._data_pool)
+            self._sid_heartbeat_store = store_factory(self._heartbeat_pool)
+            sid_control = sid_grant_control.SidGrantControl(
+                self._sid_data_store,
+                self._sid_heartbeat_store,
+                SourceType.BCFY_CALLS,
+                abandonment,
+            )
+            if self._sid_runner_factory is None:
+                sid_runner: grant_control.GrantRunner[
+                    ingestion_lease_store.LeaseGrant,
+                    ingestion_lease_store.LeaseSnapshot,
+                ] = _DormantSidRunner()
+            else:
+                sid_runner = self._sid_runner_factory(
+                    _SidRunnerResources(
+                        data_store=self._sid_data_store,
+                        heartbeat_store=self._sid_heartbeat_store,
+                        capture_resources=self._capture_resources,
+                        gcs_client=self._gcs_client,
+                        pubsub_client=self._pubsub_client,
+                        health_state=self._health_state,
+                        shutdown=self._shutdown,
+                    )
+                )
+                if not callable(getattr(sid_runner, "run", None)):
+                    msg = "SID runner factory returned an invalid runner"
+                    raise TypeError(msg)
+            registrations.append(
+                grant_supervisor.RegisteredDomain(
+                    domain_id=grant_control.DomainId.SID,
+                    authority_kind=(worker_profiles.AuthorityKind.SID_LEASE),
+                    grant_type=ingestion_lease_store.LeaseGrant,
+                    payload_validator=_is_lease_snapshot_payload,
+                    authority_of=_sid_authority,
+                    owner_of=_sid_owner,
+                    fencing_token_of=_sid_fencing_token,
+                    control=sid_control,
+                    runner=sid_runner,
+                    allocation=allocation,
+                    terminal_decision_for=self._sid_terminal_decision,
+                )
+            )
+
+        self._supervisor = grant_supervisor.GrantSupervisor(
+            settings.worker_profile,
+            registrations,
+            finalize_concurrency=settings.db.pool_max_size,
+        )
 
     # -- Async core -------------------------------------------------------
 
@@ -437,6 +678,12 @@ class CollectorRuntime:
             "startup_jitter_max_sec": settings.startup_jitter_max_sec,
             "lease_admission_cycle_budget": settings.lease_admission_cycle_budget,
             "max_feeds_per_worker": settings.max_feeds_per_worker,
+            "profile": settings.worker_profile.name,
+            "profile_digest": self._profile_digest,
+            "selected_domains": [
+                allocation.domain_id.value
+                for allocation in settings.worker_profile.allocations
+            ],
             "process_id": os.getpid(),
         }
         logger.info(
@@ -469,33 +716,12 @@ class CollectorRuntime:
         # silently dropping packets hangs connect() for 2+ min (Linux TCP
         # SYN-ACK timeout), starving the pool of connections.
         self._data_pool = await create_pool_with_retry(settings.db)
-        self._store = FeedStore(
-            self._data_pool,
-            claim_types=list(settings.caps.keys()),
-        )
 
         # Dedicated 1-connection pool ensures heartbeat queries never queue
         # behind 250 bookmark/upload operations on the main pool. Without
         # this, pool contention causes false stall-timeout kills.
         hb_settings = settings.db.replace(pool_min_size=1, pool_max_size=1)
         self._heartbeat_pool = await create_pool_with_retry(hb_settings)
-        # Heartbeat store doesn't claim feeds (only renews + counts), but
-        # we pass the same claim_types for symmetry — keeps both stores
-        # generated from the same set so a future divergence between
-        # caps.keys() and the FeedStore default (all SourceType minus
-        # ECHO) doesn't silently change the heartbeat store's
-        # never-called acquire SQL out of sync with the data store's.
-        self._heartbeat_store = FeedStore(
-            self._heartbeat_pool,
-            claim_types=list(settings.caps.keys()),
-        )
-
-        self._heartbeat_thread = threading.Thread(
-            target=self._heartbeat_loop,
-            daemon=True,
-            name="heartbeat",
-        )
-        self._heartbeat_thread.start()
 
         # WATCHDOG-01: cgroup-aware memory daemon thread. The watchdog owns
         # cgroup detection and disabled-mode logging; the runtime only wires
@@ -537,41 +763,16 @@ class CollectorRuntime:
                 segment_temp_dir=segment_dir,
             )
 
-            feed_allocation = worker_profiles.allocation_for_domain(
-                settings.worker_profile,
-                grant_control.DomainId.FEED,
+            self._compose_supervisor()
+
+            # Start the sole heartbeat thread only after the supervisor and
+            # every selected typed registration are fully constructed.
+            self._heartbeat_thread = threading.Thread(
+                target=self._heartbeat_loop,
+                daemon=True,
+                name="heartbeat",
             )
-            if feed_allocation is None:
-                msg = "Plan 03-04-01 requires a selected Feed domain"
-                raise ValueError(msg)
-            if len(settings.worker_profile.allocations) != 1:
-                msg = "Plan 03-04-01 supports the legacy Feed profile only"
-                raise ValueError(msg)
-            feed_control = feed_grant_control.FeedGrantControl(
-                self._store,
-                self._heartbeat_store,
-                settings.caps,
-                datetime.timedelta(seconds=settings.abandonment_window_sec),
-            )
-            self._feed_runner = _FeedRunner(self)
-            feed_registration = grant_supervisor.RegisteredDomain(
-                domain_id=grant_control.DomainId.FEED,
-                authority_kind=worker_profiles.AuthorityKind.FEED,
-                grant_type=FeedGrant,
-                payload_validator=_is_leased_feed_payload,
-                authority_of=_feed_authority,
-                owner_of=_feed_owner,
-                fencing_token_of=_feed_fencing_token,
-                control=feed_control,
-                runner=self._feed_runner,
-                allocation=feed_allocation,
-                terminal_decision_for=self._feed_terminal_decision,
-            )
-            self._supervisor = grant_supervisor.GrantSupervisor(
-                settings.worker_profile,
-                (feed_registration,),
-                finalize_concurrency=settings.db.pool_max_size,
-            )
+            self._heartbeat_thread.start()
 
             # Start /healthz HTTP server. Runs on the same event loop as the
             # leasing/heartbeat coroutines — this is load-bearing: if the
@@ -1328,6 +1529,13 @@ class CollectorRuntime:
             and self._heartbeat_thread.is_alive()
         ):
             await asyncio.to_thread(self._heartbeat_thread.join, timeout=5)
+            if self._heartbeat_thread.is_alive():
+                logger.critical(
+                    "Heartbeat thread did not stop; preserving exact grants "
+                    "and shared resources for process-exit recovery"
+                )
+                msg = "heartbeat thread did not stop"
+                raise RuntimeError(msg)
 
     async def _shutdown_sequence(self) -> None:
         """Drain exact grants before finalization and shared-resource close."""

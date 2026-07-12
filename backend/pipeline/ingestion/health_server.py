@@ -3,12 +3,18 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from aiohttp import web
 
+from backend.pipeline.ingestion import (
+    grant_control,
+    grant_supervisor,
+    worker_profiles,
+)
+
 if TYPE_CHECKING:
-    import uuid
+    from collections.abc import Callable
 
     from backend.pipeline.ingestion.settings import CollectorSettings
 
@@ -21,8 +27,8 @@ class HealthState:
     Shared state between the worker runtime and the /healthz handler.
 
     Lives on the event-loop thread; all reads/writes happen there, so no lock
-    is required. ``feed_tasks`` is held by reference to the runtime's own
-    ``_feed_tasks`` dict so ``len()`` reflects live leasing without copying.
+    is required. The snapshot provider reads only the supervisor's immutable
+    process-local projection and performs no request-time control or DB I/O.
 
     ``last_heartbeat_tick`` is stamped at the *beginning* of every
     ``_heartbeat_cycle`` invocation — before any DB I/O — so the stamp
@@ -33,12 +39,46 @@ class HealthState:
     on recovery).
     """
 
+    snapshot_provider: Callable[[], grant_supervisor.SupervisorSnapshot]
     startup_time: float = field(default_factory=time.monotonic)
     last_heartbeat_tick: float | None = None
-    # Value type is Any because the handler only calls len() on this — it
-    # doesn't inspect values. Using Any avoids a dict-invariance mismatch
-    # when the runtime passes its dict[UUID, asyncio.Task] by reference.
-    feed_tasks: dict[uuid.UUID, Any] = field(default_factory=dict)
+
+
+def _snapshot_payload(
+    snapshot: grant_supervisor.SupervisorSnapshot,
+) -> tuple[int, dict[str, dict[str, object]]]:
+    """Render one bounded immutable supervisor snapshot for HTTP health."""
+    grant_counts: dict[str, dict[str, object]] = {}
+    active_feeds = 0
+    for domain_id, count in snapshot.counts_by_domain.items():
+        catalog_entry = worker_profiles.DOMAIN_CATALOG[domain_id]
+        grant_counts[domain_id.value] = {
+            "authority_kind": catalog_entry.authority_kind.value,
+            "active": count.active,
+            "retrying": count.retrying,
+            "durable_failing": count.durable_failing,
+        }
+        if domain_id is grant_control.DomainId.FEED:
+            active_feeds = count.active
+    return active_feeds, grant_counts
+
+
+def _response_payload(
+    state: HealthState,
+    *,
+    status: str,
+    heartbeat_age_sec: float | None,
+) -> dict[str, object]:
+    snapshot = state.snapshot_provider()
+    active_feeds, grant_counts = _snapshot_payload(snapshot)
+    return {
+        "status": status,
+        "active_feeds": active_feeds,
+        "last_heartbeat_age_sec": heartbeat_age_sec,
+        "profile": snapshot.profile,
+        "profile_digest": snapshot.profile_digest,
+        "grant_counts": grant_counts,
+    }
 
 
 # Typed aiohttp app keys (the recommended pattern since aiohttp 3.9).
@@ -62,13 +102,11 @@ async def _healthz(request: web.Request) -> web.Response:
     # unnecessarily tear down the VM.
     if uptime < settings.health_check_startup_grace_sec:
         return web.json_response(
-            {
-                "status": "healthy",
-                "active_feeds": len(state.feed_tasks),
-                "last_heartbeat_age_sec": (now - hb)
-                if hb is not None
-                else None,
-            },
+            _response_payload(
+                state,
+                status="healthy",
+                heartbeat_age_sec=(now - hb) if hb is not None else None,
+            )
         )
 
     # Gate 1: Heartbeat dispatch freshness. Threshold = 2x
@@ -82,14 +120,26 @@ async def _healthz(request: web.Request) -> web.Response:
     # (Docker daemon wedged), where autohealing needs to replace the VM.
     heartbeat_max_age_sec = 2.0 * settings.heartbeat_interval_sec
     if hb is None:
+        payload = _response_payload(
+            state,
+            status="unhealthy",
+            heartbeat_age_sec=None,
+        )
+        payload["reason"] = "no_heartbeat"
         return web.json_response(
-            {"status": "unhealthy", "reason": "no_heartbeat"},
+            payload,
             status=503,
         )
     hb_age = now - hb
     if hb_age > heartbeat_max_age_sec:
+        payload = _response_payload(
+            state,
+            status="unhealthy",
+            heartbeat_age_sec=hb_age,
+        )
+        payload["reason"] = "heartbeat_stale"
         return web.json_response(
-            {"status": "unhealthy", "reason": "heartbeat_stale"},
+            payload,
             status=503,
         )
 
@@ -102,11 +152,11 @@ async def _healthz(request: web.Request) -> web.Response:
     # restart); /healthz is not the right place to detect that.
 
     return web.json_response(
-        {
-            "status": "healthy",
-            "active_feeds": len(state.feed_tasks),
-            "last_heartbeat_age_sec": hb_age,
-        },
+        _response_payload(
+            state,
+            status="healthy",
+            heartbeat_age_sec=hb_age,
+        )
     )
 
 

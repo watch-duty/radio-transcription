@@ -196,9 +196,10 @@ class GrantControl[GrantT, PayloadT](typing.Protocol):
     async def finalize(
         self,
         grant: GrantT,
+        payload: PayloadT,
         terminal: TerminalDecision,
     ) -> FinalizeResult[GrantT]:
-        """Execute one already-selected terminal storage action."""
+        """Execute one selected action with its exact validated payload."""
         ...
 
 

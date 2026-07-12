@@ -42,6 +42,10 @@ async def emit_quarantine_event(
     source_type: str,
     reason: str,
     status_reason: str,
+    profile: str,
+    profile_digest: str,
+    domain_id: str,
+    authority_kind: str,
 ) -> None:
     """Emit a quarantine event signal.  **Never raises.**
 
@@ -50,9 +54,9 @@ async def emit_quarantine_event(
        ``json_fields.reason`` so on-callers see the failure cause in the
        Logs Explorer summary row without expanding the payload.
     2. Cloud Monitoring GAUGE metric (only when *configure* was called
-       with a project ID). ``reason`` is deliberately NOT in the metric
-       labels — its cardinality is unbounded and would fragment the
-       metric's time series.
+       with a project ID). Labels are limited to immutable profile/domain
+       context plus bounded source type; Feed identity, status, and reason
+       remain log-only to avoid per-authority time-series cardinality.
     """
     try:
         logger.error(
@@ -66,6 +70,10 @@ async def emit_quarantine_event(
                     "reason": reason,
                     "status_reason": status_reason,
                     "source_type": source_type,
+                    "profile": profile,
+                    "profile_digest": profile_digest,
+                    "domain_id": domain_id,
+                    "authority_kind": authority_kind,
                 },
             },
         )
@@ -76,13 +84,16 @@ async def emit_quarantine_event(
         return
 
     try:
-        # Cardinality: keep labels bounded; reason is unbounded and would
-        # fragment time series.
+        # Cardinality: only immutable process/domain dimensions and the
+        # bounded SourceType vocabulary become metric labels. Feed identity,
+        # status, and diagnostic reasons remain structured-log context only.
         await _client.write_time_series(
             metric_type=METRIC_TYPE_QUARANTINE_EVENTS,
             labels={
-                "feed_id": feed_id,
-                "feed_name": feed_name,
+                "profile": profile,
+                "profile_digest": profile_digest,
+                "domain_id": domain_id,
+                "authority_kind": authority_kind,
                 "source_type": source_type,
             },
             value=1,

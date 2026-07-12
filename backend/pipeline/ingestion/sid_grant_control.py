@@ -214,11 +214,15 @@ class SidGrantControl:
     async def finalize(
         self,
         grant: ingestion_lease_store.LeaseGrant,
+        payload: ingestion_lease_store.LeaseSnapshot,
         terminal: grant_control.TerminalDecision,
     ) -> grant_control.FinalizeResult[ingestion_lease_store.LeaseGrant]:
         """Execute one exact Lease release or selected failure action."""
         if not isinstance(grant, ingestion_lease_store.LeaseGrant):
             msg = "grant must be a LeaseGrant"
+            raise TypeError(msg)
+        if not isinstance(payload, ingestion_lease_store.LeaseSnapshot):
+            msg = "payload must be a LeaseSnapshot"
             raise TypeError(msg)
 
         if isinstance(terminal, grant_control.NeutralRelease):
