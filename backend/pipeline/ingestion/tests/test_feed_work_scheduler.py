@@ -479,6 +479,74 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             await scheduler._wait_for_idle()
             await scheduler.close()
 
+    async def test_repeated_cancel_waits_for_bounded_page_cleanup(
+        self,
+    ) -> None:
+        scheduler_types = _scheduler_types()
+        limits = scheduler_types._SchedulerLimits(
+            shard_count=1,
+            capacity=5,
+            workers_per_shard=1,
+            high_water=4,
+            resume_at=2,
+        )
+        executor = _GateExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        candidate = cursor.prepare(_SOURCE_TIME)
+        abort_entered = asyncio.Event()
+        allow_abort = asyncio.Event()
+        abort_page = lane._abort_page
+
+        async def gated_abort(page_sequence: int) -> None:
+            abort_entered.set()
+            await allow_abort.wait()
+            await abort_page(page_sequence)
+
+        lane._abort_page = gated_abort
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _submission(uuid.UUID(int=index + 1), index)
+                    for index in range(6)
+                ),
+                boundaries=(),
+                candidate=candidate,
+            )
+        )
+        try:
+            await scheduler._shards[0].wait_for_capacity_waiters(1)
+            coverage.cancel()
+            await asyncio.wait_for(abort_entered.wait(), timeout=1)
+
+            coverage.cancel()
+            yielded = asyncio.Event()
+            asyncio.get_running_loop().call_soon(yielded.set)
+            await yielded.wait()
+            self.assertFalse(coverage.done())
+
+            allow_abort.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await coverage
+
+            snapshot = await scheduler._snapshot()
+            self.assertEqual(snapshot.held, 1)
+            self.assertEqual(snapshot.shards[0].queued_calls, 0)
+            self.assertEqual(snapshot.shards[0].active_calls, 1)
+            self.assertIsNone((await lane._snapshot()).page)
+            self.assertIs(cursor.outstanding_candidate, candidate)
+        finally:
+            allow_abort.set()
+            executor.release_all()
+            await scheduler._wait_for_idle()
+            await scheduler.close()
+
     async def test_only_one_page_pulls_from_a_lane_at_a_time(self) -> None:
         scheduler_types = _scheduler_types()
         limits = scheduler_types._SchedulerLimits(
@@ -638,6 +706,54 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         finally:
             executor.release_all()
             await scheduler._wait_for_idle()
+            await scheduler.close()
+
+    async def test_distinct_slot_churn_retains_only_scalar_fences(
+        self,
+    ) -> None:
+        scheduler = feed_work_scheduler.FeedWorkScheduler(_ImmediateExecutor())
+        await scheduler.start()
+        grants = tuple(
+            _grant(lease_key=str(150 + index), fencing_token=index + 1)
+            for index in range(3)
+        )
+
+        try:
+            for grant in grants:
+                lane = scheduler.open_lane(grant)
+                coordinator = lane._boundary_coordinator
+                self.assertEqual((await scheduler._snapshot()).lane_count, 1)
+
+                result = await lane.close()
+
+                self.assertEqual(
+                    result,
+                    feed_work_scheduler.LaneClosed(
+                        grant,
+                        feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN,
+                    ),
+                )
+                self.assertTrue(coordinator.task.done())
+                self.assertEqual((await scheduler._snapshot()).lane_count, 0)
+                self.assertNotIn(grant, scheduler._lanes)
+                self.assertNotIn(grant, scheduler._closing_grants)
+
+            self.assertEqual(scheduler._lanes, {})
+            self.assertEqual(scheduler._closing_grants, set())
+            self.assertEqual(
+                scheduler._highest_fence,
+                {
+                    (grant.source_type, grant.lease_key): grant.fencing_token
+                    for grant in grants
+                },
+            )
+            self.assertTrue(
+                all(
+                    isinstance(fence, int)
+                    for fence in scheduler._highest_fence.values()
+                )
+            )
+        finally:
             await scheduler.close()
 
     async def test_drain_upgrades_to_loss_before_any_close_result(

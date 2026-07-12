@@ -243,6 +243,172 @@ class TestBoundaryOrdering(unittest.IsolatedAsyncioTestCase):
             await scheduler._wait_for_idle()
             await scheduler.close()
 
+
+class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
+    async def _cancel_after_promotion(
+        self,
+        promotion_count: int,
+    ) -> None:
+        shard_count = 3
+        executor = _GateExecutor()
+        committer = _ControlledCommitter()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            boundary_committer=committer,
+            _limits=_limits(
+                shard_count=shard_count,
+                capacity=12,
+                workers=1,
+                high_water=12,
+                resume_at=6,
+            ),
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        candidate = cursor.prepare(_SOURCE_TIME)
+        feeds = tuple(uuid.UUID(int=index + 3) for index in range(shard_count))
+        promotion_reached = asyncio.Event()
+        allow_promotion = asyncio.Event()
+        promoted = 0
+
+        def gate_promotion(
+            shard: typing.Any,
+        ) -> typing.Callable[[object, int], typing.Awaitable[None]]:
+            original = shard.promote_boundary_page
+
+            async def promote(
+                exact_grant: object,
+                page_sequence: int,
+            ) -> None:
+                nonlocal promoted
+                await original(exact_grant, page_sequence)
+                promoted += 1
+                if promoted == promotion_count:
+                    promotion_reached.set()
+                    await allow_promotion.wait()
+
+            return promote
+
+        for shard in scheduler._shards:
+            shard.promote_boundary_page = gate_promotion(shard)
+
+        calls = []
+        for feed_id in feeds:
+            for source_order in range(2):
+                calls.append(_call(feed_id, source_order))
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=tuple(calls),
+                boundaries=tuple(_boundary(feed_id, 10) for feed_id in feeds),
+                candidate=candidate,
+            )
+        )
+        try:
+            await asyncio.wait_for(promotion_reached.wait(), timeout=1)
+            coverage.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await coverage
+
+            snapshot = await scheduler._snapshot()
+            self.assertEqual(snapshot.held, shard_count)
+            self.assertTrue(
+                all(shard.queued_calls == 0 for shard in snapshot.shards)
+            )
+            self.assertTrue(
+                all(shard.pending_boundaries == 0 for shard in snapshot.shards)
+            )
+            self.assertTrue(
+                all(shard.flushing_boundaries == 0 for shard in snapshot.shards)
+            )
+            self.assertIsNone((await lane._snapshot()).page)
+            self.assertIs(cursor.outstanding_candidate, candidate)
+
+            executor.release.set()
+            await scheduler._wait_for_idle()
+            self.assertTrue(
+                all(
+                    not batch for _grant_value, batch, _final in committer.calls
+                )
+            )
+        finally:
+            allow_promotion.set()
+            executor.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_cancel_after_each_partial_promotion_rolls_back_page(
+        self,
+    ) -> None:
+        for promotion_count in (1, 2):
+            with self.subTest(promotion_count=promotion_count):
+                await self._cancel_after_promotion(promotion_count)
+
+    async def test_cancel_after_final_promotion_before_receipt_rolls_back(
+        self,
+    ) -> None:
+        await self._cancel_after_promotion(3)
+
+    async def test_receipt_winner_returns_sealed_receipt(self) -> None:
+        committer = _ControlledCommitter()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        candidate = cursor.prepare(_SOURCE_TIME)
+        final_promotion = asyncio.Event()
+        allow_receipt = asyncio.Event()
+        promote = scheduler._promote_boundary_page
+
+        async def gated_promote(
+            exact_grant: object,
+            page_sequence: int,
+        ) -> None:
+            await promote(exact_grant, page_sequence)
+            final_promotion.set()
+            await allow_receipt.wait()
+
+        scheduler._promote_boundary_page = gated_promote
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(),
+                boundaries=(_boundary(uuid.UUID(int=1), 10),),
+                candidate=candidate,
+            )
+        )
+        try:
+            await asyncio.wait_for(final_promotion.wait(), timeout=1)
+            allow_receipt.set()
+            receipt = await coverage
+            coverage.cancel()
+
+            self.assertEqual(cursor.accept(receipt), _SOURCE_TIME)
+            self.assertIsNone((await lane._snapshot()).page)
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+            committed = []
+            for _grant_value, batch, _final in committer.calls:
+                committed.extend(batch)
+            self.assertEqual(
+                [(boundary.feed_id, boundary.target) for boundary in committed],
+                [
+                    (
+                        uuid.UUID(int=1),
+                        _SOURCE_TIME + datetime.timedelta(seconds=10),
+                    )
+                ],
+            )
+        finally:
+            allow_receipt.set()
+            await scheduler.close()
+
     async def test_cross_page_pending_coalesce_rolls_back_on_abort(
         self,
     ) -> None:
