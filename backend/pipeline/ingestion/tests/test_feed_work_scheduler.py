@@ -94,10 +94,73 @@ class _GateExecutor:
             self._release[sequence].set()
             self._released += 1
 
+    def release(self, sequence: int) -> None:
+        self._release.setdefault(sequence, asyncio.Event()).set()
+
     def release_all(self) -> None:
         self._release_all = True
         for event in self._release.values():
             event.set()
+
+
+class _DelayedCancellationExecutor:
+    """Executor that exposes cancellation and an explicit settle winner."""
+
+    def __init__(self, *, swallow: bool = False) -> None:
+        self.swallow = swallow
+        self.entered = asyncio.Event()
+        self.cancellation_seen = asyncio.Event()
+        self.settle = asyncio.Event()
+
+    async def execute(self, record: object) -> object:
+        del record
+        self.entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            self.cancellation_seen.set()
+            if self.swallow:
+                task = asyncio.current_task()
+                if task is None:
+                    message = "executor must run in a Task"
+                    raise RuntimeError(message)
+                task.uncancel()
+            await self.settle.wait()
+            if self.swallow:
+                return feed_work_scheduler.CallCompleted()
+            raise
+
+
+class _GatedOutcomeExecutor:
+    """Returns one controlled closed outcome after page coverage."""
+
+    def __init__(self, outcome: object) -> None:
+        self.outcome = outcome
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls = 0
+
+    async def execute(self, record: object) -> object:
+        del record
+        self.calls += 1
+        self.entered.set()
+        await self.release.wait()
+        return self.outcome
+
+
+class _GatedFailureExecutor:
+    """Raises one unexpected worker failure after explicit release."""
+
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def execute(self, record: object) -> object:
+        del record
+        self.entered.set()
+        await self.release.wait()
+        message = "unexpected executor failure"
+        raise RuntimeError(message)
 
 
 class _TracingCalls:
@@ -139,8 +202,13 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             "CallMembershipRejected",
             "CallRetryable",
             "CallSubmission",
+            "FeedRemoved",
             "FeedWorkScheduler",
             "GrantLane",
+            "LaneCloseReason",
+            "LaneClosed",
+            "SchedulerIntegrityError",
+            "Undrained",
         }
         forbidden_fragments = {
             "Adapter",
@@ -428,6 +496,453 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             await scheduler._wait_for_idle()
             await scheduler.close()
 
+    async def test_exact_drain_preserves_successor_and_sibling_work(
+        self,
+    ) -> None:
+        scheduler_types = _scheduler_types()
+        limits = scheduler_types._SchedulerLimits(
+            shard_count=1,
+            capacity=8,
+            workers_per_shard=2,
+            high_water=8,
+            resume_at=4,
+        )
+        executor = _GateExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+        )
+        await scheduler.start()
+        old = _grant(fencing_token=7)
+        successor = _grant(fencing_token=8)
+        sibling = _grant(lease_key="151", fencing_token=7)
+        old_lane = scheduler.open_lane(old)
+        successor_lane = scheduler.open_lane(successor)
+        sibling_lane = scheduler.open_lane(sibling)
+        shared_feed = uuid.UUID(int=1)
+        await old_lane.cover_page(
+            calls=(_submission(shared_feed, 0),),
+            boundaries=(),
+            candidate=cursor_policy.LeaseCursor(old, pos=None).prepare(
+                _SOURCE_TIME
+            ),
+        )
+        await successor_lane.cover_page(
+            calls=(_submission(shared_feed, 0),),
+            boundaries=(),
+            candidate=cursor_policy.LeaseCursor(
+                successor,
+                pos=None,
+            ).prepare(_SOURCE_TIME),
+        )
+        await sibling_lane.cover_page(
+            calls=(_submission(uuid.UUID(int=2), 0),),
+            boundaries=(),
+            candidate=cursor_policy.LeaseCursor(
+                sibling,
+                pos=None,
+            ).prepare(_SOURCE_TIME),
+        )
+        await executor.wait_for_started(2)
+        close = asyncio.create_task(
+            old_lane.close(feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN)
+        )
+        try:
+            await asyncio.wait_for(old_lane._closing_event.wait(), timeout=1)
+            snapshot = await old_lane._snapshot()
+            self.assertTrue(snapshot.closing)
+            self.assertFalse(snapshot.closed)
+            self.assertFalse(close.done())
+            records = (await scheduler._snapshot()).shards[0].records
+            self.assertEqual(
+                tuple(record.grant for record in records),
+                (old, successor, sibling),
+            )
+
+            executor.release(0)
+            result = await asyncio.wait_for(close, timeout=1)
+            self.assertEqual(
+                result,
+                feed_work_scheduler.LaneClosed(
+                    old,
+                    feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN,
+                ),
+            )
+            self.assertEqual(
+                await old_lane.close(
+                    feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN
+                ),
+                result,
+            )
+            remaining = (await scheduler._snapshot()).shards[0].records
+            self.assertEqual(
+                {record.grant for record in remaining},
+                {successor, sibling},
+            )
+        finally:
+            executor.release_all()
+            await scheduler._wait_for_idle()
+            await scheduler.close()
+
+    async def test_drain_upgrades_to_loss_before_any_close_result(
+        self,
+    ) -> None:
+        scheduler_types = _scheduler_types()
+        limits = scheduler_types._SchedulerLimits(
+            shard_count=1,
+            capacity=4,
+            workers_per_shard=1,
+            high_water=4,
+            resume_at=2,
+        )
+        executor = _DelayedCancellationExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        await lane.cover_page(
+            calls=(_submission(uuid.UUID(int=1), 0),),
+            boundaries=(),
+            candidate=cursor_policy.LeaseCursor(grant, pos=None).prepare(
+                _SOURCE_TIME
+            ),
+        )
+        await asyncio.wait_for(executor.entered.wait(), timeout=1)
+        old_worker = scheduler._shards[0]._workers[0].task
+        drain = asyncio.create_task(
+            lane.close(feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN)
+        )
+        await asyncio.wait_for(lane._closing_event.wait(), timeout=1)
+        loss = asyncio.create_task(
+            lane.close(feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS)
+        )
+        await asyncio.wait_for(executor.cancellation_seen.wait(), timeout=1)
+        self.assertFalse(drain.done())
+        self.assertFalse(loss.done())
+        self.assertEqual((await scheduler._snapshot()).held, 1)
+
+        executor.settle.set()
+        drain_result, loss_result = await asyncio.wait_for(
+            asyncio.gather(drain, loss),
+            timeout=1,
+        )
+        expected = feed_work_scheduler.LaneClosed(
+            grant,
+            feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS,
+        )
+        self.assertEqual(drain_result, expected)
+        self.assertEqual(loss_result, expected)
+        snapshot = await scheduler._snapshot()
+        self.assertEqual(snapshot.held, 0)
+        replacement = scheduler._shards[0]._workers[0].task
+        self.assertIsNot(replacement, old_worker)
+        self.assertTrue(old_worker.done())
+        self.assertFalse(replacement.done())
+        await scheduler.close()
+
+    async def test_feed_removal_localizes_blocked_and_queued_records(
+        self,
+    ) -> None:
+        scheduler_types = _scheduler_types()
+        limits = scheduler_types._SchedulerLimits(
+            shard_count=1,
+            capacity=4,
+            workers_per_shard=1,
+            high_water=2,
+            resume_at=1,
+        )
+        executor = _GateExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+        )
+        await scheduler.start()
+        grant = _grant(fencing_token=7)
+        successor = _grant(fencing_token=8)
+        lane = scheduler.open_lane(grant)
+        successor_lane = scheduler.open_lane(successor)
+        removed_feed = uuid.UUID(int=1)
+        sibling_feed = uuid.UUID(int=2)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        calls = _TracingCalls(
+            (
+                _submission(removed_feed, 0),
+                _submission(removed_feed, 1),
+                _submission(removed_feed, 2),
+                _submission(sibling_feed, 3),
+            )
+        )
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=calls,
+                boundaries=(),
+                candidate=cursor.prepare(_SOURCE_TIME),
+            )
+        )
+        try:
+            await scheduler._shards[0].wait_for_capacity_waiters(1)
+            self.assertEqual(calls.pulled, [0, 1, 2])
+            removed = await lane.remove_feed(removed_feed)
+            receipt = await asyncio.wait_for(coverage, timeout=1)
+
+            self.assertEqual(
+                removed,
+                feed_work_scheduler.FeedRemoved(
+                    grant=grant,
+                    feed_id=removed_feed,
+                    released_count=1,
+                    active_retained=True,
+                ),
+            )
+            self.assertEqual(calls.pulled, [0, 1, 2, 3])
+            self.assertEqual(cursor.accept(receipt), _SOURCE_TIME)
+            snapshot = await scheduler._snapshot()
+            self.assertEqual(snapshot.held, 2)
+            self.assertEqual(
+                tuple(
+                    record.source_order for record in snapshot.shards[0].records
+                ),
+                (0, 3),
+            )
+
+            next_candidate = cursor.prepare(
+                _SOURCE_TIME + datetime.timedelta(seconds=1)
+            )
+            removed_only = await lane.cover_page(
+                calls=(_submission(removed_feed, 0),),
+                boundaries=(),
+                candidate=next_candidate,
+            )
+            self.assertEqual(
+                cursor.accept(removed_only),
+                _SOURCE_TIME + datetime.timedelta(seconds=1),
+            )
+            self.assertEqual((await scheduler._snapshot()).held, 2)
+
+            executor.release_all()
+            await scheduler._wait_for_idle()
+            successor_cursor = cursor_policy.LeaseCursor(
+                successor,
+                pos=None,
+            )
+            successor_receipt = await successor_lane.cover_page(
+                calls=(_submission(removed_feed, 0),),
+                boundaries=(),
+                candidate=successor_cursor.prepare(_SOURCE_TIME),
+            )
+            self.assertEqual(
+                successor_cursor.accept(successor_receipt),
+                _SOURCE_TIME,
+            )
+            await scheduler._wait_for_idle()
+        finally:
+            if not coverage.done():
+                coverage.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await coverage
+            executor.release_all()
+            await scheduler._wait_for_idle()
+            await scheduler.close()
+
+    async def test_typed_membership_rejection_retires_only_that_feed(
+        self,
+    ) -> None:
+        executor = _GatedOutcomeExecutor(
+            feed_work_scheduler.CallMembershipRejected()
+        )
+        scheduler = feed_work_scheduler.FeedWorkScheduler(executor)
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        removed_feed = uuid.UUID(int=8)
+        sibling_feed = uuid.UUID(int=16)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        first = await lane.cover_page(
+            calls=(_submission(removed_feed, 0),),
+            boundaries=(),
+            candidate=cursor.prepare(_SOURCE_TIME),
+        )
+        cursor.accept(first)
+        await asyncio.wait_for(executor.entered.wait(), timeout=1)
+        executor.release.set()
+        await scheduler._wait_for_idle()
+
+        second = await lane.cover_page(
+            calls=(
+                _submission(removed_feed, 0),
+                _submission(sibling_feed, 1),
+            ),
+            boundaries=(),
+            candidate=cursor.prepare(
+                _SOURCE_TIME + datetime.timedelta(seconds=1)
+            ),
+        )
+        cursor.accept(second)
+        await scheduler._wait_for_idle()
+        self.assertEqual(executor.calls, 2)
+        self.assertFalse((await scheduler._snapshot()).fatal)
+        self.assertFalse((await lane._snapshot()).closing)
+        await scheduler.close()
+
+    async def test_typed_authority_loss_closes_its_exact_lane(self) -> None:
+        executor = _GatedOutcomeExecutor(
+            feed_work_scheduler.CallAuthorityLost()
+        )
+        scheduler = feed_work_scheduler.FeedWorkScheduler(executor)
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        receipt = await lane.cover_page(
+            calls=(_submission(uuid.UUID(int=8), 0),),
+            boundaries=(),
+            candidate=cursor.prepare(_SOURCE_TIME),
+        )
+        cursor.accept(receipt)
+        await asyncio.wait_for(executor.entered.wait(), timeout=1)
+        executor.release.set()
+        await asyncio.wait_for(lane._closing_event.wait(), timeout=1)
+
+        result = await lane.close(
+            feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS
+        )
+
+        self.assertEqual(
+            result,
+            feed_work_scheduler.LaneClosed(
+                grant,
+                feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS,
+            ),
+        )
+        self.assertEqual((await scheduler._snapshot()).held, 0)
+        await scheduler.close()
+
+    async def test_swallowed_cancellation_is_undrained_without_reuse(
+        self,
+    ) -> None:
+        scheduler_types = _scheduler_types()
+        limits = scheduler_types._SchedulerLimits(
+            shard_count=1,
+            capacity=2,
+            workers_per_shard=1,
+            high_water=1,
+            resume_at=0,
+        )
+        executor = _DelayedCancellationExecutor(swallow=True)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        await lane.cover_page(
+            calls=(_submission(uuid.UUID(int=1), 0),),
+            boundaries=(),
+            candidate=cursor_policy.LeaseCursor(grant, pos=None).prepare(
+                _SOURCE_TIME
+            ),
+        )
+        await asyncio.wait_for(executor.entered.wait(), timeout=1)
+        worker = scheduler._shards[0]._workers[0].task
+        close = asyncio.create_task(
+            lane.close(feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS)
+        )
+        await asyncio.wait_for(executor.cancellation_seen.wait(), timeout=1)
+        failure = RuntimeError("worker cancellation did not settle")
+        await scheduler._shards[0].abandon_cancellation(0, failure)
+
+        result = await asyncio.wait_for(close, timeout=1)
+        self.assertEqual(
+            result,
+            feed_work_scheduler.Undrained(
+                grant,
+                feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS,
+            ),
+        )
+        snapshot = await scheduler._snapshot()
+        self.assertTrue(snapshot.fatal)
+        self.assertEqual(snapshot.held, 1)
+        self.assertIs(scheduler._shards[0]._workers[0].task, worker)
+        self.assertFalse(worker.done())
+
+        scheduler_result = await scheduler.close()
+        self.assertIsInstance(
+            scheduler_result,
+            feed_work_scheduler.Undrained,
+        )
+        self.assertFalse((await scheduler._snapshot()).closed)
+        executor.settle.set()
+        await asyncio.wait_for(worker, timeout=1)
+        self.assertEqual((await scheduler._snapshot()).held, 1)
+
+    async def test_unexpected_worker_failure_reaches_every_lane(self) -> None:
+        scheduler_types = _scheduler_types()
+        limits = scheduler_types._SchedulerLimits(
+            shard_count=1,
+            capacity=2,
+            workers_per_shard=1,
+            high_water=1,
+            resume_at=0,
+        )
+        executor = _GatedFailureExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+        )
+        await scheduler.start()
+        first_grant = _grant()
+        sibling_grant = _grant(lease_key="151")
+        first_lane = scheduler.open_lane(first_grant)
+        sibling_lane = scheduler.open_lane(sibling_grant)
+        first_cursor = cursor_policy.LeaseCursor(first_grant, pos=None)
+        first_cursor.accept(
+            await first_lane.cover_page(
+                calls=(_submission(uuid.UUID(int=1), 0),),
+                boundaries=(),
+                candidate=first_cursor.prepare(_SOURCE_TIME),
+            )
+        )
+        await asyncio.wait_for(executor.entered.wait(), timeout=1)
+        sibling_cursor = cursor_policy.LeaseCursor(sibling_grant, pos=None)
+        blocked = asyncio.create_task(
+            sibling_lane.cover_page(
+                calls=(_submission(uuid.UUID(int=2), 0),),
+                boundaries=(),
+                candidate=sibling_cursor.prepare(_SOURCE_TIME),
+            )
+        )
+        await scheduler._shards[0].wait_for_capacity_waiters(1)
+        executor.release.set()
+        await scheduler._shards[0].wait_for_fatal()
+
+        with self.assertRaises(feed_work_scheduler.SchedulerIntegrityError):
+            await blocked
+        with self.assertRaises(feed_work_scheduler.SchedulerIntegrityError):
+            await first_lane.cover_page(
+                calls=(),
+                boundaries=(),
+                candidate=first_cursor.prepare(
+                    _SOURCE_TIME + datetime.timedelta(seconds=1)
+                ),
+            )
+        self.assertIsInstance(
+            await first_lane.close(
+                feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN
+            ),
+            feed_work_scheduler.Undrained,
+        )
+        self.assertIsInstance(
+            await scheduler.close(),
+            feed_work_scheduler.Undrained,
+        )
+        snapshot = await scheduler._snapshot()
+        self.assertFalse(snapshot.closed)
+        self.assertEqual(snapshot.held, 1)
+
     async def test_close_before_coverage_returns_no_receipt(self) -> None:
         scheduler_types = _scheduler_types()
         limits = scheduler_types._SchedulerLimits(
@@ -457,10 +972,12 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 candidate=candidate,
             )
         )
-        close: asyncio.Task[None] | None = None
+        close: asyncio.Task[object] | None = None
         try:
             await scheduler._shards[0].wait_for_capacity_waiters(1)
-            close = asyncio.create_task(scheduler.close())
+            close = asyncio.create_task(
+                lane.close(feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN)
+            )
             with self.assertRaisesRegex(RuntimeError, "closed"):
                 await coverage
 
@@ -472,10 +989,9 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(close.done())
         finally:
             executor.release_all()
-            if close is None:
-                await scheduler.close()
-            else:
+            if close is not None:
                 await asyncio.wait_for(close, timeout=1)
+            await scheduler.close()
 
 
 if __name__ == "__main__":

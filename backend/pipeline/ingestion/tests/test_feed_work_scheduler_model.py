@@ -223,6 +223,36 @@ class _PageCoverageModel:
             _violation("page counters do not conserve pulled records")
 
 
+class _CloseStrength(enum.IntEnum):
+    """Independent monotonic exact-lane close lattice."""
+
+    OPEN = 0
+    DRAINING = 1
+    CANCELLING = 2
+
+
+@dataclasses.dataclass(slots=True)
+class _LaneLifecycleModel:
+    """Small close oracle with one shared strongest result."""
+
+    strength: _CloseStrength = _CloseStrength.OPEN
+    active: int = 0
+    result: _CloseStrength | None = None
+
+    def request(self, strength: _CloseStrength) -> None:
+        if strength < self.strength:
+            return
+        if self.result is not None and strength > self.result:
+            _violation("a settled close result cannot be upgraded")
+        self.strength = strength
+
+    def settle(self) -> _CloseStrength | None:
+        if self.active:
+            return None
+        self.result = self.strength
+        return self.result
+
+
 class _ReferenceModel:
     """Independent small-limit oracle for shard transition semantics."""
 
@@ -238,6 +268,9 @@ class _ReferenceModel:
         self._ready_members: set[uuid.UUID] = set()
         self._active_by_feed: dict[uuid.UUID, int] = {}
         self._active_by_slot: dict[int, int] = {}
+        self._retired_scopes: set[
+            tuple[ingestion_lease_store.LeaseGrant, uuid.UUID]
+        ] = set()
         self._pending_boundary_by_feed: dict[uuid.UUID, int] = {}
         self._flushing_boundary_by_feed: dict[uuid.UUID, int] = {}
         self._released_sequences: set[int] = set()
@@ -284,6 +317,7 @@ class _ReferenceModel:
     ) -> int | None:
         if (
             self.fatal
+            or (grant, feed_id) in self._retired_scopes
             or self.pressure_paused
             or self.held >= self.limits.capacity
         ):
@@ -439,6 +473,38 @@ class _ReferenceModel:
             self._release(sequence)
         self._assert_invariants()
         return purged
+
+    def retire_feed(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        feed_id: uuid.UUID,
+    ) -> tuple[tuple[int, ...], int | None]:
+        """Retire only one exact grant/Feed scope."""
+        self._retired_scopes.add((grant, feed_id))
+        purged = tuple(
+            sequence
+            for sequence, record in sorted(self._records.items())
+            if record.grant == grant
+            and record.feed_id == feed_id
+            and record.state
+            in {_ModelState.QUEUED, _ModelState.PENDING_BOUNDARY}
+        )
+        for sequence in purged:
+            record = self._records[sequence]
+            if record.state is _ModelState.QUEUED:
+                queue = self._feed_queues[feed_id]
+                queue.remove(sequence)
+                if not queue:
+                    del self._feed_queues[feed_id]
+                    self._remove_ready(feed_id)
+            else:
+                del self._pending_boundary_by_feed[feed_id]
+            self._release(sequence)
+        active = self._active_by_feed.get(feed_id)
+        if active is not None and self._records[active].grant != grant:
+            active = None
+        self._assert_invariants()
+        return purged, active
 
     def mark_fatal(self) -> None:
         self.fatal = True
@@ -712,6 +778,43 @@ class TestConservationModel(unittest.TestCase):
         )
         self.assertEqual(model.snapshot().held, 3)
 
+    def test_model_feed_retirement_is_exact_and_active_is_retained(
+        self,
+    ) -> None:
+        model = _ReferenceModel()
+        old = _grant(fencing_token=7)
+        successor = _grant(fencing_token=8)
+        feed_id = _FEED_IDS[0]
+        active = model.admit_call(feed_id, old, source_order=0)
+        removed = model.admit_call(feed_id, old, source_order=1)
+        successor_record = model.admit_call(
+            feed_id,
+            successor,
+            source_order=2,
+        )
+        self.assertEqual(model.dispatch(0), active)
+
+        purged, retained_active = model.retire_feed(old, feed_id)
+
+        self.assertEqual(purged, (removed,))
+        self.assertEqual(retained_active, active)
+        self.assertIn(successor_record, model.live_sequences)
+        self.assertIsNone(model.admit_call(feed_id, old, source_order=3))
+        model.terminalize(typing.cast("int", active))
+        self.assertEqual(model.dispatch(0), successor_record)
+
+    def test_model_close_strength_upgrades_before_settlement(self) -> None:
+        lifecycle = _LaneLifecycleModel(active=1)
+        lifecycle.request(_CloseStrength.DRAINING)
+        self.assertIsNone(lifecycle.settle())
+
+        lifecycle.request(_CloseStrength.CANCELLING)
+        lifecycle.active = 0
+
+        self.assertEqual(lifecycle.settle(), _CloseStrength.CANCELLING)
+        lifecycle.request(_CloseStrength.DRAINING)
+        self.assertEqual(lifecycle.result, _CloseStrength.CANCELLING)
+
     def test_model_boundary_placeholders_participate_in_held_equation(
         self,
     ) -> None:
@@ -766,7 +869,7 @@ class TestConservationModel(unittest.TestCase):
                 model = _ReferenceModel()
                 source_order = 0
                 for step in range(96):
-                    command = generator.randrange(7)
+                    command = generator.randrange(8)
                     if command in (0, 1):
                         model.admit_call(
                             generator.choice(_FEED_IDS),
@@ -819,6 +922,11 @@ class TestConservationModel(unittest.TestCase):
                                     model.flushing_boundary_sequences
                                 )
                             )
+                    elif command == 7:
+                        model.retire_feed(
+                            generator.choice(grants),
+                            generator.choice(_FEED_IDS),
+                        )
                     try:
                         model._assert_invariants()
                     except _ModelViolation as exc:
@@ -1020,7 +1128,7 @@ def _actual_model_projection(snapshot: object) -> _ModelSnapshot:
 class TestShardModel(unittest.IsolatedAsyncioTestCase):
     """Compares every real locked transition with the independent oracle."""
 
-    async def test_seeded_shard_snapshot_matches_model_transitions(
+    async def test_seeded_shard_snapshot_matches_model_transitions(  # noqa: PLR0912, PLR0915
         self,
     ) -> None:
         scheduler_types = _scheduler_types()
@@ -1046,7 +1154,7 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
                 records: dict[int, object] = {}
                 source_order = 0
                 for step in range(80):
-                    command = generator.randrange(4)
+                    command = generator.randrange(5)
                     if command == 0:
                         feed_id = generator.choice(_FEED_IDS)
                         grant = generator.choice(grants)
@@ -1103,6 +1211,23 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
                         actual = await shard.purge_exact(grant)
                         self.assertEqual(actual.released_sequences, expected)
                         for sequence in expected:
+                            records.pop(sequence)
+                    elif command == 4:
+                        grant = generator.choice(grants)
+                        feed_id = generator.choice(_FEED_IDS)
+                        expected_released, expected_active = model.retire_feed(
+                            grant, feed_id
+                        )
+                        actual = await shard.retire_feed(grant, feed_id)
+                        self.assertEqual(
+                            actual.released_sequences,
+                            expected_released,
+                        )
+                        self.assertEqual(
+                            actual.active_sequence,
+                            expected_active,
+                        )
+                        for sequence in expected_released:
                             records.pop(sequence)
 
                     actual_snapshot = await shard.snapshot()
