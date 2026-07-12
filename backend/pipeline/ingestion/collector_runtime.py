@@ -34,6 +34,7 @@ from backend.pipeline.common.tracing_utils import setup_tracing
 from backend.pipeline.ingestion import (
     failure_policy,
     feed_grant_control,
+    feed_work_scheduler,
     grant_control,
     grant_supervisor,
     health_server,
@@ -42,6 +43,9 @@ from backend.pipeline.ingestion import (
     sid_grant_control,
     status_reason_detail,
     worker_profiles,
+)
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    sid_runner as bcfy_calls_sid_runner,
 )
 from backend.pipeline.ingestion.failure_classifiers import pubsub
 from backend.pipeline.ingestion.health_server import HealthState
@@ -319,6 +323,56 @@ def _sid_fencing_token(grant: ingestion_lease_store.LeaseGrant) -> int:
     return grant.fencing_token
 
 
+class _UnconnectedCallExecutor:
+    """Fail closed until a later phase wires the SID call pipeline."""
+
+    async def execute(self, record: object) -> typing.Never:
+        del record
+        message = "Phase 4 call executor is unconnected"
+        raise feed_work_scheduler.SchedulerIntegrityError(message)
+
+
+class _UnconnectedBoundaryCommitter:
+    """Fail closed until a later phase wires boundary persistence."""
+
+    async def commit(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        boundaries: tuple[object, ...],
+        *,
+        final_logical: bool,
+    ) -> typing.Never:
+        del grant, boundaries, final_logical
+        message = "Phase 4 boundary committer is unconnected"
+        raise feed_work_scheduler.SchedulerIntegrityError(message)
+
+
+def _create_unconnected_feed_work_scheduler() -> (
+    feed_work_scheduler.FeedWorkScheduler
+):
+    """Create the sole Phase 4 scheduler with no data-plane authority."""
+    return feed_work_scheduler.FeedWorkScheduler(
+        _UnconnectedCallExecutor(),
+        boundary_committer=_UnconnectedBoundaryCommitter(),
+    )
+
+
+def _is_feed_work_scheduler(
+    value: object,
+) -> typing.TypeGuard[feed_work_scheduler.FeedWorkScheduler]:
+    """Validate the narrow lifecycle contract accepted from test factories."""
+    return (
+        callable(getattr(value, "start", None))
+        and callable(getattr(value, "open_lane", None))
+        and callable(getattr(value, "close", None))
+        and callable(getattr(value, "raise_if_failed", None))
+        and isinstance(
+            getattr(value, "integrity_failure_event", None),
+            asyncio.Event,
+        )
+    )
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class _SidRunnerResources:
     """One controlled SID runner's view of shared runtime resources."""
@@ -330,6 +384,7 @@ class _SidRunnerResources:
     pubsub_client: pubsub_client.PubSubClient
     health_state: HealthState
     shutdown: asyncio.Event
+    feed_work_scheduler: feed_work_scheduler.FeedWorkScheduler
 
 
 type _SidStoreFactory = Callable[
@@ -343,20 +398,7 @@ type _SidRunnerFactory = Callable[
         ingestion_lease_store.LeaseSnapshot,
     ],
 ]
-
-
-class _DormantSidRunner:
-    """Fail closed if a claims-disabled Phase 3 SID registration ever runs."""
-
-    async def run(
-        self,
-        grant: ingestion_lease_store.LeaseGrant,
-        payload: ingestion_lease_store.LeaseSnapshot,
-        context: grant_control.RunContext,
-    ) -> grant_control.RunOutcome:
-        del grant, payload, context
-        msg = "Dormant Phase 3 SID runner must never be invoked"
-        raise grant_control.GrantControlIntegrityError(msg)
+type _SchedulerFactory = Callable[[], object]
 
 
 class CollectorRuntime:
@@ -389,6 +431,8 @@ class CollectorRuntime:
         settings: Runtime configuration. Defaults to ``CollectorSettings()``.
         runtime_actor_id: Optional producer-owned audit actor. Defaults to the
             configured runtime service actor.
+        scheduler_factory: Narrow deterministic-test seam for the one
+            selected-SID process scheduler.
 
     """
 
@@ -400,6 +444,7 @@ class CollectorRuntime:
         *,
         sid_store_factory: _SidStoreFactory | None = None,
         sid_runner_factory: _SidRunnerFactory | None = None,
+        scheduler_factory: _SchedulerFactory | None = None,
     ) -> None:
         if settings is None:
             from backend.pipeline.ingestion.settings import CollectorSettings  # noqa: I001, PLC0415
@@ -412,6 +457,11 @@ class CollectorRuntime:
         )
         self._sid_store_factory = sid_store_factory
         self._sid_runner_factory = sid_runner_factory
+        self._scheduler_factory = (
+            _create_unconnected_feed_work_scheduler
+            if scheduler_factory is None
+            else scheduler_factory
+        )
         self._hostname = socket.gethostname()
         self._runtime_actor_id = (
             runtime_actor_id
@@ -445,6 +495,9 @@ class CollectorRuntime:
         ) = None
         self._sid_heartbeat_store: (
             ingestion_lease_store.IngestionLeaseStore | None
+        ) = None
+        self._feed_work_scheduler: (
+            feed_work_scheduler.FeedWorkScheduler | None
         ) = None
         self._supervisor: grant_supervisor.GrantSupervisor = None  # type: ignore # set in _main()
         self._feed_runner: _FeedRunner = None  # type: ignore # set in _main()
@@ -538,6 +591,21 @@ class CollectorRuntime:
             return grant_control.NeutralRelease(outcome.cause)
         return grant_control.NeutralRelease(grant_control.TerminalCause.NORMAL)
 
+    async def _start_feed_work_scheduler(self) -> None:
+        """Start one process scheduler only for a selected SID domain."""
+        selected_sid = any(
+            allocation.domain_id is grant_control.DomainId.SID
+            for allocation in self._collector_settings.worker_profile.allocations
+        )
+        if not selected_sid or self._feed_work_scheduler is not None:
+            return
+        candidate = self._scheduler_factory()
+        if not _is_feed_work_scheduler(candidate):
+            message = "scheduler factory returned an invalid scheduler"
+            raise TypeError(message)
+        self._feed_work_scheduler = candidate
+        await candidate.start()
+
     def _compose_supervisor(self) -> None:
         """Construct only selected typed domains over the shared resources."""
         settings = self._collector_settings
@@ -583,6 +651,10 @@ class CollectorRuntime:
             if allocation.domain_id is not grant_control.DomainId.SID:
                 msg = f"Unsupported runtime domain {allocation.domain_id}"
                 raise ValueError(msg)
+            scheduler = self._feed_work_scheduler
+            if scheduler is None:
+                msg = "Selected SID domain requires a started scheduler"
+                raise RuntimeError(msg)
             if allocation.claims_enabled and (
                 self._sid_store_factory is None
                 or self._sid_runner_factory is None
@@ -608,7 +680,7 @@ class CollectorRuntime:
                 sid_runner: grant_control.GrantRunner[
                     ingestion_lease_store.LeaseGrant,
                     ingestion_lease_store.LeaseSnapshot,
-                ] = _DormantSidRunner()
+                ] = bcfy_calls_sid_runner.BcfyCallsSidRunner(scheduler)
             else:
                 sid_runner = self._sid_runner_factory(
                     _SidRunnerResources(
@@ -619,6 +691,7 @@ class CollectorRuntime:
                         pubsub_client=self._pubsub_client,
                         health_state=self._health_state,
                         shutdown=self._shutdown,
+                        feed_work_scheduler=scheduler,
                     )
                 )
                 if not callable(getattr(sid_runner, "run", None)):
@@ -781,6 +854,7 @@ class CollectorRuntime:
                 segment_temp_dir=segment_dir,
             )
 
+            await self._start_feed_work_scheduler()
             self._compose_supervisor()
 
             # Start the sole heartbeat thread only after the supervisor and
@@ -819,34 +893,42 @@ class CollectorRuntime:
             elapsed normally.
 
         """
+        waits = [asyncio.create_task(self._shutdown.wait())]
         supervisor = self._supervisor
-        if supervisor is None:
-            try:
-                await asyncio.wait_for(self._shutdown.wait(), timeout=seconds)
-            except TimeoutError:
-                return False
-            return True
-
-        shutdown_wait = asyncio.create_task(self._shutdown.wait())
-        integrity_wait = asyncio.create_task(
-            supervisor.integrity_failure_event.wait()
-        )
-        waits = (shutdown_wait, integrity_wait)
-        _done, pending = await asyncio.wait(
-            waits,
-            timeout=seconds,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-        for task in pending:
-            task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
-        if supervisor.integrity_failure_event.is_set():
-            self._raise_integrity_failure()
+        if supervisor is not None:
+            waits.append(
+                asyncio.create_task(supervisor.integrity_failure_event.wait())
+            )
+        scheduler = self._feed_work_scheduler
+        if scheduler is not None:
+            waits.append(
+                asyncio.create_task(scheduler.integrity_failure_event.wait())
+            )
+        try:
+            await asyncio.wait(
+                waits,
+                timeout=seconds,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for task in waits:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*waits, return_exceptions=True)
+        self._raise_integrity_failure()
         return self._shutdown.is_set()
 
+    def _raise_scheduler_integrity_failure(self) -> None:
+        """Raise the selected scheduler's first fatal evidence, if any."""
+        scheduler = self._feed_work_scheduler
+        if scheduler is not None and scheduler.integrity_failure_event.is_set():
+            scheduler.raise_if_failed()
+            msg = "scheduler signalled integrity failure without evidence"
+            raise grant_control.GrantControlIntegrityError(msg)
+
     def _raise_integrity_failure(self) -> None:
-        """Raise the first fatal supervisor failure for process restart."""
+        """Raise deterministic process-integrity evidence for restart."""
+        self._raise_scheduler_integrity_failure()
         supervisor = self._supervisor
         if (
             supervisor is None
@@ -943,8 +1025,7 @@ class CollectorRuntime:
                         self._collector_settings.worker_id
                     )
                 except Exception:
-                    if self._supervisor.integrity_failure_event.is_set():
-                        self._raise_integrity_failure()
+                    self._raise_integrity_failure()
                     logger.exception(
                         "Grant admission failed -- will retry in %.1fs",
                         self._collector_settings.lease_poll_interval_sec,
@@ -1647,6 +1728,18 @@ class CollectorRuntime:
                 shutdown_result.undrained,
             )
             return
+
+        scheduler = self._feed_work_scheduler
+        if scheduler is not None:
+            scheduler_result = await scheduler.close()
+            if isinstance(scheduler_result, feed_work_scheduler.Undrained):
+                self._raise_scheduler_integrity_failure()
+                msg = "process scheduler did not drain"
+                raise grant_control.GrantControlIntegrityError(msg)
+            if scheduler_result is not None:
+                msg = "process scheduler returned an invalid close result"
+                raise grant_control.GrantControlIntegrityError(msg)
+            self._raise_scheduler_integrity_failure()
 
         await self._pubsub_client.close()
         await self._gcs_client.close()

@@ -2291,8 +2291,25 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
     async def test_default_scheduler_adapters_are_explicitly_unconnected(
         self,
     ) -> None:
-        executor = collector_runtime._UnconnectedCallExecutor()
-        committer = collector_runtime._UnconnectedBoundaryCommitter()
+        constructed = object()
+        with mock.patch.object(
+            collector_runtime.feed_work_scheduler,
+            "FeedWorkScheduler",
+            return_value=constructed,
+        ) as scheduler_constructor:
+            result = collector_runtime._create_unconnected_feed_work_scheduler()
+
+        self.assertIs(result, constructed)
+        scheduler_constructor.assert_called_once()
+        executor = scheduler_constructor.call_args.args[0]
+        committer = scheduler_constructor.call_args.kwargs["boundary_committer"]
+        self.assertIsInstance(
+            executor, collector_runtime._UnconnectedCallExecutor
+        )
+        self.assertIsInstance(
+            committer,
+            collector_runtime._UnconnectedBoundaryCommitter,
+        )
         grant = ingestion_lease_store.LeaseGrant(
             SourceType.BCFY_CALLS,
             "123",
@@ -2465,6 +2482,14 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
                 managed.closed_outcome,
                 grant_control.RunStopped,
             )
+            assert isinstance(
+                managed.closed_outcome,
+                grant_control.RunStopped,
+            )
+            self.assertIs(
+                managed.closed_outcome.cause,
+                grant_control.TerminalCause.PLANNED_DRAIN,
+            )
             order.append("release")
             return ingestion_lease_store.LeaseOperationResult(
                 ingestion_lease_store.LeaseOperationDisposition.APPLIED,
@@ -2495,7 +2520,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
 
         data_store.release.assert_awaited_once_with(
             grant,
-            cause=ingestion_lease_store.LeaseReleaseCause.REBALANCE,
+            cause=ingestion_lease_store.LeaseReleaseCause.SHUTDOWN,
         )
         self.assertLess(order.index("lane_closed"), order.index("release"))
         self.assertLess(order.index("release"), order.index("scheduler_close"))
