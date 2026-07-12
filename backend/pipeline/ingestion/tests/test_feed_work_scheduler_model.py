@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import datetime
 import enum
@@ -27,6 +28,13 @@ def _scheduler_types() -> types.ModuleType:
     """Load the private production vocabulary under test."""
     return importlib.import_module(
         "backend.pipeline.ingestion.feed_work_scheduler._types"
+    )
+
+
+def _scheduler_shard() -> types.ModuleType:
+    """Load the private authoritative shard implementation under test."""
+    return importlib.import_module(
+        "backend.pipeline.ingestion.feed_work_scheduler._shard"
     )
 
 
@@ -706,6 +714,446 @@ class TestConservationModel(unittest.TestCase):
                     f"seed={seed}",
                 )
                 self.assertEqual(model.snapshot().held, before_fatal.held)
+
+
+class _ImmediateExecutor:
+    def __init__(self) -> None:
+        self.sequences: list[int] = []
+
+    async def execute(self, record: object) -> object:
+        scheduler_types = _scheduler_types()
+        self.sequences.append(record.local_sequence)
+        return scheduler_types._ExecutorCompleted()
+
+
+class _GateExecutor:
+    def __init__(self) -> None:
+        self.started: list[int] = []
+        self.changed = asyncio.Event()
+        self._release: dict[int, asyncio.Event] = {}
+
+    async def execute(self, record: object) -> object:
+        scheduler_types = _scheduler_types()
+        sequence = record.local_sequence
+        self._release.setdefault(sequence, asyncio.Event())
+        self.started.append(sequence)
+        self.changed.set()
+        await self._release[sequence].wait()
+        return scheduler_types._ExecutorCompleted()
+
+    async def wait_for_started(self, count: int) -> None:
+        while len(self.started) < count:
+            self.changed.clear()
+            if len(self.started) >= count:
+                return
+            await asyncio.wait_for(self.changed.wait(), timeout=1)
+
+    def allow(self, sequence: int) -> None:
+        self._release.setdefault(sequence, asyncio.Event()).set()
+
+
+class _CancellationExecutor:
+    def __init__(self, *, swallow: bool) -> None:
+        self.swallow = swallow
+        self.entered = asyncio.Event()
+        self.cancellation_seen = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def execute(self, record: object) -> object:
+        del record
+        scheduler_types = _scheduler_types()
+        self.entered.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancellation_seen.set()
+            if not self.swallow:
+                raise
+            current = asyncio.current_task()
+            if current is None:
+                self.fail_no_current_task()
+            current.uncancel()
+            await self.release.wait()
+        return scheduler_types._ExecutorCompleted()
+
+    def fail_no_current_task(self) -> typing.Never:
+        self._raise_missing_task()
+
+    def _raise_missing_task(self) -> typing.Never:
+        message = "executor is not running in a Task"
+        raise RuntimeError(message)
+
+
+class _FailingExecutor:
+    def __init__(self) -> None:
+        self.entered = asyncio.Event()
+
+    async def execute(self, record: object) -> object:
+        del record
+        self.entered.set()
+        message = "unexpected executor failure"
+        raise RuntimeError(message)
+
+
+def _call_work(
+    feed_id: uuid.UUID,
+    grant: ingestion_lease_store.LeaseGrant,
+    source_order: int,
+    *,
+    source_timestamp: datetime.datetime = _SOURCE_TIME,
+) -> object:
+    scheduler_types = _scheduler_types()
+    return scheduler_types._CallWork(
+        feed_id=feed_id,
+        grant=grant,
+        source_order=source_order,
+        source_timestamp=source_timestamp,
+        payload=object(),
+        page_sequence=0,
+    )
+
+
+def _actual_model_projection(snapshot: object) -> _ModelSnapshot:
+    return _ModelSnapshot(
+        held=snapshot.held,
+        queued_calls=snapshot.queued_calls,
+        active_calls=snapshot.active_calls,
+        pending_boundaries=snapshot.pending_boundaries,
+        flushing_boundaries=snapshot.flushing_boundaries,
+        pressure_paused=snapshot.pressure_paused,
+        ready_feeds=snapshot.ready_feeds,
+        active_feeds=snapshot.active_feeds,
+        local_sequences=tuple(
+            record.local_sequence for record in snapshot.records
+        ),
+        fatal=snapshot.fatal,
+    )
+
+
+class TestShardModel(unittest.IsolatedAsyncioTestCase):
+    """Compares every real locked transition with the independent oracle."""
+
+    async def test_seeded_shard_snapshot_matches_model_transitions(
+        self,
+    ) -> None:
+        scheduler_types = _scheduler_types()
+        shard_module = _scheduler_shard()
+        limits = scheduler_types._SchedulerLimits(
+            shard_count=1,
+            capacity=5,
+            workers_per_shard=2,
+            high_water=4,
+            resume_at=2,
+        )
+        grants = (
+            _grant(fencing_token=1),
+            _grant(fencing_token=2),
+            _grant(lease_key="151", fencing_token=1),
+        )
+        for seed in (0xB0A7, 0xAFF1):
+            with self.subTest(seed=seed):
+                generator = random.Random(seed)  # noqa: S311
+                executor = _ImmediateExecutor()
+                shard = shard_module._Shard(0, executor, limits=limits)
+                model = _ReferenceModel()
+                records: dict[int, object] = {}
+                source_order = 0
+                for step in range(80):
+                    command = generator.randrange(4)
+                    if command == 0:
+                        feed_id = generator.choice(_FEED_IDS)
+                        grant = generator.choice(grants)
+                        expected = model.admit_call(
+                            feed_id,
+                            grant,
+                            source_order=source_order,
+                        )
+                        if expected is not None:
+                            record = await shard.admit(
+                                _call_work(
+                                    feed_id,
+                                    grant,
+                                    source_order,
+                                )
+                            )
+                            self.assertEqual(record.local_sequence, expected)
+                            records[expected] = record
+                        source_order += 1
+                    elif command == 1:
+                        free_slots = tuple(
+                            slot
+                            for slot in range(model.limits.workers)
+                            if slot not in model._active_by_slot
+                        )
+                        if free_slots:
+                            slot = generator.choice(free_slots)
+                            expected = model.dispatch(slot)
+                            actual = await shard._take_next(
+                                slot,
+                                wait=False,
+                            )
+                            if expected is None:
+                                self.assertIsNone(actual)
+                            else:
+                                self.assertIsNotNone(actual)
+                                self.assertEqual(
+                                    actual.local_sequence,
+                                    expected,
+                                )
+                    elif command == 2 and model.active_sequences:
+                        sequence = generator.choice(model.active_sequences)
+                        slot = model._records[sequence].worker_slot
+                        self.assertIsNotNone(slot)
+                        model.terminalize(sequence)
+                        await shard._terminalize(
+                            typing.cast("int", slot),
+                            records.pop(sequence),
+                            scheduler_types._ExecutorCompleted(),
+                        )
+                    elif command == 3:
+                        grant = generator.choice(grants)
+                        expected = model.purge_exact(grant)
+                        actual = await shard.purge_exact(grant)
+                        self.assertEqual(actual.released_sequences, expected)
+                        for sequence in expected:
+                            records.pop(sequence)
+
+                    actual_snapshot = await shard.snapshot()
+                    expected_snapshot = model.snapshot()
+                    self.assertEqual(
+                        _actual_model_projection(actual_snapshot),
+                        expected_snapshot,
+                        f"seed={seed} step={step} command={command}",
+                    )
+
+    async def test_exact_hysteresis_waits_without_registration(self) -> None:
+        scheduler_types = _scheduler_types()
+        shard_module = _scheduler_shard()
+        limits = scheduler_types._SchedulerLimits(
+            shard_count=8,
+            capacity=500,
+            workers_per_shard=4,
+            high_water=400,
+            resume_at=299,
+        )
+        shard = shard_module._Shard(
+            0,
+            _ImmediateExecutor(),
+            limits=limits,
+        )
+        first_hundred = _grant(lease_key="100")
+        threshold_record = _grant(lease_key="101")
+        retained = _grant(lease_key="102")
+        for source_order in range(400):
+            if source_order < 100:
+                grant = first_hundred
+            elif source_order == 100:
+                grant = threshold_record
+            else:
+                grant = retained
+            await shard.admit(
+                _call_work(
+                    uuid.UUID(int=source_order + 1),
+                    grant,
+                    source_order,
+                )
+            )
+
+        snapshot = await shard.snapshot()
+        self.assertEqual(snapshot.held, 400)
+        self.assertTrue(snapshot.pressure_paused)
+        blocked = asyncio.create_task(
+            shard.admit(_call_work(uuid.UUID(int=401), retained, 400))
+        )
+        try:
+            await shard.wait_for_capacity_waiters(1)
+            snapshot = await shard.snapshot()
+            self.assertEqual(snapshot.held, 400)
+            self.assertNotIn(
+                400,
+                tuple(record.local_sequence for record in snapshot.records),
+            )
+
+            released = await shard.purge_exact(first_hundred)
+            self.assertEqual(len(released.released_sequences), 100)
+            self.assertEqual((await shard.snapshot()).held, 300)
+            self.assertFalse(blocked.done())
+
+            released = await shard.purge_exact(threshold_record)
+            self.assertEqual(len(released.released_sequences), 1)
+            admitted = await asyncio.wait_for(blocked, timeout=1)
+            self.assertEqual(admitted.local_sequence, 400)
+            snapshot = await shard.snapshot()
+            self.assertEqual(snapshot.held, 300)
+            self.assertFalse(snapshot.pressure_paused)
+        finally:
+            if not blocked.done():
+                blocked.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await blocked
+
+
+class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
+    """Event-gated fixed-worker and integrity transition tests."""
+
+    def _limits(self, *, workers: int = 2) -> object:
+        scheduler_types = _scheduler_types()
+        return scheduler_types._SchedulerLimits(
+            shard_count=1,
+            capacity=10,
+            workers_per_shard=workers,
+            high_water=10,
+            resume_at=5,
+        )
+
+    async def test_fixed_workers_preserve_fifo_identity_and_fair_turns(
+        self,
+    ) -> None:
+        shard_module = _scheduler_shard()
+        executor = _GateExecutor()
+        shard = shard_module._Shard(0, executor, limits=self._limits())
+        grant = _grant()
+        await shard.start()
+        try:
+            hot = _FEED_IDS[0]
+            cold = _FEED_IDS[1]
+            works = (
+                _call_work(hot, grant, 0),
+                _call_work(hot, grant, 1),
+                _call_work(cold, grant, 2),
+                _call_work(
+                    hot,
+                    grant,
+                    3,
+                    source_timestamp=(
+                        _SOURCE_TIME - datetime.timedelta(seconds=1)
+                    ),
+                ),
+            )
+            records = tuple([await shard.admit(work) for work in works])
+            await executor.wait_for_started(2)
+
+            self.assertEqual(set(executor.started[:2]), {0, 2})
+            snapshot = await shard.snapshot()
+            self.assertEqual(len(snapshot.workers), 2)
+            self.assertTrue(
+                all(worker.task_registered for worker in snapshot.workers)
+            )
+            self.assertEqual(snapshot.active_calls, 2)
+            self.assertEqual(len(snapshot.active_feeds), 2)
+
+            executor.allow(0)
+            executor.allow(2)
+            await executor.wait_for_started(3)
+            self.assertEqual(executor.started[2], 1)
+            executor.allow(1)
+            await executor.wait_for_started(4)
+            self.assertEqual(executor.started[3], 3)
+            executor.allow(3)
+            await shard.wait_for_held(0)
+
+            self.assertEqual(
+                [record.local_sequence for record in records],
+                [0, 1, 2, 3],
+            )
+            self.assertEqual(executor.started, [0, 2, 1, 3])
+            self.assertEqual((await shard.snapshot()).held, 0)
+        finally:
+            await shard.close()
+
+    async def test_expected_cancellation_settles_before_slot_reuse(
+        self,
+    ) -> None:
+        shard_module = _scheduler_shard()
+        executor = _CancellationExecutor(swallow=False)
+        shard = shard_module._Shard(
+            0,
+            executor,
+            limits=self._limits(workers=1),
+        )
+        grant = _grant()
+        await shard.start()
+        try:
+            await shard.admit(_call_work(_FEED_IDS[0], grant, 0))
+            await asyncio.wait_for(executor.entered.wait(), timeout=1)
+            cancelled = await shard.cancel_active_exact(grant)
+
+            self.assertEqual(cancelled, (0,))
+            self.assertTrue(executor.cancellation_seen.is_set())
+            snapshot = await shard.snapshot()
+            self.assertEqual(snapshot.held, 0)
+            self.assertEqual(len(snapshot.workers), 1)
+            self.assertTrue(snapshot.workers[0].task_registered)
+            self.assertFalse(snapshot.workers[0].task_done)
+            self.assertIsNone(snapshot.workers[0].active_sequence)
+            self.assertFalse(snapshot.fatal)
+        finally:
+            await shard.close()
+
+    async def test_swallowed_cancellation_fails_closed_and_retains_token(
+        self,
+    ) -> None:
+        shard_module = _scheduler_shard()
+        executor = _CancellationExecutor(swallow=True)
+        limits = _scheduler_types()._SchedulerLimits(
+            shard_count=1,
+            capacity=2,
+            workers_per_shard=1,
+            high_water=1,
+            resume_at=0,
+        )
+        shard = shard_module._Shard(0, executor, limits=limits)
+        grant = _grant()
+        await shard.start()
+        await shard.admit(_call_work(_FEED_IDS[0], grant, 0))
+        await asyncio.wait_for(executor.entered.wait(), timeout=1)
+        blocked = asyncio.create_task(
+            shard.admit(_call_work(_FEED_IDS[1], grant, 1))
+        )
+        await shard.wait_for_capacity_waiters(1)
+        requests = await shard.request_cancel_exact(grant)
+        self.assertEqual(len(requests), 1)
+        await asyncio.wait_for(executor.cancellation_seen.wait(), timeout=1)
+        failure = RuntimeError("worker swallowed cancellation")
+        await shard.abandon_cancellation(requests[0].slot_id, failure)
+
+        with self.assertRaises(shard_module._ShardFatalError):
+            await blocked
+        snapshot = await shard.snapshot()
+        self.assertTrue(snapshot.fatal)
+        self.assertFalse(snapshot.admission_open)
+        self.assertEqual(snapshot.held, 1)
+        self.assertEqual(snapshot.active_calls, 1)
+        self.assertEqual(snapshot.workers[0].cancellation_sequence, 0)
+        executor.release.set()
+        await asyncio.wait_for(requests[0].task, timeout=1)
+        snapshot = await shard.snapshot()
+        self.assertEqual(snapshot.held, 1)
+        self.assertTrue(snapshot.workers[0].task_done)
+
+    async def test_unexpected_worker_failure_is_persistent_and_unreplaced(
+        self,
+    ) -> None:
+        shard_module = _scheduler_shard()
+        executor = _FailingExecutor()
+        shard = shard_module._Shard(
+            0,
+            executor,
+            limits=self._limits(workers=1),
+        )
+        await shard.start()
+        await shard.admit(_call_work(_FEED_IDS[0], _grant(), 0))
+        await asyncio.wait_for(executor.entered.wait(), timeout=1)
+        await shard.wait_for_fatal()
+
+        snapshot = await shard.snapshot()
+        self.assertTrue(snapshot.fatal)
+        self.assertFalse(snapshot.admission_open)
+        self.assertEqual(snapshot.held, 1)
+        self.assertEqual(snapshot.active_calls, 1)
+        self.assertTrue(snapshot.workers[0].task_done)
+        with self.assertRaises(shard_module._ShardFatalError):
+            await shard.admit(_call_work(_FEED_IDS[1], _grant(), 1))
 
 
 if __name__ == "__main__":
