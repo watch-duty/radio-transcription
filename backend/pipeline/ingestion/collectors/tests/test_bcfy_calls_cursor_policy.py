@@ -50,6 +50,15 @@ def _cursor_state(
     )
 
 
+def _assign_attribute(
+    target: object,
+    field_name: str,
+    replacement: object,
+) -> None:
+    """Attempt assignment through the object's normal frozen guard."""
+    setattr(target, field_name, replacement)
+
+
 class TestBootstrapCursor(unittest.TestCase):
     """Tests for durable Feed cursor bootstrap decisions."""
 
@@ -64,7 +73,7 @@ class TestBootstrapCursor(unittest.TestCase):
         )
         self.assertFalse(hasattr(decision, "__dict__"))
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            decision.clamped = True  # type: ignore[misc]
+            _assign_attribute(decision, "clamped", replacement=True)
 
     def test_bootstrap_empty_or_all_null_omits_pos(self) -> None:
         for cursors in ((), (None, None)):
@@ -211,9 +220,9 @@ class TestPageCursorCapability(unittest.TestCase):
         self.assertFalse(hasattr(candidate, "__dict__"))
         self.assertFalse(hasattr(receipt, "__dict__"))
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            candidate.page_sequence = 1  # type: ignore[misc]
+            _assign_attribute(candidate, "page_sequence", 1)
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            receipt.page_sequence = 1  # type: ignore[misc]
+            _assign_attribute(receipt, "page_sequence", 1)
 
     def test_private_receipt_surface_is_not_publicly_exported(self) -> None:
         self.assertIn("PageCursorCandidate", cursor_policy.__all__)
@@ -230,14 +239,14 @@ class TestPageCursorCapability(unittest.TestCase):
                 grant=grant,
                 page_sequence=0,
                 last_pos=_NEXT_POS,
-                _seal=object(),
+                _seal=cursor_policy._CandidateSeal(),
             )
         with self.assertRaises(cursor_policy.CursorIntegrityError):
             cursor_policy._CoveredPage(
                 grant=grant,
                 page_sequence=0,
                 last_pos=_NEXT_POS,
-                _seal=object(),
+                _seal=cursor_policy._CandidateSeal(),
             )
 
     def test_private_issuer_rejects_structural_candidate(self) -> None:
@@ -248,7 +257,9 @@ class TestPageCursorCapability(unittest.TestCase):
         )
 
         with self.assertRaises(cursor_policy.CursorIntegrityError):
-            cursor_policy._issue_covered_page(fake)  # type: ignore[arg-type]
+            cursor_policy._issue_covered_page(
+                typing.cast("cursor_policy.PageCursorCandidate", fake)
+            )
 
 
 class TestLeaseCursor(unittest.TestCase):
@@ -342,7 +353,9 @@ class TestLeaseCursor(unittest.TestCase):
         for receipt in (None, fake):
             with self.subTest(receipt=receipt):
                 with self.assertRaises(cursor_policy.CursorIntegrityError):
-                    self.cursor.accept(receipt)  # type: ignore[arg-type]
+                    self.cursor.accept(
+                        typing.cast("cursor_policy._CoveredPage", receipt)
+                    )
                 self.assertEqual(_cursor_state(self.cursor), before)
 
     def test_cross_grant_receipt_is_non_mutating(self) -> None:
