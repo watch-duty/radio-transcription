@@ -151,6 +151,23 @@ class _BoundaryCoordinator:
         *,
         final_logical: bool,
     ) -> _types._BoundaryPressureResult:
+        """Own and await the coordinator's sole outstanding generation.
+
+        Args:
+            final_logical: Whether the generation is a page's required final
+                attempt, including an empty physical batch.
+
+        Returns:
+            The closed pressure result correlated to this generation.
+
+        Raises:
+            _BoundaryCoordinatorError: The coordinator closes or fails before
+                the generation settles.
+            _BoundaryAuthorityLostError: The exact grant was rejected.
+
+        The condition admits only one requester beyond the completed counter,
+        so the boolean final marker always belongs to that exact generation.
+        """
         async with self._generation_changed:
             self._raise_unavailable()
             await self._generation_changed.wait_for(
@@ -358,6 +375,21 @@ class _BoundaryCoordinator:
     async def _settle_committed[ResultT](
         self, awaitable: typing.Awaitable[ResultT]
     ) -> tuple[ResultT, bool]:
+        """Settle a started commit despite coordinator-task cancellation.
+
+        Args:
+            awaitable: External mutation whose closed outcome is now required.
+
+        Returns:
+            The settled result and whether cancellation arrived while waiting.
+
+        Raises:
+            _BoundaryCoordinatorError: Cancellation erased the committed
+                mutation's closed outcome.
+
+        Shielding is bounded to this one commit task; repeated cancellation
+        cannot detach mutation-capable work from its counted boundary records.
+        """
         task = asyncio.ensure_future(awaitable)
         cancelled = False
         while True:

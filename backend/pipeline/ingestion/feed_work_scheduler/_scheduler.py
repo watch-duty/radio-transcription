@@ -253,6 +253,16 @@ class FeedWorkScheduler:
         return self._close_task
 
     async def _coordinate_close(self) -> _types.Undrained | None:
+        """Settle every live exact lane before stopping fixed shard workers.
+
+        Returns:
+            ``None`` after all lanes, held records, and shard workers close;
+            otherwise conservative ``Undrained`` evidence.
+
+        Each lane receives synchronous shutdown intent before this coroutine
+        awaits its shared close task. Any uncertain lane or shard prevents the
+        scheduler from publishing a closed result.
+        """
         lane_tasks = tuple(
             lane._request_close(_types.LaneCloseReason.SCHEDULER_SHUTDOWN)
             for lane in self._lanes.values()

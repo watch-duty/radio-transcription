@@ -1617,6 +1617,15 @@ class _Shard:
         return self._workers[slot_id]
 
     def _check_conservation_locked(self) -> None:
+        """Validate counted capacity and exclusive ownership under the lock.
+
+        Raises:
+            RuntimeError: Held capacity, ready membership, Feed ownership,
+                record state, or fixed-worker ownership is inconsistent.
+
+        Callers treat any failure as scheduler-integrity evidence; this method
+        never repairs uncertain state or releases capacity speculatively.
+        """
         queued = sum(len(queue) for queue in self._feed_queues.values())
         active = len(self._active_by_feed)
         conserved = (

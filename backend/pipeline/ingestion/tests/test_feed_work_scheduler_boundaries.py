@@ -657,11 +657,12 @@ class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
                 ),
             )
             cursor.accept(later)
-            committed_feeds = {
-                boundary.feed_id
-                for _grant_value, batch, _final in committer.calls
-                for boundary in batch
-            }
+            committed_feeds = set()
+            for _grant_value, batch, _final in committer.calls:
+                for boundary in batch:
+                    committed_feeds.add(
+                        typing.cast("typing.Any", boundary).feed_id
+                    )
             self.assertIn(sibling_feed, committed_feeds)
             self.assertFalse((await scheduler._snapshot()).fatal)
         finally:

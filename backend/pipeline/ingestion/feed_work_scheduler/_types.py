@@ -332,7 +332,12 @@ class LaneCloseReason(enum.StrEnum):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LaneClosed:
-    """Proof that one exact lane reached mutation closure."""
+    """Proof that one exact lane reached mutation closure.
+
+    Attributes:
+        grant: Complete immutable Lease generation that is now closed.
+        reason: Strongest close reason settled by the lane coordinator.
+    """
 
     grant: ingestion_lease_store.LeaseGrant
     reason: LaneCloseReason
@@ -348,7 +353,13 @@ class LaneClosed:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class Undrained:
-    """Conservative result when mutation closure cannot be proved."""
+    """Conservative result when mutation closure cannot be proved.
+
+    Attributes:
+        grant: Unsettled exact Lease generation, or ``None`` for process-wide
+            scheduler shutdown.
+        reason: Strongest close reason requested before uncertainty remained.
+    """
 
     grant: ingestion_lease_store.LeaseGrant | None
     reason: LaneCloseReason
@@ -367,7 +378,14 @@ class Undrained:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class FeedRemoved:
-    """Evidence-neutral result for one exact lane-local Feed removal."""
+    """Evidence-neutral result for one exact lane-local Feed removal.
+
+    Attributes:
+        grant: Complete immutable Lease generation scoped by the removal.
+        feed_id: Feed retired only from that exact grant.
+        released_count: Queued calls and pending boundaries safely released.
+        active_retained: Whether admitted active work remains to settle.
+    """
 
     grant: ingestion_lease_store.LeaseGrant
     feed_id: uuid.UUID
