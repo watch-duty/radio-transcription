@@ -19,6 +19,10 @@ class _BoundaryCoordinatorError(RuntimeError):
     """The exact boundary coordinator can no longer settle requests."""
 
 
+class _BoundaryAuthorityLostError(_BoundaryCoordinatorError):
+    """The exact boundary committer rejected this grant generation."""
+
+
 class _DefaultBoundaryCommitter:
     """Deterministic Phase 4 adapter used until Phase 5 wires storage."""
 
@@ -77,13 +81,17 @@ class _BoundaryCoordinator:
         self._requested_final = False
         self._retryable_generation: int | None = None
         self._closing = False
+        self._abandoned = False
+        self._authority_rejected = False
         self._fatal: BaseException | None = None
+        self._close_changed = asyncio.Event()
         self._task = asyncio.create_task(
             self._run(),
             name=(
                 f"feed-boundary-flusher-{grant.lease_key}-{grant.fencing_token}"
             ),
         )
+        self._task.add_done_callback(self._task_settled)
 
     @property
     def task(self) -> asyncio.Task[None]:
@@ -120,7 +128,23 @@ class _BoundaryCoordinator:
         """Stop selection and await any already-committed batch settlement."""
         self._closing = True
         self._signal.set()
-        await self._task
+        if not self._task.done() and not self._abandoned:
+            await self._close_changed.wait()
+        if self._task.done():
+            await self._task
+
+    async def abandon(self, failure: BaseException) -> None:
+        """Fail closed without waiting forever on an unsettled mutation."""
+        if not isinstance(failure, BaseException):
+            message = "failure must be a BaseException"
+            raise TypeError(message)
+        if self._task.done():
+            return
+        self._abandoned = True
+        self._closing = True
+        self._signal.set()
+        await self._fail(failure)
+        self._close_changed.set()
 
     async def _request_generation(
         self,
@@ -164,20 +188,36 @@ class _BoundaryCoordinator:
                 generation = self._requested_generation
                 logical = generation > self._completed_generation
                 final_logical = logical and self._requested_final
-                selected = await self._select_batch()
+                selected = await self._select_batch(
+                    include_suspended=logical,
+                )
                 if not selected and not logical:
                     continue
                 retryable = await self._commit_selected(
                     selected,
                     final_logical=final_logical,
                 )
-                if logical:
-                    async with self._generation_changed:
+                async with self._generation_changed:
+                    if (
+                        not logical
+                        and self._requested_generation
+                        > self._completed_generation
+                        and not self._requested_final
+                    ):
+                        generation = self._requested_generation
+                        logical = True
+                    if logical:
                         self._completed_generation = generation
                         self._retryable_generation = (
                             generation if retryable else None
                         )
                         self._generation_changed.notify_all()
+                    pending_final = (
+                        self._requested_generation > self._completed_generation
+                        and self._requested_final
+                    )
+                    if retryable and not pending_final:
+                        self._signal.clear()
                 if not retryable and await self._has_ready_boundary():
                     self._signal.set()
         except asyncio.CancelledError:
@@ -190,6 +230,8 @@ class _BoundaryCoordinator:
 
     async def _select_batch(
         self,
+        *,
+        include_suspended: bool,
     ) -> tuple[tuple[_shard._Shard, _types._BoundaryRecord], ...]:
         selected = []
         remaining = self._batch_size
@@ -199,6 +241,7 @@ class _BoundaryCoordinator:
             records = await shard.select_boundary_batch(
                 self._grant,
                 remaining,
+                include_suspended=include_suspended,
             )
             selected.extend((shard, record) for record in records)
             remaining -= len(records)
@@ -216,7 +259,7 @@ class _BoundaryCoordinator:
         targets = tuple(
             record.detached_work() for _shard_value, record in selected
         )
-        result = await self._settle_committed(
+        result, cancelled = await self._settle_committed(
             self._committer.commit(
                 self._grant,
                 targets,
@@ -225,7 +268,9 @@ class _BoundaryCoordinator:
         )
         if type(result) is _types.BoundaryGrantRejected:
             await self._discard_selected(selected)
+            self._authority_rejected = True
             self._authority_lost()
+            self._raise_if_cancelled(cancelled=cancelled)
             return False
         if type(result) is not _types.BoundaryBatchCommitted:
             message = "committer returned outside the closed vocabulary"
@@ -265,6 +310,7 @@ class _BoundaryCoordinator:
                 await shard.apply_boundary_results(tuple(shard_results))
                 or retryable
             )
+        self._raise_if_cancelled(cancelled=cancelled)
         return retryable
 
     async def _discard_selected(
@@ -290,18 +336,26 @@ class _BoundaryCoordinator:
 
     async def _settle_committed[ResultT](
         self, awaitable: typing.Awaitable[ResultT]
-    ) -> ResultT:
+    ) -> tuple[ResultT, bool]:
         task = asyncio.ensure_future(awaitable)
+        cancelled = False
         while True:
             try:
-                return await asyncio.shield(task)
+                return await asyncio.shield(task), cancelled
             except asyncio.CancelledError:
+                cancelled = True
                 if not task.done():
                     continue
                 if task.cancelled():
                     message = "committed boundary mutation lost its outcome"
                     raise _BoundaryCoordinatorError(message) from None
-                return task.result()
+                return task.result(), cancelled
+
+    @staticmethod
+    def _raise_if_cancelled(*, cancelled: bool) -> None:
+        if cancelled:
+            message = "boundary flusher was cancelled during settlement"
+            raise _BoundaryCoordinatorError(message)
 
     async def _fail(self, failure: BaseException) -> None:
         if self._fatal is None:
@@ -317,6 +371,13 @@ class _BoundaryCoordinator:
         if self._fatal is not None:
             message = "boundary coordinator integrity failed"
             raise _BoundaryCoordinatorError(message) from self._fatal
+        if self._authority_rejected:
+            message = "boundary committer rejected the exact grant"
+            raise _BoundaryAuthorityLostError(message)
         if self._closing:
             message = "boundary coordinator is closing"
             raise _BoundaryCoordinatorError(message)
+
+    def _task_settled(self, task: asyncio.Task[None]) -> None:
+        del task
+        self._close_changed.set()

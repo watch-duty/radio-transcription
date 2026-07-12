@@ -224,6 +224,7 @@ class FeedWorkScheduler:
             for lane in lanes:
                 self._publish_abandonment(lane.grant, failure)
             for lane in lanes:
+                await lane._boundary_coordinator.abandon(failure)
                 await self._abandon_exact_cancellations(
                     lane.grant,
                     failure,
@@ -562,13 +563,14 @@ class GrantLane:
                 self._grant,
                 failure,
             )
+            await self._boundary_coordinator.abandon(failure)
             await self._scheduler._abandon_exact_cancellations(
                 self._grant,
                 failure,
             )
             raise
 
-    async def cover_page(  # noqa: PLR0915
+    async def cover_page(  # noqa: PLR0912, PLR0915
         self,
         *,
         calls: collections.abc.Iterable[_types.CallSubmission],
@@ -645,6 +647,13 @@ class GrantLane:
                     except _shard._BoundaryReliefRetryableError:
                         message = "boundary pressure relief is retryable"
                         raise RuntimeError(message) from None
+                    except _boundaries._BoundaryAuthorityLostError as exc:
+                        message = "exact grant lost boundary authority"
+                        raise _LaneClosedError(message) from exc
+                    except _boundaries._BoundaryCoordinatorError as exc:
+                        self._scheduler._raise_fatal()
+                        message = "boundary coordinator integrity failed"
+                        raise SchedulerIntegrityError(message) from exc
                     except _shard._AdmissionAbortedError as exc:
                         message = "lane closed during boundary admission"
                         raise _LaneClosedError(message) from exc
@@ -654,6 +663,9 @@ class GrantLane:
                     await self._mark_registered(source_order)
                 try:
                     await self._boundary_coordinator.request_final()
+                except _boundaries._BoundaryAuthorityLostError as exc:
+                    message = "exact grant lost boundary authority"
+                    raise _LaneClosedError(message) from exc
                 except _boundaries._BoundaryCoordinatorError as exc:
                     self._scheduler._raise_fatal()
                     message = "boundary coordinator integrity failed"

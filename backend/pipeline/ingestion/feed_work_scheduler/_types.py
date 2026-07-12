@@ -274,6 +274,7 @@ class _BoundaryRecord:
     provisional_count: int
     state: _RecordState
     aborted_page_sequence: int | None = None
+    retry_suspended: bool = False
 
     def detached_work(self) -> BoundaryWork:
         """Return the immutable target passed across the I/O boundary."""
@@ -444,6 +445,7 @@ class _BoundarySnapshot:
     provisional_page_sequence: int | None
     provisional_count: int
     state: _RecordState
+    retry_suspended: bool
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

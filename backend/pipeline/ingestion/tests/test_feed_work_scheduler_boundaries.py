@@ -104,6 +104,7 @@ class _ControlledCommitter:
         self.dispositions: dict[uuid.UUID, object] = {}
         self.override_result: object | None = None
         self.inspect: typing.Callable[[], None] | None = None
+        self.rejected_grants: set[object] = set()
         self.scripted_dispositions: collections.deque[object] = (
             collections.deque()
         )
@@ -132,6 +133,8 @@ class _ControlledCommitter:
         if self.override_result is not None:
             return self.override_result
         scheduler_types = _types()
+        if grant in self.rejected_grants:
+            return scheduler_types.BoundaryGrantRejected()
         scripted = (
             self.scripted_dispositions.popleft()
             if boundaries and self.scripted_dispositions
@@ -336,6 +339,7 @@ class TestBoundaryOrdering(unittest.IsolatedAsyncioTestCase):
             timeout=1,
         )
         cursor.accept(first)
+        self.assertEqual(committer.calls, [(grant, (), True)])
         executor.release.set()
         await committer.wait_for_calls(2)
 
@@ -369,6 +373,60 @@ class TestBoundaryOrdering(unittest.IsolatedAsyncioTestCase):
 
 
 class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
+    async def test_fence_rejection_closes_only_old_exact_grant(self) -> None:
+        committer = _ControlledCommitter()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+        )
+        await scheduler.start()
+        old = _grant(fencing_token=1)
+        successor = _grant(fencing_token=2)
+        old_lane = scheduler.open_lane(old)
+        successor_lane = scheduler.open_lane(successor)
+        committer.rejected_grants.add(old)
+        old_cursor = cursor_policy.LeaseCursor(old, pos=None)
+        old_candidate = old_cursor.prepare(_SOURCE_TIME)
+
+        with self.assertRaises(RuntimeError) as raised:
+            await old_lane.cover_page(
+                calls=(),
+                boundaries=(_boundary(uuid.UUID(int=1), 1),),
+                candidate=old_candidate,
+            )
+
+        self.assertNotIsInstance(
+            raised.exception,
+            feed_work_scheduler.SchedulerIntegrityError,
+        )
+        self.assertIs(old_cursor.outstanding_candidate, old_candidate)
+        self.assertEqual(
+            await asyncio.wait_for(
+                old_lane.close(
+                    feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS
+                ),
+                timeout=1,
+            ),
+            feed_work_scheduler.LaneClosed(
+                old,
+                feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS,
+            ),
+        )
+        self.assertFalse((await scheduler._snapshot()).fatal)
+
+        successor_cursor = cursor_policy.LeaseCursor(successor, pos=None)
+        receipt = await successor_lane.cover_page(
+            calls=(),
+            boundaries=(_boundary(uuid.UUID(int=1), 2),),
+            candidate=successor_cursor.prepare(_SOURCE_TIME),
+        )
+        self.assertEqual(successor_cursor.accept(receipt), _SOURCE_TIME)
+        await asyncio.wait_for(scheduler._wait_for_idle(), timeout=1)
+        self.assertIn(successor, (call[0] for call in committer.calls))
+        self.assertFalse((await scheduler._snapshot()).fatal)
+        await scheduler.close()
+
     async def test_committer_runs_unlocked_and_member_rejection_is_local(
         self,
     ) -> None:
@@ -646,6 +704,7 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
                 timeout=2,
             )
             self.assertEqual(cursor.accept(replay), _SOURCE_TIME)
+            await asyncio.wait_for(scheduler._wait_for_idle(), timeout=1)
             self.assertEqual((await scheduler._snapshot()).held, 0)
         finally:
             committer.release.set()
@@ -693,6 +752,58 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
             await scheduler.close(),
             feed_work_scheduler.Undrained,
         )
+
+    async def test_never_settling_committed_close_is_undrained(self) -> None:
+        committer = _ControlledCommitter()
+        committer.block_nonempty = True
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        candidate = cursor.prepare(_SOURCE_TIME)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(),
+                boundaries=(_boundary(uuid.UUID(int=1), 1),),
+                candidate=candidate,
+            )
+        )
+        await committer.wait_for_calls(1)
+        coordinator_task = lane._boundary_coordinator.task
+        close = asyncio.create_task(
+            lane.close(feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS)
+        )
+        await asyncio.wait_for(lane._closing_event.wait(), timeout=1)
+
+        close.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await close
+        with self.assertRaises(feed_work_scheduler.SchedulerIntegrityError):
+            await asyncio.wait_for(coverage, timeout=1)
+
+        result = await asyncio.wait_for(
+            lane.close(feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS),
+            timeout=1,
+        )
+        self.assertIsInstance(result, feed_work_scheduler.Undrained)
+        snapshot = await scheduler._snapshot()
+        self.assertTrue(snapshot.fatal)
+        self.assertEqual(snapshot.held, 1)
+        self.assertIs(lane._boundary_coordinator.task, coordinator_task)
+        self.assertFalse(coordinator_task.done())
+        self.assertIsInstance(
+            await scheduler.close(),
+            feed_work_scheduler.Undrained,
+        )
+
+        committer.release.set()
+        await asyncio.wait_for(coordinator_task, timeout=1)
+        self.assertEqual((await scheduler._snapshot()).held, 0)
 
 
 if __name__ == "__main__":

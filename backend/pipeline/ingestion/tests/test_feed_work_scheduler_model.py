@@ -232,6 +232,7 @@ class _BoundaryOracleRecord:
     provisional_page: int | None
     state: _ModelState
     aborted_page: int | None = None
+    retry_suspended: bool = False
 
 
 class _BoundaryProvenanceModel:
@@ -277,12 +278,15 @@ class _BoundaryProvenanceModel:
         if flushing is not None and flushing.provisional_page == page:
             flushing.aborted_page = page
 
-    def detach(self) -> bool:
+    def detach(self, *, include_suspended: bool) -> bool:
         if self.pending is None or self.flushing is not None:
+            return False
+        if self.pending.retry_suspended and not include_suspended:
             return False
         self.flushing = self.pending
         self.pending = None
         self.flushing.state = _ModelState.FLUSHING_BOUNDARY
+        self.flushing.retry_suspended = False
         return True
 
     def settle(self, *, retryable: bool) -> None:
@@ -300,6 +304,7 @@ class _BoundaryProvenanceModel:
             record.provisional_page = None
         record.aborted_page = None
         record.state = _ModelState.PENDING_BOUNDARY
+        record.retry_suspended = True
         if self.pending is not None:
             _violation("retryable boundary collided with pending state")
         self.pending = record
@@ -314,6 +319,7 @@ class _BoundaryProvenanceModel:
                 datetime.datetime | None,
                 int | None,
                 _ModelState,
+                bool,
             ],
             ...,
         ],
@@ -324,6 +330,7 @@ class _BoundaryProvenanceModel:
                 record.stable,
                 record.provisional_page,
                 record.state,
+                record.retry_suspended,
             )
             for record in (self.flushing, self.pending)
             if record is not None
@@ -1295,10 +1302,14 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
                         await shard.abort_boundary_page(grant, page)
                         page += 1
                     elif command == 3:
-                        expected = model.detach()
+                        include_suspended = bool(generator.randrange(2))
+                        expected = model.detach(
+                            include_suspended=include_suspended
+                        )
                         selected = await shard.select_boundary_batch(
                             grant,
                             1,
+                            include_suspended=include_suspended,
                         )
                         self.assertEqual(bool(selected), expected)
                     elif command == 4 and model.flushing is not None:
@@ -1332,6 +1343,7 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
                             boundary.stable_target,
                             boundary.provisional_page_sequence,
                             _ModelState(boundary.state.value),
+                            boundary.retry_suspended,
                         )
                         for boundary in snapshot.boundaries
                     )

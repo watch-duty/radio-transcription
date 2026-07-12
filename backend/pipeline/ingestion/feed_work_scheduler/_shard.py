@@ -360,12 +360,17 @@ class _Shard:
         self,
         grant: ingestion_lease_store.LeaseGrant,
         limit: int,
+        *,
+        include_suspended: bool = False,
     ) -> tuple[_types._BoundaryRecord, ...]:
         """Detach a bounded ready exact-grant prefix under the shard lock."""
         if not isinstance(grant, ingestion_lease_store.LeaseGrant):
             message = "grant must be a LeaseGrant"
             raise TypeError(message)
         _types._require_positive_integer(limit, "limit")
+        if not isinstance(include_suspended, bool):
+            message = "include_suspended must be a boolean"
+            raise TypeError(message)
         async with self._lock:
             self._raise_fatal_locked()
             selected = []
@@ -378,10 +383,14 @@ class _Shard:
                     break
                 if record.grant != grant:
                     continue
-                if not self._boundary_is_ready_locked(record):
+                if not self._boundary_is_ready_locked(
+                    record,
+                    include_suspended=include_suspended,
+                ):
                     continue
                 del self._pending_boundaries[scope]
                 record.state = _types._RecordState.FLUSHING_BOUNDARY
+                record.retry_suspended = False
                 self._flushing_boundaries[record.local_sequence] = record
                 self._active_boundaries[record.feed_id] = record
                 selected.append(record)
@@ -570,6 +579,7 @@ class _Shard:
                     ),
                     provisional_count=record.provisional_count,
                     state=record.state,
+                    retry_suspended=record.retry_suspended,
                 )
                 for record in sorted(
                     (
@@ -1355,12 +1365,44 @@ class _Shard:
             record.provisional_count = 0
         record.aborted_page_sequence = None
         record.state = _types._RecordState.PENDING_BOUNDARY
+        record.retry_suspended = True
         scope = (record.grant, record.feed_id)
-        if scope in self._pending_boundaries:
-            message = "retryable restore collided with a pending boundary"
-            raise RuntimeError(message)
+        pending = self._pending_boundaries.pop(scope, None)
+        if pending is not None:
+            provisional_pages = {
+                page
+                for page in (
+                    record.provisional_page_sequence,
+                    pending.provisional_page_sequence,
+                )
+                if page is not None
+            }
+            if len(provisional_pages) > 1:
+                message = "retryable merge crossed live boundary pages"
+                raise RuntimeError(message)
+            stable_targets = tuple(
+                target
+                for target in (record.stable_target, pending.stable_target)
+                if target is not None
+            )
+            record.stable_target = (
+                max(stable_targets) if stable_targets else None
+            )
+            record.target = max(record.target, pending.target)
+            record.provisional_page_sequence = next(
+                iter(provisional_pages),
+                None,
+            )
+            record.provisional_count += pending.provisional_count
+            self._held -= 1
+            self._after_release_locked(1)
         self._pending_boundaries[scope] = record
-        self._ready_call_or_boundary_locked(record.feed_id)
+        if (
+            record.feed_id not in self._active_by_feed
+            and record.feed_id not in self._active_boundaries
+            and record.feed_id in self._feed_queues
+        ):
+            self._ensure_ready_locked(record.feed_id)
 
     def _ready_call_or_boundary_locked(self, feed_id: uuid.UUID) -> None:
         if (
@@ -1380,9 +1422,12 @@ class _Shard:
     def _boundary_is_ready_locked(
         self,
         record: _types._BoundaryRecord,
+        *,
+        include_suspended: bool = False,
     ) -> bool:
         return (
             record.state is _types._RecordState.PENDING_BOUNDARY
+            and (include_suspended or not record.retry_suspended)
             and record.feed_id not in self._feed_queues
             and record.feed_id not in self._active_by_feed
             and record.feed_id not in self._active_boundaries
