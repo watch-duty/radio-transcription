@@ -429,6 +429,16 @@ class TestSchedulerConstants(unittest.TestCase):
         self.assertEqual(scheduler_types.PRODUCTION_HIGH_WATER, 400)
         self.assertEqual(scheduler_types.PRODUCTION_RESUME_AT, 299)
 
+    def test_production_affinity_is_exact_uuid_modulo(self) -> None:
+        scheduler_types = _scheduler_types()
+
+        for feed_id in _FEED_IDS:
+            with self.subTest(feed_id=feed_id):
+                self.assertEqual(
+                    scheduler_types._shard_index(feed_id),
+                    feed_id.int % 8,
+                )
+
     def test_private_model_limits_validate_ordering(self) -> None:
         scheduler_types = _scheduler_types()
         valid = scheduler_types._SchedulerLimits(
@@ -926,6 +936,57 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
                         f"seed={seed} step={step} command={command}",
                     )
 
+    async def test_exact_purge_keeps_active_successor_and_sibling(self) -> None:
+        scheduler_types = _scheduler_types()
+        shard_module = _scheduler_shard()
+        limits = scheduler_types._SchedulerLimits(
+            shard_count=1,
+            capacity=6,
+            workers_per_shard=1,
+            high_water=6,
+            resume_at=3,
+        )
+        shard = shard_module._Shard(
+            0,
+            _ImmediateExecutor(),
+            limits=limits,
+        )
+        old = _grant(fencing_token=7)
+        successor = _grant(fencing_token=8)
+        sibling = _grant(lease_key="151", fencing_token=7)
+        old_record = await shard.admit(_call_work(_FEED_IDS[0], old, 0))
+        successor_record = await shard.admit(
+            _call_work(_FEED_IDS[0], successor, 1)
+        )
+        sibling_record = await shard.admit(_call_work(_FEED_IDS[1], sibling, 2))
+        active_old = await shard._take_next(0, wait=False)
+        self.assertIs(active_old, old_record)
+
+        result = await shard.purge_exact(old)
+
+        self.assertEqual(result.released_sequences, ())
+        self.assertEqual(result.active_sequences, (0,))
+        snapshot = await shard.snapshot()
+        self.assertEqual(snapshot.held, 3)
+        self.assertEqual(
+            tuple(record.local_sequence for record in snapshot.records),
+            (0, 1, 2),
+        )
+        await shard._terminalize(
+            0,
+            old_record,
+            scheduler_types._ExecutorCompleted(),
+        )
+        snapshot = await shard.snapshot()
+        self.assertEqual(snapshot.held, 2)
+        self.assertEqual(
+            tuple(record.local_sequence for record in snapshot.records),
+            (
+                successor_record.local_sequence,
+                sibling_record.local_sequence,
+            ),
+        )
+
     async def test_exact_hysteresis_waits_without_registration(self) -> None:
         scheduler_types = _scheduler_types()
         shard_module = _scheduler_shard()
@@ -1061,6 +1122,25 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
         finally:
             await shard.close()
 
+    async def test_production_start_registers_exactly_four_workers(
+        self,
+    ) -> None:
+        shard_module = _scheduler_shard()
+        shard = shard_module._Shard(0, _ImmediateExecutor())
+
+        await shard.start()
+        try:
+            snapshot = await shard.snapshot()
+            self.assertEqual(len(snapshot.workers), 4)
+            self.assertTrue(
+                all(worker.task_registered for worker in snapshot.workers)
+            )
+            self.assertTrue(
+                all(not worker.task_done for worker in snapshot.workers)
+            )
+        finally:
+            await shard.close()
+
     async def test_expected_cancellation_settles_before_slot_reuse(
         self,
     ) -> None:
@@ -1129,6 +1209,43 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(requests[0].task, timeout=1)
         snapshot = await shard.snapshot()
         self.assertEqual(snapshot.held, 1)
+        self.assertTrue(snapshot.workers[0].task_done)
+
+    async def test_unclassified_cancellation_wakes_waiters_and_fails_closed(
+        self,
+    ) -> None:
+        shard_module = _scheduler_shard()
+        executor = _CancellationExecutor(swallow=False)
+        limits = _scheduler_types()._SchedulerLimits(
+            shard_count=1,
+            capacity=2,
+            workers_per_shard=1,
+            high_water=1,
+            resume_at=0,
+        )
+        shard = shard_module._Shard(0, executor, limits=limits)
+        grant = _grant()
+        await shard.start()
+        await shard.admit(_call_work(_FEED_IDS[0], grant, 0))
+        await asyncio.wait_for(executor.entered.wait(), timeout=1)
+        blocked = asyncio.create_task(
+            shard.admit(_call_work(_FEED_IDS[1], grant, 1))
+        )
+        await shard.wait_for_capacity_waiters(1)
+        worker_task = shard._workers[0].task
+        self.assertIsNotNone(worker_task)
+        typing.cast("asyncio.Task[None]", worker_task).cancel()
+        await shard.wait_for_fatal()
+
+        with self.assertRaises(shard_module._ShardFatalError):
+            await blocked
+        with self.assertRaises(asyncio.CancelledError):
+            await typing.cast("asyncio.Task[None]", worker_task)
+        snapshot = await shard.snapshot()
+        self.assertTrue(snapshot.fatal)
+        self.assertFalse(snapshot.admission_open)
+        self.assertEqual(snapshot.held, 1)
+        self.assertEqual(snapshot.active_calls, 1)
         self.assertTrue(snapshot.workers[0].task_done)
 
     async def test_unexpected_worker_failure_is_persistent_and_unreplaced(
