@@ -861,6 +861,7 @@ class GrantSupervisor:
             grant_lost=managed.grant_lost,
             set_retrying=lambda retrying: self._set_retrying(key, retrying),
         )
+        acknowledged_closed_outcome = False
         try:
             outcome = await run(context)
             if not isinstance(
@@ -874,20 +875,16 @@ class GrantSupervisor:
             ):
                 msg = "runner returned an invalid closed outcome"
                 raise grant_control.GrantControlIntegrityError(msg)
+            acknowledged_closed_outcome = True
             current = self._registry.get(key)
             if current is managed:
                 managed.closed_outcome = outcome
-        except asyncio.CancelledError:
-            current = self._registry.get(key)
-            if current is managed:
-                managed.closed_outcome = grant_control.RunStopped(
-                    grant_control.TerminalCause.CANCELLATION
-                )
         finally:
             if managed.retrying:
                 self._set_retrying(key, False)  # noqa: FBT003
-            managed.runner_closed.set()
-            self._handle_runner_closed(key)
+            if acknowledged_closed_outcome:
+                managed.runner_closed.set()
+                self._handle_runner_closed(key)
 
     def _set_retrying(
         self,
@@ -1491,6 +1488,47 @@ class GrantSupervisor:
             + sum(not managed.runner_closed.is_set() for managed in current),
         )
 
+    def _refine_shutdown_failure(self, managed: _ManagedGrant) -> None:
+        """Resolve one provisional shutdown reservation to real failure."""
+        if (
+            self._current_exact(managed.key) is not managed
+            or managed.terminal_state is not TerminalState.RESERVED
+            or managed.terminal_kind is not _ReservationKind.SHUTDOWN
+            or not isinstance(managed.closed_outcome, grant_control.RunFailed)
+        ):
+            return
+        try:
+            decision = managed.domain.terminal_decision_for(
+                managed.closed_outcome
+            )
+        except Exception as exc:
+            managed.terminal_state = TerminalState.ABANDONED
+            managed.terminal_kind = _ReservationKind.UNCERTAIN
+            managed.terminal_decision = _UncertainAbandonment()
+            self._surface_integrity_failure(exc)
+            return
+        if not isinstance(decision, _STORAGE_DECISION_TYPES):
+            failure = grant_control.GrantControlIntegrityError(
+                "shutdown failure selector returned an invalid decision"
+            )
+            managed.terminal_state = TerminalState.ABANDONED
+            managed.terminal_kind = _ReservationKind.UNCERTAIN
+            managed.terminal_decision = _UncertainAbandonment()
+            self._surface_integrity_failure(failure)
+            return
+        managed.terminal_kind = _ReservationKind.STORAGE
+        managed.terminal_decision = decision
+        self._emit_lifecycle(
+            _LifecycleEvent.SHUTDOWN,
+            managed.domain,
+            outcome="refined_failure",
+        )
+
+    def _refine_shutdown_failures(self) -> None:
+        """Resolve every closed provisional shutdown failure once."""
+        for managed in tuple(self._registry.values()):
+            self._refine_shutdown_failure(managed)
+
     async def shutdown(
         self,
         *,
@@ -1568,6 +1606,8 @@ class GrantSupervisor:
                 managed.terminal_decision = _UncertainAbandonment()
                 managed.grant_lost.set()
 
+        self._refine_shutdown_failures()
+
         await stop_heartbeat_supervision()
         self._heartbeat_stopped.set()
 
@@ -1577,7 +1617,8 @@ class GrantSupervisor:
             if self._current_exact(managed.key) is managed
             and managed.runner_closed.is_set()
             and managed.terminal_state is TerminalState.RESERVED
-            and managed.terminal_kind is _ReservationKind.SHUTDOWN
+            and managed.terminal_kind
+            in (_ReservationKind.SHUTDOWN, _ReservationKind.STORAGE)
         )
         effects = (
             await asyncio.gather(*shutdown_tasks) if shutdown_tasks else ()

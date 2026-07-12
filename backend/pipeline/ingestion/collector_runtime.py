@@ -95,6 +95,27 @@ INGESTION_IO_MAX_WORKERS = 512
 _UUID_INT_RANGE = 1 << 128
 
 
+class _CommittedMutationCancelled(BaseException):
+    """A committed-stage child stopped without a knowable outcome."""
+
+
+async def _settle_committed_awaitable[ResultT](
+    awaitable: typing.Awaitable[ResultT],
+) -> ResultT:
+    """Defer caller cancellation until committed mutation has settled."""
+    task = asyncio.ensure_future(awaitable)
+    while True:
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            if not task.done():
+                continue
+            if task.cancelled():
+                msg = "committed mutation was cancelled with unknown outcome"
+                raise _CommittedMutationCancelled(msg) from exc
+            return task.result()
+
+
 def _bounded_jitter(max_sec: float) -> float:
     """Return bounded non-cryptographic scheduling jitter."""
     if max_sec <= 0.0:
@@ -1052,35 +1073,38 @@ class CollectorRuntime:
             raise LeaseExpiredError(msg)
 
         try:
-            message_id = await retry_with_lease_check(
-                gcp_helper.publish_audio_chunk,
-                self._pubsub_client,
-                topic_path,
-                str(feed["id"]),
-                feed["name"],
-                gcs_uri,
-                captured_chunk.session_id,
-                captured_chunk.chunk_start_time,
-                duration_ms,
-                feed["source_type"],
-                captured_chunk.external_audio_segment_id,
-                lease_lost=context.grant_lost,
-                shutdown=context.stop_requested,
-                max_retries=settings.pubsub_publish_max_retries,
-                base_delay_sec=settings.pubsub_publish_retry_base_delay_sec,
-                max_delay_sec=settings.pubsub_publish_retry_max_delay_sec,
-                retryable=(
-                    google_exceptions.Aborted,
-                    google_exceptions.DeadlineExceeded,
-                    google_exceptions.InternalServerError,
-                    google_exceptions.ResourceExhausted,
-                    google_exceptions.ServiceUnavailable,
-                    google_exceptions.Unknown,
-                    google_exceptions.Cancelled,
-                    pubsub_exceptions.PublishToPausedOrderingKeyException,
-                ),
-                operation_name="Pub/Sub publish",
-                retry_state_changed=context.set_retrying,
+            committed_stage_signal = asyncio.Event()
+            message_id = await _settle_committed_awaitable(
+                retry_with_lease_check(
+                    gcp_helper.publish_audio_chunk,
+                    self._pubsub_client,
+                    topic_path,
+                    str(feed["id"]),
+                    feed["name"],
+                    gcs_uri,
+                    captured_chunk.session_id,
+                    captured_chunk.chunk_start_time,
+                    duration_ms,
+                    feed["source_type"],
+                    captured_chunk.external_audio_segment_id,
+                    lease_lost=committed_stage_signal,
+                    shutdown=committed_stage_signal,
+                    max_retries=settings.pubsub_publish_max_retries,
+                    base_delay_sec=settings.pubsub_publish_retry_base_delay_sec,
+                    max_delay_sec=settings.pubsub_publish_retry_max_delay_sec,
+                    retryable=(
+                        google_exceptions.Aborted,
+                        google_exceptions.DeadlineExceeded,
+                        google_exceptions.InternalServerError,
+                        google_exceptions.ResourceExhausted,
+                        google_exceptions.ServiceUnavailable,
+                        google_exceptions.Unknown,
+                        google_exceptions.Cancelled,
+                        pubsub_exceptions.PublishToPausedOrderingKeyException,
+                    ),
+                    operation_name="Pub/Sub publish",
+                    retry_state_changed=context.set_retrying,
+                )
             )
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
@@ -1341,12 +1365,14 @@ class CollectorRuntime:
             )
             return grant_control.RunFailed(status_reason, reason)
 
+        capture_iterator: AsyncIterator[CaptureEvent] | None = None
         try:
-            async for capture_event in self._capture_fn(
+            capture_iterator = self._capture_fn(
                 feed,
                 context.stop_requested,
                 self._capture_resources,
-            ):
+            )
+            async for capture_event in capture_iterator:
                 if isinstance(capture_event, SourceObservation):
                     should_continue = await self._process_source_observation(
                         feed,
@@ -1477,6 +1503,17 @@ class CollectorRuntime:
                 status_reason=status_reason,
             )
             return grant_control.RunFailed(status_reason, reason)
+        finally:
+            if capture_iterator is not None:
+                aclose = getattr(capture_iterator, "aclose", None)
+                if not callable(aclose):
+                    msg = "capture iterator must support acknowledged aclose"
+                    raise grant_control.GrantControlIntegrityError(msg)
+                close = typing.cast(
+                    "typing.Callable[[], typing.Awaitable[None]]",
+                    aclose,
+                )
+                await close()
 
         if context.grant_lost.is_set():
             return grant_control.RunLost()

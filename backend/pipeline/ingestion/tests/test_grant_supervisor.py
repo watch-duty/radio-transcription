@@ -481,11 +481,11 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             runner.finish.set()
             runner.release_child.set()
         for managed in tuple(supervisor._registry.values()):
+            managed.stop_requested.set()
+            managed.grant_lost.set()
             task = managed.root_task
-            if task is not None and not task.done():
-                task.cancel()
             if task is not None:
-                await task
+                await asyncio.wait_for(task, timeout=1)
         await supervisor._settle_terminal_tasks()
 
     async def test_feed_and_sid_share_admission_and_generation_contract(
@@ -1810,6 +1810,59 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sid_control.finalize_calls, [])
         self.assertEqual(supervisor._process_owned, 1)
 
+    async def test_raw_runner_cancellation_is_unclosed_and_never_released(
+        self,
+    ) -> None:
+        profile = _profile(
+            process_cap=1,
+            feed_cap=1,
+            feed_budget=1,
+            domains=(grant_control.DomainId.FEED,),
+        )
+        (
+            supervisor,
+            feed_control,
+            _feed_runner,
+            _sid_control,
+            _sid_runner,
+        ) = self._mixed(profile)
+        feed_id = uuid.UUID(int=161)
+        feed_control.results[grant_control.ClaimMode.PRIMARY] = (
+            _claim(
+                feed_store.FeedGrant(feed_id, _OWNER_ID, 1),
+                _leased_feed(feed_id),
+            ),
+        )
+        await supervisor.admit_cycle(_OWNER_ID)
+        managed = next(iter(supervisor._registry.values()))
+        root_task = managed.root_task
+        self.assertIsNotNone(root_task)
+        assert root_task is not None
+
+        root_task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await root_task
+
+        self.assertFalse(managed.runner_closed.is_set())
+
+        async def stop_heartbeat() -> None:
+            return None
+
+        result = await supervisor.shutdown(
+            cooperative_grace_sec=0,
+            external_stop_deadline_sec=0,
+            stop_heartbeat_supervision=stop_heartbeat,
+        )
+
+        self.assertEqual(result, grant_supervisor.ShutdownResult(0, 1, 1))
+        self.assertEqual(feed_control.finalize_calls, [])
+        self.assertEqual(supervisor._process_owned, 1)
+        managed = next(iter(supervisor._registry.values()))
+        self.assertIs(
+            managed.terminal_state,
+            grant_supervisor.TerminalState.ABANDONED,
+        )
+
     async def test_shutdown_finalization_respects_bounded_concurrency(
         self,
     ) -> None:
@@ -1967,7 +2020,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(feed_control.heartbeat_calls, [])
         self.assertEqual(len(feed_control.finalize_calls), 1)
 
-    async def test_shutdown_reservation_wins_before_failed_runner_observes_stop(
+    async def test_shutdown_reservation_refines_to_failed_runner_decision(
         self,
     ) -> None:
         profile = _profile(
@@ -2019,7 +2072,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(feed_control.finalize_calls), 1)
         self.assertIsInstance(
             feed_control.finalize_calls[0][1],
-            grant_control.NeutralRelease,
+            grant_control.BudgetedFailureDecision,
         )
 
     async def test_snapshot_and_lifecycle_records_are_low_cardinality(

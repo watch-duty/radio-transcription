@@ -797,6 +797,157 @@ class TestProcessFeedSideEffectOrdering(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(call_order, ["upload", "bookmark", "publish"])
 
+    async def test_stop_after_bookmark_still_settles_publish(self) -> None:
+        """A committed bookmark makes publication a required final step."""
+
+        async def _one_chunk(feed, shutdown, _resources):
+            yield _make_captured_chunk(b"audio")
+
+        context = _make_run_context()
+        call_order: list[str] = []
+
+        async def _upload(*_args: object, **_kwargs: object) -> str:
+            call_order.append("upload")
+            return "gs://b/p"
+
+        async def _bookmark(*_args: object, **_kwargs: object) -> bool:
+            call_order.append("bookmark")
+            context.stop_requested.set()
+            return True
+
+        async def _publish(*_args: object, **_kwargs: object) -> str:
+            call_order.append("publish")
+            return "message-1"
+
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress = mock.AsyncMock(side_effect=_bookmark)
+
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.upload_staged_audio",
+                mock.AsyncMock(side_effect=_upload),
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_audio_chunk",
+                mock.AsyncMock(side_effect=_publish),
+            ),
+        ):
+            outcome = await _run_feed(rt, _FEED, context=context)
+
+        self.assertEqual(call_order, ["upload", "bookmark", "publish"])
+        self.assertEqual(
+            outcome,
+            grant_control.RunStopped(grant_control.TerminalCause.SHUTDOWN),
+        )
+
+    async def test_hard_cancel_during_publish_is_undrained_and_not_released(
+        self,
+    ) -> None:
+        async def _one_chunk(feed, shutdown, _resources):
+            yield _make_captured_chunk(b"audio")
+
+        publish_started = asyncio.Event()
+        release_publish = asyncio.Event()
+
+        async def _publish(*_args: object, **_kwargs: object) -> str:
+            publish_started.set()
+            await release_publish.wait()
+            return "message-1"
+
+        rt = CollectorRuntime(
+            capture_fn=_one_chunk,
+            settings=_make_settings(
+                max_feeds_per_worker=1,
+                lease_admission_cycle_budget=1,
+            ),
+        )
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        allocation = worker_profiles.allocation_for_domain(
+            rt._collector_settings.worker_profile,
+            grant_control.DomainId.FEED,
+        )
+        assert allocation is not None
+        control = mock.AsyncMock()
+        claimed = False
+
+        async def claim(mode, owner_worker_id, limit):
+            nonlocal claimed
+            if mode is grant_control.ClaimMode.RECOVERY or claimed:
+                return ()
+            claimed = True
+            return (
+                grant_control.ClaimedGrant(
+                    grant=_make_feed_grant(),
+                    payload=_FEED,
+                    lifecycle=grant_control.LifecycleEvidence(
+                        durable_failing=False
+                    ),
+                ),
+            )
+
+        control.claim.side_effect = claim
+        supervisor = grant_supervisor.GrantSupervisor(
+            rt._collector_settings.worker_profile,
+            (
+                grant_supervisor.RegisteredDomain(
+                    domain_id=grant_control.DomainId.FEED,
+                    authority_kind=worker_profiles.AuthorityKind.FEED,
+                    grant_type=FeedGrant,
+                    payload_validator=collector_runtime._is_leased_feed_payload,
+                    authority_of=collector_runtime._feed_authority,
+                    owner_of=collector_runtime._feed_owner,
+                    fencing_token_of=collector_runtime._feed_fencing_token,
+                    control=control,
+                    runner=collector_runtime._FeedRunner(rt),
+                    allocation=allocation,
+                    terminal_decision_for=rt._feed_terminal_decision,
+                ),
+            ),
+            finalize_concurrency=1,
+        )
+
+        with (
+            _mock_upload_audio(),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.gcp_helper.publish_audio_chunk",
+                mock.AsyncMock(side_effect=_publish),
+            ),
+        ):
+            await supervisor.admit_cycle(_WORKER_ID)
+            await asyncio.wait_for(publish_started.wait(), timeout=1)
+
+            async def stop_heartbeat() -> None:
+                return None
+
+            result = await supervisor.shutdown(
+                cooperative_grace_sec=0,
+                external_stop_deadline_sec=0,
+                stop_heartbeat_supervision=stop_heartbeat,
+            )
+
+            self.assertEqual(
+                result,
+                grant_supervisor.ShutdownResult(0, 1, 1),
+            )
+            control.finalize.assert_not_awaited()
+            release_publish.set()
+            managed = next(iter(supervisor._registry.values()))
+            root_task = managed.root_task
+            self.assertIsNotNone(root_task)
+            assert root_task is not None
+            await root_task
+
+        control.finalize.assert_not_awaited()
+        self.assertTrue(managed.runner_closed.is_set())
+
     async def test_chunk_ingested_slo_includes_stream_interval_lag(
         self,
     ) -> None:
@@ -876,8 +1027,9 @@ class TestProcessFeedFenceViolation(unittest.IsolatedAsyncioTestCase):
 class TestProcessFeedShutdown(unittest.IsolatedAsyncioTestCase):
     """Tests for _process_feed shutdown behavior."""
 
-    async def test_shutdown_skips_individual_release(self) -> None:
-        """When shutdown is set, task returns without calling release_feed."""
+    async def test_pre_requested_shutdown_has_no_pipeline_side_effects(
+        self,
+    ) -> None:
 
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
@@ -887,18 +1039,67 @@ class TestProcessFeedShutdown(unittest.IsolatedAsyncioTestCase):
             settings=_make_settings(),
             runtime_actor_id=_RUNTIME_ACTOR_ID,
         )
-        rt._shutdown = asyncio.Event()
-        rt._shutdown.set()
-        rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
-        rt._releasing_feeds = set()
 
-        with _mock_upload_audio(), _mock_pubsub_publish():
-            await _run_feed(rt, _FEED)
+        with (
+            _mock_upload_audio() as upload,
+            _mock_pubsub_publish() as publish,
+        ):
+            outcome = await _run_feed(
+                rt,
+                _FEED,
+                context=_make_run_context(stopped=True),
+            )
 
-        rt._store.release_feed.assert_not_called()
+        self.assertEqual(
+            outcome,
+            grant_control.RunStopped(grant_control.TerminalCause.SHUTDOWN),
+        )
+        upload.assert_not_awaited()
+        publish.assert_not_awaited()
+        rt._store.update_feed_progress.assert_not_awaited()
+
+
+class TestProcessFeedIteratorCleanup(unittest.IsolatedAsyncioTestCase):
+    """The runner acknowledges closure only after capture cleanup."""
+
+    async def test_early_stop_awaits_capture_aclose(self) -> None:
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        cleanup_done = asyncio.Event()
+
+        async def _one_observation(feed, shutdown, _resources):
+            try:
+                shutdown.set()
+                yield SourceObservation()
+            finally:
+                cleanup_started.set()
+                await release_cleanup.wait()
+                cleanup_done.set()
+
+        rt = CollectorRuntime(
+            capture_fn=_one_observation,
+            settings=_make_settings(),
+        )
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        context = _make_run_context()
+
+        running = asyncio.create_task(_run_feed(rt, _FEED, context=context))
+        await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+
+        self.assertFalse(running.done())
+        self.assertFalse(cleanup_done.is_set())
+        release_cleanup.set()
+        outcome = await running
+
+        self.assertTrue(cleanup_done.is_set())
+        self.assertEqual(
+            outcome,
+            grant_control.RunStopped(grant_control.TerminalCause.SHUTDOWN),
+        )
 
 
 class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
@@ -2278,32 +2479,32 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(retry_transitions, [True, False])
         rt._store.release_feed.assert_not_awaited()
 
-    async def test_lease_lost_during_upload_aborts_without_db_write(
+    async def test_preconfirmed_grant_loss_has_no_pipeline_side_effects(
         self,
     ) -> None:
-        """LeaseExpiredError aborts cleanly — no report_feed_failure call."""
-
         async def _one_chunk(feed, shutdown, _resources):
             yield _make_captured_chunk(b"audio")
 
         rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
-        rt._shutdown = asyncio.Event()
-        rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
-        rt._lease_lost.set()
         rt._store = mock.AsyncMock()
-        rt._releasing_feeds = set()
 
         with (
             mock.patch(
                 "backend.pipeline.ingestion.collector_runtime.gcp_helper.upload_staged_audio",
                 mock.AsyncMock(return_value="gs://b/p"),
-            ),
-            _mock_pubsub_publish(),
+            ) as upload,
+            _mock_pubsub_publish() as publish,
         ):
-            await _run_feed(rt, _FEED)
+            outcome = await _run_feed(
+                rt,
+                _FEED,
+                context=_make_run_context(lost=True),
+            )
 
-        # LeaseExpiredError caught by dedicated handler — no DB write attempted
+        self.assertIsInstance(outcome, grant_control.RunLost)
+        upload.assert_not_awaited()
+        publish.assert_not_awaited()
         rt._store.report_feed_failure.assert_not_awaited()
         rt._store.release_feed.assert_not_awaited()
 
@@ -2314,19 +2515,23 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
             yield _make_captured_chunk(b"audio")
 
         rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
-        rt._shutdown = asyncio.Event()
-        rt._lease_lost = asyncio.Event()
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
-        # Bookmark fails with a retryable error, then lease is lost
         rt._store.update_feed_progress.side_effect = asyncpg.InterfaceError(
             "connection lost"
         )
-        rt._releasing_feeds = set()
+        stop_requested = asyncio.Event()
+        grant_lost = asyncio.Event()
 
-        async def _set_lease_lost_soon() -> None:
-            await asyncio.sleep(0.01)
-            rt._lease_lost.set()
+        def retry_state_changed(retrying: bool) -> None:  # noqa: FBT001
+            if retrying:
+                grant_lost.set()
+
+        context = grant_control.RunContext(
+            stop_requested=stop_requested,
+            grant_lost=grant_lost,
+            set_retrying=retry_state_changed,
+        )
 
         with (
             mock.patch(
@@ -2335,11 +2540,10 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
             ),
             _mock_pubsub_publish(),
         ):
-            task = asyncio.create_task(_set_lease_lost_soon())
-            await _run_feed(rt, _FEED)
-            await task
+            outcome = await _run_feed(rt, _FEED, context=context)
 
-        # LeaseExpiredError caught by dedicated handler — no DB write attempted
+        self.assertIsInstance(outcome, grant_control.RunLost)
+        self.assertEqual(rt._store.update_feed_progress.await_count, 1)
         rt._store.report_feed_failure.assert_not_awaited()
 
     async def test_transient_pubsub_failure_retries_after_bookmark(
