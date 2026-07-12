@@ -1375,6 +1375,56 @@ class GrantSupervisor:
             and not self._heartbeat_stopped.is_set()
         )
 
+    def _abandon_heartbeat_uncertainty(
+        self,
+        managed: _ManagedGrant,
+        expected_state: TerminalState,
+        expected_kind: _ReservationKind | None,
+    ) -> bool:
+        """Fail closed one generation from an in-flight heartbeat batch.
+
+        Shutdown reservations are provisional and perform no storage write
+        until heartbeat supervision has stopped. An uncertainty returned for
+        a batch dispatched before shutdown must therefore supersede that
+        reservation, even if the runner closed while the request was in
+        flight. Other terminal reservations own their outcome and cannot be
+        replaced here.
+        """
+        if self._current_exact(managed.key) is not managed:
+            return False
+        unchanged_and_eligible = (
+            managed.terminal_state is expected_state
+            and managed.terminal_kind is expected_kind
+            and self._heartbeat_eligible(managed)
+        )
+        provisional_shutdown = (
+            not self._heartbeat_stopped.is_set()
+            and managed.terminal_state is TerminalState.RESERVED
+            and managed.terminal_kind is _ReservationKind.SHUTDOWN
+            and (
+                expected_state is TerminalState.OPEN
+                or (
+                    expected_state is TerminalState.RESERVED
+                    and expected_kind is _ReservationKind.SHUTDOWN
+                )
+            )
+        )
+        if not unchanged_and_eligible and not provisional_shutdown:
+            return False
+        if managed.terminal_state is TerminalState.OPEN:
+            if not self._reserve_terminal(
+                managed.key,
+                _UncertainAbandonment(),
+            ):
+                return False
+        else:
+            managed.terminal_state = TerminalState.ABANDONED
+            managed.terminal_kind = _ReservationKind.UNCERTAIN
+            managed.terminal_decision = _UncertainAbandonment()
+        managed.grant_lost.set()
+        managed.stop_requested.set()
+        return True
+
     def _fail_heartbeat_domain(
         self,
         domain: _ErasedRegisteredDomain,
@@ -1390,19 +1440,7 @@ class GrantSupervisor:
     ) -> None:
         self._admission_enabled = False
         for managed, state, kind in expected:
-            if (
-                self._current_exact(managed.key) is not managed
-                or managed.terminal_state is not state
-                or managed.terminal_kind is not kind
-                or not self._heartbeat_eligible(managed)
-            ):
-                continue
-            if self._reserve_terminal(
-                managed.key,
-                _UncertainAbandonment(),
-            ):
-                managed.grant_lost.set()
-                managed.stop_requested.set()
+            self._abandon_heartbeat_uncertainty(managed, state, kind)
         self._emit_lifecycle(
             _LifecycleEvent.UNAVAILABLE,
             domain,

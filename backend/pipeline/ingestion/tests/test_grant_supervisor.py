@@ -1235,6 +1235,94 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                         ),
                     )
 
+    async def test_shutdown_reservation_yields_to_heartbeat_uncertainty(
+        self,
+    ) -> None:
+        for runner_closes_first in (False, True):
+            with self.subTest(runner_closes_first=runner_closes_first):
+                profile = _profile(
+                    process_cap=1,
+                    feed_cap=1,
+                    feed_budget=1,
+                    domains=(grant_control.DomainId.FEED,),
+                )
+                (
+                    supervisor,
+                    feed_control,
+                    feed_runner,
+                    _sid_control,
+                    _sid_runner,
+                ) = self._mixed(profile)
+                feed_id = uuid.UUID(int=109 + runner_closes_first)
+                grant = feed_store.FeedGrant(feed_id, _OWNER_ID, 1)
+                feed_control.results[grant_control.ClaimMode.PRIMARY] = (
+                    _claim(grant, _leased_feed(feed_id)),
+                )
+                feed_control.block_heartbeat = True
+                feed_control.heartbeat_error = RuntimeError(
+                    "authority unavailable"
+                )
+                feed_runner.wait_for_signal = "stop"
+                feed_runner.block_child_cleanup = True
+                await supervisor.admit_cycle(_OWNER_ID)
+
+                heartbeat = asyncio.create_task(
+                    supervisor.heartbeat_cycle(lambda: None)
+                )
+                await asyncio.wait_for(
+                    feed_control.heartbeat_entered.wait(),
+                    timeout=1,
+                )
+
+                async def stop_heartbeat() -> None:
+                    return None
+
+                shutdown = asyncio.create_task(
+                    supervisor.shutdown(
+                        cooperative_grace_sec=30,
+                        external_stop_deadline_sec=30,
+                        stop_heartbeat_supervision=stop_heartbeat,
+                    )
+                )
+                await asyncio.wait_for(
+                    feed_runner.child_started.wait(),
+                    timeout=1,
+                )
+                managed = next(iter(supervisor._registry.values()))
+                self.assertIs(
+                    managed.terminal_kind,
+                    grant_supervisor._ReservationKind.SHUTDOWN,
+                )
+                if runner_closes_first:
+                    feed_runner.release_child.set()
+                    await asyncio.wait_for(
+                        managed.runner_closed.wait(),
+                        timeout=1,
+                    )
+
+                feed_control.release_heartbeat.set()
+                await heartbeat
+                state_after_heartbeat = managed.terminal_state
+                kind_after_heartbeat = managed.terminal_kind
+                feed_runner.release_child.set()
+                result = await shutdown
+
+                self.assertIs(
+                    state_after_heartbeat,
+                    grant_supervisor.TerminalState.ABANDONED,
+                )
+                self.assertIs(
+                    kind_after_heartbeat,
+                    grant_supervisor._ReservationKind.UNCERTAIN,
+                )
+                self.assertEqual(
+                    result,
+                    grant_supervisor.ShutdownResult(0, 1, 0),
+                )
+                self.assertEqual(feed_control.finalize_calls, [])
+                self.assertEqual(supervisor._process_owned, 1)
+                self.assertTrue(supervisor.integrity_failure_event.is_set())
+
     async def test_administrative_sid_stop_is_reserved_and_localized(
         self,
     ) -> None:
