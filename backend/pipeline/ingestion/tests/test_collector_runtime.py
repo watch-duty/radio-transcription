@@ -2225,21 +2225,32 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         close_data_pool.assert_awaited_once_with(rt._data_pool)
         rt._store.release_feeds_batch.assert_not_called()
 
-    async def test_undrained_shutdown_keeps_resources_available(self) -> None:
+    async def test_undrained_shutdown_logs_bounded_count_and_keeps_resources_available(
+        self,
+    ) -> None:
         rt = self._configure_shutdown_runtime(
             grant_supervisor.ShutdownResult(
                 finalized=0,
-                abandoned=1,
-                undrained=1,
+                abandoned=800,
+                undrained=800,
             )
         )
 
-        with mock.patch(
-            "backend.pipeline.ingestion.collector_runtime.close_pool",
-            new=mock.AsyncMock(),
-        ) as close_data_pool:
+        with (
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.close_pool",
+                new=mock.AsyncMock(),
+            ) as close_data_pool,
+            self.assertLogs(
+                "backend.pipeline.ingestion.collector_runtime",
+                level=logging.CRITICAL,
+            ) as logs,
+        ):
             await rt._shutdown_sequence()
 
+        self.assertEqual(len(logs.records), 1)
+        self.assertEqual(logs.records[0].args, (800,))
+        self.assertLess(len(logs.records[0].getMessage().encode("utf-8")), 1024)
         rt._pubsub_client.close.assert_not_awaited()
         rt._gcs_client.close.assert_not_awaited()
         rt._http_session.close.assert_not_awaited()
@@ -3041,56 +3052,6 @@ class TestWatchdogLifecycle(unittest.IsolatedAsyncioTestCase):
             await rt._shutdown_sequence()
 
         rt._memory_watchdog.join.assert_awaited_once_with(timeout_sec=3)
-
-
-class TestLogPayloadBound(unittest.TestCase):
-    """SHUTDOWN-02: 800-feed shutdown bounded log stays under 1 MB
-    (ROADMAP SC#2 / D-10). Pure string-formatting test — no asyncio.
-    """
-
-    def test_eight_hundred_feed_message_under_one_megabyte(self) -> None:
-        """Formatted Sub-timeout warning for 800 mock pending tasks
-        encodes to < 1 MB of UTF-8 bytes.
-        """
-        # Build 800 mock Task objects with realistic feed names
-        # ("feed-{source}-{i}-{name}" shape, ~30-50 chars each).
-        pending = []
-        for i in range(800):
-            t = mock.MagicMock(spec=asyncio.Task)
-            t.get_name = mock.MagicMock(
-                return_value=f"feed-source-{i:04d}-name-with-typical-length",
-            )
-            pending.append(t)
-
-        # Reproduce the production formatting EXACTLY as written in
-        # collector_runtime.py _shutdown_sequence (Task 2 D-04).
-        # If a future refactor accidentally interpolates `pending`
-        # (the list of Task objects) instead of `names` (list of
-        # strings), this assertion catches it because Task repr
-        # adds ~150 bytes per task → 800 × 150 ≈ 120 KB just from
-        # task-object boilerplate, plus any `<MagicMock id=0x...>`
-        # repr noise pushing well past 1 MB if mocks ever escape.
-        names = sorted(t.get_name() for t in pending)
-        # Use %-formatting (NOT f-strings) to mirror the production
-        # logger.warning shape exactly. The template is built as a
-        # string variable so UP031 (which only flags inline `%`
-        # against a string literal) does not require a suppression
-        # comment — the whole point of the test is to format-check
-        # the production logger string.
-        template = (
-            "Sub-timeout: %d tasks still running after %ss — "
-            "explicitly cancelling and proceeding to release. "
-            "names=%s"
-        )
-        formatted = template % (len(pending), 30.0, names)
-
-        encoded = formatted.encode("utf-8")
-        self.assertLess(
-            len(encoded),
-            1_048_576,
-            f"800-feed Sub-timeout warning is {len(encoded)} bytes, "
-            f"must be under 1 MB (ROADMAP SC#2)",
-        )
 
 
 class TestProcessFeedResumePosition(unittest.IsolatedAsyncioTestCase):

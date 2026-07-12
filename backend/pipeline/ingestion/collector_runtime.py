@@ -360,22 +360,20 @@ class _DormantSidRunner:
 
 
 class CollectorRuntime:
-    """
-    Generic runtime orchestrator for a fleet of async feed-processing tasks.
+    """Run the exact-grant lifecycle for the selected worker profile.
 
-    Manages the full lifecycle of feed ingestion: batch-leasing feeds from
-    the database, spawning an asyncio Task per feed, renewing heartbeats via
-    an OS daemon thread (immune to event loop starvation), and detecting fence
-    violations (immediate ``os._exit(1)`` on any lost lease).
+    One :class:`GrantSupervisor` claims, heartbeats, runs, and finalizes every
+    registered grant domain through the same lifecycle. Feed grants adapt the
+    collector-provided ``capture_fn`` async generator; other domains provide
+    their own grant runners. Capacity and enabled domains come from the
+    immutable worker profile rather than from runtime-specific limits.
 
-    Collector authors provide a single ``capture_fn`` async generator that
-    yields audio chunks. The runtime handles everything else.
-
-    Design target: 250 concurrent feeds per GCE instance on a Managed
-    Instance Group (MIG). The Stream Capturer MIG scales horizontally based
-    on Stream Utilization % (number of active streams per instance), preventing
-    data loss by ensuring fleet size is proportional to the stateful workload.
-    Composition over inheritance — the capture function is passed in, not subclassed.
+    Confirmed authority loss stops only the runner for that exact grant. An
+    unknown heartbeat or control outcome fail-closes the affected domain and
+    reaches the runtime through the supervisor's fatal-integrity channel; the
+    runtime then performs ordered shutdown before propagating the failure.
+    Only an event-loop stall that prevents heartbeat dispatch from completing
+    uses immediate ``os._exit(1)`` termination.
 
     INVARIANT: ``asyncio.sleep()`` and ``time.sleep()`` must not appear
     anywhere in this file EXCEPT the single ``asyncio.sleep(0.25)``
@@ -1538,7 +1536,7 @@ class CollectorRuntime:
         ``heartbeat_interval + cycle_duration``. Under moderate DB load
         (5s cycles), heartbeats would fire every 20s instead of 15s. Two
         consecutive slow cycles could exceed the 60s abandonment window,
-        triggering unnecessary ``os._exit(1)``.
+        causing avoidable grant abandonment and recovery churn.
         """
         interval = self._collector_settings.heartbeat_interval_sec
         next_tick = time.monotonic() + interval
@@ -1570,9 +1568,11 @@ class CollectorRuntime:
                 logging.shutdown()  # flush before os._exit bypasses handlers
                 os._exit(1)
             except Exception:
-                # Transient DB error -- log and retry. A failed renewal
-                # attempt does not prove confirmed lease loss; fenced writes
-                # and heartbeat diagnostics remain authoritative.
+                # GrantSupervisor owns authority decisions: it fail-closes
+                # control errors and signals the runtime's fatal-integrity
+                # channel. This branch records only an unexpected exception
+                # that escaped that contract; the main loop remains the owner
+                # of ordered shutdown and fatal propagation.
                 logger.exception("Heartbeat renewal error")
 
             # Allow one immediate catch-up tick, but reset large drift so a
