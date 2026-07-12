@@ -163,6 +163,30 @@ class _TracingBoundaries:
 
 
 class TestBoundaryOrdering(unittest.IsolatedAsyncioTestCase):
+    async def test_lane_flushing_owns_one_event_without_audio_slot(
+        self,
+    ) -> None:
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=_ControlledCommitter(),
+            _limits=_limits(workers=2),
+        )
+        await scheduler.start()
+        lane = scheduler.open_lane(_grant())
+        coordinator = lane._boundary_coordinator
+
+        snapshot = await scheduler._snapshot()
+        self.assertEqual(snapshot.registered_worker_tasks, 2)
+        self.assertEqual(snapshot.registered_flusher_tasks, 1)
+        self.assertIsInstance(coordinator.signal, asyncio.Event)
+        self.assertFalse(coordinator.task.done())
+        self.assertFalse(hasattr(coordinator, "_queue"))
+        self.assertFalse(hasattr(coordinator, "_mailbox"))
+        self.assertFalse(hasattr(coordinator, "_history"))
+
+        await lane.close()
+        await scheduler.close()
+
     async def test_call_pressure_blocks_boundary_stream_pull(self) -> None:
         executor = _GateExecutor()
         committer = _ControlledCommitter()
@@ -221,10 +245,13 @@ class TestBoundaryOrdering(unittest.IsolatedAsyncioTestCase):
         lane = scheduler.open_lane(grant)
         feed_id = uuid.UUID(int=1)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
-        first = await lane.cover_page(
-            calls=(_call(feed_id, 0),),
-            boundaries=(_boundary(feed_id, 10),),
-            candidate=cursor.prepare(_SOURCE_TIME),
+        first = await asyncio.wait_for(
+            lane.cover_page(
+                calls=(_call(feed_id, 0),),
+                boundaries=(_boundary(feed_id, 10),),
+                candidate=cursor.prepare(_SOURCE_TIME),
+            ),
+            timeout=1,
         )
         cursor.accept(first)
 
@@ -289,10 +316,13 @@ class TestBoundaryOrdering(unittest.IsolatedAsyncioTestCase):
         lane = scheduler.open_lane(grant)
         feed_id = uuid.UUID(int=1)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
-        first = await lane.cover_page(
-            calls=(_call(feed_id, 0),),
-            boundaries=(_boundary(feed_id, 10),),
-            candidate=cursor.prepare(_SOURCE_TIME),
+        first = await asyncio.wait_for(
+            lane.cover_page(
+                calls=(_call(feed_id, 0),),
+                boundaries=(_boundary(feed_id, 10),),
+                candidate=cursor.prepare(_SOURCE_TIME),
+            ),
+            timeout=1,
         )
         cursor.accept(first)
         executor.release.set()

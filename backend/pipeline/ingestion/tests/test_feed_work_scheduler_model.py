@@ -223,6 +223,114 @@ class _PageCoverageModel:
             _violation("page counters do not conserve pulled records")
 
 
+@dataclasses.dataclass(slots=True)
+class _BoundaryOracleRecord:
+    """Independent constant-size provenance for one boundary token."""
+
+    target: datetime.datetime
+    stable: datetime.datetime | None
+    provisional_page: int | None
+    state: _ModelState
+    aborted_page: int | None = None
+
+
+class _BoundaryProvenanceModel:
+    """One-Feed oracle for reversible pending and immutable flushing state."""
+
+    def __init__(self) -> None:
+        self.pending: _BoundaryOracleRecord | None = None
+        self.flushing: _BoundaryOracleRecord | None = None
+
+    def admit(self, target: datetime.datetime, page: int) -> None:
+        record = self.pending
+        if record is None:
+            self.pending = _BoundaryOracleRecord(
+                target=target,
+                stable=None,
+                provisional_page=page,
+                state=_ModelState.PENDING_BOUNDARY,
+            )
+            return
+        if record.provisional_page not in (None, page):
+            _violation("pending boundary retained another live page")
+        if record.provisional_page is None:
+            if record.stable is not None and target <= record.stable:
+                return
+            record.provisional_page = page
+        record.target = max(record.target, target)
+
+    def promote(self, page: int) -> None:
+        record = self.pending
+        if record is not None and record.provisional_page == page:
+            record.stable = record.target
+            record.provisional_page = None
+
+    def abort(self, page: int) -> None:
+        record = self.pending
+        if record is not None and record.provisional_page == page:
+            if record.stable is None:
+                self.pending = None
+            else:
+                record.target = record.stable
+                record.provisional_page = None
+        flushing = self.flushing
+        if flushing is not None and flushing.provisional_page == page:
+            flushing.aborted_page = page
+
+    def detach(self) -> bool:
+        if self.pending is None or self.flushing is not None:
+            return False
+        self.flushing = self.pending
+        self.pending = None
+        self.flushing.state = _ModelState.FLUSHING_BOUNDARY
+        return True
+
+    def settle(self, *, retryable: bool) -> None:
+        record = self.flushing
+        if record is None:
+            _violation("no flushing boundary exists")
+        self.flushing = None
+        if not retryable:
+            return
+        aborted = record.aborted_page == record.provisional_page
+        if aborted and record.stable is None:
+            return
+        if aborted:
+            record.target = typing.cast("datetime.datetime", record.stable)
+            record.provisional_page = None
+        record.aborted_page = None
+        record.state = _ModelState.PENDING_BOUNDARY
+        if self.pending is not None:
+            _violation("retryable boundary collided with pending state")
+        self.pending = record
+
+    def projection(
+        self,
+    ) -> tuple[
+        int,
+        tuple[
+            tuple[
+                datetime.datetime,
+                datetime.datetime | None,
+                int | None,
+                _ModelState,
+            ],
+            ...,
+        ],
+    ]:
+        records = tuple(
+            (
+                record.target,
+                record.stable,
+                record.provisional_page,
+                record.state,
+            )
+            for record in (self.flushing, self.pending)
+            if record is not None
+        )
+        return len(records), records
+
+
 class _CloseStrength(enum.IntEnum):
     """Independent monotonic exact-lane close lattice."""
 
@@ -1127,6 +1235,113 @@ def _actual_model_projection(snapshot: object) -> _ModelSnapshot:
 
 class TestShardModel(unittest.IsolatedAsyncioTestCase):
     """Compares every real locked transition with the independent oracle."""
+
+    async def test_seeded_boundary_provenance_matches_shard(
+        self,
+    ) -> None:
+        scheduler_types = _scheduler_types()
+        shard_module = _scheduler_shard()
+        grant = _grant()
+        feed_id = _FEED_IDS[0]
+
+        async def relief() -> object:
+            return scheduler_types._BoundaryPressureResult.COMPLETED
+
+        for seed in (0xB0A7, 0xC0A1):
+            with self.subTest(seed=seed):
+                generator = random.Random(seed)  # noqa: S311
+                model = _BoundaryProvenanceModel()
+                shard = shard_module._Shard(
+                    0,
+                    _ImmediateExecutor(),
+                    limits=scheduler_types._SchedulerLimits(
+                        shard_count=1,
+                        capacity=8,
+                        workers_per_shard=1,
+                        high_water=8,
+                        resume_at=4,
+                    ),
+                )
+                abort_event = asyncio.Event()
+                page = 0
+                source_order = 0
+                for step in range(64):
+                    command = generator.randrange(5)
+                    if command == 0:
+                        target = _SOURCE_TIME + datetime.timedelta(
+                            seconds=generator.randrange(1, 30)
+                        )
+                        model.admit(target, page)
+                        await shard.admit_boundary(
+                            scheduler_types._BoundaryInput(
+                                boundary=scheduler_types.BoundaryWork(
+                                    feed_id,
+                                    target,
+                                ),
+                                grant=grant,
+                                source_order=source_order,
+                                page_sequence=page,
+                            ),
+                            abort_event=abort_event,
+                            pressure_relief=relief,
+                        )
+                        source_order += 1
+                    elif command == 1:
+                        model.promote(page)
+                        await shard.promote_boundary_page(grant, page)
+                        page += 1
+                    elif command == 2:
+                        model.abort(page)
+                        await shard.abort_boundary_page(grant, page)
+                        page += 1
+                    elif command == 3:
+                        expected = model.detach()
+                        selected = await shard.select_boundary_batch(
+                            grant,
+                            1,
+                        )
+                        self.assertEqual(bool(selected), expected)
+                    elif command == 4 and model.flushing is not None:
+                        retryable = model.pending is None and bool(
+                            generator.randrange(2)
+                        )
+                        model.settle(retryable=retryable)
+                        snapshot = await shard.snapshot()
+                        flushing = next(
+                            boundary
+                            for boundary in snapshot.boundaries
+                            if boundary.state
+                            is scheduler_types._RecordState.FLUSHING_BOUNDARY
+                        )
+                        record = shard._flushing_boundaries[
+                            flushing.local_sequence
+                        ]
+                        disposition = (
+                            scheduler_types.BoundaryDisposition.RETRYABLE
+                            if retryable
+                            else scheduler_types.BoundaryDisposition.COMMITTED
+                        )
+                        await shard.apply_boundary_results(
+                            ((record, disposition),)
+                        )
+
+                    snapshot = await shard.snapshot()
+                    actual = tuple(
+                        (
+                            boundary.target,
+                            boundary.stable_target,
+                            boundary.provisional_page_sequence,
+                            _ModelState(boundary.state.value),
+                        )
+                        for boundary in snapshot.boundaries
+                    )
+                    expected_held, expected = model.projection()
+                    self.assertEqual(snapshot.held, expected_held)
+                    self.assertEqual(
+                        actual,
+                        expected,
+                        f"seed={seed} step={step} command={command}",
+                    )
 
     async def test_seeded_shard_snapshot_matches_model_transitions(  # noqa: PLR0912, PLR0915
         self,

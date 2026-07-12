@@ -352,7 +352,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         finally:
             await scheduler.close()
 
-    async def test_nonempty_boundary_fails_before_call_admission(self) -> None:
+    async def test_invalid_boundary_fails_after_call_stream(self) -> None:
         scheduler = feed_work_scheduler.FeedWorkScheduler(_ImmediateExecutor())
         await scheduler.start()
         grant = _grant()
@@ -364,15 +364,16 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         calls = _TracingCalls((_submission(uuid.UUID(int=8), 0),))
         try:
             with self.assertRaisesRegex(
-                NotImplementedError,
-                "boundary",
+                TypeError,
+                "BoundaryWork",
             ):
                 await lane.cover_page(
                     calls=calls,
                     boundaries=(object(),),
                     candidate=candidate,
                 )
-            self.assertEqual(calls.pulled, [])
+            self.assertEqual(calls.pulled, [0])
+            await scheduler._wait_for_idle()
             self.assertEqual((await scheduler._snapshot()).held, 0)
         finally:
             await scheduler.close()

@@ -12,7 +12,11 @@ import typing
 import uuid
 
 from backend.pipeline.ingestion.collectors.bcfy_calls import cursor_policy
-from backend.pipeline.ingestion.feed_work_scheduler import _shard, _types
+from backend.pipeline.ingestion.feed_work_scheduler import (
+    _boundaries,
+    _shard,
+    _types,
+)
 from backend.pipeline.storage import feed_store, ingestion_lease_store
 
 if typing.TYPE_CHECKING:
@@ -78,6 +82,7 @@ class _SchedulerSnapshot:
     held: int
     lane_count: int
     registered_worker_tasks: int
+    registered_flusher_tasks: int
     started: bool
     closing: bool
     closed: bool
@@ -91,19 +96,34 @@ class FeedWorkScheduler:
         self,
         executor: _types.CallExecutor,
         *,
+        boundary_committer: _types.BoundaryCommitter | None = None,
         _limits: _types._SchedulerLimits = _types._PRODUCTION_LIMITS,
+        _boundary_batch_size: int = _boundaries._BOUNDARY_BATCH_SIZE,
     ) -> None:
         """Create one scheduler with immutable production or test limits.
 
         Args:
             executor: Private full-pipeline adapter for fixed workers.
+            boundary_committer: Closed exact-grant persistence seam. Phase 4
+                uses the deterministic default until Phase 5 wires storage.
             _limits: Validated deterministic-test limits. Production callers
                 use the fixed default.
         """
         if not isinstance(_limits, _types._SchedulerLimits):
             message = "_limits must be _SchedulerLimits"
             raise TypeError(message)
+        if boundary_committer is None:
+            boundary_committer = _boundaries._DefaultBoundaryCommitter()
+        if not callable(getattr(boundary_committer, "commit", None)):
+            message = "boundary_committer must provide async commit"
+            raise TypeError(message)
+        _types._require_positive_integer(
+            _boundary_batch_size,
+            "_boundary_batch_size",
+        )
         self._limits = _limits
+        self._boundary_committer = boundary_committer
+        self._boundary_batch_size = _boundary_batch_size
         self._lanes: dict[
             ingestion_lease_store.LeaseGrant,
             GrantLane,
@@ -127,6 +147,7 @@ class FeedWorkScheduler:
                 fatal_observer=self._observe_fatal,
                 global_fatal=lambda: self._fatal,
                 abandonment_for=self._abandonment.get,
+                boundary_ready_observer=self._observe_boundary_ready,
             )
             for index in range(_limits.shard_count)
         )
@@ -261,11 +282,16 @@ class FeedWorkScheduler:
             for snapshot in snapshots
             for worker in snapshot.workers
         )
+        registered_flushers = sum(
+            not lane._boundary_coordinator.task.done()
+            for lane in self._lanes.values()
+        )
         return _SchedulerSnapshot(
             shards=snapshots,
             held=sum(snapshot.held for snapshot in snapshots),
             lane_count=len(self._lanes),
             registered_worker_tasks=registered,
+            registered_flusher_tasks=registered_flushers,
             started=self._started,
             closing=self._closing,
             closed=self._closed,
@@ -283,6 +309,22 @@ class FeedWorkScheduler:
     ) -> None:
         for shard in self._shards:
             await shard.purge_page(grant, page_sequence)
+
+    async def _abort_boundary_page(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+    ) -> None:
+        for shard in self._shards:
+            await shard.abort_boundary_page(grant, page_sequence)
+
+    async def _promote_boundary_page(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+    ) -> None:
+        for shard in self._shards:
+            await shard.promote_boundary_page(grant, page_sequence)
 
     async def _purge_exact(
         self,
@@ -355,6 +397,15 @@ class FeedWorkScheduler:
                 message = "membership outcome omitted retirement evidence"
                 raise RuntimeError(message)
             lane._observe_membership(record, retirement)
+
+    def _observe_boundary_ready(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> None:
+        """Coalesce a shard-ready notification into its exact lane Event."""
+        lane = self._lanes.get(grant)
+        if lane is not None:
+            lane._boundary_coordinator.notify_ready()
 
     def _publish_grant_close(
         self,
@@ -457,6 +508,16 @@ class GrantLane:
         ) = None
         self._closing = False
         self._closed = False
+        self._boundary_coordinator = _boundaries._BoundaryCoordinator(
+            grant,
+            scheduler._shards,
+            scheduler._boundary_committer,
+            authority_lost=lambda: self._request_close(
+                _types.LaneCloseReason.AUTHORITY_LOSS
+            ),
+            fatal_observer=scheduler._observe_fatal,
+            batch_size=scheduler._boundary_batch_size,
+        )
 
     @property
     def grant(self) -> ingestion_lease_store.LeaseGrant:
@@ -507,19 +568,18 @@ class GrantLane:
             )
             raise
 
-    async def cover_page(
+    async def cover_page(  # noqa: PLR0915
         self,
         *,
         calls: collections.abc.Iterable[_types.CallSubmission],
-        boundaries: collections.abc.Iterable[object],
+        boundaries: collections.abc.Iterable[_types.BoundaryWork],
         candidate: cursor_policy.PageCursorCandidate,
     ) -> cursor_policy._CoveredPage:
         """Incrementally cover one source-order call page.
 
         Args:
             calls: Single-pass call submissions in provider source order.
-            boundaries: Trailing boundary inputs. Plan 04-04 installs them;
-                any non-empty input currently fails before call admission.
+            boundaries: Single-pass trailing Feed completion boundaries.
             candidate: Exact cursor candidate awaiting bounded coverage.
 
         Returns:
@@ -527,12 +587,10 @@ class GrantLane:
 
         Raises:
             CursorIntegrityError: Candidate authority or sequence is wrong.
-            NotImplementedError: A boundary is offered before Plan 04-04.
             RuntimeError: The lane or scheduler is closing or failed.
         """
         async with self._admission_lock:
             await self._validate_candidate(candidate)
-            self._require_empty_boundaries(boundaries)
             await self._begin_page(candidate.page_sequence)
             try:
                 for source_order, submission in enumerate(calls):
@@ -562,6 +620,48 @@ class GrantLane:
                         message = "scheduler shard integrity failed"
                         raise SchedulerIntegrityError(message) from exc.failure
                     await self._mark_registered(source_order)
+                for boundary in boundaries:
+                    self._require_boundary(boundary)
+                    source_order = await self._next_source_order()
+                    await self._mark_pulled(source_order)
+                    boundary_input = _types._BoundaryInput(
+                        boundary=boundary,
+                        grant=self._grant,
+                        source_order=source_order,
+                        page_sequence=candidate.page_sequence,
+                    )
+                    shard = self._scheduler._shard_for(boundary.feed_id)
+                    try:
+                        await shard.admit_boundary(
+                            boundary_input,
+                            abort_event=self._closing_event,
+                            pressure_relief=(
+                                self._boundary_coordinator.request_relief
+                            ),
+                        )
+                    except _shard._FeedRetiredError:
+                        await self._mark_localized(source_order)
+                        continue
+                    except _shard._BoundaryReliefRetryableError:
+                        message = "boundary pressure relief is retryable"
+                        raise RuntimeError(message) from None
+                    except _shard._AdmissionAbortedError as exc:
+                        message = "lane closed during boundary admission"
+                        raise _LaneClosedError(message) from exc
+                    except _shard._ShardFatalError as exc:
+                        message = "scheduler shard integrity failed"
+                        raise SchedulerIntegrityError(message) from exc.failure
+                    await self._mark_registered(source_order)
+                try:
+                    await self._boundary_coordinator.request_final()
+                except _boundaries._BoundaryCoordinatorError as exc:
+                    self._scheduler._raise_fatal()
+                    message = "boundary coordinator integrity failed"
+                    raise SchedulerIntegrityError(message) from exc
+                await self._scheduler._promote_boundary_page(
+                    self._grant,
+                    candidate.page_sequence,
+                )
                 return await self._cover(candidate)
             except BaseException:
                 await self._abort_page(candidate.page_sequence)
@@ -618,6 +718,14 @@ class GrantLane:
                 raise RuntimeError(message)
             page.current_source_order = source_order
             page.pulled += 1
+
+    async def _next_source_order(self) -> int:
+        async with self._state_lock:
+            page = self._require_page_locked()
+            if page.current_source_order is not None:
+                message = "cannot inspect the next source record while blocked"
+                raise RuntimeError(message)
+            return page.pulled
 
     async def _mark_registered(self, source_order: int) -> None:
         async with self._state_lock:
@@ -707,6 +815,10 @@ class GrantLane:
             return receipt
 
     async def _abort_page(self, page_sequence: int) -> None:
+        await self._scheduler._abort_boundary_page(
+            self._grant,
+            page_sequence,
+        )
         await self._scheduler._purge_page(self._grant, page_sequence)
         async with self._state_lock:
             if (
@@ -759,6 +871,7 @@ class GrantLane:
         """Purge, drain or cancel, then publish one strongest result."""
         try:
             await self._scheduler._wake_admission()
+            await self._boundary_coordinator.close()
             await self._scheduler._purge_exact(self._grant)
             while True:
                 if self._close_strength is _CloseStrength.CANCELLING:
@@ -851,13 +964,9 @@ class GrantLane:
             raise TypeError(message)
 
     @staticmethod
-    def _require_empty_boundaries(
-        boundaries: collections.abc.Iterable[object],
+    def _require_boundary(
+        boundary: object,
     ) -> None:
-        iterator = iter(boundaries)
-        try:
-            next(iterator)
-        except StopIteration:
-            return
-        message = "boundary scheduling is installed in Plan 04-04"
-        raise NotImplementedError(message)
+        if type(boundary) is not _types.BoundaryWork:
+            message = "boundaries must contain exact BoundaryWork values"
+            raise TypeError(message)

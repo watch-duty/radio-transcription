@@ -111,6 +111,88 @@ class CallSubmission:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class BoundaryWork:
+    """One trailing Feed boundary offered after a page's call stream.
+
+    Attributes:
+        feed_id: Authoritative Feed identity used for shard affinity.
+        target: Validated UTC completion boundary that may only coalesce up.
+    """
+
+    feed_id: uuid.UUID
+    target: datetime.datetime
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.feed_id, uuid.UUID):
+            message = "feed_id must be a UUID"
+            raise TypeError(message)
+        if not isinstance(self.target, datetime.datetime):
+            message = "target must be a datetime"
+            raise TypeError(message)
+        if self.target.utcoffset() != datetime.timedelta(0):
+            message = "target must be UTC-aware"
+            raise ValueError(message)
+
+
+class BoundaryDisposition(enum.StrEnum):
+    """Closed caller-correlated outcome for one boundary target."""
+
+    COMMITTED = "committed"
+    MEMBER_REJECTED = "member_rejected"
+    RETRYABLE = "retryable"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class BoundaryResult:
+    """One disposition correlated to the caller's immutable target."""
+
+    boundary: BoundaryWork
+    disposition: BoundaryDisposition
+
+    def __post_init__(self) -> None:
+        if type(self.boundary) is not BoundaryWork:
+            message = "boundary must be an exact BoundaryWork"
+            raise TypeError(message)
+        if not isinstance(self.disposition, BoundaryDisposition):
+            message = "disposition must be a BoundaryDisposition"
+            raise TypeError(message)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class BoundaryBatchCommitted:
+    """Caller-ordered settled results beneath an accepted exact grant."""
+
+    results: tuple[BoundaryResult, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.results, tuple):
+            message = "results must be an immutable tuple"
+            raise TypeError(message)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class BoundaryGrantRejected:
+    """The committer rejected the complete exact grant or fence."""
+
+
+type BoundaryCommitResult = BoundaryBatchCommitted | BoundaryGrantRejected
+
+
+class BoundaryCommitter(typing.Protocol):
+    """Narrow exact-grant seam for deterministic boundary settlement."""
+
+    async def commit(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        boundaries: tuple[BoundaryWork, ...],
+        *,
+        final_logical: bool,
+    ) -> BoundaryCommitResult:
+        """Attempt one immutable physical or final logical batch."""
+        ...
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class _CallWork:
     """One source-order call submission before local shard registration."""
 
@@ -155,6 +237,54 @@ class _CallRecord:
     @property
     def grant(self) -> ingestion_lease_store.LeaseGrant:
         return self.work.grant
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _BoundaryInput:
+    """One page-local boundary before counted shard registration."""
+
+    boundary: BoundaryWork
+    grant: ingestion_lease_store.LeaseGrant
+    source_order: int
+    page_sequence: int
+
+    def __post_init__(self) -> None:
+        if type(self.boundary) is not BoundaryWork:
+            message = "boundary must be an exact BoundaryWork"
+            raise TypeError(message)
+        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
+            message = "grant must be a LeaseGrant"
+            raise TypeError(message)
+        _require_nonnegative_integer(self.source_order, "source_order")
+        _require_nonnegative_integer(self.page_sequence, "page_sequence")
+
+
+@dataclasses.dataclass(slots=True)
+class _BoundaryRecord:
+    """One counted pending or immutable detached boundary observation."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    feed_id: uuid.UUID
+    local_sequence: int
+    source_order: int
+    created_page_sequence: int
+    target: datetime.datetime
+    stable_target: datetime.datetime | None
+    provisional_page_sequence: int | None
+    provisional_count: int
+    state: _RecordState
+    aborted_page_sequence: int | None = None
+
+    def detached_work(self) -> BoundaryWork:
+        """Return the immutable target passed across the I/O boundary."""
+        return BoundaryWork(self.feed_id, self.target)
+
+
+class _BoundaryPressureResult(enum.StrEnum):
+    """Bounded result returned to one pressure-blocked page episode."""
+
+    COMPLETED = "completed"
+    RETRYABLE = "retryable"
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -301,6 +431,22 @@ class _RecordSnapshot:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class _BoundarySnapshot:
+    """Payload-free projection of one counted boundary record."""
+
+    local_sequence: int
+    feed_id: uuid.UUID
+    grant: ingestion_lease_store.LeaseGrant
+    source_order: int
+    created_page_sequence: int
+    target: datetime.datetime
+    stable_target: datetime.datetime | None
+    provisional_page_sequence: int | None
+    provisional_count: int
+    state: _RecordState
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class _WorkerSnapshot:
     """Bounded ownership evidence for one fixed worker slot."""
 
@@ -325,6 +471,7 @@ class _ShardSnapshot:
     ready_members: frozenset[uuid.UUID]
     active_feeds: frozenset[uuid.UUID]
     records: tuple[_RecordSnapshot, ...]
+    boundaries: tuple[_BoundarySnapshot, ...]
     workers: tuple[_WorkerSnapshot, ...]
     retired_scopes: frozenset[
         tuple[ingestion_lease_store.LeaseGrant, uuid.UUID]
@@ -347,4 +494,5 @@ class _RetireFeedResult:
 
     released_sequences: tuple[int, ...]
     released_calls: tuple[tuple[int, int], ...]
+    released_boundaries: tuple[tuple[int, int], ...]
     active_sequence: int | None
