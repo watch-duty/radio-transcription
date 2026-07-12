@@ -1055,6 +1055,39 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         self.data_store.load_membership.assert_not_awaited()
         self.data_store.commit_child_mutations.assert_not_awaited()
 
+    async def test_non_budgeted_quarantine_is_rejected(self) -> None:
+        grant = _lease_grant()
+        before = _lease_snapshot()
+        quarantined = _lease_snapshot(
+            status=feed_store.FeedStatus.QUARANTINED,
+            failure_count=5,
+            status_reason=(
+                feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
+            ),
+        )
+        for effect in (
+            ingestion_lease_store.LeaseFailureEffect.QUARANTINED,
+            ingestion_lease_store.LeaseFailureEffect.FAILURE_RECORDED,
+        ):
+            with self.subTest(effect=effect):
+                self.data_store.finalize_failure.return_value = (
+                    ingestion_lease_store.LeaseFailureResult(
+                        ingestion_lease_store.LeaseOperationDisposition.APPLIED,
+                        effect,
+                        before,
+                        quarantined,
+                    )
+                )
+
+                with self.assertRaises(
+                    grant_control.GrantControlIntegrityError
+                ):
+                    await self.control.finalize(
+                        grant,
+                        _payload_for_grant(grant),
+                        _non_budgeted_decision(),
+                    )
+
     async def test_finalize_maps_noop_and_loss_without_batch_release(
         self,
     ) -> None:

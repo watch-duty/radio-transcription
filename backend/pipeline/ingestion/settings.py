@@ -48,6 +48,41 @@ _CAPS_UNSET = _UnsetCaps()
 _TOPIC_UNSET = _UnsetTopic("")
 
 
+def _require_finite_range(
+    field_name: str,
+    value: float,
+    *,
+    minimum: float,
+    inclusive: bool,
+) -> None:
+    """Validate one finite float against its operational lower bound."""
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        msg = f"{field_name} must be a number"
+        raise TypeError(msg)
+    below_minimum = value < minimum if inclusive else value <= minimum
+    if not math.isfinite(value) or below_minimum:
+        comparison = "at least" if inclusive else "greater than"
+        msg = (
+            f"{field_name} ({value}) must be finite and {comparison} {minimum}"
+        )
+        raise ValueError(msg)
+
+
+def _require_integer_range(
+    field_name: str,
+    value: int,
+    *,
+    minimum: int,
+) -> None:
+    """Validate one integer against its inclusive operational minimum."""
+    if not isinstance(value, int) or isinstance(value, bool):
+        msg = f"{field_name} must be an integer"
+        raise TypeError(msg)
+    if value < minimum:
+        msg = f"{field_name} ({value}) must be at least {minimum}"
+        raise ValueError(msg)
+
+
 def _load_caps_from_env() -> dict[SourceType, int]:
     """Build per-type caps from CAP_<NAME> env vars, defaulting via _DEFAULT_CAPS.
 
@@ -166,16 +201,9 @@ class CollectorSettings:
             os.environ.get("HEARTBEAT_INTERVAL_SEC", "15.0"),
         ),
     )
-    # Clamped to >=1.0: a non-positive timeout makes
-    # concurrent.futures.Future.result() raise TimeoutError immediately
-    # on every heartbeat tick, which the heartbeat thread interprets as
-    # an event-loop stall and triggers os._exit(1). Clamping at 1 second
-    # converts the misconfig failure mode from "instant fleet-wide death
-    # on first tick" into "every-cycle log noise" — recoverable.
     heartbeat_stall_timeout_sec: float = field(
-        default_factory=lambda: max(
-            1.0,
-            float(os.environ.get("HEARTBEAT_STALL_TIMEOUT_SEC", "45.0")),
+        default_factory=lambda: float(
+            os.environ.get("HEARTBEAT_STALL_TIMEOUT_SEC", "45.0"),
         ),
     )
     # Documented overall shutdown-budget envelope (NOT an enforced timeout).
@@ -403,16 +431,152 @@ class CollectorSettings:
                 )
             else:
                 object.__setattr__(self, "segmented_pubsub_topic_path", None)
+        self._validate_numeric_settings()
+
+    def _validate_numeric_settings(self) -> None:
+        """Reject unsafe numeric configuration before resource creation."""
+        positive_intervals = (
+            ("lease_poll_interval_sec", self.lease_poll_interval_sec),
+            ("heartbeat_interval_sec", self.heartbeat_interval_sec),
+            (
+                "heartbeat_stall_timeout_sec",
+                self.heartbeat_stall_timeout_sec,
+            ),
+            (
+                "graceful_shutdown_timeout_sec",
+                self.graceful_shutdown_timeout_sec,
+            ),
+            ("abandonment_window_sec", self.abandonment_window_sec),
+            (
+                "rss_watchdog_poll_interval_sec",
+                self.rss_watchdog_poll_interval_sec,
+            ),
+        )
+        for field_name, value in positive_intervals:
+            _require_finite_range(
+                field_name,
+                value,
+                minimum=0.0,
+                inclusive=False,
+            )
+
         non_negative_delays = (
             ("startup_stagger_max_sec", self.startup_stagger_max_sec),
             ("startup_jitter_max_sec", self.startup_jitter_max_sec),
             ("lease_poll_jitter_max_sec", self.lease_poll_jitter_max_sec),
+            ("task_cancel_budget_sec", self.task_cancel_budget_sec),
+            (
+                "gcs_upload_retry_base_delay_sec",
+                self.gcs_upload_retry_base_delay_sec,
+            ),
+            (
+                "gcs_upload_retry_max_delay_sec",
+                self.gcs_upload_retry_max_delay_sec,
+            ),
+            (
+                "bookmark_retry_base_delay_sec",
+                self.bookmark_retry_base_delay_sec,
+            ),
+            (
+                "bookmark_retry_max_delay_sec",
+                self.bookmark_retry_max_delay_sec,
+            ),
+            (
+                "pubsub_publish_retry_base_delay_sec",
+                self.pubsub_publish_retry_base_delay_sec,
+            ),
+            (
+                "pubsub_publish_retry_max_delay_sec",
+                self.pubsub_publish_retry_max_delay_sec,
+            ),
+            (
+                "health_check_startup_grace_sec",
+                self.health_check_startup_grace_sec,
+            ),
+            ("rss_watchdog_warmup_sec", self.rss_watchdog_warmup_sec),
         )
         for field_name, value in non_negative_delays:
-            if not math.isfinite(value) or value < 0:
-                msg = (
-                    f"{field_name} ({value}s) must be finite and non-negative."
-                )
+            _require_finite_range(
+                field_name,
+                value,
+                minimum=0.0,
+                inclusive=True,
+            )
+
+        positive_integers = (
+            ("feed_failure_threshold", self.feed_failure_threshold),
+            (
+                "rss_watchdog_pause_consecutive_samples",
+                self.rss_watchdog_pause_consecutive_samples,
+            ),
+            (
+                "rss_watchdog_exit_consecutive_samples",
+                self.rss_watchdog_exit_consecutive_samples,
+            ),
+        )
+        for field_name, value in positive_integers:
+            _require_integer_range(field_name, value, minimum=1)
+
+        retry_counts = (
+            ("gcs_upload_max_retries", self.gcs_upload_max_retries),
+            ("bookmark_max_retries", self.bookmark_max_retries),
+            ("pubsub_publish_max_retries", self.pubsub_publish_max_retries),
+        )
+        for field_name, value in retry_counts:
+            _require_integer_range(field_name, value, minimum=0)
+
+        if self.worker_index is not None:
+            _require_integer_range("worker_index", self.worker_index, minimum=0)
+        if not 1 <= self.health_check_port <= 65535:
+            msg = "health_check_port must be between 1 and 65535"
+            raise ValueError(msg)
+
+        for field_name, value in (
+            ("rss_watchdog_pause_threshold", self.rss_watchdog_pause_threshold),
+            ("rss_watchdog_exit_threshold", self.rss_watchdog_exit_threshold),
+        ):
+            _require_finite_range(
+                field_name,
+                value,
+                minimum=0.0,
+                inclusive=False,
+            )
+            if value > 1.0:
+                msg = f"{field_name} ({value}) must not exceed 1.0"
+                raise ValueError(msg)
+        if (
+            self.rss_watchdog_pause_threshold
+            >= self.rss_watchdog_exit_threshold
+        ):
+            msg = (
+                "rss_watchdog_pause_threshold must be less than "
+                "rss_watchdog_exit_threshold"
+            )
+            raise ValueError(msg)
+
+        retry_delays = (
+            (
+                "gcs_upload_retry_base_delay_sec",
+                self.gcs_upload_retry_base_delay_sec,
+                "gcs_upload_retry_max_delay_sec",
+                self.gcs_upload_retry_max_delay_sec,
+            ),
+            (
+                "bookmark_retry_base_delay_sec",
+                self.bookmark_retry_base_delay_sec,
+                "bookmark_retry_max_delay_sec",
+                self.bookmark_retry_max_delay_sec,
+            ),
+            (
+                "pubsub_publish_retry_base_delay_sec",
+                self.pubsub_publish_retry_base_delay_sec,
+                "pubsub_publish_retry_max_delay_sec",
+                self.pubsub_publish_retry_max_delay_sec,
+            ),
+        )
+        for base_name, base_delay, max_name, max_delay in retry_delays:
+            if base_delay > max_delay:
+                msg = f"{base_name} must not exceed {max_name}"
                 raise ValueError(msg)
 
         # SHUTDOWN-02: validate the inner sub-timeout fits inside the

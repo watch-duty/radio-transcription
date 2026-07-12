@@ -370,25 +370,77 @@ class TestCollectorSettings(unittest.TestCase):
 
         require_env.assert_not_called()
 
-    def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
-        """Allows zero/negative values because parsing does not enforce ranges."""
+    def test_invalid_operational_timing_values_raise(self) -> None:
+        cases = (
+            ("LEASE_POLL_INTERVAL_SEC", "0"),
+            ("LEASE_POLL_INTERVAL_SEC", "nan"),
+            ("HEARTBEAT_INTERVAL_SEC", "-1"),
+            ("HEARTBEAT_STALL_TIMEOUT_SEC", "0"),
+            ("ABANDONMENT_WINDOW_SEC", "-0.5"),
+            ("GRACEFUL_SHUTDOWN_TIMEOUT_SEC", "inf"),
+            ("TASK_CANCEL_BUDGET_SEC", "-1"),
+            ("HEALTH_CHECK_STARTUP_GRACE_SEC", "-1"),
+            ("RSS_WATCHDOG_POLL_INTERVAL_SEC", "0"),
+            ("RSS_WATCHDOG_WARMUP_SEC", "-1"),
+        )
+
+        for name, value in cases:
+            with self.subTest(name=name, value=value):
+                env = {**_required_env(), name: value}
+                with patch.dict("os.environ", env, clear=True):
+                    with self.assertRaisesRegex(ValueError, name.lower()):
+                        CollectorSettings()
+
+    def test_invalid_retry_and_watchdog_values_raise(self) -> None:
+        cases = (
+            ("FEED_FAILURE_THRESHOLD", "0"),
+            ("GCS_UPLOAD_MAX_RETRIES", "-1"),
+            ("GCS_UPLOAD_RETRY_BASE_DELAY_SEC", "-1"),
+            ("GCS_UPLOAD_RETRY_MAX_DELAY_SEC", "nan"),
+            ("BOOKMARK_MAX_RETRIES", "-1"),
+            ("BOOKMARK_RETRY_BASE_DELAY_SEC", "5"),
+            ("PUBSUB_PUBLISH_MAX_RETRIES", "-1"),
+            ("PUBSUB_PUBLISH_RETRY_BASE_DELAY_SEC", "5"),
+            ("RSS_WATCHDOG_PAUSE_THRESHOLD", "0"),
+            ("RSS_WATCHDOG_EXIT_THRESHOLD", "1.1"),
+            ("RSS_WATCHDOG_PAUSE_CONSECUTIVE_SAMPLES", "0"),
+            ("RSS_WATCHDOG_EXIT_CONSECUTIVE_SAMPLES", "-1"),
+            ("HEALTH_CHECK_PORT", "0"),
+            ("WORKER_INDEX", "-1"),
+        )
+
+        for name, value in cases:
+            with self.subTest(name=name, value=value):
+                env = {**_required_env(), name: value}
+                with patch.dict("os.environ", env, clear=True):
+                    with self.assertRaisesRegex(ValueError, name.lower()):
+                        CollectorSettings()
+
+    def test_zero_retry_delay_and_warmup_controls_are_valid(self) -> None:
         env = {
             **_required_env(),
-            "LEASE_POLL_INTERVAL_SEC": "0.0",
-            "HEARTBEAT_INTERVAL_SEC": "-1.0",
-            "ALLOYDB_POOL_MIN_SIZE": "0",
-            "ALLOYDB_POOL_MAX_SIZE": "-2",
-            "ABANDONMENT_WINDOW_SEC": "-0.5",
+            "TASK_CANCEL_BUDGET_SEC": "0",
+            "GRACEFUL_SHUTDOWN_TIMEOUT_SEC": "2",
+            "GCS_UPLOAD_MAX_RETRIES": "0",
+            "GCS_UPLOAD_RETRY_BASE_DELAY_SEC": "0",
+            "GCS_UPLOAD_RETRY_MAX_DELAY_SEC": "0",
+            "BOOKMARK_MAX_RETRIES": "0",
+            "BOOKMARK_RETRY_BASE_DELAY_SEC": "0",
+            "BOOKMARK_RETRY_MAX_DELAY_SEC": "0",
+            "PUBSUB_PUBLISH_MAX_RETRIES": "0",
+            "PUBSUB_PUBLISH_RETRY_BASE_DELAY_SEC": "0",
+            "PUBSUB_PUBLISH_RETRY_MAX_DELAY_SEC": "0",
+            "HEALTH_CHECK_STARTUP_GRACE_SEC": "0",
+            "RSS_WATCHDOG_WARMUP_SEC": "0",
         }
 
         with patch.dict("os.environ", env, clear=True):
             settings = CollectorSettings()
 
-        self.assertEqual(settings.lease_poll_interval_sec, 0.0)
-        self.assertEqual(settings.heartbeat_interval_sec, -1.0)
-        self.assertEqual(settings.db.pool_min_size, 0)
-        self.assertEqual(settings.db.pool_max_size, -2)
-        self.assertEqual(settings.abandonment_window_sec, -0.5)
+        self.assertEqual(settings.task_cancel_budget_sec, 0)
+        self.assertEqual(settings.gcs_upload_max_retries, 0)
+        self.assertEqual(settings.health_check_startup_grace_sec, 0)
+        self.assertEqual(settings.rss_watchdog_warmup_sec, 0)
 
     def test_caps_partial_env_override(self) -> None:
         """Setting CAP_<NAME> for one type overrides only that one; others use defaults."""

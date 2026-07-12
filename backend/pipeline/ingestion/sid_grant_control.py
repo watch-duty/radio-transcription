@@ -284,6 +284,19 @@ class SidGrantControl:
         if not isinstance(result, ingestion_lease_store.LeaseFailureResult):
             msg = "SID failure returned an invalid result type"
             raise grant_control.GrantControlIntegrityError(msg)
+        if isinstance(terminal, grant_control.NonBudgetedFailureDecision) and (
+            result.effect
+            is ingestion_lease_store.LeaseFailureEffect.QUARANTINED
+            or (
+                result.disposition
+                is ingestion_lease_store.LeaseOperationDisposition.APPLIED
+                and result.after_snapshot is not None
+                and result.after_snapshot.status
+                is feed_store.FeedStatus.QUARANTINED
+            )
+        ):
+            msg = "non-budgeted SID failure cannot quarantine"
+            raise grant_control.GrantControlIntegrityError(msg)
         disposition = _finalize_disposition(result.disposition)
         lifecycle = None
         if disposition is not grant_control.FinalizeDisposition.LOST:
