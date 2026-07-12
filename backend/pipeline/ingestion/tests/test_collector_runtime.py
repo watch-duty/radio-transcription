@@ -2225,7 +2225,7 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         close_data_pool.assert_awaited_once_with(rt._data_pool)
         rt._store.release_feeds_batch.assert_not_called()
 
-    async def test_undrained_shutdown_logs_bounded_count_and_keeps_resources_available(
+    async def test_undrained_shutdown_logs_bounded_count(
         self,
     ) -> None:
         rt = self._configure_shutdown_runtime(

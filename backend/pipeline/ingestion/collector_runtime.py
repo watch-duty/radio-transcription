@@ -433,8 +433,8 @@ class CollectorRuntime:
         self._shutdown: asyncio.Event = None  # type: ignore # set in _main()
         self._data_pool: asyncpg.Pool = None  # type: ignore # set in _main()
         # Dedicated 1-connection pool for heartbeat (control-plane / data-plane
-        # separation). Prevents 250 bookmark/upload ops on the main pool from
-        # starving heartbeat queries, which would cause false stall detection.
+        # separation). Prevents profile-sized data-plane work on the main pool
+        # from starving heartbeat queries and causing false stall detection.
         self._heartbeat_pool: asyncpg.Pool = None  # type: ignore # set in _main()
         self._loop: asyncio.AbstractEventLoop = None  # type: ignore # set in _main()
         self._heartbeat_thread: threading.Thread | None = None
@@ -454,10 +454,9 @@ class CollectorRuntime:
         # SSL-teardown sleep (Pitfall 12).
         self._http_session: aiohttp.ClientSession = None  # type: ignore # set in _main()
         self._capture_resources: CaptureResources = None  # type: ignore # set in _main()
-        # Size the aiohttp connection pool to match the feed concurrency so
-        # GCS uploads are never queued waiting for a free connection slot.
-        # Without this, the default limit of 100 means ~150 uploads always
-        # queue at the 250-feed target, adding latency and event-loop overhead.
+        # Size the aiohttp connection pool to the profile's process-wide owned
+        # cap so concurrent data-plane operations are not constrained by the
+        # client's lower default connection limit.
         self._gcs_client = gcs_client.GcsClient(
             max_connections=(
                 self._collector_settings.worker_profile.process_owned_cap
@@ -497,8 +496,8 @@ class CollectorRuntime:
 
         Uses uvloop as the event loop implementation. uvloop is a
         drop-in asyncio replacement built on libuv (C extension) that
-        reduces per-callback scheduling overhead, which matters at 250
-        concurrent feed tasks each generating frequent I/O completions.
+        reduces per-callback scheduling overhead when many concurrent grant
+        runners generate frequent I/O completions.
         """
         logger.info(
             "Starting CollectorRuntime worker_id=%s max_feeds=%d",
@@ -737,7 +736,7 @@ class CollectorRuntime:
         self._data_pool = await create_pool_with_retry(settings.db)
 
         # Dedicated 1-connection pool ensures heartbeat queries never queue
-        # behind 250 bookmark/upload operations on the main pool. Without
+        # behind profile-sized data-plane operations on the main pool. Without
         # this, pool contention causes false stall-timeout kills.
         hb_settings = settings.db.replace(pool_min_size=1, pool_max_size=1)
         self._heartbeat_pool = await create_pool_with_retry(hb_settings)
