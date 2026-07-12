@@ -23,6 +23,10 @@ class _FeedRetiredError(RuntimeError):
     """Admission reached a Feed retired from this shard."""
 
 
+class _AdmissionAbortedError(RuntimeError):
+    """Admission observed its exact lane closing before registration."""
+
+
 class _ShardFatalError(RuntimeError):
     """Admission or coordination observed persistent integrity failure."""
 
@@ -149,15 +153,26 @@ class _Shard:
             for slot in self._workers:
                 self._spawn_worker_locked(slot)
 
-    async def admit(self, work: _types._CallWork) -> _types._CallRecord:
+    async def admit(
+        self,
+        work: _types._CallWork,
+        *,
+        abort_event: asyncio.Event | None = None,
+    ) -> _types._CallRecord:
         """Atomically register one capacity-owning source record."""
         if not isinstance(work, _types._CallWork):
             message = "work must be _CallWork"
             raise TypeError(message)
+        if abort_event is not None and not isinstance(
+            abort_event,
+            asyncio.Event,
+        ):
+            message = "abort_event must be an asyncio.Event"
+            raise TypeError(message)
 
         async with self._capacity_changed:
             while True:
-                self._raise_admission_error_locked(work.feed_id)
+                self._raise_admission_error_locked(work, abort_event)
                 if (
                     not self._pressure_paused
                     and self._held < self._limits.capacity
@@ -344,6 +359,52 @@ class _Shard:
                 active_sequences=active,
             )
 
+    async def purge_page(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+    ) -> _types._PurgeResult:
+        """Release only queued calls from one exact grant and page."""
+        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
+            message = "grant must be a LeaseGrant"
+            raise TypeError(message)
+        _types._require_nonnegative_integer(page_sequence, "page_sequence")
+        async with self._lock:
+            released: list[int] = []
+            for feed_id, queue in tuple(self._feed_queues.items()):
+                kept: collections.deque[_types._CallRecord] = (
+                    collections.deque()
+                )
+                for record in queue:
+                    if (
+                        record.grant == grant
+                        and record.work.page_sequence == page_sequence
+                    ):
+                        released.append(record.local_sequence)
+                        del self._records[record.local_sequence]
+                        self._held -= 1
+                    else:
+                        kept.append(record)
+                if kept:
+                    self._feed_queues[feed_id] = kept
+                else:
+                    del self._feed_queues[feed_id]
+                    self._remove_ready_locked(feed_id)
+            active = tuple(
+                sorted(
+                    record.local_sequence
+                    for record in self._active_by_feed.values()
+                    if record.grant == grant
+                    and record.work.page_sequence == page_sequence
+                )
+            )
+            self._after_release_locked(len(released))
+            self._check_conservation_locked()
+            return _types._PurgeResult(
+                released_sequences=tuple(sorted(released)),
+                active_sequences=active,
+            )
+
     async def retire_feed(self, feed_id: uuid.UUID) -> _types._RetireFeedResult:
         """Reject one Feed and safely purge only its queued calls."""
         if not isinstance(feed_id, uuid.UUID):
@@ -471,6 +532,12 @@ class _Shard:
     async def wait_for_fatal(self) -> None:
         """Wait until first persistent scheduler-integrity evidence exists."""
         await self._fatal_event.wait()
+
+    async def wake_waiters(self) -> None:
+        """Recheck work and admission predicates after lane state changes."""
+        async with self._lock:
+            self._work_ready.notify_all()
+            self._capacity_changed.notify_all()
 
     async def close(self) -> None:
         """Stop fixed workers only after the shard is provably quiescent."""
@@ -697,12 +764,19 @@ class _Shard:
         self._capacity_changed.notify_all()
         self._work_ready.notify_all()
 
-    def _raise_admission_error_locked(self, feed_id: uuid.UUID) -> None:
+    def _raise_admission_error_locked(
+        self,
+        work: _types._CallWork,
+        abort_event: asyncio.Event | None,
+    ) -> None:
         self._raise_fatal_locked()
+        if abort_event is not None and abort_event.is_set():
+            message = "exact lane admission was aborted"
+            raise _AdmissionAbortedError(message)
         if not self._admission_open or self._stopping or self._closed:
             message = "shard admission is closed"
             raise _ShardClosedError(message)
-        if feed_id in self._retired_feeds:
+        if work.feed_id in self._retired_feeds:
             message = "Feed is retired from this shard"
             raise _FeedRetiredError(message)
 

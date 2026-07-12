@@ -363,6 +363,120 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             await scheduler._wait_for_idle()
             await scheduler.close()
 
+    async def test_only_one_page_pulls_from_a_lane_at_a_time(self) -> None:
+        scheduler_types = _scheduler_types()
+        limits = scheduler_types._SchedulerLimits(
+            shard_count=1,
+            capacity=4,
+            workers_per_shard=1,
+            high_water=2,
+            resume_at=0,
+        )
+        executor = _GateExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        first_candidate = cursor_policy.LeaseCursor(
+            grant,
+            pos=None,
+        ).prepare(_SOURCE_TIME)
+        second_candidate = cursor_policy.LeaseCursor(
+            grant,
+            pos=None,
+        ).prepare(_SOURCE_TIME)
+        first_calls = _TracingCalls(
+            _submission(uuid.UUID(int=index + 1), index) for index in range(3)
+        )
+        second_calls = _TracingCalls((_submission(uuid.UUID(int=10), 0),))
+        first = asyncio.create_task(
+            lane.cover_page(
+                calls=first_calls,
+                boundaries=(),
+                candidate=first_candidate,
+            )
+        )
+        second: asyncio.Task[object] | None = None
+        try:
+            await scheduler._shards[0].wait_for_capacity_waiters(1)
+            second = asyncio.create_task(
+                lane.cover_page(
+                    calls=second_calls,
+                    boundaries=(),
+                    candidate=second_candidate,
+                )
+            )
+            yielded = asyncio.Event()
+            asyncio.get_running_loop().call_soon(yielded.set)
+            await yielded.wait()
+
+            self.assertEqual(first_calls.pulled, [0, 1, 2])
+            self.assertEqual(second_calls.pulled, [])
+            self.assertFalse(second.done())
+        finally:
+            if second is not None:
+                second.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await second
+            first.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await first
+            executor.release_all()
+            await scheduler._wait_for_idle()
+            await scheduler.close()
+
+    async def test_close_before_coverage_returns_no_receipt(self) -> None:
+        scheduler_types = _scheduler_types()
+        limits = scheduler_types._SchedulerLimits(
+            shard_count=1,
+            capacity=5,
+            workers_per_shard=1,
+            high_water=4,
+            resume_at=2,
+        )
+        executor = _GateExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        candidate = cursor.prepare(_SOURCE_TIME)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _submission(uuid.UUID(int=index + 1), index)
+                    for index in range(6)
+                ),
+                boundaries=(),
+                candidate=candidate,
+            )
+        )
+        close: asyncio.Task[None] | None = None
+        try:
+            await scheduler._shards[0].wait_for_capacity_waiters(1)
+            close = asyncio.create_task(scheduler.close())
+            with self.assertRaisesRegex(RuntimeError, "closed"):
+                await coverage
+
+            snapshot = await scheduler._snapshot()
+            self.assertTrue(snapshot.closing)
+            self.assertEqual(snapshot.held, 1)
+            self.assertEqual(snapshot.shards[0].queued_calls, 0)
+            self.assertIs(cursor.outstanding_candidate, candidate)
+            self.assertFalse(close.done())
+        finally:
+            executor.release_all()
+            if close is None:
+                await scheduler.close()
+            else:
+                await asyncio.wait_for(close, timeout=1)
+
 
 if __name__ == "__main__":
     unittest.main()

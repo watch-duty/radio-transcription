@@ -88,6 +88,29 @@ def _shard_index(
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class CallSubmission:
+    """One opaque source-order call offered to an exact grant lane.
+
+    Attributes:
+        feed_id: Authoritative Feed identity used for stable shard affinity.
+        source_timestamp: Source metadata retained without ordering authority.
+        payload: Opaque adapter input retained only by its counted record.
+    """
+
+    feed_id: uuid.UUID
+    source_timestamp: datetime.datetime
+    payload: object
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.feed_id, uuid.UUID):
+            message = "feed_id must be a UUID"
+            raise TypeError(message)
+        if not isinstance(self.source_timestamp, datetime.datetime):
+            message = "source_timestamp must be a datetime"
+            raise TypeError(message)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class _CallWork:
     """One source-order call submission before local shard registration."""
 
@@ -135,27 +158,27 @@ class _CallRecord:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class _ExecutorCompleted:
+class CallCompleted:
     """The call pipeline settled in a scheduling-terminal state."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class _ExecutorRetryable:
+class CallRetryable:
     """The adapter settled with retryable evidence for an outer policy."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class _ExecutorAuthorityLost:
+class CallAuthorityLost:
     """The adapter confirmed loss of the record's exact Lease authority."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class _ExecutorMembershipRejected:
+class CallMembershipRejected:
     """The adapter rejected only the record's Feed membership."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class _ExecutorIntegrityFailure:
+class CallIntegrityFailure:
     """The adapter settled with scheduler-integrity failure evidence."""
 
     failure: BaseException
@@ -166,12 +189,19 @@ class _ExecutorIntegrityFailure:
             raise TypeError(message)
 
 
+_ExecutorCompleted = CallCompleted
+_ExecutorRetryable = CallRetryable
+_ExecutorAuthorityLost = CallAuthorityLost
+_ExecutorMembershipRejected = CallMembershipRejected
+_ExecutorIntegrityFailure = CallIntegrityFailure
+
+
 type _ExecutorOutcome = (
-    _ExecutorCompleted
-    | _ExecutorRetryable
-    | _ExecutorAuthorityLost
-    | _ExecutorMembershipRejected
-    | _ExecutorIntegrityFailure
+    CallCompleted
+    | CallRetryable
+    | CallAuthorityLost
+    | CallMembershipRejected
+    | CallIntegrityFailure
 )
 
 
