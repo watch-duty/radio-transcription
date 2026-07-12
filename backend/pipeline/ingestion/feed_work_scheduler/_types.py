@@ -275,6 +275,8 @@ class _BoundaryRecord:
     state: _RecordState
     aborted_page_sequence: int | None = None
     retry_suspended: bool = False
+    promotion_page_sequence: int | None = None
+    promotion_rollback_target: datetime.datetime | None = None
 
     def detached_work(self) -> BoundaryWork:
         """Return the immutable target passed across the I/O boundary."""

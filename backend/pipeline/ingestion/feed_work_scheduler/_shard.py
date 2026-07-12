@@ -462,16 +462,44 @@ class _Shard:
         grant: ingestion_lease_store.LeaseGrant,
         page_sequence: int,
     ) -> None:
-        """Make the current page's pending contribution stable in O(1)."""
+        """Prepare current-page contributions without losing provenance."""
         async with self._lock:
             for record in self._pending_boundaries.values():
                 if (
                     record.grant == grant
                     and record.provisional_page_sequence == page_sequence
                 ):
+                    prepared = record.promotion_page_sequence
+                    if prepared not in (None, page_sequence):
+                        message = "boundary promotion crossed live pages"
+                        raise RuntimeError(message)
+                    record.promotion_rollback_target = record.stable_target
                     record.stable_target = record.target
                     record.provisional_page_sequence = None
                     record.provisional_count = 0
+                    record.promotion_page_sequence = page_sequence
+            self._check_conservation_locked()
+
+    async def seal_boundary_page(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+    ) -> None:
+        """Stabilize prepared contributions after coverage has won."""
+        async with self._lock:
+            for record in self._pending_boundaries.values():
+                if record.grant != grant:
+                    continue
+                if record.promotion_page_sequence == page_sequence:
+                    if record.provisional_page_sequence is not None:
+                        message = "promoted boundary retained provisional state"
+                        raise RuntimeError(message)
+                    record.promotion_page_sequence = None
+                    record.promotion_rollback_target = None
+                    continue
+                if record.provisional_page_sequence == page_sequence:
+                    message = "boundary was not prepared before sealing"
+                    raise RuntimeError(message)
             self._check_conservation_locked()
 
     async def abort_boundary_page(
@@ -483,23 +511,32 @@ class _Shard:
         async with self._lock:
             released = 0
             for scope, record in tuple(self._pending_boundaries.items()):
-                if (
-                    record.grant != grant
-                    or record.provisional_page_sequence != page_sequence
-                ):
+                if record.grant != grant:
                     continue
-                if record.stable_target is None:
+                provisional = record.provisional_page_sequence == page_sequence
+                promoted = record.promotion_page_sequence == page_sequence
+                if not provisional and not promoted:
+                    continue
+                rollback_target = (
+                    record.promotion_rollback_target
+                    if promoted
+                    else record.stable_target
+                )
+                if rollback_target is None:
                     del self._pending_boundaries[scope]
                     self._held -= 1
                     released += 1
                 else:
-                    record.target = record.stable_target
+                    record.target = rollback_target
+                    record.stable_target = rollback_target
                     record.provisional_page_sequence = None
                     record.provisional_count = 0
+                    record.promotion_page_sequence = None
+                    record.promotion_rollback_target = None
             for record in self._flushing_boundaries.values():
-                if (
-                    record.grant == grant
-                    and record.provisional_page_sequence == page_sequence
+                if record.grant == grant and page_sequence in (
+                    record.provisional_page_sequence,
+                    record.promotion_page_sequence,
                 ):
                     record.aborted_page_sequence = page_sequence
             self._after_release_locked(released)
@@ -779,11 +816,17 @@ class _Shard:
                 )
             )
             for scope, record in tuple(self._pending_boundaries.items()):
-                if (
-                    record.grant != grant
-                    or record.provisional_page_sequence != page_sequence
-                    or record.stable_target is not None
+                if record.grant != grant or page_sequence not in (
+                    record.provisional_page_sequence,
+                    record.promotion_page_sequence,
                 ):
+                    continue
+                rollback_target = (
+                    record.promotion_rollback_target
+                    if record.promotion_page_sequence == page_sequence
+                    else record.stable_target
+                )
+                if rollback_target is not None:
                     continue
                 del self._pending_boundaries[scope]
                 released.append(record.local_sequence)
@@ -796,8 +839,11 @@ class _Shard:
                             record.local_sequence
                             for record in self._flushing_boundaries.values()
                             if record.grant == grant
-                            and record.provisional_page_sequence
-                            == page_sequence
+                            and page_sequence
+                            in (
+                                record.provisional_page_sequence,
+                                record.promotion_page_sequence,
+                            )
                         ),
                     )
                 )
@@ -1328,6 +1374,9 @@ class _Shard:
             message = "only a pending boundary may coalesce"
             raise RuntimeError(message)
         page_sequence = boundary_input.page_sequence
+        if record.promotion_page_sequence not in (None, page_sequence):
+            record.promotion_page_sequence = None
+            record.promotion_rollback_target = None
         if record.provisional_page_sequence not in (None, page_sequence):
             message = "pending boundary retained another live page"
             raise RuntimeError(message)
@@ -1346,23 +1395,35 @@ class _Shard:
         self,
         record: _types._BoundaryRecord,
     ) -> None:
+        page_sequence = (
+            record.provisional_page_sequence
+            if record.provisional_page_sequence is not None
+            else record.promotion_page_sequence
+        )
         aborted = (
             record.aborted_page_sequence is not None
-            and record.aborted_page_sequence == record.provisional_page_sequence
+            and record.aborted_page_sequence == page_sequence
         )
-        if aborted and record.stable_target is None:
+        rollback_target = (
+            record.promotion_rollback_target
+            if record.promotion_page_sequence == page_sequence
+            else record.stable_target
+        )
+        if aborted and rollback_target is None:
             self._held -= 1
             self._after_release_locked(1)
             self._ready_call_or_boundary_locked(record.feed_id)
             return
         if aborted:
-            stable_target = record.stable_target
-            if stable_target is None:
+            if rollback_target is None:
                 message = "aborted stable boundary lost its target"
                 raise RuntimeError(message)
-            record.target = stable_target
+            record.target = rollback_target
+            record.stable_target = rollback_target
             record.provisional_page_sequence = None
             record.provisional_count = 0
+            record.promotion_page_sequence = None
+            record.promotion_rollback_target = None
         record.aborted_page_sequence = None
         record.state = _types._RecordState.PENDING_BOUNDARY
         record.retry_suspended = True

@@ -2414,6 +2414,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         order: list[str] = []
         lane_opened = asyncio.Event()
         lane_closed = asyncio.Event()
+        opened_lanes: list[feed_work_scheduler.GrantLane] = []
         received_resources: list[collector_runtime._SidRunnerResources] = []
         store_factory = mock.Mock(side_effect=(data_store, heartbeat_store))
 
@@ -2440,6 +2441,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
 
         def recording_open_lane(run_grant):
             lane = original_open_lane(run_grant)
+            opened_lanes.append(lane)
             original_lane_close = lane.close
 
             async def recording_lane_close(reason):
@@ -2486,7 +2488,9 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         async def release(*_args, **_kwargs):
             self.assertTrue(lane_closed.is_set())
             self.assertTrue(rt._thread_stop.is_set())
-            lane_snapshot = await scheduler._lanes[grant]._snapshot()
+            self.assertNotIn(grant, scheduler._lanes)
+            self.assertEqual((await scheduler._snapshot()).lane_count, 0)
+            lane_snapshot = await opened_lanes[0]._snapshot()
             self.assertTrue(lane_snapshot.closed)
             managed = next(iter(rt._supervisor._registry.values()))
             self.assertTrue(managed.runner_closed.is_set())

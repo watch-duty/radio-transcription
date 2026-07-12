@@ -336,6 +336,14 @@ class FeedWorkScheduler:
         for shard in self._shards:
             await shard.promote_boundary_page(grant, page_sequence)
 
+    async def _seal_boundary_page(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+    ) -> None:
+        for shard in self._shards:
+            await shard.seal_boundary_page(grant, page_sequence)
+
     async def _purge_exact(
         self,
         grant: ingestion_lease_store.LeaseGrant,
@@ -453,15 +461,10 @@ class FeedWorkScheduler:
                 self._closing_grants.discard(grant)
 
     def _lane_closed(self, lane: GrantLane) -> None:
-        """Release superseded closed-lane/task history by Lease slot."""
-        slot = self._lease_slot(lane.grant)
-        successor_exists = any(
-            other is not lane and self._lease_slot(grant) == slot
-            for grant, other in self._lanes.items()
-        )
-        if successor_exists:
-            self._lanes.pop(lane.grant, None)
-            self._closing_grants.discard(lane.grant)
+        """Remove successfully closed lanes from the live registries."""
+        if self._lanes.get(lane.grant) is lane:
+            self._lanes.pop(lane.grant)
+        self._closing_grants.discard(lane.grant)
 
     @staticmethod
     def _lease_slot(
@@ -511,6 +514,7 @@ class GrantLane:
         self._close_changed = asyncio.Event()
         self._next_page_sequence = 0
         self._page: _PageBarrier | None = None
+        self._page_settlement_task: asyncio.Task[None] | None = None
         self._close_strength = _CloseStrength.OPEN
         self._close_reason = _types.LaneCloseReason.PLANNED_DRAIN
         self._close_task: (
@@ -683,10 +687,32 @@ class GrantLane:
                     self._grant,
                     candidate.page_sequence,
                 )
-                return await self._cover(candidate)
+                receipt = await self._cover(candidate)
             except BaseException:
-                await self._abort_page(candidate.page_sequence)
+                cleanup = self._start_page_settlement(
+                    self._abort_page(candidate.page_sequence),
+                    name=(
+                        "feed-work-page-abort-"
+                        f"{self._grant.lease_key}-{candidate.page_sequence}"
+                    ),
+                )
+                try:
+                    await self._settle_page_task(cleanup)
+                except BaseException as cleanup_failure:
+                    self._scheduler._observe_fatal(cleanup_failure)
                 raise
+            settlement = self._start_page_settlement(
+                self._scheduler._seal_boundary_page(
+                    self._grant,
+                    candidate.page_sequence,
+                ),
+                name=(
+                    "feed-work-page-seal-"
+                    f"{self._grant.lease_key}-{candidate.page_sequence}"
+                ),
+            )
+            await self._settle_page_task(settlement)
+            return receipt
 
     async def _snapshot(self) -> _LaneSnapshot:
         async with self._state_lock:
@@ -847,6 +873,34 @@ class GrantLane:
                 and self._page.page_sequence == page_sequence
             ):
                 self._page = None
+
+    def _start_page_settlement(
+        self,
+        coroutine: collections.abc.Coroutine[object, object, None],
+        *,
+        name: str,
+    ) -> asyncio.Task[None]:
+        if self._page_settlement_task is not None:
+            message = "lane already owns a page settlement task"
+            raise RuntimeError(message)
+        task = asyncio.create_task(coroutine, name=name)
+        self._page_settlement_task = task
+        return task
+
+    async def _settle_page_task(self, task: asyncio.Task[None]) -> None:
+        try:
+            while True:
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    if task.done():
+                        task.result()
+                        return
+                    continue
+                return
+        finally:
+            if self._page_settlement_task is task:
+                self._page_settlement_task = None
 
     def _request_close(
         self,
