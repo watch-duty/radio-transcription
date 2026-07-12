@@ -53,6 +53,33 @@ type Authority = FeedAuthority | SidAuthority
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class GrantCount:
+    """Low-cardinality local counts for one registered domain."""
+
+    active: int
+    retrying: int
+    durable_failing: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SupervisorSnapshot:
+    """Immutable local-only health projection for the selected profile."""
+
+    profile: str
+    profile_digest: str
+    counts_by_domain: typing.Mapping[grant_control.DomainId, GrantCount]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ShutdownResult:
+    """Bounded result counts for one completed supervisor shutdown."""
+
+    finalized: int
+    abandoned: int
+    undrained: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class RegisteredDomain[GrantT, PayloadT]:
     """One typed grant-control and runner registration.
 
@@ -93,6 +120,75 @@ class TerminalState(enum.StrEnum):
     RESERVED = "reserved"
     FINALIZED = "finalized"
     ABANDONED = "abandoned"
+
+
+class _ReservationKind(enum.StrEnum):
+    STORAGE = "storage"
+    ADMINISTRATIVE = "administrative"
+    CONFIRMED_LOSS = "confirmed_loss"
+    UNCERTAIN = "uncertain"
+    SHUTDOWN = "shutdown"
+
+
+class _LifecycleEvent(enum.StrEnum):
+    ADMISSION = "admission"
+    HEARTBEAT = "heartbeat"
+    ADMINISTRATIVE_STOP = "administrative_stop"
+    LOSS = "loss"
+    UNAVAILABLE = "unavailable"
+    RETRY_STATE = "retry_state"
+    FINALIZATION = "finalization"
+    COUNT_SNAPSHOT = "count_snapshot"
+    SHUTDOWN = "shutdown"
+
+
+class _FinalizeEffect(enum.StrEnum):
+    FINALIZED = "finalized"
+    ABANDONED = "abandoned"
+    LOST = "lost"
+    SKIPPED = "skipped"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _AdministrativeNoWrite:
+    pass
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ConfirmedLoss:
+    pass
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _UncertainAbandonment:
+    pass
+
+
+type _TerminalReservation = (
+    grant_control.TerminalDecision
+    | _AdministrativeNoWrite
+    | _ConfirmedLoss
+    | _UncertainAbandonment
+)
+
+_STORAGE_DECISION_TYPES = (
+    grant_control.NeutralRelease,
+    grant_control.BudgetedFailureDecision,
+    grant_control.NonBudgetedFailureDecision,
+)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _LifecycleRecord:
+    event_type: str
+    profile: str
+    profile_digest: str
+    domain_id: str
+    authority_kind: str
+    outcome: str
+    active: int | None = None
+    retrying: int | None = None
+    durable_failing: int | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -171,7 +267,9 @@ class _ManagedGrant:
     retrying: bool = False
     closed_outcome: grant_control.RunOutcome | None = None
     terminal_state: TerminalState = TerminalState.OPEN
-    terminal_decision: grant_control.TerminalDecision | None = None
+    terminal_kind: _ReservationKind | None = None
+    terminal_decision: _TerminalReservation | None = None
+    terminal_task: asyncio.Task[_FinalizeEffect] | None = None
 
 
 _AUTHORITY_TYPES: typing.Mapping[
@@ -416,6 +514,7 @@ class GrantSupervisor:
         )
         self._profile_digest = worker_profiles.profile_digest(self._profile)
         self._finalize_concurrency = finalize_concurrency
+        self._finalize_semaphore = asyncio.Semaphore(finalize_concurrency)
         self._registry: dict[_GenerationKey, _ManagedGrant] = {}
         self._current_by_slot: dict[_AuthoritySlot, _GenerationKey] = {}
         self._owned_by_domain = dict.fromkeys(self._domains_by_id, 0)
@@ -426,6 +525,8 @@ class GrantSupervisor:
         self._admission_enabled = True
         self._integrity_failure: BaseException | None = None
         self._integrity_failure_event = asyncio.Event()
+        self._heartbeat_stopped = asyncio.Event()
+        self._terminal_tasks: set[asyncio.Task[_FinalizeEffect]] = set()
 
     @property
     def admission_enabled(self) -> bool:
@@ -442,7 +543,10 @@ class GrantSupervisor:
         """Return the first surfaced control-plane integrity failure."""
         return self._integrity_failure
 
-    async def admit_cycle(self, owner_worker_id: uuid.UUID) -> None:
+    async def admit_cycle(  # noqa: PLR0912
+        self,
+        owner_worker_id: uuid.UUID,
+    ) -> None:
         """Run one reservation-first primary then recovery admission cycle.
 
         Args:
@@ -464,6 +568,12 @@ class GrantSupervisor:
             if domain.allocation.claims_enabled
         )
         if not enabled:
+            for domain in self._domains:
+                self._emit_lifecycle(
+                    _LifecycleEvent.ADMISSION,
+                    domain,
+                    outcome="disabled",
+                )
             return
         start = self._domain_start_cursor % len(enabled)
         ordered = enabled[start:] + enabled[:start]
@@ -508,10 +618,25 @@ class GrantSupervisor:
                 strict=True,
             ):
                 if isinstance(result, BaseException):
+                    self._emit_lifecycle(
+                        _LifecycleEvent.ADMISSION,
+                        _domain,
+                        outcome="control_error",
+                    )
                     if first_failure is None:
                         first_failure = result
             if first_failure is not None:
                 raise first_failure
+        for domain in self._domains:
+            self._emit_lifecycle(
+                _LifecycleEvent.ADMISSION,
+                domain,
+                outcome=(
+                    "complete"
+                    if domain.allocation.claims_enabled
+                    else "disabled"
+                ),
+            )
 
     def _reserve_admission(
         self,
@@ -547,6 +672,13 @@ class GrantSupervisor:
         registered_count = 0
         try:
             claims = await domain.claim(mode, owner_worker_id, reservation)
+            if not self._admission_enabled:
+                self._emit_lifecycle(
+                    _LifecycleEvent.ADMISSION,
+                    domain,
+                    outcome="stopped_in_flight",
+                )
+                return 0
             if len(claims) > reservation:
                 msg = "control returned more claims than reserved"
                 raise grant_control.GrantControlIntegrityError(msg)  # noqa: TRY301
@@ -559,6 +691,11 @@ class GrantSupervisor:
             return registered_count  # noqa: TRY300
         except grant_control.GrantControlIntegrityError as exc:
             self._surface_integrity_failure(exc)
+            self._emit_lifecycle(
+                _LifecycleEvent.ADMISSION,
+                domain,
+                outcome="integrity_failure",
+            )
             return 0
         finally:
             if remaining_reservation:
@@ -639,6 +776,11 @@ class GrantSupervisor:
             name=(f"grant-{domain.domain_id.value}-{claim.fencing_token}"),
         )
         managed.root_task = root_task
+        self._emit_lifecycle(
+            _LifecycleEvent.ADMISSION,
+            domain,
+            outcome="registered",
+        )
         root_task.add_done_callback(
             lambda task, generation=key: self._root_done(generation, task)
         )
@@ -682,8 +824,10 @@ class GrantSupervisor:
                     grant_control.TerminalCause.CANCELLATION
                 )
         finally:
-            managed.retrying = False
+            if managed.retrying:
+                self._set_retrying(key, False)  # noqa: FBT003
             managed.runner_closed.set()
+            self._handle_runner_closed(key)
 
     def _set_retrying(
         self,
@@ -699,8 +843,16 @@ class GrantSupervisor:
             managed is not None
             and self._current_by_slot.get(slot) == key
             and managed.key == key
+            and (managed.terminal_state is TerminalState.OPEN or not retrying)
         ):
+            if managed.retrying == retrying:
+                return
             managed.retrying = retrying
+            self._emit_lifecycle(
+                _LifecycleEvent.RETRY_STATE,
+                managed.domain,
+                outcome="retrying" if retrying else "active",
+            )
 
     def _root_done(
         self,
@@ -719,6 +871,697 @@ class GrantSupervisor:
             and self._current_by_slot.get(slot) == key
         ):
             self._surface_integrity_failure(exception)
+
+    def _handle_runner_closed(  # noqa: PLR0911, PLR0912
+        self,
+        key: _GenerationKey,
+    ) -> None:
+        managed = self._current_exact(key)
+        if managed is None:
+            return
+        if managed.terminal_kind is _ReservationKind.ADMINISTRATIVE:
+            self._emit_lifecycle(
+                _LifecycleEvent.ADMINISTRATIVE_STOP,
+                managed.domain,
+                outcome="closed",
+            )
+            self._discard_exact_generation(key)
+            return
+        if managed.terminal_kind is _ReservationKind.CONFIRMED_LOSS:
+            self._emit_lifecycle(
+                _LifecycleEvent.LOSS,
+                managed.domain,
+                outcome="closed",
+            )
+            self._discard_exact_generation(key)
+            return
+        if managed.terminal_kind in (
+            _ReservationKind.UNCERTAIN,
+            _ReservationKind.SHUTDOWN,
+            _ReservationKind.STORAGE,
+        ):
+            return
+
+        outcome = managed.closed_outcome
+        if outcome is None:
+            if self._reserve_terminal(key, _UncertainAbandonment()):
+                failure = grant_control.GrantControlIntegrityError(
+                    "runner closed without a valid outcome"
+                )
+                self._surface_integrity_failure(failure)
+            return
+        if isinstance(outcome, grant_control.RunLost):
+            if self._reserve_terminal(key, _ConfirmedLoss()):
+                self._discard_exact_generation(key)
+            return
+        if isinstance(outcome, grant_control.RunFailed):
+            try:
+                decision = managed.domain.terminal_decision_for(outcome)
+            except Exception as exc:
+                self._reserve_terminal(key, _UncertainAbandonment())
+                self._surface_integrity_failure(exc)
+                return
+            if not isinstance(decision, _STORAGE_DECISION_TYPES):
+                failure = grant_control.GrantControlIntegrityError(
+                    "terminal selector returned an invalid decision"
+                )
+                self._reserve_terminal(key, _UncertainAbandonment())
+                self._surface_integrity_failure(failure)
+                return
+        elif isinstance(outcome, grant_control.RunStopped):
+            decision = grant_control.NeutralRelease(outcome.cause)
+        else:
+            decision = grant_control.NeutralRelease(
+                grant_control.TerminalCause.NORMAL
+            )
+        if self._reserve_terminal(key, decision):
+            self._start_terminal_task(key)
+
+    def _reserve_terminal(
+        self,
+        key: _GenerationKey,
+        decision: _TerminalReservation,
+    ) -> bool:
+        """Synchronously reserve the first terminal owner for ``key``."""
+        managed = self._current_exact(key)
+        if managed is None or managed.terminal_state is not TerminalState.OPEN:
+            return False
+        if isinstance(decision, _AdministrativeNoWrite):
+            kind = _ReservationKind.ADMINISTRATIVE
+            state = TerminalState.RESERVED
+        elif isinstance(decision, _ConfirmedLoss):
+            kind = _ReservationKind.CONFIRMED_LOSS
+            state = TerminalState.ABANDONED
+        elif isinstance(decision, _UncertainAbandonment):
+            kind = _ReservationKind.UNCERTAIN
+            state = TerminalState.ABANDONED
+        elif (
+            isinstance(decision, grant_control.NeutralRelease)
+            and decision.cause is grant_control.TerminalCause.SHUTDOWN
+        ):
+            kind = _ReservationKind.SHUTDOWN
+            state = TerminalState.RESERVED
+        elif isinstance(decision, _STORAGE_DECISION_TYPES):
+            kind = _ReservationKind.STORAGE
+            state = TerminalState.RESERVED
+        else:
+            msg = "decision must be a closed terminal reservation"
+            raise TypeError(msg)
+        managed.terminal_kind = kind
+        managed.terminal_decision = decision
+        managed.terminal_state = state
+        return True
+
+    def _current_exact(self, key: _GenerationKey) -> _ManagedGrant | None:
+        managed = self._registry.get(key)
+        slot = _AuthoritySlot(key.domain_id, key.authority)
+        if (
+            managed is None
+            or managed.key != key
+            or self._current_by_slot.get(slot) != key
+        ):
+            return None
+        return managed
+
+    def _start_terminal_task(
+        self,
+        key: _GenerationKey,
+    ) -> asyncio.Task[_FinalizeEffect]:
+        managed = self._current_exact(key)
+        if managed is None:
+            msg = "cannot start finalization for a non-current generation"
+            raise RuntimeError(msg)
+        if managed.terminal_task is not None:
+            return managed.terminal_task
+        task = asyncio.create_task(
+            self._finalize_reserved(key),
+            name=f"grant-finalize-{key.domain_id.value}-{key.fencing_token}",
+        )
+        managed.terminal_task = task
+        self._terminal_tasks.add(task)
+        task.add_done_callback(self._terminal_task_done)
+        return task
+
+    def _terminal_task_done(
+        self,
+        task: asyncio.Task[_FinalizeEffect],
+    ) -> None:
+        self._terminal_tasks.discard(task)
+        try:
+            task.exception()
+        except asyncio.CancelledError:
+            pass
+
+    async def _finalize_reserved(  # noqa: PLR0911, PLR0912, PLR0915
+        self,
+        key: _GenerationKey,
+    ) -> _FinalizeEffect:
+        managed = self._current_exact(key)
+        if (
+            managed is None
+            or managed.terminal_state is not TerminalState.RESERVED
+            or managed.terminal_kind
+            not in (_ReservationKind.STORAGE, _ReservationKind.SHUTDOWN)
+            or not managed.runner_closed.is_set()
+        ):
+            return _FinalizeEffect.SKIPPED
+        if (
+            managed.terminal_kind is _ReservationKind.SHUTDOWN
+            and not self._heartbeat_stopped.is_set()
+        ):
+            return _FinalizeEffect.SKIPPED
+        decision = managed.terminal_decision
+        if not isinstance(decision, _STORAGE_DECISION_TYPES):
+            return _FinalizeEffect.SKIPPED
+        try:
+            async with self._finalize_semaphore:
+                current = self._current_exact(key)
+                if (
+                    current is not managed
+                    or managed.terminal_state is not TerminalState.RESERVED
+                    or managed.terminal_decision is not decision
+                ):
+                    return _FinalizeEffect.SKIPPED
+                result = await managed.domain.finalize(
+                    managed.grant,
+                    decision,
+                )
+        except asyncio.CancelledError:
+            current = self._current_exact(key)
+            if current is managed:
+                managed.terminal_state = TerminalState.ABANDONED
+                managed.terminal_kind = _ReservationKind.UNCERTAIN
+                managed.terminal_decision = _UncertainAbandonment()
+                self._emit_lifecycle(
+                    _LifecycleEvent.FINALIZATION,
+                    managed.domain,
+                    outcome="cancelled_unknown",
+                )
+            raise
+        except Exception as exc:
+            current = self._current_exact(key)
+            if current is managed:
+                managed.terminal_state = TerminalState.ABANDONED
+                managed.terminal_kind = _ReservationKind.UNCERTAIN
+                managed.terminal_decision = _UncertainAbandonment()
+                self._emit_lifecycle(
+                    _LifecycleEvent.FINALIZATION,
+                    managed.domain,
+                    outcome="unavailable",
+                )
+                self._surface_integrity_failure(exc)
+            return _FinalizeEffect.ABANDONED
+
+        current = self._current_exact(key)
+        if (
+            current is not managed
+            or managed.terminal_state is not TerminalState.RESERVED
+            or managed.terminal_decision is not decision
+        ):
+            return _FinalizeEffect.SKIPPED
+        if result.grant != managed.grant:
+            failure = grant_control.GrantControlIntegrityError(
+                "finalize result identity mismatch"
+            )
+            managed.terminal_state = TerminalState.ABANDONED
+            managed.terminal_kind = _ReservationKind.UNCERTAIN
+            managed.terminal_decision = _UncertainAbandonment()
+            self._emit_lifecycle(
+                _LifecycleEvent.FINALIZATION,
+                managed.domain,
+                outcome="identity_mismatch",
+            )
+            self._surface_integrity_failure(failure)
+            return _FinalizeEffect.ABANDONED
+        if not isinstance(
+            result.disposition,
+            grant_control.FinalizeDisposition,
+        ) or (
+            result.lifecycle is not None
+            and not isinstance(
+                result.lifecycle,
+                grant_control.LifecycleEvidence,
+            )
+        ):
+            failure = grant_control.GrantControlIntegrityError(
+                "finalize result lifecycle or disposition is malformed"
+            )
+            managed.terminal_state = TerminalState.ABANDONED
+            managed.terminal_kind = _ReservationKind.UNCERTAIN
+            managed.terminal_decision = _UncertainAbandonment()
+            self._emit_lifecycle(
+                _LifecycleEvent.FINALIZATION,
+                managed.domain,
+                outcome="malformed",
+            )
+            self._surface_integrity_failure(failure)
+            return _FinalizeEffect.ABANDONED
+        if result.disposition in (
+            grant_control.FinalizeDisposition.APPLIED,
+            grant_control.FinalizeDisposition.ACCEPTED_NOOP,
+        ):
+            if result.lifecycle is not None:
+                managed.lifecycle = result.lifecycle
+            managed.terminal_state = TerminalState.FINALIZED
+            self._emit_lifecycle(
+                _LifecycleEvent.FINALIZATION,
+                managed.domain,
+                outcome="finalized",
+            )
+            self._discard_exact_generation(key)
+            return _FinalizeEffect.FINALIZED
+        if result.disposition is grant_control.FinalizeDisposition.LOST:
+            managed.terminal_state = TerminalState.ABANDONED
+            managed.terminal_kind = _ReservationKind.CONFIRMED_LOSS
+            managed.terminal_decision = _ConfirmedLoss()
+            self._emit_lifecycle(
+                _LifecycleEvent.FINALIZATION,
+                managed.domain,
+                outcome="lost",
+            )
+            self._discard_exact_generation(key)
+            return _FinalizeEffect.LOST
+        managed.terminal_state = TerminalState.ABANDONED
+        managed.terminal_kind = _ReservationKind.UNCERTAIN
+        managed.terminal_decision = _UncertainAbandonment()
+        failure = grant_control.GrantControlIntegrityError(
+            "finalize returned unavailable or unknown authority"
+        )
+        self._emit_lifecycle(
+            _LifecycleEvent.FINALIZATION,
+            managed.domain,
+            outcome="unavailable",
+        )
+        self._surface_integrity_failure(failure)
+        return _FinalizeEffect.ABANDONED
+
+    async def heartbeat_cycle(  # noqa: PLR0912
+        self,
+        on_dispatch: typing.Callable[[], None],
+    ) -> None:
+        """Heartbeat exact current generations grouped by registered domain.
+
+        Args:
+            on_dispatch: Non-awaiting local-liveness stamp invoked before any
+                control I/O.
+
+        Raises:
+            TypeError: If ``on_dispatch`` is not callable.
+        """
+        if not callable(on_dispatch):
+            msg = "on_dispatch must be callable"
+            raise TypeError(msg)
+        on_dispatch()
+        for domain in self._domains:
+            expected = tuple(
+                (
+                    managed,
+                    managed.terminal_state,
+                    managed.terminal_kind,
+                )
+                for managed in self._registry.values()
+                if managed.domain is domain
+                and self._heartbeat_eligible(managed)
+                and self._current_exact(managed.key) is managed
+            )
+            if not expected:
+                self._emit_lifecycle(
+                    _LifecycleEvent.HEARTBEAT,
+                    domain,
+                    outcome="empty",
+                )
+                continue
+            grants = tuple(managed.grant for managed, _state, _kind in expected)
+            try:
+                results = await domain.heartbeat(grants)
+                self._validate_heartbeat_results(expected, results)
+                if any(
+                    result.disposition
+                    is grant_control.HeartbeatDisposition.UNAVAILABLE
+                    for result in results
+                ):
+                    msg = "heartbeat control reported unavailable authority"
+                    raise grant_control.GrantControlIntegrityError(msg)  # noqa: TRY301
+            except Exception as exc:
+                self._fail_heartbeat_domain(domain, expected, exc)
+                continue
+
+            for expected_entry, result in zip(
+                expected,
+                results,
+                strict=True,
+            ):
+                managed, state, kind = expected_entry
+                current = self._current_exact(managed.key)
+                if (
+                    current is not managed
+                    or managed.terminal_state is not state
+                    or managed.terminal_kind is not kind
+                    or not self._heartbeat_eligible(managed)
+                ):
+                    continue
+                if (
+                    result.disposition
+                    is grant_control.HeartbeatDisposition.RETAINED
+                ):
+                    lifecycle = result.lifecycle
+                    if lifecycle is None:
+                        continue
+                    managed.lifecycle = lifecycle
+                    self._emit_lifecycle(
+                        _LifecycleEvent.HEARTBEAT,
+                        domain,
+                        outcome="retained",
+                    )
+                elif (
+                    result.disposition
+                    is grant_control.HeartbeatDisposition.ADMINISTRATIVE_STOP
+                ):
+                    if self._reserve_terminal(
+                        managed.key,
+                        _AdministrativeNoWrite(),
+                    ):
+                        self._emit_lifecycle(
+                            _LifecycleEvent.ADMINISTRATIVE_STOP,
+                            domain,
+                            outcome="reserved",
+                        )
+                        managed.stop_requested.set()
+                        if managed.runner_closed.is_set():
+                            self._handle_runner_closed(managed.key)
+                elif (
+                    result.disposition
+                    is grant_control.HeartbeatDisposition.LOST
+                ):
+                    if self._reserve_terminal(managed.key, _ConfirmedLoss()):
+                        self._emit_lifecycle(
+                            _LifecycleEvent.LOSS,
+                            domain,
+                            outcome="reserved",
+                        )
+                        managed.grant_lost.set()
+                        if managed.runner_closed.is_set():
+                            self._handle_runner_closed(managed.key)
+
+    def _validate_heartbeat_results(
+        self,
+        expected: tuple[
+            tuple[
+                _ManagedGrant,
+                TerminalState,
+                _ReservationKind | None,
+            ],
+            ...,
+        ],
+        results: tuple[_ErasedHeartbeat, ...],
+    ) -> None:
+        if len(results) != len(expected):
+            msg = "heartbeat result cardinality mismatch"
+            raise grant_control.GrantControlIntegrityError(msg)
+        seen: list[object] = []
+        for index, result in enumerate(results):
+            managed = expected[index][0]
+            if result.grant != managed.grant or result.grant in seen:
+                msg = "heartbeat result identity or order mismatch"
+                raise grant_control.GrantControlIntegrityError(msg)
+            seen.append(result.grant)
+            if not isinstance(
+                result.disposition,
+                grant_control.HeartbeatDisposition,
+            ):
+                msg = "heartbeat returned an invalid disposition"
+                raise grant_control.GrantControlIntegrityError(msg)
+            retained = (
+                result.disposition
+                is grant_control.HeartbeatDisposition.RETAINED
+            )
+            if retained != isinstance(
+                result.lifecycle,
+                grant_control.LifecycleEvidence,
+            ):
+                msg = "heartbeat lifecycle evidence is malformed"
+                raise grant_control.GrantControlIntegrityError(msg)
+
+    def _heartbeat_eligible(self, managed: _ManagedGrant) -> bool:
+        if managed.terminal_state is TerminalState.OPEN:
+            return True
+        return (
+            managed.terminal_state is TerminalState.RESERVED
+            and managed.terminal_kind is _ReservationKind.SHUTDOWN
+            and not managed.runner_closed.is_set()
+            and not self._heartbeat_stopped.is_set()
+        )
+
+    def _fail_heartbeat_domain(
+        self,
+        domain: _ErasedRegisteredDomain,
+        expected: tuple[
+            tuple[
+                _ManagedGrant,
+                TerminalState,
+                _ReservationKind | None,
+            ],
+            ...,
+        ],
+        failure: BaseException,
+    ) -> None:
+        self._admission_enabled = False
+        for managed, state, kind in expected:
+            if (
+                self._current_exact(managed.key) is not managed
+                or managed.terminal_state is not state
+                or managed.terminal_kind is not kind
+                or not self._heartbeat_eligible(managed)
+            ):
+                continue
+            if self._reserve_terminal(
+                managed.key,
+                _UncertainAbandonment(),
+            ):
+                managed.grant_lost.set()
+                managed.stop_requested.set()
+        self._emit_lifecycle(
+            _LifecycleEvent.UNAVAILABLE,
+            domain,
+            outcome="fail_closed",
+        )
+        self._surface_integrity_failure(failure)
+
+    def snapshot(self) -> SupervisorSnapshot:
+        """Return a store-free immutable local lifecycle count snapshot."""
+        counts = {
+            domain.domain_id: self._count_for_domain(domain)
+            for domain in self._domains
+        }
+        for domain in self._domains:
+            count = counts[domain.domain_id]
+            self._emit_lifecycle(
+                _LifecycleEvent.COUNT_SNAPSHOT,
+                domain,
+                outcome="observed",
+                count=count,
+            )
+        return SupervisorSnapshot(
+            profile=self._profile.name,
+            profile_digest=self._profile_digest,
+            counts_by_domain=types.MappingProxyType(counts),
+        )
+
+    def _count_for_domain(
+        self,
+        domain: _ErasedRegisteredDomain,
+    ) -> GrantCount:
+        entries = tuple(
+            managed
+            for managed in self._registry.values()
+            if managed.domain is domain
+            and self._current_exact(managed.key) is managed
+        )
+        active_entries = tuple(
+            managed
+            for managed in entries
+            if managed.terminal_state is TerminalState.OPEN
+            or (
+                managed.terminal_state is TerminalState.RESERVED
+                and not managed.runner_closed.is_set()
+            )
+        )
+        return GrantCount(
+            active=len(active_entries),
+            retrying=sum(managed.retrying for managed in active_entries),
+            durable_failing=sum(
+                managed.lifecycle.durable_failing for managed in entries
+            ),
+        )
+
+    async def shutdown(
+        self,
+        *,
+        cooperative_grace_sec: float,
+        external_stop_deadline_sec: float,
+        stop_heartbeat_supervision: typing.Callable[
+            [],
+            typing.Awaitable[None],
+        ],
+    ) -> ShutdownResult:
+        """Drain runners, stop heartbeats, then exact-finalize closed grants."""
+        self._validate_shutdown_timeout(
+            cooperative_grace_sec,
+            "cooperative_grace_sec",
+        )
+        self._validate_shutdown_timeout(
+            external_stop_deadline_sec,
+            "external_stop_deadline_sec",
+        )
+        if not callable(stop_heartbeat_supervision):
+            msg = "stop_heartbeat_supervision must be callable"
+            raise TypeError(msg)
+
+        self._admission_enabled = False
+        initial = tuple(self._registry.values())
+        for managed in initial:
+            if self._current_exact(managed.key) is managed:
+                self._reserve_terminal(
+                    managed.key,
+                    grant_control.NeutralRelease(
+                        grant_control.TerminalCause.SHUTDOWN
+                    ),
+                )
+        for domain in self._domains:
+            self._emit_lifecycle(
+                _LifecycleEvent.SHUTDOWN,
+                domain,
+                outcome="reserved",
+            )
+        for managed in initial:
+            if self._current_exact(managed.key) is managed:
+                managed.stop_requested.set()
+
+        await self._await_runner_closure(
+            initial,
+            cooperative_grace_sec,
+        )
+        remaining = tuple(
+            managed
+            for managed in initial
+            if self._current_exact(managed.key) is managed
+            and not managed.runner_closed.is_set()
+        )
+        for managed in remaining:
+            task = managed.root_task
+            if task is not None and not task.done():
+                task.cancel()
+        await self._await_runner_closure(
+            remaining,
+            external_stop_deadline_sec,
+        )
+
+        undrained = 0
+        for managed in remaining:
+            if (
+                self._current_exact(managed.key) is managed
+                and not managed.runner_closed.is_set()
+            ):
+                undrained += 1
+                managed.terminal_state = TerminalState.ABANDONED
+                managed.terminal_kind = _ReservationKind.UNCERTAIN
+                managed.terminal_decision = _UncertainAbandonment()
+                managed.grant_lost.set()
+
+        await stop_heartbeat_supervision()
+        self._heartbeat_stopped.set()
+
+        shutdown_tasks = tuple(
+            self._start_terminal_task(managed.key)
+            for managed in tuple(self._registry.values())
+            if self._current_exact(managed.key) is managed
+            and managed.runner_closed.is_set()
+            and managed.terminal_state is TerminalState.RESERVED
+            and managed.terminal_kind is _ReservationKind.SHUTDOWN
+        )
+        effects = (
+            await asyncio.gather(*shutdown_tasks) if shutdown_tasks else ()
+        )
+        await self._settle_terminal_tasks()
+        finalized = sum(
+            effect is _FinalizeEffect.FINALIZED for effect in effects
+        )
+        abandoned = sum(
+            managed.terminal_state is TerminalState.ABANDONED
+            for managed in self._registry.values()
+        )
+        for domain in self._domains:
+            self._emit_lifecycle(
+                _LifecycleEvent.SHUTDOWN,
+                domain,
+                outcome="complete",
+            )
+        return ShutdownResult(
+            finalized=finalized,
+            abandoned=abandoned,
+            undrained=undrained,
+        )
+
+    def _validate_shutdown_timeout(self, value: float, name: str) -> None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            msg = f"{name} must be a number"
+            raise TypeError(msg)
+        if value < 0:
+            msg = f"{name} must be nonnegative"
+            raise ValueError(msg)
+
+    async def _await_runner_closure(
+        self,
+        entries: typing.Sequence[_ManagedGrant],
+        wait_timeout_sec: float,
+    ) -> None:
+        waits = tuple(
+            asyncio.create_task(managed.runner_closed.wait())
+            for managed in entries
+            if not managed.runner_closed.is_set()
+        )
+        if not waits:
+            return
+        _done, pending = await asyncio.wait(
+            waits,
+            timeout=wait_timeout_sec,
+        )
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    async def _settle_terminal_tasks(self) -> None:
+        while self._terminal_tasks:
+            tasks = tuple(self._terminal_tasks)
+            await asyncio.gather(*tasks, return_exceptions=True)
+            self._terminal_tasks.difference_update(tasks)
+
+    def _emit_lifecycle(
+        self,
+        event_type: _LifecycleEvent,
+        domain: _ErasedRegisteredDomain,
+        *,
+        outcome: str,
+        count: GrantCount | None = None,
+    ) -> None:
+        record = _LifecycleRecord(
+            event_type=event_type.value,
+            profile=self._profile.name,
+            profile_digest=self._profile_digest,
+            domain_id=domain.domain_id.value,
+            authority_kind=domain.authority_kind.value,
+            outcome=outcome,
+            active=count.active if count is not None else None,
+            retrying=count.retrying if count is not None else None,
+            durable_failing=(
+                count.durable_failing if count is not None else None
+            ),
+        )
+        logger.info(
+            "Grant supervisor lifecycle",
+            extra={"json_fields": dataclasses.asdict(record)},
+        )
 
     def _discard_exact_generation(self, key: _GenerationKey) -> bool:
         """Remove one closed exact generation, never its successor."""

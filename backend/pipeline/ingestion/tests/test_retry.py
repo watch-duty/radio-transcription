@@ -100,9 +100,14 @@ class TestRetryLeaseLost(unittest.IsolatedAsyncioTestCase):
     async def test_aborts_during_backoff_if_lease_lost(self) -> None:
         fn = mock.AsyncMock(side_effect=OSError("fail"))
         lease_lost = asyncio.Event()
+        backoff_started = asyncio.Event()
+
+        def retry_state_changed(retrying: bool) -> None:  # noqa: FBT001
+            if retrying:
+                backoff_started.set()
 
         async def _set_lease_lost_soon() -> None:
-            await asyncio.sleep(0.01)
+            await backoff_started.wait()
             lease_lost.set()
 
         task = asyncio.create_task(_set_lease_lost_soon())
@@ -114,6 +119,7 @@ class TestRetryLeaseLost(unittest.IsolatedAsyncioTestCase):
                 max_retries=5,
                 base_delay_sec=10.0,
                 retryable=(OSError,),
+                retry_state_changed=retry_state_changed,
             )
         await task
 
@@ -163,9 +169,14 @@ class TestRetryShutdown(unittest.IsolatedAsyncioTestCase):
     async def test_raises_cancelled_during_backoff_on_shutdown(self) -> None:
         fn = mock.AsyncMock(side_effect=OSError("transient"))
         shutdown = asyncio.Event()
+        backoff_started = asyncio.Event()
+
+        def retry_state_changed(retrying: bool) -> None:  # noqa: FBT001
+            if retrying:
+                backoff_started.set()
 
         async def _set_shutdown_soon() -> None:
-            await asyncio.sleep(0.01)
+            await backoff_started.wait()
             shutdown.set()
 
         task = asyncio.create_task(_set_shutdown_soon())
@@ -177,6 +188,7 @@ class TestRetryShutdown(unittest.IsolatedAsyncioTestCase):
                 max_retries=5,
                 base_delay_sec=10.0,
                 retryable=(OSError,),
+                retry_state_changed=retry_state_changed,
             )
         await task
 
@@ -210,6 +222,129 @@ class TestRetryJitterBounds(unittest.IsolatedAsyncioTestCase):
         for d in delays:
             self.assertLessEqual(d, 2.0)
             self.assertGreaterEqual(d, 0.0)
+
+
+class TestRetryStateChanged(unittest.IsolatedAsyncioTestCase):
+    """Exact callback transitions around actual bounded backoff only."""
+
+    async def test_backoff_then_success_reports_true_then_false(self) -> None:
+        transitions: list[bool] = []
+        fn = mock.AsyncMock(side_effect=[OSError("retry"), "ok"])
+
+        result = await retry_with_lease_check(
+            fn,
+            lease_lost=asyncio.Event(),
+            shutdown=asyncio.Event(),
+            max_retries=1,
+            base_delay_sec=0.0,
+            retryable=(OSError,),
+            retry_state_changed=transitions.append,
+        )
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(transitions, [True, False])
+
+    async def test_non_retryable_and_pre_attempt_exits_never_enter_backoff(
+        self,
+    ) -> None:
+        cases = ("non-retryable", "lost", "shutdown")
+        for case in cases:
+            with self.subTest(case=case):
+                transitions: list[bool] = []
+                lease_lost = asyncio.Event()
+                shutdown = asyncio.Event()
+                if case == "lost":
+                    lease_lost.set()
+                elif case == "shutdown":
+                    shutdown.set()
+                fn = mock.AsyncMock(side_effect=ValueError("stop"))
+
+                with self.assertRaises(
+                    (
+                        ValueError,
+                        LeaseExpiredError,
+                        asyncio.CancelledError,
+                    )
+                ):
+                    await retry_with_lease_check(
+                        fn,
+                        lease_lost=lease_lost,
+                        shutdown=shutdown,
+                        retryable=(OSError,),
+                        retry_state_changed=transitions.append,
+                    )
+
+                self.assertEqual(transitions, [])
+
+    async def test_exhaustion_resets_each_completed_backoff(self) -> None:
+        transitions: list[bool] = []
+        fn = mock.AsyncMock(side_effect=OSError("fail"))
+
+        with self.assertRaises(OSError):
+            await retry_with_lease_check(
+                fn,
+                lease_lost=asyncio.Event(),
+                shutdown=asyncio.Event(),
+                max_retries=2,
+                base_delay_sec=0.0,
+                retryable=(OSError,),
+                retry_state_changed=transitions.append,
+            )
+
+        self.assertEqual(transitions, [True, False, True, False])
+
+    async def test_cancellation_during_backoff_resets_state(self) -> None:
+        transitions: list[bool] = []
+        backoff_started = asyncio.Event()
+
+        def retry_state_changed(retrying: bool) -> None:  # noqa: FBT001
+            transitions.append(retrying)
+            if retrying:
+                backoff_started.set()
+
+        task = asyncio.create_task(
+            retry_with_lease_check(
+                mock.AsyncMock(side_effect=OSError("fail")),
+                lease_lost=asyncio.Event(),
+                shutdown=asyncio.Event(),
+                max_retries=2,
+                base_delay_sec=30.0,
+                retryable=(OSError,),
+                retry_state_changed=retry_state_changed,
+            )
+        )
+        await asyncio.wait_for(backoff_started.wait(), timeout=1)
+        task.cancel()
+
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        self.assertEqual(transitions, [True, False])
+
+    async def test_callback_errors_are_not_swallowed(self) -> None:
+        for failing_state in (True, False):
+            with self.subTest(failing_state=failing_state):
+
+                def retry_state_changed(
+                    retrying: bool,  # noqa: FBT001
+                    *,
+                    expected: bool = failing_state,
+                ) -> None:
+                    if retrying is expected:
+                        msg = f"callback failed at {retrying}"
+                        raise RuntimeError(msg)
+
+                fn = mock.AsyncMock(side_effect=OSError("retry"))
+                with self.assertRaisesRegex(RuntimeError, "callback failed"):
+                    await retry_with_lease_check(
+                        fn,
+                        lease_lost=asyncio.Event(),
+                        shutdown=asyncio.Event(),
+                        max_retries=1,
+                        base_delay_sec=0.0,
+                        retryable=(OSError,),
+                        retry_state_changed=retry_state_changed,
+                    )
 
 
 if __name__ == "__main__":
