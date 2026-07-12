@@ -1323,6 +1323,71 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(supervisor._process_owned, 1)
                 self.assertTrue(supervisor.integrity_failure_event.is_set())
 
+    async def test_shutdown_failure_refinement_waits_for_heartbeat(
+        self,
+    ) -> None:
+        profile = _profile(
+            process_cap=1,
+            feed_cap=1,
+            feed_budget=1,
+            domains=(grant_control.DomainId.FEED,),
+        )
+        (
+            supervisor,
+            feed_control,
+            feed_runner,
+            _sid_control,
+            _sid_runner,
+        ) = self._mixed(profile)
+        feed_id = uuid.UUID(int=111)
+        grant = feed_store.FeedGrant(feed_id, _OWNER_ID, 1)
+        feed_control.results[grant_control.ClaimMode.PRIMARY] = (
+            _claim(grant, _leased_feed(feed_id)),
+        )
+        feed_control.block_heartbeat = True
+        feed_control.heartbeat_error = RuntimeError("authority unavailable")
+        feed_runner.wait_for_signal = "stop"
+        feed_runner.outcome = grant_control.RunFailed(
+            feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "runner failed during shutdown",
+        )
+        await supervisor.admit_cycle(_OWNER_ID)
+
+        heartbeat = asyncio.create_task(
+            supervisor.heartbeat_cycle(lambda: None)
+        )
+        await asyncio.wait_for(feed_control.heartbeat_entered.wait(), timeout=1)
+        heartbeat_stop_entered = asyncio.Event()
+
+        async def stop_heartbeat() -> None:
+            heartbeat_stop_entered.set()
+            await heartbeat
+
+        shutdown = asyncio.create_task(
+            supervisor.shutdown(
+                cooperative_grace_sec=30,
+                external_stop_deadline_sec=30,
+                stop_heartbeat_supervision=stop_heartbeat,
+            )
+        )
+        await asyncio.wait_for(heartbeat_stop_entered.wait(), timeout=1)
+        managed = next(iter(supervisor._registry.values()))
+        feed_control.release_heartbeat.set()
+        result = await shutdown
+
+        self.assertIs(
+            managed.terminal_state,
+            grant_supervisor.TerminalState.ABANDONED,
+        )
+        self.assertIs(
+            managed.terminal_kind,
+            grant_supervisor._ReservationKind.UNCERTAIN,
+        )
+        self.assertEqual(result, grant_supervisor.ShutdownResult(0, 1, 0))
+        self.assertEqual(feed_control.finalize_calls, [])
+        self.assertEqual(supervisor._process_owned, 1)
+        self.assertTrue(supervisor.integrity_failure_event.is_set())
+
     async def test_administrative_sid_stop_is_reserved_and_localized(
         self,
     ) -> None:

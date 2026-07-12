@@ -1644,10 +1644,10 @@ class GrantSupervisor:
                 managed.terminal_decision = _UncertainAbandonment()
                 managed.grant_lost.set()
 
-        self._refine_shutdown_failures()
-
         await stop_heartbeat_supervision()
         self._heartbeat_stopped.set()
+
+        self._refine_shutdown_failures()
 
         shutdown_tasks = tuple(
             self._start_terminal_task(managed.key)
