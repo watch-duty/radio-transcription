@@ -492,7 +492,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         executor = _GateExecutor()
         scheduler = feed_work_scheduler.FeedWorkScheduler(
-            executor,
+            typing.cast("typing.Any", executor),
             _limits=limits,
         )
         await scheduler.start()
@@ -509,12 +509,15 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             await allow_abort.wait()
             await abort_page(page_sequence)
 
-        lane._abort_page = gated_abort
+        typing.cast("typing.Any", lane)._abort_page = gated_abort
         coverage = asyncio.create_task(
             lane.cover_page(
-                calls=(
-                    _submission(uuid.UUID(int=index + 1), index)
-                    for index in range(6)
+                calls=typing.cast(
+                    "typing.Any",
+                    (
+                        _submission(uuid.UUID(int=index + 1), index)
+                        for index in range(6)
+                    ),
                 ),
                 boundaries=(),
                 candidate=candidate,
@@ -711,7 +714,9 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
     async def test_distinct_slot_churn_retains_only_scalar_fences(
         self,
     ) -> None:
-        scheduler = feed_work_scheduler.FeedWorkScheduler(_ImmediateExecutor())
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            typing.cast("typing.Any", _ImmediateExecutor())
+        )
         await scheduler.start()
         grants = tuple(
             _grant(lease_key=str(150 + index), fencing_token=index + 1)

@@ -253,14 +253,17 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
         executor = _GateExecutor()
         committer = _ControlledCommitter()
         scheduler = feed_work_scheduler.FeedWorkScheduler(
-            executor,
-            boundary_committer=committer,
-            _limits=_limits(
-                shard_count=shard_count,
-                capacity=12,
-                workers=1,
-                high_water=12,
-                resume_at=6,
+            typing.cast("typing.Any", executor),
+            boundary_committer=typing.cast("typing.Any", committer),
+            _limits=typing.cast(
+                "typing.Any",
+                _limits(
+                    shard_count=shard_count,
+                    capacity=12,
+                    workers=1,
+                    high_water=12,
+                    resume_at=6,
+                ),
             ),
         )
         await scheduler.start()
@@ -275,11 +278,14 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
 
         def gate_promotion(
             shard: typing.Any,
-        ) -> typing.Callable[[object, int], typing.Awaitable[None]]:
+        ) -> typing.Callable[
+            [ingestion_lease_store.LeaseGrant, int],
+            typing.Awaitable[None],
+        ]:
             original = shard.promote_boundary_page
 
             async def promote(
-                exact_grant: object,
+                exact_grant: ingestion_lease_store.LeaseGrant,
                 page_sequence: int,
             ) -> None:
                 nonlocal promoted
@@ -292,7 +298,9 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
             return promote
 
         for shard in scheduler._shards:
-            shard.promote_boundary_page = gate_promotion(shard)
+            typing.cast(
+                "typing.Any", shard
+            ).promote_boundary_page = gate_promotion(shard)
 
         calls = []
         for feed_id in feeds:
@@ -300,8 +308,11 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
                 calls.append(_call(feed_id, source_order))
         coverage = asyncio.create_task(
             lane.cover_page(
-                calls=tuple(calls),
-                boundaries=tuple(_boundary(feed_id, 10) for feed_id in feeds),
+                calls=typing.cast("typing.Any", tuple(calls)),
+                boundaries=typing.cast(
+                    "typing.Any",
+                    tuple(_boundary(feed_id, 10) for feed_id in feeds),
+                ),
                 candidate=candidate,
             )
         )
@@ -355,9 +366,9 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
     async def test_receipt_winner_returns_sealed_receipt(self) -> None:
         committer = _ControlledCommitter()
         scheduler = feed_work_scheduler.FeedWorkScheduler(
-            _ImmediateExecutor(),
-            boundary_committer=committer,
-            _limits=_limits(),
+            typing.cast("typing.Any", _ImmediateExecutor()),
+            boundary_committer=typing.cast("typing.Any", committer),
+            _limits=typing.cast("typing.Any", _limits()),
         )
         await scheduler.start()
         grant = _grant()
@@ -369,18 +380,23 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
         promote = scheduler._promote_boundary_page
 
         async def gated_promote(
-            exact_grant: object,
+            exact_grant: ingestion_lease_store.LeaseGrant,
             page_sequence: int,
         ) -> None:
             await promote(exact_grant, page_sequence)
             final_promotion.set()
             await allow_receipt.wait()
 
-        scheduler._promote_boundary_page = gated_promote
+        typing.cast(
+            "typing.Any", scheduler
+        )._promote_boundary_page = gated_promote
         coverage = asyncio.create_task(
             lane.cover_page(
                 calls=(),
-                boundaries=(_boundary(uuid.UUID(int=1), 10),),
+                boundaries=typing.cast(
+                    "typing.Any",
+                    (_boundary(uuid.UUID(int=1), 10),),
+                ),
                 candidate=candidate,
             )
         )
@@ -397,7 +413,10 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
             for _grant_value, batch, _final in committer.calls:
                 committed.extend(batch)
             self.assertEqual(
-                [(boundary.feed_id, boundary.target) for boundary in committed],
+                [
+                    (boundary.feed_id, boundary.target)
+                    for boundary in typing.cast("typing.Any", committed)
+                ],
                 [
                     (
                         uuid.UUID(int=1),
