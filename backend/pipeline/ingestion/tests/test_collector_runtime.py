@@ -21,6 +21,7 @@ from backend.pipeline.ingestion import (
     collector_runtime,
     failure_policy,
     feed_grant_control,
+    feed_work_scheduler,
     grant_control,
     grant_supervisor,
     source_runtime_specs,
@@ -30,6 +31,7 @@ from backend.pipeline.ingestion.collector_runtime import (
     CollectorRuntime,
     _PipelineFailure,
 )
+from backend.pipeline.ingestion.collectors.bcfy_calls import sid_runner
 from backend.pipeline.ingestion.failure_classifiers import pubsub
 from backend.pipeline.ingestion.models import (
     CapturedChunk,
@@ -329,6 +331,53 @@ def _make_runtime(**settings_overrides) -> CollectorRuntime:
     return rt
 
 
+class _ControlledProcessScheduler:
+    """Small process-scheduler fake for runtime lifecycle ordering."""
+
+    def __init__(
+        self,
+        *,
+        close_result: feed_work_scheduler.Undrained | None = None,
+        start_failure: BaseException | None = None,
+        order: list[str] | None = None,
+    ) -> None:
+        self.integrity_failure_event = asyncio.Event()
+        self.close_result = close_result
+        self.start_failure = start_failure
+        self.order = order if order is not None else []
+        self.failure: BaseException | None = None
+        self.start_calls = 0
+        self.close_calls = 0
+        self.open_lane_calls = 0
+
+    async def start(self) -> None:
+        self.start_calls += 1
+        self.order.append("scheduler_start")
+        if self.start_failure is not None:
+            raise self.start_failure
+
+    def open_lane(self, _grant: object) -> object:
+        self.open_lane_calls += 1
+        msg = "controlled process scheduler opened an unexpected lane"
+        raise AssertionError(msg)
+
+    async def close(self) -> feed_work_scheduler.Undrained | None:
+        self.close_calls += 1
+        self.order.append("scheduler_close")
+        return self.close_result
+
+    def fail(self, failure: BaseException) -> None:
+        self.failure = failure
+        self.integrity_failure_event.set()
+
+    def raise_if_failed(self) -> None:
+        if self.failure is not None:
+            message = "controlled scheduler failed"
+            raise feed_work_scheduler.SchedulerIntegrityError(
+                message
+            ) from self.failure
+
+
 def _make_feed_grant(
     feed: LeasedFeed = _FEED,
     *,
@@ -417,6 +466,56 @@ class TestSleepOrShutdown(unittest.IsolatedAsyncioTestCase):
         rt._shutdown.set()
         result = await rt._sleep_or_shutdown(10.0)
         self.assertTrue(result)
+
+    async def test_idle_scheduler_integrity_interrupts_without_a_lane(
+        self,
+    ) -> None:
+        """An idle selected-SID scheduler cannot lose a worker silently."""
+        rt = _make_runtime(
+            worker_profile=worker_profiles.SID_DORMANT_PROFILE,
+            caps={},
+        )
+        scheduler = _ControlledProcessScheduler()
+        rt._feed_work_scheduler = scheduler
+        failure = RuntimeError("idle fixed worker failed")
+
+        waiting = asyncio.create_task(rt._sleep_or_shutdown(60.0))
+        scheduler.fail(failure)
+
+        with self.assertRaises(
+            feed_work_scheduler.SchedulerIntegrityError
+        ) as raised:
+            await asyncio.wait_for(waiting, timeout=1)
+        self.assertIs(raised.exception.__cause__, failure)
+        self.assertEqual(scheduler.open_lane_calls, 0)
+
+    async def test_scheduler_integrity_wins_a_simultaneous_runtime_race(
+        self,
+    ) -> None:
+        rt = _make_runtime(
+            worker_profile=worker_profiles.SID_DORMANT_PROFILE,
+            caps={},
+        )
+        scheduler = _ControlledProcessScheduler()
+        rt._feed_work_scheduler = scheduler
+        scheduler_failure = RuntimeError("scheduler worker failed first")
+        supervisor_failure = grant_control.GrantControlIntegrityError(
+            "supervisor also failed"
+        )
+        supervisor = mock.MagicMock()
+        supervisor.integrity_failure_event = asyncio.Event()
+        supervisor.integrity_failure = supervisor_failure
+        rt._supervisor = supervisor
+
+        waiting = asyncio.create_task(rt._sleep_or_shutdown(60.0))
+        scheduler.fail(scheduler_failure)
+        supervisor.integrity_failure_event.set()
+
+        with self.assertRaises(
+            feed_work_scheduler.SchedulerIntegrityError
+        ) as raised:
+            await asyncio.wait_for(waiting, timeout=1)
+        self.assertIs(raised.exception.__cause__, scheduler_failure)
 
 
 class TestStartupPacingHelpers(unittest.TestCase):
@@ -1894,6 +1993,116 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(hb_settings.pool_min_size, 1)
         self.assertEqual(hb_settings.pool_max_size, 1)
 
+    @mock.patch(
+        "backend.pipeline.ingestion.collector_runtime.create_pool_with_retry",
+        new_callable=mock.AsyncMock,
+    )
+    async def test_partial_scheduler_start_failure_closes_before_clients(
+        self,
+        mock_create_pool_with_retry: mock.AsyncMock,
+    ) -> None:
+        """A stored partial start is closed before shared resources."""
+        order: list[str] = []
+        failure = RuntimeError("scheduler start failed")
+        scheduler = _ControlledProcessScheduler(
+            start_failure=failure,
+            order=order,
+        )
+        data_pool = mock.AsyncMock()
+        heartbeat_pool = mock.AsyncMock()
+        mock_create_pool_with_retry.side_effect = (
+            data_pool,
+            heartbeat_pool,
+        )
+        http_session = mock.AsyncMock()
+
+        def scheduler_factory():
+            order.append("scheduler_factory")
+            self.assertIs(rt._data_pool, data_pool)
+            self.assertIs(rt._heartbeat_pool, heartbeat_pool)
+            self.assertIs(rt._http_session, http_session)
+            self.assertIs(
+                rt._capture_resources.http_session,
+                http_session,
+            )
+            self.assertIsNotNone(rt._gcs_client)
+            self.assertIsNotNone(rt._pubsub_client)
+            return scheduler
+
+        rt = CollectorRuntime(
+            capture_fn=mock.AsyncMock(),
+            settings=_make_settings(
+                worker_profile=worker_profiles.SID_DORMANT_PROFILE,
+                caps={},
+                startup_stagger_max_sec=0.0,
+                startup_jitter_max_sec=0.0,
+            ),
+            scheduler_factory=scheduler_factory,
+        )
+        rt._pubsub_client = mock.AsyncMock()
+        rt._pubsub_client.close.side_effect = lambda: order.append(
+            "pubsub_close"
+        )
+        rt._gcs_client = mock.AsyncMock()
+        rt._gcs_client.close.side_effect = lambda: order.append("gcs_close")
+        rt._memory_watchdog.join = mock.AsyncMock()
+        heartbeat_pool.close.side_effect = lambda: order.append(
+            "heartbeat_pool_close"
+        )
+        http_session.close.side_effect = lambda: order.append("http_close")
+        loop = asyncio.get_running_loop()
+
+        with (
+            self.assertRaisesRegex(RuntimeError, "scheduler start failed"),
+            mock.patch.object(loop, "add_signal_handler"),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.aiohttp.TCPConnector"
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.aiohttp.ClientSession",
+                return_value=http_session,
+            ),
+            mock.patch.object(rt._memory_watchdog, "start"),
+            mock.patch.object(rt, "_compose_supervisor") as compose,
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry.configure"
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.close_pool",
+                new=mock.AsyncMock(
+                    side_effect=lambda _pool: order.append("data_pool_close")
+                ),
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.asyncio.sleep",
+                new=mock.AsyncMock(),
+            ),
+        ):
+            await rt._main()
+
+        compose.assert_not_called()
+        self.assertIs(rt._feed_work_scheduler, scheduler)
+        self.assertEqual(scheduler.start_calls, 1)
+        self.assertEqual(scheduler.close_calls, 1)
+        self.assertLess(
+            order.index("scheduler_factory"),
+            order.index("scheduler_start"),
+        )
+        self.assertLess(
+            order.index("scheduler_close"),
+            order.index("pubsub_close"),
+        )
+        self.assertLess(order.index("pubsub_close"), order.index("gcs_close"))
+        self.assertLess(order.index("gcs_close"), order.index("http_close"))
+        self.assertLess(
+            order.index("http_close"),
+            order.index("heartbeat_pool_close"),
+        )
+        self.assertLess(
+            order.index("heartbeat_pool_close"),
+            order.index("data_pool_close"),
+        )
+
 
 class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
     """One runtime composes only profile-selected typed domains."""
@@ -1904,6 +2113,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         *,
         sid_store_factory=None,
         sid_runner_factory=None,
+        scheduler_factory=None,
     ) -> CollectorRuntime:
         rt = CollectorRuntime(
             capture_fn=mock.AsyncMock(),
@@ -1921,6 +2131,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             ),
             sid_store_factory=sid_store_factory,
             sid_runner_factory=sid_runner_factory,
+            scheduler_factory=scheduler_factory,
         )
         rt._shutdown = asyncio.Event()
         rt._data_pool = mock.AsyncMock()
@@ -1931,16 +2142,21 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
     async def test_feed_only_constructs_no_sid_dependencies(self) -> None:
         sid_store_factory = mock.Mock()
         sid_runner_factory = mock.Mock()
+        scheduler_factory = mock.Mock()
         rt = self._runtime(
             worker_profiles.LEGACY_PROFILE,
             sid_store_factory=sid_store_factory,
             sid_runner_factory=sid_runner_factory,
+            scheduler_factory=scheduler_factory,
         )
 
+        await rt._start_feed_work_scheduler()
         rt._compose_supervisor()
 
         sid_store_factory.assert_not_called()
         sid_runner_factory.assert_not_called()
+        scheduler_factory.assert_not_called()
+        self.assertIsNone(rt._feed_work_scheduler)
         self.assertEqual(
             set(rt._supervisor.snapshot().counts_by_domain),
             {grant_control.DomainId.FEED},
@@ -1954,22 +2170,41 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         heartbeat_store = mock.AsyncMock(
             spec=ingestion_lease_store.IngestionLeaseStore
         )
-        rt = self._runtime(worker_profiles.SID_DORMANT_PROFILE)
+        scheduler = _ControlledProcessScheduler()
+        scheduler_factory = mock.Mock(return_value=scheduler)
+        rt = self._runtime(
+            worker_profiles.SID_DORMANT_PROFILE,
+            scheduler_factory=scheduler_factory,
+        )
+        runner = mock.AsyncMock()
 
-        with mock.patch.object(
-            collector_runtime.ingestion_lease_store,
-            "IngestionLeaseStore",
-            side_effect=(data_store, heartbeat_store),
-        ) as store_factory:
+        with (
+            mock.patch.object(
+                collector_runtime.ingestion_lease_store,
+                "IngestionLeaseStore",
+                side_effect=(data_store, heartbeat_store),
+            ) as store_factory,
+            mock.patch.object(
+                collector_runtime.bcfy_calls_sid_runner,
+                "BcfyCallsSidRunner",
+                return_value=runner,
+            ) as runner_constructor,
+        ):
+            await rt._start_feed_work_scheduler()
             rt._compose_supervisor()
         await rt._supervisor.admit_cycle(_WORKER_ID)
 
+        scheduler_factory.assert_called_once_with()
+        self.assertEqual(scheduler.start_calls, 1)
+        self.assertIs(rt._feed_work_scheduler, scheduler)
+        runner_constructor.assert_called_once_with(scheduler)
         self.assertEqual(
             store_factory.call_args_list,
             [mock.call(rt._data_pool), mock.call(rt._heartbeat_pool)],
         )
         data_store.claim_unclaimed.assert_not_awaited()
         data_store.claim_recoverable.assert_not_awaited()
+        self.assertEqual(scheduler.open_lane_calls, 0)
         self.assertEqual(
             set(rt._supervisor.snapshot().counts_by_domain),
             {grant_control.DomainId.SID},
@@ -1981,13 +2216,24 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         store_factory = mock.Mock(
             side_effect=(mock.AsyncMock(), mock.AsyncMock())
         )
+        scheduler = _ControlledProcessScheduler()
+        scheduler_factory = mock.Mock(return_value=scheduler)
+        runner_factory = mock.Mock(return_value=mock.AsyncMock())
         rt = self._runtime(
             worker_profiles.MIXED_DORMANT_PROFILE,
             sid_store_factory=store_factory,
+            sid_runner_factory=runner_factory,
+            scheduler_factory=scheduler_factory,
         )
 
+        await rt._start_feed_work_scheduler()
         rt._compose_supervisor()
 
+        scheduler_factory.assert_called_once_with()
+        self.assertEqual(scheduler.start_calls, 1)
+        runner_factory.assert_called_once()
+        resources = runner_factory.call_args.args[0]
+        self.assertIs(resources.feed_work_scheduler, scheduler)
         self.assertEqual(
             set(rt._supervisor.snapshot().counts_by_domain),
             {grant_control.DomainId.FEED, grant_control.DomainId.SID},
@@ -2008,13 +2254,62 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             name="sid-controlled-test",
             allocations=(allocation,),
         )
-        rt = self._runtime(profile)
+        scheduler = _ControlledProcessScheduler()
+        rt = self._runtime(
+            profile,
+            scheduler_factory=mock.Mock(return_value=scheduler),
+        )
+        await rt._start_feed_work_scheduler()
 
         with self.assertRaisesRegex(
             ValueError,
             "requires controlled store and runner factories",
         ):
             rt._compose_supervisor()
+
+    async def test_invalid_scheduler_is_rejected_before_sid_stores(
+        self,
+    ) -> None:
+        store_factory = mock.Mock()
+        scheduler_factory = mock.Mock(return_value=object())
+        rt = self._runtime(
+            worker_profiles.SID_DORMANT_PROFILE,
+            sid_store_factory=store_factory,
+            scheduler_factory=scheduler_factory,
+        )
+
+        with self.assertRaisesRegex(
+            TypeError,
+            "scheduler factory returned an invalid scheduler",
+        ):
+            await rt._start_feed_work_scheduler()
+
+        scheduler_factory.assert_called_once_with()
+        store_factory.assert_not_called()
+        self.assertIsNone(rt._feed_work_scheduler)
+
+    async def test_default_scheduler_adapters_are_explicitly_unconnected(
+        self,
+    ) -> None:
+        executor = collector_runtime._UnconnectedCallExecutor()
+        committer = collector_runtime._UnconnectedBoundaryCommitter()
+        grant = ingestion_lease_store.LeaseGrant(
+            SourceType.BCFY_CALLS,
+            "123",
+            _WORKER_ID,
+            1,
+        )
+
+        with self.assertRaisesRegex(
+            feed_work_scheduler.SchedulerIntegrityError,
+            "call executor is unconnected",
+        ):
+            await executor.execute(object())
+        with self.assertRaisesRegex(
+            feed_work_scheduler.SchedulerIntegrityError,
+            "boundary committer is unconnected",
+        ):
+            await committer.commit(grant, (), final_logical=True)
 
     async def test_quarantine_observer_adds_static_runtime_context(
         self,
@@ -2053,7 +2348,9 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             authority_kind="feed",
         )
 
-    async def test_controlled_sid_full_runtime_lifecycle(self) -> None:
+    async def test_controlled_sid_full_runtime_lifecycle(  # noqa: PLR0915
+        self,
+    ) -> None:
         allocation = dataclasses.replace(
             worker_profiles.SID_DORMANT_PROFILE.allocations[0],
             claims_enabled=True,
@@ -2088,47 +2385,66 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             ),
         )
         order: list[str] = []
-        child_closed = asyncio.Event()
-
-        class ControlledRunner:
-            def __init__(self) -> None:
-                self.started = asyncio.Event()
-
-            async def run(self, run_grant, payload, context):
-                self.started.set()
-
-                async def child() -> None:
-                    await context.stop_requested.wait()
-                    order.append("child_closed")
-                    child_closed.set()
-
-                child_task = asyncio.create_task(child())
-                await child_task
-                return grant_control.RunStopped(
-                    grant_control.TerminalCause.SHUTDOWN
-                )
-
-        runner = ControlledRunner()
+        lane_opened = asyncio.Event()
+        lane_closed = asyncio.Event()
+        received_resources: list[object] = []
         store_factory = mock.Mock(side_effect=(data_store, heartbeat_store))
-        runner_factory = mock.Mock(return_value=runner)
+
+        def runner_factory(resources):
+            received_resources.append(resources)
+            return sid_runner.BcfyCallsSidRunner(resources.feed_work_scheduler)
+
         rt = self._runtime(
             profile,
             sid_store_factory=store_factory,
             sid_runner_factory=runner_factory,
         )
+        await rt._start_feed_work_scheduler()
+        scheduler = rt._feed_work_scheduler
+        self.assertIsInstance(
+            scheduler,
+            feed_work_scheduler.FeedWorkScheduler,
+        )
+        assert scheduler is not None
+        original_open_lane = scheduler.open_lane
+        original_scheduler_close = scheduler.close
+
+        def recording_open_lane(run_grant):
+            lane = original_open_lane(run_grant)
+            original_lane_close = lane.close
+
+            async def recording_lane_close(reason):
+                result = await original_lane_close(reason)
+                order.append("lane_closed")
+                lane_closed.set()
+                return result
+
+            lane.close = recording_lane_close
+            lane_opened.set()
+            return lane
+
+        async def recording_scheduler_close():
+            order.append("scheduler_close")
+            return await original_scheduler_close()
+
+        scheduler.open_lane = recording_open_lane
+        scheduler.close = recording_scheduler_close
         rt._compose_supervisor()
 
         await rt._supervisor.admit_cycle(_WORKER_ID)
-        await asyncio.wait_for(runner.started.wait(), timeout=1)
+        await asyncio.wait_for(lane_opened.wait(), timeout=1)
         await rt._heartbeat_cycle()
 
+        scheduler_snapshot = await scheduler._snapshot()
+        self.assertEqual(scheduler_snapshot.lane_count, 1)
         snapshot = rt._health_state.snapshot_provider()
         self.assertEqual(
             snapshot.counts_by_domain[grant_control.DomainId.SID].active,
             1,
         )
         heartbeat_store.renew_heartbeats.assert_awaited_once_with((grant,))
-        resources = runner_factory.call_args.args[0]
+        self.assertEqual(len(received_resources), 1)
+        resources = received_resources[0]
         self.assertIs(resources.data_store, data_store)
         self.assertIs(resources.heartbeat_store, heartbeat_store)
         self.assertIs(resources.capture_resources, rt._capture_resources)
@@ -2136,10 +2452,19 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         self.assertIs(resources.pubsub_client, rt._pubsub_client)
         self.assertIs(resources.health_state, rt._health_state)
         self.assertIs(resources.shutdown, rt._shutdown)
+        self.assertIs(resources.feed_work_scheduler, scheduler)
 
         async def release(*_args, **_kwargs):
-            self.assertTrue(child_closed.is_set())
+            self.assertTrue(lane_closed.is_set())
             self.assertTrue(rt._thread_stop.is_set())
+            lane_snapshot = await scheduler._lanes[grant]._snapshot()
+            self.assertTrue(lane_snapshot.closed)
+            managed = next(iter(rt._supervisor._registry.values()))
+            self.assertTrue(managed.runner_closed.is_set())
+            self.assertIsInstance(
+                managed.closed_outcome,
+                grant_control.RunStopped,
+            )
             order.append("release")
             return ingestion_lease_store.LeaseOperationResult(
                 ingestion_lease_store.LeaseOperationDisposition.APPLIED,
@@ -2170,9 +2495,14 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
 
         data_store.release.assert_awaited_once_with(
             grant,
-            cause=ingestion_lease_store.LeaseReleaseCause.SHUTDOWN,
+            cause=ingestion_lease_store.LeaseReleaseCause.REBALANCE,
         )
-        self.assertLess(order.index("child_closed"), order.index("release"))
+        self.assertLess(order.index("lane_closed"), order.index("release"))
+        self.assertLess(order.index("release"), order.index("scheduler_close"))
+        self.assertLess(
+            order.index("scheduler_close"),
+            order.index("pubsub_close"),
+        )
         self.assertLess(order.index("release"), order.index("pubsub_close"))
 
 
@@ -2197,12 +2527,23 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         return rt
 
     async def test_drained_shutdown_closes_shared_resources(self) -> None:
-        rt = self._configure_shutdown_runtime(
-            grant_supervisor.ShutdownResult(
-                finalized=1,
-                abandoned=0,
-                undrained=0,
-            )
+        order: list[str] = []
+        result = grant_supervisor.ShutdownResult(
+            finalized=1,
+            abandoned=0,
+            undrained=0,
+        )
+        rt = self._configure_shutdown_runtime(result)
+        scheduler = _ControlledProcessScheduler(order=order)
+        rt._feed_work_scheduler = scheduler
+
+        async def shutdown(**_kwargs):
+            order.append("supervisor_shutdown")
+            return result
+
+        rt._supervisor.shutdown.side_effect = shutdown
+        rt._pubsub_client.close.side_effect = lambda: order.append(
+            "pubsub_close"
         )
 
         with (
@@ -2224,6 +2565,15 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         rt._heartbeat_pool.close.assert_awaited_once()
         close_data_pool.assert_awaited_once_with(rt._data_pool)
         rt._store.release_feeds_batch.assert_not_called()
+        self.assertEqual(scheduler.close_calls, 1)
+        self.assertLess(
+            order.index("supervisor_shutdown"),
+            order.index("scheduler_close"),
+        )
+        self.assertLess(
+            order.index("scheduler_close"),
+            order.index("pubsub_close"),
+        )
 
     async def test_undrained_shutdown_logs_bounded_count(
         self,
@@ -2235,6 +2585,8 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
                 undrained=800,
             )
         )
+        scheduler = _ControlledProcessScheduler()
+        rt._feed_work_scheduler = scheduler
 
         with (
             mock.patch(
@@ -2251,6 +2603,44 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(logs.records), 1)
         self.assertEqual(logs.records[0].args, (800,))
         self.assertLess(len(logs.records[0].getMessage().encode("utf-8")), 1024)
+        rt._pubsub_client.close.assert_not_awaited()
+        rt._gcs_client.close.assert_not_awaited()
+        rt._http_session.close.assert_not_awaited()
+        rt._heartbeat_pool.close.assert_not_awaited()
+        close_data_pool.assert_not_awaited()
+        self.assertEqual(scheduler.close_calls, 0)
+
+    async def test_scheduler_undrained_preserves_shared_resources(
+        self,
+    ) -> None:
+        rt = self._configure_shutdown_runtime(
+            grant_supervisor.ShutdownResult(
+                finalized=1,
+                abandoned=0,
+                undrained=0,
+            )
+        )
+        scheduler = _ControlledProcessScheduler(
+            close_result=feed_work_scheduler.Undrained(
+                None,
+                feed_work_scheduler.LaneCloseReason.SCHEDULER_SHUTDOWN,
+            )
+        )
+        rt._feed_work_scheduler = scheduler
+
+        with (
+            self.assertRaisesRegex(
+                grant_control.GrantControlIntegrityError,
+                "process scheduler did not drain",
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.close_pool",
+                new=mock.AsyncMock(),
+            ) as close_data_pool,
+        ):
+            await rt._shutdown_sequence()
+
+        self.assertEqual(scheduler.close_calls, 1)
         rt._pubsub_client.close.assert_not_awaited()
         rt._gcs_client.close.assert_not_awaited()
         rt._http_session.close.assert_not_awaited()
