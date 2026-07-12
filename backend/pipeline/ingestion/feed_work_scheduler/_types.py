@@ -189,6 +189,71 @@ class CallIntegrityFailure:
             raise TypeError(message)
 
 
+class LaneCloseReason(enum.StrEnum):
+    """Closed reasons accepted by one exact grant lane."""
+
+    PLANNED_DRAIN = "planned_drain"
+    AUTHORITY_LOSS = "authority_loss"
+    SCHEDULER_SHUTDOWN = "scheduler_shutdown"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class LaneClosed:
+    """Proof that one exact lane reached mutation closure."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    reason: LaneCloseReason
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
+            message = "grant must be a LeaseGrant"
+            raise TypeError(message)
+        if not isinstance(self.reason, LaneCloseReason):
+            message = "reason must be a LaneCloseReason"
+            raise TypeError(message)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class Undrained:
+    """Conservative result when mutation closure cannot be proved."""
+
+    grant: ingestion_lease_store.LeaseGrant | None
+    reason: LaneCloseReason
+
+    def __post_init__(self) -> None:
+        if self.grant is not None and not isinstance(
+            self.grant,
+            ingestion_lease_store.LeaseGrant,
+        ):
+            message = "grant must be a LeaseGrant or None"
+            raise TypeError(message)
+        if not isinstance(self.reason, LaneCloseReason):
+            message = "reason must be a LaneCloseReason"
+            raise TypeError(message)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FeedRemoved:
+    """Evidence-neutral result for one exact lane-local Feed removal."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    feed_id: uuid.UUID
+    released_count: int
+    active_retained: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
+            message = "grant must be a LeaseGrant"
+            raise TypeError(message)
+        if not isinstance(self.feed_id, uuid.UUID):
+            message = "feed_id must be a UUID"
+            raise TypeError(message)
+        _require_nonnegative_integer(self.released_count, "released_count")
+        if not isinstance(self.active_retained, bool):
+            message = "active_retained must be a bool"
+            raise TypeError(message)
+
+
 _ExecutorCompleted = CallCompleted
 _ExecutorRetryable = CallRetryable
 _ExecutorAuthorityLost = CallAuthorityLost
@@ -261,7 +326,9 @@ class _ShardSnapshot:
     active_feeds: frozenset[uuid.UUID]
     records: tuple[_RecordSnapshot, ...]
     workers: tuple[_WorkerSnapshot, ...]
-    retired_feeds: frozenset[uuid.UUID]
+    retired_scopes: frozenset[
+        tuple[ingestion_lease_store.LeaseGrant, uuid.UUID]
+    ]
     admission_open: bool
     fatal: bool
 
@@ -279,4 +346,5 @@ class _RetireFeedResult:
     """Localized Feed retirement result for later lane coordination."""
 
     released_sequences: tuple[int, ...]
+    released_calls: tuple[tuple[int, int], ...]
     active_sequence: int | None

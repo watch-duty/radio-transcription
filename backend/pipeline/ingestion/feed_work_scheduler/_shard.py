@@ -47,10 +47,6 @@ class _InvalidExecutorOutcome(RuntimeError):
     """An executor returned outside the closed outcome vocabulary."""
 
 
-def _raise_cancelled() -> typing.Never:
-    raise asyncio.CancelledError
-
-
 @dataclasses.dataclass(slots=True)
 class _WorkerSlot:
     slot_id: int
@@ -81,12 +77,33 @@ _TERMINAL_EXECUTOR_OUTCOMES = (
 class _Shard:
     """One lock-protected held-token state machine with fixed workers."""
 
-    def __init__(
+    def __init__(  # noqa: PLR0915
         self,
         shard_id: int,
         executor: _types.CallExecutor,
         *,
         limits: _types._SchedulerLimits = _types._PRODUCTION_LIMITS,
+        outcome_observer: typing.Callable[
+            [
+                _types._CallRecord,
+                _types._ExecutorOutcome,
+                _types._RetireFeedResult | None,
+            ],
+            None,
+        ]
+        | None = None,
+        grant_is_closing: typing.Callable[
+            [ingestion_lease_store.LeaseGrant],
+            bool,
+        ]
+        | None = None,
+        fatal_observer: typing.Callable[[BaseException], None] | None = None,
+        global_fatal: typing.Callable[[], BaseException | None] | None = None,
+        abandonment_for: typing.Callable[
+            [ingestion_lease_store.LeaseGrant],
+            BaseException | None,
+        ]
+        | None = None,
     ) -> None:
         if isinstance(shard_id, bool) or not isinstance(shard_id, int):
             message = "shard_id must be an integer"
@@ -100,14 +117,35 @@ class _Shard:
         if not callable(getattr(executor, "execute", None)):
             message = "executor must provide async execute(record)"
             raise TypeError(message)
+        if outcome_observer is not None and not callable(outcome_observer):
+            message = "outcome_observer must be callable or None"
+            raise TypeError(message)
+        if grant_is_closing is not None and not callable(grant_is_closing):
+            message = "grant_is_closing must be callable or None"
+            raise TypeError(message)
+        if fatal_observer is not None and not callable(fatal_observer):
+            message = "fatal_observer must be callable or None"
+            raise TypeError(message)
+        if global_fatal is not None and not callable(global_fatal):
+            message = "global_fatal must be callable or None"
+            raise TypeError(message)
+        if abandonment_for is not None and not callable(abandonment_for):
+            message = "abandonment_for must be callable or None"
+            raise TypeError(message)
 
         self.shard_id = shard_id
         self._executor = executor
+        self._outcome_observer = outcome_observer
+        self._grant_is_closing = grant_is_closing
+        self._fatal_observer = fatal_observer
+        self._global_fatal = global_fatal
+        self._abandonment_for = abandonment_for
         self._limits = limits
         self._lock = asyncio.Lock()
         self._work_ready = asyncio.Condition(self._lock)
         self._capacity_changed = asyncio.Condition(self._lock)
         self._fatal_event = asyncio.Event()
+        self._worker_changed = asyncio.Event()
 
         self._held = 0
         self._pressure_paused = False
@@ -120,7 +158,9 @@ class _Shard:
         self._ready_members: set[uuid.UUID] = set()
         self._records: dict[int, _types._CallRecord] = {}
         self._active_by_feed: dict[uuid.UUID, _types._CallRecord] = {}
-        self._retired_feeds: set[uuid.UUID] = set()
+        self._retired_scopes: set[
+            tuple[ingestion_lease_store.LeaseGrant, uuid.UUID]
+        ] = set()
         self._pending_boundaries = 0
         self._flushing_boundaries = 0
         self._capacity_waiters = 0
@@ -265,7 +305,7 @@ class _Shard:
                 active_feeds=frozenset(self._active_by_feed),
                 records=records,
                 workers=workers,
-                retired_feeds=frozenset(self._retired_feeds),
+                retired_scopes=frozenset(self._retired_scopes),
                 admission_open=self._admission_open,
                 fatal=self._fatal is not None,
             )
@@ -280,7 +320,11 @@ class _Shard:
         slot = self._require_slot(slot_id)
         async with self._work_ready:
             while True:
-                if self._fatal is not None or self._stopping:
+                if (
+                    self._fatal is not None
+                    or self._global_fatal_failure() is not None
+                    or self._stopping
+                ):
                     return None
                 if slot.active_record is not None:
                     message = "worker slot already owns an active record"
@@ -295,6 +339,17 @@ class _Shard:
                     record = queue.popleft()
                     if not queue:
                         del self._feed_queues[feed_id]
+                    if (
+                        self._grant_is_closing is not None
+                        and self._grant_is_closing(record.grant)
+                    ):
+                        del self._records[record.local_sequence]
+                        self._held -= 1
+                        if feed_id in self._feed_queues:
+                            self._ensure_ready_locked(feed_id)
+                        self._after_release_locked(1)
+                        self._check_conservation_locked()
+                        continue
                     self._active_by_feed[feed_id] = record
                     slot.active_record = record
                     self._check_conservation_locked()
@@ -313,11 +368,28 @@ class _Shard:
         if not isinstance(outcome, _TERMINAL_EXECUTOR_OUTCOMES):
             message = "outcome is not scheduling-terminal"
             raise TypeError(message)
+        retirement = None
         async with self._lock:
             released = self._terminalize_locked(slot_id, record)
             if not released:
                 message = "active record no longer belongs to worker slot"
                 raise RuntimeError(message)
+            if isinstance(outcome, _types._ExecutorMembershipRejected):
+                retirement = self._retire_feed_locked(
+                    record.grant,
+                    record.feed_id,
+                )
+        if (
+            isinstance(
+                outcome,
+                (
+                    _types._ExecutorAuthorityLost,
+                    _types._ExecutorMembershipRejected,
+                ),
+            )
+            and self._outcome_observer is not None
+        ):
+            self._outcome_observer(record, outcome, retirement)
 
     async def purge_exact(
         self,
@@ -405,28 +477,75 @@ class _Shard:
                 active_sequences=active,
             )
 
-    async def retire_feed(self, feed_id: uuid.UUID) -> _types._RetireFeedResult:
-        """Reject one Feed and safely purge only its queued calls."""
+    async def retire_feed(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        feed_id: uuid.UUID,
+    ) -> _types._RetireFeedResult:
+        """Reject one exact grant/Feed and purge only its queued calls."""
+        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
+            message = "grant must be a LeaseGrant"
+            raise TypeError(message)
         if not isinstance(feed_id, uuid.UUID):
             message = "feed_id must be a UUID"
             raise TypeError(message)
         async with self._lock:
-            self._retired_feeds.add(feed_id)
-            queue = self._feed_queues.pop(feed_id, collections.deque())
-            released = tuple(record.local_sequence for record in queue)
-            for record in queue:
+            return self._retire_feed_locked(grant, feed_id)
+
+    async def forget_retired_grant(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> None:
+        """Drop Feed-removal history after exact mutation closure."""
+        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
+            message = "grant must be a LeaseGrant"
+            raise TypeError(message)
+        async with self._lock:
+            self._retired_scopes = {
+                scope for scope in self._retired_scopes if scope[0] != grant
+            }
+
+    def _retire_feed_locked(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        feed_id: uuid.UUID,
+    ) -> _types._RetireFeedResult:
+        """Retire one exact scope while the shard lock is held."""
+        self._retired_scopes.add((grant, feed_id))
+        queue = self._feed_queues.get(feed_id, collections.deque())
+        kept: collections.deque[_types._CallRecord] = collections.deque()
+        released = []
+        released_calls = []
+        for record in queue:
+            if record.grant == grant:
+                released.append(record.local_sequence)
+                released_calls.append(
+                    (record.work.page_sequence, record.work.source_order)
+                )
                 del self._records[record.local_sequence]
                 self._held -= 1
+            else:
+                kept.append(record)
+        if kept:
+            self._feed_queues[feed_id] = kept
+        else:
+            self._feed_queues.pop(feed_id, None)
             self._remove_ready_locked(feed_id)
-            active = self._active_by_feed.get(feed_id)
-            self._after_release_locked(len(released))
-            self._check_conservation_locked()
-            return _types._RetireFeedResult(
-                released_sequences=released,
-                active_sequence=(
-                    active.local_sequence if active is not None else None
-                ),
-            )
+        active = self._active_by_feed.get(feed_id)
+        active_sequence = (
+            active.local_sequence
+            if active is not None and active.grant == grant
+            else None
+        )
+        self._after_release_locked(len(released))
+        self._capacity_changed.notify_all()
+        self._work_ready.notify_all()
+        self._check_conservation_locked()
+        return _types._RetireFeedResult(
+            released_sequences=tuple(released),
+            released_calls=tuple(released_calls),
+            active_sequence=active_sequence,
+        )
 
     async def request_cancel_exact(
         self,
@@ -438,6 +557,7 @@ class _Shard:
             raise TypeError(message)
         async with self._lock:
             requests = []
+            abandonment = self._abandonment_failure(grant)
             for slot in self._workers:
                 record = slot.active_record
                 task = slot.task
@@ -450,6 +570,7 @@ class _Shard:
                     continue
                 slot.cancel_expected = True
                 slot.cancellation_sequence = record.local_sequence
+                slot.abandoned = abandonment is not None
                 requests.append(
                     _CancellationRequest(
                         slot_id=slot.slot_id,
@@ -457,6 +578,8 @@ class _Shard:
                         task=task,
                     )
                 )
+            if requests and abandonment is not None:
+                self._mark_fatal_locked(abandonment)
         for request in requests:
             request.task.cancel()
         return tuple(requests)
@@ -467,7 +590,22 @@ class _Shard:
     ) -> tuple[int, ...]:
         """Settle expected exact cancellations before reusing worker slots."""
         requests = await self.request_cancel_exact(grant)
+        return await self.settle_cancellations(requests)
+
+    async def settle_cancellations(
+        self,
+        requests: tuple[_CancellationRequest, ...],
+    ) -> tuple[int, ...]:
+        """Await already-issued cancellation requests before slot reuse."""
+        settled = []
         for request in requests:
+            while not request.task.done() and self._fatal is None:
+                self._worker_changed.clear()
+                if request.task.done() or self._fatal is not None:
+                    break
+                await self._worker_changed.wait()
+            if not request.task.done():
+                continue
             try:
                 await request.task
             except asyncio.CancelledError:
@@ -475,7 +613,8 @@ class _Shard:
             except BaseException as exc:
                 await self._mark_fatal(exc)
             await self._replace_cancelled_worker(request)
-        return tuple(request.slot_id for request in requests)
+            settled.append(request.slot_id)
+        return tuple(settled)
 
     async def abandon_cancellation(
         self,
@@ -498,6 +637,38 @@ class _Shard:
                 raise RuntimeError(message)
             slot.abandoned = True
             self._mark_fatal_locked(failure)
+
+    async def abandon_exact_cancellations(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        failure: BaseException,
+    ) -> int:
+        """Fail closed for every live unsettled cancellation of a grant."""
+        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
+            message = "grant must be a LeaseGrant"
+            raise TypeError(message)
+        if not isinstance(failure, BaseException):
+            message = "failure must be a BaseException"
+            raise TypeError(message)
+        abandoned = 0
+        async with self._lock:
+            for slot in self._workers:
+                record = slot.active_record
+                task = slot.task
+                if (
+                    record is None
+                    or record.grant != grant
+                    or not slot.cancel_expected
+                    or slot.cancellation_sequence != record.local_sequence
+                    or task is None
+                    or task.done()
+                ):
+                    continue
+                slot.abandoned = True
+                abandoned += 1
+            if abandoned:
+                self._mark_fatal_locked(failure)
+        return abandoned
 
     async def wait_for_capacity_waiters(self, minimum: int) -> None:
         """Wait for a bounded producer-wait count in deterministic tests."""
@@ -529,9 +700,37 @@ class _Shard:
             )
             self._raise_fatal_locked()
 
+    async def wait_exact_empty(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> None:
+        """Wait until no counted record retains one complete grant."""
+        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
+            message = "grant must be a LeaseGrant"
+            raise TypeError(message)
+        async with self._capacity_changed:
+            await self._capacity_changed.wait_for(
+                lambda: (
+                    not any(
+                        record.grant == grant
+                        for record in self._records.values()
+                    )
+                    or self._fatal is not None
+                )
+            )
+            self._raise_fatal_locked()
+
     async def wait_for_fatal(self) -> None:
         """Wait until first persistent scheduler-integrity evidence exists."""
         await self._fatal_event.wait()
+
+    async def propagate_fatal(self, failure: BaseException) -> None:
+        """Fail this shard from scheduler-global integrity evidence."""
+        if not isinstance(failure, BaseException):
+            message = "failure must be a BaseException"
+            raise TypeError(message)
+        async with self._lock:
+            self._mark_fatal_locked(failure, observe=False)
 
     async def wake_waiters(self) -> None:
         """Recheck work and admission predicates after lane state changes."""
@@ -603,13 +802,17 @@ class _Shard:
                         )
                         await self._mark_fatal(failure)
                         return
+                    if expected:
+                        failure = _ShardUndrainedError(
+                            "executor swallowed registered cancellation"
+                        )
+                        await self._mark_fatal(failure)
+                        return
                     await self._terminalize(
                         slot.slot_id,
                         record,
                         outcome,
                     )
-                    if expected:
-                        _raise_cancelled()
                 except asyncio.CancelledError:
                     expected, abandoned = await self._cancellation_state(
                         slot,
@@ -665,11 +868,7 @@ class _Shard:
         del self._active_by_feed[record.feed_id]
         del self._records[record.local_sequence]
         self._held -= 1
-        if (
-            record.feed_id in self._feed_queues
-            and record.feed_id not in self._retired_feeds
-            and self._fatal is None
-        ):
+        if record.feed_id in self._feed_queues and self._fatal is None:
             self._ensure_ready_locked(record.feed_id)
         self._after_release_locked(1)
         self._check_conservation_locked()
@@ -720,11 +919,20 @@ class _Shard:
         async with self._lock:
             self._mark_fatal_locked(failure)
 
-    def _mark_fatal_locked(self, failure: BaseException) -> None:
+    def _mark_fatal_locked(
+        self,
+        failure: BaseException,
+        *,
+        observe: bool = True,
+    ) -> None:
         self._admission_open = False
+        first = self._fatal is None
         if self._fatal is None:
             self._fatal = failure
             self._fatal_event.set()
+        if first and observe and self._fatal_observer is not None:
+            self._fatal_observer(failure)
+        self._worker_changed.set()
         self._work_ready.notify_all()
         self._capacity_changed.notify_all()
 
@@ -733,9 +941,9 @@ class _Shard:
         slot: _WorkerSlot,
         task: asyncio.Task[None],
     ) -> None:
-        del self
         if slot.task is not task:
             return
+        self._worker_changed.set()
         try:
             task.exception()
         except asyncio.CancelledError:
@@ -776,13 +984,27 @@ class _Shard:
         if not self._admission_open or self._stopping or self._closed:
             message = "shard admission is closed"
             raise _ShardClosedError(message)
-        if work.feed_id in self._retired_feeds:
+        if (work.grant, work.feed_id) in self._retired_scopes:
             message = "Feed is retired from this shard"
             raise _FeedRetiredError(message)
 
     def _raise_fatal_locked(self) -> None:
-        if self._fatal is not None:
-            raise _ShardFatalError(self._fatal) from self._fatal
+        failure = self._fatal or self._global_fatal_failure()
+        if failure is not None:
+            raise _ShardFatalError(failure) from failure
+
+    def _global_fatal_failure(self) -> BaseException | None:
+        if self._global_fatal is None:
+            return None
+        return self._global_fatal()
+
+    def _abandonment_failure(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> BaseException | None:
+        if self._abandonment_for is None:
+            return None
+        return self._abandonment_for(grant)
 
     def _require_slot(self, slot_id: int) -> _WorkerSlot:
         if isinstance(slot_id, bool) or not isinstance(slot_id, int):

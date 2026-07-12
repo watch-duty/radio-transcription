@@ -7,23 +7,32 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import enum
 import typing
+import uuid
 
 from backend.pipeline.ingestion.collectors.bcfy_calls import cursor_policy
 from backend.pipeline.ingestion.feed_work_scheduler import _shard, _types
-from backend.pipeline.storage import ingestion_lease_store
+from backend.pipeline.storage import feed_store, ingestion_lease_store
 
 if typing.TYPE_CHECKING:
     import collections.abc
-    import uuid
 
 
-class _SchedulerIntegrityError(RuntimeError):
+class SchedulerIntegrityError(RuntimeError):
     """The process scheduler can no longer prove safe admission."""
 
 
 class _LaneClosedError(RuntimeError):
     """An exact lane closed before page coverage linearized."""
+
+
+class _CloseStrength(enum.IntEnum):
+    """Monotonic exact-lane lifecycle strength."""
+
+    OPEN = 0
+    DRAINING = 1
+    CANCELLING = 2
 
 
 @dataclasses.dataclass(slots=True)
@@ -95,15 +104,34 @@ class FeedWorkScheduler:
             message = "_limits must be _SchedulerLimits"
             raise TypeError(message)
         self._limits = _limits
-        self._shards = tuple(
-            _shard._Shard(index, executor, limits=_limits)
-            for index in range(_limits.shard_count)
-        )
-        self._lifecycle_lock = asyncio.Lock()
         self._lanes: dict[
             ingestion_lease_store.LeaseGrant,
             GrantLane,
         ] = {}
+        self._highest_fence: dict[tuple[feed_store.SourceType, str], int] = {}
+        self._closing_grants: set[ingestion_lease_store.LeaseGrant] = set()
+        self._abandonment: dict[
+            ingestion_lease_store.LeaseGrant,
+            BaseException,
+        ] = {}
+        self._fatal: BaseException | None = None
+        self._fatal_event = asyncio.Event()
+        self._fatal_propagation_task: asyncio.Task[None] | None = None
+        self._shards = tuple(
+            _shard._Shard(
+                index,
+                executor,
+                limits=_limits,
+                outcome_observer=self._observe_outcome,
+                grant_is_closing=self._closing_grants.__contains__,
+                fatal_observer=self._observe_fatal,
+                global_fatal=lambda: self._fatal,
+                abandonment_for=self._abandonment.get,
+            )
+            for index in range(_limits.shard_count)
+        )
+        self._lifecycle_lock = asyncio.Lock()
+        self._close_task: asyncio.Task[_types.Undrained | None] | None = None
         self._started = False
         self._closing = False
         self._closed = False
@@ -151,31 +179,77 @@ class FeedWorkScheduler:
         if grant in self._lanes:
             message = "exact grant already has a lane"
             raise ValueError(message)
+        slot = self._lease_slot(grant)
+        highest = self._highest_fence.get(slot)
+        if highest is not None and grant.fencing_token <= highest:
+            message = "grant is not newer than the lane slot history"
+            raise ValueError(message)
+        self._prune_closed_slot(grant)
         lane = GrantLane(self, grant)
         self._lanes[grant] = lane
+        self._highest_fence[slot] = grant.fencing_token
         return lane
 
-    async def close(self) -> None:
-        """Close all lanes, then stop only quiescent fixed workers."""
-        async with self._lifecycle_lock:
-            if self._closed:
-                return
-            self._closing = True
+    async def close(self) -> _types.Undrained | None:
+        """Close all exact lanes and then their settled fixed workers."""
+        task = self._request_close()
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            failure = _shard._ShardUndrainedError(
+                "scheduler close was cancelled before worker settlement"
+            )
             lanes = tuple(self._lanes.values())
             for lane in lanes:
-                lane._publish_close()
+                self._publish_abandonment(lane.grant, failure)
+            for lane in lanes:
+                await self._abandon_exact_cancellations(
+                    lane.grant,
+                    failure,
+                )
+            raise
 
-        for lane in lanes:
-            await lane._purge_for_scheduler_close()
-        await self._wait_for_idle()
-        self._raise_fatal()
-        for shard in self._shards:
-            await shard.close()
-        for lane in lanes:
-            await lane._finish_closed()
-        async with self._lifecycle_lock:
-            self._lanes.clear()
-            self._closed = True
+    def _request_close(self) -> asyncio.Task[_types.Undrained | None]:
+        """Publish scheduler shutdown synchronously and share one task."""
+        self._closing = True
+        for lane in self._lanes.values():
+            lane._request_close(_types.LaneCloseReason.SCHEDULER_SHUTDOWN)
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(
+                self._coordinate_close(),
+                name="feed-work-scheduler-close",
+            )
+        return self._close_task
+
+    async def _coordinate_close(self) -> _types.Undrained | None:
+        lane_tasks = tuple(
+            lane._request_close(_types.LaneCloseReason.SCHEDULER_SHUTDOWN)
+            for lane in self._lanes.values()
+        )
+        results = []
+        for task in lane_tasks:
+            results.append(await asyncio.shield(task))
+        if any(isinstance(result, _types.Undrained) for result in results):
+            return _types.Undrained(
+                None,
+                _types.LaneCloseReason.SCHEDULER_SHUTDOWN,
+            )
+        try:
+            self._raise_fatal()
+            await self._wait_for_idle()
+            for shard in self._shards:
+                await shard.close()
+        except (
+            SchedulerIntegrityError,
+            _shard._ShardFatalError,
+            _shard._ShardUndrainedError,
+        ):
+            return _types.Undrained(
+                None,
+                _types.LaneCloseReason.SCHEDULER_SHUTDOWN,
+            )
+        self._closed = True
+        return None
 
     async def _snapshot(self) -> _SchedulerSnapshot:
         shards = []
@@ -217,6 +291,45 @@ class FeedWorkScheduler:
         for shard in self._shards:
             await shard.purge_exact(grant)
 
+    async def _wait_exact_empty(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> None:
+        for shard in self._shards:
+            await shard.wait_exact_empty(grant)
+
+    async def _cancel_exact(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> None:
+        pending = []
+        for shard in self._shards:
+            pending.append((shard, await shard.request_cancel_exact(grant)))
+        for shard, requests in pending:
+            await shard.settle_cancellations(requests)
+
+    async def _abandon_exact_cancellations(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        failure: BaseException,
+    ) -> None:
+        for shard in self._shards:
+            await shard.abandon_exact_cancellations(grant, failure)
+
+    async def _retire_feed(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        feed_id: uuid.UUID,
+    ) -> _types._RetireFeedResult:
+        return await self._shard_for(feed_id).retire_feed(grant, feed_id)
+
+    async def _forget_retired_grant(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> None:
+        for shard in self._shards:
+            await shard.forget_retired_grant(grant)
+
     async def _wake_admission(self) -> None:
         for shard in self._shards:
             await shard.wake_waiters()
@@ -225,12 +338,100 @@ class FeedWorkScheduler:
         index = _types._shard_index(feed_id, self._limits)
         return self._shards[index]
 
+    def _observe_outcome(
+        self,
+        record: _types._CallRecord,
+        outcome: _types._ExecutorOutcome,
+        retirement: _types._RetireFeedResult | None,
+    ) -> None:
+        """Project terminal membership/loss evidence into its exact lane."""
+        lane = self._lanes.get(record.grant)
+        if lane is None:
+            return
+        if isinstance(outcome, _types._ExecutorAuthorityLost):
+            lane._request_close(_types.LaneCloseReason.AUTHORITY_LOSS)
+        elif isinstance(outcome, _types._ExecutorMembershipRejected):
+            if retirement is None:
+                message = "membership outcome omitted retirement evidence"
+                raise RuntimeError(message)
+            lane._observe_membership(record, retirement)
+
+    def _publish_grant_close(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> None:
+        """Make close visible to fixed-worker dispatch synchronously."""
+        self._closing_grants.add(grant)
+
+    def _publish_abandonment(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        failure: BaseException,
+    ) -> None:
+        """Retain an external deadline winner until intent registration."""
+        self._abandonment.setdefault(grant, failure)
+
+    def _clear_abandonment(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> None:
+        self._abandonment.pop(grant, None)
+
+    def _prune_closed_slot(
+        self,
+        successor: ingestion_lease_store.LeaseGrant,
+    ) -> None:
+        slot = self._lease_slot(successor)
+        for grant, lane in tuple(self._lanes.items()):
+            if (
+                grant != successor
+                and self._lease_slot(grant) == slot
+                and lane._closed
+            ):
+                del self._lanes[grant]
+                self._closing_grants.discard(grant)
+
+    def _lane_closed(self, lane: GrantLane) -> None:
+        """Release superseded closed-lane/task history by Lease slot."""
+        slot = self._lease_slot(lane.grant)
+        successor_exists = any(
+            other is not lane and self._lease_slot(grant) == slot
+            for grant, other in self._lanes.items()
+        )
+        if successor_exists:
+            self._lanes.pop(lane.grant, None)
+            self._closing_grants.discard(lane.grant)
+
+    @staticmethod
+    def _lease_slot(
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> tuple[feed_store.SourceType, str]:
+        return grant.source_type, grant.lease_key
+
+    def _observe_fatal(self, failure: BaseException) -> None:
+        """Publish first integrity failure and wake every shard once."""
+        if self._fatal is not None:
+            return
+        self._fatal = failure
+        self._fatal_event.set()
+        self._fatal_propagation_task = asyncio.create_task(
+            self._propagate_fatal(failure),
+            name="feed-work-scheduler-fatal-propagation",
+        )
+
+    async def _propagate_fatal(self, failure: BaseException) -> None:
+        for shard in self._shards:
+            await shard.propagate_fatal(failure)
+
     def _raise_fatal(self) -> None:
+        if self._fatal is not None:
+            message = "scheduler shard integrity failed"
+            raise SchedulerIntegrityError(message) from self._fatal
         for shard in self._shards:
             failure = shard.fatal_failure
             if failure is not None:
                 message = "scheduler shard integrity failed"
-                raise _SchedulerIntegrityError(message) from failure
+                raise SchedulerIntegrityError(message) from failure
 
 
 class GrantLane:
@@ -246,8 +447,14 @@ class GrantLane:
         self._admission_lock = asyncio.Lock()
         self._state_lock = asyncio.Lock()
         self._closing_event = asyncio.Event()
+        self._close_changed = asyncio.Event()
         self._next_page_sequence = 0
         self._page: _PageBarrier | None = None
+        self._close_strength = _CloseStrength.OPEN
+        self._close_reason = _types.LaneCloseReason.PLANNED_DRAIN
+        self._close_task: (
+            asyncio.Task[_types.LaneClosed | _types.Undrained] | None
+        ) = None
         self._closing = False
         self._closed = False
 
@@ -255,6 +462,50 @@ class GrantLane:
     def grant(self) -> ingestion_lease_store.LeaseGrant:
         """Return the complete immutable grant bound to this lane."""
         return self._grant
+
+    async def remove_feed(self, feed_id: uuid.UUID) -> _types.FeedRemoved:
+        """Retire one Feed only from this lane's complete grant."""
+        if not isinstance(feed_id, uuid.UUID):
+            message = "feed_id must be a UUID"
+            raise TypeError(message)
+        self._raise_closed_locked()
+        try:
+            result = await self._scheduler._retire_feed(
+                self._grant,
+                feed_id,
+            )
+        except _shard._ShardFatalError as exc:
+            message = "scheduler shard integrity failed"
+            raise SchedulerIntegrityError(message) from exc.failure
+        await self._localize_released(result.released_calls)
+        return _types.FeedRemoved(
+            grant=self._grant,
+            feed_id=feed_id,
+            released_count=len(result.released_sequences),
+            active_retained=result.active_sequence is not None,
+        )
+
+    async def close(
+        self,
+        reason: _types.LaneCloseReason = (_types.LaneCloseReason.PLANNED_DRAIN),
+    ) -> _types.LaneClosed | _types.Undrained:
+        """Close this exact grant with monotonic shared coordination."""
+        task = self._request_close(reason)
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            failure = _shard._ShardUndrainedError(
+                "lane close was cancelled before worker settlement"
+            )
+            self._scheduler._publish_abandonment(
+                self._grant,
+                failure,
+            )
+            await self._scheduler._abandon_exact_cancellations(
+                self._grant,
+                failure,
+            )
+            raise
 
     async def cover_page(
         self,
@@ -301,9 +552,15 @@ class GrantLane:
                             work,
                             abort_event=self._closing_event,
                         )
+                    except _shard._FeedRetiredError:
+                        await self._mark_localized(source_order)
+                        continue
                     except _shard._AdmissionAbortedError as exc:
                         message = "lane closed during page admission"
                         raise _LaneClosedError(message) from exc
+                    except _shard._ShardFatalError as exc:
+                        message = "scheduler shard integrity failed"
+                        raise SchedulerIntegrityError(message) from exc.failure
                     await self._mark_registered(source_order)
                 return await self._cover(candidate)
             except BaseException:
@@ -365,11 +622,70 @@ class GrantLane:
     async def _mark_registered(self, source_order: int) -> None:
         async with self._state_lock:
             page = self._require_page_locked()
+            if page.current_source_order is None:
+                if (
+                    source_order != page.pulled - 1
+                    or page.pulled != page.registered + page.localized
+                ):
+                    message = "source record lost its barrier transition"
+                    raise RuntimeError(message)
+                return
             if page.current_source_order != source_order:
                 message = "registered source record does not match barrier"
                 raise RuntimeError(message)
             page.current_source_order = None
             page.registered += 1
+
+    async def _mark_localized(self, source_order: int) -> None:
+        async with self._state_lock:
+            page = self._require_page_locked()
+            if page.current_source_order != source_order:
+                message = "localized source record does not match barrier"
+                raise RuntimeError(message)
+            page.current_source_order = None
+            page.localized += 1
+
+    async def _localize_released(
+        self,
+        released_calls: tuple[tuple[int, int], ...],
+    ) -> None:
+        async with self._state_lock:
+            for page_sequence, source_order in released_calls:
+                self._localize_tag(page_sequence, source_order)
+
+    def _observe_membership(
+        self,
+        record: _types._CallRecord,
+        retirement: _types._RetireFeedResult,
+    ) -> None:
+        """Localize a terminal membership outcome without another task."""
+        self._localize_tag(
+            record.work.page_sequence,
+            record.work.source_order,
+        )
+        for page_sequence, source_order in retirement.released_calls:
+            self._localize_tag(page_sequence, source_order)
+
+    def _localize_tag(
+        self,
+        page_sequence: int,
+        source_order: int,
+    ) -> None:
+        page = self._page
+        if page is None or page.page_sequence != page_sequence:
+            return
+        if page.current_source_order == source_order:
+            page.current_source_order = None
+            page.localized += 1
+            return
+        if source_order >= page.pulled:
+            message = "membership evidence precedes its source pull"
+            raise RuntimeError(message)
+        if page.registered <= 0:
+            message = "membership evidence has no registered record"
+            raise RuntimeError(message)
+        page.registered -= 1
+        page.localized += 1
 
     async def _cover(
         self,
@@ -399,19 +715,107 @@ class GrantLane:
             ):
                 self._page = None
 
-    def _publish_close(self) -> None:
+    def _request_close(
+        self,
+        reason: _types.LaneCloseReason,
+    ) -> asyncio.Task[_types.LaneClosed | _types.Undrained]:
+        """Publish/strengthen close before returning an awaitable task."""
+        if not isinstance(reason, _types.LaneCloseReason):
+            message = "reason must be a LaneCloseReason"
+            raise TypeError(message)
+        requested = (
+            _CloseStrength.DRAINING
+            if reason is _types.LaneCloseReason.PLANNED_DRAIN
+            else _CloseStrength.CANCELLING
+        )
+        if self._close_task is not None and self._close_task.done():
+            return self._close_task
+        if requested > self._close_strength:
+            self._close_strength = requested
+            self._close_reason = reason
+            self._close_changed.set()
+        elif (
+            requested == self._close_strength
+            and reason is _types.LaneCloseReason.AUTHORITY_LOSS
+        ):
+            self._close_reason = reason
+            self._close_changed.set()
+        self._scheduler._publish_grant_close(self._grant)
         self._closing = True
         self._closing_event.set()
+        if self._close_task is None:
+            self._close_task = asyncio.create_task(
+                self._coordinate_close(),
+                name=(
+                    "feed-work-lane-close-"
+                    f"{self._grant.lease_key}-{self._grant.fencing_token}"
+                ),
+            )
+        return self._close_task
 
-    async def _purge_for_scheduler_close(self) -> None:
-        await self._scheduler._wake_admission()
-        await self._scheduler._purge_exact(self._grant)
+    async def _coordinate_close(
+        self,
+    ) -> _types.LaneClosed | _types.Undrained:
+        """Purge, drain or cancel, then publish one strongest result."""
+        try:
+            await self._scheduler._wake_admission()
+            await self._scheduler._purge_exact(self._grant)
+            while True:
+                if self._close_strength is _CloseStrength.CANCELLING:
+                    await self._scheduler._cancel_exact(self._grant)
+                    self._scheduler._raise_fatal()
+                    await self._scheduler._wait_exact_empty(self._grant)
+                else:
+                    drained = await self._wait_for_drain_or_upgrade()
+                    if not drained:
+                        continue
+                if self._close_strength is _CloseStrength.CANCELLING:
+                    self._scheduler._raise_fatal()
+                await self._scheduler._forget_retired_grant(self._grant)
+                self._scheduler._raise_fatal()
+                self._scheduler._clear_abandonment(self._grant)
+                self._closed = True
+                self._page = None
+                self._scheduler._lane_closed(self)
+                return _types.LaneClosed(
+                    self._grant,
+                    self._close_reason,
+                )
+        except (
+            SchedulerIntegrityError,
+            _shard._ShardFatalError,
+            _shard._ShardUndrainedError,
+        ):
+            return _types.Undrained(
+                self._grant,
+                self._close_reason,
+            )
 
-    async def _finish_closed(self) -> None:
-        async with self._state_lock:
-            self._closing = True
-            self._closed = True
-            self._page = None
+    async def _wait_for_drain_or_upgrade(self) -> bool:
+        """Wait for exact emptiness unless a stronger close wins."""
+        self._close_changed.clear()
+        if self._close_strength is _CloseStrength.CANCELLING:
+            return False
+        drain = asyncio.create_task(
+            self._scheduler._wait_exact_empty(self._grant)
+        )
+        upgrade = asyncio.create_task(self._close_changed.wait())
+        try:
+            await asyncio.wait(
+                (drain, upgrade),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if self._close_strength is _CloseStrength.CANCELLING:
+                return False
+            await drain
+            return True
+        finally:
+            pending = tuple(
+                task for task in (drain, upgrade) if not task.done()
+            )
+            for task in pending:
+                task.cancel()
+            await asyncio.gather(drain, upgrade, return_exceptions=True)
 
     def _validate_candidate_locked(
         self,

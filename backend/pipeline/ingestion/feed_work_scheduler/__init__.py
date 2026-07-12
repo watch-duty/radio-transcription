@@ -8,8 +8,13 @@ CallIntegrityFailure = _types.CallIntegrityFailure
 CallMembershipRejected = _types.CallMembershipRejected
 CallRetryable = _types.CallRetryable
 CallSubmission = _types.CallSubmission
+FeedRemoved = _types.FeedRemoved
 FeedWorkScheduler = _scheduler.FeedWorkScheduler
 GrantLane = _scheduler.GrantLane
+LaneCloseReason = _types.LaneCloseReason
+LaneClosed = _types.LaneClosed
+SchedulerIntegrityError = _scheduler.SchedulerIntegrityError
+Undrained = _types.Undrained
 
 __all__ = [
     "CallAuthorityLost",
@@ -18,6 +23,11 @@ __all__ = [
     "CallMembershipRejected",
     "CallRetryable",
     "CallSubmission",
+    "FeedRemoved",
     "FeedWorkScheduler",
     "GrantLane",
+    "LaneCloseReason",
+    "LaneClosed",
+    "SchedulerIntegrityError",
+    "Undrained",
 ]
