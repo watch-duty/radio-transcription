@@ -6,7 +6,12 @@ import uuid
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from backend.pipeline.ingestion import source_runtime_specs
+from backend.pipeline.ingestion import (
+    grant_control,
+    source_runtime_specs,
+    worker_profiles,
+)
+from backend.pipeline.storage import feed_store
 from backend.pipeline.storage.settings import AlloyDBSettings
 
 if TYPE_CHECKING:
@@ -29,6 +34,20 @@ def _require_env(name: str) -> str:
 _DEFAULT_CAPS: dict[SourceType, int] = source_runtime_specs.default_caps()
 
 
+class _UnsetCaps(dict[feed_store.SourceType, int]):
+    """Private sentinel distinguishing omitted caps from explicit emptiness."""
+
+
+class _UnsetTopic(str):
+    """Private sentinel distinguishing omitted topics from empty values."""
+
+    __slots__ = ()
+
+
+_CAPS_UNSET = _UnsetCaps()
+_TOPIC_UNSET = _UnsetTopic("")
+
+
 def _load_caps_from_env() -> dict[SourceType, int]:
     """Build per-type caps from CAP_<NAME> env vars, defaulting via _DEFAULT_CAPS.
 
@@ -46,6 +65,53 @@ def _load_caps_from_env() -> dict[SourceType, int]:
     }
 
 
+def load_worker_profile_from_env() -> worker_profiles.WorkerProfile:
+    """Resolve the closed worker profile and allocation env exactly once."""
+    selector = os.environ.get("WORKER_PROFILE")
+    template = (
+        worker_profiles.LEGACY_PROFILE
+        if selector is None
+        else worker_profiles.WORKER_PROFILE_PRESETS.get(selector)
+    )
+    feed_selected = template is not None and (
+        worker_profiles.allocation_for_domain(
+            template,
+            grant_control.DomainId.FEED,
+        )
+        is not None
+    )
+    sid_selected = template is not None and (
+        worker_profiles.allocation_for_domain(
+            template,
+            grant_control.DomainId.SID,
+        )
+        is not None
+    )
+    return worker_profiles.resolve_worker_profile(
+        selector,
+        feed_owned_cap=(
+            int(os.environ.get("MAX_FEEDS_PER_WORKER", "800"))
+            if feed_selected
+            else 800
+        ),
+        feed_claims_per_cycle=(
+            int(os.environ.get("LEASE_ADMISSION_CYCLE_BUDGET", "20"))
+            if feed_selected
+            else 20
+        ),
+        sid_owned_cap=(
+            int(os.environ.get("MAX_SIDS_PER_WORKER", "32"))
+            if sid_selected
+            else 32
+        ),
+        sid_claims_per_cycle=(
+            int(os.environ.get("SID_LEASE_ADMISSION_CYCLE_BUDGET", "2"))
+            if sid_selected
+            else 2
+        ),
+    )
+
+
 @dataclass(frozen=True, kw_only=True)
 class CollectorSettings:
     """
@@ -57,29 +123,20 @@ class CollectorSettings:
 
     """
 
+    # Immutable process topology, resolved before every other default factory.
+    worker_profile: worker_profiles.WorkerProfile = field(
+        default_factory=load_worker_profile_from_env,
+    )
+
     # Worker identity
     worker_id: uuid.UUID = field(
-        default_factory=lambda: (
-            uuid.UUID(os.environ["WORKER_ID"])
-            if "WORKER_ID" in os.environ
-            else uuid.uuid4()
-        ),
+        default_factory=uuid.uuid4,
     )
 
     # Feed orchestration
-    max_feeds_per_worker: int = field(
-        default_factory=lambda: int(
-            os.environ.get("MAX_FEEDS_PER_WORKER", "800"),
-        ),
-    )
     lease_poll_interval_sec: float = field(
         default_factory=lambda: float(
             os.environ.get("LEASE_POLL_INTERVAL_SEC", "5.0"),
-        ),
-    )
-    lease_admission_cycle_budget: int = field(
-        default_factory=lambda: int(
-            os.environ.get("LEASE_ADMISSION_CYCLE_BUDGET", "20"),
         ),
     )
     startup_stagger_max_sec: float = field(
@@ -150,7 +207,9 @@ class CollectorSettings:
     # PostgreSQL enforces the cap structurally via the query planner.
     # Defaults + claimable type set live in module-level _DEFAULT_CAPS;
     # CAP_<NAME> env vars override individual entries.
-    caps: dict[SourceType, int] = field(default_factory=_load_caps_from_env)
+    caps: dict[SourceType, int] = field(
+        default_factory=lambda: _CAPS_UNSET,
+    )
 
     # GCS
     audio_staging_bucket: str = field(
@@ -159,12 +218,8 @@ class CollectorSettings:
 
     # Pub/Sub
     # topic_path is in the form `projects/{project_id}/topics/{topic_id}`
-    continuous_pubsub_topic_path: str = field(
-        default_factory=lambda: _require_env("CONTINUOUS_PUBSUB_TOPIC_PATH"),
-    )
-    segmented_pubsub_topic_path: str | None = field(
-        default_factory=lambda: os.environ.get("SEGMENTED_PUBSUB_TOPIC_PATH"),
-    )
+    continuous_pubsub_topic_path: str = _TOPIC_UNSET
+    segmented_pubsub_topic_path: str | None = _TOPIC_UNSET
 
     # Google Cloud project ID for telemetry metric emission (None disables metrics)
     google_cloud_project: str | None = field(
@@ -294,14 +349,60 @@ class CollectorSettings:
         default_factory=lambda: os.environ.get("ICECAST_SEGMENT_DIR"),
     )
 
+    @property
+    def max_feeds_per_worker(self) -> int:
+        """Return the selected Feed allocation cap, or zero if unselected."""
+        allocation = worker_profiles.allocation_for_domain(
+            self.worker_profile,
+            grant_control.DomainId.FEED,
+        )
+        return allocation.owned_cap if allocation is not None else 0
+
+    @property
+    def lease_admission_cycle_budget(self) -> int:
+        """Return the selected Feed claim budget, or zero if unselected."""
+        allocation = worker_profiles.allocation_for_domain(
+            self.worker_profile,
+            grant_control.DomainId.FEED,
+        )
+        return allocation.claims_per_cycle if allocation is not None else 0
+
     def __post_init__(self) -> None:
-        if self.lease_admission_cycle_budget <= 0:
+        if "WORKER_ID" in os.environ:
             msg = (
-                "lease_admission_cycle_budget "
-                f"({self.lease_admission_cycle_budget}) must be greater "
-                "than zero."
+                "WORKER_ID must not be supplied; worker identity is generated "
+                "for each process epoch"
             )
             raise ValueError(msg)
+        worker_profiles.validate_worker_profile(self.worker_profile)
+        feed_allocation = worker_profiles.allocation_for_domain(
+            self.worker_profile,
+            grant_control.DomainId.FEED,
+        )
+        if self.caps is _CAPS_UNSET:
+            object.__setattr__(
+                self,
+                "caps",
+                _load_caps_from_env() if feed_allocation is not None else {},
+            )
+        if self.continuous_pubsub_topic_path is _TOPIC_UNSET:
+            if feed_allocation is not None:
+                object.__setattr__(
+                    self,
+                    "continuous_pubsub_topic_path",
+                    _require_env("CONTINUOUS_PUBSUB_TOPIC_PATH"),
+                )
+            else:
+                object.__setattr__(self, "continuous_pubsub_topic_path", "")
+        if self.segmented_pubsub_topic_path is _TOPIC_UNSET:
+            if feed_allocation is not None:
+                object.__setattr__(
+                    self,
+                    "segmented_pubsub_topic_path",
+                    os.environ.get("SEGMENTED_PUBSUB_TOPIC_PATH"),
+                )
+            else:
+                object.__setattr__(self, "segmented_pubsub_topic_path", None)
         non_negative_delays = (
             ("startup_stagger_max_sec", self.startup_stagger_max_sec),
             ("startup_jitter_max_sec", self.startup_jitter_max_sec),

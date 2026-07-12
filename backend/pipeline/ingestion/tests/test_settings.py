@@ -2,6 +2,8 @@ import unittest
 import uuid
 from unittest.mock import patch
 
+from backend.pipeline.ingestion import grant_control, worker_profiles
+from backend.pipeline.ingestion import settings as settings_module
 from backend.pipeline.ingestion.settings import CollectorSettings
 from backend.pipeline.storage.feed_store import SourceType
 
@@ -23,8 +25,8 @@ class TestCollectorSettings(unittest.TestCase):
         """Loads all settings from valid environment variables."""
         env = {
             **_required_env(),
-            "WORKER_ID": "00000000-0000-0000-0000-000000000123",
             "MAX_FEEDS_PER_WORKER": "500",
+            "LEASE_ADMISSION_CYCLE_BUDGET": "11",
             "LEASE_POLL_INTERVAL_SEC": "2.5",
             "HEARTBEAT_INTERVAL_SEC": "10.0",
             "HEARTBEAT_STALL_TIMEOUT_SEC": "30.0",
@@ -65,8 +67,9 @@ class TestCollectorSettings(unittest.TestCase):
         with patch.dict("os.environ", env, clear=True):
             settings = CollectorSettings()
 
-        self.assertEqual(settings.worker_id, uuid.UUID(env["WORKER_ID"]))
+        self.assertIsInstance(settings.worker_id, uuid.UUID)
         self.assertEqual(settings.max_feeds_per_worker, 500)
+        self.assertEqual(settings.lease_admission_cycle_budget, 11)
         self.assertEqual(settings.lease_poll_interval_sec, 2.5)
         self.assertEqual(settings.heartbeat_interval_sec, 10.0)
         self.assertEqual(settings.heartbeat_stall_timeout_sec, 30.0)
@@ -114,6 +117,7 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertEqual(settings.caps[SourceType.BCFY_CALLS], 400)
         self.assertEqual(settings.caps[SourceType.OPENMHZ], 700)
         self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 300)
+        self.assertEqual(settings.worker_profile.name, "legacy")
 
     def test_phase1_expected_inputs(self) -> None:
         """Loads Phase 1 lease-admission settings from environment."""
@@ -188,11 +192,188 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertEqual(settings.caps[SourceType.OPENMHZ], 900)
         self.assertEqual(settings.caps[SourceType.FIRE_NOTIFICATIONS], 300)
 
+    def test_two_process_epochs_with_same_index_get_distinct_worker_ids(
+        self,
+    ) -> None:
+        env = {**_required_env(), "WORKER_INDEX": "2"}
+
+        with patch.dict("os.environ", env, clear=True):
+            first = CollectorSettings()
+            second = CollectorSettings()
+
+        self.assertEqual(first.worker_index, second.worker_index)
+        self.assertEqual(first.worker_index, 2)
+        self.assertNotEqual(first.worker_id, second.worker_id)
+
+    def test_explicit_worker_id_is_allowed_without_environment_override(
+        self,
+    ) -> None:
+        worker_id = uuid.UUID("00000000-0000-0000-0000-000000000123")
+
+        with patch.dict("os.environ", _required_env(), clear=True):
+            settings = CollectorSettings(worker_id=worker_id)
+
+        self.assertIs(settings.worker_id, worker_id)
+
+    def test_collector_settings_retains_selected_immutable_profile(
+        self,
+    ) -> None:
+        profile = worker_profiles.SID_DORMANT_PROFILE
+
+        with patch.dict("os.environ", _required_env(), clear=True):
+            settings = CollectorSettings(worker_profile=profile)
+
+        self.assertIs(settings.worker_profile, profile)
+        self.assertEqual(settings.max_feeds_per_worker, 0)
+        self.assertEqual(settings.lease_admission_cycle_budget, 0)
+
+    def test_sid_only_settings_skip_feed_caps_and_topics(self) -> None:
+        env = _required_env()
+        del env["CONTINUOUS_PUBSUB_TOPIC_PATH"]
+        env.update(
+            {
+                "WORKER_PROFILE": "sid-dormant",
+                "MAX_FEEDS_PER_WORKER": "not-an-int",
+                "LEASE_ADMISSION_CYCLE_BUDGET": "not-an-int",
+                "CAP_BCFY_CALLS": "not-an-int",
+                "SEGMENTED_PUBSUB_TOPIC_PATH": "not-inspected",
+            }
+        )
+
+        with patch.dict("os.environ", env, clear=True):
+            settings = CollectorSettings()
+
+        self.assertEqual(settings.caps, {})
+        self.assertEqual(settings.continuous_pubsub_topic_path, "")
+        self.assertIsNone(settings.segmented_pubsub_topic_path)
+
+    def test_feed_only_profile_skips_sid_allocation_configuration(self) -> None:
+        env = {
+            **_required_env(),
+            "MAX_SIDS_PER_WORKER": "not-an-int",
+            "SID_LEASE_ADMISSION_CYCLE_BUDGET": "not-an-int",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            settings = CollectorSettings()
+
+        self.assertEqual(
+            settings.worker_profile, worker_profiles.LEGACY_PROFILE
+        )
+
+    def test_explicit_empty_feed_configuration_is_not_replaced(self) -> None:
+        with patch.dict("os.environ", _required_env(), clear=True):
+            settings = CollectorSettings(
+                caps={},
+                continuous_pubsub_topic_path="",
+                segmented_pubsub_topic_path=None,
+            )
+
+        self.assertEqual(settings.caps, {})
+        self.assertEqual(settings.continuous_pubsub_topic_path, "")
+        self.assertIsNone(settings.segmented_pubsub_topic_path)
+
+    def test_feed_overrides_have_one_profile_allocation_source(self) -> None:
+        env = {
+            **_required_env(),
+            "MAX_FEEDS_PER_WORKER": "123",
+            "LEASE_ADMISSION_CYCLE_BUDGET": "7",
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            settings = CollectorSettings()
+            feed = worker_profiles.allocation_for_domain(
+                settings.worker_profile,
+                grant_control.DomainId.FEED,
+            )
+            self.assertIsNotNone(feed)
+            assert feed is not None
+            self.assertEqual(feed.owned_cap, 123)
+            self.assertEqual(feed.claims_per_cycle, 7)
+            os_environ = settings_module.os.environ
+            os_environ["MAX_FEEDS_PER_WORKER"] = "999"
+            os_environ["LEASE_ADMISSION_CYCLE_BUDGET"] = "999"
+            self.assertEqual(settings.max_feeds_per_worker, 123)
+            self.assertEqual(settings.lease_admission_cycle_budget, 7)
+
+    def test_profile_loader_delegates_once_with_all_allocations(self) -> None:
+        env = {
+            "WORKER_PROFILE": "mixed-dormant",
+            "MAX_FEEDS_PER_WORKER": "123",
+            "LEASE_ADMISSION_CYCLE_BUDGET": "7",
+            "MAX_SIDS_PER_WORKER": "31",
+            "SID_LEASE_ADMISSION_CYCLE_BUDGET": "1",
+        }
+        expected = worker_profiles.MIXED_DORMANT_PROFILE
+
+        with (
+            patch.dict("os.environ", env, clear=True),
+            patch.object(
+                worker_profiles,
+                "resolve_worker_profile",
+                return_value=expected,
+            ) as resolve_profile,
+        ):
+            profile = settings_module.load_worker_profile_from_env()
+
+        self.assertIs(profile, expected)
+        resolve_profile.assert_called_once_with(
+            "mixed-dormant",
+            feed_owned_cap=123,
+            feed_claims_per_cycle=7,
+            sid_owned_cap=31,
+            sid_claims_per_cycle=1,
+        )
+
+    def test_sid_profile_defaults_and_overrides_are_one_allocation(
+        self,
+    ) -> None:
+        cases = (
+            ({"WORKER_PROFILE": "sid-dormant"}, 32, 2),
+            (
+                {
+                    "WORKER_PROFILE": "sid-dormant",
+                    "MAX_SIDS_PER_WORKER": "31",
+                    "SID_LEASE_ADMISSION_CYCLE_BUDGET": "1",
+                },
+                31,
+                1,
+            ),
+        )
+
+        for env, expected_cap, expected_budget in cases:
+            with self.subTest(env=env):
+                with patch.dict("os.environ", env, clear=True):
+                    profile = settings_module.load_worker_profile_from_env()
+
+                self.assertEqual(len(profile.allocations), 1)
+                allocation = profile.allocations[0]
+                self.assertIs(allocation.domain_id, grant_control.DomainId.SID)
+                self.assertEqual(allocation.owned_cap, expected_cap)
+                self.assertEqual(
+                    allocation.claims_per_cycle,
+                    expected_budget,
+                )
+                self.assertFalse(allocation.claims_enabled)
+
+    def test_invalid_profile_fails_before_required_setting_reads(self) -> None:
+        with (
+            patch.dict(
+                "os.environ",
+                {"WORKER_PROFILE": "unknown"},
+                clear=True,
+            ),
+            patch.object(settings_module, "_require_env") as require_env,
+        ):
+            with self.assertRaisesRegex(ValueError, "Unknown WORKER_PROFILE"):
+                CollectorSettings()
+
+        require_env.assert_not_called()
+
     def test_edge_case_zero_and_negative_numeric_values_parse(self) -> None:
         """Allows zero/negative values because parsing does not enforce ranges."""
         env = {
             **_required_env(),
-            "MAX_FEEDS_PER_WORKER": "0",
             "LEASE_POLL_INTERVAL_SEC": "0.0",
             "HEARTBEAT_INTERVAL_SEC": "-1.0",
             "ALLOYDB_POOL_MIN_SIZE": "0",
@@ -203,7 +384,6 @@ class TestCollectorSettings(unittest.TestCase):
         with patch.dict("os.environ", env, clear=True):
             settings = CollectorSettings()
 
-        self.assertEqual(settings.max_feeds_per_worker, 0)
         self.assertEqual(settings.lease_poll_interval_sec, 0.0)
         self.assertEqual(settings.heartbeat_interval_sec, -1.0)
         self.assertEqual(settings.db.pool_min_size, 0)
@@ -258,13 +438,22 @@ class TestCollectorSettings(unittest.TestCase):
 
         self.assertIn("AUDIO_STAGING_BUCKET", str(context.exception))
 
-    def test_invalid_worker_id_raises(self) -> None:
-        """Raises ValueError when WORKER_ID is not a valid UUID."""
-        env = {**_required_env(), "WORKER_ID": "not-a-uuid"}
-
-        with patch.dict("os.environ", env, clear=True):
-            with self.assertRaises(ValueError):
-                CollectorSettings()
+    def test_any_environment_worker_id_is_rejected(self) -> None:
+        """Static ownership IDs are forbidden, even with explicit injection."""
+        explicit = uuid.UUID("00000000-0000-0000-0000-000000000123")
+        for value in (
+            "",
+            "not-a-uuid",
+            "00000000-0000-0000-0000-000000000456",
+        ):
+            with self.subTest(value=value):
+                env = {**_required_env(), "WORKER_ID": value}
+                with patch.dict("os.environ", env, clear=True):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "WORKER_ID must not be supplied",
+                    ):
+                        CollectorSettings(worker_id=explicit)
 
     def test_invalid_integer_env_raises(self) -> None:
         """Raises ValueError for non-integer integer-backed settings."""
