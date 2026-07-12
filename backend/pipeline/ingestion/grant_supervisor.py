@@ -530,6 +530,7 @@ class GrantSupervisor:
         self._integrity_failure: BaseException | None = None
         self._integrity_failure_event = asyncio.Event()
         self._heartbeat_stopped = asyncio.Event()
+        self._claim_tasks: set[asyncio.Task[int]] = set()
         self._terminal_tasks: set[asyncio.Task[_FinalizeEffect]] = set()
 
     @property
@@ -614,6 +615,9 @@ class GrantSupervisor:
                 )
                 for domain, ask in reservations
             )
+            self._claim_tasks.update(tasks)
+            for task in tasks:
+                task.add_done_callback(self._claim_task_done)
             results = await asyncio.gather(*tasks, return_exceptions=True)
             first_failure: BaseException | None = None
             for (_domain, ask), result in zip(
@@ -678,23 +682,39 @@ class GrantSupervisor:
         registered_count = 0
         try:
             claims = await domain.claim(mode, owner_worker_id, reservation)
-            if not self._admission_enabled:
+            if len(claims) > reservation:
+                msg = "control returned more claims than reserved"
+                raise grant_control.GrantControlIntegrityError(msg)  # noqa: TRY301
+            self._validate_claim_batch(domain, owner_worker_id, claims)
+            stopped_in_flight = not self._admission_enabled
+            for claim in claims:
+                self._consume_reservation(domain.domain_id)
+                remaining_reservation -= 1
+                self._register_claim(
+                    domain,
+                    claim,
+                    start_runner=not stopped_in_flight,
+                )
+                registered_count += 1
+            if stopped_in_flight:
                 self._emit_lifecycle(
                     _LifecycleEvent.ADMISSION,
                     domain,
                     outcome="stopped_in_flight",
                 )
-                return 0
-            if len(claims) > reservation:
-                msg = "control returned more claims than reserved"
-                raise grant_control.GrantControlIntegrityError(msg)  # noqa: TRY301
-            self._validate_claim_batch(domain, owner_worker_id, claims)
-            for claim in claims:
-                self._consume_reservation(domain.domain_id)
-                remaining_reservation -= 1
-                self._register_claim(domain, claim)
-                registered_count += 1
             return registered_count  # noqa: TRY300
+        except asyncio.CancelledError as exc:
+            failure = grant_control.GrantControlIntegrityError(
+                "claim outcome is unknown after cancellation"
+            )
+            failure.__cause__ = exc
+            self._surface_integrity_failure(failure)
+            self._emit_lifecycle(
+                _LifecycleEvent.ADMISSION,
+                domain,
+                outcome="cancelled_unknown",
+            )
+            raise
         except grant_control.GrantControlIntegrityError as exc:
             self._surface_integrity_failure(exc)
             self._emit_lifecycle(
@@ -703,12 +723,27 @@ class GrantSupervisor:
                 outcome="integrity_failure",
             )
             return 0
+        except Exception as exc:
+            failure = grant_control.GrantControlIntegrityError(
+                "claim outcome is unknown"
+            )
+            failure.__cause__ = exc
+            self._surface_integrity_failure(failure)
+            self._emit_lifecycle(
+                _LifecycleEvent.ADMISSION,
+                domain,
+                outcome="unavailable_unknown",
+            )
+            return 0
         finally:
             if remaining_reservation:
                 self._release_reservation(
                     domain.domain_id,
                     remaining_reservation,
                 )
+
+    def _claim_task_done(self, task: asyncio.Task[int]) -> None:
+        self._claim_tasks.discard(task)
 
     def _validate_claim_batch(
         self,
@@ -754,6 +789,8 @@ class GrantSupervisor:
         self,
         domain: _ErasedRegisteredDomain,
         claim: _ErasedClaim,
+        *,
+        start_runner: bool = True,
     ) -> None:
         key = _GenerationKey(
             domain_id=domain.domain_id,
@@ -777,6 +814,23 @@ class GrantSupervisor:
         self._current_by_slot[slot] = key
         self._owned_by_domain[domain.domain_id] += 1
         self._process_owned += 1
+        if not start_runner:
+            managed.closed_outcome = grant_control.RunStopped(
+                grant_control.TerminalCause.SHUTDOWN
+            )
+            managed.runner_closed.set()
+            self._reserve_terminal(
+                key,
+                grant_control.NeutralRelease(
+                    grant_control.TerminalCause.SHUTDOWN
+                ),
+            )
+            self._emit_lifecycle(
+                _LifecycleEvent.ADMISSION,
+                domain,
+                outcome="registered_shutdown_only",
+            )
+            return
         root_task = asyncio.create_task(
             self._run_managed(key, claim.run),
             name=(f"grant-{domain.domain_id.value}-{claim.fencing_token}"),
@@ -1053,7 +1107,7 @@ class GrantSupervisor:
                     managed.payload,
                     decision,
                 )
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as exc:
             current = self._current_exact(key)
             if current is managed:
                 managed.terminal_state = TerminalState.ABANDONED
@@ -1064,6 +1118,11 @@ class GrantSupervisor:
                     managed.domain,
                     outcome="cancelled_unknown",
                 )
+                failure = grant_control.GrantControlIntegrityError(
+                    "finalization outcome is unknown after cancellation"
+                )
+                failure.__cause__ = exc
+                self._surface_integrity_failure(failure)
             raise
         except Exception as exc:
             current = self._current_exact(key)
@@ -1401,6 +1460,37 @@ class GrantSupervisor:
             ),
         )
 
+    async def _claim_shutdown_blocker(
+        self,
+        wait_timeout_sec: float,
+    ) -> ShutdownResult | None:
+        """Wait for known claim mutations or report a fail-closed drain."""
+        claim_tasks = tuple(self._claim_tasks)
+        if not claim_tasks:
+            return None
+        _done, pending_claims = await asyncio.wait(
+            claim_tasks,
+            timeout=wait_timeout_sec,
+        )
+        if not pending_claims:
+            return None
+        current = tuple(
+            managed
+            for managed in self._registry.values()
+            if self._current_exact(managed.key) is managed
+        )
+        for managed in current:
+            managed.stop_requested.set()
+        return ShutdownResult(
+            finalized=0,
+            abandoned=sum(
+                managed.terminal_state is TerminalState.ABANDONED
+                for managed in current
+            ),
+            undrained=len(pending_claims)
+            + sum(not managed.runner_closed.is_set() for managed in current),
+        )
+
     async def shutdown(
         self,
         *,
@@ -1425,6 +1515,9 @@ class GrantSupervisor:
             raise TypeError(msg)
 
         self._admission_enabled = False
+        blocked = await self._claim_shutdown_blocker(external_stop_deadline_sec)
+        if blocked is not None:
+            return blocked
         initial = tuple(self._registry.values())
         for managed in initial:
             if self._current_exact(managed.key) is managed:

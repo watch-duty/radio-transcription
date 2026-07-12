@@ -588,6 +588,33 @@ class TestSupervisorAdmissionDelegation(unittest.IsolatedAsyncioTestCase):
         rt._supervisor.admit_cycle.assert_not_awaited()
         sleep_or_shutdown.assert_awaited_once_with(0.25)
 
+    async def test_integrity_failure_interrupts_leasing_poll(self) -> None:
+        rt = _make_runtime(
+            lease_poll_interval_sec=60.0,
+            lease_poll_jitter_max_sec=0.0,
+        )
+        failure = grant_control.GrantControlIntegrityError(
+            "heartbeat correlation failed"
+        )
+        supervisor = mock.MagicMock()
+        supervisor.admit_cycle = mock.AsyncMock()
+        supervisor.integrity_failure_event = asyncio.Event()
+        supervisor.integrity_failure = failure
+        rt._supervisor = supervisor
+        rt._memory_watchdog.is_paused = mock.MagicMock(return_value=False)
+
+        leasing = asyncio.create_task(rt._leasing_loop())
+        await asyncio.sleep(0)
+        supervisor.integrity_failure_event.set()
+
+        with self.assertRaisesRegex(
+            grant_control.GrantControlIntegrityError,
+            "heartbeat correlation failed",
+        ):
+            await asyncio.wait_for(leasing, timeout=1)
+
+        supervisor.admit_cycle.assert_awaited_once_with(_WORKER_ID)
+
 
 class TestLeasedFeedPayloadValidator(unittest.TestCase):
     """The registered Feed payload boundary validates concrete mappings."""
@@ -1405,6 +1432,68 @@ class TestHeartbeatCycle(unittest.IsolatedAsyncioTestCase):
 
 class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
     """Tests for pool creation in _main."""
+
+    @mock.patch(
+        "backend.pipeline.ingestion.collector_runtime.FeedStore",
+    )
+    @mock.patch(
+        "backend.pipeline.ingestion.collector_runtime.create_pool_with_retry",
+        new_callable=mock.AsyncMock,
+    )
+    async def test_shutdown_time_integrity_failure_exits_after_cleanup(
+        self,
+        mock_create_pool_with_retry: mock.AsyncMock,
+        _mock_feed_store: mock.MagicMock,
+    ) -> None:
+        rt = _make_runtime(startup_stagger_max_sec=0.0)
+        failure = grant_control.GrantControlIntegrityError(
+            "finalization outcome unavailable"
+        )
+        order: list[str] = []
+
+        async def leasing_loop() -> None:
+            order.append("leasing")
+            rt._supervisor._surface_integrity_failure(failure)
+
+        async def shutdown_sequence() -> None:
+            order.append("shutdown")
+
+        mock_create_pool_with_retry.side_effect = (
+            mock.AsyncMock(),
+            mock.AsyncMock(),
+        )
+        loop = asyncio.get_running_loop()
+        with (
+            mock.patch.object(loop, "add_signal_handler"),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.aiohttp.TCPConnector"
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.aiohttp.ClientSession"
+            ),
+            mock.patch.object(rt, "_leasing_loop", side_effect=leasing_loop),
+            mock.patch.object(
+                rt,
+                "_shutdown_sequence",
+                side_effect=shutdown_sequence,
+            ),
+            mock.patch("threading.Thread"),
+            mock.patch.object(rt._memory_watchdog, "start"),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.health_server.start",
+                new_callable=mock.AsyncMock,
+            ),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.quarantine_telemetry.configure"
+            ),
+        ):
+            with self.assertRaisesRegex(
+                grant_control.GrantControlIntegrityError,
+                "finalization outcome unavailable",
+            ):
+                await rt._main()
+
+        self.assertEqual(order, ["leasing", "shutdown"])
 
     @mock.patch(
         "backend.pipeline.ingestion.collector_runtime.FeedStore",

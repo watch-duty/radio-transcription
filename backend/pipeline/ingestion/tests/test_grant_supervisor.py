@@ -135,6 +135,7 @@ class _ControlledControl[GrantT, PayloadT]:
             grant_control.ClaimMode.RECOVERY: (),
         }
         self.claim_calls: list[tuple[grant_control.ClaimMode, int]] = []
+        self.claim_error: BaseException | None = None
         self.call_order: list[tuple[str, grant_control.ClaimMode]] | None = None
         self.call_label = ""
         self.blocked_modes: set[grant_control.ClaimMode] = set()
@@ -176,6 +177,8 @@ class _ControlledControl[GrantT, PayloadT]:
         if mode in self.blocked_modes:
             self.claim_entered[mode].set()
             await self.release_claim.wait()
+        if self.claim_error is not None:
+            raise self.claim_error
         return self.results[mode]
 
     async def heartbeat(
@@ -712,7 +715,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                 typing.cast("_ControlledRunner[object, object]", feed_runner),
             )
 
-    async def test_shutdown_rejects_claim_returning_after_admission_stop(
+    async def test_shutdown_reconciles_claim_returning_after_admission_stop(
         self,
     ) -> None:
         profile = _profile(
@@ -745,18 +748,84 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         async def stop_heartbeat() -> None:
             return None
 
-        result = await supervisor.shutdown(
-            cooperative_grace_sec=0,
-            external_stop_deadline_sec=0,
-            stop_heartbeat_supervision=stop_heartbeat,
-        )
-        feed_control.release_claim.set()
-        await admission
+        claim_wait_entered = asyncio.Event()
+        wait_for_claims = supervisor._claim_shutdown_blocker
 
-        self.assertEqual(result, grant_supervisor.ShutdownResult(0, 0, 0))
+        async def observed_claim_wait(
+            wait_timeout_sec: float,
+        ) -> grant_supervisor.ShutdownResult | None:
+            claim_wait_entered.set()
+            return await wait_for_claims(wait_timeout_sec)
+
+        with mock.patch.object(
+            supervisor,
+            "_claim_shutdown_blocker",
+            side_effect=observed_claim_wait,
+        ):
+            shutdown = asyncio.create_task(
+                supervisor.shutdown(
+                    cooperative_grace_sec=0,
+                    external_stop_deadline_sec=1,
+                    stop_heartbeat_supervision=stop_heartbeat,
+                )
+            )
+            await asyncio.wait_for(claim_wait_entered.wait(), timeout=1)
+            self.assertFalse(shutdown.done())
+            feed_control.release_claim.set()
+            await admission
+            result = await shutdown
+
+        self.assertEqual(result, grant_supervisor.ShutdownResult(1, 0, 0))
         self.assertEqual(supervisor._registry, {})
         self.assertEqual(supervisor._process_reserved, 0)
         self.assertEqual(feed_runner.calls, [])
+        self.assertEqual(len(feed_control.finalize_calls), 1)
+        self.assertEqual(feed_control.finalize_calls[0][0].feed_id, feed_id)
+        self.assertEqual(
+            feed_control.finalize_calls[0][1],
+            grant_control.NeutralRelease(grant_control.TerminalCause.SHUTDOWN),
+        )
+
+    async def test_claim_exception_is_unknown_and_disables_admission(
+        self,
+    ) -> None:
+        profile = _profile(
+            process_cap=1,
+            feed_cap=1,
+            feed_budget=1,
+            domains=(grant_control.DomainId.FEED,),
+        )
+        (
+            supervisor,
+            feed_control,
+            feed_runner,
+            _sid_control,
+            _sid_runner,
+        ) = self._mixed(profile)
+        feed_control.claim_error = RuntimeError("commit outcome unknown")
+
+        await supervisor.admit_cycle(_OWNER_ID)
+
+        self.assertFalse(supervisor.admission_enabled)
+        self.assertTrue(supervisor.integrity_failure_event.is_set())
+        self.assertIsInstance(
+            supervisor.integrity_failure,
+            grant_control.GrantControlIntegrityError,
+        )
+        self.assertIs(
+            supervisor.integrity_failure.__cause__,
+            feed_control.claim_error,
+        )
+        self.assertEqual(supervisor._process_reserved, 0)
+        self.assertEqual(supervisor._registry, {})
+        self.assertEqual(feed_runner.calls, [])
+
+        await supervisor.admit_cycle(_OWNER_ID)
+
+        self.assertEqual(
+            feed_control.claim_calls,
+            [(grant_control.ClaimMode.PRIMARY, 1)],
+        )
 
     async def test_constrained_empty_cycles_rotate_first_domain(self) -> None:
         profile = _profile(
@@ -1553,6 +1622,16 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             grant_supervisor._ReservationKind.UNCERTAIN,
         )
         self.assertEqual(len(feed_control.finalize_calls), 1)
+        self.assertFalse(supervisor.admission_enabled)
+        self.assertTrue(supervisor.integrity_failure_event.is_set())
+        self.assertIsInstance(
+            supervisor.integrity_failure,
+            grant_control.GrantControlIntegrityError,
+        )
+        self.assertNotIsInstance(
+            supervisor.integrity_failure,
+            asyncio.CancelledError,
+        )
 
         async def stop_heartbeat() -> None:
             return None

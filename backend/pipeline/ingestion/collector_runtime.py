@@ -786,6 +786,7 @@ class CollectorRuntime:
             await self._leasing_loop()
         finally:
             await self._shutdown_sequence()
+        self._raise_integrity_failure()
 
     async def _sleep_or_shutdown(self, seconds: float) -> bool:
         """
@@ -800,11 +801,45 @@ class CollectorRuntime:
             elapsed normally.
 
         """
-        try:
-            await asyncio.wait_for(self._shutdown.wait(), timeout=seconds)
-        except TimeoutError:
-            return False
-        return True
+        supervisor = self._supervisor
+        if supervisor is None:
+            try:
+                await asyncio.wait_for(self._shutdown.wait(), timeout=seconds)
+            except TimeoutError:
+                return False
+            return True
+
+        shutdown_wait = asyncio.create_task(self._shutdown.wait())
+        integrity_wait = asyncio.create_task(
+            supervisor.integrity_failure_event.wait()
+        )
+        waits = (shutdown_wait, integrity_wait)
+        _done, pending = await asyncio.wait(
+            waits,
+            timeout=seconds,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        if supervisor.integrity_failure_event.is_set():
+            self._raise_integrity_failure()
+        return self._shutdown.is_set()
+
+    def _raise_integrity_failure(self) -> None:
+        """Raise the first fatal supervisor failure for process restart."""
+        supervisor = self._supervisor
+        if (
+            supervisor is None
+            or not supervisor.integrity_failure_event.is_set()
+        ):
+            return
+        failure = supervisor.integrity_failure
+        if failure is None:
+            msg = "supervisor signalled integrity failure without evidence"
+            raise grant_control.GrantControlIntegrityError(msg)
+        raise failure
 
     def _feed_terminal_decision(
         self,
@@ -890,6 +925,8 @@ class CollectorRuntime:
                         self._collector_settings.worker_id
                     )
                 except Exception:
+                    if self._supervisor.integrity_failure_event.is_set():
+                        self._raise_integrity_failure()
                     logger.exception(
                         "Grant admission failed -- will retry in %.1fs",
                         self._collector_settings.lease_poll_interval_sec,
