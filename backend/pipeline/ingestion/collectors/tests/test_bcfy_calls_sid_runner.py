@@ -61,9 +61,11 @@ class _TrackedEvent(asyncio.Event):
         self.active_waiters = 0
         self.completed_waiters = 0
         self.cancelled_waiters = 0
+        self.wait_entered = asyncio.Event()
 
     async def wait(self) -> bool:
         self.active_waiters += 1
+        self.wait_entered.set()
         try:
             result = await super().wait()
         except asyncio.CancelledError:
@@ -426,6 +428,12 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
         task = asyncio.create_task(runner.run(_grant(), _snapshot(), context))
         await asyncio.wait_for(scheduler.lane_opened.wait(), timeout=1)
         lane = scheduler.opened[0]
+        await asyncio.wait_for(stop.wait_entered.wait(), timeout=1)
+        await asyncio.wait_for(loss.wait_entered.wait(), timeout=1)
+        await asyncio.wait_for(
+            scheduler.integrity_failure_event.wait_entered.wait(),
+            timeout=1,
+        )
 
         task.cancel()
         await asyncio.wait_for(lane.close_entered.wait(), timeout=1)

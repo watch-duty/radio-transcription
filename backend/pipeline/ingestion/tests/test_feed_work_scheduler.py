@@ -1065,7 +1065,16 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler._shards[1].wait_for_capacity_waiters(1)
         executor.release_failure.set()
-        await scheduler._shards[0].wait_for_fatal()
+        await asyncio.wait_for(
+            scheduler.integrity_failure_event.wait(),
+            timeout=1,
+        )
+        self.assertTrue(scheduler.integrity_failure_event.is_set())
+        with self.assertRaises(
+            feed_work_scheduler.SchedulerIntegrityError
+        ) as raised:
+            scheduler.raise_if_failed()
+        self.assertIsInstance(raised.exception.__cause__, RuntimeError)
 
         with self.assertRaises(feed_work_scheduler.SchedulerIntegrityError):
             await blocked

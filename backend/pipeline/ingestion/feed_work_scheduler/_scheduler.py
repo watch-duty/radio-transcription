@@ -170,6 +170,15 @@ class FeedWorkScheduler:
                 await shard.start()
             self._started = True
 
+    @property
+    def integrity_failure_event(self) -> asyncio.Event:
+        """Return the monotonic signal for process scheduler failure."""
+        return self._fatal_event
+
+    def raise_if_failed(self) -> None:
+        """Raise public scheduler integrity evidence after the signal wakes."""
+        self._raise_fatal()
+
     def open_lane(
         self,
         grant: ingestion_lease_store.LeaseGrant,
