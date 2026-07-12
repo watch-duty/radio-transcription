@@ -178,6 +178,14 @@ class _BoundaryCoordinator:
             return _types._BoundaryPressureResult.COMPLETED
 
     async def _run(self) -> None:
+        """Flush signaled batches and complete each bounded generation.
+
+        Returns:
+            None after close stops selection and wakes generation waiters.
+
+        Cancellation is converted to persistent coordinator failure so a
+        committed mutation cannot disappear with an unobserved task exit.
+        """
         try:
             while True:
                 await self._signal.wait()
@@ -256,6 +264,19 @@ class _BoundaryCoordinator:
         *,
         final_logical: bool,
     ) -> bool:
+        """Commit and correlate one immutable batch outside shard locks.
+
+        Args:
+            selected: Detached records paired with their owning shards.
+            final_logical: Whether this is the page's required final attempt.
+
+        Returns:
+            Whether at least one correlated target must be retried later.
+
+        Raises:
+            _BoundaryCoordinatorError: The committed outcome is lost,
+                malformed, or outside the closed result vocabulary.
+        """
         targets = tuple(
             record.detached_work() for _shard_value, record in selected
         )

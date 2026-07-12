@@ -287,11 +287,10 @@ class FeedWorkScheduler:
         for shard in self._shards:
             shards.append(await shard.snapshot())
         snapshots = tuple(shards)
-        registered = sum(
-            worker.task_registered
-            for snapshot in snapshots
-            for worker in snapshot.workers
-        )
+        registered = 0
+        for snapshot in snapshots:
+            for worker in snapshot.workers:
+                registered += worker.task_registered
         registered_flushers = sum(
             not lane._boundary_coordinator.task.done()
             for lane in self._lanes.values()
@@ -341,6 +340,7 @@ class FeedWorkScheduler:
         grant: ingestion_lease_store.LeaseGrant,
         page_sequence: int,
     ) -> None:
+        """Irrevocably seal every prepared shard after receipt issuance."""
         for shard in self._shards:
             await shard.seal_boundary_page(grant, page_sequence)
 
@@ -880,6 +880,18 @@ class GrantLane:
         *,
         name: str,
     ) -> asyncio.Task[None]:
+        """Register the lane's one bounded page finalization task.
+
+        Args:
+            coroutine: Abort or successful-seal work to own until settlement.
+            name: Diagnostic asyncio task name.
+
+        Returns:
+            The newly registered task.
+
+        Raises:
+            RuntimeError: Another page finalization task is still registered.
+        """
         if self._page_settlement_task is not None:
             message = "lane already owns a page settlement task"
             raise RuntimeError(message)
@@ -888,6 +900,14 @@ class GrantLane:
         return task
 
     async def _settle_page_task(self, task: asyncio.Task[None]) -> None:
+        """Keep caller cancellation pending until owned page work settles.
+
+        Args:
+            task: The lane-owned abort or seal task.
+
+        Repeated cancellation cannot detach the bounded task. The caller's
+        original exception remains active and is re-raised by ``cover_page``.
+        """
         try:
             while True:
                 try:

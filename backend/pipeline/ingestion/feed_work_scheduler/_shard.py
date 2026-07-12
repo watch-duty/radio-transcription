@@ -114,6 +114,23 @@ class _Shard:
         ]
         | None = None,
     ) -> None:
+        """Create one authoritative shard with injected coordination seams.
+
+        Args:
+            shard_id: Stable index within the scheduler's immutable shards.
+            executor: Full-pipeline adapter used by fixed worker slots.
+            limits: Validated capacity and worker limits.
+            outcome_observer: Optional terminal membership/loss observer.
+            grant_is_closing: Optional exact-grant dispatch rejection check.
+            fatal_observer: Optional process-level failure publisher.
+            global_fatal: Optional process-level failure reader.
+            abandonment_for: Optional external cancellation evidence reader.
+            boundary_ready_observer: Optional exact-grant flusher notifier.
+
+        Raises:
+            TypeError: An identifier, limit, or injected seam has wrong type.
+            ValueError: ``shard_id`` is outside the configured shard count.
+        """
         if isinstance(shard_id, bool) or not isinstance(shard_id, int):
             message = "shard_id must be an integer"
             raise TypeError(message)
@@ -557,11 +574,10 @@ class _Shard:
         """Return a payload-free bounded state projection."""
         async with self._lock:
             self._check_conservation_locked()
-            queued_sequences = {
-                record.local_sequence
-                for queue in self._feed_queues.values()
-                for record in queue
-            }
+            queued_sequences = set()
+            for queue in self._feed_queues.values():
+                for record in queue:
+                    queued_sequences.add(record.local_sequence)
             active_slots = {
                 slot.active_record.local_sequence: slot.slot_id
                 for slot in self._workers
@@ -1179,6 +1195,15 @@ class _Shard:
         self,
         slot: _WorkerSlot,
     ) -> None:
+        """Run one fixed slot through dequeue, execute, and terminalize.
+
+        Args:
+            slot: Permanently registered worker slot owned by this task.
+
+        Cancellation releases active work only when exact cancellation intent
+        was registered first. Unexpected cancellation or execution failure is
+        published as persistent shard-integrity evidence before task exit.
+        """
         try:
             while True:
                 record = await self._take_next(slot.slot_id)
@@ -1395,6 +1420,18 @@ class _Shard:
         self,
         record: _types._BoundaryRecord,
     ) -> None:
+        """Restore or discard a retryable detached boundary under the lock.
+
+        Args:
+            record: Immutable-during-I/O record whose retryable result settled.
+
+        Raises:
+            RuntimeError: Restoration would cross page provenance or lose the
+                stable rollback target.
+
+        An aborted page rolls back before any merge. Otherwise a concurrent
+        pending tail is coalesced without adding a second held permit.
+        """
         page_sequence = (
             record.provisional_page_sequence
             if record.provisional_page_sequence is not None
