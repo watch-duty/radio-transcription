@@ -110,6 +110,119 @@ def _assign_attribute(
     setattr(target, field_name, value)
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PageCoverageSnapshot:
+    """O(1) page state independent from counted shard records."""
+
+    next_page_sequence: int
+    page_sequence: int | None
+    current_source_order: int | None
+    pulled: int
+    registered: int
+    localized: int
+
+
+class _PageCoverageModel:
+    """Independent exact-page begin/pull/register/cover/abort oracle."""
+
+    def __init__(self) -> None:
+        self.next_page_sequence = 0
+        self.page_sequence: int | None = None
+        self.current_source_order: int | None = None
+        self.pulled = 0
+        self.registered = 0
+        self.localized = 0
+        self._assert_invariants()
+
+    def snapshot(self) -> _PageCoverageSnapshot:
+        return _PageCoverageSnapshot(
+            next_page_sequence=self.next_page_sequence,
+            page_sequence=self.page_sequence,
+            current_source_order=self.current_source_order,
+            pulled=self.pulled,
+            registered=self.registered,
+            localized=self.localized,
+        )
+
+    def begin(self, page_sequence: int) -> None:
+        if self.page_sequence is not None:
+            _violation("a page is already live")
+        if page_sequence != self.next_page_sequence:
+            _violation("page is not the exact next sequence")
+        self.page_sequence = page_sequence
+        self.current_source_order = None
+        self.pulled = 0
+        self.registered = 0
+        self.localized = 0
+        self._assert_invariants()
+
+    def pull(self, source_order: int) -> None:
+        if self.page_sequence is None:
+            _violation("no page is live")
+        if self.current_source_order is not None:
+            _violation("cannot pull past the current source record")
+        if source_order != self.pulled:
+            _violation("source order must be contiguous")
+        self.current_source_order = source_order
+        self.pulled += 1
+        self._assert_invariants()
+
+    def register(self) -> None:
+        if self.current_source_order is None:
+            _violation("no pulled record is awaiting registration")
+        self.registered += 1
+        self.current_source_order = None
+        self._assert_invariants()
+
+    def localize(self) -> None:
+        if self.current_source_order is None:
+            _violation("no pulled record is awaiting localization")
+        self.localized += 1
+        self.current_source_order = None
+        self._assert_invariants()
+
+    def cover(self) -> None:
+        if self.page_sequence is None:
+            _violation("no page is live")
+        if self.current_source_order is not None:
+            _violation("cannot cover a partially handled source record")
+        if self.pulled != self.registered + self.localized:
+            _violation("not every pulled record owns coverage")
+        self.next_page_sequence += 1
+        self._clear_page()
+        self._assert_invariants()
+
+    def abort(self) -> None:
+        if self.page_sequence is None:
+            _violation("no page is live")
+        self._clear_page()
+        self._assert_invariants()
+
+    def _clear_page(self) -> None:
+        self.page_sequence = None
+        self.current_source_order = None
+        self.pulled = 0
+        self.registered = 0
+        self.localized = 0
+
+    def _assert_invariants(self) -> None:
+        if self.page_sequence is None:
+            if any(
+                (
+                    self.current_source_order is not None,
+                    self.pulled,
+                    self.registered,
+                    self.localized,
+                )
+            ):
+                _violation("closed page retained coordination state")
+            return
+        handled = self.registered + self.localized
+        expected_unhandled = int(self.current_source_order is not None)
+        if self.pulled != handled + expected_unhandled:
+            _violation("page counters do not conserve pulled records")
+
+
 class _ReferenceModel:
     """Independent small-limit oracle for shard transition semantics."""
 
@@ -724,6 +837,70 @@ class TestConservationModel(unittest.TestCase):
                     f"seed={seed}",
                 )
                 self.assertEqual(model.snapshot().held, before_fatal.held)
+
+
+class TestPageCoverageModel(unittest.TestCase):
+    """Seeded begin/admit/coverage/abort contracts for one exact lane."""
+
+    def test_page_model_never_pulls_past_an_unhandled_record(self) -> None:
+        model = _PageCoverageModel()
+        model.begin(0)
+        model.pull(0)
+
+        with self.assertRaisesRegex(
+            _ModelViolation,
+            "current source record",
+        ):
+            model.pull(1)
+
+        self.assertEqual(
+            model.snapshot(),
+            _PageCoverageSnapshot(0, 0, 0, 1, 0, 0),
+        )
+        model.register()
+        model.pull(1)
+        model.localize()
+        model.cover()
+        self.assertEqual(
+            model.snapshot(),
+            _PageCoverageSnapshot(1, None, None, 0, 0, 0),
+        )
+
+    def test_seeded_page_transitions_preserve_o1_state(self) -> None:
+        for seed in (0xC0A7, 0xAB07, 0xFACE):
+            with self.subTest(seed=seed):
+                generator = random.Random(seed)  # noqa: S311
+                model = _PageCoverageModel()
+                for expected_sequence in range(24):
+                    model.begin(expected_sequence)
+                    record_count = generator.randrange(0, 9)
+                    abort_at = (
+                        generator.randrange(record_count + 1)
+                        if generator.randrange(4) == 0
+                        else None
+                    )
+                    aborted = False
+                    for source_order in range(record_count):
+                        model.pull(source_order)
+                        if abort_at == source_order:
+                            model.abort()
+                            aborted = True
+                            break
+                        if generator.randrange(5) == 0:
+                            model.localize()
+                        else:
+                            model.register()
+                        model._assert_invariants()
+                    if aborted:
+                        model.begin(expected_sequence)
+                        model.cover()
+                    else:
+                        model.cover()
+                    self.assertEqual(
+                        model.next_page_sequence,
+                        expected_sequence + 1,
+                    )
+                    self.assertIsNone(model.snapshot().page_sequence)
 
 
 class _ImmediateExecutor:
