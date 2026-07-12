@@ -612,7 +612,7 @@ class GrantSupervisor:
             )
             results = await asyncio.gather(*tasks, return_exceptions=True)
             first_failure: BaseException | None = None
-            for (_domain, _ask), result in zip(
+            for (_domain, ask), result in zip(
                 reservations,
                 results,
                 strict=True,
@@ -625,6 +625,8 @@ class GrantSupervisor:
                     )
                     if first_failure is None:
                         first_failure = result
+                else:
+                    remaining[_domain.domain_id] += ask - result
             if first_failure is not None:
                 raise first_failure
         for domain in self._domains:

@@ -662,6 +662,53 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                 typing.cast("_ControlledRunner[object, object]", sid_runner),
             )
 
+    async def test_primary_underfill_restores_budget_for_recovery(self) -> None:
+        profile = _profile(
+            process_cap=3,
+            feed_cap=3,
+            feed_budget=3,
+            domains=(grant_control.DomainId.FEED,),
+        )
+        (
+            supervisor,
+            feed_control,
+            feed_runner,
+            _sid_control,
+            _sid_runner,
+        ) = self._mixed(profile)
+        primary_id = uuid.UUID(int=40)
+        recovery_id = uuid.UUID(int=41)
+        feed_control.results[grant_control.ClaimMode.PRIMARY] = (
+            _claim(
+                feed_store.FeedGrant(primary_id, _OWNER_ID, 1),
+                _leased_feed(primary_id),
+            ),
+        )
+        feed_control.results[grant_control.ClaimMode.RECOVERY] = (
+            _claim(
+                feed_store.FeedGrant(recovery_id, _OWNER_ID, 1),
+                _leased_feed(recovery_id),
+            ),
+        )
+
+        try:
+            await supervisor.admit_cycle(_OWNER_ID)
+
+            self.assertEqual(
+                feed_control.claim_calls,
+                [
+                    (grant_control.ClaimMode.PRIMARY, 3),
+                    (grant_control.ClaimMode.RECOVERY, 2),
+                ],
+            )
+            self.assertEqual(supervisor._process_owned, 2)
+            self.assertEqual(supervisor._process_reserved, 0)
+        finally:
+            await self._close(
+                supervisor,
+                typing.cast("_ControlledRunner[object, object]", feed_runner),
+            )
+
     async def test_shutdown_rejects_claim_returning_after_admission_stop(
         self,
     ) -> None:
