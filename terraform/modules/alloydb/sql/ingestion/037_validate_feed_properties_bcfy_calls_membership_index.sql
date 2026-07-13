@@ -14,7 +14,7 @@ BEGIN
         RAISE EXCEPTION USING
             MESSAGE = 'Broadcastify Calls membership index is missing or invalid',
             HINT =
-                'Run DROP INDEX CONCURRENTLY ' ||
+                'Run DROP INDEX CONCURRENTLY IF EXISTS ' ||
                 'public.idx_feed_properties_bcfy_calls_membership; ' ||
                 'then reapply the schema migrations';
     END IF;
