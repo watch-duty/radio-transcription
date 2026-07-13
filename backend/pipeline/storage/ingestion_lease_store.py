@@ -321,6 +321,15 @@ class SourceObservation:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class ClosedCohortProgress:
+    """Lifecycle-neutral durability for one completed cohort."""
+
+    member: LeaseMemberIdentity
+    last_processed_filename: str | None
+    cursor: datetime.datetime | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class FeedFailureTransition:
     """Caller-classified failure at an optional completed source boundary.
 
@@ -336,7 +345,10 @@ class FeedFailureTransition:
 
 
 type ChildMutation = (
-    AdmittedAudioProgress | SourceObservation | FeedFailureTransition
+    AdmittedAudioProgress
+    | SourceObservation
+    | ClosedCohortProgress
+    | FeedFailureTransition
 )
 
 
@@ -430,6 +442,7 @@ class LeaseMember:
     """Eligible child Feed state attached to an immutable identity."""
 
     identity: LeaseMemberIdentity
+    name: str
     status: feed_store.FeedStatus
     last_processed_filename: str | None
     last_bookmark_time: datetime.datetime | None
@@ -703,6 +716,25 @@ def _mutation_cursor(
     return mutation.cursor
 
 
+def _require_closed_cohort_progress(
+    mutation: ClosedCohortProgress,
+) -> None:
+    """Validate lifecycle-neutral progress fields before pool checkout."""
+    path = mutation.last_processed_filename
+    if path is not None and not isinstance(path, str):
+        msg = "closed cohort last_processed_filename must be a string or None"
+        raise TypeError(msg)
+    if isinstance(path, str) and not path.strip():
+        msg = (
+            "closed cohort last_processed_filename must be nonempty "
+            "when present"
+        )
+        raise ValueError(msg)
+    if path is None and mutation.cursor is None:
+        msg = "closed cohort progress requires a path or cursor"
+        raise ValueError(msg)
+
+
 def _require_child_batch(
     grant: LeaseGrant,
     value: object,
@@ -724,11 +756,13 @@ def _require_child_batch(
     seen_feed_ids: set[uuid.UUID] = set()
     progress_commands: list[AdmittedAudioProgress] = []
     observation_commands: list[SourceObservation] = []
+    closed_cohort_commands: list[ClosedCohortProgress] = []
     failure_commands: list[FeedFailureTransition] = []
     for mutation in batch.mutations:
         if type(mutation) not in (
             AdmittedAudioProgress,
             SourceObservation,
+            ClosedCohortProgress,
             FeedFailureTransition,
         ):
             msg = f"unsupported child mutation {type(mutation).__name__}"
@@ -756,6 +790,9 @@ def _require_child_batch(
             progress_commands.append(mutation)
         elif isinstance(mutation, SourceObservation):
             observation_commands.append(mutation)
+        elif isinstance(mutation, ClosedCohortProgress):
+            _require_closed_cohort_progress(mutation)
+            closed_cohort_commands.append(mutation)
         else:
             _require_failure_action(mutation.action)
             _require_status_reason(mutation.status_reason)
@@ -772,6 +809,15 @@ def _require_child_batch(
         "source observation",
         tuple(command.member.feed_id for command in observation_commands),
         tuple(command.cursor for command in observation_commands),
+    )
+    _require_parallel_cardinality(
+        "closed cohort progress",
+        tuple(command.member.feed_id for command in closed_cohort_commands),
+        tuple(
+            command.last_processed_filename
+            for command in closed_cohort_commands
+        ),
+        tuple(command.cursor for command in closed_cohort_commands),
     )
     _require_parallel_cardinality(
         "Feed failure",
@@ -879,6 +925,11 @@ def _confirmed_child_audit_action(
     after_row: collections.abc.Mapping,
 ) -> str | None:
     """Select a canonical action from the locked before and returned after."""
+    if isinstance(plan.mutation, ClosedCohortProgress):
+        if plan.audit_action is not None:
+            msg = "closed cohort progress cannot request an audit action"
+            raise ValueError(msg)
+        return None
     before_row = plan.before_row
     if before_row is None:
         msg = "updated child lacks locked before state"
@@ -1191,8 +1242,20 @@ def _member_from_row(
     identity: LeaseMemberIdentity,
     row: collections.abc.Mapping,
 ) -> LeaseMember:
+    try:
+        name = row["feed_name"]
+    except KeyError as error:
+        msg = "membership row is missing the canonical Feed name"
+        raise ValueError(msg) from error
+    if not isinstance(name, str):
+        msg = "membership Feed name must be a string"
+        raise TypeError(msg)
+    if not name.strip():
+        msg = "membership Feed name must not be blank"
+        raise ValueError(msg)
     return LeaseMember(
         identity=identity,
+        name=name,
         status=_status_from_row(row),
         last_processed_filename=row["last_processed_filename"],
         last_bookmark_time=row["last_bookmark_time"],
@@ -1221,96 +1284,39 @@ def _locked_children_by_id(
     return by_id
 
 
-def _plan_child_mutation(
+def _plan_non_failure_child_mutation(
     caller_ordinal: int,
-    mutation: ChildMutation,
-    before_row: collections.abc.Mapping | None,
+    mutation: AdmittedAudioProgress | SourceObservation | ClosedCohortProgress,
+    before_row: collections.abc.Mapping,
+    status: feed_store.FeedStatus,
+    cursor_effect: CursorEffect,
+    *,
+    write_cursor: bool,
 ) -> _PlannedChildMutation:
-    if before_row is None:
-        return _PlannedChildMutation(
-            caller_ordinal=caller_ordinal,
-            mutation=mutation,
-            before_row=None,
-            disposition=ChildDisposition.MISSING,
-            cursor_effect=CursorEffect.ABSENT,
-            lifecycle_effect=LifecycleEffect.NONE,
+    """Plan progress or observation separately from failure charging."""
+    if isinstance(mutation, ClosedCohortProgress):
+        write_path = (
+            mutation.last_processed_filename is not None
+            and before_row["last_processed_filename"]
+            != mutation.last_processed_filename
         )
-
-    status = _status_from_row(before_row)
-    source_type = _child_source_type_from_row(before_row)
-    cursor_effect = _cursor_effect(
-        before_row["last_bookmark_time"],
-        _mutation_cursor(mutation),
-    )
-    if source_type is not mutation.member.source_type:
-        return _PlannedChildMutation(
-            caller_ordinal=caller_ordinal,
-            mutation=mutation,
-            before_row=before_row,
-            disposition=ChildDisposition.STATUS_INELIGIBLE,
-            cursor_effect=cursor_effect,
-            lifecycle_effect=LifecycleEffect.NONE,
+        needs_update = write_cursor or write_path
+        disposition = (
+            ChildDisposition.APPLIED
+            if needs_update
+            else ChildDisposition.ACCEPTED_NOOP
         )
-
-    is_progress = isinstance(mutation, AdmittedAudioProgress)
-    is_failure = isinstance(mutation, FeedFailureTransition)
-    allowed_statuses = (
-        (
-            feed_store.FeedStatus.ACTIVE,
-            feed_store.FeedStatus.FAILING,
-            feed_store.FeedStatus.DEACTIVATED,
-        )
-        if is_progress
-        else (
-            feed_store.FeedStatus.ACTIVE,
-            feed_store.FeedStatus.FAILING,
-        )
-    )
-    if status not in allowed_statuses:
+        if status is feed_store.FeedStatus.DEACTIVATED and needs_update:
+            disposition = ChildDisposition.APPLIED_AFTER_DEACTIVATION
         return _PlannedChildMutation(
             caller_ordinal=caller_ordinal,
             mutation=mutation,
             before_row=before_row,
-            disposition=ChildDisposition.STATUS_INELIGIBLE,
+            disposition=disposition,
             cursor_effect=cursor_effect,
             lifecycle_effect=LifecycleEffect.NONE,
-        )
-
-    write_cursor = cursor_effect in (
-        CursorEffect.INITIALIZED,
-        CursorEffect.ADVANCED,
-    )
-    if is_failure:
-        failure = mutation
-        charge_failure = failure.completion_cursor is None or write_cursor
-        if not charge_failure:
-            return _PlannedChildMutation(
-                caller_ordinal=caller_ordinal,
-                mutation=mutation,
-                before_row=before_row,
-                disposition=ChildDisposition.ACCEPTED_NOOP,
-                cursor_effect=cursor_effect,
-                lifecycle_effect=LifecycleEffect.NONE,
-            )
-        lifecycle_effect = LifecycleEffect.FAILURE_RECORDED
-        if isinstance(failure.action, BudgetedFailure) and (
-            before_row["failure_count"] + 1 >= failure.action.failure_threshold
-        ):
-            lifecycle_effect = LifecycleEffect.QUARANTINED
-        return _PlannedChildMutation(
-            caller_ordinal=caller_ordinal,
-            mutation=mutation,
-            before_row=before_row,
-            disposition=ChildDisposition.APPLIED,
-            cursor_effect=cursor_effect,
-            lifecycle_effect=lifecycle_effect,
             write_cursor=write_cursor,
-            charge_failure=True,
-            audit_action=_select_failure_audit_action(
-                before_row,
-                failure,
-                lifecycle_effect,
-            ),
+            write_path=write_path,
         )
 
     clear_lifecycle = _has_dirty_child_lifecycle(status, before_row)
@@ -1355,6 +1361,110 @@ def _plan_child_mutation(
     )
 
 
+def _plan_child_mutation(
+    caller_ordinal: int,
+    mutation: ChildMutation,
+    before_row: collections.abc.Mapping | None,
+) -> _PlannedChildMutation:
+    if before_row is None:
+        return _PlannedChildMutation(
+            caller_ordinal=caller_ordinal,
+            mutation=mutation,
+            before_row=None,
+            disposition=ChildDisposition.MISSING,
+            cursor_effect=CursorEffect.ABSENT,
+            lifecycle_effect=LifecycleEffect.NONE,
+        )
+
+    status = _status_from_row(before_row)
+    source_type = _child_source_type_from_row(before_row)
+    cursor_effect = _cursor_effect(
+        before_row["last_bookmark_time"],
+        _mutation_cursor(mutation),
+    )
+    if source_type is not mutation.member.source_type:
+        return _PlannedChildMutation(
+            caller_ordinal=caller_ordinal,
+            mutation=mutation,
+            before_row=before_row,
+            disposition=ChildDisposition.STATUS_INELIGIBLE,
+            cursor_effect=cursor_effect,
+            lifecycle_effect=LifecycleEffect.NONE,
+        )
+
+    is_progress = isinstance(
+        mutation,
+        (AdmittedAudioProgress, ClosedCohortProgress),
+    )
+    allowed_statuses = (
+        (
+            feed_store.FeedStatus.ACTIVE,
+            feed_store.FeedStatus.FAILING,
+            feed_store.FeedStatus.DEACTIVATED,
+        )
+        if is_progress
+        else (
+            feed_store.FeedStatus.ACTIVE,
+            feed_store.FeedStatus.FAILING,
+        )
+    )
+    if status not in allowed_statuses:
+        return _PlannedChildMutation(
+            caller_ordinal=caller_ordinal,
+            mutation=mutation,
+            before_row=before_row,
+            disposition=ChildDisposition.STATUS_INELIGIBLE,
+            cursor_effect=cursor_effect,
+            lifecycle_effect=LifecycleEffect.NONE,
+        )
+
+    write_cursor = cursor_effect in (
+        CursorEffect.INITIALIZED,
+        CursorEffect.ADVANCED,
+    )
+    if isinstance(mutation, FeedFailureTransition):
+        failure = mutation
+        charge_failure = failure.completion_cursor is None or write_cursor
+        if not charge_failure:
+            return _PlannedChildMutation(
+                caller_ordinal=caller_ordinal,
+                mutation=mutation,
+                before_row=before_row,
+                disposition=ChildDisposition.ACCEPTED_NOOP,
+                cursor_effect=cursor_effect,
+                lifecycle_effect=LifecycleEffect.NONE,
+            )
+        lifecycle_effect = LifecycleEffect.FAILURE_RECORDED
+        if isinstance(failure.action, BudgetedFailure) and (
+            before_row["failure_count"] + 1 >= failure.action.failure_threshold
+        ):
+            lifecycle_effect = LifecycleEffect.QUARANTINED
+        return _PlannedChildMutation(
+            caller_ordinal=caller_ordinal,
+            mutation=mutation,
+            before_row=before_row,
+            disposition=ChildDisposition.APPLIED,
+            cursor_effect=cursor_effect,
+            lifecycle_effect=lifecycle_effect,
+            write_cursor=write_cursor,
+            charge_failure=True,
+            audit_action=_select_failure_audit_action(
+                before_row,
+                failure,
+                lifecycle_effect,
+            ),
+        )
+
+    return _plan_non_failure_child_mutation(
+        caller_ordinal,
+        mutation,
+        before_row,
+        status,
+        cursor_effect,
+        write_cursor=write_cursor,
+    )
+
+
 def _updated_children_by_ordinal(
     expected: collections.abc.Sequence[_PlannedChildMutation],
     rows: collections.abc.Sequence[collections.abc.Mapping],
@@ -1379,6 +1489,32 @@ def _updated_children_by_ordinal(
         rows_by_ordinal[ordinal] = row
     if set(rows_by_ordinal) != set(expected_by_ordinal):
         msg = "child DML did not return every locked eligible Feed"
+        raise ValueError(msg)
+    return rows_by_ordinal
+
+
+def _updated_neutral_children_by_ordinal(
+    expected: collections.abc.Sequence[_PlannedChildMutation],
+    rows: collections.abc.Sequence[collections.abc.Mapping],
+) -> dict[int, collections.abc.Mapping]:
+    """Correlate lifecycle-neutral DML without reading lifecycle columns."""
+    expected_by_ordinal = {
+        plan.caller_ordinal: plan.feed_id for plan in expected
+    }
+    rows_by_ordinal: dict[int, collections.abc.Mapping] = {}
+    for row in rows:
+        ordinal = row["caller_ordinal"]
+        if (
+            not isinstance(ordinal, int)
+            or ordinal not in expected_by_ordinal
+            or ordinal in rows_by_ordinal
+            or _child_feed_id_from_row(row) != expected_by_ordinal[ordinal]
+        ):
+            msg = "neutral child DML returned an unexpected or duplicate row"
+            raise ValueError(msg)
+        rows_by_ordinal[ordinal] = row
+    if set(rows_by_ordinal) != set(expected_by_ordinal):
+        msg = "neutral child DML did not return every locked eligible Feed"
         raise ValueError(msg)
     return rows_by_ordinal
 
@@ -1916,6 +2052,12 @@ class IngestionLeaseStore:
                     if isinstance(plan.mutation, SourceObservation)
                     and plan.needs_update
                 )
+                closed_cohort_updates = tuple(
+                    plan
+                    for plan in plans
+                    if isinstance(plan.mutation, ClosedCohortProgress)
+                    and plan.needs_update
+                )
                 failure_updates = tuple(
                     plan
                     for plan in plans
@@ -1937,6 +2079,17 @@ class IngestionLeaseStore:
                     )
                     updated_by_ordinal.update(
                         _updated_children_by_ordinal(observation_updates, rows)
+                    )
+                if closed_cohort_updates:
+                    rows = await self._apply_closed_cohort_progress(
+                        connection,
+                        closed_cohort_updates,
+                    )
+                    updated_by_ordinal.update(
+                        _updated_neutral_children_by_ordinal(
+                            closed_cohort_updates,
+                            rows,
+                        )
                     )
                 if failure_updates:
                     rows = await self._apply_feed_failures(
@@ -2062,6 +2215,40 @@ class IngestionLeaseStore:
             cursors,
             write_cursors,
             clear_lifecycle,
+            caller_ordinals,
+        )
+
+    async def _apply_closed_cohort_progress(
+        self,
+        connection: asyncpg.Connection,
+        plans: tuple[_PlannedChildMutation, ...],
+    ) -> collections.abc.Sequence[collections.abc.Mapping]:
+        """Apply one static lifecycle-neutral cohort progress rowset."""
+        mutations = [
+            typing.cast("ClosedCohortProgress", plan.mutation) for plan in plans
+        ]
+        feed_ids = [plan.feed_id for plan in plans]
+        paths = [mutation.last_processed_filename for mutation in mutations]
+        cursors = [mutation.cursor for mutation in mutations]
+        write_cursors = [plan.write_cursor for plan in plans]
+        write_paths = [plan.write_path for plan in plans]
+        caller_ordinals = [plan.caller_ordinal for plan in plans]
+        _require_parallel_cardinality(
+            "closed cohort progress",
+            feed_ids,
+            paths,
+            cursors,
+            write_cursors,
+            write_paths,
+            caller_ordinals,
+        )
+        return await connection.fetch(
+            ingestion_lease_queries.APPLY_CLOSED_COHORT_PROGRESS_SQL,
+            feed_ids,
+            paths,
+            cursors,
+            write_cursors,
+            write_paths,
             caller_ordinals,
         )
 

@@ -592,6 +592,7 @@ updated AS (
 LOAD_BCFY_CALLS_MEMBERSHIP_SQL = """\
 SELECT
     fp.feed_id,
+    feeds.name AS feed_name,
     fp.source_type AS property_source_type,
     feeds.source_type AS feed_source_type,
     fp.source_feed_id,
@@ -847,6 +848,68 @@ updated AS (
         feeds.status_reason_updated_at,
         feeds.audit_revision,
         feeds.created_at
+)
+SELECT *
+FROM updated
+ORDER BY caller_ordinal
+"""
+
+
+APPLY_CLOSED_COHORT_PROGRESS_SQL = """\
+WITH input AS MATERIALIZED (
+    SELECT
+        input_values.feed_id,
+        input_values.last_processed_filename,
+        input_values.cursor,
+        input_values.write_cursor,
+        input_values.write_path,
+        input_values.caller_ordinal,
+        input_values.row_ordinal
+    FROM UNNEST(
+        $1::uuid[],
+        $2::text[],
+        $3::timestamptz[],
+        $4::boolean[],
+        $5::boolean[],
+        $6::bigint[]
+    ) WITH ORDINALITY AS input_values(
+        feed_id,
+        last_processed_filename,
+        cursor,
+        write_cursor,
+        write_path,
+        caller_ordinal,
+        row_ordinal
+    )
+),
+updated AS (
+    UPDATE public.feeds AS feeds
+    SET last_processed_filename = CASE
+            WHEN input.write_path THEN input.last_processed_filename
+            ELSE feeds.last_processed_filename
+        END,
+        last_bookmark_time = CASE
+            WHEN input.write_cursor
+                THEN GREATEST(feeds.last_bookmark_time, input.cursor)
+            ELSE feeds.last_bookmark_time
+        END
+    FROM input
+    WHERE feeds.id = input.feed_id
+      AND (
+          (
+              input.write_cursor
+              AND (
+                  feeds.last_bookmark_time IS NULL
+                  OR input.cursor > feeds.last_bookmark_time
+              )
+          )
+          OR input.write_path
+      )
+    RETURNING
+        input.caller_ordinal,
+        feeds.id,
+        feeds.last_processed_filename,
+        feeds.last_bookmark_time
 )
 SELECT *
 FROM updated

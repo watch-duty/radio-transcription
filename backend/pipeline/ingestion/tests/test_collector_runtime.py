@@ -154,6 +154,7 @@ def _lease_member(
     )
     return ingestion_lease_store.LeaseMember(
         identity=identity,
+        name=f"Feed {feed_id}",
         status=FeedStatus.ACTIVE,
         last_processed_filename=None,
         last_bookmark_time=cursor,

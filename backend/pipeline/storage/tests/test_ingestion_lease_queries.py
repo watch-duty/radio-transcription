@@ -471,6 +471,15 @@ class TestChildMutationQueryContract(unittest.TestCase):
             [
                 field.name
                 for field in dataclasses.fields(
+                    ingestion_lease_store.ClosedCohortProgress
+                )
+            ],
+            ["member", "last_processed_filename", "cursor"],
+        )
+        self.assertEqual(
+            [
+                field.name
+                for field in dataclasses.fields(
                     ingestion_lease_store.FeedFailureTransition
                 )
             ],
@@ -488,12 +497,14 @@ class TestChildMutationQueryContract(unittest.TestCase):
             {
                 ingestion_lease_store.AdmittedAudioProgress,
                 ingestion_lease_store.SourceObservation,
+                ingestion_lease_store.ClosedCohortProgress,
                 ingestion_lease_store.FeedFailureTransition,
             },
         )
         for value_type in (
             ingestion_lease_store.AdmittedAudioProgress,
             ingestion_lease_store.SourceObservation,
+            ingestion_lease_store.ClosedCohortProgress,
             ingestion_lease_store.FeedFailureTransition,
             ingestion_lease_store.NoLeaseEffect,
             ingestion_lease_store.FinalizeLeaseRecovery,
@@ -564,6 +575,7 @@ class TestChildMutationQueryContract(unittest.TestCase):
             ingestion_lease_queries.LOCK_CHILD_FEEDS_SQL,
             ingestion_lease_queries.APPLY_ADMITTED_PROGRESS_SQL,
             ingestion_lease_queries.APPLY_SOURCE_OBSERVATIONS_SQL,
+            ingestion_lease_queries.APPLY_CLOSED_COHORT_PROGRESS_SQL,
             ingestion_lease_queries.APPLY_FEED_FAILURES_SQL,
         ):
             self.assertNotRegex(_normalized_sql(query), r"\bupdated_at\b")
@@ -589,6 +601,39 @@ class TestChildMutationQueryContract(unittest.TestCase):
             self.assertNotIn("worker_id", sql)
             self.assertNotIn("fencing_token", sql)
             self.assertNotIn("last_heartbeat", sql)
+
+    def test_closed_cohort_progress_is_static_and_lifecycle_neutral(
+        self,
+    ) -> None:
+        sql = _normalized_sql(
+            ingestion_lease_queries.APPLY_CLOSED_COHORT_PROGRESS_SQL
+        )
+
+        self.assertIn("AS MATERIALIZED", sql)
+        self.assertIn("UNNEST(", sql)
+        self.assertIn("WITH ORDINALITY", sql)
+        for typed_array in (
+            "$1::uuid[]",
+            "$2::text[]",
+            "$3::timestamptz[]",
+            "$4::boolean[]",
+            "$5::boolean[]",
+            "$6::bigint[]",
+        ):
+            self.assertIn(typed_array, sql)
+        self.assertIn("last_processed_filename", sql)
+        self.assertIn("GREATEST(feeds.last_bookmark_time, input.cursor)", sql)
+        self.assertIn("OR input.write_path", sql)
+        for forbidden in (
+            "status",
+            "failure_count",
+            "retry_after",
+            "reason",
+            "audit",
+            "feed_properties",
+            "notification",
+        ):
+            self.assertNotIn(forbidden, sql.lower())
 
     def test_audit_enrichment_is_conditional_sorted_and_rowset_safe(
         self,
@@ -698,6 +743,18 @@ class TestMembershipSnapshotContract(unittest.TestCase):
         self.assertNotIn("owner_worker_id", fields)
         self.assertNotIn("fencing_token", fields)
 
+    def test_lease_member_requires_canonical_name_without_default(self) -> None:
+        fields = dataclasses.fields(ingestion_lease_store.LeaseMember)
+        fields_by_name = {field.name: field for field in fields}
+
+        self.assertEqual(fields[0].name, "identity")
+        self.assertEqual(fields[1].name, "name")
+        self.assertIs(fields_by_name["name"].default, dataclasses.MISSING)
+        self.assertIs(
+            fields_by_name["name"].default_factory,
+            dataclasses.MISSING,
+        )
+
     def test_membership_uses_maintained_index_identity_and_order(self) -> None:
         sql = _normalized_sql(
             ingestion_lease_queries.LOAD_BCFY_CALLS_MEMBERSHIP_SQL
@@ -706,6 +763,7 @@ class TestMembershipSnapshotContract(unittest.TestCase):
         self.assertIn("fp.bcfy_calls_sid", sql)
         self.assertIn("fp.bcfy_calls_group_id", sql)
         self.assertIn("fp.source_feed_id", sql)
+        self.assertIn("feeds.name AS feed_name", sql)
         self.assertIn("fp.source_type = 'bcfy_calls'", sql)
         self.assertIn("fp.bcfy_calls_is_trunked IS TRUE", sql)
         self.assertIn("ORDER BY fp.bcfy_calls_group_id, fp.feed_id", sql)

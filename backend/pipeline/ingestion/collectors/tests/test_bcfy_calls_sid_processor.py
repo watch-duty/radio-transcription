@@ -50,6 +50,7 @@ def _member(
     )
     return ingestion_lease_store.LeaseMember(
         identity=identity,
+        name=f"Feed {source_feed_id}",
         status=feed_store.FeedStatus.ACTIVE,
         last_processed_filename=None,
         last_bookmark_time=cursor,

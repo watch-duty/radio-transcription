@@ -87,6 +87,7 @@ def _failure_result_row(
 def _member_row(**overrides: object) -> dict[str, object]:
     row: dict[str, object] = {
         "feed_id": uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+        "feed_name": "County Fire Dispatch",
         "property_source_type": "bcfy_calls",
         "feed_source_type": "bcfy_calls",
         "source_feed_id": "00123-00045",
@@ -952,6 +953,7 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.excluded_count, 1)
         self.assertEqual(result.members[0].identity.sid, "00123")
         self.assertEqual(result.members[0].identity.group_id, "00045")
+        self.assertEqual(result.members[0].name, "County Fire Dispatch")
         self.assertEqual(
             result.members[0].identity.source_feed_id, "00123-00045"
         )
@@ -1064,6 +1066,35 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
                 self.assertIsInstance(
                     result,
                     ingestion_lease_store.MembershipInvariantViolation,
+                )
+
+    async def test_membership_feed_name_rejects_missing_null_and_blank(
+        self,
+    ) -> None:
+        invalid_rows = [
+            _member_row(feed_name=None),
+            _member_row(feed_name=7),
+            _member_row(feed_name=""),
+            _member_row(feed_name=" \t "),
+        ]
+        missing_name = _member_row()
+        del missing_name["feed_name"]
+        invalid_rows.append(missing_name)
+
+        for case_index, row in enumerate(invalid_rows):
+            with self.subTest(case_index=case_index):
+                pool = connection_util.make_mock_pool(transaction=True)
+                connection = pool.acquired_connection
+                connection.fetchrow.return_value = _lease_row(lease_key="00123")
+                connection.fetch.return_value = [row]
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+                with self.assertRaises((TypeError, ValueError)):
+                    await store.load_membership(_grant("00123"))
+
+                connection.fetch.assert_awaited_once_with(
+                    ingestion_lease_queries.LOAD_BCFY_CALLS_MEMBERSHIP_SQL,
+                    "00123",
                 )
 
     async def test_revision_changes_snapshot_but_not_grant_identity(
@@ -1413,6 +1444,19 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             completion_cursor=cursor,
         )
 
+    def _closed_cohort(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        cursor: datetime.datetime | None = _NOW,
+        path: str | None = "gs://bucket/cohort.flac",
+    ) -> ingestion_lease_store.ClosedCohortProgress:
+        return ingestion_lease_store.ClosedCohortProgress(
+            member=_member_identity(feed_id),
+            last_processed_filename=path,
+            cursor=cursor,
+        )
+
     async def test_rejects_directly_forged_member_before_checkout(
         self,
     ) -> None:
@@ -1546,6 +1590,23 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 ),
                 ingestion_lease_store.NoLeaseEffect(),
             ),
+            ingestion_lease_store.ChildMutationBatch(
+                (self._closed_cohort(feed_id, cursor=None, path=None),),
+                ingestion_lease_store.NoLeaseEffect(),
+            ),
+            ingestion_lease_store.ChildMutationBatch(
+                (self._closed_cohort(feed_id, cursor=None, path=" \t"),),
+                ingestion_lease_store.NoLeaseEffect(),
+            ),
+            ingestion_lease_store.ChildMutationBatch(
+                (
+                    self._closed_cohort(
+                        feed_id,
+                        cursor=datetime.datetime(2026, 7, 10),
+                    ),
+                ),
+                ingestion_lease_store.NoLeaseEffect(),
+            ),
         )
 
         for case_index, batch in enumerate(invalid_batches):
@@ -1573,6 +1634,64 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     actor_id=actor_id,
                 )
             pool.acquire.assert_not_called()
+
+    async def test_closed_cohort_duplicate_feed_rejected_before_checkout(
+        self,
+    ) -> None:
+        feed_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000140")
+        pool = connection_util.make_mock_pool(transaction=True)
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        with self.assertRaisesRegex(ValueError, "duplicate Feed UUID"):
+            await store.commit_child_mutations(
+                _grant(),
+                ingestion_lease_store.ChildMutationBatch(
+                    (
+                        self._closed_cohort(feed_id),
+                        self._closed_cohort(
+                            feed_id,
+                            cursor=None,
+                            path="gs://bucket/other.flac",
+                        ),
+                    ),
+                    ingestion_lease_store.NoLeaseEffect(),
+                ),
+                actor_id="service_account:gcp:collector",
+            )
+
+        pool.acquire.assert_not_called()
+
+    async def test_closed_cohort_forged_member_rejected_before_checkout(
+        self,
+    ) -> None:
+        feed_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000141")
+        forged_member = ingestion_lease_store.LeaseMemberIdentity(
+            feed_id=feed_id,
+            source_type=feed_store.SourceType.BCFY_CALLS,
+            source_feed_id="123-45",
+            sid="123",
+            group_id="45",
+        )
+        pool = connection_util.make_mock_pool(transaction=True)
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        with self.assertRaisesRegex(ValueError, "membership loading"):
+            await store.commit_child_mutations(
+                _grant(),
+                ingestion_lease_store.ChildMutationBatch(
+                    (
+                        ingestion_lease_store.ClosedCohortProgress(
+                            forged_member,
+                            "gs://bucket/cohort.flac",
+                            _NOW,
+                        ),
+                    ),
+                    ingestion_lease_store.NoLeaseEffect(),
+                ),
+                actor_id="service_account:gcp:collector",
+            )
+
+        pool.acquire.assert_not_called()
 
     def test_cursor_and_lifecycle_effects_are_independent(self) -> None:
         feed_id = uuid.UUID("77777777-0000-0000-0000-000000000070")
@@ -1657,6 +1776,486 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     plan.lifecycle_effect,
                     ingestion_lease_store.LifecycleEffect.NONE,
                 )
+
+    def test_closed_cohort_plans_path_and_cursor_independently(self) -> None:
+        feed_id = uuid.UUID("77777777-0000-0000-0000-000000000142")
+        earlier = _NOW - datetime.timedelta(seconds=1)
+        later = _NOW + datetime.timedelta(seconds=1)
+        path = "gs://bucket/cohort.flac"
+        cases = (
+            (
+                self._closed_cohort(feed_id, cursor=later, path=path),
+                _child_row(feed_id, last_bookmark_time=_NOW),
+                ingestion_lease_store.CursorEffect.ADVANCED,
+                True,
+                True,
+            ),
+            (
+                self._closed_cohort(feed_id, cursor=later, path=None),
+                _child_row(feed_id, last_bookmark_time=_NOW),
+                ingestion_lease_store.CursorEffect.ADVANCED,
+                True,
+                False,
+            ),
+            (
+                self._closed_cohort(feed_id, cursor=None, path=path),
+                _child_row(feed_id, last_processed_filename="old"),
+                ingestion_lease_store.CursorEffect.ABSENT,
+                False,
+                True,
+            ),
+            (
+                self._closed_cohort(feed_id, cursor=_NOW, path=path),
+                _child_row(feed_id, last_bookmark_time=_NOW),
+                ingestion_lease_store.CursorEffect.EQUAL,
+                False,
+                True,
+            ),
+            (
+                self._closed_cohort(feed_id, cursor=earlier, path=path),
+                _child_row(feed_id, last_bookmark_time=_NOW),
+                ingestion_lease_store.CursorEffect.REGRESSIVE,
+                False,
+                True,
+            ),
+            (
+                self._closed_cohort(feed_id, cursor=_NOW, path=path),
+                _child_row(
+                    feed_id,
+                    last_bookmark_time=_NOW,
+                    last_processed_filename=path,
+                ),
+                ingestion_lease_store.CursorEffect.EQUAL,
+                False,
+                False,
+            ),
+        )
+
+        for mutation, row, cursor_effect, write_cursor, write_path in cases:
+            with self.subTest(
+                cursor_effect=cursor_effect.value,
+                write_cursor=write_cursor,
+                write_path=write_path,
+            ):
+                plan = ingestion_lease_store._plan_child_mutation(
+                    0,
+                    mutation,
+                    row,
+                )
+
+                self.assertIs(plan.cursor_effect, cursor_effect)
+                self.assertEqual(plan.write_cursor, write_cursor)
+                self.assertEqual(plan.write_path, write_path)
+                self.assertIs(
+                    plan.lifecycle_effect,
+                    ingestion_lease_store.LifecycleEffect.NONE,
+                )
+                self.assertFalse(plan.clear_lifecycle)
+                self.assertIsNone(plan.audit_action)
+                expected_disposition = (
+                    ingestion_lease_store.ChildDisposition.APPLIED
+                    if write_cursor or write_path
+                    else ingestion_lease_store.ChildDisposition.ACCEPTED_NOOP
+                )
+                self.assertIs(plan.disposition, expected_disposition)
+
+    def test_closed_cohort_allows_dirty_and_deactivated_members(self) -> None:
+        statuses = (
+            feed_store.FeedStatus.ACTIVE,
+            feed_store.FeedStatus.FAILING,
+            feed_store.FeedStatus.DEACTIVATED,
+        )
+        for index, status in enumerate(statuses):
+            with self.subTest(status=status.value):
+                feed_id = uuid.UUID(int=150 + index)
+                plan = ingestion_lease_store._plan_child_mutation(
+                    0,
+                    self._closed_cohort(feed_id, cursor=None),
+                    _child_row(
+                        feed_id,
+                        status=status.value,
+                        failure_count=4,
+                        retry_after=_NOW,
+                        status_reason="source_unreachable",
+                        status_reason_detail="still dirty",
+                        audit_revision=9,
+                    ),
+                )
+
+                expected = ingestion_lease_store.ChildDisposition.APPLIED
+                if status is feed_store.FeedStatus.DEACTIVATED:
+                    expected = ingestion_lease_store.ChildDisposition.APPLIED_AFTER_DEACTIVATION
+                self.assertIs(plan.disposition, expected)
+                self.assertIs(
+                    plan.lifecycle_effect,
+                    ingestion_lease_store.LifecycleEffect.NONE,
+                )
+                self.assertFalse(plan.clear_lifecycle)
+                self.assertIsNone(plan.audit_action)
+
+    async def test_closed_cohort_preserves_dirty_lifecycle_and_order(
+        self,
+    ) -> None:
+        first_id = uuid.UUID("ffffffff-0000-0000-0000-000000000143")
+        second_id = uuid.UUID("11111111-0000-0000-0000-000000000144")
+        third_id = uuid.UUID("22222222-0000-0000-0000-000000000145")
+        earlier = _NOW - datetime.timedelta(seconds=1)
+        feed_ids = (first_id, second_id, third_id)
+        paths = tuple(f"gs://bucket/{index}.flac" for index in range(3))
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row()
+        connection.fetch.side_effect = [
+            [
+                _child_row(
+                    second_id,
+                    status="failing",
+                    last_bookmark_time=_NOW,
+                    failure_count=3,
+                    retry_after=_NOW,
+                    status_reason="source_unreachable",
+                    status_reason_detail="dirty failing",
+                    audit_revision=8,
+                ),
+                _child_row(
+                    third_id,
+                    status="deactivated",
+                    last_bookmark_time=_NOW,
+                    failure_count=5,
+                    retry_after=_NOW,
+                    status_reason="system_pipeline_error",
+                    status_reason_detail="dirty deactivated",
+                    audit_revision=11,
+                ),
+                _child_row(
+                    first_id,
+                    status="active",
+                    last_bookmark_time=_NOW,
+                    failure_count=2,
+                    retry_after=_NOW,
+                    status_reason="source_unreachable",
+                    status_reason_detail="dirty active",
+                    audit_revision=6,
+                ),
+            ],
+            [
+                {
+                    "caller_ordinal": 2,
+                    "id": third_id,
+                    "last_processed_filename": paths[2],
+                    "last_bookmark_time": _NOW,
+                },
+                {
+                    "caller_ordinal": 0,
+                    "id": first_id,
+                    "last_processed_filename": paths[0],
+                    "last_bookmark_time": _NOW,
+                },
+                {
+                    "caller_ordinal": 1,
+                    "id": second_id,
+                    "last_processed_filename": paths[1],
+                    "last_bookmark_time": _NOW,
+                },
+            ],
+        ]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+        mutations = tuple(
+            self._closed_cohort(
+                feed_id,
+                cursor=_NOW if index == 0 else earlier,
+                path=paths[index],
+            )
+            for index, feed_id in enumerate(feed_ids)
+        )
+
+        with mock.patch(
+            "backend.pipeline.storage.ingestion_lease_store."
+            "feed_change_notifications.emit_feed_change_notification"
+        ) as emit:
+            result = await store.commit_child_mutations(
+                _grant(),
+                ingestion_lease_store.ChildMutationBatch(
+                    mutations,
+                    ingestion_lease_store.NoLeaseEffect(),
+                ),
+                actor_id="service_account:gcp:collector",
+            )
+
+        assert isinstance(result, ingestion_lease_store.BatchCommitted)
+        self.assertEqual(
+            tuple(child.feed_id for child in result.children),
+            feed_ids,
+        )
+        self.assertEqual(
+            tuple(child.lifecycle_effect for child in result.children),
+            (ingestion_lease_store.LifecycleEffect.NONE,) * 3,
+        )
+        self.assertIs(
+            result.children[2].disposition,
+            ingestion_lease_store.ChildDisposition.APPLIED_AFTER_DEACTIVATION,
+        )
+        self.assertEqual(connection.fetch.await_count, 2)
+        lock_args = connection.fetch.await_args_list[0].args
+        self.assertEqual(lock_args[1], [second_id, third_id, first_id])
+        neutral_args = connection.fetch.await_args_list[1].args
+        self.assertIs(
+            neutral_args[0],
+            ingestion_lease_queries.APPLY_CLOSED_COHORT_PROGRESS_SQL,
+        )
+        self.assertEqual(neutral_args[1], list(feed_ids))
+        self.assertEqual(neutral_args[2], list(paths))
+        self.assertEqual(neutral_args[4], [False, False, False])
+        self.assertEqual(neutral_args[5], [True, True, True])
+        emit.assert_not_called()
+
+    async def test_closed_cohort_stale_fence_reads_no_child(self) -> None:
+        feed_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000146")
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row(fencing_token=8)
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.commit_child_mutations(
+            _grant(),
+            ingestion_lease_store.ChildMutationBatch(
+                (self._closed_cohort(feed_id),),
+                ingestion_lease_store.NoLeaseEffect(),
+            ),
+            actor_id="service_account:gcp:collector",
+        )
+
+        assert isinstance(result, ingestion_lease_store.GrantRejected)
+        self.assertIs(
+            result.reason,
+            ingestion_lease_store.GrantRejectionReason.FENCE_MISMATCH,
+        )
+        connection.fetch.assert_not_awaited()
+
+    async def test_closed_cohort_missing_and_ineligible_are_selective(
+        self,
+    ) -> None:
+        missing_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000147")
+        quarantined_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000148")
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row()
+        connection.fetch.return_value = [
+            _child_row(quarantined_id, status="quarantined")
+        ]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.commit_child_mutations(
+            _grant(),
+            ingestion_lease_store.ChildMutationBatch(
+                (
+                    self._closed_cohort(missing_id),
+                    self._closed_cohort(quarantined_id),
+                ),
+                ingestion_lease_store.NoLeaseEffect(),
+            ),
+            actor_id="service_account:gcp:collector",
+        )
+
+        assert isinstance(result, ingestion_lease_store.BatchCommitted)
+        self.assertEqual(
+            tuple(child.disposition for child in result.children),
+            (
+                ingestion_lease_store.ChildDisposition.MISSING,
+                ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE,
+            ),
+        )
+        self.assertEqual(connection.fetch.await_count, 1)
+
+    async def test_closed_cohort_exact_noop_runs_no_dml(self) -> None:
+        feed_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000149")
+        path = "gs://bucket/cohort.flac"
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row()
+        connection.fetch.return_value = [
+            _child_row(
+                feed_id,
+                last_processed_filename=path,
+                last_bookmark_time=_NOW,
+            )
+        ]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.commit_child_mutations(
+            _grant(),
+            ingestion_lease_store.ChildMutationBatch(
+                (self._closed_cohort(feed_id, path=path),),
+                ingestion_lease_store.NoLeaseEffect(),
+            ),
+            actor_id="service_account:gcp:collector",
+        )
+
+        assert isinstance(result, ingestion_lease_store.BatchCommitted)
+        self.assertIs(
+            result.children[0].disposition,
+            ingestion_lease_store.ChildDisposition.ACCEPTED_NOOP,
+        )
+        self.assertIs(
+            result.children[0].cursor_effect,
+            ingestion_lease_store.CursorEffect.EQUAL,
+        )
+        self.assertIs(
+            result.children[0].lifecycle_effect,
+            ingestion_lease_store.LifecycleEffect.NONE,
+        )
+        connection.fetch.assert_awaited_once()
+
+    async def test_closed_cohort_database_error_rolls_back_once(self) -> None:
+        feed_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000150")
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row()
+        connection.fetch.side_effect = [
+            [_child_row(feed_id)],
+            RuntimeError("neutral progress failed"),
+        ]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        with mock.patch(
+            "backend.pipeline.storage.ingestion_lease_store."
+            "feed_change_notifications.emit_feed_change_notification"
+        ) as emit:
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "neutral progress failed",
+            ):
+                await store.commit_child_mutations(
+                    _grant(),
+                    ingestion_lease_store.ChildMutationBatch(
+                        (self._closed_cohort(feed_id),),
+                        ingestion_lease_store.NoLeaseEffect(),
+                    ),
+                    actor_id="service_account:gcp:collector",
+                )
+
+        self.assertEqual(connection.fetch.await_count, 2)
+        exit_args = pool.transaction_context.__aexit__.await_args.args
+        self.assertIs(exit_args[0], RuntimeError)
+        emit.assert_not_called()
+
+    async def test_source_observation_none_clears_lifecycle_without_cursor(
+        self,
+    ) -> None:
+        feed_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000151")
+        payload_row = _child_audit_payload(feed_id, caller_ordinal=0)
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row()
+        connection.fetch.side_effect = [
+            [
+                _child_row(
+                    feed_id,
+                    status="failing",
+                    last_bookmark_time=_NOW,
+                    failure_count=2,
+                    retry_after=_NOW,
+                    status_reason="source_unreachable",
+                    status_reason_detail="stale failure",
+                    audit_revision=4,
+                )
+            ],
+            [
+                _child_row(
+                    feed_id,
+                    caller_ordinal=0,
+                    status="active",
+                    last_bookmark_time=_NOW,
+                    failure_count=0,
+                    retry_after=None,
+                    status_reason=None,
+                    status_reason_detail=None,
+                    audit_revision=5,
+                )
+            ],
+            [_audit_property_row(feed_id)],
+            [payload_row],
+        ]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.commit_child_mutations(
+            _grant(),
+            ingestion_lease_store.ChildMutationBatch(
+                (
+                    ingestion_lease_store.SourceObservation(
+                        _member_identity(feed_id),
+                        None,
+                    ),
+                ),
+                ingestion_lease_store.NoLeaseEffect(),
+            ),
+            actor_id="service_account:gcp:collector",
+        )
+
+        assert isinstance(result, ingestion_lease_store.BatchCommitted)
+        self.assertIs(
+            result.children[0].cursor_effect,
+            ingestion_lease_store.CursorEffect.ABSENT,
+        )
+        self.assertIs(
+            result.children[0].lifecycle_effect,
+            ingestion_lease_store.LifecycleEffect.RECOVERED,
+        )
+        observation_args = connection.fetch.await_args_list[1].args
+        self.assertIs(
+            observation_args[0],
+            ingestion_lease_queries.APPLY_SOURCE_OBSERVATIONS_SQL,
+        )
+        self.assertEqual(observation_args[2], [None])
+        self.assertEqual(observation_args[3], [False])
+        self.assertEqual(observation_args[4], [True])
+
+    async def test_closed_cohort_fanout_is_constant_for_one_and_hundred(
+        self,
+    ) -> None:
+        observed_fetch_counts = []
+        for feed_count in (1, 100):
+            feed_ids = [
+                uuid.UUID(int=1000 + index) for index in range(feed_count)
+            ]
+            pool = connection_util.make_mock_pool(transaction=True)
+            connection = pool.acquired_connection
+            connection.fetchrow.return_value = _lease_row()
+            connection.fetch.side_effect = [
+                [_child_row(feed_id) for feed_id in reversed(feed_ids)],
+                [
+                    {
+                        "caller_ordinal": index,
+                        "id": feed_id,
+                        "last_processed_filename": None,
+                        "last_bookmark_time": _NOW,
+                    }
+                    for index, feed_id in enumerate(feed_ids)
+                ],
+            ]
+            store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+            result = await store.commit_child_mutations(
+                _grant(),
+                ingestion_lease_store.ChildMutationBatch(
+                    tuple(
+                        self._closed_cohort(
+                            feed_id,
+                            cursor=_NOW,
+                            path=None,
+                        )
+                        for feed_id in feed_ids
+                    ),
+                    ingestion_lease_store.NoLeaseEffect(),
+                ),
+                actor_id="service_account:gcp:collector",
+            )
+
+            assert isinstance(result, ingestion_lease_store.BatchCommitted)
+            self.assertEqual(len(result.children), feed_count)
+            observed_fetch_counts.append(connection.fetch.await_count)
+
+        self.assertEqual(observed_fetch_counts, [2, 2])
 
     async def test_empty_batch_still_locks_and_validates_grant(self) -> None:
         pool = connection_util.make_mock_pool(transaction=True)
