@@ -11,6 +11,7 @@ import inspect
 import typing
 import unittest
 import uuid
+from unittest import mock
 
 from backend.pipeline.ingestion import feed_work_scheduler, models
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
@@ -38,6 +39,35 @@ _GRANT = ingestion_lease_store.LeaseGrant(
     _OWNER_ID,
     7,
 )
+
+
+def _lease_lifecycle_snapshot() -> ingestion_lease_store.LeaseSnapshot:
+    return ingestion_lease_store.LeaseSnapshot(
+        status=feed_store.FeedStatus.ACTIVE,
+        last_heartbeat=_NOW,
+        failure_count=0,
+        retry_after=None,
+        status_reason=None,
+        status_reason_detail=None,
+        status_reason_updated_at=None,
+        audit_revision=1,
+        membership_revision=4,
+        updated_at=_NOW,
+    )
+
+
+def _batch_committed(
+    *children: ingestion_lease_store.ChildMutationResult,
+) -> ingestion_lease_store.BatchCommitted:
+    snapshot = _lease_lifecycle_snapshot()
+    return ingestion_lease_store.BatchCommitted(
+        lease_effect=ingestion_lease_store.LeaseLifecycleResult(
+            effect=ingestion_lease_store.LeaseLifecycleEffect.NONE,
+            before_snapshot=snapshot,
+            after_snapshot=snapshot,
+        ),
+        children=children,
+    )
 
 
 def _member(
@@ -160,6 +190,197 @@ class _AsyncGate:
         self.entered.set()
         await self.release.wait()
         return self.result
+
+
+class _SecondPendingInsertFails(dict[str, uuid.UUID]):
+    """Raise before the second pending URL insert and permit exact rollback.
+
+    Attributes:
+        insertion_count: Number of attempted ``__setitem__`` operations.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.insertion_count = 0
+
+    def __setitem__(self, key: str, value: uuid.UUID) -> None:
+        self.insertion_count += 1
+        if self.insertion_count == 2:
+            message = "second pending insert failed"
+            raise RuntimeError(message)
+        super().__setitem__(key, value)
+
+
+class _UnexpectedExecutor:
+    """Fail if scheduler work executes after an admission rejection."""
+
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> object:
+        del execution
+        message = "rejected cohort unexpectedly executed"
+        raise AssertionError(message)
+
+
+def _resolve_successful_execution(
+    execution: feed_work_scheduler.CohortExecution,
+) -> feed_work_scheduler.CallCompleted:
+    """Resolve real producer obligations and return exact durable facts."""
+    records = []
+    for call in execution.calls:
+        payload = typing.cast(
+            "cohort_pipeline.ScheduledCohortPayload",
+            call.payload,
+        )
+        matching = tuple(
+            entry
+            for entry in payload.entries
+            if entry.source_order == call.identity.source_order
+        )
+        if len(matching) != 1:
+            message = "execution identity lost its payload entry"
+            raise AssertionError(message)
+        entry = matching[0]
+        ledger = sid_processor.gap_ledger._owner_for(entry.obligation)
+        ledger.resolve_success(entry.obligation, call.identity)
+        records.append(
+            feed_work_scheduler.CohortRecordTerminalFact(
+                identity=call.identity,
+                participated=True,
+                closure_state=(
+                    feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+                ),
+                full_pipeline_completed=True,
+                terminal_reason=(
+                    feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE
+                ),
+            )
+        )
+    return feed_work_scheduler.CallCompleted(
+        feed_work_scheduler.CohortTerminalFacts(
+            tuple(records),
+            feed_work_scheduler.CohortTerminalDisposition.SETTLED,
+        )
+    )
+
+
+class _SuccessfulExecutor:
+    """Complete real processor payloads through their page-owned ledgers."""
+
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> feed_work_scheduler.CallCompleted:
+        return _resolve_successful_execution(execution)
+
+
+class _ProcessorReplayBarrierExecutor:
+    """Hold t1, complete its sibling, and fail if same-Feed t2 executes.
+
+    Attributes:
+        started: Source-order tuples that reached physical execution.
+        first_entered: Set when the replayable t1 starts.
+        sibling_completed: Set after the other Feed resolves durably.
+        release_first: Gate allowing t1 to return replayable evidence.
+    """
+
+    def __init__(self, replay_feed_id: uuid.UUID) -> None:
+        self.replay_feed_id = replay_feed_id
+        self.started: list[tuple[int, ...]] = []
+        self.first_entered = asyncio.Event()
+        self.sibling_completed = asyncio.Event()
+        self.release_first = asyncio.Event()
+
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> object:
+        orders = tuple(call.identity.source_order for call in execution.calls)
+        self.started.append(orders)
+        feed_id = execution.calls[0].identity.feed_id
+        if feed_id != self.replay_feed_id:
+            completed = _resolve_successful_execution(execution)
+            self.sibling_completed.set()
+            return completed
+        if orders != (0,):
+            message = "same-Feed t2 crossed the replay barrier"
+            raise AssertionError(message)
+        self.first_entered.set()
+        await self.release_first.wait()
+        records = tuple(
+            feed_work_scheduler.CohortRecordTerminalFact(
+                identity=call.identity,
+                participated=True,
+                closure_state=(
+                    feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+                ),
+                full_pipeline_completed=False,
+                terminal_reason=(
+                    feed_work_scheduler.CohortRecordTerminalReason.REPLAYABLE_DIRECT
+                ),
+                direct_failure=feed_work_scheduler.CohortDirectFailureFact(
+                    feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+                    "selected direct precommit failure",
+                ),
+            )
+            for call in execution.calls
+        )
+        return feed_work_scheduler.CallReplayableDirectFailure(
+            feed_work_scheduler.CohortTerminalFacts(
+                records,
+                feed_work_scheduler.CohortTerminalDisposition.REPLAYABLE_DIRECT,
+            )
+        )
+
+
+class _ProcessorReplayPageFinalizer:
+    """Accept a real replayable scheduler page with exact source evidence.
+
+    Attributes:
+        contexts: Finalization contexts received from the real scheduler.
+    """
+
+    def __init__(self) -> None:
+        self.contexts: list[feed_work_scheduler.PageFinalizationContext] = []
+
+    async def finalize_page(
+        self,
+        context: feed_work_scheduler.PageFinalizationContext,
+    ) -> feed_work_scheduler.FinalPageReplayable:
+        self.contexts.append(context)
+        if type(context.candidate) is not cursor_policy.PageCursorCandidate:
+            message = "replay finalizer requires a progress candidate"
+            raise AssertionError(message)
+        verdict = boundary_verdict.decide_page_verdict(
+            runtime_adapters._page_verdict_input(context)
+        )
+        caps = tuple(
+            typing.cast("typing.Any", _closure_cap(context.candidate, boundary))
+            for boundary in context.candidate_boundaries
+        )
+        return feed_work_scheduler.FinalPageReplayable(
+            grant=context.grant,
+            page_sequence=context.page_sequence,
+            candidate=context.candidate,
+            boundary_results=tuple(
+                feed_work_scheduler.BoundaryResult(
+                    boundary,
+                    feed_work_scheduler.BoundaryDisposition.COMMITTED,
+                )
+                for boundary in context.candidate_boundaries
+            ),
+            final_closure_resolutions=(),
+            source_evidence=runtime_adapters.PageFinalizationEvidence(
+                verdict=verdict,
+                closure_caps=caps,
+                quarantined_feed_ids=(),
+                item_to_feed_promotion_count=(
+                    verdict.item_to_feed_promotion_count
+                ),
+            ),
+            member_retirements=context.locally_retired_members,
+        )
 
 
 class _RecordingLane:
@@ -388,7 +609,10 @@ def _prepared_calls(
         replay_feed_ids=replay_feed_ids,
         frozen_routes=frozen_routes,
     )
-    return tuple(call for cohort in prepared.cohorts for call in cohort.calls)
+    calls_by_cohort = []
+    for cohort in prepared.cohorts:
+        calls_by_cohort.extend(cohort.calls)
+    return tuple(calls_by_cohort)
 
 
 def _admit_prepared(
@@ -589,13 +813,11 @@ def _settled_page(
                 disposition=feed_work_scheduler.CohortTerminalDisposition.SETTLED,
             )
         )
-    members_by_id = {
-        member.feed_id: member
-        for member in (
-            *(cohort.member for cohort in cohorts),
-            *(boundary.member for boundary in boundaries),
-        )
-    }
+    members_by_id = {}
+    for cohort in cohorts:
+        members_by_id[cohort.member.feed_id] = cohort.member
+    for boundary in boundaries:
+        members_by_id[boundary.member.feed_id] = boundary.member
     verdict = boundary_verdict.decide_page_verdict(
         boundary_verdict.PageVerdictInput(
             grant=_GRANT,
@@ -659,6 +881,120 @@ def _settled_page(
             cohort_count=len(cohorts),
         ),
         source_evidence=source_evidence,
+    )
+
+
+def _quarantined_settled_page(
+    cohorts: tuple[feed_work_scheduler.CohortSubmission, ...],
+    boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
+    candidate: object,
+) -> feed_work_scheduler.SettledPage:
+    settled = _settled_page(cohorts, boundaries, candidate)
+    evidence = typing.cast(
+        "runtime_adapters.PageFinalizationEvidence",
+        settled.source_evidence,
+    )
+    return dataclasses.replace(
+        settled,
+        source_evidence=dataclasses.replace(
+            evidence,
+            quarantined_feed_ids=(_FEED_A,),
+        ),
+    )
+
+
+def _promoted_settled_page(
+    cohorts: tuple[feed_work_scheduler.CohortSubmission, ...],
+    boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
+    candidate: object,
+) -> feed_work_scheduler.SettledPage:
+    settled = _settled_page(cohorts, boundaries, candidate)
+    assert isinstance(candidate, cursor_policy.PageCursorCandidate)
+    identities = []
+    facts = []
+    source_order = 0
+    for cohort in cohorts:
+        records = []
+        for offset, _call in enumerate(cohort.calls):
+            identity = feed_work_scheduler.CohortRecordIdentity(
+                grant=_GRANT,
+                member=cohort.member,
+                page_sequence=candidate.page_sequence,
+                feed_id=cohort.feed_id,
+                cohort_timestamp=cohort.cohort_timestamp,
+                source_order=source_order + offset,
+                local_sequence=source_order + offset,
+            )
+            identities.append(identity)
+            records.append(
+                feed_work_scheduler.CohortRecordTerminalFact(
+                    identity=identity,
+                    participated=True,
+                    closure_state=(
+                        feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+                    ),
+                    full_pipeline_completed=False,
+                    terminal_reason=(
+                        feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP
+                    ),
+                    item_failure=feed_work_scheduler.CohortItemFailureFact(
+                        feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+                        "terminal item skip",
+                    ),
+                )
+            )
+        source_order += len(cohort.calls)
+        facts.append(
+            feed_work_scheduler.CohortTerminalFacts(
+                tuple(records),
+                feed_work_scheduler.CohortTerminalDisposition.SETTLED,
+            )
+        )
+    members = tuple(
+        cohort.member
+        for cohort in sorted(
+            cohorts,
+            key=lambda value: value.feed_id.int,
+        )
+    )
+    verdict = boundary_verdict.decide_page_verdict(
+        boundary_verdict.PageVerdictInput(
+            grant=_GRANT,
+            page_sequence=candidate.page_sequence,
+            members=members,
+            record_identities=tuple(
+                sorted(
+                    identities,
+                    key=lambda value: (
+                        value.feed_id.int,
+                        value.source_order,
+                    ),
+                )
+            ),
+            cohort_terminal_facts=tuple(
+                sorted(
+                    facts,
+                    key=lambda value: (
+                        value.records[0].identity.feed_id.int,
+                        value.records[0].identity.source_order,
+                    ),
+                )
+            ),
+            child_recovery_candidates=(),
+            lease_recovery_candidate=False,
+        )
+    )
+    evidence = typing.cast(
+        "runtime_adapters.PageFinalizationEvidence",
+        settled.source_evidence,
+    )
+    return dataclasses.replace(
+        settled,
+        source_evidence=dataclasses.replace(
+            evidence,
+            verdict=verdict,
+            item_to_feed_promotion_count=(verdict.item_to_feed_promotion_count),
+        ),
     )
 
 
@@ -1881,6 +2217,38 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             caught.exception.status_reason,
             feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
         )
+        self.assertEqual(caught.exception.reason, "invalid provider envelope")
+        self.assertEqual(wait.calls, [])
+
+    async def test_membership_invariant_failure_preserves_typed_terminal(
+        self,
+    ) -> None:
+        calls_provider = _ScriptedProvider()
+        wait = _RecordingWait()
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                ingestion_lease_store.MembershipInvariantViolation(
+                    _GRANT,
+                    ingestion_lease_store.MembershipInvariantReason.DUPLICATE_ROUTING_KEY,
+                    "duplicate group route",
+                )
+            ),
+            calls_provider=calls_provider,
+            wait=wait,
+        )
+
+        with self.assertRaises(sid_processor.SidProcessorFailure) as caught:
+            await processor.run(asyncio.Event())
+
+        self.assertIs(
+            caught.exception.status_reason,
+            feed_store.FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
+        )
+        self.assertEqual(
+            caught.exception.reason,
+            "bcfy_calls_sid_membership_invalid",
+        )
+        self.assertEqual(calls_provider.calls, [])
         self.assertEqual(wait.calls, [])
 
     async def test_cadence_membership_uncertainty_skips_fetch_then_recovers(
@@ -2101,6 +2469,125 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(processor._pending_by_url, {})
 
+    async def test_second_pending_insert_rolls_back_before_ledger_admission(
+        self,
+    ) -> None:
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_A, "00123-00045"))
+            )
+        )
+        await processor._refresh_membership()
+        assert processor._lease_cursor is not None
+        candidate = processor._lease_cursor.prepare(
+            _NOW + datetime.timedelta(seconds=30)
+        )
+        prepared = processor._prepare_page_work(
+            (
+                _raw_call(
+                    "00123-00045",
+                    "https://audio/first",
+                    _NOW.timestamp() + 1,
+                ),
+                _raw_call(
+                    "00123-00045",
+                    "https://audio/second",
+                    _NOW.timestamp() + 1,
+                ),
+            ),
+            candidate=candidate,
+        )
+        pending = _SecondPendingInsertFails()
+        processor._pending_by_url = pending
+        scheduler = feed_work_scheduler.FeedWorkScheduler(_UnexpectedExecutor())
+        await scheduler.start()
+        lane = scheduler.open_lane(
+            _GRANT,
+            stop_requested=asyncio.Event(),
+            grant_lost=asyncio.Event(),
+        )
+        try:
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "second pending insert failed",
+            ):
+                await lane.cover_page(
+                    calls=prepared.cohorts,
+                    boundaries=(),
+                    candidate=candidate,
+                )
+
+            self.assertEqual(pending, {})
+            self.assertEqual(pending.insertion_count, 2)
+            self.assertTrue(
+                all(
+                    prepared.ledger.state(entry.obligation)
+                    is sid_processor.gap_ledger.MissingCallState.DRAFT
+                    for entry in prepared.entries
+                )
+            )
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+            lane_snapshot = await lane._snapshot()
+            self.assertEqual(lane_snapshot.next_page_sequence, 0)
+            self.assertIsNone(lane_snapshot.page)
+        finally:
+            await scheduler.close()
+
+    async def test_ledger_rejection_rolls_back_all_staged_pending_urls(
+        self,
+    ) -> None:
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_A, "00123-00045"))
+            )
+        )
+        await processor._refresh_membership()
+        assert processor._lease_cursor is not None
+        candidate = processor._lease_cursor.prepare(
+            _NOW + datetime.timedelta(seconds=30)
+        )
+        prepared = processor._prepare_page_work(
+            (
+                _raw_call(
+                    "00123-00045",
+                    "https://audio/released",
+                    _NOW.timestamp() + 1,
+                ),
+            ),
+            candidate=candidate,
+        )
+        call = prepared.cohorts[0].calls[0]
+        assert call.settlement_observer is not None
+        call.settlement_observer(feed_work_scheduler.CallSettlement.RETRYABLE)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(_UnexpectedExecutor())
+        await scheduler.start()
+        lane = scheduler.open_lane(
+            _GRANT,
+            stop_requested=asyncio.Event(),
+            grant_lost=asyncio.Event(),
+        )
+        try:
+            with self.assertRaises(
+                sid_processor.gap_ledger.MissingCallIntegrityError
+            ):
+                await lane.cover_page(
+                    calls=prepared.cohorts,
+                    boundaries=(),
+                    candidate=candidate,
+                )
+
+            self.assertEqual(processor._pending_by_url, {})
+            self.assertIs(
+                prepared.ledger.state(prepared.entries[0].obligation),
+                sid_processor.gap_ledger.MissingCallState.REPLAY_RELEASED,
+            )
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+            lane_snapshot = await lane._snapshot()
+            self.assertEqual(lane_snapshot.next_page_sequence, 0)
+            self.assertIsNone(lane_snapshot.page)
+        finally:
+            await scheduler.close()
+
     async def test_stable_session_collision_fails_before_lane_mutation(
         self,
     ) -> None:
@@ -2175,6 +2662,199 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(processor._recent_urls, set())
         self.assertEqual(len(lane.covers), 1)
 
+    async def test_real_scheduler_replay_barrier_blocks_t2_and_settles_page(
+        self,
+    ) -> None:
+        member_a = _member(_FEED_A, "00123-00045")
+        member_b = _member(_FEED_B, "00123-00046")
+        membership_store = _ScriptedMembershipStore(
+            _snapshot(4, member_a, member_b)
+        )
+        executor = _ProcessorReplayBarrierExecutor(_FEED_A)
+        finalizer = _ProcessorReplayPageFinalizer()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        lane = scheduler.open_lane(
+            _GRANT,
+            stop_requested=asyncio.Event(),
+            grant_lost=asyncio.Event(),
+        )
+        processor = sid_processor.BcfyCallsSidProcessor(
+            _GRANT,
+            membership_store,
+            _ScriptedProvider(),
+            lane,
+            now=lambda: _NOW,
+        )
+        await processor._refresh_membership()
+        target = _NOW + datetime.timedelta(seconds=30)
+        settlement = asyncio.create_task(
+            processor._settle_page(
+                _page(
+                    _raw_call(
+                        "00123-00045",
+                        "https://audio/a-t1",
+                        _NOW.timestamp() + 1,
+                    ),
+                    _raw_call(
+                        "00123-00045",
+                        "https://audio/a-t2",
+                        _NOW.timestamp() + 2,
+                    ),
+                    _raw_call(
+                        "00123-00046",
+                        "https://audio/b-t1",
+                        _NOW.timestamp() + 1,
+                    ),
+                    last_pos=target.timestamp(),
+                ),
+                request=processor._select_request_position(),
+            )
+        )
+        try:
+            await asyncio.wait_for(executor.first_entered.wait(), timeout=1)
+            await asyncio.wait_for(
+                executor.sibling_completed.wait(),
+                timeout=1,
+            )
+            self.assertIn((0,), executor.started)
+            self.assertIn((1,), executor.started)
+            self.assertNotIn((2,), executor.started)
+            executor.release_first.set()
+            await asyncio.wait_for(settlement, timeout=1)
+
+            self.assertNotIn((2,), executor.started)
+            self.assertEqual(len(finalizer.contexts), 1)
+            context = finalizer.contexts[0]
+            self.assertEqual(
+                context.unresolved_replay_feed_ids,
+                (_FEED_A,),
+            )
+            self.assertEqual(context.replay_blocked_feed_ids, (_FEED_A,))
+            assert processor._lease_cursor is not None
+            self.assertEqual(processor._lease_cursor.pos, _NOW)
+            self.assertEqual(processor._lease_cursor.next_page_sequence, 1)
+            self.assertEqual(processor._select_request_position().pos, _NOW)
+            self.assertEqual(processor._pending_by_url, {})
+            self.assertNotIn("https://audio/a-t1", processor._recent_urls)
+            self.assertNotIn("https://audio/a-t2", processor._recent_urls)
+            self.assertIn("https://audio/b-t1", processor._recent_urls)
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+        finally:
+            executor.release_first.set()
+            if not settlement.done():
+                settlement.cancel()
+                await asyncio.gather(settlement, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_no_progress_nonboundary_rejection_tombstones_exact_feed(
+        self,
+    ) -> None:
+        member_a = _member(_FEED_A, "00123-00045")
+        member_b = _member(_FEED_B, "00123-00046")
+        membership_store = _ScriptedMembershipStore(
+            _snapshot(4, member_a, member_b),
+            ingestion_lease_store.MembershipUnchanged(_GRANT, 4),
+        )
+        store = mock.create_autospec(
+            ingestion_lease_store.IngestionLeaseStore,
+            instance=True,
+        )
+        store.commit_child_mutations = mock.AsyncMock(
+            return_value=_batch_committed(
+                ingestion_lease_store.ChildMutationResult(
+                    feed_id=_FEED_A,
+                    disposition=(
+                        ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE
+                    ),
+                    cursor_effect=ingestion_lease_store.CursorEffect.ABSENT,
+                    lifecycle_effect=ingestion_lease_store.LifecycleEffect.NONE,
+                )
+            )
+        )
+        finalizer = runtime_adapters.FencedPageFinalizer(
+            store,
+            actor_id="service_account:gcp:sid-processor-tests",
+            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            boundary_settled_utc=lambda: _NOW,
+        )
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _SuccessfulExecutor(),
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        lane = scheduler.open_lane(
+            _GRANT,
+            stop_requested=asyncio.Event(),
+            grant_lost=asyncio.Event(),
+        )
+        processor = sid_processor.BcfyCallsSidProcessor(
+            _GRANT,
+            membership_store,
+            _ScriptedProvider(),
+            lane,
+            now=lambda: _NOW,
+        )
+        await processor._refresh_membership()
+        try:
+            with mock.patch.object(
+                sid_processor.gap_ledger.telemetry,
+                "emit_missing_call",
+            ) as emit_missing_call:
+                await processor._settle_page(
+                    _page(
+                        _raw_call(
+                            "00123-00045",
+                            "https://audio/no-progress",
+                            ...,
+                        ),
+                        last_pos=None,
+                    ),
+                    request=processor._select_request_position(),
+                )
+
+            emit_missing_call.assert_not_called()
+            self.assertTrue(await lane.is_feed_retired(_FEED_A))
+            self.assertFalse(await lane.is_feed_retired(_FEED_B))
+            self.assertEqual(set(processor._members_by_id), {_FEED_B})
+            self.assertEqual(
+                set(processor._members_by_source),
+                {"00123-00046"},
+            )
+            self.assertIn(_FEED_A, processor._retired_feed_ids)
+            assert processor._lease_cursor is not None
+            self.assertEqual(processor._lease_cursor.pos, _NOW)
+            self.assertEqual(processor._lease_cursor.next_page_sequence, 1)
+            batch = store.commit_child_mutations.await_args.args[1]
+            self.assertEqual(
+                batch.mutations,
+                (
+                    ingestion_lease_store.SourceObservation(
+                        member_a.identity, None
+                    ),
+                ),
+            )
+
+            await processor._refresh_membership()
+            prepared = _prepared_work(
+                processor,
+                (
+                    _raw_call(
+                        "00123-00045",
+                        "https://audio/retired-next-poll",
+                        _NOW.timestamp() + 1,
+                    ),
+                ),
+            )
+            self.assertEqual(prepared.cohorts, ())
+            self.assertEqual(processor._pending_by_url, {})
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+        finally:
+            await scheduler.close()
+
     async def test_undrained_page_retains_candidate_and_is_not_resubmitted(
         self,
     ) -> None:
@@ -2218,26 +2898,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         member = _member(_FEED_A, "00123-00045")
-
-        def quarantine(
-            cohorts: tuple[feed_work_scheduler.CohortSubmission, ...],
-            boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
-            candidate: object,
-        ) -> feed_work_scheduler.SettledPage:
-            settled = _settled_page(cohorts, boundaries, candidate)
-            evidence = typing.cast(
-                "runtime_adapters.PageFinalizationEvidence",
-                settled.source_evidence,
-            )
-            return dataclasses.replace(
-                settled,
-                source_evidence=dataclasses.replace(
-                    evidence,
-                    quarantined_feed_ids=(_FEED_A,),
-                ),
-            )
-
-        lane = _RecordingLane(quarantine)
+        lane = _RecordingLane(_quarantined_settled_page)
         processor, _ = _processor(
             _ScriptedMembershipStore(
                 _snapshot(4, member),
@@ -2263,105 +2924,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
     async def test_unanimous_page_failure_promotes_only_after_page_close(
         self,
     ) -> None:
-        def promote(
-            cohorts: tuple[feed_work_scheduler.CohortSubmission, ...],
-            boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
-            candidate: object,
-        ) -> feed_work_scheduler.SettledPage:
-            settled = _settled_page(cohorts, boundaries, candidate)
-            assert isinstance(candidate, cursor_policy.PageCursorCandidate)
-            identities = []
-            facts = []
-            source_order = 0
-            for cohort in cohorts:
-                records = []
-                for offset, _call in enumerate(cohort.calls):
-                    identity = feed_work_scheduler.CohortRecordIdentity(
-                        grant=_GRANT,
-                        member=cohort.member,
-                        page_sequence=candidate.page_sequence,
-                        feed_id=cohort.feed_id,
-                        cohort_timestamp=cohort.cohort_timestamp,
-                        source_order=source_order + offset,
-                        local_sequence=source_order + offset,
-                    )
-                    identities.append(identity)
-                    records.append(
-                        feed_work_scheduler.CohortRecordTerminalFact(
-                            identity=identity,
-                            participated=True,
-                            closure_state=(
-                                feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
-                            ),
-                            full_pipeline_completed=False,
-                            terminal_reason=(
-                                feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP
-                            ),
-                            item_failure=(
-                                feed_work_scheduler.CohortItemFailureFact(
-                                    feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
-                                    "terminal item skip",
-                                )
-                            ),
-                        )
-                    )
-                source_order += len(cohort.calls)
-                facts.append(
-                    feed_work_scheduler.CohortTerminalFacts(
-                        tuple(records),
-                        feed_work_scheduler.CohortTerminalDisposition.SETTLED,
-                    )
-                )
-            members = tuple(
-                cohort.member
-                for cohort in sorted(
-                    cohorts,
-                    key=lambda value: value.feed_id.int,
-                )
-            )
-            verdict = boundary_verdict.decide_page_verdict(
-                boundary_verdict.PageVerdictInput(
-                    grant=_GRANT,
-                    page_sequence=candidate.page_sequence,
-                    members=members,
-                    record_identities=tuple(
-                        sorted(
-                            identities,
-                            key=lambda value: (
-                                value.feed_id.int,
-                                value.source_order,
-                            ),
-                        )
-                    ),
-                    cohort_terminal_facts=tuple(
-                        sorted(
-                            facts,
-                            key=lambda value: (
-                                value.records[0].identity.feed_id.int,
-                                value.records[0].identity.source_order,
-                            ),
-                        )
-                    ),
-                    child_recovery_candidates=(),
-                    lease_recovery_candidate=False,
-                )
-            )
-            evidence = typing.cast(
-                "runtime_adapters.PageFinalizationEvidence",
-                settled.source_evidence,
-            )
-            return dataclasses.replace(
-                settled,
-                source_evidence=dataclasses.replace(
-                    evidence,
-                    verdict=verdict,
-                    item_to_feed_promotion_count=(
-                        verdict.item_to_feed_promotion_count
-                    ),
-                ),
-            )
-
-        lane = _RecordingLane(promote)
+        lane = _RecordingLane(_promoted_settled_page)
         processor, _ = _processor(
             _ScriptedMembershipStore(
                 _snapshot(

@@ -590,6 +590,15 @@ class _DefaultPageFinalizer:
             "boundary_results": boundaries,
             "final_closure_resolutions": tuple(resolutions),
             "source_evidence": None,
+            "member_retirements": tuple(
+                sorted(
+                    context.locally_retired_members,
+                    key=lambda member: (
+                        member.feed_id.int,
+                        member.source_feed_id,
+                    ),
+                )
+            ),
         }
         if type(context.candidate) is cursor_policy.NoProgressPageCandidate:
             return _types.FinalPageNoProgress(**accepted)
@@ -1411,7 +1420,17 @@ class GrantLane:
         )
 
     async def is_feed_retired(self, feed_id: uuid.UUID) -> bool:
-        """Return whether this exact lane has retired one Feed scope."""
+        """Return whether this exact lane has retired one Feed scope.
+
+        Args:
+            feed_id: Immutable Feed UUID within this lane's complete grant.
+
+        Returns:
+            Whether that Feed is locally retired from scheduler admission.
+
+        Raises:
+            TypeError: ``feed_id`` is not a UUID.
+        """
         if not isinstance(feed_id, uuid.UUID):
             message = "feed_id must be a UUID"
             raise TypeError(message)
@@ -2478,14 +2497,11 @@ class GrantLane:
                 accepted,
             )
             await self._scheduler._resolve_final_pending(by_shard)
-            for boundary_result in accepted.boundary_results:
-                if boundary_result.disposition is (
-                    _types.BoundaryDisposition.MEMBER_REJECTED
-                ):
-                    await self._scheduler._retire_feed(
-                        self._grant,
-                        boundary_result.boundary.feed_id,
-                    )
+            for member in accepted.member_retirements:
+                await self._scheduler._retire_feed(
+                    self._grant,
+                    member.feed_id,
+                )
             await self._scheduler._clear_replay_barriers(
                 self._grant,
                 candidate.page_sequence,
@@ -2552,10 +2568,15 @@ class GrantLane:
             context,
             correlated,
         )
+        member_retirements = self._require_member_retirements(
+            context,
+            correlated,
+            boundary_rejected_members=rejected_members,
+        )
         self._require_final_resolutions(
             context,
             correlated,
-            rejected_members=rejected_members,
+            member_retirements=member_retirements,
         )
         return correlated
 
@@ -2619,7 +2640,7 @@ class GrantLane:
         context: _types.PageFinalizationContext,
         result: _types._AcceptedFinalPage,
         *,
-        rejected_members: tuple[
+        member_retirements: tuple[
             ingestion_lease_store.LeaseMemberIdentity,
             ...,
         ],
@@ -2645,10 +2666,10 @@ class GrantLane:
         for resolution in resolutions:
             identity = resolution.identity
             basis = resolution.release_basis
-            boundary_rejected = any(
-                identity.member is member for member in rejected_members
+            member_retired = any(
+                identity.member is member for member in member_retirements
             )
-            if boundary_rejected:
+            if member_retired:
                 if (
                     resolution.closure_state
                     is _types.CohortRecordClosureState.REPLAY_SAFE_RELEASE
@@ -2656,9 +2677,7 @@ class GrantLane:
                     is _types.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT
                 ):
                     continue
-                message = (
-                    "member-rejected boundary retained non-retirement work"
-                )
+                message = "retired member retained non-retirement work"
                 raise _types.CohortIntegrityError(message)
             if (
                 resolution.closure_state
@@ -2680,16 +2699,50 @@ class GrantLane:
                 basis
                 is _types.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT
                 and any(
-                    identity.member is member
-                    for member in (
-                        *context.locally_retired_members,
-                        *rejected_members,
-                    )
+                    identity.member is member for member in member_retirements
                 )
             ):
                 continue
             message = "final replay-safe resolution lacks exact acceptance"
             raise _types.CohortIntegrityError(message)
+
+    @staticmethod
+    def _require_member_retirements(
+        context: _types.PageFinalizationContext,
+        result: _types._AcceptedFinalPage,
+        *,
+        boundary_rejected_members: tuple[
+            ingestion_lease_store.LeaseMemberIdentity,
+            ...,
+        ],
+    ) -> tuple[ingestion_lease_store.LeaseMemberIdentity, ...]:
+        """Correlate accepted retirement evidence to current-page members."""
+        current_members = [
+            boundary.member for boundary in context.candidate_boundaries
+        ]
+        for facts in context.cohort_terminal_facts:
+            current_members.extend(
+                record.identity.member for record in facts.records
+            )
+        current_members.extend(context.locally_retired_members)
+        retirements = result.member_retirements
+        if any(
+            not any(member is current for current in current_members)
+            for member in retirements
+        ):
+            message = "member retirement is not exact current-page evidence"
+            raise _types.CohortIntegrityError(message)
+        required = (
+            *boundary_rejected_members,
+            *context.locally_retired_members,
+        )
+        if any(
+            not any(member is retirement for retirement in retirements)
+            for member in required
+        ):
+            message = "accepted result omitted exact member retirement"
+            raise _types.CohortIntegrityError(message)
+        return retirements
 
     async def _cover(
         self,

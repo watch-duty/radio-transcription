@@ -261,6 +261,41 @@ def test_admission_is_atomic_and_binds_the_exact_identity_tuple() -> None:
         ledger.admit((first,), (first_identity,))
 
 
+def test_local_sequence_is_shard_local_but_unique_within_one_feed() -> None:
+    grant = _grant()
+    member_a = _member(grant)
+    member_b = _member(grant, feed_id=_FEED_B, group_id="46")
+    ledger = gap_ledger.MissingCallLedger(grant, 0)
+    first = _draft(ledger, member_a)
+    sibling = _draft(
+        ledger,
+        member_b,
+        source_order=1,
+        audio_url=f"{_URL}-sibling",
+    )
+    duplicate = _draft(
+        ledger,
+        member_a,
+        source_order=2,
+        audio_url=f"{_URL}-duplicate",
+    )
+
+    ledger.admit((first,), (_identity(grant, member_a),))
+    ledger.admit(
+        (sibling,),
+        (_identity(grant, member_b, source_order=1),),
+    )
+
+    assert ledger.state(first) is gap_ledger.MissingCallState.ADMITTED
+    assert ledger.state(sibling) is gap_ledger.MissingCallState.ADMITTED
+    with pytest.raises(gap_ledger.MissingCallIntegrityError):
+        ledger.admit(
+            (duplicate,),
+            (_identity(grant, member_a, source_order=2),),
+        )
+    assert ledger.state(duplicate) is gap_ledger.MissingCallState.DRAFT
+
+
 def test_cross_ledger_handle_and_equal_but_replaced_identity_fail_closed() -> (
     None
 ):

@@ -22,6 +22,28 @@ from backend.pipeline.storage import feed_store, ingestion_lease_store
 _OWNER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _OTHER_OWNER_ID = uuid.UUID("22222222-3333-4444-5555-666666666666")
 _NOW = datetime.datetime(2026, 7, 11, 12, 0, tzinfo=datetime.UTC)
+_SID_FAILURE_CASES = (
+    (
+        "provider-exhaustion",
+        feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+        "invalid provider envelope",
+    ),
+    (
+        "membership-invariant",
+        feed_store.FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
+        "bcfy_calls_sid_membership_invalid",
+    ),
+    (
+        "logical-failure-threshold",
+        feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
+        "provider rate limit",
+    ),
+    (
+        "promoted-page",
+        feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+        "terminal item skip",
+    ),
+)
 
 
 def _leased_feed(
@@ -536,6 +558,59 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                 typing.cast("_ControlledRunner[object, object]", feed_runner),
                 typing.cast("_ControlledRunner[object, object]", sid_runner),
             )
+
+    async def test_all_sid_failure_sources_have_one_generic_parent_writer(
+        self,
+    ) -> None:
+        for index, (case_id, status_reason, reason) in enumerate(
+            _SID_FAILURE_CASES,
+            start=1,
+        ):
+            with self.subTest(case=case_id):
+                profile = _profile(
+                    process_cap=1,
+                    sid_cap=1,
+                    sid_budget=1,
+                    domains=(grant_control.DomainId.SID,),
+                )
+                (
+                    supervisor,
+                    feed_control,
+                    _feed_runner,
+                    sid_control,
+                    sid_runner,
+                ) = self._mixed(profile)
+                grant = ingestion_lease_store.LeaseGrant(
+                    feed_store.SourceType.BCFY_CALLS,
+                    f"failure-{index}",
+                    _OWNER_ID,
+                    index,
+                )
+                payload = _lease_snapshot()
+                outcome = grant_control.RunFailed(status_reason, reason)
+                sid_control.results[grant_control.ClaimMode.PRIMARY] = (
+                    _claim(grant, payload),
+                )
+                sid_runner.outcome = outcome
+
+                await supervisor.admit_cycle(_OWNER_ID)
+                await asyncio.wait_for(sid_runner.started.wait(), timeout=1)
+                managed = next(iter(supervisor._registry.values()))
+                root_task = managed.root_task
+                self.assertIsNotNone(root_task)
+                assert root_task is not None
+                sid_runner.finish.set()
+                await asyncio.wait_for(root_task, timeout=1)
+                await supervisor._settle_terminal_tasks()
+
+                self.assertEqual(
+                    sid_control.finalize_calls,
+                    [(grant, _terminal_for(outcome))],
+                )
+                self.assertEqual(sid_control.finalize_payloads, [payload])
+                self.assertEqual(feed_control.finalize_calls, [])
+                self.assertEqual(supervisor._registry, {})
+                self.assertEqual(supervisor._process_owned, 0)
 
     async def test_reservation_precedes_both_control_awaits_and_bounds_capacity(
         self,

@@ -118,7 +118,11 @@ class SidProcessorPlannedDrain(RuntimeError):
 
 
 class SidProcessorUndrained(RuntimeError):
-    """The page retained uncertain work and cannot begin another poll."""
+    """The page retained uncertain work and cannot begin another poll.
+
+    Attributes:
+        result: Exact scheduler result retaining the page's work and permits.
+    """
 
     def __init__(self, result: feed_work_scheduler.Undrained) -> None:
         if not isinstance(result, feed_work_scheduler.Undrained):
@@ -171,7 +175,14 @@ class _GrantLane(typing.Protocol):
         ...
 
     async def is_feed_retired(self, feed_id: uuid.UUID) -> bool:
-        """Return exact lane-local retirement for one Feed."""
+        """Return exact lane-local retirement for one Feed.
+
+        Args:
+            feed_id: Immutable Feed UUID within this lane's complete grant.
+
+        Returns:
+            Whether the scheduler has retired this exact Feed scope.
+        """
         ...
 
     async def cover_page(
@@ -223,6 +234,30 @@ class _PreparedPageWork:
     cohorts: tuple[feed_work_scheduler.CohortSubmission, ...]
     entries: tuple[cohort_pipeline.ScheduledCohortEntry, ...]
     entry_feed_ids: tuple[uuid.UUID, ...]
+
+
+def _page_obligations_are_released(prepared: _PreparedPageWork) -> bool:
+    """Return whether known abort cleanup left no retained obligation."""
+    closed = {
+        gap_ledger.MissingCallState.RESOLVED,
+        gap_ledger.MissingCallState.EMITTED,
+        gap_ledger.MissingCallState.REPLAY_RELEASED,
+    }
+    return all(
+        prepared.ledger.state(entry.obligation) in closed
+        for entry in prepared.entries
+    )
+
+
+def _rollback_pending_urls(
+    pending_by_url: collections.abc.MutableMapping[str, uuid.UUID],
+    audio_urls: tuple[str, ...],
+    feed_id: uuid.UUID,
+) -> None:
+    """Remove only this synchronous admission's exact staged URL bindings."""
+    for audio_url in reversed(audio_urls):
+        if pending_by_url.get(audio_url) == feed_id:
+            del pending_by_url[audio_url]
 
 
 def _new_session_id() -> str:
@@ -655,7 +690,7 @@ class BcfyCallsSidProcessor:
                 candidate=candidate,
             )
         except BaseException:
-            if self._page_obligations_are_released(prepared):
+            if _page_obligations_are_released(prepared):
                 self._active_page_ledger = None
             raise
         if isinstance(settled, feed_work_scheduler.Undrained):
@@ -702,7 +737,23 @@ class BcfyCallsSidProcessor:
             collections.abc.Mapping[str, _MemberState] | None
         ) = None,
     ) -> _PreparedPageWork:
-        """Freeze one candidate page into exact timestamp cohorts."""
+        """Freeze one candidate page into exact sorted timestamp cohorts.
+
+        Args:
+            raw_calls: Provider items in their frozen page order.
+            candidate: Exact already-prepared cursor candidate for the page.
+            replay_feed_ids: Feeds authorized by the current replay override.
+            frozen_routes: Optional immutable routing snapshot for this fetch.
+
+        Returns:
+            One page ledger and deterministic per-Feed cohort stream. Cohort
+            first-seen order is defined by the existing ``(ts, source_order)``
+            sorted stream, preserving chronological Feed execution.
+
+        Raises:
+            TypeError: The candidate is outside the closed cursor vocabulary.
+            CohortIntegrityError: Candidate authority crosses the processor.
+        """
         if type(candidate) not in {
             cursor_policy.PageCursorCandidate,
             cursor_policy.NoProgressPageCandidate,
@@ -930,7 +981,13 @@ class BcfyCallsSidProcessor:
         [tuple[feed_work_scheduler.CohortRecordIdentity, ...]],
         None,
     ]:
-        """Atomically bind exact identities before making URLs pending."""
+        """Atomically bind exact identities and grant-local pending URLs.
+
+        The synchronous URL staging is fully rolled back for either a mapping
+        failure or ledger validation failure. ``payload.admission_hook`` is
+        the final operation: its ledger validates the whole tuple before its
+        non-failing state assignments, so success needs no compensating step.
+        """
 
         def admit(
             identities: tuple[
@@ -945,9 +1002,17 @@ class BcfyCallsSidProcessor:
             ):
                 message = "cohort URL became ineligible before admission"
                 raise feed_work_scheduler.CohortIntegrityError(message)
-            payload.admission_hook(identities)
-            for audio_url in audio_urls:
-                self._pending_by_url[audio_url] = feed_id
+            try:
+                for audio_url in audio_urls:
+                    self._pending_by_url[audio_url] = feed_id
+                payload.admission_hook(identities)
+            except BaseException:
+                _rollback_pending_urls(
+                    self._pending_by_url,
+                    audio_urls,
+                    feed_id,
+                )
+                raise
 
         return admit
 
@@ -982,7 +1047,17 @@ class BcfyCallsSidProcessor:
         *,
         prepared: _PreparedPageWork,
     ) -> None:
-        """Consume one accepted page exactly once, then apply local effects."""
+        """Consume one accepted page exactly once, then apply local effects.
+
+        Args:
+            settled: Exact scheduler-owned accepted page result.
+            prepared: Processor-owned ledger and cohort stream for that page.
+
+        Raises:
+            CohortIntegrityError: Returned page or source evidence crosses the
+                processor's grant, candidate, cursor, or lifecycle authority.
+            SidProcessorFailure: The accepted verdict promotes to Lease scope.
+        """
         source_evidence = settled.source_evidence
         if type(source_evidence) is not (
             runtime_adapters.PageFinalizationEvidence
@@ -1123,19 +1198,6 @@ class BcfyCallsSidProcessor:
                 del self._pending_by_url[entry.audio_url]
                 if feed_id not in self._retired_feed_ids:
                     self._append_recent(entry.audio_url, feed_id)
-
-    @staticmethod
-    def _page_obligations_are_released(prepared: _PreparedPageWork) -> bool:
-        """Return whether known abort cleanup left no retained obligation."""
-        closed = {
-            gap_ledger.MissingCallState.RESOLVED,
-            gap_ledger.MissingCallState.EMITTED,
-            gap_ledger.MissingCallState.REPLAY_RELEASED,
-        }
-        return all(
-            prepared.ledger.state(entry.obligation) in closed
-            for entry in prepared.entries
-        )
 
     def _append_recent(self, audio_url: str, feed_id: uuid.UUID) -> None:
         """Append one unique completion while synchronizing deque and set."""

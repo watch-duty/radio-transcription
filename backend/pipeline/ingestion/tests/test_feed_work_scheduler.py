@@ -76,9 +76,10 @@ def _submission(
     grant: ingestion_lease_store.LeaseGrant | None = None,
     source_timestamp: datetime.datetime | None = _SOURCE_TIME,
     settlement_observer: typing.Callable[[object], None] | None = None,
+    member: ingestion_lease_store.LeaseMemberIdentity | None = None,
 ) -> feed_work_scheduler.CohortSubmission:
     exact_grant = _grant() if grant is None else grant
-    member = _member(exact_grant, feed_id)
+    exact_member = _member(exact_grant, feed_id) if member is None else member
     timestamp = (
         None
         if source_timestamp is None
@@ -87,11 +88,11 @@ def _submission(
     call = feed_work_scheduler.CallSubmission(
         feed_id=feed_id,
         source_timestamp=timestamp,
-        payload={"source_order": source_order, "member": member},
+        payload={"source_order": source_order, "member": exact_member},
         settlement_observer=settlement_observer,
     )
     return feed_work_scheduler.CohortSubmission(
-        member=member,
+        member=exact_member,
         feed_id=feed_id,
         cohort_timestamp=timestamp,
         calls=(call,),
@@ -713,6 +714,11 @@ def _covered_final_page(
         ...,
     ] = (),
     source_evidence: object = None,
+    member_retirements: tuple[
+        ingestion_lease_store.LeaseMemberIdentity,
+        ...,
+    ]
+    | None = None,
 ) -> feed_work_scheduler.FinalPageCovered:
     return feed_work_scheduler.FinalPageCovered(
         grant=context.grant,
@@ -721,7 +727,90 @@ def _covered_final_page(
         boundary_results=_accepted_boundary_results(context),
         final_closure_resolutions=resolutions,
         source_evidence=source_evidence,
+        member_retirements=(
+            context.locally_retired_members
+            if member_retirements is None
+            else member_retirements
+        ),
     )
+
+
+def _member_rejected_retirement_page(
+    context: feed_work_scheduler.PageFinalizationContext,
+) -> feed_work_scheduler.FinalPageCovered:
+    """Accept exact boundary rejection with member-retirement release."""
+    identity = context.cohort_terminal_facts[0].records[0].identity
+    retirements = tuple(
+        boundary.member for boundary in context.candidate_boundaries
+    )
+    return feed_work_scheduler.FinalPageCovered(
+        grant=context.grant,
+        page_sequence=context.page_sequence,
+        candidate=context.candidate,
+        boundary_results=tuple(
+            feed_work_scheduler.BoundaryResult(
+                boundary,
+                feed_work_scheduler.BoundaryDisposition.MEMBER_REJECTED,
+            )
+            for boundary in context.candidate_boundaries
+        ),
+        final_closure_resolutions=(
+            feed_work_scheduler.FinalRecordClosureResolution(
+                identity=identity,
+                closure_state=(
+                    feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+                ),
+                release_basis=(
+                    feed_work_scheduler.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT
+                ),
+            ),
+        ),
+        source_evidence=None,
+        member_retirements=retirements,
+    )
+
+
+def _member_rejected_durable_page(
+    context: feed_work_scheduler.PageFinalizationContext,
+) -> feed_work_scheduler.FinalPageCovered:
+    """Return invalid durable closure for an exact rejected member."""
+    identity = context.cohort_terminal_facts[0].records[0].identity
+    retirements = tuple(
+        boundary.member for boundary in context.candidate_boundaries
+    )
+    return feed_work_scheduler.FinalPageCovered(
+        grant=context.grant,
+        page_sequence=context.page_sequence,
+        candidate=context.candidate,
+        boundary_results=tuple(
+            feed_work_scheduler.BoundaryResult(
+                boundary,
+                feed_work_scheduler.BoundaryDisposition.MEMBER_REJECTED,
+            )
+            for boundary in context.candidate_boundaries
+        ),
+        final_closure_resolutions=(
+            feed_work_scheduler.FinalRecordClosureResolution(
+                identity=identity,
+                closure_state=(
+                    feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+                ),
+                release_basis=(
+                    feed_work_scheduler.FinalRecordReleaseBasis.DURABLE_SOURCE_CLOSURE
+                ),
+            ),
+        ),
+        source_evidence=None,
+        member_retirements=retirements,
+    )
+
+
+def _member_rejected_without_retirement_page(
+    context: feed_work_scheduler.PageFinalizationContext,
+) -> feed_work_scheduler.FinalPageCovered:
+    """Omit required retirement evidence for a rejected boundary."""
+    accepted = _member_rejected_retirement_page(context)
+    return dataclasses.replace(accepted, member_retirements=())
 
 
 class _ControlledPageFinalizer:
@@ -2571,11 +2660,27 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         sibling_feed = uuid.UUID(int=2)
         later_sibling_feed = uuid.UUID(int=3)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        removed_member = _member(grant, removed_feed)
         calls = _TracingCalls(
             (
-                _submission(removed_feed, 0, grant=grant),
-                _submission(removed_feed, 1, grant=grant),
-                _submission(removed_feed, 2, grant=grant),
+                _submission(
+                    removed_feed,
+                    0,
+                    grant=grant,
+                    member=removed_member,
+                ),
+                _submission(
+                    removed_feed,
+                    1,
+                    grant=grant,
+                    member=removed_member,
+                ),
+                _submission(
+                    removed_feed,
+                    2,
+                    grant=grant,
+                    member=removed_member,
+                ),
                 _submission(sibling_feed, 3, grant=grant),
                 _submission(later_sibling_feed, 4, grant=grant),
             )
@@ -5347,36 +5452,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
         member = _member(grant, feed_id)
         observed = []
 
-        def reject_boundary(
-            context: feed_work_scheduler.PageFinalizationContext,
-        ) -> object:
-            identity = context.cohort_terminal_facts[0].records[0].identity
-            return feed_work_scheduler.FinalPageCovered(
-                grant=context.grant,
-                page_sequence=context.page_sequence,
-                candidate=context.candidate,
-                boundary_results=tuple(
-                    feed_work_scheduler.BoundaryResult(
-                        boundary,
-                        feed_work_scheduler.BoundaryDisposition.MEMBER_REJECTED,
-                    )
-                    for boundary in context.candidate_boundaries
-                ),
-                final_closure_resolutions=(
-                    feed_work_scheduler.FinalRecordClosureResolution(
-                        identity=identity,
-                        closure_state=(
-                            feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
-                        ),
-                        release_basis=(
-                            feed_work_scheduler.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT
-                        ),
-                    ),
-                ),
-                source_evidence=None,
-            )
-
-        finalizer = _ControlledPageFinalizer(reject_boundary)
+        finalizer = _ControlledPageFinalizer(_member_rejected_retirement_page)
         finalizer.release.set()
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             _GatedOutcomeExecutor(_final_closure_pending),
@@ -5439,36 +5515,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
         member = _member(grant, feed_id)
         observed = []
 
-        def cross_boundary(
-            context: feed_work_scheduler.PageFinalizationContext,
-        ) -> object:
-            identity = context.cohort_terminal_facts[0].records[0].identity
-            return feed_work_scheduler.FinalPageCovered(
-                grant=context.grant,
-                page_sequence=context.page_sequence,
-                candidate=context.candidate,
-                boundary_results=tuple(
-                    feed_work_scheduler.BoundaryResult(
-                        boundary,
-                        feed_work_scheduler.BoundaryDisposition.MEMBER_REJECTED,
-                    )
-                    for boundary in context.candidate_boundaries
-                ),
-                final_closure_resolutions=(
-                    feed_work_scheduler.FinalRecordClosureResolution(
-                        identity=identity,
-                        closure_state=(
-                            feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
-                        ),
-                        release_basis=(
-                            feed_work_scheduler.FinalRecordReleaseBasis.DURABLE_SOURCE_CLOSURE
-                        ),
-                    ),
-                ),
-                source_evidence=None,
-            )
-
-        finalizer = _ControlledPageFinalizer(cross_boundary)
+        finalizer = _ControlledPageFinalizer(_member_rejected_durable_page)
         finalizer.release.set()
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             _GatedOutcomeExecutor(_final_closure_pending),
@@ -5517,6 +5564,150 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
             if not coverage.done():
                 coverage.cancel()
                 await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    def test_member_retirement_value_rejects_invalid_authority_and_order(
+        self,
+    ) -> None:
+        grant = _grant()
+        first = _member(grant, uuid.UUID(int=161))
+        second = _member(grant, uuid.UUID(int=162))
+        duplicate_feed = _member(grant, first.feed_id)
+        crossed = _member(_grant(lease_key="999"), uuid.UUID(int=163))
+        forged = ingestion_lease_store.LeaseMemberIdentity(
+            feed_id=uuid.UUID(int=167),
+            source_type=feed_store.SourceType.BCFY_CALLS,
+            source_feed_id="150-167",
+            sid="150",
+            group_id="167",
+        )
+        candidate = cursor_policy.LeaseCursor(grant, pos=None).prepare(
+            _SOURCE_TIME
+        )
+        cases = (
+            ("duplicate_member", (first, first)),
+            ("duplicate_feed", (first, duplicate_feed)),
+            ("nondeterministic_order", (second, first)),
+            ("cross_grant", (crossed,)),
+            ("forged_member", (forged,)),
+        )
+        for case_id, retirements in cases:
+            with self.subTest(case_id=case_id):
+                with self.assertRaises(
+                    feed_work_scheduler.CohortIntegrityError
+                ):
+                    feed_work_scheduler.FinalPageCovered(
+                        grant=grant,
+                        page_sequence=candidate.page_sequence,
+                        candidate=candidate,
+                        boundary_results=(),
+                        final_closure_resolutions=(),
+                        source_evidence=None,
+                        member_retirements=retirements,
+                    )
+
+    async def test_member_rejected_boundary_omission_retains_exact_page(
+        self,
+    ) -> None:
+        feed_id = uuid.UUID(int=164)
+        grant = _grant()
+        member = _member(grant, feed_id)
+        finalizer = _ControlledPageFinalizer(
+            _member_rejected_without_retirement_page
+        )
+        finalizer.release.set()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _GatedOutcomeExecutor(_final_closure_pending),
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        lane = _open_lane(scheduler, grant)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _cohort(
+                        feed_id,
+                        (0,),
+                        grant=grant,
+                        cohort_timestamp=None,
+                        member=member,
+                        payload_member=member,
+                    ),
+                ),
+                boundaries=(
+                    feed_work_scheduler.BoundaryWork(member, _SOURCE_TIME),
+                ),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+        )
+        executor = typing.cast(
+            "_GatedOutcomeExecutor",
+            scheduler._shards[0]._executor,
+        )
+        try:
+            await asyncio.wait_for(executor.entered.wait(), timeout=1)
+            executor.release.set()
+            self.assertIsInstance(
+                await asyncio.wait_for(coverage, timeout=1),
+                feed_work_scheduler.Undrained,
+            )
+            self.assertFalse(await lane.is_feed_retired(feed_id))
+            self.assertEqual((await scheduler._snapshot()).held, 1)
+        finally:
+            executor.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_retirement_rejects_same_grant_noncurrent_page_member(
+        self,
+    ) -> None:
+        grant = _grant()
+        current_feed = uuid.UUID(int=165)
+        current_member = _member(grant, current_feed)
+        foreign_member = _member(grant, uuid.UUID(int=166))
+
+        def retire_foreign_member(
+            context: feed_work_scheduler.PageFinalizationContext,
+        ) -> feed_work_scheduler.FinalPageCovered:
+            return _covered_final_page(
+                context,
+                member_retirements=(foreign_member,),
+            )
+
+        finalizer = _ControlledPageFinalizer(retire_foreign_member)
+        finalizer.release.set()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        lane = _open_lane(scheduler, grant)
+        try:
+            result = await lane.cover_page(
+                calls=(
+                    _submission(
+                        current_feed,
+                        0,
+                        grant=grant,
+                        member=current_member,
+                    ),
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+
+            self.assertIsInstance(result, feed_work_scheduler.Undrained)
+            self.assertFalse(await lane.is_feed_retired(current_feed))
+            self.assertFalse(await lane.is_feed_retired(foreign_member.feed_id))
+        finally:
             await scheduler.close()
 
 

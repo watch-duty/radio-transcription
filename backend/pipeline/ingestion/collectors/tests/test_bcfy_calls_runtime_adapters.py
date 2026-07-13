@@ -863,6 +863,52 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.boundary_results, ())
         self.assertEqual(result.source_evidence.closure_caps, ())
 
+    async def test_no_progress_rejected_observation_reports_exact_retirement(
+        self,
+    ) -> None:
+        grant = _grant()
+        member = _member(grant, uuid.UUID(int=304), group_id="304")
+        facts = _terminal_facts(
+            _terminal_record(
+                _record_identity(grant, member, 0, cohort_timestamp=None),
+                feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE,
+            ),
+            disposition=feed_work_scheduler.CohortTerminalDisposition.SETTLED,
+        )
+        context = _page_context(
+            grant,
+            facts=(facts,),
+            no_progress=True,
+        )
+        store = _store_with_result(
+            _batch_committed(
+                _child_result(
+                    member.feed_id,
+                    ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE,
+                    cursor_effect=ingestion_lease_store.CursorEffect.ABSENT,
+                )
+            )
+        )
+        finalizer = runtime_adapters.FencedPageFinalizer(
+            store,
+            actor_id=_ACTOR_ID,
+            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            boundary_settled_utc=lambda: _NOW,
+        )
+
+        result = await finalizer.finalize_page(context)
+
+        self.assertIs(type(result), feed_work_scheduler.FinalPageNoProgress)
+        assert isinstance(result, feed_work_scheduler.FinalPageNoProgress)
+        self.assertEqual(result.boundary_results, ())
+        self.assertEqual(result.final_closure_resolutions, ())
+        self.assertEqual(result.member_retirements, (member,))
+        batch = store.commit_child_mutations.await_args.args[1]
+        self.assertEqual(
+            batch.mutations,
+            (ingestion_lease_store.SourceObservation(member, None),),
+        )
+
     async def test_mutated_closure_cap_is_rejected_as_forged(self) -> None:
         grant = _grant()
         member = _member(grant, uuid.UUID(int=404), group_id="404")
@@ -1316,7 +1362,6 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         )
-
         replay_identity = _record_identity(
             grant,
             pending_member,
@@ -1643,6 +1688,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         )
+        self.assertEqual(result.member_retirements, (member,))
 
     async def test_finalizer_correlation_failures_are_outcome_unknown_once(
         self,

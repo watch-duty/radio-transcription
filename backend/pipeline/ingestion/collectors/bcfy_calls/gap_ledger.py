@@ -148,7 +148,7 @@ class MissingCallLedger:
         self._page_sequence = page_sequence
         self._records: list[_ObligationRecord] = []
         self._source_orders: set[int] = set()
-        self._local_sequences: set[int] = set()
+        self._local_sequences: set[tuple[uuid.UUID, int]] = set()
         self._closed = False
 
     @property
@@ -271,7 +271,7 @@ class MissingCallLedger:
         pending: list[
             tuple[_ObligationRecord, feed_work_scheduler.CohortRecordIdentity]
         ] = []
-        proposed_local_sequences: set[int] = set()
+        proposed_local_sequences: set[tuple[uuid.UUID, int]] = set()
         for obligation, identity in zip(
             obligations,
             identities,
@@ -282,13 +282,13 @@ class MissingCallLedger:
                 message = "admission obligation is not a fresh draft"
                 raise MissingCallIntegrityError(message)
             self._validate_identity(record, identity, admitted=False)
-            if (
-                identity.local_sequence in self._local_sequences
-                or identity.local_sequence in proposed_local_sequences
+            scheduler_slot = (identity.feed_id, identity.local_sequence)
+            if scheduler_slot in self._local_sequences or (
+                scheduler_slot in proposed_local_sequences
             ):
-                message = "admission local_sequence is already bound"
+                message = "admission Feed/local_sequence is already bound"
                 raise MissingCallIntegrityError(message)
-            proposed_local_sequences.add(identity.local_sequence)
+            proposed_local_sequences.add(scheduler_slot)
             pending.append((record, identity))
 
         for record, identity in pending:

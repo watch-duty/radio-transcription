@@ -892,6 +892,33 @@ def _final_closure_resolutions(
     return tuple(resolutions)
 
 
+def _accepted_member_retirements(
+    context: feed_work_scheduler.PageFinalizationContext,
+    locally_rejected_members: tuple[
+        ingestion_lease_store.LeaseMemberIdentity,
+        ...,
+    ],
+) -> tuple[ingestion_lease_store.LeaseMemberIdentity, ...]:
+    """Return one deterministic exact member tuple for accepted retirement."""
+    members_by_feed: dict[
+        uuid.UUID,
+        ingestion_lease_store.LeaseMemberIdentity,
+    ] = {}
+    for member in (
+        *context.locally_retired_members,
+        *locally_rejected_members,
+    ):
+        existing = members_by_feed.get(member.feed_id)
+        if existing is not None and existing is not member:
+            message = "accepted retirement crossed issued member identity"
+            raise BoundaryAdapterIntegrityError(message)
+        members_by_feed[member.feed_id] = member
+    return tuple(
+        members_by_feed[feed_id]
+        for feed_id in sorted(members_by_feed, key=lambda value: value.int)
+    )
+
+
 def _final_outcome_unknown(
     context: feed_work_scheduler.PageFinalizationContext,
 ) -> feed_work_scheduler.FinalPageOutcomeUnknown:
@@ -1116,6 +1143,10 @@ class FencedPageFinalizer:
             "boundary_results": boundary_results,
             "final_closure_resolutions": resolutions,
             "source_evidence": evidence,
+            "member_retirements": _accepted_member_retirements(
+                context,
+                locally_rejected_members,
+            ),
         }
         if type(context.candidate) is cursor_policy.NoProgressPageCandidate:
             return feed_work_scheduler.FinalPageNoProgress(**accepted)

@@ -954,6 +954,50 @@ def _require_uuid_tuple(value: object, name: str) -> tuple[uuid.UUID, ...]:
     return value
 
 
+def _require_member_retirement_tuple(
+    grant: ingestion_lease_store.LeaseGrant,
+    value: object,
+) -> tuple[ingestion_lease_store.LeaseMemberIdentity, ...]:
+    """Validate deterministic accepted retirement authority for one grant."""
+    if not isinstance(value, tuple) or any(
+        not isinstance(item, ingestion_lease_store.LeaseMemberIdentity)
+        for item in value
+    ):
+        message = "member_retirements must contain issued members"
+        raise TypeError(message)
+    members = typing.cast(
+        "tuple[ingestion_lease_store.LeaseMemberIdentity, ...]",
+        value,
+    )
+    if len({id(member) for member in members}) != len(members) or len(
+        {member.feed_id for member in members}
+    ) != len(members):
+        message = "member_retirements must not repeat a member or Feed"
+        raise CohortIntegrityError(message)
+    expected = tuple(
+        sorted(
+            members,
+            key=lambda member: (
+                member.feed_id.int,
+                member.source_feed_id,
+            ),
+        )
+    )
+    if members != expected:
+        message = "member_retirements must be in deterministic Feed order"
+        raise CohortIntegrityError(message)
+    for member in members:
+        try:
+            ingestion_lease_store._require_member_binding(  # noqa: SLF001
+                grant,
+                member,
+            )
+        except (TypeError, ValueError) as exc:
+            message = "member retirement crossed complete grant"
+            raise CohortIntegrityError(message) from exc
+    return members
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class PageFinalizationContext:
     """Bounded exact evidence supplied to one source page finalizer."""
@@ -1082,7 +1126,18 @@ class PageFinalizationContext:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _AcceptedFinalPage:
-    """Shared exact fields for one accepted final-page disposition."""
+    """Shared exact fields for one accepted final-page disposition.
+
+    Attributes:
+        grant: Complete Lease authority for this page.
+        page_sequence: Exact grant-local page sequence.
+        candidate: Object-identical cursor candidate accepted by the source.
+        boundary_results: Ordered results for every submitted page boundary.
+        final_closure_resolutions: Complete ordered final-pending resolution.
+        source_evidence: Source-owned accepted transaction evidence.
+        member_retirements: Deterministic exact issued members whose accepted
+            child commands were rejected or already retired on this page.
+    """
 
     grant: ingestion_lease_store.LeaseGrant
     page_sequence: int
@@ -1090,6 +1145,10 @@ class _AcceptedFinalPage:
     boundary_results: tuple[BoundaryResult, ...]
     final_closure_resolutions: tuple[FinalRecordClosureResolution, ...]
     source_evidence: object
+    member_retirements: tuple[
+        ingestion_lease_store.LeaseMemberIdentity,
+        ...,
+    ] = ()
 
     def __post_init__(self) -> None:
         _require_final_result_identity(
@@ -1109,6 +1168,7 @@ class _AcceptedFinalPage:
         ):
             message = "final_closure_resolutions must contain exact values"
             raise TypeError(message)
+        _require_member_retirement_tuple(self.grant, self.member_retirements)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

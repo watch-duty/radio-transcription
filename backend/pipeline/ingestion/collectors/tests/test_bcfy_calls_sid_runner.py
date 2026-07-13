@@ -20,6 +20,28 @@ from backend.pipeline.storage import feed_store, ingestion_lease_store
 
 _OWNER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _NOW = datetime.datetime(2026, 7, 12, 12, 0, tzinfo=datetime.UTC)
+_SID_FAILURE_CASES = (
+    (
+        "provider-exhaustion",
+        feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+        "invalid provider envelope",
+    ),
+    (
+        "membership-invariant",
+        feed_store.FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
+        "bcfy_calls_sid_membership_invalid",
+    ),
+    (
+        "logical-failure-threshold",
+        feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
+        "provider rate limit",
+    ),
+    (
+        "promoted-page",
+        feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+        "terminal item skip",
+    ),
+)
 
 
 def _sid_runner_module():
@@ -551,6 +573,40 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
                 lane.release_close.set()
 
                 self.assertEqual(await task, expected)
+                self.assert_waiters_settled(scheduler, stop, loss)
+
+    async def test_all_failure_sources_map_to_generic_run_failed(
+        self,
+    ) -> None:
+        sid_runner = _sid_runner_module()
+        for case_id, status_reason, reason in _SID_FAILURE_CASES:
+            with self.subTest(case=case_id):
+                scheduler = _ControlledScheduler(block_close=True)
+                processor = _ControlledProcessor(
+                    sid_processor.SidProcessorFailure(status_reason, reason)
+                )
+                runner, _ = _runner(sid_runner, scheduler, processor)
+                context, stop, loss = _context()
+                task = asyncio.create_task(
+                    runner.run(_grant(case_id), _snapshot(), context)
+                )
+                await asyncio.wait_for(processor.started.wait(), timeout=1)
+                processor.release.set()
+                lane = scheduler.opened[0]
+                await asyncio.wait_for(lane.close_entered.wait(), timeout=1)
+
+                self.assertTrue(processor.settled.is_set())
+                self.assertFalse(task.done())
+                self.assertEqual(
+                    lane.close_reasons,
+                    [feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN],
+                )
+                lane.release_close.set()
+
+                self.assertEqual(
+                    await task,
+                    grant_control.RunFailed(status_reason, reason),
+                )
                 self.assert_waiters_settled(scheduler, stop, loss)
 
     async def test_monotonic_signals_precede_late_processor_failure(
