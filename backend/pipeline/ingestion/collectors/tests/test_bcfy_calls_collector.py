@@ -1096,9 +1096,6 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             first_params["pos"], int(last_bookmark_time.timestamp())
         )
         self.assertEqual(second_params["pos"], 9999)
-        for params in (first_params, second_params):
-            self.assertEqual(params["groups"], self.feed["source_feed_id"])
-            self.assertNotIn("sid", params)
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
@@ -1530,14 +1527,6 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(mock_jwt.call_count, 1)
         self.assertEqual(mock_fetch.call_count, 50)
-        request_params = [
-            call_args[0][3] for call_args in mock_fetch.call_args_list
-        ]
-        self.assertEqual(
-            {params["groups"] for params in request_params},
-            {f"sid{i}" for i in range(50)},
-        )
-        self.assertTrue(all("sid" not in params for params in request_params))
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"

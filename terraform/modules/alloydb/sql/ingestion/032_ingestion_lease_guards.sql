@@ -1,6 +1,7 @@
 -- Lease identities are permanent, and fencing tokens may only move forward.
--- Recreate the guards transactionally so migration replay remains simple and
--- never exposes a partially guarded table.
+-- Install the guards transactionally. Normal migration replay performs no
+-- table DDL once each trigger is present and enabled ALWAYS, avoiding a
+-- write-conflicting lock after Lease writers are activated.
 BEGIN;
 
 CREATE OR REPLACE FUNCTION public.guard_ingestion_lease_identity()
@@ -48,33 +49,67 @@ BEGIN
 END;
 $guard$;
 
-DROP TRIGGER IF EXISTS trg_ingestion_leases_prevent_delete
-    ON public.ingestion_leases;
-CREATE TRIGGER trg_ingestion_leases_prevent_delete
-    BEFORE DELETE ON public.ingestion_leases
-    FOR EACH ROW
-    EXECUTE FUNCTION public.guard_ingestion_lease_identity();
+-- PostgreSQL has no CREATE TRIGGER IF NOT EXISTS. Check only the stable replay
+-- contract (table-local name plus ENABLE ALWAYS) rather than duplicating full
+-- trigger definitions in catalog validators.
+DO $install_guards$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_catalog.pg_trigger
+         WHERE tgrelid = 'public.ingestion_leases'::regclass
+           AND tgname = 'trg_ingestion_leases_prevent_delete'
+           AND tgenabled = 'A'
+           AND NOT tgisinternal
+    ) THEN
+        DROP TRIGGER IF EXISTS trg_ingestion_leases_prevent_delete
+            ON public.ingestion_leases;
+        CREATE TRIGGER trg_ingestion_leases_prevent_delete
+            BEFORE DELETE ON public.ingestion_leases
+            FOR EACH ROW
+            EXECUTE FUNCTION public.guard_ingestion_lease_identity();
+        ALTER TABLE public.ingestion_leases
+            ENABLE ALWAYS TRIGGER trg_ingestion_leases_prevent_delete;
+    END IF;
 
-DROP TRIGGER IF EXISTS trg_ingestion_leases_prevent_truncate
-    ON public.ingestion_leases;
-CREATE TRIGGER trg_ingestion_leases_prevent_truncate
-    BEFORE TRUNCATE ON public.ingestion_leases
-    FOR EACH STATEMENT
-    EXECUTE FUNCTION public.guard_ingestion_lease_identity();
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_catalog.pg_trigger
+         WHERE tgrelid = 'public.ingestion_leases'::regclass
+           AND tgname = 'trg_ingestion_leases_prevent_truncate'
+           AND tgenabled = 'A'
+           AND NOT tgisinternal
+    ) THEN
+        DROP TRIGGER IF EXISTS trg_ingestion_leases_prevent_truncate
+            ON public.ingestion_leases;
+        CREATE TRIGGER trg_ingestion_leases_prevent_truncate
+            BEFORE TRUNCATE ON public.ingestion_leases
+            FOR EACH STATEMENT
+            EXECUTE FUNCTION public.guard_ingestion_lease_identity();
+        ALTER TABLE public.ingestion_leases
+            ENABLE ALWAYS TRIGGER trg_ingestion_leases_prevent_truncate;
+    END IF;
 
-DROP TRIGGER IF EXISTS trg_ingestion_leases_protect_identity_and_fence
-    ON public.ingestion_leases;
-CREATE TRIGGER trg_ingestion_leases_protect_identity_and_fence
-    BEFORE UPDATE OF source_type, lease_key, fencing_token
-    ON public.ingestion_leases
-    FOR EACH ROW
-    EXECUTE FUNCTION public.guard_ingestion_lease_identity();
-
-ALTER TABLE public.ingestion_leases
-    ENABLE ALWAYS TRIGGER trg_ingestion_leases_prevent_delete;
-ALTER TABLE public.ingestion_leases
-    ENABLE ALWAYS TRIGGER trg_ingestion_leases_prevent_truncate;
-ALTER TABLE public.ingestion_leases
-    ENABLE ALWAYS TRIGGER trg_ingestion_leases_protect_identity_and_fence;
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_catalog.pg_trigger
+         WHERE tgrelid = 'public.ingestion_leases'::regclass
+           AND tgname = 'trg_ingestion_leases_protect_identity_and_fence'
+           AND tgenabled = 'A'
+           AND NOT tgisinternal
+    ) THEN
+        DROP TRIGGER IF EXISTS trg_ingestion_leases_protect_identity_and_fence
+            ON public.ingestion_leases;
+        CREATE TRIGGER trg_ingestion_leases_protect_identity_and_fence
+            BEFORE UPDATE OF source_type, lease_key, fencing_token
+            ON public.ingestion_leases
+            FOR EACH ROW
+            EXECUTE FUNCTION public.guard_ingestion_lease_identity();
+        ALTER TABLE public.ingestion_leases
+            ENABLE ALWAYS TRIGGER
+                trg_ingestion_leases_protect_identity_and_fence;
+    END IF;
+END
+$install_guards$;
 
 COMMIT;
