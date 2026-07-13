@@ -23,7 +23,7 @@ from backend.pipeline.common.tracing_utils import (
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.processor import (
     TranscriptionEventProcessor,
-    _is_transient_exception,
+    is_transient_exception,
 )
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.pipeline.transcription.transcribers.factory import get_transcriber
@@ -241,7 +241,7 @@ async def transcribe_claim_check(envelope: dict, request: Request) -> Response:
     try:
         await processor.process_event(envelope)
     except Exception as e:
-        if _is_transient_exception(e):
+        if is_transient_exception(e):
             # Suppress noisy Uvicorn tracebacks while preserving Pub/Sub retry behavior
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
