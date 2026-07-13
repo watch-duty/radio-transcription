@@ -82,9 +82,6 @@ export function TranscriptRow({
     }
 
     if (transcriptAnnotation.errors.length > 0) {
-      if (transcriptAnnotation.text) {
-        return `${transcriptAnnotation.text} [Partial transcription]`;
-      }
       return '[Transcription failed]';
     }
 
@@ -96,7 +93,7 @@ export function TranscriptRow({
   );
 
   const hasErrors = transcriptAnnotation
-    ? transcriptAnnotation.errors.length > 0 && !transcriptAnnotation.text
+    ? transcriptAnnotation.errors.length > 0
     : false;
   const isWaiting = !isSilence && !isOutage && !transcriptAnnotation;
   const isPlaceholder = isSilence || isWaiting || hasErrors || isOutage;
@@ -296,12 +293,7 @@ export function TranscriptRow({
               renderTranscriptionText(transcriptAnnotation)
             ) : (
               <HighlightedTranscript
-                text={
-                  transcriptAnnotation?.errors &&
-                  transcriptAnnotation.errors.length > 0
-                    ? `${transcriptAnnotation.text} [Partial transcription]`
-                    : (transcriptAnnotation?.text ?? '')
-                }
+                text={transcriptAnnotation?.text ?? ''}
                 ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
               />
             )}
@@ -346,8 +338,7 @@ export function TranscriptRow({
                   sx={{ cursor: 'copy' }}
                   disabled={
                     !transcriptAnnotation ||
-                    (transcriptAnnotation.errors.length > 0 &&
-                      !transcriptAnnotation.text)
+                    transcriptAnnotation.errors.length > 0
                   }
                 >
                   <ContentCopyIcon fontSize="small" />
