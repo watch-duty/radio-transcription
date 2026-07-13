@@ -195,7 +195,9 @@ class NormalizationEventProcessorTest(unittest.TestCase):
         mock_uploader = mock_uploader_cls.return_value
 
         # Mock processor output
-        mock_processor.transcode_to_flac.return_value = b"fake-flac-data"
+        mock_processor.transcode_derivatives.return_value = TranscodeResult(
+            flac_bytes=b"fake-flac-data", m4a_bytes=b"fake-m4a-data"
+        )
         mock_processor.is_mono.return_value = False
         mock_processor.downmix_to_mono.return_value = b"fake-mono-flac-data"
 
@@ -269,11 +271,8 @@ class NormalizationEventProcessorTest(unittest.TestCase):
         # Run process_event
         processor.process_event(cloud_event)
 
-        # Verify we copied M4A directly (no transcode_to_m4a called)
-        mock_processor.transcode_to_m4a.assert_not_called()
-
-        # Verify audio processor was called to transcode M4A to FLAC
-        mock_processor.transcode_to_flac.assert_called_once_with(
+        # Verify audio processor was called to transcode M4A via derivatives
+        mock_processor.transcode_derivatives.assert_called_once_with(
             b"fake-m4a-data"
         )
 

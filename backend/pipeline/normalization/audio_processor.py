@@ -74,28 +74,6 @@ class AudioProcessor:
             )
             raise RuntimeError(err_msg)
 
-    def transcode_to_flac(self, input_bytes: bytes) -> bytes:
-        """Transcodes input audio bytes of any format to lossless FLAC using ffmpeg."""
-        with self._temp_files(".flac") as (temp_filename,):
-            self._execute_ffmpeg(
-                [
-                    "ffmpeg",
-                    "-y",
-                    "-i",
-                    "pipe:0",
-                    "-f",
-                    "flac",
-                    "-compression_level",
-                    FLAC_COMPRESSION_LEVEL,
-                    temp_filename,
-                ],
-                input_bytes,
-                "FLAC transcode",
-                "Failed to transcode to FLAC via ffmpeg",
-            )
-            with open(temp_filename, "rb") as f:
-                return f.read()
-
     def is_mono(self, input_bytes: bytes) -> bool:
         """Returns True if the given FLAC bytes represent a mono audio track."""
         with io.BytesIO(input_bytes) as flac_io:
