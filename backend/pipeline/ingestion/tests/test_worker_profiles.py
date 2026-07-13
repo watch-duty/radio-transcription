@@ -172,6 +172,103 @@ class TestWorkerProfile(unittest.TestCase):
                     self.assertEqual(allocation.claims_per_cycle, 2)
                     self.assertFalse(allocation.claims_enabled)
 
+    def test_bcfy_calls_authority_mode_is_closed(self) -> None:
+        self.assertEqual(
+            set(worker_profiles.BcfyCallsAuthorityMode),
+            {
+                worker_profiles.BcfyCallsAuthorityMode.LEGACY_FEED,
+                worker_profiles.BcfyCallsAuthorityMode.SID_LEASE,
+            },
+        )
+        self.assertEqual(
+            {mode.value for mode in worker_profiles.BcfyCallsAuthorityMode},
+            {"legacy_feed", "sid_lease"},
+        )
+
+    def test_authority_derivation_overwrites_profile_claim_flags(self) -> None:
+        feed, sid = worker_profiles.MIXED_DORMANT_PROFILE.allocations
+        tampered = dataclasses.replace(
+            worker_profiles.MIXED_DORMANT_PROFILE,
+            allocations=(
+                dataclasses.replace(feed, claims_enabled=False),
+                dataclasses.replace(sid, claims_enabled=True),
+            ),
+        )
+
+        legacy = worker_profiles.derive_bcfy_calls_authority(
+            tampered,
+            worker_profiles.BcfyCallsAuthorityMode.LEGACY_FEED,
+        )
+        sid_lease = worker_profiles.derive_bcfy_calls_authority(
+            dataclasses.replace(
+                tampered,
+                allocations=(
+                    dataclasses.replace(feed, claims_enabled=False),
+                    dataclasses.replace(sid, claims_enabled=False),
+                ),
+            ),
+            worker_profiles.BcfyCallsAuthorityMode.SID_LEASE,
+        )
+
+        self.assertEqual(
+            tuple(
+                allocation.claims_enabled for allocation in legacy.allocations
+            ),
+            (True, False),
+        )
+        self.assertEqual(
+            tuple(
+                allocation.claims_enabled
+                for allocation in sid_lease.allocations
+            ),
+            (True, True),
+        )
+        self.assertEqual(
+            tuple(
+                (allocation.owned_cap, allocation.claims_per_cycle)
+                for allocation in sid_lease.allocations
+            ),
+            ((800, 20), (32, 2)),
+        )
+
+    def test_authority_derivation_rejects_incompatible_topologies(self) -> None:
+        cases = (
+            (
+                worker_profiles.LEGACY_PROFILE,
+                worker_profiles.BcfyCallsAuthorityMode.SID_LEASE,
+            ),
+            (
+                worker_profiles.SID_DORMANT_PROFILE,
+                worker_profiles.BcfyCallsAuthorityMode.LEGACY_FEED,
+            ),
+        )
+
+        for profile, mode in cases:
+            with self.subTest(profile=profile.name, mode=mode.value):
+                with self.assertRaisesRegex(ValueError, "requires.*domain"):
+                    worker_profiles.derive_bcfy_calls_authority(profile, mode)
+
+        with self.assertRaisesRegex(TypeError, "BcfyCallsAuthorityMode"):
+            worker_profiles.derive_bcfy_calls_authority(
+                worker_profiles.MIXED_DORMANT_PROFILE,
+                typing.cast(
+                    "worker_profiles.BcfyCallsAuthorityMode",
+                    "sid_lease",
+                ),
+            )
+
+    def test_authority_derivation_revalidates_process_envelope(self) -> None:
+        profile = dataclasses.replace(
+            worker_profiles.MIXED_DORMANT_PROFILE,
+            process_owned_cap=800,
+        )
+
+        with self.assertRaisesRegex(ValueError, "exceed.*envelope"):
+            worker_profiles.derive_bcfy_calls_authority(
+                profile,
+                worker_profiles.BcfyCallsAuthorityMode.SID_LEASE,
+            )
+
     def test_sid_budget_is_one_total_cycle_allocation(self) -> None:
         profile = worker_profiles.MIXED_DORMANT_PROFILE
         sid_allocations = [

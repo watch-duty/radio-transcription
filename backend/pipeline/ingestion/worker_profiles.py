@@ -19,6 +19,13 @@ class AuthorityKind(enum.StrEnum):
     SID_LEASE = "sid_lease"
 
 
+class BcfyCallsAuthorityMode(enum.StrEnum):
+    """Startup-only authority selection for Broadcastify Calls."""
+
+    LEGACY_FEED = "legacy_feed"
+    SID_LEASE = "sid_lease"
+
+
 class ResourceClass(enum.StrEnum):
     """Stable deployment resource classes, never storage authority."""
 
@@ -323,6 +330,63 @@ def allocation_for_domain(
         if allocation.domain_id is domain_id:
             return allocation
     return None
+
+
+def derive_bcfy_calls_authority(
+    profile: WorkerProfile,
+    mode: BcfyCallsAuthorityMode,
+) -> WorkerProfile:
+    """Derive both Calls claim authorities from one closed startup mode.
+
+    ``DomainAllocation.claims_enabled`` is an effective runtime output. The
+    input profile contributes only selected topology and admission capacity;
+    its claim flags cannot independently select Broadcastify Calls ownership.
+
+    Args:
+        profile: Immutable topology and capacity description.
+        mode: Sole process-wide Broadcastify Calls authority selection.
+
+    Returns:
+        A validated frozen profile with both claim authorities derived.
+
+    Raises:
+        TypeError: If ``mode`` is not a ``BcfyCallsAuthorityMode``.
+        ValueError: If the topology cannot host the selected authority or the
+            derived enabled capacity exceeds the process envelope.
+    """
+    validated = validate_worker_profile(profile)
+    if not isinstance(mode, BcfyCallsAuthorityMode):
+        msg = "mode must be a BcfyCallsAuthorityMode"
+        raise TypeError(msg)
+
+    feed_allocation = allocation_for_domain(
+        validated,
+        grant_control.DomainId.FEED,
+    )
+    sid_allocation = allocation_for_domain(
+        validated,
+        grant_control.DomainId.SID,
+    )
+    if mode is BcfyCallsAuthorityMode.LEGACY_FEED and feed_allocation is None:
+        msg = "legacy_feed authority requires a selected Feed domain"
+        raise ValueError(msg)
+    if mode is BcfyCallsAuthorityMode.SID_LEASE and sid_allocation is None:
+        msg = "sid_lease authority requires a selected SID domain"
+        raise ValueError(msg)
+
+    allocations = tuple(
+        dataclasses.replace(
+            allocation,
+            claims_enabled=(
+                allocation.domain_id is grant_control.DomainId.FEED
+                or mode is BcfyCallsAuthorityMode.SID_LEASE
+            ),
+        )
+        for allocation in validated.allocations
+    )
+    return validate_worker_profile(
+        dataclasses.replace(validated, allocations=allocations)
+    )
 
 
 def resolve_worker_profile(

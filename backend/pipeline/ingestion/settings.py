@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import math
 import os
+import typing
 import uuid
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from types import MappingProxyType
 
 from backend.pipeline.ingestion import (
     grant_control,
@@ -14,7 +15,7 @@ from backend.pipeline.ingestion import (
 from backend.pipeline.storage import feed_store
 from backend.pipeline.storage.settings import AlloyDBSettings
 
-if TYPE_CHECKING:
+if typing.TYPE_CHECKING:
     from backend.pipeline.storage.feed_store import SourceType
 
 
@@ -147,6 +148,23 @@ def load_worker_profile_from_env() -> worker_profiles.WorkerProfile:
     )
 
 
+def _load_bcfy_calls_authority_mode_from_env() -> (
+    worker_profiles.BcfyCallsAuthorityMode
+):
+    """Read the exact closed Calls authority mode once at construction."""
+    value = os.environ.get("BCFY_CALLS_AUTHORITY_MODE")
+    if value is None:
+        return worker_profiles.BcfyCallsAuthorityMode.LEGACY_FEED
+    try:
+        return worker_profiles.BcfyCallsAuthorityMode(value)
+    except ValueError as exc:
+        msg = (
+            "BCFY_CALLS_AUTHORITY_MODE must be exactly "
+            "'legacy_feed' or 'sid_lease'"
+        )
+        raise ValueError(msg) from exc
+
+
 @dataclass(frozen=True, kw_only=True)
 class CollectorSettings:
     """
@@ -161,6 +179,9 @@ class CollectorSettings:
     # Immutable process topology, resolved before every other default factory.
     worker_profile: worker_profiles.WorkerProfile = field(
         default_factory=load_worker_profile_from_env,
+    )
+    bcfy_calls_authority_mode: worker_profiles.BcfyCallsAuthorityMode = field(
+        default_factory=_load_bcfy_calls_authority_mode_from_env,
     )
 
     # Worker identity
@@ -238,6 +259,7 @@ class CollectorSettings:
     caps: dict[SourceType, int] = field(
         default_factory=lambda: _CAPS_UNSET,
     )
+    feed_claim_caps: typing.Mapping[SourceType, int] = field(init=False)
 
     # GCS
     audio_staging_bucket: str = field(
@@ -402,7 +424,14 @@ class CollectorSettings:
                 "for each process epoch"
             )
             raise ValueError(msg)
-        worker_profiles.validate_worker_profile(self.worker_profile)
+        object.__setattr__(
+            self,
+            "worker_profile",
+            worker_profiles.derive_bcfy_calls_authority(
+                self.worker_profile,
+                self.bcfy_calls_authority_mode,
+            ),
+        )
         feed_allocation = worker_profiles.allocation_for_domain(
             self.worker_profile,
             grant_control.DomainId.FEED,
@@ -413,6 +442,17 @@ class CollectorSettings:
                 "caps",
                 _load_caps_from_env() if feed_allocation is not None else {},
             )
+        claim_caps = dict(self.caps) if feed_allocation is not None else {}
+        if (
+            self.bcfy_calls_authority_mode
+            is worker_profiles.BcfyCallsAuthorityMode.SID_LEASE
+        ):
+            claim_caps.pop(feed_store.SourceType.BCFY_CALLS, None)
+        object.__setattr__(
+            self,
+            "feed_claim_caps",
+            MappingProxyType(claim_caps),
+        )
         if self.continuous_pubsub_topic_path is _TOPIC_UNSET:
             if feed_allocation is not None:
                 object.__setattr__(

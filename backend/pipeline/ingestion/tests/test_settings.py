@@ -1,3 +1,4 @@
+import dataclasses
 import unittest
 import uuid
 from unittest.mock import patch
@@ -220,12 +221,24 @@ class TestCollectorSettings(unittest.TestCase):
     ) -> None:
         profile = worker_profiles.SID_DORMANT_PROFILE
 
-        with patch.dict("os.environ", _required_env(), clear=True):
+        env = {
+            **_required_env(),
+            "BCFY_CALLS_AUTHORITY_MODE": "sid_lease",
+        }
+        with patch.dict("os.environ", env, clear=True):
             settings = CollectorSettings(worker_profile=profile)
 
-        self.assertIs(settings.worker_profile, profile)
+        self.assertEqual(
+            dataclasses.replace(
+                settings.worker_profile.allocations[0],
+                claims_enabled=False,
+            ),
+            profile.allocations[0],
+        )
+        self.assertTrue(settings.worker_profile.allocations[0].claims_enabled)
         self.assertEqual(settings.max_feeds_per_worker, 0)
         self.assertEqual(settings.lease_admission_cycle_budget, 0)
+        self.assertEqual(settings.feed_claim_caps, {})
 
     def test_sid_only_settings_skip_feed_caps_and_topics(self) -> None:
         env = _required_env()
@@ -233,6 +246,7 @@ class TestCollectorSettings(unittest.TestCase):
         env.update(
             {
                 "WORKER_PROFILE": "sid-dormant",
+                "BCFY_CALLS_AUTHORITY_MODE": "sid_lease",
                 "MAX_FEEDS_PER_WORKER": "not-an-int",
                 "LEASE_ADMISSION_CYCLE_BUDGET": "not-an-int",
                 "CAP_BCFY_CALLS": "not-an-int",
@@ -244,6 +258,7 @@ class TestCollectorSettings(unittest.TestCase):
             settings = CollectorSettings()
 
         self.assertEqual(settings.caps, {})
+        self.assertEqual(settings.feed_claim_caps, {})
         self.assertEqual(settings.continuous_pubsub_topic_path, "")
         self.assertIsNone(settings.segmented_pubsub_topic_path)
 
@@ -329,10 +344,18 @@ class TestCollectorSettings(unittest.TestCase):
         self,
     ) -> None:
         cases = (
-            ({"WORKER_PROFILE": "sid-dormant"}, 32, 2),
             (
                 {
                     "WORKER_PROFILE": "sid-dormant",
+                    "BCFY_CALLS_AUTHORITY_MODE": "sid_lease",
+                },
+                32,
+                2,
+            ),
+            (
+                {
+                    "WORKER_PROFILE": "sid-dormant",
+                    "BCFY_CALLS_AUTHORITY_MODE": "sid_lease",
                     "MAX_SIDS_PER_WORKER": "31",
                     "SID_LEASE_ADMISSION_CYCLE_BUDGET": "1",
                 },
@@ -355,6 +378,147 @@ class TestCollectorSettings(unittest.TestCase):
                     expected_budget,
                 )
                 self.assertFalse(allocation.claims_enabled)
+
+    def test_authority_mode_defaults_and_parses_exact_values(self) -> None:
+        cases = (
+            ({}, worker_profiles.BcfyCallsAuthorityMode.LEGACY_FEED),
+            (
+                {"BCFY_CALLS_AUTHORITY_MODE": "legacy_feed"},
+                worker_profiles.BcfyCallsAuthorityMode.LEGACY_FEED,
+            ),
+            (
+                {
+                    "WORKER_PROFILE": "mixed-dormant",
+                    "BCFY_CALLS_AUTHORITY_MODE": "sid_lease",
+                },
+                worker_profiles.BcfyCallsAuthorityMode.SID_LEASE,
+            ),
+        )
+
+        for additions, expected in cases:
+            with self.subTest(additions=additions):
+                env = {**_required_env(), **additions}
+                with patch.dict("os.environ", env, clear=True):
+                    settings = CollectorSettings()
+
+                self.assertIs(settings.bcfy_calls_authority_mode, expected)
+                if (
+                    expected
+                    is worker_profiles.BcfyCallsAuthorityMode.LEGACY_FEED
+                ):
+                    self.assertEqual(settings.feed_claim_caps, settings.caps)
+
+    def test_authority_mode_rejects_nonexact_environment_values(self) -> None:
+        for value in (
+            "",
+            " ",
+            "SID_LEASE",
+            " sid_lease",
+            "sid_lease ",
+            "unknown",
+        ):
+            with self.subTest(value=value):
+                env = {
+                    **_required_env(),
+                    "WORKER_PROFILE": "mixed-dormant",
+                    "BCFY_CALLS_AUTHORITY_MODE": value,
+                }
+                with patch.dict("os.environ", env, clear=True):
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "BCFY_CALLS_AUTHORITY_MODE",
+                    ):
+                        CollectorSettings()
+
+    def test_authority_mode_rejects_incompatible_profiles(self) -> None:
+        cases = (
+            ("legacy", "sid_lease"),
+            ("sid-dormant", "legacy_feed"),
+        )
+
+        for profile, mode in cases:
+            with self.subTest(profile=profile, mode=mode):
+                env = {
+                    **_required_env(),
+                    "WORKER_PROFILE": profile,
+                    "BCFY_CALLS_AUTHORITY_MODE": mode,
+                }
+                with patch.dict("os.environ", env, clear=True):
+                    with self.assertRaisesRegex(ValueError, "requires.*domain"):
+                        CollectorSettings()
+
+    def test_authority_derives_static_and_effective_feed_caps(self) -> None:
+        env = {
+            **_required_env(),
+            "WORKER_PROFILE": "mixed-dormant",
+            "BCFY_CALLS_AUTHORITY_MODE": "sid_lease",
+            "CAP_BCFY_CALLS": "401",
+        }
+        explicit_caps = {
+            SourceType.BCFY_FEEDS: 11,
+            SourceType.BCFY_CALLS: 12,
+            SourceType.OPENMHZ: 13,
+        }
+
+        with patch.dict("os.environ", env, clear=True):
+            from_env = CollectorSettings()
+            explicit = CollectorSettings(caps=explicit_caps)
+
+        self.assertEqual(from_env.caps[SourceType.BCFY_CALLS], 401)
+        self.assertNotIn(SourceType.BCFY_CALLS, from_env.feed_claim_caps)
+        self.assertEqual(
+            set(from_env.feed_claim_caps),
+            set(from_env.caps) - {SourceType.BCFY_CALLS},
+        )
+        self.assertEqual(
+            explicit_caps,
+            {
+                SourceType.BCFY_FEEDS: 11,
+                SourceType.BCFY_CALLS: 12,
+                SourceType.OPENMHZ: 13,
+            },
+        )
+        self.assertEqual(
+            dict(explicit.feed_claim_caps),
+            {
+                SourceType.BCFY_FEEDS: 11,
+                SourceType.OPENMHZ: 13,
+            },
+        )
+        with self.assertRaises(TypeError):
+            explicit.feed_claim_caps[SourceType.BCFY_FEEDS] = 99
+
+    def test_authority_is_read_once_and_frozen_after_construction(self) -> None:
+        class CountingEnvironment(dict[str, str]):
+            authority_reads = 0
+
+            def get(self, key: str, default: str | None = None) -> str | None:
+                if key == "BCFY_CALLS_AUTHORITY_MODE":
+                    self.authority_reads += 1
+                return super().get(key, default)
+
+        env = CountingEnvironment(
+            {
+                **_required_env(),
+                "WORKER_PROFILE": "mixed-dormant",
+                "BCFY_CALLS_AUTHORITY_MODE": "sid_lease",
+            }
+        )
+
+        with patch.object(settings_module.os, "environ", env):
+            settings = CollectorSettings()
+            original_profile = settings.worker_profile
+            original_caps = settings.feed_claim_caps
+            env["BCFY_CALLS_AUTHORITY_MODE"] = "legacy_feed"
+
+            self.assertIs(
+                settings.bcfy_calls_authority_mode,
+                worker_profiles.BcfyCallsAuthorityMode.SID_LEASE,
+            )
+            self.assertIs(settings.worker_profile, original_profile)
+            self.assertIs(settings.feed_claim_caps, original_caps)
+
+        self.assertEqual(env.authority_reads, 1)
 
     def test_invalid_profile_fails_before_required_setting_reads(self) -> None:
         with (
