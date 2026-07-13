@@ -281,12 +281,6 @@ class GeminiTranscriber(base.Transcriber):
             msg = f"Incomplete response from Gemini (finish_reason: None). (Response ID: {response_id})"
             raise GeminiTransientTranscriptionError(msg)
 
-        if reason_str == types.FinishReason.MAX_TOKENS.name:
-            logger.warning(
-                "Gemini response reached MAX_TOKENS limit. Transcript is likely truncated. Response ID: %s",
-                response_id,
-            )
-
         if reason_str == types.FinishReason.RECITATION.name:
             logger.info(
                 "Treating RECITATION block as %s fallback.",
@@ -318,6 +312,10 @@ class GeminiTranscriber(base.Transcriber):
                 transcript = "".join(text_parts).strip()
 
         if reason_str == types.FinishReason.MAX_TOKENS.name:
+            logger.warning(
+                "Gemini response reached MAX_TOKENS limit. Transcript is likely truncated. Response ID: %s",
+                response_id,
+            )
             raise exceptions.PartialTranscriptionError(
                 partial_text=transcript,
                 reason="MAX_TOKENS",
