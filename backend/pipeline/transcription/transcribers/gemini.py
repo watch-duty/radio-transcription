@@ -311,33 +311,19 @@ class GeminiTranscriber(base.Transcriber):
 
             raise exceptions.InvalidFinishReasonError(msg)
 
-        if not candidate.content or not candidate.content.parts:
-            if reason_str == types.FinishReason.MAX_TOKENS.name:
-                raise exceptions.PartialTranscriptionError(
-                    partial_text="", reason="MAX_TOKENS"
-                )
-            if reason_str == types.FinishReason.STOP.name:
-                logger.info(
-                    "Gemini returned empty content (finish reason: STOP)."
-                )
-                return ""
-
-            msg = (
-                f"Gemini response candidate had no content or parts. "
-                f"Finish reason: {reason_str}. (Response ID: {response_id})"
-            )
-            raise exceptions.NonRetryableError(msg)
-
-        text_parts = [p.text for p in candidate.content.parts if p.text]
-        if not text_parts:
-            return ""
-
-        transcript = "".join(text_parts).strip()
+        transcript = ""
+        if candidate.content and candidate.content.parts:
+            text_parts = [p.text for p in candidate.content.parts if p.text]
+            if text_parts:
+                transcript = "".join(text_parts).strip()
 
         if reason_str == types.FinishReason.MAX_TOKENS.name:
             raise exceptions.PartialTranscriptionError(
                 partial_text=transcript,
                 reason="MAX_TOKENS",
             )
+
+        if not transcript:
+            logger.info("Gemini returned empty content (finish reason: STOP).")
 
         return transcript
