@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import datetime
 import os
 import threading
@@ -14,6 +15,7 @@ import aiohttp
 
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
+    provider,
 )
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
@@ -290,6 +292,322 @@ class TestSharedJwtToken(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(token, "token")
         self.assertEqual(mock_jwt.call_count, 1)
         self.assertIsNone(bcfy_calls_collector._jwt_state.refresh_task)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._get_jwt_token"
+    )
+    async def test_legacy_and_provider_callers_share_one_fetch(
+        self,
+        mock_jwt: MagicMock,
+    ) -> None:
+        def _slow_fetch() -> str:
+            time.sleep(0.01)
+            return "shared-token"
+
+        mock_jwt.side_effect = _slow_fetch
+        json_fetcher = AsyncMock(return_value={"calls": []})
+        client = provider.CallsProviderClient(
+            MagicMock(),
+            "https://calls.example/live",
+            _token_loader=(
+                bcfy_calls_collector._get_shared_jwt_token_with_retry
+            ),
+            _json_fetcher=json_fetcher,
+        )
+
+        legacy_token, page = await asyncio.gather(
+            bcfy_calls_collector._get_shared_jwt_token(),
+            client.fetch_group_page(
+                "00123-00045",
+                None,
+                subject_id="feed-id",
+                shutdown_event=asyncio.Event(),
+            ),
+        )
+
+        self.assertEqual(legacy_token, "shared-token")
+        self.assertEqual(page.calls, ())
+        self.assertEqual(mock_jwt.call_count, 1)
+
+
+class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
+    """Shared provider contracts for legacy groups and SID polling."""
+
+    def setUp(self) -> None:
+        provider._reset_jwt_cache_for_tests()
+        provider._jwt_state.token = "sensitive-token"
+        self.session = MagicMock()
+        self.shutdown = asyncio.Event()
+        self.client = provider.CallsProviderClient(
+            self.session,
+            "https://calls.example/live",
+        )
+
+    def _response(
+        self,
+        payload: object,
+        *,
+        status: int = 200,
+        headers: dict[str, str] | None = None,
+    ) -> MagicMock:
+        response = AsyncMock(status=status)
+        response.headers = headers or {}
+        response.json.return_value = payload
+        response.read.return_value = b"audio"
+        return MagicMock(
+            __aenter__=AsyncMock(return_value=response),
+            __aexit__=AsyncMock(return_value=False),
+        )
+
+    async def test_group_and_sid_selectors_are_exclusive(self) -> None:
+        self.session.get.side_effect = [
+            self._response({"calls": [], "lastPos": "group-pos"}),
+            self._response({"calls": [], "lastPos": "sid-pos"}),
+        ]
+        sid_position = datetime.datetime(
+            2026,
+            7,
+            12,
+            12,
+            0,
+            tzinfo=datetime.UTC,
+        )
+
+        group_page = await self.client.fetch_group_page(
+            "00123-00045",
+            1_700_000_001,
+            subject_id="feed-id",
+            shutdown_event=self.shutdown,
+        )
+        sid_page = await self.client.fetch_sid_page(
+            "00123",
+            sid_position,
+            subject_id="lease-id",
+            shutdown_event=self.shutdown,
+        )
+
+        self.assertEqual(group_page.last_pos, "group-pos")
+        self.assertEqual(sid_page.last_pos, "sid-pos")
+        group_request = self.session.get.call_args_list[0]
+        sid_request = self.session.get.call_args_list[1]
+        self.assertEqual(
+            group_request.kwargs["params"],
+            {"groups": "00123-00045", "pos": 1_700_000_001},
+        )
+        self.assertEqual(
+            sid_request.kwargs["params"],
+            {"sid": "00123", "pos": int(sid_position.timestamp())},
+        )
+        self.assertEqual(
+            group_request.args[0],
+            "https://calls.example/live/",
+        )
+        self.assertEqual(
+            group_request.kwargs["headers"]["Authorization"],
+            "Bearer sensitive-token",
+        )
+        self.assertNotIn("sid", group_request.kwargs["params"])
+        self.assertNotIn("groups", sid_request.kwargs["params"])
+
+    async def test_private_fetch_requires_exactly_one_selector(self) -> None:
+        for group_id, sid in ((None, None), ("group", "sid")):
+            with self.subTest(group_id=group_id, sid=sid):
+                with self.assertRaises(ValueError):
+                    await self.client._fetch_page(
+                        group_id=group_id,
+                        sid=sid,
+                        pos=None,
+                        subject_id="subject",
+                        shutdown_event=self.shutdown,
+                    )
+
+        self.session.get.assert_not_called()
+
+    async def test_envelope_is_frozen_and_preserves_raw_items(self) -> None:
+        malformed_item = {"not": "validated here"}
+        self.session.get.return_value = self._response(
+            {
+                "calls": [malformed_item, "raw sibling"],
+                "lastPos": "1700000010.5",
+            }
+        )
+
+        page = await self.client.fetch_group_page(
+            "00123-00045",
+            None,
+            subject_id="feed-id",
+            shutdown_event=self.shutdown,
+        )
+
+        self.assertEqual(page.calls, (malformed_item, "raw sibling"))
+        self.assertEqual(page.last_pos, "1700000010.5")
+        self.assertTrue(hasattr(type(page), "__slots__"))
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            page.calls = ()  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+
+    async def test_missing_calls_is_empty_and_non_list_fails(self) -> None:
+        self.session.get.side_effect = [
+            self._response({"lastPos": 123}),
+            self._response({"calls": {"not": "a list"}}),
+            self._response([{"calls": []}]),
+        ]
+
+        missing = await self.client.fetch_group_page(
+            "00123-00045",
+            None,
+            subject_id="feed-id",
+            shutdown_event=self.shutdown,
+        )
+        self.assertEqual(missing.calls, ())
+        self.assertEqual(missing.last_pos, 123)
+        for case_index in range(2):
+            with self.subTest(case_index=case_index):
+                with self.assertRaises(FeedFailure) as context:
+                    await self.client.fetch_group_page(
+                        "00123-00045",
+                        None,
+                        subject_id="feed-id",
+                        shutdown_event=self.shutdown,
+                    )
+                self.assertIs(
+                    context.exception.status_reason,
+                    FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+                )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.aiohttp_requests.random.uniform",
+        return_value=0.25,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".provider.control_flow.sleep_or_cancel",
+        new_callable=AsyncMock,
+    )
+    async def test_metadata_retry_uses_one_two_four_base_plus_jitter(
+        self,
+        mock_sleep: AsyncMock,
+        _mock_uniform: MagicMock,
+    ) -> None:
+        self.session.get.side_effect = [
+            self._response({}, status=503),
+            self._response({}, status=503),
+            self._response({}, status=503),
+            self._response({"calls": []}),
+        ]
+
+        await self.client.fetch_group_page(
+            "00123-00045",
+            None,
+            subject_id="feed-id",
+            shutdown_event=self.shutdown,
+        )
+
+        self.assertEqual(
+            [call.args[1] for call in mock_sleep.await_args_list],
+            [1.25, 2.25, 4.25],
+        )
+        self.assertEqual(self.session.get.call_count, 4)
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".provider.control_flow.sleep_or_cancel",
+        new_callable=AsyncMock,
+    )
+    async def test_metadata_retry_honors_numeric_retry_after(
+        self,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        self.session.get.side_effect = [
+            self._response({}, status=429, headers={"Retry-After": "7"}),
+            self._response({"calls": []}),
+        ]
+
+        await self.client.fetch_group_page(
+            "00123-00045",
+            None,
+            subject_id="feed-id",
+            shutdown_event=self.shutdown,
+        )
+
+        mock_sleep.assert_awaited_once_with(self.shutdown, 7.0)
+
+    async def test_download_uses_runtime_session_without_closing_it(
+        self,
+    ) -> None:
+        self.session.get.return_value = self._response({}, status=200)
+        headers: dict[str, str] = {}
+
+        result = await self.client.download_audio(
+            "https://media.example/audio.mp3?signature=sensitive",
+            shutdown_event=self.shutdown,
+            out_headers=headers,
+        )
+
+        self.assertEqual(result, b"audio")
+        self.session.close.assert_not_called()
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".provider.control_flow.sleep_or_cancel",
+        new_callable=AsyncMock,
+    )
+    async def test_media_transport_error_redacts_signed_url(
+        self,
+        mock_sleep: AsyncMock,
+    ) -> None:
+        signed_url = "https://media.example/audio?signature=sensitive"
+        self.session.get.side_effect = aiohttp.InvalidURL(signed_url)
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.aiohttp_requests",
+            level="WARNING",
+        ) as captured:
+            result = await self.client.download_audio(
+                signed_url,
+                shutdown_event=self.shutdown,
+            )
+
+        failure = _require_item_failure(result)
+        logs = "\n".join(captured.output)
+        self.assertEqual(failure.reason, "item_download_failed: ClientError")
+        self.assertNotIn(signed_url, logs)
+        self.assertNotIn("signature=sensitive", logs)
+        self.assertNotIn(signed_url, failure.reason)
+        self.assertEqual(self.session.get.call_count, 4)
+        self.assertEqual(mock_sleep.await_count, 3)
+
+    async def test_tokens_headers_and_media_urls_are_not_logged(self) -> None:
+        self.session.get.side_effect = [
+            self._response({}, status=503),
+            self._response({"calls": []}),
+            self._response({}, status=503),
+            self._response({}, status=200),
+        ]
+
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors",
+            level="WARNING",
+        ) as captured:
+            await self.client.fetch_group_page(
+                "00123-00045",
+                None,
+                subject_id="feed-id",
+                shutdown_event=self.shutdown,
+            )
+            await self.client.download_audio(
+                "https://media.example/audio.mp3?signature=sensitive",
+                shutdown_event=self.shutdown,
+            )
+
+        logs = "\n".join(captured.output)
+        for secret in (
+            "sensitive-token",
+            "Authorization",
+            "signature=sensitive",
+        ):
+            self.assertNotIn(secret, logs)
+        self.session.close.assert_not_called()
 
 
 class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
@@ -824,6 +1142,35 @@ class TestCreateChunkFromCall(unittest.IsolatedAsyncioTestCase):
         ".bcfy_calls_collector._download_audio",
         new_callable=AsyncMock,
     )
+    async def test_runtime_error_does_not_log_signed_url(
+        self,
+        mock_dl: AsyncMock,
+    ) -> None:
+        signed_url = "https://media.example/audio?signature=sensitive"
+        mock_dl.side_effect = RuntimeError(signed_url)
+
+        with self.assertLogs(
+            bcfy_calls_collector.logger, level="ERROR"
+        ) as logs:
+            result = await bcfy_calls_collector._create_chunk_from_call(
+                self.session,
+                {"url": signed_url},
+                signed_url,
+                self.shutdown,
+                "test-session",
+                datetime.datetime(2026, 1, 1, tzinfo=datetime.UTC),
+            )
+
+        self.assertNotIn(signed_url, "\n".join(logs.output))
+        self.assertNotIn("signature=sensitive", "\n".join(logs.output))
+        failure = _require_item_failure(result.failure)
+        self.assertEqual(failure.reason, "item_download_failed")
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._download_audio",
+        new_callable=AsyncMock,
+    )
     async def test_unexpected_exception_returns_none(
         self, mock_dl: AsyncMock
     ) -> None:
@@ -1012,6 +1359,42 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
             FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
         )
         self.assertEqual(str(ctx.exception), "missing_source_feed_id")
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._get_shared_jwt_token_with_retry",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.bcfy_calls"
+        ".bcfy_calls_collector._fetch_calls",
+        new_callable=AsyncMock,
+    )
+    async def test_jwt_shutdown_returns_cleanly(
+        self,
+        mock_fetch: AsyncMock,
+        mock_token_loader: AsyncMock,
+    ) -> None:
+        async def stop_during_token_load(
+            *args: object, **kwargs: object
+        ) -> None:
+            self.shutdown.set()
+
+        mock_token_loader.side_effect = stop_during_token_load
+
+        events = [
+            event
+            async for event in bcfy_calls_collector.capture_bcfy_calls(
+                self.leased_feed,
+                self.shutdown,
+                self.url_base,
+                _default_resources(),
+            )
+        ]
+
+        self.assertEqual(events, [])
+        mock_token_loader.assert_awaited_once()
+        mock_fetch.assert_not_awaited()
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"
