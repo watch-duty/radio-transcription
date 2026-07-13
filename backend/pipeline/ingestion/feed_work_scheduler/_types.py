@@ -1285,10 +1285,11 @@ class OutcomeUnknownCause(enum.StrEnum):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class OutcomeUnknownRetentionRequest:
-    """One exact sticky retention request for an active cohort."""
+    """One exact sticky unknown/integrity request for an active cohort."""
 
     cause: OutcomeUnknownCause
     terminal_facts: CohortTerminalFacts
+    failure: BaseException | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.cause, OutcomeUnknownCause):
@@ -1297,11 +1298,19 @@ class OutcomeUnknownRetentionRequest:
         if type(self.terminal_facts) is not CohortTerminalFacts:
             message = "terminal_facts must be exact CohortTerminalFacts"
             raise TypeError(message)
-        if (
-            self.terminal_facts.disposition
-            is not CohortTerminalDisposition.OUTCOME_UNKNOWN
-        ):
-            message = "retention requires OUTCOME_UNKNOWN facts"
+        disposition = self.terminal_facts.disposition
+        if disposition not in {
+            CohortTerminalDisposition.INTEGRITY_FAILURE,
+            CohortTerminalDisposition.OUTCOME_UNKNOWN,
+        }:
+            message = "retention requires unknown or integrity facts"
+            raise CohortIntegrityError(message)
+        if disposition is CohortTerminalDisposition.INTEGRITY_FAILURE:
+            if not isinstance(self.failure, BaseException):
+                message = "integrity retention requires its exact failure"
+                raise TypeError(message)
+        elif self.failure is not None:
+            message = "outcome-unknown retention cannot carry a failure"
             raise CohortIntegrityError(message)
 
 
@@ -1310,7 +1319,7 @@ _CAPABILITY_SEAL = object()
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class CohortRetentionHandle:
-    """Scheduler-minted complete-identity outcome-unknown capability."""
+    """Scheduler-minted complete-identity sticky-retention capability."""
 
     identities: tuple[CohortRecordIdentity, ...]
     _callback: typing.Callable[[OutcomeUnknownRetentionRequest], None]
@@ -1322,7 +1331,7 @@ class CohortRetentionHandle:
             raise CohortIntegrityError(message)
 
     def retain(self, request: OutcomeUnknownRetentionRequest) -> None:
-        """Retain this exact active cohort for one unknown result."""
+        """Retain this exact active cohort for uncertainty or integrity."""
         self._callback(request)
 
 

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import random
+import typing
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -13,6 +15,80 @@ logger = logging.getLogger(__name__)
 
 class LeaseExpiredError(Exception):
     """Raised when a retry loop observes confirmed lease loss."""
+
+
+class CommittedAwaitableCancelled(BaseException):
+    """An already-started committed operation cancelled internally.
+
+    Caller cancellation is intentionally represented on
+    :class:`CommittedAwaitableSettlement` instead.  This exception therefore
+    means the child operation itself ended cancelled and its external outcome
+    cannot be inferred from the awaitable.
+    """
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class CommittedAwaitableSettlement[ResultT]:
+    """Definitive child outcome plus the first deferred cancellation."""
+
+    result: ResultT | None
+    failure: BaseException | None = None
+    cancellation: asyncio.CancelledError | None = None
+
+    def unwrap(self) -> ResultT:
+        """Return the child value or re-raise its exact failure."""
+        if self.failure is not None:
+            raise self.failure
+        return typing.cast("ResultT", self.result)
+
+
+async def settle_committed_awaitable[ResultT](
+    awaitable: typing.Awaitable[ResultT],
+) -> CommittedAwaitableSettlement[ResultT]:
+    """Wait for an already-started operation despite caller cancellation.
+
+    The first exact ``CancelledError`` object is remembered while the child is
+    shielded to a definitive result.  Repeated cancellation cannot replace
+    that evidence.  The caller decides how to hand off or retain the result
+    before re-raising the remembered exception.
+    """
+    task = asyncio.ensure_future(awaitable)
+    cancellation: asyncio.CancelledError | None = None
+    while True:
+        try:
+            result = await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            if task.done():
+                if task.cancelled():
+                    message = (
+                        "committed operation was cancelled with unknown outcome"
+                    )
+                    raise CommittedAwaitableCancelled(message) from exc
+                try:
+                    result = task.result()
+                except BaseException as failure:
+                    return CommittedAwaitableSettlement(
+                        None,
+                        failure=failure,
+                        cancellation=cancellation or exc,
+                    )
+                return CommittedAwaitableSettlement(
+                    result,
+                    cancellation=cancellation or exc,
+                )
+            if cancellation is None:
+                cancellation = exc
+            continue
+        except BaseException as exc:
+            return CommittedAwaitableSettlement(
+                None,
+                failure=exc,
+                cancellation=cancellation,
+            )
+        return CommittedAwaitableSettlement(
+            result,
+            cancellation=cancellation,
+        )
 
 
 # TODO: https://linear.app/watchduty/issue/GOO-566/ - Move retry callers to a
@@ -28,6 +104,7 @@ async def retry_with_lease_check[T](  # noqa: PLR0912
     retryable: tuple[type[Exception], ...] = (Exception,),
     operation_name: str = "operation",
     retry_state_changed: Callable[[bool], None] | None = None,
+    attempt_observer: Callable[[int], None] | None = None,
 ) -> T:
     """
     Retry an async callable, aborting immediately if the lease is lost.
@@ -53,6 +130,8 @@ async def retry_with_lease_check[T](  # noqa: PLR0912
         operation_name: Label for log messages.
         retry_state_changed: Optional non-awaiting callback that reports the
             exact bounded-backoff interval.
+        attempt_observer: Optional non-awaiting callback invoked immediately
+            before each actual call with its one-based attempt number.
 
     Returns:
         The return value of *fn* on success.
@@ -71,6 +150,8 @@ async def retry_with_lease_check[T](  # noqa: PLR0912
         if shutdown.is_set():
             raise asyncio.CancelledError
 
+        if attempt_observer is not None:
+            attempt_observer(attempt + 1)
         try:
             return await fn(*args)
         except Exception as exc:

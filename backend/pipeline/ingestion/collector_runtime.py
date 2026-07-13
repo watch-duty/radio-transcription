@@ -21,10 +21,8 @@ import aiohttp
 import asyncpg
 import uvloop
 from aiohttp import web
-from google.api_core import exceptions as google_exceptions
-from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
-from backend.pipeline.common import gcp_helper, tracing_utils
+from backend.pipeline.common import tracing_utils
 from backend.pipeline.common.actor_identity import (
     resolve_runtime_service_actor_id,
 )
@@ -44,6 +42,9 @@ from backend.pipeline.ingestion import (
     source_runtime_specs,
     status_reason_detail,
     worker_profiles,
+)
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    pipeline as bcfy_calls_pipeline,
 )
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     provider as bcfy_calls_provider,
@@ -72,7 +73,6 @@ from backend.pipeline.ingestion.retry import (
     retry_with_lease_check,
 )
 from backend.pipeline.ingestion.router import resolve_topic_path
-from backend.pipeline.ingestion.slo_contract import EVENT_TYPE_CHUNK_INGESTED
 from backend.pipeline.storage import feed_lifecycle, ingestion_lease_store
 from backend.pipeline.storage.connection import (
     close_pool,
@@ -100,6 +100,9 @@ CaptureFn = Callable[
     AsyncIterator[CaptureEvent],
 ]
 logger = logging.getLogger(__name__)
+# Compatibility seam for legacy tests and runtime patchers.  Both names point
+# at the same module object used by the extracted primitives.
+gcp_helper = bcfy_calls_pipeline.gcp_helper
 
 _PIPELINE_GCS_UPLOAD_FAILED = "gcs_upload_failed"
 _PIPELINE_BOOKMARK_WRITE_FAILED = "bookmark_write_failed"
@@ -107,27 +110,6 @@ _NON_BUDGETED_RETRY_MIN_SEC = 5 * 60
 _NON_BUDGETED_RETRY_MAX_SEC = 15 * 60
 INGESTION_IO_MAX_WORKERS = 512
 _UUID_INT_RANGE = 1 << 128
-
-
-class _CommittedMutationCancelled(BaseException):
-    """A committed-stage child stopped without a knowable outcome."""
-
-
-async def _settle_committed_awaitable[ResultT](
-    awaitable: typing.Awaitable[ResultT],
-) -> ResultT:
-    """Defer caller cancellation until committed mutation has settled."""
-    task = asyncio.ensure_future(awaitable)
-    while True:
-        try:
-            return await asyncio.shield(task)
-        except asyncio.CancelledError as exc:
-            if not task.done():
-                continue
-            if task.cancelled():
-                msg = "committed mutation was cancelled with unknown outcome"
-                raise _CommittedMutationCancelled(msg) from exc
-            return task.result()
 
 
 def _bounded_jitter(max_sec: float) -> float:
@@ -1155,29 +1137,23 @@ class CollectorRuntime:
         """Run post-capture upload, bookmark, publish, and SLO logging."""
         settings = self._collector_settings
         try:
-            gcs_uri = await retry_with_lease_check(
-                gcp_helper.upload_staged_audio,
+            staged = await bcfy_calls_pipeline.stage_chunk_upload(
                 self._gcs_client,
-                captured_chunk.audio_bytes,
+                captured_chunk,
                 feed,
                 settings.audio_staging_bucket,
                 seq_for_chunk,
                 fencing_token,
-                chunk_extension,
-                chunk_content_type,
                 lease_lost=context.grant_lost,
                 shutdown=context.stop_requested,
                 max_retries=settings.gcs_upload_max_retries,
                 base_delay_sec=settings.gcs_upload_retry_base_delay_sec,
                 max_delay_sec=settings.gcs_upload_retry_max_delay_sec,
-                retryable=(
-                    aiohttp.ClientError,
-                    asyncio.TimeoutError,
-                    OSError,
-                ),
-                operation_name="GCS upload",
                 retry_state_changed=context.set_retrying,
+                extension=chunk_extension,
+                content_type=chunk_content_type,
             )
+            gcs_uri = staged.gcs_uri
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
         except Exception as exc:
@@ -1201,12 +1177,6 @@ class CollectorRuntime:
                 actor_id=self._runtime_actor_id,
             )
 
-        duration_ms = int(
-            (
-                captured_chunk.chunk_end_time - captured_chunk.chunk_start_time
-            ).total_seconds()
-            * 1000
-        )
         try:
             ok = await retry_with_lease_check(
                 _update_progress,
@@ -1237,39 +1207,17 @@ class CollectorRuntime:
             raise LeaseExpiredError(msg)
 
         try:
-            committed_stage_signal = asyncio.Event()
-            message_id = await _settle_committed_awaitable(
-                retry_with_lease_check(
-                    gcp_helper.publish_audio_chunk,
-                    self._pubsub_client,
-                    topic_path,
-                    str(feed["id"]),
-                    feed["name"],
-                    gcs_uri,
-                    captured_chunk.session_id,
-                    captured_chunk.chunk_start_time,
-                    duration_ms,
-                    feed["source_type"],
-                    captured_chunk.external_audio_segment_id,
-                    lease_lost=committed_stage_signal,
-                    shutdown=committed_stage_signal,
-                    max_retries=settings.pubsub_publish_max_retries,
-                    base_delay_sec=settings.pubsub_publish_retry_base_delay_sec,
-                    max_delay_sec=settings.pubsub_publish_retry_max_delay_sec,
-                    retryable=(
-                        google_exceptions.Aborted,
-                        google_exceptions.DeadlineExceeded,
-                        google_exceptions.InternalServerError,
-                        google_exceptions.ResourceExhausted,
-                        google_exceptions.ServiceUnavailable,
-                        google_exceptions.Unknown,
-                        google_exceptions.Cancelled,
-                        pubsub_exceptions.PublishToPausedOrderingKeyException,
-                    ),
-                    operation_name="Pub/Sub publish",
-                    retry_state_changed=context.set_retrying,
-                )
+            publication = await bcfy_calls_pipeline.publish_staged_chunk(
+                self._pubsub_client,
+                topic_path,
+                feed,
+                staged,
+                max_retries=settings.pubsub_publish_max_retries,
+                base_delay_sec=settings.pubsub_publish_retry_base_delay_sec,
+                max_delay_sec=settings.pubsub_publish_retry_max_delay_sec,
+                retry_state_changed=context.set_retrying,
             )
+            publication.unwrap()
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
         except Exception as exc:
@@ -1279,37 +1227,6 @@ class CollectorRuntime:
                     FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
                 ),
             ) from exc
-
-        logger.info(
-            "Published message %s for feed %s",
-            message_id,
-            feed["name"],
-        )
-
-        # SLO: chunk_ingested emit -- strictly after publish success.
-        chunk_ingested_payload: dict[str, object] = {
-            "event_type": EVENT_TYPE_CHUNK_INGESTED,
-            "feed_id": str(feed["id"]),
-            "source_type": feed["source_type"],
-        }
-        if captured_chunk.receipt_time is not None:
-            raw_latency_sec = (
-                datetime.datetime.now(datetime.UTC)
-                - captured_chunk.receipt_time
-            ).total_seconds()
-            chunk_ingested_payload["processing_latency_sec"] = max(
-                0.0, round(raw_latency_sec, 2)
-            )
-            if raw_latency_sec < 0:
-                chunk_ingested_payload["latency_clamped"] = True
-        if captured_chunk.stream_interval_lag_sec is not None:
-            chunk_ingested_payload["stream_interval_lag_sec"] = round(
-                captured_chunk.stream_interval_lag_sec, 2
-            )
-        logger.info(
-            "Chunk ingested",
-            extra={"json_fields": chunk_ingested_payload},
-        )
 
     @staticmethod
     def _leased_feed_has_failure_state(feed: LeasedFeed) -> bool:

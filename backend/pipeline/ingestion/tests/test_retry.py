@@ -5,8 +5,10 @@ import unittest
 from unittest import mock
 
 from backend.pipeline.ingestion.retry import (
+    CommittedAwaitableSettlement,
     LeaseExpiredError,
     retry_with_lease_check,
+    settle_committed_awaitable,
 )
 
 
@@ -345,6 +347,100 @@ class TestRetryStateChanged(unittest.IsolatedAsyncioTestCase):
                         retryable=(OSError,),
                         retry_state_changed=retry_state_changed,
                     )
+
+
+class TestRetryAttemptObserver(unittest.IsolatedAsyncioTestCase):
+    """Actual calls expose stable one-based bounded attempt evidence."""
+
+    async def test_observer_reports_every_actual_attempt(self) -> None:
+        attempts: list[int] = []
+        fn = mock.AsyncMock(side_effect=[OSError("one"), OSError("two"), "ok"])
+
+        result = await retry_with_lease_check(
+            fn,
+            lease_lost=asyncio.Event(),
+            shutdown=asyncio.Event(),
+            max_retries=2,
+            base_delay_sec=0.0,
+            retryable=(OSError,),
+            attempt_observer=attempts.append,
+        )
+
+        self.assertEqual(result, "ok")
+        self.assertEqual(attempts, [1, 2, 3])
+
+    async def test_pre_attempt_exit_reports_no_attempt(self) -> None:
+        attempts: list[int] = []
+        lease_lost = asyncio.Event()
+        lease_lost.set()
+
+        with self.assertRaises(LeaseExpiredError):
+            await retry_with_lease_check(
+                mock.AsyncMock(),
+                lease_lost=lease_lost,
+                shutdown=asyncio.Event(),
+                attempt_observer=attempts.append,
+            )
+
+        self.assertEqual(attempts, [])
+
+
+class TestCommittedAwaitableSettlement(unittest.IsolatedAsyncioTestCase):
+    """Committed cleanup remembers the first exact cancellation object."""
+
+    async def test_repeated_cancellation_keeps_first_and_child_result(
+        self,
+    ) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def child() -> str:
+            started.set()
+            await release.wait()
+            return "settled"
+
+        task = asyncio.create_task(settle_committed_awaitable(child()))
+        await started.wait()
+        task.cancel("first")
+        await asyncio.sleep(0)
+        task.cancel("second")
+        await asyncio.sleep(0)
+        release.set()
+
+        settlement = await task
+
+        self.assertIsInstance(settlement, CommittedAwaitableSettlement)
+        self.assertEqual(settlement.unwrap(), "settled")
+        first = settlement.cancellation
+        self.assertIsNotNone(first)
+        assert first is not None
+        self.assertEqual(first.args, ("first",))
+        with self.assertRaises(asyncio.CancelledError) as raised:
+            raise first
+        self.assertIs(raised.exception, first)
+
+    async def test_child_failure_is_returned_after_cancellation(self) -> None:
+        started = asyncio.Event()
+        release = asyncio.Event()
+        failure = RuntimeError("commit uncertain")
+
+        async def child() -> None:
+            started.set()
+            await release.wait()
+            raise failure
+
+        task = asyncio.create_task(settle_committed_awaitable(child()))
+        await started.wait()
+        task.cancel("original")
+        await asyncio.sleep(0)
+        release.set()
+
+        settlement = await task
+
+        self.assertIs(settlement.failure, failure)
+        with self.assertRaises(RuntimeError) as raised:
+            settlement.unwrap()
+        self.assertIs(raised.exception, failure)
 
 
 if __name__ == "__main__":

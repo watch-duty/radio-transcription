@@ -2092,11 +2092,19 @@ class _Shard:
             ):
                 if self._page_terminal_observer is not None:
                     retention = cohort.control.retention_request
-                    retained_outcome = (
-                        _types._ExecutorOutcomeUnknown(retention.terminal_facts)
-                        if retention is not None
-                        else None
-                    )
+                    retained_outcome = None
+                    if retention is not None:
+                        if retention.terminal_facts.disposition is (
+                            _types.CohortTerminalDisposition.INTEGRITY_FAILURE
+                        ):
+                            retained_outcome = _types._ExecutorIntegrityFailure(
+                                retention.terminal_facts,
+                                typing.cast("BaseException", retention.failure),
+                            )
+                        else:
+                            retained_outcome = _types._ExecutorOutcomeUnknown(
+                                retention.terminal_facts
+                            )
                     self._page_terminal_observer(
                         cohort,
                         retained_outcome,

@@ -38,9 +38,6 @@ from backend.pipeline.ingestion.collectors.bcfy_calls import (
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     runtime_adapters as bcfy_calls_runtime_adapters,
 )
-from backend.pipeline.ingestion.collectors.bcfy_calls import (
-    sid_processor,
-)
 from backend.pipeline.ingestion.failure_classifiers import pubsub
 from backend.pipeline.ingestion.models import (
     CapturedChunk,
@@ -461,16 +458,35 @@ class _ImmediateCallExecutor:
     """Deterministic test-only executor for the real scheduler path."""
 
     def __init__(self) -> None:
-        self.executions: list[feed_work_scheduler.CallExecution] = []
+        self.executions: list[feed_work_scheduler.CohortExecution] = []
         self.completed = asyncio.Event()
 
     async def execute(
         self,
-        execution: feed_work_scheduler.CallExecution,
+        execution: feed_work_scheduler.CohortExecution,
     ) -> feed_work_scheduler.CallCompleted:
         self.executions.append(execution)
         self.completed.set()
-        return feed_work_scheduler.CallCompleted()
+        records = tuple(
+            feed_work_scheduler.CohortRecordTerminalFact(
+                call.identity,
+                participated=True,
+                closure_state=(
+                    feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+                ),
+                full_pipeline_completed=True,
+                terminal_reason=(
+                    feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE
+                ),
+            )
+            for call in execution.calls
+        )
+        return feed_work_scheduler.CallCompleted(
+            feed_work_scheduler.CohortTerminalFacts(
+                records,
+                feed_work_scheduler.CohortTerminalDisposition.SETTLED,
+            )
+        )
 
 
 def _make_feed_grant(
@@ -1186,7 +1202,7 @@ class TestProcessFeedSideEffectOrdering(unittest.IsolatedAsyncioTestCase):
                 mock.AsyncMock(return_value="message-1"),
             ),
             mock.patch(
-                "backend.pipeline.ingestion.collector_runtime.logger"
+                "backend.pipeline.ingestion.collectors.bcfy_calls.pipeline.logger"
             ) as mock_logger,
         ):
             await _run_feed(rt, _FEED)
@@ -2518,14 +2534,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             feed_work_scheduler.SchedulerIntegrityError,
             "call executor is unconnected",
         ):
-            await executor.execute(
-                execution=feed_work_scheduler.CallExecution(
-                    grant=grant,
-                    feed_id=_FEED_ID,
-                    source_timestamp=None,
-                    payload=object(),
-                )
-            )
+            await executor.execute(execution=cast("Any", object()))
 
         snapshot = _lease_snapshot()
         data_store.commit_child_mutations.return_value = _committed_child_batch(
@@ -2630,11 +2639,6 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
                 excluded_count=0,
             )
         )
-        raw_call = {
-            "groupId": member.identity.source_feed_id,
-            "url": "https://example.invalid/call.flac",
-            "ts": (cursor + datetime.timedelta(seconds=1)).timestamp(),
-        }
         calls_provider = mock.create_autospec(
             bcfy_calls_provider.CallsProviderClient,
             instance=True,
@@ -2642,16 +2646,16 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         calls_provider.fetch_sid_page = mock.AsyncMock(
             return_value=bcfy_calls_provider.CallsPageEnvelope(
                 payload={
-                    "calls": [raw_call],
+                    "calls": [],
                     "lastPos": (
                         cursor + datetime.timedelta(seconds=2)
                     ).timestamp(),
                 },
-                calls=(raw_call,),
+                calls=(),
                 last_pos=(cursor + datetime.timedelta(seconds=2)).timestamp(),
                 http_attempt_count=0,
                 response_byte_count=0,
-                response_row_count=1,
+                response_row_count=0,
             )
         )
         order: list[str] = []
@@ -2705,8 +2709,17 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         original_open_lane = scheduler.open_lane
         original_scheduler_close = scheduler.close
 
-        def recording_open_lane(run_grant):
-            lane = original_open_lane(run_grant)
+        def recording_open_lane(
+            run_grant,
+            *,
+            stop_requested,
+            grant_lost,
+        ):
+            lane = original_open_lane(
+                run_grant,
+                stop_requested=stop_requested,
+                grant_lost=grant_lost,
+            )
             opened_lanes.append(lane)
             original_lane_close = lane.close
 
@@ -2730,7 +2743,6 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
 
         await rt._supervisor.admit_cycle(_WORKER_ID)
         await asyncio.wait_for(lane_opened.wait(), timeout=1)
-        await asyncio.wait_for(call_executor.completed.wait(), timeout=1)
         await asyncio.wait_for(boundary_committed.wait(), timeout=1)
         await rt._heartbeat_cycle()
 
@@ -2746,11 +2758,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         self.assertIs(rt._sid_heartbeat_store, heartbeat_store)
         self.assertIs(rt._sid_calls_provider, calls_provider)
         calls_provider.fetch_sid_page.assert_awaited_once()
-        self.assertEqual(len(call_executor.executions), 1)
-        self.assertIsInstance(
-            call_executor.executions[0].payload,
-            sid_processor.ScheduledCallPayload,
-        )
+        self.assertEqual(call_executor.executions, [])
         data_store.commit_child_mutations.assert_awaited_once()
 
         async def release(*_args, **_kwargs):
