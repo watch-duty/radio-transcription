@@ -2468,7 +2468,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             "call executor is unconnected",
         ):
             await executor.execute(
-                feed_work_scheduler.CallExecution(
+                execution=feed_work_scheduler.CallExecution(
                     grant=grant,
                     feed_id=_FEED_ID,
                     source_timestamp=None,

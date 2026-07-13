@@ -336,8 +336,11 @@ def _sid_fencing_token(grant: ingestion_lease_store.LeaseGrant) -> int:
 class _UnconnectedCallExecutor:
     """Fail closed until Phase 6 wires the durable SID call pipeline."""
 
-    async def execute(self, record: object) -> typing.Never:
-        del record
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CallExecution,
+    ) -> typing.Never:
+        del execution
         message = "Phase 5 call executor is unconnected"
         raise feed_work_scheduler.SchedulerIntegrityError(message)
 
