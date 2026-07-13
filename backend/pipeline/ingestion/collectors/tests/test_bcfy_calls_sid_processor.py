@@ -323,6 +323,9 @@ def _page(
         payload=payload,
         calls=calls,
         last_pos=last_pos,
+        http_attempt_count=0,
+        response_byte_count=0,
+        response_row_count=len(calls),
     )
 
 

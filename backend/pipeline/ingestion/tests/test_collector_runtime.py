@@ -2649,6 +2649,9 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
                 },
                 calls=(raw_call,),
                 last_pos=(cursor + datetime.timedelta(seconds=2)).timestamp(),
+                http_attempt_count=0,
+                response_byte_count=0,
+                response_row_count=1,
             )
         )
         order: list[str] = []

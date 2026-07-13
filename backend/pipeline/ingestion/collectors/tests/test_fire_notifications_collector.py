@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import collections
 import datetime
+import json
 import os
 import subprocess
 import unittest
@@ -47,10 +48,16 @@ def _mock_response(
 ) -> MagicMock:
     resp = AsyncMock()
     resp.status = status
-    resp.read = AsyncMock(return_value=content)
     if json_data is not None:
+        content = json.dumps(json_data).encode()
         resp.json = AsyncMock(return_value=json_data)
-    resp.headers = {}
+        resp.headers = {"Content-Type": "application/json"}
+    else:
+        resp.headers = {}
+    resp.read = AsyncMock(return_value=content)
+    resp.get_encoding = MagicMock(return_value="utf-8")
+    resp.request_info = MagicMock()
+    resp.history = ()
 
     cm = MagicMock()
     cm.__aenter__ = AsyncMock(return_value=resp)

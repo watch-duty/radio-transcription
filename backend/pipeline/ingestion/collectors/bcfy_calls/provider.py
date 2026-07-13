@@ -75,9 +75,32 @@ _jwt_state = _JwtCacheState()
 class CallsPageEnvelope:
     """Validated metadata envelope with raw independently handled items."""
 
-    payload: collections.abc.Mapping[str, object]
-    calls: tuple[object, ...]
-    last_pos: object | None
+    payload: collections.abc.Mapping[str, object] = dataclasses.field(
+        repr=False
+    )
+    calls: tuple[object, ...] = dataclasses.field(repr=False)
+    last_pos: object | None = dataclasses.field(repr=False)
+    http_attempt_count: int
+    response_byte_count: int
+    response_row_count: int
+
+    def __post_init__(self) -> None:
+        for name in (
+            "http_attempt_count",
+            "response_byte_count",
+            "response_row_count",
+        ):
+            value = getattr(self, name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                msg = f"{name} must be a nonnegative integer"
+                raise ValueError(msg)
+        if self.response_row_count != len(self.calls):
+            msg = "response_row_count must equal the validated calls count"
+            raise ValueError(msg)
 
 
 type _TokenFetcher = collections.abc.Callable[[], str]
@@ -92,6 +115,20 @@ type _JsonFetcher = collections.abc.Callable[
         asyncio.Event,
     ],
     typing.Awaitable[collections.abc.Mapping[str, object]],
+]
+type _JsonEvidenceFetcher = collections.abc.Callable[
+    [
+        aiohttp.ClientSession,
+        str,
+        collections.abc.Mapping[str, str],
+        collections.abc.Mapping[str, object],
+        object,
+        asyncio.Event,
+        aiohttp_requests.HttpAttemptObserver | None,
+    ],
+    typing.Awaitable[
+        aiohttp_requests.JsonFetchEvidence[collections.abc.Mapping[str, object]]
+    ],
 ]
 type _MediaDownloader = collections.abc.Callable[
     [
@@ -338,30 +375,32 @@ def _validate_calls_api_payload(
         _log_calls_api_response_invalid(subject_id)
         msg = "payload must be an object"
         raise TypeError(msg)
-    calls = payload.get("calls", [])
+    validated = typing.cast("collections.abc.Mapping[str, object]", payload)
+    calls = validated.get("calls", [])
     if not isinstance(calls, list):
         _log_calls_api_response_invalid(subject_id)
         msg = "calls field must be a list"
         raise TypeError(msg)
-    return typing.cast("collections.abc.Mapping[str, object]", payload)
+    return validated
 
 
-async def _fetch_calls(
+async def _fetch_calls_with_evidence(
     session: aiohttp.ClientSession,
     url: str,
     headers: collections.abc.Mapping[str, str],
     params: collections.abc.Mapping[str, object],
     subject_id: object,
     shutdown_event: asyncio.Event,
-) -> collections.abc.Mapping[str, object]:
-    """Fetch one Calls metadata page with the shared request policy."""
+    attempt_observer: aiohttp_requests.HttpAttemptObserver | None = None,
+) -> aiohttp_requests.JsonFetchEvidence[collections.abc.Mapping[str, object]]:
+    """Fetch one Calls page with transport-owned success evidence."""
 
     def validate_payload(
         payload: object,
     ) -> collections.abc.Mapping[str, object]:
         return _validate_calls_api_payload(payload, subject_id)
 
-    return await aiohttp_requests.fetch_json_with_retries(
+    return await aiohttp_requests.fetch_json_with_retries_evidence(
         session,
         url,
         shutdown_event,
@@ -386,6 +425,54 @@ async def _fetch_calls(
             feed_store.FeedStatusReason.SOURCE_UNREACHABLE
         ),
         transport_reason="calls_api_http_transport_failed",
+        attempt_observer=attempt_observer,
+    )
+
+
+async def _fetch_calls(
+    session: aiohttp.ClientSession,
+    url: str,
+    headers: collections.abc.Mapping[str, str],
+    params: collections.abc.Mapping[str, object],
+    subject_id: object,
+    shutdown_event: asyncio.Event,
+) -> collections.abc.Mapping[str, object]:
+    """Fetch one Calls page through the legacy payload-only contract."""
+    evidence = await _fetch_calls_with_evidence(
+        session,
+        url,
+        headers,
+        params,
+        subject_id,
+        shutdown_event,
+    )
+    return evidence.payload
+
+
+async def _adapt_payload_json_fetcher(
+    fetcher: _JsonFetcher,
+    session: aiohttp.ClientSession,
+    url: str,
+    headers: collections.abc.Mapping[str, str],
+    params: collections.abc.Mapping[str, object],
+    subject_id: object,
+    shutdown_event: asyncio.Event,
+    attempt_observer: aiohttp_requests.HttpAttemptObserver | None,
+) -> aiohttp_requests.JsonFetchEvidence[collections.abc.Mapping[str, object]]:
+    """Adapt an injected legacy fetcher without inferring transport facts."""
+    del attempt_observer
+    payload = await fetcher(
+        session,
+        url,
+        headers,
+        params,
+        subject_id,
+        shutdown_event,
+    )
+    return aiohttp_requests.JsonFetchEvidence(
+        payload=payload,
+        http_attempt_count=0,
+        response_byte_count=0,
     )
 
 
@@ -394,6 +481,8 @@ async def _download_audio(
     audio_url: str,
     shutdown_event: asyncio.Event,
     out_headers: dict[str, str] | None = None,
+    *,
+    attempt_observer: aiohttp_requests.HttpAttemptObserver | None = None,
 ) -> bytes | ItemFailure:
     """Download one Calls item with the shared media retry policy."""
     redacted_session = typing.cast(
@@ -411,6 +500,7 @@ async def _download_audio(
             sleep_func=control_flow.sleep_or_cancel,
         ),
         log_label="Broadcastify Calls item audio",
+        attempt_observer=attempt_observer,
     )
     if isinstance(result, aiohttp_requests.DownloadedItem):
         if out_headers is not None:
@@ -422,6 +512,9 @@ async def _download_audio(
 def _calls_page_envelope(
     payload: object,
     subject_id: object,
+    *,
+    http_attempt_count: int,
+    response_byte_count: int,
 ) -> CallsPageEnvelope:
     validated = _validate_calls_api_payload(payload, subject_id)
     calls = validated.get("calls", [])
@@ -432,6 +525,9 @@ def _calls_page_envelope(
         payload=validated,
         calls=tuple(calls),
         last_pos=validated.get("lastPos"),
+        http_attempt_count=http_attempt_count,
+        response_byte_count=response_byte_count,
+        response_row_count=len(calls),
     )
 
 
@@ -454,8 +550,11 @@ class CallsProviderClient:
             else f"{live_endpoint_url}/"
         )
         self._token_loader = _token_loader or _get_shared_jwt_token_with_retry
-        self._json_fetcher = _json_fetcher or _fetch_calls
-        self._media_downloader = _media_downloader or _download_audio
+        self._legacy_json_fetcher = _json_fetcher
+        self._json_evidence_fetcher: _JsonEvidenceFetcher = (
+            _fetch_calls_with_evidence
+        )
+        self._legacy_media_downloader = _media_downloader
 
     async def fetch_group_page(
         self,
@@ -484,6 +583,7 @@ class CallsProviderClient:
         *,
         subject_id: object,
         shutdown_event: asyncio.Event,
+        attempt_observer: aiohttp_requests.HttpAttemptObserver | None = None,
     ) -> CallsPageEnvelope:
         """Fetch one SID page with an integer timestamp position."""
         if not isinstance(sid, str) or not sid:
@@ -499,6 +599,7 @@ class CallsProviderClient:
             pos=timestamp,
             subject_id=subject_id,
             shutdown_event=shutdown_event,
+            attempt_observer=attempt_observer,
         )
 
     async def _fetch_page(
@@ -509,6 +610,7 @@ class CallsProviderClient:
         pos: object | None,
         subject_id: object,
         shutdown_event: asyncio.Event,
+        attempt_observer: aiohttp_requests.HttpAttemptObserver | None = None,
     ) -> CallsPageEnvelope:
         """Fetch one page after enforcing selector exclusivity."""
         if (group_id is None) == (sid is None):
@@ -525,14 +627,27 @@ class CallsProviderClient:
             raise _TokenLoadStopped
         headers = {"Authorization": f"Bearer {token}"}
         try:
-            payload = await self._json_fetcher(
-                self._session,
-                self._live_endpoint_url,
-                headers,
-                params,
-                subject_id,
-                shutdown_event,
-            )
+            if self._legacy_json_fetcher is None:
+                evidence = await self._json_evidence_fetcher(
+                    self._session,
+                    self._live_endpoint_url,
+                    headers,
+                    params,
+                    subject_id,
+                    shutdown_event,
+                    attempt_observer,
+                )
+            else:
+                evidence = await _adapt_payload_json_fetcher(
+                    self._legacy_json_fetcher,
+                    self._session,
+                    self._live_endpoint_url,
+                    headers,
+                    params,
+                    subject_id,
+                    shutdown_event,
+                    attempt_observer,
+                )
         except FeedFailure as error:
             if (
                 error.status_reason
@@ -547,7 +662,12 @@ class CallsProviderClient:
                 if refreshed is None:
                     raise _TokenLoadStopped from error
             raise
-        return _calls_page_envelope(payload, subject_id)
+        return _calls_page_envelope(
+            evidence.payload,
+            subject_id,
+            http_attempt_count=evidence.http_attempt_count,
+            response_byte_count=evidence.response_byte_count,
+        )
 
     async def download_audio(
         self,
@@ -555,11 +675,20 @@ class CallsProviderClient:
         *,
         shutdown_event: asyncio.Event,
         out_headers: dict[str, str] | None = None,
+        attempt_observer: aiohttp_requests.HttpAttemptObserver | None = None,
     ) -> bytes | ItemFailure:
         """Download one item without taking ownership of the session."""
-        return await self._media_downloader(
+        if self._legacy_media_downloader is not None:
+            return await self._legacy_media_downloader(
+                self._session,
+                audio_url,
+                shutdown_event,
+                out_headers,
+            )
+        return await _download_audio(
             self._session,
             audio_url,
             shutdown_event,
             out_headers,
+            attempt_observer=attempt_observer,
         )

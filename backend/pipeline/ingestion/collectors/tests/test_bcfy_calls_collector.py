@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import datetime
+import json
 import os
 import threading
 import time
@@ -13,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 
+from backend.pipeline.ingestion.collectors import aiohttp_requests
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
     provider,
@@ -350,11 +352,18 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
         *,
         status: int = 200,
         headers: dict[str, str] | None = None,
+        content: bytes | None = None,
     ) -> MagicMock:
         response = AsyncMock(status=status)
-        response.headers = headers or {}
+        response.headers = dict(headers or {})
+        response.headers.setdefault("Content-Type", "application/json")
         response.json.return_value = payload
-        response.read.return_value = b"audio"
+        response.read.return_value = (
+            json.dumps(payload).encode() if content is None else content
+        )
+        response.get_encoding = MagicMock(return_value="utf-8")
+        response.request_info = MagicMock()
+        response.history = ()
         return MagicMock(
             __aenter__=AsyncMock(return_value=response),
             __aexit__=AsyncMock(return_value=False),
@@ -389,6 +398,18 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(group_page.last_pos, "group-pos")
         self.assertEqual(sid_page.last_pos, "sid-pos")
+        self.assertEqual(group_page.http_attempt_count, 1)
+        self.assertEqual(sid_page.http_attempt_count, 1)
+        self.assertEqual(group_page.response_row_count, 0)
+        self.assertEqual(sid_page.response_row_count, 0)
+        self.assertEqual(
+            group_page.response_byte_count,
+            len(json.dumps({"calls": [], "lastPos": "group-pos"}).encode()),
+        )
+        self.assertEqual(
+            sid_page.response_byte_count,
+            len(json.dumps({"calls": [], "lastPos": "sid-pos"}).encode()),
+        )
         group_request = self.session.get.call_args_list[0]
         sid_request = self.session.get.call_args_list[1]
         self.assertEqual(
@@ -425,7 +446,8 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
         self.session.get.assert_not_called()
 
     async def test_envelope_is_frozen_and_preserves_raw_items(self) -> None:
-        malformed_item = {"not": "validated here"}
+        signed_url = "https://audio.example/call?token=sensitive"
+        malformed_item = {"url": signed_url, "not": "validated here"}
         self.session.get.return_value = self._response(
             {
                 "calls": [malformed_item, "raw sibling"],
@@ -442,9 +464,50 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(page.calls, (malformed_item, "raw sibling"))
         self.assertEqual(page.last_pos, "1700000010.5")
+        self.assertEqual(page.response_row_count, 2)
+        self.assertNotIn(signed_url, repr(page))
+        self.assertNotIn("raw sibling", repr(page))
         self.assertTrue(hasattr(type(page), "__slots__"))
         with self.assertRaises(dataclasses.FrozenInstanceError):
             page.calls = ()  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+
+    def test_envelope_requires_exact_nonnegative_counters(self) -> None:
+        with self.assertRaises(ValueError):
+            provider.CallsPageEnvelope(
+                payload={"calls": []},
+                calls=(),
+                last_pos=None,
+                http_attempt_count=-1,
+                response_byte_count=0,
+                response_row_count=0,
+            )
+        with self.assertRaises(ValueError):
+            provider.CallsPageEnvelope(
+                payload={"calls": []},
+                calls=(),
+                last_pos=None,
+                http_attempt_count=0,
+                response_byte_count=-1,
+                response_row_count=0,
+            )
+        with self.assertRaises(ValueError):
+            provider.CallsPageEnvelope(
+                payload={"calls": []},
+                calls=(),
+                last_pos=None,
+                http_attempt_count=0,
+                response_byte_count=0,
+                response_row_count=-1,
+            )
+        with self.assertRaises(ValueError):
+            provider.CallsPageEnvelope(
+                payload={"calls": []},
+                calls=(),
+                last_pos=None,
+                http_attempt_count=0,
+                response_byte_count=0,
+                response_row_count=1,
+            )
 
     async def test_missing_calls_is_empty_and_non_list_fails(self) -> None:
         self.session.get.side_effect = [
@@ -474,6 +537,131 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
                     context.exception.status_reason,
                     FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
                 )
+
+    async def test_injected_payload_fetcher_has_explicit_zero_evidence(
+        self,
+    ) -> None:
+        signed_url = "https://audio.example/call?token=sensitive"
+        json_fetcher = AsyncMock(
+            return_value={
+                "calls": [{"url": signed_url}],
+                "lastPos": 123,
+            }
+        )
+        client = provider.CallsProviderClient(
+            self.session,
+            "https://calls.example/live",
+            _json_fetcher=json_fetcher,
+        )
+        observed: list[tuple[object, int]] = []
+
+        page = await client.fetch_sid_page(
+            "00123",
+            None,
+            subject_id="lease-id",
+            shutdown_event=self.shutdown,
+            attempt_observer=lambda kind, ordinal: observed.append(
+                (kind, ordinal)
+            ),
+        )
+
+        self.assertEqual(page.http_attempt_count, 0)
+        self.assertEqual(page.response_byte_count, 0)
+        self.assertEqual(page.response_row_count, 1)
+        self.assertEqual(observed, [])
+        self.assertNotIn(signed_url, repr(page))
+        json_fetcher.assert_awaited_once()
+        await_args = json_fetcher.await_args
+        self.assertIsNotNone(await_args)
+        assert await_args is not None
+        self.assertEqual(
+            await_args.args[3],
+            {"sid": "00123"},
+        )
+
+    async def test_sid_typed_retry_failure_preserves_actual_attempts(
+        self,
+    ) -> None:
+        responses = [
+            self._response(
+                {},
+                status=503,
+                content=b"provider body must stay private",
+            )
+            for _ in range(4)
+        ]
+        self.session.get.side_effect = responses
+        observed: list[tuple[object, int]] = []
+
+        with patch(
+            "backend.pipeline.ingestion.collectors.bcfy_calls"
+            ".provider.control_flow.sleep_or_cancel",
+            new_callable=AsyncMock,
+        ) as mock_sleep:
+            with self.assertRaises(FeedFailure):
+                await self.client.fetch_sid_page(
+                    "00123",
+                    None,
+                    subject_id="lease-id",
+                    shutdown_event=self.shutdown,
+                    attempt_observer=lambda kind, ordinal: observed.append(
+                        (kind, ordinal)
+                    ),
+                )
+
+        self.assertEqual(mock_sleep.await_count, 3)
+        self.assertEqual(
+            observed,
+            [
+                (aiohttp_requests.HttpAttemptKind.JSON, ordinal)
+                for ordinal in range(1, 5)
+            ],
+        )
+        self.assertTrue(
+            all(
+                response.__aenter__.return_value.read.await_count == 1
+                for response in responses
+            )
+        )
+
+    async def test_auth_refresh_failure_observes_only_actual_http_attempt(
+        self,
+    ) -> None:
+        token_loader = AsyncMock(side_effect=["old-token", "new-token"])
+        client = provider.CallsProviderClient(
+            self.session,
+            "https://calls.example/live",
+            _token_loader=token_loader,
+        )
+        response = self._response(
+            {},
+            status=401,
+            content=b"authentication response body",
+        )
+        self.session.get.return_value = response
+        observed: list[tuple[object, int]] = []
+
+        with self.assertRaises(FeedFailure):
+            await client.fetch_sid_page(
+                "00123",
+                None,
+                subject_id="lease-id",
+                shutdown_event=self.shutdown,
+                attempt_observer=lambda kind, ordinal: observed.append(
+                    (kind, ordinal)
+                ),
+            )
+
+        self.assertEqual(token_loader.await_count, 2)
+        self.assertEqual(self.session.get.call_count, 1)
+        self.assertEqual(
+            response.__aenter__.return_value.read.await_count,
+            1,
+        )
+        self.assertEqual(
+            observed,
+            [(aiohttp_requests.HttpAttemptKind.JSON, 1)],
+        )
 
     @patch(
         "backend.pipeline.ingestion.collectors.aiohttp_requests.random.uniform",
@@ -535,16 +723,28 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
     async def test_download_uses_runtime_session_without_closing_it(
         self,
     ) -> None:
-        self.session.get.return_value = self._response({}, status=200)
+        self.session.get.return_value = self._response(
+            {},
+            status=200,
+            content=b"audio",
+        )
         headers: dict[str, str] = {}
+        observed: list[tuple[object, int]] = []
 
         result = await self.client.download_audio(
             "https://media.example/audio.mp3?signature=sensitive",
             shutdown_event=self.shutdown,
             out_headers=headers,
+            attempt_observer=lambda kind, ordinal: observed.append(
+                (kind, ordinal)
+            ),
         )
 
         self.assertEqual(result, b"audio")
+        self.assertEqual(
+            observed,
+            [(aiohttp_requests.HttpAttemptKind.MEDIA, 1)],
+        )
         self.session.close.assert_not_called()
 
     @patch(
@@ -582,7 +782,7 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
             self._response({}, status=503),
             self._response({"calls": []}),
             self._response({}, status=503),
-            self._response({}, status=200),
+            self._response({}, status=200, content=b"audio"),
         ]
 
         with self.assertLogs(
@@ -624,7 +824,10 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
 
     async def test_success_list(self) -> None:
         resp = AsyncMock(status=200)
-        resp.json.return_value = {"calls": [{"call": 1}]}
+        payload = {"calls": [{"call": 1}]}
+        resp.headers = {"Content-Type": "application/json"}
+        resp.read.return_value = json.dumps(payload).encode()
+        resp.get_encoding = MagicMock(return_value="utf-8")
         cm = MagicMock()
         cm.__aenter__ = AsyncMock(return_value=resp)
         cm.__aexit__ = AsyncMock(return_value=False)
@@ -637,7 +840,10 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
 
     async def test_success_missing_calls_key_is_empty_page(self) -> None:
         resp = AsyncMock(status=200)
-        resp.json.return_value = {"call": 1}
+        payload = {"call": 1}
+        resp.headers = {"Content-Type": "application/json"}
+        resp.read.return_value = json.dumps(payload).encode()
+        resp.get_encoding = MagicMock(return_value="utf-8")
         cm = MagicMock()
         cm.__aenter__ = AsyncMock(return_value=resp)
         cm.__aexit__ = AsyncMock(return_value=False)
@@ -657,7 +863,10 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         mock_sleep.return_value = False
         resp = AsyncMock(status=200)
-        resp.json.return_value = {"calls": {"call": 1}}
+        payload = {"calls": {"call": 1}}
+        resp.headers = {"Content-Type": "application/json"}
+        resp.read.return_value = json.dumps(payload).encode()
+        resp.get_encoding = MagicMock(return_value="utf-8")
         cm = MagicMock()
         cm.__aenter__ = AsyncMock(return_value=resp)
         cm.__aexit__ = AsyncMock(return_value=False)
@@ -688,7 +897,10 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         resp500 = AsyncMock(status=500)
         resp500.headers = {}
         resp200 = AsyncMock(status=200)
-        resp200.json.return_value = {"calls": [{"call": 1}]}
+        payload = {"calls": [{"call": 1}]}
+        resp200.headers = {"Content-Type": "application/json"}
+        resp200.read.return_value = json.dumps(payload).encode()
+        resp200.get_encoding = MagicMock(return_value="utf-8")
 
         self.session.get.side_effect = [
             MagicMock(

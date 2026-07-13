@@ -5,8 +5,11 @@ from __future__ import annotations
 import asyncio
 import collections.abc
 import dataclasses
+import enum
+import json
 import logging
 import random
+import re
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, TypeVar, cast
 
@@ -27,6 +30,62 @@ logger = logging.getLogger(__name__)
 
 _JSON = TypeVar("_JSON")
 type SleepFunc = Callable[[asyncio.Event, float], Awaitable[None]]
+
+
+class HttpAttemptKind(enum.StrEnum):
+    """Closed operation kinds exposed to HTTP attempt observers."""
+
+    JSON = "json"
+    MEDIA = "media"
+
+
+type HttpAttemptObserver = Callable[[HttpAttemptKind, int], None]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class JsonFetchEvidence[PayloadT]:
+    """Validated JSON plus transport-owned scalar success evidence."""
+
+    payload: PayloadT = dataclasses.field(repr=False)
+    http_attempt_count: int
+    response_byte_count: int
+
+    def __post_init__(self) -> None:
+        _require_nonnegative_int(
+            self.http_attempt_count,
+            name="http_attempt_count",
+        )
+        _require_nonnegative_int(
+            self.response_byte_count,
+            name="response_byte_count",
+        )
+
+
+_JSON_CONTENT_TYPE_RE = re.compile(r"^application/(?:[\w.+-]+?\+)?json")
+
+
+def _require_nonnegative_int(value: object, *, name: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        msg = f"{name} must be a nonnegative integer"
+        raise ValueError(msg)
+
+
+def _observe_http_attempt(
+    observer: HttpAttemptObserver | None,
+    kind: HttpAttemptKind,
+    ordinal: int,
+) -> None:
+    """Notify an invocation-local observer without changing HTTP behavior."""
+    if observer is None:
+        return
+    try:
+        observer(kind, ordinal)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
+        # This is an isolation boundary. Observers cannot fail or cancel the
+        # request owner, and their exception detail must not reach logs.
+        return
 
 
 @dataclasses.dataclass(frozen=True)
@@ -131,7 +190,41 @@ def _headers_dict(headers: object) -> dict[str, str]:
     }
 
 
-async def fetch_json_with_retries(  # noqa: UP047
+def _decode_json_body(
+    response: aiohttp.ClientResponse,
+    body: bytes,
+) -> object:
+    """Decode captured bytes with ``ClientResponse.json`` compatibility."""
+    content_type = response.headers.get("Content-Type", "").lower()
+    if _JSON_CONTENT_TYPE_RE.match(content_type) is None:
+        raise aiohttp.ContentTypeError(
+            response.request_info,
+            response.history,
+            status=response.status,
+            message=(
+                "Attempt to decode JSON with unexpected mimetype: "
+                f"{content_type}"
+            ),
+            headers=response.headers,
+        )
+
+    stripped = body.strip()
+    if not stripped:
+        return None
+    return json.loads(stripped.decode(response.get_encoding()))
+
+
+async def _drain_error_response(response: aiohttp.ClientResponse) -> None:
+    """Best-effort drain without replacing an already-observed HTTP status."""
+    try:
+        await response.read()
+    except (aiohttp.ClientError, TimeoutError):
+        # The response context will discard an unreadable body. Status and
+        # headers remain authoritative for retry and failure classification.
+        return
+
+
+async def fetch_json_with_retries_evidence(  # noqa: UP047
     session: aiohttp.ClientSession,
     url: str,
     shutdown: asyncio.Event,
@@ -147,8 +240,9 @@ async def fetch_json_with_retries(  # noqa: UP047
     invalid_payload_reason: str,
     transport_status_reason: feed_store.FeedStatusReason,
     transport_reason: str,
-) -> _JSON:
-    """Fetch and validate JSON for a feed-scoped endpoint.
+    attempt_observer: HttpAttemptObserver | None = None,
+) -> JsonFetchEvidence[_JSON]:
+    """Fetch validated JSON with actual attempts and accepted body bytes.
 
     Shutdown interruption raises ``asyncio.CancelledError``.
     Terminal feed-scoped failures raise ``FeedFailure``.
@@ -159,6 +253,12 @@ async def fetch_json_with_retries(  # noqa: UP047
         if shutdown.is_set():
             raise asyncio.CancelledError
 
+        ordinal = attempt + 1
+        _observe_http_attempt(
+            attempt_observer,
+            HttpAttemptKind.JSON,
+            ordinal,
+        )
         try:
             async with session.get(
                 url,
@@ -168,8 +268,14 @@ async def fetch_json_with_retries(  # noqa: UP047
             ) as response:
                 if response.status == 200:
                     try:
-                        payload = await response.json()
-                        return validate_payload(payload)
+                        body = await response.read()
+                        payload = _decode_json_body(response, body)
+                        validated = validate_payload(payload)
+                        return JsonFetchEvidence(
+                            payload=validated,
+                            http_attempt_count=ordinal,
+                            response_byte_count=len(body),
+                        )
                     except (
                         aiohttp.ContentTypeError,
                         TypeError,
@@ -181,6 +287,7 @@ async def fetch_json_with_retries(  # noqa: UP047
                             f"{status_reason_detail.exception_text(exc)}",
                         ) from exc
 
+                await _drain_error_response(response)
                 if _is_retryable_status(
                     response.status
                 ) and _has_attempt_remaining(attempt, retry_config):
@@ -227,6 +334,45 @@ async def fetch_json_with_retries(  # noqa: UP047
     raise RuntimeError(msg)
 
 
+async def fetch_json_with_retries(  # noqa: UP047
+    session: aiohttp.ClientSession,
+    url: str,
+    shutdown: asyncio.Event,
+    *,
+    retry_config: RetryConfig,
+    headers: Mapping[str, str] | None = None,
+    params: Mapping[str, Any] | None = None,
+    log_label: str,
+    reason_prefix: str,
+    status_policy: http_status.HTTPStatusPolicy,
+    validate_payload: Callable[[object], _JSON],
+    invalid_payload_status_reason: feed_store.FeedStatusReason,
+    invalid_payload_reason: str,
+    transport_status_reason: feed_store.FeedStatusReason,
+    transport_reason: str,
+    attempt_observer: HttpAttemptObserver | None = None,
+) -> _JSON:
+    """Fetch validated JSON through the payload-only compatibility API."""
+    evidence = await fetch_json_with_retries_evidence(
+        session,
+        url,
+        shutdown,
+        retry_config=retry_config,
+        headers=headers,
+        params=params,
+        log_label=log_label,
+        reason_prefix=reason_prefix,
+        status_policy=status_policy,
+        validate_payload=validate_payload,
+        invalid_payload_status_reason=invalid_payload_status_reason,
+        invalid_payload_reason=invalid_payload_reason,
+        transport_status_reason=transport_status_reason,
+        transport_reason=transport_reason,
+        attempt_observer=attempt_observer,
+    )
+    return evidence.payload
+
+
 async def download_item_media(
     session: aiohttp.ClientSession,
     url: str,
@@ -246,6 +392,7 @@ async def download_item_media(
         feed_store.FeedStatusReason.SOURCE_UNREACHABLE
     ),
     transport_reason: str = "item_download_failed",
+    attempt_observer: HttpAttemptObserver | None = None,
 ) -> DownloadedItem | ItemFailure:
     """Download item media with retry and item-scoped classification.
 
@@ -258,6 +405,11 @@ async def download_item_media(
         if shutdown.is_set():
             raise asyncio.CancelledError
 
+        _observe_http_attempt(
+            attempt_observer,
+            HttpAttemptKind.MEDIA,
+            attempt + 1,
+        )
         try:
             async with session.get(url, timeout=timeout) as response:
                 if response.status == 200:
@@ -274,6 +426,7 @@ async def download_item_media(
                         ),
                     )
 
+                await _drain_error_response(response)
                 if _is_retryable_status(
                     response.status
                 ) and _has_attempt_remaining(attempt, retry_config):
