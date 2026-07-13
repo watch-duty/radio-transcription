@@ -329,12 +329,19 @@ class ClosedCohortProgress:
     cursor: datetime.datetime | None
 
 
+class FeedFailureChargeMode(enum.StrEnum):
+    """Closed policy for charging one explicit Feed failure command."""
+
+    ON_CURSOR_ADVANCE = "on_cursor_advance"
+    ONE_SHOT = "one_shot"
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class FeedFailureTransition:
     """Caller-classified failure at an optional completed source boundary.
 
-    A command without a completion cursor is a standalone one-shot mutation;
-    callers must not retry it after an outcome-unknown transaction attempt.
+    ``charge_mode`` is independent from ``completion_cursor``. One-shot
+    callers must not retry after an outcome-unknown transaction attempt.
     """
 
     member: LeaseMemberIdentity
@@ -342,6 +349,7 @@ class FeedFailureTransition:
     status_reason: feed_store.FeedStatusReason
     reason: str | None
     completion_cursor: datetime.datetime | None
+    charge_mode: FeedFailureChargeMode
 
 
 type ChildMutation = (
@@ -623,6 +631,13 @@ def _require_failure_action(value: object) -> LeaseFailureAction:
     return typing.cast("LeaseFailureAction", value)
 
 
+def _require_failure_charge_mode(value: object) -> FeedFailureChargeMode:
+    if not isinstance(value, FeedFailureChargeMode):
+        msg = "charge_mode must be a FeedFailureChargeMode"
+        raise TypeError(msg)
+    return value
+
+
 def _require_reason_detail(value: object) -> str | None:
     if value is not None and not isinstance(value, str):
         msg = "reason must be a string or None"
@@ -795,6 +810,7 @@ def _require_child_batch(
             closed_cohort_commands.append(mutation)
         else:
             _require_failure_action(mutation.action)
+            _require_failure_charge_mode(mutation.charge_mode)
             _require_status_reason(mutation.status_reason)
             _require_reason_detail(mutation.reason)
             failure_commands.append(mutation)
@@ -823,6 +839,7 @@ def _require_child_batch(
         "Feed failure",
         tuple(command.member.feed_id for command in failure_commands),
         tuple(command.completion_cursor for command in failure_commands),
+        tuple(command.charge_mode for command in failure_commands),
         tuple(command.action for command in failure_commands),
         tuple(command.status_reason for command in failure_commands),
         tuple(command.reason for command in failure_commands),
@@ -1424,7 +1441,10 @@ def _plan_child_mutation(
     )
     if isinstance(mutation, FeedFailureTransition):
         failure = mutation
-        charge_failure = failure.completion_cursor is None or write_cursor
+        charge_mode = _require_failure_charge_mode(failure.charge_mode)
+        charge_failure = (
+            charge_mode is FeedFailureChargeMode.ONE_SHOT or write_cursor
+        )
         if not charge_failure:
             return _PlannedChildMutation(
                 caller_ordinal=caller_ordinal,
@@ -2257,7 +2277,7 @@ class IngestionLeaseStore:
         connection: asyncpg.Connection,
         plans: tuple[_PlannedChildMutation, ...],
     ) -> collections.abc.Sequence[collections.abc.Mapping]:
-        """Apply one static cursor-idempotent Feed failure rowset."""
+        """Apply one static explicitly charged Feed failure rowset."""
         mutations = [
             typing.cast("FeedFailureTransition", plan.mutation)
             for plan in plans
@@ -2265,6 +2285,7 @@ class IngestionLeaseStore:
         actions = [mutation.action for mutation in mutations]
         feed_ids = [plan.feed_id for plan in plans]
         cursors = [mutation.completion_cursor for mutation in mutations]
+        charge_failures = [plan.charge_failure for plan in plans]
         write_cursors = [plan.write_cursor for plan in plans]
         is_budgeted = [
             isinstance(action, BudgetedFailure) for action in actions
@@ -2304,6 +2325,7 @@ class IngestionLeaseStore:
             "Feed failure",
             feed_ids,
             cursors,
+            charge_failures,
             write_cursors,
             is_budgeted,
             thresholds,
@@ -2318,6 +2340,7 @@ class IngestionLeaseStore:
             ingestion_lease_queries.APPLY_FEED_FAILURES_SQL,
             feed_ids,
             cursors,
+            charge_failures,
             write_cursors,
             is_budgeted,
             thresholds,

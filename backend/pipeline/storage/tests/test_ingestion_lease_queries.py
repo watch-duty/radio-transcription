@@ -489,6 +489,7 @@ class TestChildMutationQueryContract(unittest.TestCase):
                 "status_reason",
                 "reason",
                 "completion_cursor",
+                "charge_mode",
             ],
         )
         child_mutation_value = ingestion_lease_store.ChildMutation.__value__
@@ -532,6 +533,13 @@ class TestChildMutationQueryContract(unittest.TestCase):
         )
 
     def test_child_result_vocabularies_are_exhaustive(self) -> None:
+        self.assertEqual(
+            {
+                value.value
+                for value in ingestion_lease_store.FeedFailureChargeMode
+            },
+            {"on_cursor_advance", "one_shot"},
+        )
         self.assertEqual(
             {value.value for value in ingestion_lease_store.ChildDisposition},
             {
@@ -656,11 +664,28 @@ class TestChildMutationQueryContract(unittest.TestCase):
         self.assertIn("feed_audit_event_payload_sql", query_source)
         self.assertNotIn("feed_audit_event_scalar_sql", query_source)
 
-    def test_failure_rowset_is_cursor_guarded_and_policy_closed(self) -> None:
+    def test_failure_rowset_has_explicit_charge_and_cursor_flags(self) -> None:
         sql = _normalized_sql(ingestion_lease_queries.APPLY_FEED_FAILURES_SQL)
 
+        for typed_array in (
+            "$1::uuid[]",
+            "$2::timestamptz[]",
+            "$3::boolean[]",
+            "$4::boolean[]",
+            "$5::boolean[]",
+            "$6::integer[]",
+            "$7::integer[]",
+            "$8::integer[]",
+            "$9::timestamptz[]",
+            "$10::text[]",
+            "$11::text[]",
+            "$12::bigint[]",
+        ):
+            self.assertIn(typed_array, sql)
         self.assertIn("UNNEST(", sql)
         self.assertIn("WITH ORDINALITY", sql)
+        self.assertIn("input.charge_failure", sql)
+        self.assertIn("input.write_cursor", sql)
         self.assertIn("GREATEST(feeds.last_bookmark_time, input.cursor)", sql)
         self.assertIn(
             "feeds.status IN ( 'active'::public.feed_status, "
@@ -674,6 +699,15 @@ class TestChildMutationQueryContract(unittest.TestCase):
         self.assertIn("input.retry_after", sql)
         self.assertIn("RANDOM() * INTERVAL '10 seconds'", sql)
         self.assertIn("audit_revision = feeds.audit_revision + 1", sql)
+        where_clause = sql.split("WHERE feeds.id", 1)[1].split(
+            "RETURNING",
+            1,
+        )[0]
+        self.assertIn("AND input.charge_failure", where_clause)
+        self.assertNotIn("input.cursor IS NULL", where_clause)
+        self.assertNotIn(
+            "input.cursor > feeds.last_bookmark_time", where_clause
+        )
         for legacy_authority in (
             "worker_id",
             "fencing_token",

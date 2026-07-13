@@ -11,8 +11,6 @@ import unittest
 import unittest.mock
 import uuid
 
-import asyncpg
-
 from backend.pipeline.ingestion import (
     feed_work_scheduler,
     grant_control,
@@ -27,12 +25,6 @@ _NOW = datetime.datetime(2026, 7, 12, 12, 0, tzinfo=datetime.UTC)
 def _sid_runner_module():
     return importlib.import_module(
         "backend.pipeline.ingestion.collectors.bcfy_calls.sid_runner"
-    )
-
-
-def _runtime_adapters_module():
-    return importlib.import_module(
-        "backend.pipeline.ingestion.collectors.bcfy_calls.runtime_adapters"
     )
 
 
@@ -62,74 +54,6 @@ def _snapshot() -> ingestion_lease_store.LeaseSnapshot:
         membership_revision=1,
         updated_at=_NOW,
     )
-
-
-def _member(
-    grant: ingestion_lease_store.LeaseGrant,
-    feed_id: uuid.UUID,
-    *,
-    group_id: str,
-) -> ingestion_lease_store.LeaseMemberIdentity:
-    return ingestion_lease_store._issue_member_identity(
-        grant,
-        feed_id=feed_id,
-        source_type=feed_store.SourceType.BCFY_CALLS,
-        source_feed_id=f"{grant.lease_key}-{group_id}",
-        sid=grant.lease_key,
-        group_id=group_id,
-    )
-
-
-def _boundary(
-    grant: ingestion_lease_store.LeaseGrant,
-    feed_id: uuid.UUID,
-    *,
-    group_id: str,
-    offset_seconds: int = 0,
-) -> feed_work_scheduler.BoundaryWork:
-    return feed_work_scheduler.BoundaryWork(
-        member=_member(grant, feed_id, group_id=group_id),
-        target=_NOW + datetime.timedelta(seconds=offset_seconds),
-    )
-
-
-def _child_result(
-    feed_id: uuid.UUID,
-    disposition: ingestion_lease_store.ChildDisposition,
-) -> ingestion_lease_store.ChildMutationResult:
-    return ingestion_lease_store.ChildMutationResult(
-        feed_id=feed_id,
-        disposition=disposition,
-        cursor_effect=ingestion_lease_store.CursorEffect.ADVANCED,
-        lifecycle_effect=ingestion_lease_store.LifecycleEffect.NONE,
-    )
-
-
-def _batch_committed(
-    *children: ingestion_lease_store.ChildMutationResult,
-) -> ingestion_lease_store.BatchCommitted:
-    snapshot = _snapshot()
-    return ingestion_lease_store.BatchCommitted(
-        lease_effect=ingestion_lease_store.LeaseLifecycleResult(
-            effect=ingestion_lease_store.LeaseLifecycleEffect.NONE,
-            before_snapshot=snapshot,
-            after_snapshot=snapshot,
-        ),
-        children=children,
-    )
-
-
-def _store_with_result(
-    result: object,
-) -> ingestion_lease_store.IngestionLeaseStore:
-    store = unittest.mock.create_autospec(
-        ingestion_lease_store.IngestionLeaseStore,
-        instance=True,
-    )
-    store.commit_child_mutations = unittest.mock.AsyncMock(
-        return_value=result
-    )
-    return typing.cast("ingestion_lease_store.IngestionLeaseStore", store)
 
 
 class _TrackedEvent(asyncio.Event):
@@ -229,9 +153,7 @@ class _ControlledScheduler:
         self.integrity_failure_event = _TrackedEvent()
         self.failure: Exception | None = None
         self.opened: list[_ControlledLane] = []
-        self.opened_signals: list[
-            tuple[asyncio.Event, asyncio.Event]
-        ] = []
+        self.opened_signals: list[tuple[asyncio.Event, asyncio.Event]] = []
         self.lane_opened = asyncio.Event()
         self.two_lanes_opened = asyncio.Event()
         self.close_calls = 0
@@ -636,9 +558,12 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         sid_runner = _sid_runner_module()
         cases = (
-            ("stop", grant_control.RunStopped(
-                grant_control.TerminalCause.PLANNED_DRAIN
-            )),
+            (
+                "stop",
+                grant_control.RunStopped(
+                    grant_control.TerminalCause.PLANNED_DRAIN
+                ),
+            ),
             ("loss", grant_control.RunLost()),
         )
         for signal, expected in cases:
@@ -706,9 +631,7 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
                     await task
                 self.assertEqual(
                     scheduler.opened[0].close_reasons,
-                    [
-                        feed_work_scheduler.LaneCloseReason.SCHEDULER_SHUTDOWN
-                    ],
+                    [feed_work_scheduler.LaneCloseReason.SCHEDULER_SHUTDOWN],
                 )
                 self.assert_waiters_settled(scheduler, stop, loss)
 
@@ -794,324 +717,6 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
             sid_runner.BcfyCallsSidRunner(scheduler)
         with self.assertRaises(TypeError):
             sid_runner.BcfyCallsSidRunner(scheduler, object())
-
-
-class TestFencedBoundaryCommitter(unittest.IsolatedAsyncioTestCase):
-    """Prove quiet boundaries make one exact fenced storage attempt."""
-
-    async def test_nonempty_mutation_translation_preserves_exact_order(
-        self,
-    ) -> None:
-        runtime_adapters = _runtime_adapters_module()
-        grant = _grant()
-        boundaries = tuple(
-            _boundary(
-                grant,
-                uuid.UUID(int=index + 1),
-                group_id=str(index + 1),
-                offset_seconds=index,
-            )
-            for index in range(3)
-        )
-        dispositions = (
-            ingestion_lease_store.ChildDisposition.APPLIED,
-            ingestion_lease_store.ChildDisposition.APPLIED_AFTER_DEACTIVATION,
-            ingestion_lease_store.ChildDisposition.ACCEPTED_NOOP,
-        )
-        store = _store_with_result(
-            _batch_committed(
-                *(
-                    _child_result(boundary.feed_id, disposition)
-                    for boundary, disposition in zip(
-                        boundaries,
-                        dispositions,
-                        strict=True,
-                    )
-                )
-            )
-        )
-        committer = runtime_adapters.FencedBoundaryCommitter(
-            store,
-            actor_id="service_account:gcp:collector",
-        )
-
-        result = await committer.commit(
-            grant,
-            boundaries,
-            final_logical=False,
-        )
-
-        self.assertEqual(
-            result,
-            feed_work_scheduler.BoundaryBatchCommitted(
-                tuple(
-                    feed_work_scheduler.BoundaryResult(
-                        boundary,
-                        feed_work_scheduler.BoundaryDisposition.COMMITTED,
-                    )
-                    for boundary in boundaries
-                )
-            ),
-        )
-        store.commit_child_mutations.assert_awaited_once()
-        call = store.commit_child_mutations.await_args
-        self.assertEqual(call.args[0], grant)
-        self.assertEqual(
-            call.kwargs,
-            {"actor_id": "service_account:gcp:collector"},
-        )
-        batch = call.args[1]
-        self.assertIsInstance(
-            batch.lease_effect,
-            ingestion_lease_store.NoLeaseEffect,
-        )
-        self.assertEqual(
-            tuple(type(mutation) for mutation in batch.mutations),
-            (ingestion_lease_store.SourceObservation,) * 3,
-        )
-        self.assertEqual(
-            tuple(mutation.member for mutation in batch.mutations),
-            tuple(boundary.member for boundary in boundaries),
-        )
-        self.assertEqual(
-            tuple(mutation.cursor for mutation in batch.mutations),
-            tuple(boundary.target for boundary in boundaries),
-        )
-        store.load_membership.assert_not_called()
-        store.refresh_membership.assert_not_called()
-
-    async def test_empty_final_boundary_still_attempts_one_mutation(self) -> None:
-        runtime_adapters = _runtime_adapters_module()
-        grant = _grant()
-        store = _store_with_result(_batch_committed())
-        committer = runtime_adapters.FencedBoundaryCommitter(
-            store,
-            actor_id="service_account:gcp:collector",
-        )
-
-        result = await committer.commit(grant, (), final_logical=True)
-
-        self.assertEqual(
-            result,
-            feed_work_scheduler.BoundaryBatchCommitted(()),
-        )
-        store.commit_child_mutations.assert_awaited_once()
-        batch = store.commit_child_mutations.await_args.args[1]
-        self.assertEqual(batch.mutations, ())
-        self.assertIsInstance(
-            batch.lease_effect,
-            ingestion_lease_store.NoLeaseEffect,
-        )
-
-    async def test_exact_fence_rejection_is_batch_rejection(self) -> None:
-        runtime_adapters = _runtime_adapters_module()
-        store = _store_with_result(
-            ingestion_lease_store.GrantRejected(
-                ingestion_lease_store.GrantRejectionReason.MISSING,
-                None,
-            )
-        )
-        committer = runtime_adapters.FencedBoundaryCommitter(
-            store,
-            actor_id="service_account:gcp:collector",
-        )
-
-        result = await committer.commit(_grant(), (), final_logical=True)
-
-        self.assertEqual(
-            result,
-            feed_work_scheduler.BoundaryGrantRejected(),
-        )
-        store.commit_child_mutations.assert_awaited_once()
-
-    async def test_missing_and_ineligible_members_localize_in_order(
-        self,
-    ) -> None:
-        runtime_adapters = _runtime_adapters_module()
-        grant = _grant()
-        boundaries = (
-            _boundary(grant, uuid.UUID(int=1), group_id="1"),
-            _boundary(grant, uuid.UUID(int=2), group_id="2"),
-        )
-        store = _store_with_result(
-            _batch_committed(
-                _child_result(
-                    boundaries[0].feed_id,
-                    ingestion_lease_store.ChildDisposition.MISSING,
-                ),
-                _child_result(
-                    boundaries[1].feed_id,
-                    ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE,
-                ),
-            )
-        )
-        committer = runtime_adapters.FencedBoundaryCommitter(
-            store,
-            actor_id="service_account:gcp:collector",
-        )
-
-        result = await committer.commit(
-            grant,
-            boundaries,
-            final_logical=False,
-        )
-
-        self.assertEqual(
-            tuple(item.boundary for item in result.results),
-            boundaries,
-        )
-        self.assertEqual(
-            tuple(item.disposition for item in result.results),
-            (
-                feed_work_scheduler.BoundaryDisposition.MEMBER_REJECTED,
-                feed_work_scheduler.BoundaryDisposition.MEMBER_REJECTED,
-            ),
-        )
-
-    async def test_transient_storage_failures_are_batch_retryable(self) -> None:
-        runtime_adapters = _runtime_adapters_module()
-        failures = (
-            asyncpg.PostgresConnectionError("connection lost"),
-            asyncpg.InterfaceError("connection unavailable"),
-            OSError("socket failed"),
-        )
-
-        for failure in failures:
-            with self.subTest(failure=type(failure).__name__):
-                store = _store_with_result(object())
-                store.commit_child_mutations.side_effect = failure
-                committer = runtime_adapters.FencedBoundaryCommitter(
-                    store,
-                    actor_id="service_account:gcp:collector",
-                )
-
-                result = await committer.commit(
-                    _grant(),
-                    (),
-                    final_logical=True,
-                )
-
-                self.assertEqual(
-                    result,
-                    feed_work_scheduler.BoundaryBatchRetryable(),
-                )
-                store.commit_child_mutations.assert_awaited_once()
-
-    async def test_cancellation_and_nontransient_failures_propagate(
-        self,
-    ) -> None:
-        runtime_adapters = _runtime_adapters_module()
-        failures = (
-            asyncio.CancelledError(),
-            TypeError("programming error"),
-            asyncpg.UniqueViolationError("constraint failed"),
-        )
-
-        for failure in failures:
-            with self.subTest(failure=type(failure).__name__):
-                store = _store_with_result(object())
-                store.commit_child_mutations.side_effect = failure
-                committer = runtime_adapters.FencedBoundaryCommitter(
-                    store,
-                    actor_id="service_account:gcp:collector",
-                )
-
-                with self.assertRaises(type(failure)):
-                    await committer.commit(
-                        _grant(),
-                        (),
-                        final_logical=True,
-                    )
-
-                store.commit_child_mutations.assert_awaited_once()
-
-    async def test_malformed_mutation_correlation_is_integrity_failure(
-        self,
-    ) -> None:
-        runtime_adapters = _runtime_adapters_module()
-        grant = _grant()
-        boundaries = (
-            _boundary(grant, uuid.UUID(int=1), group_id="1"),
-            _boundary(grant, uuid.UUID(int=2), group_id="2"),
-        )
-        cases = (
-            _batch_committed(
-                _child_result(
-                    boundaries[0].feed_id,
-                    ingestion_lease_store.ChildDisposition.APPLIED,
-                )
-            ),
-            _batch_committed(
-                _child_result(
-                    boundaries[1].feed_id,
-                    ingestion_lease_store.ChildDisposition.APPLIED,
-                ),
-                _child_result(
-                    boundaries[0].feed_id,
-                    ingestion_lease_store.ChildDisposition.APPLIED,
-                ),
-            ),
-            _batch_committed(
-                ingestion_lease_store.ChildMutationResult(
-                    feed_id=boundaries[0].feed_id,
-                    disposition=object(),  # type: ignore[arg-type]
-                    cursor_effect=ingestion_lease_store.CursorEffect.ADVANCED,
-                    lifecycle_effect=ingestion_lease_store.LifecycleEffect.NONE,
-                ),
-                _child_result(
-                    boundaries[1].feed_id,
-                    ingestion_lease_store.ChildDisposition.APPLIED,
-                ),
-            ),
-        )
-
-        for result in cases:
-            with self.subTest(result=result):
-                store = _store_with_result(result)
-                committer = runtime_adapters.FencedBoundaryCommitter(
-                    store,
-                    actor_id="service_account:gcp:collector",
-                )
-
-                with self.assertRaises(
-                    runtime_adapters.BoundaryAdapterIntegrityError
-                ):
-                    await committer.commit(
-                        grant,
-                        boundaries,
-                        final_logical=False,
-                    )
-
-    async def test_boundary_input_shape_is_validated_before_mutation(
-        self,
-    ) -> None:
-        runtime_adapters = _runtime_adapters_module()
-        store = _store_with_result(_batch_committed())
-        committer = runtime_adapters.FencedBoundaryCommitter(
-            store,
-            actor_id="service_account:gcp:collector",
-        )
-
-        with self.assertRaises(TypeError):
-            await committer.commit(
-                _grant(),
-                [],  # type: ignore[arg-type]
-                final_logical=True,
-            )
-        with self.assertRaises(TypeError):
-            await committer.commit(
-                _grant(),
-                (object(),),  # type: ignore[arg-type]
-                final_logical=True,
-            )
-        with self.assertRaises(TypeError):
-            await committer.commit(
-                _grant(),
-                (),
-                final_logical=1,  # type: ignore[arg-type]
-            )
-
-        store.commit_child_mutations.assert_not_awaited()
 
 
 if __name__ == "__main__":

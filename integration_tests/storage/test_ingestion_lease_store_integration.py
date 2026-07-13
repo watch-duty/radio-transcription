@@ -349,6 +349,9 @@ def _failure(
         status_reason=status_reason,
         reason="integration boundary failure",
         completion_cursor=cursor,
+        charge_mode=(
+            ingestion_lease_store.FeedFailureChargeMode.ON_CURSOR_ADVANCE
+        ),
     )
 
 
