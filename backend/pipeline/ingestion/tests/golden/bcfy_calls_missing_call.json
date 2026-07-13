@@ -1,0 +1,20 @@
+{
+  "event": "bcfy_calls_missing_call",
+  "expected_keys": [
+    "audio_url",
+    "attempt_count",
+    "event_type",
+    "feed_id",
+    "feed_name",
+    "gap_stage",
+    "group_id",
+    "provider_ts",
+    "reason",
+    "schema_version",
+    "sid",
+    "source_feed_id",
+    "source_type",
+    "status_reason"
+  ],
+  "_note": "D-21 through D-27: the sole URL-unredacted log surface, emitted once only after an irreversible per-call gap. Keys alphabetized for stable review."
+}

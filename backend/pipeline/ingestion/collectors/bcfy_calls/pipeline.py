@@ -20,6 +20,7 @@ from backend.pipeline.common import gcp_helper
 from backend.pipeline.ingestion import feed_work_scheduler
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
+    gap_ledger,
     provider,
     runtime_adapters,
 )
@@ -44,6 +45,9 @@ if typing.TYPE_CHECKING:
 
     from backend.pipeline.common.clients.gcs_client import GcsClient
     from backend.pipeline.common.clients.pubsub_client import PubSubClient
+    from backend.pipeline.ingestion.collectors.failure_classification import (
+        ItemFailure,
+    )
     from backend.pipeline.ingestion.settings import CollectorSettings
 
 logger = logging.getLogger(__name__)
@@ -97,9 +101,10 @@ class ScheduledCohortEntry:
     """One immutable provider item in its original source order."""
 
     source_order: int
-    audio_url: str
-    raw_call: Mapping[str, object]
+    audio_url: str = dataclasses.field(repr=False)
+    raw_call: Mapping[str, object] = dataclasses.field(repr=False)
     receipt_time: datetime.datetime
+    obligation: gap_ledger.MissingCallObligation
 
     def __post_init__(self) -> None:
         if isinstance(self.source_order, bool) or not isinstance(
@@ -128,6 +133,9 @@ class ScheduledCohortEntry:
         if self.receipt_time.utcoffset() != datetime.timedelta(0):
             message = "receipt_time must be UTC-aware"
             raise ValueError(message)
+        if type(self.obligation) is not gap_ledger.MissingCallObligation:
+            message = "obligation must be an exact MissingCallObligation"
+            raise TypeError(message)
 
 
 def deduplicate_exact_url_entries(
@@ -188,6 +196,70 @@ class ScheduledCohortPayload:
         if orders != tuple(sorted(orders)) or len(set(orders)) != len(orders):
             message = "entries must preserve distinct provider source order"
             raise ValueError(message)
+        ledgers = tuple(
+            gap_ledger._validate_scheduled_entry(  # noqa: SLF001
+                entry.obligation,
+                member=self.member,
+                source_order=entry.source_order,
+                audio_url=entry.audio_url,
+                provider_ts=_normalized_provider_timestamp(entry.raw_call),
+            )
+            for entry in self.entries
+        )
+        if any(ledger is not ledgers[0] for ledger in ledgers):
+            message = "payload obligations must share one page ledger"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+
+    def admission_hook(
+        self,
+        identities: tuple[feed_work_scheduler.CohortRecordIdentity, ...],
+    ) -> None:
+        """Atomically bind every payload obligation at scheduler admission."""
+        obligations = tuple(entry.obligation for entry in self.entries)
+        ledger = gap_ledger._owner_for(obligations[0])  # noqa: SLF001
+        ledger.admit(obligations, identities)
+
+    def settlement_observer(
+        self,
+        source_order: int,
+    ) -> Callable[[feed_work_scheduler.CallSettlement], None]:
+        """Return the exact record-bound known-release observer."""
+        matching = tuple(
+            entry
+            for entry in self.entries
+            if entry.source_order == source_order
+        )
+        if len(matching) != 1:
+            message = "source_order does not identify one payload entry"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        obligation = matching[0].obligation
+        ledger = gap_ledger._owner_for(obligation)  # noqa: SLF001
+
+        def observe(settlement: feed_work_scheduler.CallSettlement) -> None:
+            ledger.observe_settlement(obligation, settlement)
+
+        return observe
+
+
+def _normalized_provider_timestamp(
+    raw_call: Mapping[str, object],
+) -> datetime.datetime | None:
+    """Normalize one provider timestamp without inventing missing progress."""
+    if "ts" not in raw_call:
+        return None
+    value = raw_call["ts"]
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+    ):
+        message = "provider timestamp must be one finite number"
+        raise feed_work_scheduler.CohortIntegrityError(message)
+    try:
+        return datetime.datetime.fromtimestamp(value, datetime.UTC)
+    except (OSError, OverflowError, ValueError) as exc:
+        message = "provider timestamp is outside the UTC range"
+        raise feed_work_scheduler.CohortIntegrityError(message) from exc
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -359,6 +431,7 @@ async def publish_staged_chunk(
     base_delay_sec: float,
     max_delay_sec: float,
     retry_state_changed: Callable[[bool], None] | None = None,
+    attempt_observer: Callable[[int], None] | None = None,
 ) -> CommittedAwaitableSettlement[PublishedChunk]:
     """Publish one bookmarked chunk and defer caller cancellation safely."""
     chunk = staged.chunk
@@ -371,6 +444,13 @@ async def publish_staged_chunk(
     def observe_attempt(attempt: int) -> None:
         nonlocal attempt_count
         attempt_count = attempt
+        if attempt_observer is not None:
+            try:
+                attempt_observer(attempt)
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except BaseException:  # noqa: S110 - observation is nonsemantic
+                pass
 
     committed_signal = asyncio.Event()
 
@@ -451,6 +531,44 @@ class _RecordState:
         feed_work_scheduler.CohortRecordTerminalReason | None
     ) = None
     direct_failure: feed_work_scheduler.CohortDirectFailureFact | None = None
+    content_attempt_count: int = 0
+    publication_attempt_count: int = 0
+
+
+class _AttemptObservingCallsProvider:
+    """Invocation-local proxy that records media attempts for one call."""
+
+    __slots__ = ("_observe", "_provider")
+
+    def __init__(
+        self,
+        calls_provider: provider.CallsProviderClient,
+        observe: Callable[[object, int], None],
+    ) -> None:
+        self._provider = calls_provider
+        self._observe = observe
+
+    async def download_audio(
+        self,
+        audio_url: str,
+        *,
+        shutdown_event: asyncio.Event,
+        out_headers: dict[str, str] | None = None,
+        attempt_observer: Callable[[object, int], None] | None = None,
+    ) -> bytes | ItemFailure:
+        """Forward one media request while preserving any outer observer."""
+
+        def observe(kind: object, ordinal: int) -> None:
+            self._observe(kind, ordinal)
+            if attempt_observer is not None:
+                attempt_observer(kind, ordinal)
+
+        return await self._provider.download_audio(
+            audio_url,
+            shutdown_event=shutdown_event,
+            out_headers=out_headers,
+            attempt_observer=observe,
+        )
 
 
 type _StageOperation = Callable[..., Awaitable[StagedChunk]]
@@ -524,6 +642,21 @@ class BcfyCallsCohortExecutor:
             if signal_outcome is not None:
                 return signal_outcome
             state.participated = True
+            state.content_attempt_count = 1
+
+            def observe_content_attempt(
+                _kind: object,
+                ordinal: int,
+                *,
+                record_state: _RecordState = state,
+            ) -> None:
+                if (
+                    isinstance(ordinal, int)
+                    and not isinstance(ordinal, bool)
+                    and ordinal > record_state.content_attempt_count
+                ):
+                    record_state.content_attempt_count = ordinal
+
             try:
                 result = await self._create_chunk_operation(
                     self._http_session,
@@ -535,7 +668,10 @@ class BcfyCallsCohortExecutor:
                     ),
                     payload.session_id,
                     state.entry.receipt_time,
-                    calls_provider=self._calls_provider,
+                    calls_provider=_AttemptObservingCallsProvider(
+                        self._calls_provider,
+                        observe_content_attempt,
+                    ),
                 )
             except asyncio.CancelledError:
                 if self._task_is_cancelling():
@@ -567,6 +703,12 @@ class BcfyCallsCohortExecutor:
                 state.item_failure = feed_work_scheduler.CohortItemFailureFact(
                     failure.status_reason,
                     failure.reason,
+                )
+                self._obligation_ledger(state).mark_terminal_skip(
+                    state.entry.obligation,
+                    state.call.identity,
+                    state.item_failure,
+                    state.content_attempt_count,
                 )
                 continue
             if failure is not None or not isinstance(chunk, CapturedChunk):
@@ -720,6 +862,8 @@ class BcfyCallsCohortExecutor:
                 raise cancellation
             return classified
 
+        self._close_timestamped_terminal_skips(states, commit.cursor)
+
         gate_cancellation = await self._run_gate(
             ControlGate.POST_COMMIT,
             0,
@@ -739,6 +883,20 @@ class BcfyCallsCohortExecutor:
         for state in states:
             if state.staged is None:
                 continue
+            state.publication_attempt_count = 1
+
+            def observe_publication_attempt(
+                ordinal: int,
+                *,
+                record_state: _RecordState = state,
+            ) -> None:
+                if (
+                    isinstance(ordinal, int)
+                    and not isinstance(ordinal, bool)
+                    and ordinal > record_state.publication_attempt_count
+                ):
+                    record_state.publication_attempt_count = ordinal
+
             try:
                 publication = await self._publish_operation(
                     self._pubsub_client,
@@ -753,6 +911,7 @@ class BcfyCallsCohortExecutor:
                         self._settings.pubsub_publish_retry_max_delay_sec
                     ),
                     retry_state_changed=self._retry_state_changed,
+                    attempt_observer=observe_publication_attempt,
                 )
             except CommittedAwaitableCancelled:
                 return self._unknown_outcome(states)
@@ -790,6 +949,10 @@ class BcfyCallsCohortExecutor:
                 state.publication_reason = (
                     feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE
                 )
+                self._obligation_ledger(state).resolve_success(
+                    state.entry.obligation,
+                    state.call.identity,
+                )
             elif isinstance(publication.failure, _PUBSUB_RETRYABLE):
                 state.publication_reason = (
                     CohortRecordTerminalReason.PUBLICATION_EXHAUSTED
@@ -797,6 +960,12 @@ class BcfyCallsCohortExecutor:
                 state.direct_failure = CohortDirectFailureFact(
                     feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
                     pubsub.publish_failure_reason(publication.failure),
+                )
+                self._obligation_ledger(state).emit_publication_exhausted(
+                    state.entry.obligation,
+                    state.call.identity,
+                    state.direct_failure,
+                    state.publication_attempt_count,
                 )
             else:
                 outcome = self._unknown_outcome(states)
@@ -904,6 +1073,18 @@ class BcfyCallsCohortExecutor:
 
         states = []
         for call, entry in zip(execution.calls, payload.entries, strict=True):
+            try:
+                gap_ledger._validate_admitted_entry(  # noqa: SLF001
+                    entry.obligation,
+                    call.identity,
+                )
+            except (
+                TypeError,
+                ValueError,
+                gap_ledger.MissingCallIntegrityError,
+            ) as exc:
+                message = "scheduled obligation crossed admitted identity"
+                raise feed_work_scheduler.CohortIntegrityError(message) from exc
             if entry.raw_call.get("url") != entry.audio_url:
                 message = "entry URL does not match immutable provider call"
                 raise feed_work_scheduler.CohortIntegrityError(message)
@@ -921,21 +1102,7 @@ class BcfyCallsCohortExecutor:
     def _normalized_call_timestamp(
         raw_call: Mapping[str, object],
     ) -> datetime.datetime | None:
-        if "ts" not in raw_call:
-            return None
-        value = raw_call["ts"]
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-        ):
-            message = "provider timestamp must be one finite number"
-            raise feed_work_scheduler.CohortIntegrityError(message)
-        try:
-            return datetime.datetime.fromtimestamp(value, datetime.UTC)
-        except (OSError, OverflowError, ValueError) as exc:
-            message = "provider timestamp is outside the UTC range"
-            raise feed_work_scheduler.CohortIntegrityError(message) from exc
+        return _normalized_provider_timestamp(raw_call)
 
     async def _run_gate(
         self,
@@ -996,13 +1163,52 @@ class BcfyCallsCohortExecutor:
             )
         return None
 
-    @staticmethod
-    def _abandon_unpublished(states: list[_RecordState]) -> None:
+    def _abandon_unpublished(self, states: list[_RecordState]) -> None:
         for state in states:
             if state.staged is not None and state.publication_reason is None:
                 state.publication_reason = (
                     CohortRecordTerminalReason.PUBLICATION_ABANDONED
                 )
+                self._obligation_ledger(state).emit_publication_abandoned(
+                    state.entry.obligation,
+                    state.call.identity,
+                )
+
+    @staticmethod
+    def _obligation_ledger(
+        state: _RecordState,
+    ) -> gap_ledger.MissingCallLedger:
+        return gap_ledger._owner_for(state.entry.obligation)  # noqa: SLF001
+
+    def _retain_unknown_states(
+        self,
+        states: list[_RecordState],
+    ) -> None:
+        for state in states:
+            self._obligation_ledger(state).retain_unknown(
+                state.entry.obligation,
+                state.call.identity,
+            )
+
+    def _close_timestamped_terminal_skips(
+        self,
+        states: list[_RecordState],
+        cursor: datetime.datetime | None,
+    ) -> None:
+        for state in states:
+            if state.item_failure is None:
+                continue
+            if state.call.identity.cohort_timestamp is None:
+                message = "missing-ts terminal skip cannot close physically"
+                raise feed_work_scheduler.CohortIntegrityError(message)
+            if cursor is None:
+                message = "timestamped terminal skip commit omitted cursor"
+                raise feed_work_scheduler.CohortIntegrityError(message)
+            self._obligation_ledger(state).close_timestamped_skip(
+                state.entry.obligation,
+                state.call.identity,
+                cursor,
+            )
 
     @staticmethod
     def _task_is_cancelling() -> bool:
@@ -1218,6 +1424,7 @@ class BcfyCallsCohortExecutor:
         states: list[_RecordState],
         failure: BaseException,
     ) -> feed_work_scheduler.CallIntegrityFailure:
+        self._retain_unknown_states(states)
         facts = self._unknown_facts(
             states,
             feed_work_scheduler.CohortTerminalDisposition.INTEGRITY_FAILURE,
@@ -1229,6 +1436,7 @@ class BcfyCallsCohortExecutor:
         self,
         states: list[_RecordState],
     ) -> feed_work_scheduler.CallOutcomeUnknown:
+        self._retain_unknown_states(states)
         facts = self._unknown_facts(
             states,
             feed_work_scheduler.CohortTerminalDisposition.OUTCOME_UNKNOWN,

@@ -16,8 +16,10 @@ from google.api_core import exceptions as google_exceptions
 from backend.pipeline.ingestion import feed_work_scheduler
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     bcfy_calls_collector,
+    gap_ledger,
     pipeline,
     runtime_adapters,
+    telemetry,
 )
 from backend.pipeline.ingestion.collectors.failure_classification import (
     ItemFailure,
@@ -88,6 +90,7 @@ def _settings() -> types.SimpleNamespace:
 def _entry(
     member: ingestion_lease_store.LeaseMember,
     source_order: int,
+    ledger: gap_ledger.MissingCallLedger,
     *,
     timestamp: datetime.datetime | None = _NOW,
     audio_url: str | None = None,
@@ -101,11 +104,18 @@ def _entry(
     }
     if timestamp is not None:
         raw_call["ts"] = timestamp.timestamp()
+    obligation = ledger.draft(
+        member,
+        audio_url=url,
+        provider_ts=timestamp,
+        source_order=source_order,
+    )
     return pipeline.ScheduledCohortEntry(
         source_order,
         url,
         raw_call,
         _NOW,
+        obligation,
     )
 
 
@@ -133,6 +143,7 @@ def _execution(
         )
         for index, entry in enumerate(payload.entries)
     )
+    payload.admission_hook(identities)
     known: list[object] = []
     retained: list[feed_work_scheduler.OutcomeUnknownRetentionRequest] = []
     calls = tuple(
@@ -153,6 +164,21 @@ def _execution(
         known,
         retained,
     )
+
+
+def _observe_terminal_outcome(
+    payload: pipeline.ScheduledCohortPayload,
+    outcome: object,
+) -> None:
+    facts = outcome.facts
+    for entry, fact in zip(payload.entries, facts.records, strict=True):
+        settlement = (
+            feed_work_scheduler.CallSettlement.COMPLETED
+            if fact.closure_state
+            is feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+            else feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE
+        )
+        payload.settlement_observer(entry.source_order)(settlement)
 
 
 class _Committer:
@@ -274,6 +300,8 @@ def _executor(
     committer: _Committer,
     *,
     control_gate: Callable[..., object] | None = None,
+    calls_provider: object | None = None,
+    create_chunk_operation: Callable[..., object] | None = None,
 ) -> pipeline.BcfyCallsCohortExecutor:
     async def no_gate(
         _gate: pipeline.ControlGate,
@@ -283,7 +311,9 @@ def _executor(
 
     return pipeline.BcfyCallsCohortExecutor(
         http_session=mock.Mock(),
-        calls_provider=mock.Mock(),
+        calls_provider=(
+            mock.Mock() if calls_provider is None else calls_provider
+        ),
         gcs_client=mock.Mock(),
         pubsub_client=mock.Mock(),
         committer=committer,
@@ -292,7 +322,11 @@ def _executor(
         control_gate=control_gate or no_gate,
         stage_operation=operations.stage,
         publish_operation=operations.publish,
-        create_chunk_operation=operations.create,
+        create_chunk_operation=(
+            operations.create
+            if create_chunk_operation is None
+            else create_chunk_operation
+        ),
     )
 
 
@@ -300,10 +334,11 @@ def _executor(
 async def test_equal_timestamp_siblings_stage_commit_then_publish() -> None:
     grant = _grant()
     member = _member(grant)
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
     payload = pipeline.ScheduledCohortPayload(
         member,
         "stable-session",
-        (_entry(member, 4), _entry(member, 7)),
+        (_entry(member, 4, ledger), _entry(member, 7, ledger)),
     )
     execution, known, retained = _execution(grant, payload)
     operations = _Operations()
@@ -337,13 +372,27 @@ async def test_equal_timestamp_siblings_stage_commit_then_publish() -> None:
 
 
 def test_producer_deduplicates_before_payload_construction() -> None:
-    member = _member(_grant())
-    first = _entry(member, 1, audio_url="https://example.invalid/same")
-    duplicate = _entry(member, 2, audio_url=first.audio_url)
+    grant = _grant()
+    member = _member(grant)
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
+    first = _entry(
+        member,
+        1,
+        ledger,
+        audio_url="https://example.invalid/same",
+    )
+    duplicate = _entry(member, 2, ledger, audio_url=first.audio_url)
 
     unique = pipeline.deduplicate_exact_url_entries((first, duplicate))
 
     assert unique == (first,)
+    safe_payload = pipeline.ScheduledCohortPayload(
+        member,
+        "stable-session",
+        unique,
+    )
+    assert first.audio_url not in repr(first)
+    assert first.audio_url not in repr(safe_payload)
     with pytest.raises(ValueError, match="deduplicate exact URLs"):
         pipeline.ScheduledCohortPayload(
             member,
@@ -381,7 +430,8 @@ async def test_physical_commit_evidence_matrix(
 ) -> None:
     grant = _grant()
     member = _member(grant)
-    entry = _entry(member, 1, timestamp=timestamp)
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
+    entry = _entry(member, 1, ledger, timestamp=timestamp)
     payload = pipeline.ScheduledCohortPayload(member, "session", (entry,))
     execution, _known, _retained = _execution(
         grant,
@@ -396,6 +446,9 @@ async def test_physical_commit_evidence_matrix(
     assert isinstance(outcome, expected_type)
     if expected_fields == (False, False):
         assert committer.commits == []
+        assert ledger.state(entry.obligation) is (
+            gap_ledger.MissingCallState.FINAL_CLOSURE_PENDING
+        )
     else:
         assert len(committer.commits) == 1
         commit = committer.commits[0]
@@ -403,13 +456,61 @@ async def test_physical_commit_evidence_matrix(
             0
         ]
         assert (commit.cursor is not None) is expected_fields[1]
+        assert ledger.state(entry.obligation) is (
+            gap_ledger.MissingCallState.EMITTED
+            if skip_all
+            else gap_ledger.MissingCallState.RESOLVED
+        )
+
+
+@pytest.mark.asyncio
+async def test_terminal_skip_event_reports_actual_media_attempts() -> None:
+    class ThreeAttemptFailureProvider:
+        async def download_audio(
+            self,
+            _audio_url: str,
+            *,
+            shutdown_event: asyncio.Event,
+            out_headers: dict[str, str] | None = None,
+            attempt_observer: Callable[[object, int], None] | None = None,
+        ) -> ItemFailure:
+            del shutdown_event, out_headers
+            assert attempt_observer is not None
+            for ordinal in range(1, 4):
+                attempt_observer(mock.sentinel.media, ordinal)
+            return ItemFailure(
+                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                "item_download_failed",
+            )
+
+    grant = _grant()
+    member = _member(grant)
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
+    entry = _entry(member, 1, ledger)
+    payload = pipeline.ScheduledCohortPayload(member, "session", (entry,))
+    execution, _known, _retained = _execution(grant, payload)
+
+    with mock.patch.object(telemetry.logger, "log") as emit:
+        outcome = await _executor(
+            _Operations(),
+            _Committer(),
+            calls_provider=ThreeAttemptFailureProvider(),
+            create_chunk_operation=(
+                bcfy_calls_collector._create_chunk_from_call
+            ),
+        ).execute(execution)
+
+    assert isinstance(outcome, feed_work_scheduler.CallCompleted)
+    emit.assert_called_once()
+    assert emit.call_args.kwargs["extra"]["json_fields"]["attempt_count"] == 3
 
 
 @pytest.mark.asyncio
 async def test_terminal_skip_and_success_share_durable_commit() -> None:
     grant = _grant()
     member = _member(grant)
-    entries = (_entry(member, 1), _entry(member, 2))
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
+    entries = (_entry(member, 1, ledger), _entry(member, 2, ledger))
     payload = pipeline.ScheduledCohortPayload(member, "session", entries)
     execution, _known, _retained = _execution(grant, payload)
     operations = _Operations(skipped={entries[0].audio_url})
@@ -425,13 +526,18 @@ async def test_terminal_skip_and_success_share_durable_commit() -> None:
         feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP,
         feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE,
     )
+    assert tuple(ledger.state(entry.obligation) for entry in entries) == (
+        gap_ledger.MissingCallState.EMITTED,
+        gap_ledger.MissingCallState.RESOLVED,
+    )
 
 
 @pytest.mark.asyncio
 async def test_publication_exhaustion_does_not_suppress_later_sibling() -> None:
     grant = _grant()
     member = _member(grant)
-    entries = (_entry(member, 1), _entry(member, 2))
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
+    entries = (_entry(member, 1, ledger), _entry(member, 2, ledger))
     payload = pipeline.ScheduledCohortPayload(member, "session", entries)
     execution, _known, _retained = _execution(grant, payload)
     operations = _Operations()
@@ -448,16 +554,52 @@ async def test_publication_exhaustion_does_not_suppress_later_sibling() -> None:
     )
     assert outcome.facts.records[0].direct_failure is not None
     assert outcome.facts.records[1].full_pipeline_completed
+    assert tuple(ledger.state(entry.obligation) for entry in entries) == (
+        gap_ledger.MissingCallState.EMITTED,
+        gap_ledger.MissingCallState.RESOLVED,
+    )
+
+
+@pytest.mark.asyncio
+async def test_publication_gap_event_reports_actual_owner_attempts() -> None:
+    grant = _grant()
+    member = _member(grant)
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
+    entry = _entry(member, 1, ledger)
+    payload = pipeline.ScheduledCohortPayload(member, "session", (entry,))
+    execution, _known, _retained = _execution(grant, payload)
+    executor = _executor(_Operations(), _Committer())
+
+    async def failed_publish(
+        *_args: object,
+        attempt_observer: Callable[[int], None],
+        **_kwargs: object,
+    ) -> CommittedAwaitableSettlement[pipeline.PublishedChunk]:
+        for ordinal in range(1, 4):
+            attempt_observer(ordinal)
+        return CommittedAwaitableSettlement(
+            None,
+            failure=google_exceptions.ServiceUnavailable("unavailable"),
+        )
+
+    executor._publish_operation = failed_publish
+    with mock.patch.object(telemetry.logger, "log") as emit:
+        outcome = await executor.execute(execution)
+
+    assert isinstance(outcome, feed_work_scheduler.CallCompleted)
+    emit.assert_called_once()
+    assert emit.call_args.kwargs["extra"]["json_fields"]["attempt_count"] == 3
 
 
 @pytest.mark.asyncio
 async def test_gcs_exhaustion_is_replayable_before_commit() -> None:
     grant = _grant()
     member = _member(grant)
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
     payload = pipeline.ScheduledCohortPayload(
         member,
         "session",
-        (_entry(member, 1), _entry(member, 2)),
+        (_entry(member, 1, ledger), _entry(member, 2, ledger)),
     )
     execution, _known, _retained = _execution(grant, payload)
     operations = _Operations()
@@ -476,6 +618,16 @@ async def test_gcs_exhaustion_is_replayable_before_commit() -> None:
     assert outcome.facts.disposition is (
         feed_work_scheduler.CohortTerminalDisposition.REPLAYABLE_DIRECT
     )
+    assert all(
+        ledger.state(entry.obligation) is gap_ledger.MissingCallState.ADMITTED
+        for entry in payload.entries
+    )
+    _observe_terminal_outcome(payload, outcome)
+    assert all(
+        ledger.state(entry.obligation)
+        is gap_ledger.MissingCallState.REPLAY_RELEASED
+        for entry in payload.entries
+    )
 
 
 @pytest.mark.asyncio
@@ -493,10 +645,11 @@ async def test_precommit_signal_interrupt_is_neutral(
 ) -> None:
     grant = _grant()
     member = _member(grant)
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
     payload = pipeline.ScheduledCohortPayload(
         member,
         "session",
-        (_entry(member, 1),),
+        (_entry(member, 1, ledger),),
     )
     stop = asyncio.Event()
     loss = asyncio.Event()
@@ -530,16 +683,21 @@ async def test_precommit_signal_interrupt_is_neutral(
     assert operations.published == []
     assert known == []
     assert retained == []
+    _observe_terminal_outcome(payload, outcome)
+    assert ledger.state(payload.entries[0].obligation) is (
+        gap_ledger.MissingCallState.REPLAY_RELEASED
+    )
 
 
 @pytest.mark.asyncio
 async def test_raw_cancellation_before_commit_releases_replay_safely() -> None:
     grant = _grant()
     member = _member(grant)
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
     payload = pipeline.ScheduledCohortPayload(
         member,
         "session",
-        (_entry(member, 1),),
+        (_entry(member, 1, ledger),),
     )
     execution, known, retained = _execution(grant, payload)
     operations = _Operations()
@@ -565,6 +723,12 @@ async def test_raw_cancellation_before_commit_releases_replay_safely() -> None:
     assert operations.published == []
     assert known == []
     assert retained == []
+    payload.settlement_observer(payload.entries[0].source_order)(
+        feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE
+    )
+    assert ledger.state(payload.entries[0].obligation) is (
+        gap_ledger.MissingCallState.REPLAY_RELEASED
+    )
 
 
 @pytest.mark.asyncio
@@ -591,10 +755,11 @@ async def test_postcommit_gate_abandons_every_unpublished_record(
 ) -> None:
     grant = _grant()
     member = _member(grant)
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
     payload = pipeline.ScheduledCohortPayload(
         member,
         "session",
-        (_entry(member, 1), _entry(member, 2)),
+        (_entry(member, 1, ledger), _entry(member, 2, ledger)),
     )
     stop = asyncio.Event()
     loss = asyncio.Event()
@@ -624,16 +789,21 @@ async def test_postcommit_gate_abandons_every_unpublished_record(
         is feed_work_scheduler.CohortRecordTerminalReason.PUBLICATION_ABANDONED
         for record in outcome.facts.records
     )
+    assert all(
+        ledger.state(entry.obligation) is gap_ledger.MissingCallState.EMITTED
+        for entry in payload.entries
+    )
 
 
 @pytest.mark.asyncio
 async def test_between_publication_gate_starts_no_later_publish() -> None:
     grant = _grant()
     member = _member(grant)
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
     payload = pipeline.ScheduledCohortPayload(
         member,
         "session",
-        (_entry(member, 1), _entry(member, 2)),
+        (_entry(member, 1, ledger), _entry(member, 2, ledger)),
     )
     stop = asyncio.Event()
     execution, _known, _retained = _execution(
@@ -658,6 +828,12 @@ async def test_between_publication_gate_starts_no_later_publish() -> None:
     assert outcome.facts.records[0].full_pipeline_completed
     assert outcome.facts.records[1].terminal_reason is (
         feed_work_scheduler.CohortRecordTerminalReason.PUBLICATION_ABANDONED
+    )
+    assert tuple(
+        ledger.state(entry.obligation) for entry in payload.entries
+    ) == (
+        gap_ledger.MissingCallState.RESOLVED,
+        gap_ledger.MissingCallState.EMITTED,
     )
 
 
@@ -696,10 +872,11 @@ async def test_commit_cancellation_mapping_and_original_error(
 ) -> None:
     grant = _grant()
     member = _member(grant)
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
     payload = pipeline.ScheduledCohortPayload(
         member,
         "session",
-        (_entry(member, 1),),
+        (_entry(member, 1, ledger),),
     )
     execution, known, retained = _execution(grant, payload)
     started = asyncio.Event()
@@ -748,6 +925,19 @@ async def test_commit_cancellation_mapping_and_original_error(
         assert len(known) == 1
         assert isinstance(known[0], expected_handoff)
         assert retained == []
+        states = tuple(
+            ledger.state(entry.obligation) for entry in payload.entries
+        )
+        if result_kind == "accepted":
+            assert states == (gap_ledger.MissingCallState.EMITTED,)
+        else:
+            assert states == (gap_ledger.MissingCallState.ADMITTED,)
+        _observe_terminal_outcome(payload, known[0])
+        assert ledger.state(payload.entries[0].obligation) is (
+            gap_ledger.MissingCallState.EMITTED
+            if result_kind == "accepted"
+            else gap_ledger.MissingCallState.REPLAY_RELEASED
+        )
     else:
         assert known == []
         assert len(retained) == 1
@@ -756,6 +946,9 @@ async def test_commit_cancellation_mapping_and_original_error(
             feed_work_scheduler.CohortTerminalDisposition.INTEGRITY_FAILURE
         ):
             assert retained[0].failure is not None
+        assert ledger.state(payload.entries[0].obligation) is (
+            gap_ledger.MissingCallState.UNKNOWN_RETAINED
+        )
 
 
 @pytest.mark.asyncio
@@ -788,10 +981,11 @@ async def test_publication_cancellation_settles_or_retains(
 ) -> None:
     grant = _grant()
     member = _member(grant)
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
     payload = pipeline.ScheduledCohortPayload(
         member,
         "session",
-        (_entry(member, 1), _entry(member, 2)),
+        (_entry(member, 1, ledger), _entry(member, 2, ledger)),
     )
     execution, known, retained = _execution(grant, payload)
     operations = _Operations()
@@ -840,17 +1034,28 @@ async def test_publication_cancellation_settles_or_retains(
             feed_work_scheduler.CohortTerminalDisposition.INTEGRITY_FAILURE
         ):
             assert retained[0].failure is not None
+        assert all(
+            ledger.state(entry.obligation)
+            is gap_ledger.MissingCallState.UNKNOWN_RETAINED
+            for entry in payload.entries
+        )
     else:
         assert len(known) == 1
         assert isinstance(known[0], feed_work_scheduler.CallCompleted)
         assert retained == []
+        assert all(
+            ledger.state(entry.obligation)
+            is not gap_ledger.MissingCallState.ADMITTED
+            for entry in payload.entries
+        )
 
 
 @pytest.mark.asyncio
 async def test_validation_precedes_every_physical_side_effect() -> None:
     grant = _grant()
     member = _member(grant)
-    entry = _entry(member, 2)
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
+    entry = _entry(member, 2, ledger)
     payload = pipeline.ScheduledCohortPayload(member, "session", (entry,))
     execution, _known, _retained = _execution(grant, payload)
     forged_identity = dataclasses.replace(

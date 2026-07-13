@@ -14,6 +14,9 @@ import unittest
 
 from backend.pipeline.ingestion import slo_contract
 from backend.pipeline.ingestion.collectors import telemetry
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    telemetry as calls_telemetry,
+)
 
 _GOLDEN_DIR = pathlib.Path(__file__).resolve().parent / "golden"
 
@@ -50,6 +53,18 @@ class TestSloContractLiterals(unittest.TestCase):
             "bcfy_jwt_fetch_failed",
         )
 
+    def test_event_type_bcfy_calls_missing_call_literal(self) -> None:
+        self.assertEqual(
+            slo_contract.EVENT_TYPE_BCFY_CALLS_MISSING_CALL,
+            "bcfy_calls_missing_call",
+        )
+
+    def test_bcfy_calls_missing_call_schema_version_literal(self) -> None:
+        self.assertEqual(
+            slo_contract.BCFY_CALLS_MISSING_CALL_SCHEMA_VERSION,
+            1,
+        )
+
     def test_metric_type_quarantine_events_literal(self) -> None:
         self.assertEqual(
             slo_contract.METRIC_TYPE_QUARANTINE_EVENTS,
@@ -73,6 +88,12 @@ class TestSloContractAll(unittest.TestCase):
             "EVENT_TYPE_FEED_QUARANTINED",
             "EVENT_TYPE_CALL_AUTH_FAILURE",
             "EVENT_TYPE_BCFY_JWT_FETCH_FAILED",
+            "EVENT_TYPE_BCFY_CALLS_MISSING_CALL",
+            "BCFY_CALLS_MISSING_CALL_SCHEMA_VERSION",
+            "BCFY_CALLS_MISSING_CALL_AUDIO_URL_MAX_LENGTH",
+            "BCFY_CALLS_MISSING_CALL_ATTEMPT_COUNT_MAX",
+            "BCFY_CALLS_MISSING_CALL_IDENTITY_MAX_LENGTH",
+            "BCFY_CALLS_MISSING_CALL_REASON_MAX_LENGTH",
             "METRIC_TYPE_QUARANTINE_EVENTS",
             "INGESTION_LOGGER_PATH",
         }
@@ -122,6 +143,43 @@ class TestCallDownloadFailedGolden(unittest.TestCase):
             payload["event_type"],
             slo_contract.EVENT_TYPE_CALL_DOWNLOAD_FAILED,
         )
+
+
+class TestBcfyCallsMissingCallGolden(unittest.TestCase):
+    """Pin the sole signed-URL-bearing ingestion event shape."""
+
+    def test_golden_expected_keys_match_helper_payload(self) -> None:
+        golden = json.loads(
+            (_GOLDEN_DIR / "bcfy_calls_missing_call.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        event = calls_telemetry.MissingCallEvent(
+            audio_url="https://example.invalid/audio?signature=secret",
+            sid="123",
+            feed_id="00000000-0000-0000-0000-000000000001",
+            feed_name="Test Feed",
+            source_type="bcfy_calls",
+            source_feed_id="123-45",
+            group_id="45",
+            provider_ts="2026-07-13T12:00:00+00:00",
+            gap_stage=calls_telemetry.MissingCallStage.TERMINAL_ITEM_SKIP,
+            status_reason="source_unreachable",
+            reason="item_download_failed",
+            attempt_count=3,
+        )
+        payload = calls_telemetry.missing_call_json_fields(event)
+
+        self.assertEqual(
+            golden["event"],
+            slo_contract.EVENT_TYPE_BCFY_CALLS_MISSING_CALL,
+        )
+        self.assertEqual(set(payload), set(golden["expected_keys"]))
+        self.assertEqual(
+            payload["schema_version"],
+            slo_contract.BCFY_CALLS_MISSING_CALL_SCHEMA_VERSION,
+        )
+        self.assertIn("signature=secret", payload["audio_url"])
 
 
 if __name__ == "__main__":

@@ -21,6 +21,8 @@ Constants:
     EVENT_TYPE_BCFY_JWT_FETCH_FAILED: structured-log event_type emitted when the
                                     bcfy_calls collector cannot fetch the shared
                                     Broadcastify JWT from Secret Manager.
+    EVENT_TYPE_BCFY_CALLS_MISSING_CALL: one irreversible per-call gap event.
+    BCFY_CALLS_MISSING_CALL_SCHEMA_VERSION: stable event schema version.
     METRIC_TYPE_QUARANTINE_EVENTS:  metric type URL for existing quarantine metric
                                     (pinned to match shipped value — migrated from
                                     quarantine_telemetry.py's private _METRIC_TYPE)
@@ -30,6 +32,12 @@ Constants:
 from __future__ import annotations
 
 __all__ = [
+    "BCFY_CALLS_MISSING_CALL_ATTEMPT_COUNT_MAX",
+    "BCFY_CALLS_MISSING_CALL_AUDIO_URL_MAX_LENGTH",
+    "BCFY_CALLS_MISSING_CALL_IDENTITY_MAX_LENGTH",
+    "BCFY_CALLS_MISSING_CALL_REASON_MAX_LENGTH",
+    "BCFY_CALLS_MISSING_CALL_SCHEMA_VERSION",
+    "EVENT_TYPE_BCFY_CALLS_MISSING_CALL",
     "EVENT_TYPE_BCFY_JWT_FETCH_FAILED",
     "EVENT_TYPE_CALL_AUTH_FAILURE",
     "EVENT_TYPE_CALL_DOWNLOAD_FAILED",
@@ -49,6 +57,16 @@ EVENT_TYPE_CALL_DOWNLOAD_FAILED: str = "call_download_failed"
 EVENT_TYPE_FEED_QUARANTINED: str = "feed_quarantined"
 EVENT_TYPE_CALL_AUTH_FAILURE: str = "call_auth_failure"
 EVENT_TYPE_BCFY_JWT_FETCH_FAILED: str = "bcfy_jwt_fetch_failed"
+EVENT_TYPE_BCFY_CALLS_MISSING_CALL: str = "bcfy_calls_missing_call"
+
+# The missing-call event is intentionally bounded because one live page owns
+# all of its pending event data in memory. The exact signed URL is retained;
+# oversized provider input fails closed rather than being truncated.
+BCFY_CALLS_MISSING_CALL_SCHEMA_VERSION: int = 1
+BCFY_CALLS_MISSING_CALL_AUDIO_URL_MAX_LENGTH: int = 8192
+BCFY_CALLS_MISSING_CALL_IDENTITY_MAX_LENGTH: int = 512
+BCFY_CALLS_MISSING_CALL_REASON_MAX_LENGTH: int = 2048
+BCFY_CALLS_MISSING_CALL_ATTEMPT_COUNT_MAX: int = 1000
 
 # ---------------------------------------------------------------------------
 # Cloud Monitoring metric type for the existing quarantine_events metric.
