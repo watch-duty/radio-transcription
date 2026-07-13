@@ -229,6 +229,9 @@ class _ControlledScheduler:
         self.integrity_failure_event = _TrackedEvent()
         self.failure: Exception | None = None
         self.opened: list[_ControlledLane] = []
+        self.opened_signals: list[
+            tuple[asyncio.Event, asyncio.Event]
+        ] = []
         self.lane_opened = asyncio.Event()
         self.two_lanes_opened = asyncio.Event()
         self.close_calls = 0
@@ -237,9 +240,13 @@ class _ControlledScheduler:
     def open_lane(
         self,
         grant: ingestion_lease_store.LeaseGrant,
+        *,
+        stop_requested: asyncio.Event,
+        grant_lost: asyncio.Event,
     ) -> _ControlledLane:
         lane = _ControlledLane(self, grant)
         self.opened.append(lane)
+        self.opened_signals.append((stop_requested, grant_lost))
         self.lane_opened.set()
         if len(self.opened) >= 2:
             self.two_lanes_opened.set()
@@ -375,6 +382,10 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [lane.grant for lane in scheduler.opened],
             [first_grant, second_grant],
+        )
+        self.assertEqual(
+            scheduler.opened_signals,
+            [(first_stop, first_loss), (second_stop, second_loss)],
         )
         self.assertIsNot(scheduler.opened[0], scheduler.opened[1])
         self.assertEqual(runner.__slots__, ("_processor_factory", "_scheduler"))

@@ -18,7 +18,6 @@ _OWNER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _OTHER_OWNER_ID = uuid.UUID("22222222-3333-4444-5555-666666666666")
 _SOURCE_TIME = datetime.datetime(2026, 7, 12, 12, 0, tzinfo=datetime.UTC)
 
-
 def _scheduler_types() -> typing.Any:
     return importlib.import_module(
         "backend.pipeline.ingestion.feed_work_scheduler._types"
@@ -39,23 +38,295 @@ def _grant(
     )
 
 
+def _member(
+    grant: ingestion_lease_store.LeaseGrant,
+    feed_id: uuid.UUID,
+) -> ingestion_lease_store.LeaseMemberIdentity:
+    return ingestion_lease_store._issue_member_identity(
+        grant,
+        feed_id=feed_id,
+        source_type=feed_store.SourceType.BCFY_CALLS,
+        source_feed_id=f"{grant.lease_key}-{feed_id.int}",
+        sid=grant.lease_key,
+        group_id=str(feed_id.int),
+    )
+
+
+def _open_lane(
+    scheduler: feed_work_scheduler.FeedWorkScheduler,
+    grant: ingestion_lease_store.LeaseGrant,
+    *,
+    stop_requested: asyncio.Event | None = None,
+    grant_lost: asyncio.Event | None = None,
+) -> feed_work_scheduler.GrantLane:
+    return scheduler.open_lane(
+        grant,
+        stop_requested=(
+            asyncio.Event() if stop_requested is None else stop_requested
+        ),
+        grant_lost=asyncio.Event() if grant_lost is None else grant_lost,
+    )
+
+
 def _submission(
     feed_id: uuid.UUID,
     source_order: int,
     *,
+    grant: ingestion_lease_store.LeaseGrant | None = None,
     source_timestamp: datetime.datetime | None = _SOURCE_TIME,
     settlement_observer: typing.Callable[[object], None] | None = None,
-) -> object:
+) -> feed_work_scheduler.CohortSubmission:
+    exact_grant = _grant() if grant is None else grant
+    member = _member(exact_grant, feed_id)
     timestamp = (
         None
         if source_timestamp is None
         else source_timestamp + datetime.timedelta(seconds=source_order)
     )
-    return feed_work_scheduler.CallSubmission(
+    call = feed_work_scheduler.CallSubmission(
         feed_id=feed_id,
         source_timestamp=timestamp,
-        payload={"source_order": source_order},
+        payload={"source_order": source_order, "member": member},
         settlement_observer=settlement_observer,
+    )
+    return feed_work_scheduler.CohortSubmission(
+        member=member,
+        feed_id=feed_id,
+        cohort_timestamp=timestamp,
+        calls=(call,),
+        admission_hook=lambda _identities: None,
+    )
+
+
+def _cohort(
+    feed_id: uuid.UUID,
+    source_orders: tuple[int, ...],
+    *,
+    grant: ingestion_lease_store.LeaseGrant,
+    cohort_timestamp: datetime.datetime | None,
+    member: ingestion_lease_store.LeaseMemberIdentity | None = None,
+    payload_member: ingestion_lease_store.LeaseMemberIdentity | None = None,
+    admission_hook: typing.Callable[
+        [tuple[feed_work_scheduler.CohortRecordIdentity, ...]],
+        None,
+    ]
+    | None = None,
+    settlement_observers: dict[
+        int,
+        typing.Callable[[object], None],
+    ]
+    | None = None,
+) -> feed_work_scheduler.CohortSubmission:
+    exact_member = _member(grant, feed_id) if member is None else member
+    exact_payload_member = (
+        exact_member if payload_member is None else payload_member
+    )
+    observers = {} if settlement_observers is None else settlement_observers
+    calls = tuple(
+        feed_work_scheduler.CallSubmission(
+            feed_id=feed_id,
+            source_timestamp=cohort_timestamp,
+            payload={
+                "source_order": source_order,
+                "member": exact_payload_member,
+            },
+            settlement_observer=observers.get(source_order),
+        )
+        for source_order in source_orders
+    )
+    return feed_work_scheduler.CohortSubmission(
+        member=exact_member,
+        feed_id=feed_id,
+        cohort_timestamp=cohort_timestamp,
+        calls=calls,
+        admission_hook=(
+            (lambda _identities: None)
+            if admission_hook is None
+            else admission_hook
+        ),
+    )
+
+
+def _terminal_facts(
+    execution: feed_work_scheduler.CohortExecution,
+    *,
+    disposition: feed_work_scheduler.CohortTerminalDisposition = (
+        feed_work_scheduler.CohortTerminalDisposition.SETTLED
+    ),
+    closure_state: feed_work_scheduler.CohortRecordClosureState = (
+        feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+    ),
+    reason: feed_work_scheduler.CohortRecordTerminalReason = (
+        feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE
+    ),
+    participated: bool = True,
+    item_failure: feed_work_scheduler.CohortItemFailureFact | None = None,
+    direct_failure: feed_work_scheduler.CohortDirectFailureFact | None = None,
+) -> feed_work_scheduler.CohortTerminalFacts:
+    return feed_work_scheduler.CohortTerminalFacts(
+        records=tuple(
+            feed_work_scheduler.CohortRecordTerminalFact(
+                identity=call.identity,
+                participated=participated,
+                closure_state=closure_state,
+                full_pipeline_completed=(
+                    reason
+                    is feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE
+                ),
+                terminal_reason=reason,
+                item_failure=item_failure,
+                direct_failure=direct_failure,
+            )
+            for call in execution.calls
+        ),
+        disposition=disposition,
+    )
+
+
+def _completed(
+    execution: feed_work_scheduler.CohortExecution,
+) -> feed_work_scheduler.CallCompleted:
+    return feed_work_scheduler.CallCompleted(_terminal_facts(execution))
+
+
+def _retryable(
+    execution: feed_work_scheduler.CohortExecution,
+) -> feed_work_scheduler.CallRetryable:
+    return feed_work_scheduler.CallRetryable(
+        _terminal_facts(
+            execution,
+            disposition=feed_work_scheduler.CohortTerminalDisposition.RETRYABLE,
+            closure_state=(
+                feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+            ),
+            reason=feed_work_scheduler.CohortRecordTerminalReason.RETRYABLE,
+            participated=False,
+        )
+    )
+
+
+def _authority_lost(
+    execution: feed_work_scheduler.CohortExecution,
+) -> feed_work_scheduler.CallAuthorityLost:
+    return feed_work_scheduler.CallAuthorityLost(
+        _terminal_facts(
+            execution,
+            disposition=(
+                feed_work_scheduler.CohortTerminalDisposition.AUTHORITY_LOST
+            ),
+            closure_state=(
+                feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+            ),
+            reason=(
+                feed_work_scheduler.CohortRecordTerminalReason.AUTHORITY_LOST
+            ),
+            participated=False,
+        )
+    )
+
+
+def _membership_rejected(
+    execution: feed_work_scheduler.CohortExecution,
+) -> feed_work_scheduler.CallMembershipRejected:
+    return feed_work_scheduler.CallMembershipRejected(
+        _terminal_facts(
+            execution,
+            disposition=(
+                feed_work_scheduler.CohortTerminalDisposition.MEMBERSHIP_REJECTED
+            ),
+            closure_state=(
+                feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+            ),
+            reason=(
+                feed_work_scheduler.CohortRecordTerminalReason.MEMBERSHIP_REJECTED
+            ),
+            participated=False,
+        )
+    )
+
+
+def _replayable_direct(
+    execution: feed_work_scheduler.CohortExecution,
+) -> feed_work_scheduler.CallReplayableDirectFailure:
+    direct = feed_work_scheduler.CohortDirectFailureFact(
+        feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        "selected direct precommit failure",
+    )
+    return feed_work_scheduler.CallReplayableDirectFailure(
+        _terminal_facts(
+            execution,
+            disposition=(
+                feed_work_scheduler.CohortTerminalDisposition.REPLAYABLE_DIRECT
+            ),
+            closure_state=(
+                feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+            ),
+            reason=(
+                feed_work_scheduler.CohortRecordTerminalReason.REPLAYABLE_DIRECT
+            ),
+            participated=False,
+            direct_failure=direct,
+        )
+    )
+
+
+def _final_closure_pending(
+    execution: feed_work_scheduler.CohortExecution,
+) -> feed_work_scheduler.CallFinalClosurePending:
+    item = feed_work_scheduler.CohortItemFailureFact(
+        feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+        "terminal item skip",
+    )
+    return feed_work_scheduler.CallFinalClosurePending(
+        _terminal_facts(
+            execution,
+            disposition=(
+                feed_work_scheduler.CohortTerminalDisposition.FINAL_CLOSURE_PENDING
+            ),
+            closure_state=(
+                feed_work_scheduler.CohortRecordClosureState.FINAL_CLOSURE_PENDING
+            ),
+            reason=(
+                feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP
+            ),
+            item_failure=item,
+        )
+    )
+
+
+def _stopped(
+    execution: feed_work_scheduler.CohortExecution,
+) -> feed_work_scheduler.CallStopped:
+    return feed_work_scheduler.CallStopped(
+        _terminal_facts(
+            execution,
+            disposition=feed_work_scheduler.CohortTerminalDisposition.STOPPED,
+            closure_state=(
+                feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+            ),
+            reason=feed_work_scheduler.CohortRecordTerminalReason.STOPPED,
+            participated=False,
+        )
+    )
+
+
+def _outcome_unknown(
+    execution: feed_work_scheduler.CohortExecution,
+) -> feed_work_scheduler.CallOutcomeUnknown:
+    return feed_work_scheduler.CallOutcomeUnknown(
+        _terminal_facts(
+            execution,
+            disposition=(
+                feed_work_scheduler.CohortTerminalDisposition.OUTCOME_UNKNOWN
+            ),
+            closure_state=(
+                feed_work_scheduler.CohortRecordClosureState.OUTCOME_UNKNOWN
+            ),
+            reason=(
+                feed_work_scheduler.CohortRecordTerminalReason.OUTCOME_UNKNOWN
+            ),
+            participated=True,
+        )
     )
 
 
@@ -64,11 +335,13 @@ class _ImmediateExecutor:
         self.sequences: list[int] = []
 
     async def execute(self, execution: object) -> object:
-        if not isinstance(execution, feed_work_scheduler.CallExecution):
+        if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
-        self.sequences.append(execution.payload["source_order"])
-        return feed_work_scheduler.CallCompleted()
+        self.sequences.extend(
+            call.payload["source_order"] for call in execution.calls
+        )
+        return _completed(execution)
 
 
 class _GateExecutor:
@@ -82,7 +355,7 @@ class _GateExecutor:
         self._release_all = False
 
     async def execute(self, execution: object) -> object:
-        if not isinstance(execution, feed_work_scheduler.CallExecution):
+        if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
         sequence = len(self.started)
@@ -91,7 +364,7 @@ class _GateExecutor:
         self.changed.set()
         if not self._release_all:
             await event.wait()
-        return feed_work_scheduler.CallCompleted()
+        return _completed(execution)
 
     async def wait_for_started(self, count: int) -> None:
         while len(self.started) < count:
@@ -130,7 +403,7 @@ class _DelayedCancellationExecutor:
         self.cancellation_count = 0
 
     async def execute(self, execution: object) -> object:
-        if not isinstance(execution, feed_work_scheduler.CallExecution):
+        if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
         self.entered_count += 1
@@ -150,7 +423,7 @@ class _DelayedCancellationExecutor:
                 task.uncancel()
             await self.settle.wait()
             if self.swallow:
-                return feed_work_scheduler.CallCompleted()
+                return _completed(execution)
             raise
 
     async def wait_for_counts(self, entered: int, cancelled: int) -> None:
@@ -169,20 +442,177 @@ class _DelayedCancellationExecutor:
 class _GatedOutcomeExecutor:
     """Returns one controlled closed outcome after page coverage."""
 
-    def __init__(self, outcome: object) -> None:
-        self.outcome = outcome
+    def __init__(
+        self,
+        outcome_factory: typing.Callable[
+            [feed_work_scheduler.CohortExecution],
+            object,
+        ],
+    ) -> None:
+        self.outcome_factory = outcome_factory
         self.entered = asyncio.Event()
         self.release = asyncio.Event()
         self.calls = 0
+        self.executions: list[feed_work_scheduler.CohortExecution] = []
 
     async def execute(self, execution: object) -> object:
-        if not isinstance(execution, feed_work_scheduler.CallExecution):
+        if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
         self.calls += 1
+        self.executions.append(execution)
         self.entered.set()
         await self.release.wait()
-        return self.outcome
+        return self.outcome_factory(execution)
+
+
+class _ReplayBarrierExecutor:
+    """Gate the first Feed cohort while siblings remain runnable."""
+
+    def __init__(self, failing_feed: uuid.UUID) -> None:
+        self.failing_feed = failing_feed
+        self.started: list[tuple[int, ...]] = []
+        self.changed = asyncio.Event()
+        self.failure_entered = asyncio.Event()
+        self.release_failure = asyncio.Event()
+
+    async def execute(self, execution: object) -> object:
+        if not isinstance(execution, feed_work_scheduler.CohortExecution):
+            message = "executor received a private scheduler record"
+            raise TypeError(message)
+        orders = tuple(call.payload["source_order"] for call in execution.calls)
+        self.started.append(orders)
+        self.changed.set()
+        first = execution.calls[0]
+        if first.feed_id == self.failing_feed and orders[0] == 0:
+            self.failure_entered.set()
+            await self.release_failure.wait()
+            return _replayable_direct(execution)
+        return _completed(execution)
+
+    async def wait_for_started(self, count: int) -> None:
+        while len(self.started) < count:
+            self.changed.clear()
+            if len(self.started) >= count:
+                return
+            await asyncio.wait_for(self.changed.wait(), timeout=1)
+
+
+class _PageAbortExecutor:
+    """Retain one final-pending cohort before settling another outcome."""
+
+    def __init__(
+        self,
+        abort_factory: typing.Callable[
+            [feed_work_scheduler.CohortExecution],
+            object,
+        ],
+    ) -> None:
+        self.abort_factory = abort_factory
+        self.release_abort = asyncio.Event()
+        self.abort_entered = asyncio.Event()
+
+    async def execute(self, execution: object) -> object:
+        if not isinstance(execution, feed_work_scheduler.CohortExecution):
+            message = "executor received a private scheduler record"
+            raise TypeError(message)
+        source_order = execution.calls[0].payload["source_order"]
+        if source_order == 0:
+            return _final_closure_pending(execution)
+        self.abort_entered.set()
+        await self.release_abort.wait()
+        return self.abort_factory(execution)
+
+
+class _CancellationCapabilityExecutor:
+    """Use exactly one scheduler-minted cancellation capability."""
+
+    def __init__(self, *, unknown: bool) -> None:
+        self.unknown = unknown
+        self.entered = asyncio.Event()
+        self.handoff_complete = asyncio.Event()
+        self.caught: asyncio.CancelledError | None = None
+        self.reraised_same_object = False
+
+    async def execute(self, execution: object) -> object:
+        if not isinstance(execution, feed_work_scheduler.CohortExecution):
+            message = "executor received a private scheduler record"
+            raise TypeError(message)
+        self.entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError as exc:
+            self.caught = exc
+            if self.unknown:
+                facts = _outcome_unknown(execution).facts
+                request = feed_work_scheduler.OutcomeUnknownRetentionRequest(
+                    feed_work_scheduler.OutcomeUnknownCause.COMMIT,
+                    facts,
+                )
+                execution.retention.retain(request)
+                execution.retention.retain(request)
+            else:
+                outcome = _completed(execution)
+                execution.cancellation_handoff.settle(outcome)
+                execution.cancellation_handoff.settle(outcome)
+            self.handoff_complete.set()
+            try:
+                raise
+            except asyncio.CancelledError as propagated:
+                self.reraised_same_object = propagated is exc
+                raise
+
+
+class _UnknownPageAbortExecutor:
+    """Retain known-final and unknown work before a stopped sibling."""
+
+    def __init__(self) -> None:
+        self.abort_entered = asyncio.Event()
+        self.release_abort = asyncio.Event()
+
+    async def execute(self, execution: object) -> object:
+        if not isinstance(execution, feed_work_scheduler.CohortExecution):
+            message = "executor received a private scheduler record"
+            raise TypeError(message)
+        source_order = execution.calls[0].payload["source_order"]
+        if source_order == 0:
+            return _final_closure_pending(execution)
+        if source_order == 1:
+            return _outcome_unknown(execution)
+        self.abort_entered.set()
+        await self.release_abort.wait()
+        return _stopped(execution)
+
+
+class _CrossedTerminalFactsExecutor:
+    """Return structurally legal facts for the wrong exact identity."""
+
+    async def execute(self, execution: object) -> object:
+        if not isinstance(execution, feed_work_scheduler.CohortExecution):
+            message = "executor received a private scheduler record"
+            raise TypeError(message)
+        call = execution.calls[0]
+        crossed = dataclasses.replace(
+            call.identity,
+            local_sequence=call.identity.local_sequence + 1,
+        )
+        facts = feed_work_scheduler.CohortTerminalFacts(
+            records=(
+                feed_work_scheduler.CohortRecordTerminalFact(
+                    identity=crossed,
+                    participated=True,
+                    closure_state=(
+                        feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+                    ),
+                    full_pipeline_completed=True,
+                    terminal_reason=(
+                        feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE
+                    ),
+                ),
+            ),
+            disposition=feed_work_scheduler.CohortTerminalDisposition.SETTLED,
+        )
+        return feed_work_scheduler.CallCompleted(facts)
 
 
 class _CapturingExecutor:
@@ -191,7 +621,9 @@ class _CapturingExecutor:
 
     async def execute(self, execution: object) -> object:
         self.executions.append(execution)
-        return feed_work_scheduler.CallCompleted()
+        return _completed(
+            typing.cast("feed_work_scheduler.CohortExecution", execution)
+        )
 
 
 class _CrossShardFailureExecutor:
@@ -205,17 +637,17 @@ class _CrossShardFailureExecutor:
         self.release_healthy = asyncio.Event()
 
     async def execute(self, execution: object) -> object:
-        if not isinstance(execution, feed_work_scheduler.CallExecution):
+        if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
-        if execution.feed_id == self.failing_feed:
+        if execution.calls[0].feed_id == self.failing_feed:
             self.failing_entered.set()
             await self.release_failure.wait()
             message = "unexpected executor failure"
             raise RuntimeError(message)
         self.healthy_entered.set()
         await self.release_healthy.wait()
-        return feed_work_scheduler.CallCompleted()
+        return _completed(execution)
 
 
 class _TracingCalls:
@@ -231,10 +663,13 @@ class _TracingCalls:
 
     def __next__(self) -> object:
         value = next(self._iterator)
-        source_order = typing.cast("dict[str, int]", value.payload)[
+        source_order = typing.cast(
+            "dict[str, object]",
+            value.calls[0].payload,
+        )[
             "source_order"
         ]
-        self.pulled.append(source_order)
+        self.pulled.append(typing.cast("int", source_order))
         self.changed.set()
         return value
 
@@ -254,11 +689,28 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             "CallAuthorityLost",
             "CallCompleted",
             "CallExecution",
+            "CallFinalClosurePending",
             "CallIntegrityFailure",
             "CallMembershipRejected",
+            "CallOutcomeUnknown",
+            "CallReplayableDirectFailure",
             "CallRetryable",
             "CallSettlement",
+            "CallStopped",
             "CallSubmission",
+            "CohortCancellationHandoff",
+            "CohortDirectFailureFact",
+            "CohortExecution",
+            "CohortIntegrityError",
+            "CohortItemFailureFact",
+            "CohortRecordClosureState",
+            "CohortRecordIdentity",
+            "CohortRecordTerminalFact",
+            "CohortRecordTerminalReason",
+            "CohortRetentionHandle",
+            "CohortSubmission",
+            "CohortTerminalDisposition",
+            "CohortTerminalFacts",
             "BoundaryBatchCommitted",
             "BoundaryBatchRetryable",
             "BoundaryDisposition",
@@ -270,6 +722,9 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             "GrantLane",
             "LaneCloseReason",
             "LaneClosed",
+            "LaneSignalView",
+            "OutcomeUnknownCause",
+            "OutcomeUnknownRetentionRequest",
             "SchedulerIntegrityError",
             "Undrained",
         }
@@ -298,7 +753,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
 
         submission = _submission(uuid.UUID(int=8), 0)
         self.assertFalse(hasattr(submission, "__dict__"))
-        self.assertFalse(hasattr(submission, "grant"))
+        self.assertTrue(hasattr(submission, "member"))
         self.assertFalse(hasattr(submission, "page_sequence"))
         grant = _grant()
         results = (
@@ -322,15 +777,23 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(dataclasses.is_dataclass(result))
                 self.assertFalse(hasattr(result, "__dict__"))
 
-        execution = feed_work_scheduler.CallExecution(
+        member = _member(grant, uuid.UUID(int=8))
+        identity = feed_work_scheduler.CohortRecordIdentity(
             grant=grant,
+            member=member,
+            page_sequence=0,
             feed_id=uuid.UUID(int=8),
-            source_timestamp=None,
+            cohort_timestamp=None,
+            source_order=0,
+            local_sequence=0,
+        )
+        execution = feed_work_scheduler.CallExecution(
+            identity=identity,
             payload=object(),
         )
         self.assertTrue(dataclasses.is_dataclass(execution))
         self.assertFalse(hasattr(execution, "__dict__"))
-        with self.assertRaises(dataclasses.FrozenInstanceError):
+        with self.assertRaises((dataclasses.FrozenInstanceError, TypeError)):
             execution.source_timestamp = _SOURCE_TIME  # type: ignore[misc]
 
     async def test_executor_receives_public_execution_with_none_timestamp(
@@ -340,16 +803,28 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         scheduler = feed_work_scheduler.FeedWorkScheduler(executor)
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
-        payload = {"source_order": 0, "url": "https://example.invalid/1"}
+        lane = _open_lane(scheduler, grant)
+        member = _member(grant, uuid.UUID(int=8))
+        payload = {
+            "source_order": 0,
+            "url": "https://example.invalid/1",
+            "member": member,
+        }
+        call = feed_work_scheduler.CallSubmission(
+            feed_id=uuid.UUID(int=8),
+            source_timestamp=None,
+            payload=payload,
+        )
 
         try:
             await lane.cover_page(
                 calls=(
-                    feed_work_scheduler.CallSubmission(
+                    feed_work_scheduler.CohortSubmission(
+                        member=member,
                         feed_id=uuid.UUID(int=8),
-                        source_timestamp=None,
-                        payload=payload,
+                        cohort_timestamp=None,
+                        calls=(call,),
+                        admission_hook=lambda _identities: None,
                     ),
                 ),
                 boundaries=(),
@@ -361,11 +836,12 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             await scheduler._wait_for_idle()
 
             self.assertEqual(len(executor.executions), 1)
-            execution = executor.executions[0]
+            cohort_execution = executor.executions[0]
             self.assertIsInstance(
-                execution,
-                feed_work_scheduler.CallExecution,
+                cohort_execution,
+                feed_work_scheduler.CohortExecution,
             )
+            execution = cohort_execution.calls[0]
             self.assertIs(execution.grant, grant)
             self.assertEqual(execution.feed_id, uuid.UUID(int=8))
             self.assertIsNone(execution.source_timestamp)
@@ -380,20 +856,20 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         cases = (
             (
-                feed_work_scheduler.CallCompleted(),
+                _completed,
                 feed_work_scheduler.CallSettlement.COMPLETED,
             ),
             (
-                feed_work_scheduler.CallRetryable(),
-                feed_work_scheduler.CallSettlement.RETRYABLE,
+                _retryable,
+                feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE,
             ),
             (
-                feed_work_scheduler.CallAuthorityLost(),
-                feed_work_scheduler.CallSettlement.AUTHORITY_LOST,
+                _authority_lost,
+                feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE,
             ),
             (
-                feed_work_scheduler.CallMembershipRejected(),
-                feed_work_scheduler.CallSettlement.MEMBERSHIP_REJECTED,
+                _membership_rejected,
+                feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE,
             ),
         )
 
@@ -414,13 +890,13 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
 
             return observe
 
-        for outcome, expected in cases:
-            with self.subTest(outcome=type(outcome).__name__):
-                executor = _GatedOutcomeExecutor(outcome)
+        for case_index, (outcome_factory, expected) in enumerate(cases):
+            with self.subTest(outcome=outcome_factory.__name__):
+                executor = _GatedOutcomeExecutor(outcome_factory)
                 scheduler = feed_work_scheduler.FeedWorkScheduler(executor)
                 await scheduler.start()
-                grant = _grant(lease_key=f"150-{expected.value}")
-                lane = scheduler.open_lane(grant)
+                grant = _grant(lease_key=str(150 + case_index))
+                lane = _open_lane(scheduler, grant)
                 observed: list[object] = []
                 notified = asyncio.Event()
 
@@ -429,6 +905,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                         _submission(
                             uuid.UUID(int=8),
                             0,
+                            grant=grant,
                             settlement_observer=observer_for(
                                 scheduler,
                                 observed,
@@ -454,13 +931,11 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 await scheduler.close()
 
     async def test_observer_can_reenter_lane_and_failure_is_integrity(self) -> None:
-        executor = _GatedOutcomeExecutor(
-            feed_work_scheduler.CallCompleted()
-        )
+        executor = _GatedOutcomeExecutor(_completed)
         scheduler = feed_work_scheduler.FeedWorkScheduler(executor)
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         reentered = asyncio.Event()
 
         def close_from_observer(settlement: object) -> None:
@@ -481,6 +956,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 _submission(
                     uuid.UUID(int=8),
                     0,
+                    grant=grant,
                     settlement_observer=close_from_observer,
                 ),
             ),
@@ -500,7 +976,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         await failed_scheduler.start()
         failed_grant = _grant(lease_key="151")
-        failed_lane = failed_scheduler.open_lane(failed_grant)
+        failed_lane = _open_lane(failed_scheduler, failed_grant)
 
         def fail_observer(settlement: object) -> None:
             del settlement
@@ -513,6 +989,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                     _submission(
                         uuid.UUID(int=8),
                         0,
+                        grant=failed_grant,
                         settlement_observer=fail_observer,
                     ),
                 ),
@@ -553,8 +1030,8 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             _limits=limits,
         )
         await abort_scheduler.start()
-        abort_grant = _grant(lease_key="abort")
-        abort_lane = abort_scheduler.open_lane(abort_grant)
+        abort_grant = _grant(lease_key="180")
+        abort_lane = _open_lane(abort_scheduler, abort_grant)
         abort_observed: dict[int, list[object]] = {0: [], 1: [], 2: []}
         abort_coverage = asyncio.create_task(
             abort_lane.cover_page(
@@ -562,6 +1039,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                     _submission(
                         uuid.UUID(int=1),
                         source_order,
+                        grant=abort_grant,
                         settlement_observer=abort_observed[source_order].append,
                     )
                     for source_order in range(3)
@@ -596,8 +1074,8 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             _limits=limits,
         )
         await remove_scheduler.start()
-        remove_grant = _grant(lease_key="remove")
-        remove_lane = remove_scheduler.open_lane(remove_grant)
+        remove_grant = _grant(lease_key="181")
+        remove_lane = _open_lane(remove_scheduler, remove_grant)
         remove_observed: dict[int, list[object]] = {0: [], 1: []}
         removed_feed = uuid.UUID(int=1)
         await remove_lane.cover_page(
@@ -605,6 +1083,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 _submission(
                     removed_feed,
                     source_order,
+                    grant=remove_grant,
                     settlement_observer=remove_observed[source_order].append,
                 )
                 for source_order in range(2)
@@ -635,14 +1114,15 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             _limits=limits,
         )
         await loss_scheduler.start()
-        loss_grant = _grant(lease_key="loss")
-        loss_lane = loss_scheduler.open_lane(loss_grant)
+        loss_grant = _grant(lease_key="182")
+        loss_lane = _open_lane(loss_scheduler, loss_grant)
         loss_observed: dict[int, list[object]] = {0: [], 1: []}
         await loss_lane.cover_page(
             calls=(
                 _submission(
                     uuid.UUID(int=1),
                     source_order,
+                    grant=loss_grant,
                     settlement_observer=loss_observed[source_order].append,
                 )
                 for source_order in range(2)
@@ -663,7 +1143,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             loss_observed,
             {
-                0: [feed_work_scheduler.CallSettlement.AUTHORITY_LOST],
+                0: [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
                 1: [feed_work_scheduler.CallSettlement.AUTHORITY_LOST],
             },
         )
@@ -674,7 +1154,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler.start()
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         try:
             snapshot = await scheduler._snapshot()
             self.assertEqual(len(snapshot.shards), 8)
@@ -683,7 +1163,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             self.assertIs(lane.grant, grant)
             self.assertIsInstance(lane, feed_work_scheduler.GrantLane)
             with self.assertRaisesRegex(ValueError, "already has a lane"):
-                scheduler.open_lane(grant)
+                _open_lane(scheduler, grant)
         finally:
             await scheduler.close()
 
@@ -694,7 +1174,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         scheduler = feed_work_scheduler.FeedWorkScheduler(executor)
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
         candidate = cursor.prepare(_SOURCE_TIME)
         calls = _TracingCalls(
@@ -740,7 +1220,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         scheduler = feed_work_scheduler.FeedWorkScheduler(_ImmediateExecutor())
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         candidate = cursor_policy.LeaseCursor(
             grant,
             pos=None,
@@ -769,7 +1249,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         scheduler = feed_work_scheduler.FeedWorkScheduler(executor)
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
         candidate = cursor.prepare(_SOURCE_TIME)
         calls = _TracingCalls(
@@ -788,12 +1268,12 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             snapshot = await scheduler._snapshot()
             self.assertEqual(snapshot.shards[0].held, 400)
             self.assertTrue(snapshot.shards[0].pressure_paused)
-            self.assertEqual(calls.pulled, list(range(401)))
+            self.assertEqual(calls.pulled, list(range(402)))
             self.assertFalse(coverage.done())
 
             await executor.release_completions(100)
             await scheduler._shards[0].wait_for_held(300)
-            self.assertEqual(calls.pulled, list(range(401)))
+            self.assertEqual(calls.pulled, list(range(402)))
             self.assertFalse(coverage.done())
 
             await executor.release_completions(1)
@@ -828,7 +1308,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
         candidate = cursor.prepare(_SOURCE_TIME)
         calls = _TracingCalls(
@@ -843,7 +1323,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         try:
             await scheduler._shards[0].wait_for_capacity_waiters(1)
-            self.assertEqual(calls.pulled, list(range(5)))
+            self.assertEqual(calls.pulled, list(range(6)))
             self.assertEqual((await scheduler._snapshot()).held, 4)
 
             coverage.cancel()
@@ -881,7 +1361,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
         candidate = cursor.prepare(_SOURCE_TIME)
         abort_entered = asyncio.Event()
@@ -950,7 +1430,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         first_candidate = cursor_policy.LeaseCursor(
             grant,
             pos=None,
@@ -1019,14 +1499,14 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         old = _grant(fencing_token=7)
         successor = _grant(fencing_token=8)
         sibling = _grant(lease_key="151", fencing_token=7)
-        old_lane = scheduler.open_lane(old)
-        successor_lane = scheduler.open_lane(successor)
-        sibling_lane = scheduler.open_lane(sibling)
+        old_lane = _open_lane(scheduler, old)
+        successor_lane = _open_lane(scheduler, successor)
+        sibling_lane = _open_lane(scheduler, sibling)
         shared_feed = uuid.UUID(int=1)
         await old_lane.cover_page(
             calls=(
-                _submission(shared_feed, 0),
-                _submission(shared_feed, 1),
+                _submission(shared_feed, 0, grant=old),
+                _submission(shared_feed, 1, grant=old),
             ),
             boundaries=(),
             candidate=cursor_policy.LeaseCursor(old, pos=None).prepare(
@@ -1034,7 +1514,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             ),
         )
         await successor_lane.cover_page(
-            calls=(_submission(shared_feed, 0),),
+            calls=(_submission(shared_feed, 0, grant=successor),),
             boundaries=(),
             candidate=cursor_policy.LeaseCursor(
                 successor,
@@ -1042,7 +1522,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             ).prepare(_SOURCE_TIME),
         )
         await sibling_lane.cover_page(
-            calls=(_submission(uuid.UUID(int=2), 0),),
+            calls=(_submission(uuid.UUID(int=2), 0, grant=sibling),),
             boundaries=(),
             candidate=cursor_policy.LeaseCursor(
                 sibling,
@@ -1082,7 +1562,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 result,
             )
             with self.assertRaisesRegex(ValueError, "not newer"):
-                scheduler.open_lane(old)
+                _open_lane(scheduler, old)
             remaining = (await scheduler._snapshot()).shards[0].records
             self.assertEqual(
                 {record.grant for record in remaining},
@@ -1109,7 +1589,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
 
         try:
             for grant in grants:
-                lane = scheduler.open_lane(grant)
+                lane = _open_lane(scheduler, grant)
                 coordinator = lane._boundary_coordinator
                 self.assertEqual((await scheduler._snapshot()).lane_count, 1)
 
@@ -1163,7 +1643,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         await lane.cover_page(
             calls=(_submission(uuid.UUID(int=1), 0),),
             boundaries=(),
@@ -1222,7 +1702,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         await lane.cover_page(
             calls=(
                 _submission(uuid.UUID(int=1), 0),
@@ -1272,19 +1752,19 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler.start()
         grant = _grant(fencing_token=7)
         successor = _grant(fencing_token=8)
-        lane = scheduler.open_lane(grant)
-        successor_lane = scheduler.open_lane(successor)
+        lane = _open_lane(scheduler, grant)
+        successor_lane = _open_lane(scheduler, successor)
         removed_feed = uuid.UUID(int=1)
         sibling_feed = uuid.UUID(int=2)
         later_sibling_feed = uuid.UUID(int=3)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
         calls = _TracingCalls(
             (
-                _submission(removed_feed, 0),
-                _submission(removed_feed, 1),
-                _submission(removed_feed, 2),
-                _submission(sibling_feed, 3),
-                _submission(later_sibling_feed, 4),
+                _submission(removed_feed, 0, grant=grant),
+                _submission(removed_feed, 1, grant=grant),
+                _submission(removed_feed, 2, grant=grant),
+                _submission(sibling_feed, 3, grant=grant),
+                _submission(later_sibling_feed, 4, grant=grant),
             )
         )
         coverage = asyncio.create_task(
@@ -1296,11 +1776,15 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         try:
             await scheduler._shards[0].wait_for_capacity_waiters(1)
-            self.assertEqual(calls.pulled, [0, 1, 2])
+            self.assertEqual(calls.pulled, [0, 1, 2, 3, 4])
             removed = await lane.remove_feed(removed_feed)
             await calls.wait_for_pulled(5)
-            await scheduler._shards[0].wait_for_capacity_waiters(1)
-            barrier = (await lane._snapshot()).page
+            async with asyncio.timeout(1):
+                while True:
+                    barrier = (await lane._snapshot()).page
+                    if barrier is not None and barrier.pulled == 5:
+                        break
+                    await asyncio.sleep(0)
             self.assertIsNotNone(barrier)
             self.assertEqual(barrier.pulled, 5)
             self.assertEqual(barrier.registered, 2)
@@ -1334,7 +1818,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 _SOURCE_TIME + datetime.timedelta(seconds=1)
             )
             removed_only = await lane.cover_page(
-                calls=(_submission(removed_feed, 0),),
+                calls=(_submission(removed_feed, 0, grant=grant),),
                 boundaries=(),
                 candidate=next_candidate,
             )
@@ -1351,7 +1835,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 pos=None,
             )
             successor_receipt = await successor_lane.cover_page(
-                calls=(_submission(removed_feed, 0),),
+                calls=(_submission(removed_feed, 0, grant=successor),),
                 boundaries=(),
                 candidate=successor_cursor.prepare(_SOURCE_TIME),
             )
@@ -1372,13 +1856,11 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
     async def test_typed_membership_rejection_retires_only_that_feed(
         self,
     ) -> None:
-        executor = _GatedOutcomeExecutor(
-            feed_work_scheduler.CallMembershipRejected()
-        )
+        executor = _GatedOutcomeExecutor(_membership_rejected)
         scheduler = feed_work_scheduler.FeedWorkScheduler(executor)
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         removed_feed = uuid.UUID(int=8)
         sibling_feed = uuid.UUID(int=16)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
@@ -1410,13 +1892,11 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler.close()
 
     async def test_typed_authority_loss_closes_its_exact_lane(self) -> None:
-        executor = _GatedOutcomeExecutor(
-            feed_work_scheduler.CallAuthorityLost()
-        )
+        executor = _GatedOutcomeExecutor(_authority_lost)
         scheduler = feed_work_scheduler.FeedWorkScheduler(executor)
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
         receipt = await lane.cover_page(
             calls=(_submission(uuid.UUID(int=8), 0),),
@@ -1460,7 +1940,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         await lane.cover_page(
             calls=(_submission(uuid.UUID(int=1), 0),),
             boundaries=(),
@@ -1539,12 +2019,12 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler.start()
         first_grant = _grant()
         sibling_grant = _grant(lease_key="151")
-        first_lane = scheduler.open_lane(first_grant)
-        sibling_lane = scheduler.open_lane(sibling_grant)
+        first_lane = _open_lane(scheduler, first_grant)
+        sibling_lane = _open_lane(scheduler, sibling_grant)
         first_cursor = cursor_policy.LeaseCursor(first_grant, pos=None)
         first_cursor.accept(
             await first_lane.cover_page(
-                calls=(_submission(failing_feed, 0),),
+                calls=(_submission(failing_feed, 0, grant=first_grant),),
                 boundaries=(),
                 candidate=first_cursor.prepare(_SOURCE_TIME),
             )
@@ -1553,7 +2033,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         sibling_cursor = cursor_policy.LeaseCursor(sibling_grant, pos=None)
         sibling_cursor.accept(
             await sibling_lane.cover_page(
-                calls=(_submission(healthy_feed, 0),),
+                calls=(_submission(healthy_feed, 0, grant=sibling_grant),),
                 boundaries=(),
                 candidate=sibling_cursor.prepare(_SOURCE_TIME),
             )
@@ -1561,7 +2041,13 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(executor.healthy_entered.wait(), timeout=1)
         blocked = asyncio.create_task(
             sibling_lane.cover_page(
-                calls=(_submission(uuid.UUID(int=3), 0),),
+                calls=(
+                    _submission(
+                        uuid.UUID(int=3),
+                        0,
+                        grant=sibling_grant,
+                    ),
+                ),
                 boundaries=(),
                 candidate=sibling_cursor.prepare(
                     _SOURCE_TIME + datetime.timedelta(seconds=1)
@@ -1630,7 +2116,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
         candidate = cursor.prepare(_SOURCE_TIME)
         coverage = asyncio.create_task(
@@ -1663,6 +2149,1094 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             if close is not None:
                 await asyncio.wait_for(close, timeout=1)
             await scheduler.close()
+
+    async def test_atomic_cohort_record_identity_and_lane_signal_view(  # noqa: PLR0915
+        self,
+    ) -> None:
+        limits = _scheduler_types()._SchedulerLimits(
+            shard_count=1,
+            capacity=5,
+            workers_per_shard=1,
+            high_water=5,
+            resume_at=2,
+        )
+        executor = _GatedOutcomeExecutor(_completed)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+        )
+        await scheduler.start()
+        grant = _grant()
+        stop_requested = asyncio.Event()
+        grant_lost = asyncio.Event()
+        lane = _open_lane(
+            scheduler,
+            grant,
+            stop_requested=stop_requested,
+            grant_lost=grant_lost,
+        )
+        hook_calls: list[
+            tuple[feed_work_scheduler.CohortRecordIdentity, ...]
+        ] = []
+        observed = {source_order: [] for source_order in range(3)}
+
+        def admit(
+            identities: tuple[
+                feed_work_scheduler.CohortRecordIdentity,
+                ...,
+            ],
+        ) -> None:
+            self.assertEqual(scheduler._shards[0]._held, 0)
+            self.assertEqual(scheduler._shards[0]._records, {})
+            hook_calls.append(identities)
+
+        cohort = _cohort(
+            uuid.UUID(int=1),
+            (0, 1, 2),
+            grant=grant,
+            cohort_timestamp=_SOURCE_TIME,
+            admission_hook=admit,
+            settlement_observers={
+                source_order: observed[source_order].append
+                for source_order in range(3)
+            },
+        )
+        try:
+            await lane.cover_page(
+                calls=(cohort,),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+            await asyncio.wait_for(executor.entered.wait(), timeout=1)
+
+            self.assertEqual(executor.calls, 1)
+            execution = executor.executions[0]
+            self.assertEqual(len(execution.calls), 3)
+            self.assertEqual(len(hook_calls), 1)
+            identities = hook_calls[0]
+            self.assertEqual(
+                identities,
+                tuple(call.identity for call in execution.calls),
+            )
+            self.assertEqual(
+                tuple(identity.local_sequence for identity in identities),
+                (0, 1, 2),
+            )
+            self.assertEqual(
+                tuple(identity.source_order for identity in identities),
+                (0, 1, 2),
+            )
+            self.assertTrue(
+                all(identity.member is cohort.member for identity in identities)
+            )
+            snapshot = await scheduler._snapshot()
+            self.assertEqual(snapshot.held, 3)
+            self.assertEqual(snapshot.shards[0].active_calls, 3)
+            self.assertEqual(snapshot.shards[0].queued_calls, 0)
+            self.assertTrue(
+                all(
+                    not hasattr(record, "payload")
+                    and not hasattr(record, "signals")
+                    and not hasattr(record, "facts")
+                    for record in snapshot.shards[0].records
+                )
+            )
+
+            signals = execution.signals
+            self.assertIs(signals.grant, grant)
+            self.assertFalse(hasattr(signals.stop_requested, "set"))
+            self.assertFalse(hasattr(signals.stop_requested, "clear"))
+            self.assertFalse(hasattr(signals, "retention"))
+            self.assertFalse(signals.stop_requested.is_set())
+            stop_requested.set()
+            self.assertTrue(signals.stop_requested.is_set())
+            self.assertTrue(await signals.stop_requested.wait())
+            self.assertFalse(signals.grant_lost.is_set())
+            grant_lost.set()
+            self.assertTrue(await signals.grant_lost.wait())
+
+            executor.release.set()
+            await scheduler._wait_for_idle()
+            self.assertEqual(
+                observed,
+                {
+                    source_order: [feed_work_scheduler.CallSettlement.COMPLETED]
+                    for source_order in range(3)
+                },
+            )
+        finally:
+            executor.release.set()
+            await scheduler.close()
+
+    async def test_member_identity_validation_precedes_all_mutation(
+        self,
+    ) -> None:
+        executor = _ImmediateExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(executor)
+        await scheduler.start()
+        grant = _grant(fencing_token=2)
+        lane = _open_lane(scheduler, grant)
+        feed_id = uuid.UUID(int=8)
+        other_feed = uuid.UUID(int=16)
+        exact_member = _member(grant, feed_id)
+        predecessor_member = _member(_grant(fencing_token=1), feed_id)
+        successor_member = _member(_grant(fencing_token=3), feed_id)
+        other_member = _member(grant, other_feed)
+        forged_member = ingestion_lease_store.LeaseMemberIdentity(
+            feed_id=feed_id,
+            source_type=feed_store.SourceType.BCFY_CALLS,
+            source_feed_id="150-8",
+            sid="150",
+            group_id="8",
+        )
+        hook_calls: list[object] = []
+
+        def hook(
+            identities: tuple[
+                feed_work_scheduler.CohortRecordIdentity,
+                ...,
+            ],
+        ) -> None:
+            hook_calls.append(identities)
+
+        def manual(
+            *,
+            member: ingestion_lease_store.LeaseMemberIdentity,
+            call_feed: uuid.UUID = feed_id,
+            call_timestamp: datetime.datetime | None = _SOURCE_TIME,
+            payload: object,
+        ) -> feed_work_scheduler.CohortSubmission:
+            return feed_work_scheduler.CohortSubmission(
+                member=member,
+                feed_id=feed_id,
+                cohort_timestamp=_SOURCE_TIME,
+                calls=(
+                    feed_work_scheduler.CallSubmission(
+                        feed_id=call_feed,
+                        source_timestamp=call_timestamp,
+                        payload=payload,
+                    ),
+                ),
+                admission_hook=hook,
+            )
+
+        cases = {
+            "forged": manual(
+                member=forged_member,
+                payload={"member": forged_member},
+            ),
+            "predecessor_grant": manual(
+                member=predecessor_member,
+                payload={"member": predecessor_member},
+            ),
+            "successor_grant": manual(
+                member=successor_member,
+                payload={"member": successor_member},
+            ),
+            "crossed_payload_member": manual(
+                member=exact_member,
+                payload={"member": other_member},
+            ),
+            "crossed_call_feed": manual(
+                member=exact_member,
+                call_feed=other_feed,
+                payload={"member": exact_member},
+            ),
+            "crossed_timestamp": manual(
+                member=exact_member,
+                call_timestamp=_SOURCE_TIME + datetime.timedelta(seconds=1),
+                payload={"member": exact_member},
+            ),
+            "missing_payload_member": manual(
+                member=exact_member,
+                payload={"source_order": 0},
+            ),
+        }
+
+        try:
+            for name, cohort in cases.items():
+                with self.subTest(name=name):
+                    with self.assertRaises(
+                        (TypeError, ValueError, feed_work_scheduler.CohortIntegrityError)
+                    ):
+                        await lane.cover_page(
+                            calls=(cohort,),
+                            boundaries=(),
+                            candidate=cursor_policy.LeaseCursor(
+                                grant,
+                                pos=None,
+                            ).prepare(_SOURCE_TIME),
+                        )
+                    lane_snapshot = await lane._snapshot()
+                    self.assertEqual(lane_snapshot.next_page_sequence, 0)
+                    self.assertIsNone(lane_snapshot.page)
+                    self.assertEqual((await scheduler._snapshot()).held, 0)
+                    self.assertEqual(executor.sequences, [])
+                    self.assertEqual(hook_calls, [])
+
+            with self.assertRaises(ValueError):
+                feed_work_scheduler.CohortSubmission(
+                    member=other_member,
+                    feed_id=feed_id,
+                    cohort_timestamp=_SOURCE_TIME,
+                    calls=(
+                        feed_work_scheduler.CallSubmission(
+                            feed_id=feed_id,
+                            source_timestamp=_SOURCE_TIME,
+                            payload={"member": other_member},
+                        ),
+                    ),
+                    admission_hook=hook,
+                )
+            with self.assertRaises(ValueError):
+                _cohort(
+                    feed_id,
+                    (0, 1),
+                    grant=grant,
+                    cohort_timestamp=None,
+                )
+        finally:
+            await scheduler.close()
+
+    async def test_admission_hook_rollback_reentry_and_oversized_atomicity(  # noqa: PLR0915
+        self,
+    ) -> None:
+        limits = _scheduler_types()._SchedulerLimits(
+            shard_count=1,
+            capacity=2,
+            workers_per_shard=1,
+            high_water=2,
+            resume_at=0,
+        )
+        executor = _ImmediateExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        draft: list[object] = []
+        hook_calls = 0
+
+        def rollback_hook(
+            identities: tuple[
+                feed_work_scheduler.CohortRecordIdentity,
+                ...,
+            ],
+        ) -> None:
+            nonlocal hook_calls
+            hook_calls += 1
+            self.assertEqual(scheduler._shards[0]._held, 0)
+            draft.extend(identities)
+            draft.clear()
+            message = "ledger admission rejected"
+            raise RuntimeError(message)
+
+        failed = _cohort(
+            uuid.UUID(int=1),
+            (0, 1),
+            grant=grant,
+            cohort_timestamp=_SOURCE_TIME,
+            admission_hook=rollback_hook,
+        )
+        try:
+            with self.assertRaisesRegex(RuntimeError, "ledger admission"):
+                await lane.cover_page(
+                    calls=(failed,),
+                    boundaries=(),
+                    candidate=cursor_policy.LeaseCursor(
+                        grant,
+                        pos=None,
+                    ).prepare(_SOURCE_TIME),
+                )
+            self.assertEqual(hook_calls, 1)
+            self.assertEqual(draft, [])
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+            self.assertEqual(scheduler._shards[0]._next_sequence, 0)
+            self.assertIsNone((await lane._snapshot()).page)
+
+            with self.assertRaises(feed_work_scheduler.CohortIntegrityError):
+                await lane.cover_page(
+                    calls=(failed,),
+                    boundaries=(),
+                    candidate=cursor_policy.LeaseCursor(
+                        grant,
+                        pos=None,
+                    ).prepare(_SOURCE_TIME),
+                )
+            self.assertEqual(hook_calls, 1)
+
+            small_calls = 0
+            oversized_calls = 0
+
+            def small_hook(
+                _identities: tuple[
+                    feed_work_scheduler.CohortRecordIdentity,
+                    ...,
+                ],
+            ) -> None:
+                nonlocal small_calls
+                small_calls += 1
+
+            def oversized_hook(
+                _identities: tuple[
+                    feed_work_scheduler.CohortRecordIdentity,
+                    ...,
+                ],
+            ) -> None:
+                nonlocal oversized_calls
+                oversized_calls += 1
+
+            small = _cohort(
+                uuid.UUID(int=2),
+                (0,),
+                grant=grant,
+                cohort_timestamp=_SOURCE_TIME,
+                admission_hook=small_hook,
+            )
+            oversized = _cohort(
+                uuid.UUID(int=3),
+                (1, 2, 3),
+                grant=grant,
+                cohort_timestamp=_SOURCE_TIME + datetime.timedelta(seconds=1),
+                admission_hook=oversized_hook,
+            )
+            with self.assertRaisesRegex(ValueError, "capacity"):
+                await lane.cover_page(
+                    calls=(small, oversized),
+                    boundaries=(),
+                    candidate=cursor_policy.LeaseCursor(
+                        grant,
+                        pos=None,
+                    ).prepare(_SOURCE_TIME),
+                )
+            self.assertEqual((small_calls, oversized_calls), (0, 0))
+            self.assertEqual(executor.sequences, [])
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+
+            reentrant_holder: dict[
+                str,
+                feed_work_scheduler.CohortSubmission,
+            ] = {}
+
+            def reentrant_hook(
+                _identities: tuple[
+                    feed_work_scheduler.CohortRecordIdentity,
+                    ...,
+                ],
+            ) -> None:
+                reentrant_holder["cohort"]._begin_admission()
+
+            reentrant = _cohort(
+                uuid.UUID(int=4),
+                (0,),
+                grant=grant,
+                cohort_timestamp=_SOURCE_TIME,
+                admission_hook=reentrant_hook,
+            )
+            reentrant_holder["cohort"] = reentrant
+            with self.assertRaises(feed_work_scheduler.CohortIntegrityError):
+                await lane.cover_page(
+                    calls=(reentrant,),
+                    boundaries=(),
+                    candidate=cursor_policy.LeaseCursor(
+                        grant,
+                        pos=None,
+                    ).prepare(_SOURCE_TIME),
+                )
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+            self.assertEqual(scheduler._shards[0]._next_sequence, 0)
+        finally:
+            await scheduler.close()
+
+    async def test_replay_block_purges_queued_cohort_but_sibling_completes(
+        self,
+    ) -> None:
+        limits = _scheduler_types()._SchedulerLimits(
+            shard_count=1,
+            capacity=8,
+            workers_per_shard=2,
+            high_water=8,
+            resume_at=4,
+        )
+        failed_feed = uuid.UUID(int=1)
+        sibling_feed = uuid.UUID(int=2)
+        executor = _ReplayBarrierExecutor(failed_feed)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        observed = {source_order: [] for source_order in range(3)}
+        try:
+            await lane.cover_page(
+                calls=(
+                    _cohort(
+                        failed_feed,
+                        (0,),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                        settlement_observers={0: observed[0].append},
+                    ),
+                    _cohort(
+                        failed_feed,
+                        (1,),
+                        grant=grant,
+                        cohort_timestamp=(
+                            _SOURCE_TIME + datetime.timedelta(seconds=1)
+                        ),
+                        settlement_observers={1: observed[1].append},
+                    ),
+                    _cohort(
+                        sibling_feed,
+                        (2,),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                        settlement_observers={2: observed[2].append},
+                    ),
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+            await executor.wait_for_started(2)
+            self.assertIn((0,), executor.started)
+            self.assertIn((2,), executor.started)
+            self.assertNotIn((1,), executor.started)
+            executor.release_failure.set()
+            await scheduler._wait_for_idle()
+
+            self.assertEqual(
+                observed,
+                {
+                    0: [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+                    1: [feed_work_scheduler.CallSettlement.REPLAY_BLOCKED],
+                    2: [feed_work_scheduler.CallSettlement.COMPLETED],
+                },
+            )
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+        finally:
+            executor.release_failure.set()
+            await scheduler.close()
+
+    async def test_later_arriving_replay_block_never_dispatches(
+        self,
+    ) -> None:
+        limits = _scheduler_types()._SchedulerLimits(
+            shard_count=1,
+            capacity=2,
+            workers_per_shard=2,
+            high_water=2,
+            resume_at=0,
+        )
+        failed_feed = uuid.UUID(int=1)
+        sibling_feed = uuid.UUID(int=2)
+        executor = _ReplayBarrierExecutor(failed_feed)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        observed = {source_order: [] for source_order in range(3)}
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _cohort(
+                        failed_feed,
+                        (0,),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                        settlement_observers={0: observed[0].append},
+                    ),
+                    _cohort(
+                        sibling_feed,
+                        (2,),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                        settlement_observers={2: observed[2].append},
+                    ),
+                    _cohort(
+                        failed_feed,
+                        (1,),
+                        grant=grant,
+                        cohort_timestamp=(
+                            _SOURCE_TIME + datetime.timedelta(seconds=1)
+                        ),
+                        settlement_observers={1: observed[1].append},
+                    ),
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+        )
+        try:
+            await scheduler._shards[0].wait_for_capacity_waiters(1)
+            await executor.wait_for_started(2)
+            self.assertFalse(coverage.done())
+            self.assertNotIn((1,), executor.started)
+            executor.release_failure.set()
+            await asyncio.wait_for(coverage, timeout=1)
+            await scheduler._wait_for_idle()
+
+            self.assertNotIn((1,), executor.started)
+            self.assertEqual(
+                observed,
+                {
+                    0: [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+                    1: [feed_work_scheduler.CallSettlement.REPLAY_BLOCKED],
+                    2: [feed_work_scheduler.CallSettlement.COMPLETED],
+                },
+            )
+        finally:
+            executor.release_failure.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_terminal_facts_closure_state_and_disposition_matrix(
+        self,
+    ) -> None:
+        self.assertEqual(
+            set(feed_work_scheduler.CohortRecordClosureState),
+            {
+                feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED,
+                feed_work_scheduler.CohortRecordClosureState.FINAL_CLOSURE_PENDING,
+                feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE,
+                feed_work_scheduler.CohortRecordClosureState.OUTCOME_UNKNOWN,
+            },
+        )
+        self.assertEqual(len(feed_work_scheduler.CohortTerminalDisposition), 9)
+        self.assertEqual(len(feed_work_scheduler.CohortRecordTerminalReason), 11)
+        grant = _grant()
+        member = _member(grant, uuid.UUID(int=1))
+        identity = feed_work_scheduler.CohortRecordIdentity(
+            grant=grant,
+            member=member,
+            page_sequence=0,
+            feed_id=uuid.UUID(int=1),
+            cohort_timestamp=_SOURCE_TIME,
+            source_order=0,
+            local_sequence=0,
+        )
+        item = feed_work_scheduler.CohortItemFailureFact(
+            feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+            "  bad\nitem   payload  ",
+        )
+        self.assertEqual(item.detail, "bad item payload")
+        capped = feed_work_scheduler.CohortItemFailureFact(
+            feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+            "x" * 4096,
+        )
+        self.assertEqual(len(capped.detail), 2048)
+        with self.assertRaises(ValueError):
+            feed_work_scheduler.CohortDirectFailureFact(
+                feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+                "response at https://secret.invalid/audio",
+            )
+        direct = feed_work_scheduler.CohortDirectFailureFact(
+            feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            "selected publication failure",
+        )
+
+        def facts(
+            disposition: feed_work_scheduler.CohortTerminalDisposition,
+            closure: feed_work_scheduler.CohortRecordClosureState,
+            reason: feed_work_scheduler.CohortRecordTerminalReason,
+            *,
+            participated: bool,
+            item_failure: feed_work_scheduler.CohortItemFailureFact | None = None,
+            direct_failure: feed_work_scheduler.CohortDirectFailureFact | None = None,
+        ) -> feed_work_scheduler.CohortTerminalFacts:
+            return feed_work_scheduler.CohortTerminalFacts(
+                records=(
+                    feed_work_scheduler.CohortRecordTerminalFact(
+                        identity=identity,
+                        participated=participated,
+                        closure_state=closure,
+                        full_pipeline_completed=(
+                            reason
+                            is feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE
+                        ),
+                        terminal_reason=reason,
+                        item_failure=item_failure,
+                        direct_failure=direct_failure,
+                    ),
+                ),
+                disposition=disposition,
+            )
+
+        completed_skip = facts(
+            feed_work_scheduler.CohortTerminalDisposition.SETTLED,
+            feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED,
+            feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP,
+            participated=True,
+            item_failure=item,
+        )
+        completed = feed_work_scheduler.CallCompleted(completed_skip)
+        self.assertFalse(completed.facts.records[0].full_pipeline_completed)
+        outcomes = (
+            completed,
+            feed_work_scheduler.CallFinalClosurePending(
+                facts(
+                    feed_work_scheduler.CohortTerminalDisposition.FINAL_CLOSURE_PENDING,
+                    feed_work_scheduler.CohortRecordClosureState.FINAL_CLOSURE_PENDING,
+                    feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP,
+                    participated=True,
+                    item_failure=item,
+                )
+            ),
+            feed_work_scheduler.CallReplayableDirectFailure(
+                facts(
+                    feed_work_scheduler.CohortTerminalDisposition.REPLAYABLE_DIRECT,
+                    feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE,
+                    feed_work_scheduler.CohortRecordTerminalReason.REPLAYABLE_DIRECT,
+                    participated=False,
+                    direct_failure=direct,
+                )
+            ),
+            feed_work_scheduler.CallRetryable(
+                facts(
+                    feed_work_scheduler.CohortTerminalDisposition.RETRYABLE,
+                    feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE,
+                    feed_work_scheduler.CohortRecordTerminalReason.RETRYABLE,
+                    participated=False,
+                )
+            ),
+            feed_work_scheduler.CallStopped(
+                facts(
+                    feed_work_scheduler.CohortTerminalDisposition.STOPPED,
+                    feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE,
+                    feed_work_scheduler.CohortRecordTerminalReason.STOPPED,
+                    participated=False,
+                )
+            ),
+            feed_work_scheduler.CallAuthorityLost(
+                facts(
+                    feed_work_scheduler.CohortTerminalDisposition.AUTHORITY_LOST,
+                    feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE,
+                    feed_work_scheduler.CohortRecordTerminalReason.AUTHORITY_LOST,
+                    participated=False,
+                )
+            ),
+            feed_work_scheduler.CallMembershipRejected(
+                facts(
+                    feed_work_scheduler.CohortTerminalDisposition.MEMBERSHIP_REJECTED,
+                    feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE,
+                    feed_work_scheduler.CohortRecordTerminalReason.MEMBERSHIP_REJECTED,
+                    participated=False,
+                )
+            ),
+            feed_work_scheduler.CallIntegrityFailure(
+                facts(
+                    feed_work_scheduler.CohortTerminalDisposition.INTEGRITY_FAILURE,
+                    feed_work_scheduler.CohortRecordClosureState.OUTCOME_UNKNOWN,
+                    feed_work_scheduler.CohortRecordTerminalReason.INTEGRITY_FAILURE,
+                    participated=True,
+                ),
+                RuntimeError("malformed facts"),
+            ),
+            feed_work_scheduler.CallOutcomeUnknown(
+                facts(
+                    feed_work_scheduler.CohortTerminalDisposition.OUTCOME_UNKNOWN,
+                    feed_work_scheduler.CohortRecordClosureState.OUTCOME_UNKNOWN,
+                    feed_work_scheduler.CohortRecordTerminalReason.OUTCOME_UNKNOWN,
+                    participated=True,
+                )
+            ),
+        )
+        self.assertEqual(
+            {outcome.facts.disposition for outcome in outcomes},
+            set(feed_work_scheduler.CohortTerminalDisposition),
+        )
+        with self.assertRaises(feed_work_scheduler.CohortIntegrityError):
+            feed_work_scheduler.CohortRecordTerminalFact(
+                identity=identity,
+                participated=False,
+                closure_state=(
+                    feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+                ),
+                full_pipeline_completed=False,
+                terminal_reason=(
+                    feed_work_scheduler.CohortRecordTerminalReason.PUBLICATION_ABANDONED
+                ),
+            )
+        with self.assertRaises(feed_work_scheduler.CohortIntegrityError):
+            feed_work_scheduler.CohortRecordTerminalFact(
+                identity=identity,
+                participated=True,
+                closure_state=(
+                    feed_work_scheduler.CohortRecordClosureState.FINAL_CLOSURE_PENDING
+                ),
+                full_pipeline_completed=False,
+                terminal_reason=(
+                    feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP
+                ),
+            )
+
+    async def test_crossed_terminal_facts_retain_outcome_unknown(
+        self,
+    ) -> None:
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _CrossedTerminalFactsExecutor()
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        observed: list[object] = []
+        await lane.cover_page(
+            calls=(
+                _cohort(
+                    uuid.UUID(int=8),
+                    (0,),
+                    grant=grant,
+                    cohort_timestamp=_SOURCE_TIME,
+                    settlement_observers={0: observed.append},
+                ),
+            ),
+            boundaries=(),
+            candidate=cursor_policy.LeaseCursor(
+                grant,
+                pos=None,
+            ).prepare(_SOURCE_TIME),
+        )
+        async with asyncio.timeout(1):
+            while True:
+                snapshot = await scheduler._snapshot()
+                if snapshot.shards[0].records[0].state.value == "outcome_unknown":
+                    break
+                await asyncio.sleep(0)
+        self.assertEqual(snapshot.held, 1)
+        self.assertEqual(observed, [])
+        self.assertFalse(snapshot.fatal)
+        self.assertIsInstance(
+            await asyncio.wait_for(
+                lane.close(feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS),
+                timeout=1,
+            ),
+            feed_work_scheduler.Undrained,
+        )
+        self.assertIsInstance(await scheduler.close(), feed_work_scheduler.Undrained)
+
+    async def test_final_closure_pending_known_abort_matrix(self) -> None:
+        cases = (_stopped, _retryable, _authority_lost)
+        for abort_factory in cases:
+            with self.subTest(outcome=abort_factory.__name__):
+                limits = _scheduler_types()._SchedulerLimits(
+                    shard_count=2,
+                    capacity=4,
+                    workers_per_shard=1,
+                    high_water=4,
+                    resume_at=2,
+                )
+                executor = _PageAbortExecutor(abort_factory)
+                scheduler = feed_work_scheduler.FeedWorkScheduler(
+                    executor,
+                    _limits=limits,
+                )
+                await scheduler.start()
+                grant = _grant()
+                lane = _open_lane(scheduler, grant)
+                observed = {0: [], 1: []}
+                await lane.cover_page(
+                    calls=(
+                        _cohort(
+                            uuid.UUID(int=1),
+                            (0,),
+                            grant=grant,
+                            cohort_timestamp=_SOURCE_TIME,
+                            settlement_observers={0: observed[0].append},
+                        ),
+                        _cohort(
+                            uuid.UUID(int=2),
+                            (1,),
+                            grant=grant,
+                            cohort_timestamp=_SOURCE_TIME,
+                            settlement_observers={1: observed[1].append},
+                        ),
+                    ),
+                    boundaries=(),
+                    candidate=cursor_policy.LeaseCursor(
+                        grant,
+                        pos=None,
+                    ).prepare(_SOURCE_TIME),
+                )
+                await asyncio.wait_for(executor.abort_entered.wait(), timeout=1)
+                async with asyncio.timeout(1):
+                    while True:
+                        snapshot = await scheduler._snapshot()
+                        states = {
+                            record.state.value
+                            for shard in snapshot.shards
+                            for record in shard.records
+                        }
+                        if "final_closure_pending" in states:
+                            break
+                        await asyncio.sleep(0)
+                executor.release_abort.set()
+                if abort_factory is _authority_lost:
+                    await asyncio.wait_for(lane._closing_event.wait(), timeout=1)
+                    await asyncio.wait_for(
+                        lane.close(
+                            feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS
+                        ),
+                        timeout=1,
+                    )
+                else:
+                    await scheduler._wait_for_idle()
+
+                self.assertEqual(
+                    observed,
+                    {
+                        0: [
+                            feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE
+                        ],
+                        1: [
+                            feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE
+                        ],
+                    },
+                )
+                self.assertEqual((await scheduler._snapshot()).held, 0)
+                await scheduler.close()
+
+    async def test_precommit_cancellation_releases_final_pending_once(
+        self,
+    ) -> None:
+        limits = _scheduler_types()._SchedulerLimits(
+            shard_count=2,
+            capacity=4,
+            workers_per_shard=1,
+            high_water=4,
+            resume_at=2,
+        )
+        executor = _PageAbortExecutor(_completed)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        observed = {0: [], 1: []}
+        await lane.cover_page(
+            calls=(
+                _cohort(
+                    uuid.UUID(int=1),
+                    (0,),
+                    grant=grant,
+                    cohort_timestamp=_SOURCE_TIME,
+                    settlement_observers={0: observed[0].append},
+                ),
+                _cohort(
+                    uuid.UUID(int=2),
+                    (1,),
+                    grant=grant,
+                    cohort_timestamp=_SOURCE_TIME,
+                    settlement_observers={1: observed[1].append},
+                ),
+            ),
+            boundaries=(),
+            candidate=cursor_policy.LeaseCursor(
+                grant,
+                pos=None,
+            ).prepare(_SOURCE_TIME),
+        )
+        await asyncio.wait_for(executor.abort_entered.wait(), timeout=1)
+        result = await asyncio.wait_for(
+            lane.close(feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS),
+            timeout=1,
+        )
+        self.assertIsInstance(result, feed_work_scheduler.LaneClosed)
+        self.assertEqual(
+            observed,
+            {
+                0: [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+                1: [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+            },
+        )
+        self.assertEqual((await scheduler._snapshot()).held, 0)
+        await scheduler.close()
+
+    async def test_outcome_unknown_suppresses_page_abort_cleanup(
+        self,
+    ) -> None:
+        limits = _scheduler_types()._SchedulerLimits(
+            shard_count=2,
+            capacity=5,
+            workers_per_shard=2,
+            high_water=5,
+            resume_at=2,
+        )
+        executor = _UnknownPageAbortExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        observed = {0: [], 1: [], 2: []}
+        stopped_settled = asyncio.Event()
+
+        def observe_stopped(settlement: object) -> None:
+            observed[2].append(settlement)
+            stopped_settled.set()
+
+        await lane.cover_page(
+            calls=tuple(
+                _cohort(
+                    uuid.UUID(int=source_order + 1),
+                    (source_order,),
+                    grant=grant,
+                    cohort_timestamp=_SOURCE_TIME,
+                    settlement_observers={
+                        source_order: (
+                            observe_stopped
+                            if source_order == 2
+                            else observed[source_order].append
+                        )
+                    },
+                )
+                for source_order in range(3)
+            ),
+            boundaries=(),
+            candidate=cursor_policy.LeaseCursor(
+                grant,
+                pos=None,
+            ).prepare(_SOURCE_TIME),
+        )
+        await asyncio.wait_for(executor.abort_entered.wait(), timeout=1)
+        async with asyncio.timeout(1):
+            while True:
+                snapshot = await scheduler._snapshot()
+                states = [
+                    record.state.value
+                    for shard in snapshot.shards
+                    for record in shard.records
+                ]
+                if "final_closure_pending" in states and "outcome_unknown" in states:
+                    break
+                await asyncio.sleep(0)
+        executor.release_abort.set()
+        await asyncio.wait_for(stopped_settled.wait(), timeout=1)
+        snapshot = await scheduler._snapshot()
+        self.assertEqual(snapshot.held, 2)
+        self.assertEqual(observed[0], [])
+        self.assertEqual(observed[1], [])
+        self.assertEqual(
+            observed[2],
+            [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+        )
+        self.assertIsInstance(
+            await asyncio.wait_for(
+                lane.close(feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS),
+                timeout=1,
+            ),
+            feed_work_scheduler.Undrained,
+        )
+        self.assertEqual((await scheduler._snapshot()).held, 2)
+        self.assertEqual(observed[0], [])
+        self.assertIsInstance(await scheduler.close(), feed_work_scheduler.Undrained)
+
+    async def test_cancellation_handoff_and_retention_handle_are_disjoint(
+        self,
+    ) -> None:
+        for unknown in (False, True):
+            with self.subTest(unknown=unknown):
+                limits = _scheduler_types()._SchedulerLimits(
+                    shard_count=1,
+                    capacity=3,
+                    workers_per_shard=1,
+                    high_water=3,
+                    resume_at=1,
+                )
+                executor = _CancellationCapabilityExecutor(unknown=unknown)
+                scheduler = feed_work_scheduler.FeedWorkScheduler(
+                    executor,
+                    _limits=limits,
+                )
+                await scheduler.start()
+                grant = _grant()
+                lane = _open_lane(scheduler, grant)
+                observed = {0: [], 1: []}
+                await lane.cover_page(
+                    calls=(
+                        _cohort(
+                            uuid.UUID(int=1),
+                            (0, 1),
+                            grant=grant,
+                            cohort_timestamp=_SOURCE_TIME,
+                            settlement_observers={
+                                0: observed[0].append,
+                                1: observed[1].append,
+                            },
+                        ),
+                    ),
+                    boundaries=(),
+                    candidate=cursor_policy.LeaseCursor(
+                        grant,
+                        pos=None,
+                    ).prepare(_SOURCE_TIME),
+                )
+                await asyncio.wait_for(executor.entered.wait(), timeout=1)
+                worker = scheduler._shards[0]._workers[0].task
+                self.assertIsNotNone(worker)
+                result = await asyncio.wait_for(
+                    lane.close(
+                        feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS
+                    ),
+                    timeout=1,
+                )
+                await asyncio.wait_for(
+                    executor.handoff_complete.wait(),
+                    timeout=1,
+                )
+                self.assertIsNotNone(executor.caught)
+                with self.assertRaises(asyncio.CancelledError) as propagated:
+                    await typing.cast("asyncio.Task[None]", worker)
+                self.assertIsInstance(propagated.exception, asyncio.CancelledError)
+                self.assertTrue(executor.reraised_same_object)
+
+                if unknown:
+                    self.assertIsInstance(result, feed_work_scheduler.Undrained)
+                    snapshot = await scheduler._snapshot()
+                    self.assertEqual(snapshot.held, 2)
+                    self.assertEqual(snapshot.shards[0].active_calls, 0)
+                    self.assertTrue(
+                        all(
+                            record.state.value == "outcome_unknown"
+                            for record in snapshot.shards[0].records
+                        )
+                    )
+                    self.assertEqual(observed, {0: [], 1: []})
+                    self.assertIsInstance(
+                        await scheduler.close(),
+                        feed_work_scheduler.Undrained,
+                    )
+                else:
+                    self.assertIsInstance(result, feed_work_scheduler.LaneClosed)
+                    self.assertEqual((await scheduler._snapshot()).held, 0)
+                    self.assertEqual(
+                        observed,
+                        {
+                            0: [feed_work_scheduler.CallSettlement.COMPLETED],
+                            1: [feed_work_scheduler.CallSettlement.COMPLETED],
+                        },
+                    )
+                    await scheduler.close()
 
 
 if __name__ == "__main__":

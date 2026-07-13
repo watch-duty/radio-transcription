@@ -5,11 +5,31 @@ from backend.pipeline.ingestion.feed_work_scheduler import _scheduler, _types
 CallAuthorityLost = _types.CallAuthorityLost
 CallCompleted = _types.CallCompleted
 CallExecution = _types.CallExecution
+CallFinalClosurePending = _types.CallFinalClosurePending
 CallIntegrityFailure = _types.CallIntegrityFailure
 CallMembershipRejected = _types.CallMembershipRejected
+CallOutcomeUnknown = _types.CallOutcomeUnknown
+CallReplayableDirectFailure = _types.CallReplayableDirectFailure
 CallRetryable = _types.CallRetryable
 CallSettlement = _types.CallSettlement
+CallStopped = _types.CallStopped
 CallSubmission = _types.CallSubmission
+CohortCancellationHandoff = _types.CohortCancellationHandoff
+CohortDirectFailureFact = _types.CohortDirectFailureFact
+CohortExecution = _types.CohortExecution
+CohortIntegrityError = _types.CohortIntegrityError
+CohortItemFailureFact = _types.CohortItemFailureFact
+CohortRecordClosureState = _types.CohortRecordClosureState
+CohortRecordIdentity = _types.CohortRecordIdentity
+CohortRecordTerminalFact = _types.CohortRecordTerminalFact
+CohortRecordTerminalReason = _types.CohortRecordTerminalReason
+CohortRetentionHandle = _types.CohortRetentionHandle
+CohortSubmission = _types.CohortSubmission
+CohortTerminalDisposition = _types.CohortTerminalDisposition
+CohortTerminalFacts = _types.CohortTerminalFacts
+LaneSignalView = _types.LaneSignalView
+OutcomeUnknownCause = _types.OutcomeUnknownCause
+OutcomeUnknownRetentionRequest = _types.OutcomeUnknownRetentionRequest
 BoundaryBatchCommitted = _types.BoundaryBatchCommitted
 BoundaryBatchRetryable = _types.BoundaryBatchRetryable
 BoundaryDisposition = _types.BoundaryDisposition
@@ -34,16 +54,36 @@ __all__ = [
     "CallAuthorityLost",
     "CallCompleted",
     "CallExecution",
+    "CallFinalClosurePending",
     "CallIntegrityFailure",
     "CallMembershipRejected",
+    "CallOutcomeUnknown",
+    "CallReplayableDirectFailure",
     "CallRetryable",
     "CallSettlement",
+    "CallStopped",
     "CallSubmission",
+    "CohortCancellationHandoff",
+    "CohortDirectFailureFact",
+    "CohortExecution",
+    "CohortIntegrityError",
+    "CohortItemFailureFact",
+    "CohortRecordClosureState",
+    "CohortRecordIdentity",
+    "CohortRecordTerminalFact",
+    "CohortRecordTerminalReason",
+    "CohortRetentionHandle",
+    "CohortSubmission",
+    "CohortTerminalDisposition",
+    "CohortTerminalFacts",
     "FeedRemoved",
     "FeedWorkScheduler",
     "GrantLane",
     "LaneCloseReason",
     "LaneClosed",
+    "LaneSignalView",
+    "OutcomeUnknownCause",
+    "OutcomeUnknownRetentionRequest",
     "SchedulerIntegrityError",
     "Undrained",
 ]

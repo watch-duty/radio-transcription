@@ -100,7 +100,11 @@ class BcfyCallsSidRunner:
     ) -> grant_control.RunOutcome:
         """Supervise one processor and acknowledge only a settled exact lane."""
         try:
-            lane = self._scheduler.open_lane(grant)
+            lane = self._scheduler.open_lane(
+                grant,
+                stop_requested=context.stop_requested,
+                grant_lost=context.grant_lost,
+            )
         except feed_work_scheduler.SchedulerIntegrityError as exc:
             message = "scheduler failed before the exact lane opened"
             raise SidRunnerIntegrityError(message) from exc

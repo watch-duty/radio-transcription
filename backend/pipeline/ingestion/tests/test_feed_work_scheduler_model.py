@@ -783,25 +783,31 @@ class TestSchedulerConstants(unittest.TestCase):
     def test_scheduler_call_values_are_frozen_and_exact(self) -> None:
         scheduler_types = _scheduler_types()
         grant = _grant()
+        member = _member(grant, _FEED_IDS[0])
         payload = object()
         work = scheduler_types._CallWork(
             feed_id=_FEED_IDS[0],
             grant=grant,
+            member=member,
             source_order=7,
-            source_timestamp=_SOURCE_TIME,
+            cohort_timestamp=None,
             payload=payload,
             page_sequence=3,
         )
-        record = scheduler_types._CallRecord(
-            work=work,
+        identity = scheduler_types.CohortRecordIdentity(
+            grant=grant,
+            member=member,
+            page_sequence=3,
+            feed_id=_FEED_IDS[0],
+            cohort_timestamp=None,
+            source_order=7,
             local_sequence=11,
         )
-        execution = scheduler_types.CallExecution(
-            grant=grant,
-            feed_id=_FEED_IDS[0],
-            source_timestamp=None,
-            payload=payload,
+        record = scheduler_types._CallRecord(
+            work=work,
+            identity=identity,
         )
+        execution = record.execution()
 
         self.assertIs(work.grant, grant)
         self.assertIs(work.payload, payload)
@@ -811,18 +817,21 @@ class TestSchedulerConstants(unittest.TestCase):
         self.assertFalse(hasattr(execution, "__dict__"))
         self.assertIsNone(execution.source_timestamp)
         self.assertIs(execution.payload, payload)
-        with self.assertRaises(dataclasses.FrozenInstanceError):
+        with self.assertRaises((dataclasses.FrozenInstanceError, TypeError)):
             _assign_attribute(record, "local_sequence", 12)
 
     def test_closed_executor_outcomes_contain_no_policy(self) -> None:
         scheduler_types = _scheduler_types()
-        outcomes = (
-            scheduler_types._ExecutorCompleted(),
-            scheduler_types._ExecutorRetryable(),
-            scheduler_types._ExecutorAuthorityLost(),
-            scheduler_types._ExecutorMembershipRejected(),
-            scheduler_types._ExecutorIntegrityFailure(RuntimeError("boom")),
-            scheduler_types.BoundaryBatchRetryable(),
+        outcome_types = (
+            scheduler_types._ExecutorCompleted,
+            scheduler_types._ExecutorFinalClosurePending,
+            scheduler_types._ExecutorReplayableDirectFailure,
+            scheduler_types._ExecutorRetryable,
+            scheduler_types._ExecutorStopped,
+            scheduler_types._ExecutorAuthorityLost,
+            scheduler_types._ExecutorMembershipRejected,
+            scheduler_types._ExecutorIntegrityFailure,
+            scheduler_types._ExecutorOutcomeUnknown,
         )
         forbidden = {
             "backoff",
@@ -834,11 +843,15 @@ class TestSchedulerConstants(unittest.TestCase):
             "retry_after",
         }
 
-        for outcome in outcomes:
-            with self.subTest(outcome=type(outcome).__name__):
-                self.assertTrue(dataclasses.is_dataclass(outcome))
-                self.assertFalse(hasattr(outcome, "__dict__"))
-                self.assertTrue(forbidden.isdisjoint(outcome.__slots__))
+        for outcome_type in outcome_types:
+            with self.subTest(outcome=outcome_type.__name__):
+                self.assertTrue(dataclasses.is_dataclass(outcome_type))
+                self.assertIn("facts", outcome_type.__slots__)
+                self.assertTrue(forbidden.isdisjoint(outcome_type.__slots__))
+
+        boundary = scheduler_types.BoundaryBatchRetryable()
+        self.assertTrue(dataclasses.is_dataclass(boundary))
+        self.assertFalse(hasattr(boundary, "__dict__"))
 
 
 class TestConservationModel(unittest.TestCase):
@@ -1156,11 +1169,13 @@ class _ImmediateExecutor:
 
     async def execute(self, execution: object) -> object:
         scheduler_types = _scheduler_types()
-        if not isinstance(execution, scheduler_types.CallExecution):
+        if not isinstance(execution, scheduler_types.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
-        self.sequences.append(execution.payload["source_order"])
-        return scheduler_types._ExecutorCompleted()
+        self.sequences.extend(
+            call.payload["source_order"] for call in execution.calls
+        )
+        return _completed_execution(execution)
 
 
 class _GateExecutor:
@@ -1171,15 +1186,15 @@ class _GateExecutor:
 
     async def execute(self, execution: object) -> object:
         scheduler_types = _scheduler_types()
-        if not isinstance(execution, scheduler_types.CallExecution):
+        if not isinstance(execution, scheduler_types.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
-        sequence = execution.payload["source_order"]
+        sequence = execution.calls[0].payload["source_order"]
         self._release.setdefault(sequence, asyncio.Event())
         self.started.append(sequence)
         self.changed.set()
         await self._release[sequence].wait()
-        return scheduler_types._ExecutorCompleted()
+        return _completed_execution(execution)
 
     async def wait_for_started(self, count: int) -> None:
         while len(self.started) < count:
@@ -1200,10 +1215,9 @@ class _CancellationExecutor:
         self.release = asyncio.Event()
 
     async def execute(self, execution: object) -> object:
-        if not isinstance(execution, _scheduler_types().CallExecution):
+        if not isinstance(execution, _scheduler_types().CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
-        scheduler_types = _scheduler_types()
         self.entered.set()
         try:
             await self.release.wait()
@@ -1216,7 +1230,7 @@ class _CancellationExecutor:
                 self.fail_no_current_task()
             current.uncancel()
             await self.release.wait()
-        return scheduler_types._ExecutorCompleted()
+        return _completed_execution(execution)
 
     def fail_no_current_task(self) -> typing.Never:
         self._raise_missing_task()
@@ -1231,7 +1245,7 @@ class _FailingExecutor:
         self.entered = asyncio.Event()
 
     async def execute(self, execution: object) -> object:
-        if not isinstance(execution, _scheduler_types().CallExecution):
+        if not isinstance(execution, _scheduler_types().CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
         self.entered.set()
@@ -1247,13 +1261,125 @@ def _call_work(
     source_timestamp: datetime.datetime = _SOURCE_TIME,
 ) -> object:
     scheduler_types = _scheduler_types()
+    member = _member(grant, feed_id)
     return scheduler_types._CallWork(
         feed_id=feed_id,
         grant=grant,
+        member=member,
         source_order=source_order,
-        source_timestamp=source_timestamp,
-        payload={"source_order": source_order},
+        cohort_timestamp=source_timestamp,
+        payload={"source_order": source_order, "member": member},
         page_sequence=0,
+    )
+
+
+def _call_works(
+    feed_id: uuid.UUID,
+    grant: ingestion_lease_store.LeaseGrant,
+    source_order: int,
+    count: int,
+    *,
+    cohort_timestamp: datetime.datetime = _SOURCE_TIME,
+) -> tuple[object, ...]:
+    scheduler_types = _scheduler_types()
+    member = _member(grant, feed_id)
+    return tuple(
+        scheduler_types._CallWork(
+            feed_id=feed_id,
+            grant=grant,
+            member=member,
+            source_order=source_order + offset,
+            cohort_timestamp=cohort_timestamp,
+            payload={
+                "source_order": source_order + offset,
+                "member": member,
+            },
+            page_sequence=0,
+        )
+        for offset in range(count)
+    )
+
+
+def _terminal_facts(
+    identities: tuple[object, ...],
+) -> object:
+    scheduler_types = _scheduler_types()
+    return scheduler_types.CohortTerminalFacts(
+        records=tuple(
+            scheduler_types.CohortRecordTerminalFact(
+                identity=identity,
+                participated=True,
+                closure_state=(
+                    scheduler_types.CohortRecordClosureState.DURABLY_CLOSED
+                ),
+                full_pipeline_completed=True,
+                terminal_reason=(
+                    scheduler_types.CohortRecordTerminalReason.FULL_PIPELINE
+                ),
+            )
+            for identity in identities
+        ),
+        disposition=scheduler_types.CohortTerminalDisposition.SETTLED,
+    )
+
+
+def _completed_execution(execution: object) -> object:
+    scheduler_types = _scheduler_types()
+    cohort = typing.cast("typing.Any", execution)
+    return scheduler_types._ExecutorCompleted(
+        _terminal_facts(tuple(call.identity for call in cohort.calls))
+    )
+
+
+def _completed_record(record: object) -> object:
+    scheduler_types = _scheduler_types()
+    cohort = typing.cast("typing.Any", record)
+    return scheduler_types._ExecutorCompleted(
+        _terminal_facts(tuple(item.identity for item in cohort.records))
+    )
+
+
+async def _admit_work(shard: object, work: object) -> object:
+    return await _admit_works(shard, (work,))
+
+
+async def _admit_works(
+    shard: object,
+    works: tuple[object, ...],
+    *,
+    admission_hook: typing.Callable[[tuple[object, ...]], None] | None = None,
+) -> object:
+    scheduler_types = _scheduler_types()
+    exact_works = typing.cast("tuple[typing.Any, ...]", works)
+    exact_work = exact_works[0]
+    calls = tuple(
+        scheduler_types.CallSubmission(
+            feed_id=work.feed_id,
+            source_timestamp=work.cohort_timestamp,
+            payload=work.payload,
+        )
+        for work in exact_works
+    )
+    submission = scheduler_types.CohortSubmission(
+        member=exact_work.member,
+        feed_id=exact_work.feed_id,
+        cohort_timestamp=exact_work.cohort_timestamp,
+        calls=calls,
+        admission_hook=(
+            (lambda _identities: None)
+            if admission_hook is None
+            else admission_hook
+        ),
+    )
+    signals = scheduler_types.LaneSignalView(
+        exact_work.grant,
+        asyncio.Event(),
+        asyncio.Event(),
+    )
+    return await typing.cast("typing.Any", shard).admit_cohort(
+        submission,
+        exact_works,
+        signals,
     )
 
 
@@ -1425,12 +1551,13 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
                             source_order=source_order,
                         )
                         if expected is not None:
-                            record = await shard.admit(
+                            record = await _admit_work(
+                                shard,
                                 _call_work(
                                     feed_id,
                                     grant,
                                     source_order,
-                                )
+                                ),
                             )
                             self.assertEqual(record.local_sequence, expected)
                             records[expected] = record
@@ -1461,10 +1588,11 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
                         slot = model._records[sequence].worker_slot
                         self.assertIsNotNone(slot)
                         model.terminalize(sequence)
+                        record = records.pop(sequence)
                         await shard._terminalize(
                             typing.cast("int", slot),
-                            records.pop(sequence),
-                            scheduler_types._ExecutorCompleted(),
+                            record,
+                            _completed_record(record),
                         )
                     elif command == 3:
                         grant = generator.choice(grants)
@@ -1517,11 +1645,18 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
         old = _grant(fencing_token=7)
         successor = _grant(fencing_token=8)
         sibling = _grant(lease_key="151", fencing_token=7)
-        old_record = await shard.admit(_call_work(_FEED_IDS[0], old, 0))
-        successor_record = await shard.admit(
-            _call_work(_FEED_IDS[0], successor, 1)
+        old_record = await _admit_work(
+            shard,
+            _call_work(_FEED_IDS[0], old, 0),
         )
-        sibling_record = await shard.admit(_call_work(_FEED_IDS[1], sibling, 2))
+        successor_record = await _admit_work(
+            shard,
+            _call_work(_FEED_IDS[0], successor, 1),
+        )
+        sibling_record = await _admit_work(
+            shard,
+            _call_work(_FEED_IDS[1], sibling, 2),
+        )
         active_old = await shard._take_next(0, wait=False)
         self.assertIs(active_old, old_record)
 
@@ -1538,7 +1673,7 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
         await shard._terminalize(
             0,
             old_record,
-            scheduler_types._ExecutorCompleted(),
+            _completed_record(old_record),
         )
         snapshot = await shard.snapshot()
         self.assertEqual(snapshot.held, 2)
@@ -1575,19 +1710,23 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
                 grant = threshold_record
             else:
                 grant = retained
-            await shard.admit(
+            await _admit_work(
+                shard,
                 _call_work(
                     uuid.UUID(int=source_order + 1),
                     grant,
                     source_order,
-                )
+                ),
             )
 
         snapshot = await shard.snapshot()
         self.assertEqual(snapshot.held, 400)
         self.assertTrue(snapshot.pressure_paused)
         blocked = asyncio.create_task(
-            shard.admit(_call_work(uuid.UUID(int=401), retained, 400))
+            _admit_work(
+                shard,
+                _call_work(uuid.UUID(int=401), retained, 400),
+            )
         )
         try:
             await shard.wait_for_capacity_waiters(1)
@@ -1615,6 +1754,173 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
                 blocked.cancel()
                 with self.assertRaises(asyncio.CancelledError):
                     await blocked
+
+    async def test_atomic_cohort_pressure_oversized_and_conservation(
+        self,
+    ) -> None:
+        scheduler_types = _scheduler_types()
+        shard_module = _scheduler_shard()
+        limits = scheduler_types._SchedulerLimits(
+            shard_count=1,
+            capacity=5,
+            workers_per_shard=1,
+            high_water=4,
+            resume_at=2,
+        )
+        shard = shard_module._Shard(0, _ImmediateExecutor(), limits=limits)
+        oversized_hook_calls = 0
+
+        def oversized_hook(_identities: tuple[object, ...]) -> None:
+            nonlocal oversized_hook_calls
+            oversized_hook_calls += 1
+
+        with self.assertRaisesRegex(ValueError, "capacity"):
+            await _admit_works(
+                shard,
+                _call_works(_FEED_IDS[0], _grant(), 0, 6),
+                admission_hook=oversized_hook,
+            )
+        snapshot = await shard.snapshot()
+        self.assertEqual(snapshot.held, 0)
+        self.assertEqual(shard._next_sequence, 0)
+        self.assertEqual(oversized_hook_calls, 0)
+
+        first_grant = _grant(lease_key="100")
+        second_grant = _grant(lease_key="101")
+        third_grant = _grant(lease_key="102")
+        first = await _admit_works(
+            shard,
+            _call_works(_FEED_IDS[0], first_grant, 0, 3),
+        )
+        second = await _admit_works(
+            shard,
+            _call_works(_FEED_IDS[1], second_grant, 3, 2),
+        )
+        snapshot = await shard.snapshot()
+        self.assertEqual(snapshot.held, 5)
+        self.assertTrue(snapshot.pressure_paused)
+        self.assertEqual(snapshot.queued_calls, 5)
+        self.assertEqual(
+            tuple(record.local_sequence for record in first.records),
+            (0, 1, 2),
+        )
+        self.assertEqual(
+            tuple(record.local_sequence for record in second.records),
+            (3, 4),
+        )
+        blocked = asyncio.create_task(
+            _admit_works(
+                shard,
+                _call_works(_FEED_IDS[2], third_grant, 5, 1),
+            )
+        )
+        await shard.wait_for_capacity_waiters(1)
+        self.assertFalse(blocked.done())
+        released = await shard.purge_exact(first_grant)
+        self.assertEqual(released.released_sequences, (0, 1, 2))
+        third = await asyncio.wait_for(blocked, timeout=1)
+        snapshot = await shard.snapshot()
+        self.assertEqual(snapshot.held, 3)
+        self.assertFalse(snapshot.pressure_paused)
+        self.assertEqual(third.local_sequence, 5)
+        self.assertEqual(
+            snapshot.held,
+            snapshot.queued_calls
+            + snapshot.active_calls
+            + snapshot.pending_boundaries
+            + snapshot.flushing_boundaries,
+        )
+
+    async def test_seeded_atomic_cohort_conservation(self) -> None:
+        scheduler_types = _scheduler_types()
+        shard_module = _scheduler_shard()
+        limits = scheduler_types._SchedulerLimits(
+            shard_count=1,
+            capacity=60,
+            workers_per_shard=2,
+            high_water=60,
+            resume_at=30,
+        )
+        grants = (
+            _grant(lease_key="100"),
+            _grant(lease_key="101"),
+            _grant(lease_key="102"),
+        )
+        for seed in (0xC011, 0xA70C):
+            with self.subTest(seed=seed):
+                generator = random.Random(seed)  # noqa: S311
+                shard = shard_module._Shard(
+                    0,
+                    _ImmediateExecutor(),
+                    limits=limits,
+                )
+                known: dict[int, object] = {}
+                active: dict[int, object] = {}
+                next_source_order = 0
+                for step in range(120):
+                    command = generator.randrange(4)
+                    snapshot = await shard.snapshot()
+                    if command == 0 and snapshot.held <= 52:
+                        count = generator.randrange(1, 5)
+                        feed_id = generator.choice(_FEED_IDS)
+                        grant = generator.choice(grants)
+                        cohort = await _admit_works(
+                            shard,
+                            _call_works(
+                                feed_id,
+                                grant,
+                                next_source_order,
+                                count,
+                            ),
+                        )
+                        for record in cohort.records:
+                            known[record.local_sequence] = cohort
+                        next_source_order += count
+                    elif command == 1:
+                        free = tuple(
+                            slot
+                            for slot in range(2)
+                            if slot not in active
+                        )
+                        if free:
+                            slot = generator.choice(free)
+                            cohort = await shard._take_next(slot, wait=False)
+                            if cohort is not None:
+                                active[slot] = cohort
+                    elif command == 2 and active:
+                        slot = generator.choice(tuple(active))
+                        cohort = active.pop(slot)
+                        await shard._terminalize(
+                            slot,
+                            cohort,
+                            _completed_record(cohort),
+                        )
+                        for record in cohort.records:
+                            known.pop(record.local_sequence)
+                    elif command == 3:
+                        grant = generator.choice(grants)
+                        result = await shard.purge_exact(grant)
+                        for sequence in result.released_sequences:
+                            known.pop(sequence)
+
+                    snapshot = await shard.snapshot()
+                    actual_sequences = {
+                        record.local_sequence for record in snapshot.records
+                    }
+                    self.assertEqual(
+                        actual_sequences,
+                        set(known),
+                        f"seed={seed} step={step}",
+                    )
+                    self.assertEqual(
+                        snapshot.held,
+                        snapshot.queued_calls
+                        + snapshot.active_calls
+                        + snapshot.pending_boundaries
+                        + snapshot.flushing_boundaries,
+                        f"seed={seed} step={step}",
+                    )
+                    self.assertEqual(snapshot.held, len(actual_sequences))
 
 
 class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
@@ -1654,7 +1960,9 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
                     ),
                 ),
             )
-            records = tuple([await shard.admit(work) for work in works])
+            records = tuple(
+                [await _admit_work(shard, work) for work in works]
+            )
             await executor.wait_for_started(2)
 
             self.assertEqual(set(executor.started[:2]), {0, 2})
@@ -1717,7 +2025,10 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
         grant = _grant()
         await shard.start()
         try:
-            await shard.admit(_call_work(_FEED_IDS[0], grant, 0))
+            await _admit_work(
+                shard,
+                _call_work(_FEED_IDS[0], grant, 0),
+            )
             await asyncio.wait_for(executor.entered.wait(), timeout=1)
             cancelled = await shard.cancel_active_exact(grant)
 
@@ -1748,10 +2059,13 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
         shard = shard_module._Shard(0, executor, limits=limits)
         grant = _grant()
         await shard.start()
-        await shard.admit(_call_work(_FEED_IDS[0], grant, 0))
+        await _admit_work(
+            shard,
+            _call_work(_FEED_IDS[0], grant, 0),
+        )
         await asyncio.wait_for(executor.entered.wait(), timeout=1)
         blocked = asyncio.create_task(
-            shard.admit(_call_work(_FEED_IDS[1], grant, 1))
+            _admit_work(shard, _call_work(_FEED_IDS[1], grant, 1))
         )
         await shard.wait_for_capacity_waiters(1)
         requests = await shard.request_cancel_exact(grant)
@@ -1789,10 +2103,13 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
         shard = shard_module._Shard(0, executor, limits=limits)
         grant = _grant()
         await shard.start()
-        await shard.admit(_call_work(_FEED_IDS[0], grant, 0))
+        await _admit_work(
+            shard,
+            _call_work(_FEED_IDS[0], grant, 0),
+        )
         await asyncio.wait_for(executor.entered.wait(), timeout=1)
         blocked = asyncio.create_task(
-            shard.admit(_call_work(_FEED_IDS[1], grant, 1))
+            _admit_work(shard, _call_work(_FEED_IDS[1], grant, 1))
         )
         await shard.wait_for_capacity_waiters(1)
         worker_task = shard._workers[0].task
@@ -1822,7 +2139,10 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
             limits=self._limits(workers=1),
         )
         await shard.start()
-        await shard.admit(_call_work(_FEED_IDS[0], _grant(), 0))
+        await _admit_work(
+            shard,
+            _call_work(_FEED_IDS[0], _grant(), 0),
+        )
         await asyncio.wait_for(executor.entered.wait(), timeout=1)
         await shard.wait_for_fatal()
 
@@ -1833,7 +2153,10 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(snapshot.active_calls, 1)
         self.assertTrue(snapshot.workers[0].task_done)
         with self.assertRaises(shard_module._ShardFatalError):
-            await shard.admit(_call_work(_FEED_IDS[1], _grant(), 1))
+            await _admit_work(
+                shard,
+                _call_work(_FEED_IDS[1], _grant(), 1),
+            )
 
 
 if __name__ == "__main__":

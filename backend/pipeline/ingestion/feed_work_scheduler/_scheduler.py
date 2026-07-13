@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import collections.abc
 import dataclasses
 import enum
 import typing
@@ -18,9 +19,6 @@ from backend.pipeline.ingestion.feed_work_scheduler import (
     _types,
 )
 from backend.pipeline.storage import feed_store, ingestion_lease_store
-
-if typing.TYPE_CHECKING:
-    import collections.abc
 
 
 class SchedulerIntegrityError(RuntimeError):
@@ -39,6 +37,24 @@ class _CloseStrength(enum.IntEnum):
     CANCELLING = 2
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ReadOnlySignal:
+    """Read-only projection retaining one object-identical runner Event."""
+
+    _event: asyncio.Event
+
+    def __post_init__(self) -> None:
+        if not isinstance(self._event, asyncio.Event):
+            message = "lane signals must be asyncio.Event values"
+            raise TypeError(message)
+
+    def is_set(self) -> bool:
+        return self._event.is_set()
+
+    async def wait(self) -> bool:
+        return await self._event.wait()
+
+
 @dataclasses.dataclass(slots=True)
 class _PageBarrier:
     """O(1) state for the one page currently entering a lane."""
@@ -49,6 +65,7 @@ class _PageBarrier:
     pulled: int = 0
     registered: int = 0
     localized: int = 0
+    total_records: int = 0
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -61,6 +78,7 @@ class _PageSnapshot:
     pulled: int
     registered: int
     localized: int
+    total_records: int
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -137,6 +155,7 @@ class FeedWorkScheduler:
         self._fatal: BaseException | None = None
         self._fatal_event = asyncio.Event()
         self._fatal_propagation_task: asyncio.Task[None] | None = None
+        self._page_abort_lock = asyncio.Lock()
         self._shards = tuple(
             _shard._Shard(
                 index,
@@ -149,6 +168,7 @@ class FeedWorkScheduler:
                 abandonment_for=self._abandonment.get,
                 boundary_ready_observer=self._observe_boundary_ready,
                 closing_settlement=self._settlement_for_closing,
+                page_abort_observer=self._abort_final_pending_page,
             )
             for index in range(_limits.shard_count)
         )
@@ -183,11 +203,16 @@ class FeedWorkScheduler:
     def open_lane(
         self,
         grant: ingestion_lease_store.LeaseGrant,
+        *,
+        stop_requested: asyncio.Event,
+        grant_lost: asyncio.Event,
     ) -> GrantLane:
         """Bind one fresh live lane to one complete immutable Lease grant.
 
         Args:
             grant: Complete exact Lease ownership generation.
+            stop_requested: Runner-owned monotonic graceful-stop event.
+            grant_lost: Runner-owned monotonic complete-grant-loss event.
 
         Returns:
             Fresh lane scoped to ``grant``.
@@ -199,6 +224,12 @@ class FeedWorkScheduler:
         """
         if not isinstance(grant, ingestion_lease_store.LeaseGrant):
             message = "grant must be a LeaseGrant"
+            raise TypeError(message)
+        if not isinstance(stop_requested, asyncio.Event):
+            message = "stop_requested must be an asyncio.Event"
+            raise TypeError(message)
+        if not isinstance(grant_lost, asyncio.Event):
+            message = "grant_lost must be an asyncio.Event"
             raise TypeError(message)
         self._raise_fatal()
         if not self._started:
@@ -216,7 +247,12 @@ class FeedWorkScheduler:
             message = "grant is not newer than the lane slot history"
             raise ValueError(message)
         self._prune_closed_slot(grant)
-        lane = GrantLane(self, grant)
+        signals = _types.LaneSignalView(
+            grant=grant,
+            stop_requested=_ReadOnlySignal(stop_requested),
+            grant_lost=_ReadOnlySignal(grant_lost),
+        )
+        lane = GrantLane(self, grant, signals)
         self._lanes[grant] = lane
         self._highest_fence[slot] = grant.fencing_token
         return lane
@@ -330,6 +366,25 @@ class FeedWorkScheduler:
         for shard in self._shards:
             await shard.purge_page(grant, page_sequence)
 
+    async def _abort_final_pending_page(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+    ) -> None:
+        """Replay-release known final-pending work across every shard."""
+        async with self._page_abort_lock:
+            for shard in self._shards:
+                if await shard.page_has_unknown_retention(
+                    grant,
+                    page_sequence,
+                ):
+                    return
+            for shard in self._shards:
+                await shard.release_page_final_pending(
+                    grant,
+                    page_sequence,
+                )
+
     async def _abort_boundary_page(
         self,
         grant: ingestion_lease_store.LeaseGrant,
@@ -360,13 +415,25 @@ class FeedWorkScheduler:
         grant: ingestion_lease_store.LeaseGrant,
         settlement: _types.CallSettlement,
     ) -> None:
+        unknown_pages: set[int] = set()
         for shard in self._shards:
-            await shard.purge_exact(grant, settlement=settlement)
+            unknown_pages.update(await shard.unknown_retained_pages(grant))
+        preserved = frozenset(unknown_pages)
+        for shard in self._shards:
+            await shard.purge_exact(
+                grant,
+                settlement=settlement,
+                preserve_final_pending_pages=preserved,
+            )
 
     async def _wait_exact_empty(
         self,
         grant: ingestion_lease_store.LeaseGrant,
     ) -> None:
+        for shard in self._shards:
+            if await shard.unknown_retained_pages(grant):
+                message = "exact grant retains outcome-unknown work"
+                raise _shard._ShardUndrainedError(message)
         for shard in self._shards:
             await shard.wait_exact_empty(grant)
 
@@ -529,9 +596,11 @@ class GrantLane:
         self,
         scheduler: FeedWorkScheduler,
         grant: ingestion_lease_store.LeaseGrant,
+        signals: _types.LaneSignalView,
     ) -> None:
         self._scheduler = scheduler
         self._grant = grant
+        self._signals = signals
         self._admission_lock = asyncio.Lock()
         self._state_lock = asyncio.Lock()
         self._closing_event = asyncio.Event()
@@ -610,14 +679,14 @@ class GrantLane:
     async def cover_page(  # noqa: PLR0912, PLR0915
         self,
         *,
-        calls: collections.abc.Iterable[_types.CallSubmission],
+        calls: collections.abc.Iterable[_types.CohortSubmission],
         boundaries: collections.abc.Iterable[_types.BoundaryWork],
         candidate: cursor_policy.PageCandidate,
     ) -> cursor_policy.PageSettlement:
         """Incrementally cover one source-order call page.
 
         Args:
-            calls: Single-pass call submissions in provider source order.
+            calls: Exact cohorts in frozen provider source order.
             boundaries: Single-pass trailing Feed completion boundaries.
             candidate: Exact cursor candidate awaiting bounded coverage.
 
@@ -630,39 +699,74 @@ class GrantLane:
         """
         async with self._admission_lock:
             await self._validate_candidate(candidate)
+            cohorts = tuple(calls)
+            page_boundaries = tuple(boundaries)
+            total_records = self._validate_cohort_page(
+                cohorts,
+                candidate.page_sequence,
+            )
+            await self._reject_replay_blocked_page(
+                cohorts,
+                candidate.page_sequence,
+            )
             no_progress = (
                 type(candidate) is cursor_policy.NoProgressPageCandidate
             )
-            page_boundaries = boundaries
             if no_progress:
-                self._require_no_progress_boundaries_empty(boundaries)
+                self._require_no_progress_boundaries_empty(page_boundaries)
                 page_boundaries = ()
-            await self._begin_page(candidate.page_sequence)
+            await self._begin_page(candidate.page_sequence, total_records)
             try:
-                for source_order, submission in enumerate(calls):
-                    self._require_submission(submission)
-                    await self._mark_pulled(source_order)
-                    work = _types._CallWork(
-                        feed_id=submission.feed_id,
-                        grant=self._grant,
-                        source_order=source_order,
-                        source_timestamp=submission.source_timestamp,
-                        payload=submission.payload,
-                        page_sequence=candidate.page_sequence,
-                        settlement_observer=submission.settlement_observer,
+                source_order = 0
+                replay_blocked_feeds: set[uuid.UUID] = set()
+                for cohort in cohorts:
+                    record_count = len(cohort.calls)
+                    await self._mark_pulled(source_order, record_count)
+                    works = tuple(
+                        _types._CallWork(
+                            feed_id=cohort.feed_id,
+                            grant=self._grant,
+                            member=cohort.member,
+                            source_order=source_order + offset,
+                            cohort_timestamp=cohort.cohort_timestamp,
+                            payload=submission.payload,
+                            page_sequence=candidate.page_sequence,
+                            settlement_observer=(
+                                submission.settlement_observer
+                            ),
+                        )
+                        for offset, submission in enumerate(cohort.calls)
                     )
-                    shard = self._scheduler._shard_for(submission.feed_id)
+                    shard = self._scheduler._shard_for(cohort.feed_id)
                     try:
-                        await shard.admit(
-                            work,
+                        await shard.admit_cohort(
+                            cohort,
+                            works,
+                            self._signals,
                             abort_event=self._closing_event,
                         )
                     except _shard._FeedRetiredError:
-                        self._notify_unadmitted_settlement(
-                            submission,
+                        self._notify_unadmitted_cohort(
+                            cohort,
                             _types.CallSettlement.MEMBERSHIP_REJECTED,
                         )
-                        await self._mark_localized(source_order)
+                        await self._mark_localized(
+                            source_order,
+                            record_count,
+                        )
+                        source_order += record_count
+                        continue
+                    except _shard._ReplayBlockedError:
+                        self._notify_unadmitted_cohort(
+                            cohort,
+                            _types.CallSettlement.REPLAY_BLOCKED,
+                        )
+                        replay_blocked_feeds.add(cohort.feed_id)
+                        await self._mark_localized(
+                            source_order,
+                            record_count,
+                        )
+                        source_order += record_count
                         continue
                     except _shard._AdmissionAbortedError as exc:
                         message = "lane closed during page admission"
@@ -670,18 +774,28 @@ class GrantLane:
                     except _shard._ShardFatalError as exc:
                         message = "scheduler shard integrity failed"
                         raise SchedulerIntegrityError(message) from exc.failure
-                    await self._mark_registered(source_order)
+                    await self._mark_registered(source_order, record_count)
+                    source_order += record_count
                 for boundary in page_boundaries:
                     self._require_boundary(boundary)
                     source_order = await self._next_source_order()
-                    await self._mark_pulled(source_order)
+                    await self._mark_pulled(source_order, 1)
+                    shard = self._scheduler._shard_for(boundary.feed_id)
+                    if boundary.feed_id in replay_blocked_feeds or (
+                        await shard.is_replay_blocked(
+                            self._grant,
+                            candidate.page_sequence,
+                            boundary.feed_id,
+                        )
+                    ):
+                        await self._mark_localized(source_order, 1)
+                        continue
                     boundary_input = _types._BoundaryInput(
                         boundary=boundary,
                         grant=self._grant,
                         source_order=source_order,
                         page_sequence=candidate.page_sequence,
                     )
-                    shard = self._scheduler._shard_for(boundary.feed_id)
                     try:
                         await shard.admit_boundary(
                             boundary_input,
@@ -691,7 +805,7 @@ class GrantLane:
                             ),
                         )
                     except _shard._FeedRetiredError:
-                        await self._mark_localized(source_order)
+                        await self._mark_localized(source_order, 1)
                         continue
                     except _shard._BoundaryReliefRetryableError:
                         message = "boundary pressure relief is retryable"
@@ -709,7 +823,7 @@ class GrantLane:
                     except _shard._ShardFatalError as exc:
                         message = "scheduler shard integrity failed"
                         raise SchedulerIntegrityError(message) from exc.failure
-                    await self._mark_registered(source_order)
+                    await self._mark_registered(source_order, 1)
                 try:
                     final_result = (
                         await self._boundary_coordinator.request_final()
@@ -767,6 +881,7 @@ class GrantLane:
                     pulled=page.pulled,
                     registered=page.registered,
                     localized=page.localized,
+                    total_records=page.total_records,
                 )
             )
             return _LaneSnapshot(
@@ -785,7 +900,11 @@ class GrantLane:
             self._raise_closed_locked()
             self._validate_candidate_locked(candidate)
 
-    async def _begin_page(self, page_sequence: int) -> None:
+    async def _begin_page(
+        self,
+        page_sequence: int,
+        total_records: int,
+    ) -> None:
         async with self._state_lock:
             self._raise_closed_locked()
             if self._page is not None:
@@ -794,9 +913,15 @@ class GrantLane:
             self._page = _PageBarrier(
                 grant=self._grant,
                 page_sequence=page_sequence,
+                total_records=total_records,
             )
 
-    async def _mark_pulled(self, source_order: int) -> None:
+    async def _mark_pulled(
+        self,
+        source_order: int,
+        record_count: int,
+    ) -> None:
+        _types._require_positive_integer(record_count, "record_count")
         async with self._state_lock:
             self._raise_closed_locked()
             page = self._require_page_locked()
@@ -804,7 +929,7 @@ class GrantLane:
                 message = "cannot pull past the current source record"
                 raise RuntimeError(message)
             page.current_source_order = source_order
-            page.pulled += 1
+            page.pulled += record_count
 
     async def _next_source_order(self) -> int:
         async with self._state_lock:
@@ -814,12 +939,17 @@ class GrantLane:
                 raise RuntimeError(message)
             return page.pulled
 
-    async def _mark_registered(self, source_order: int) -> None:
+    async def _mark_registered(
+        self,
+        source_order: int,
+        record_count: int,
+    ) -> None:
+        _types._require_positive_integer(record_count, "record_count")
         async with self._state_lock:
             page = self._require_page_locked()
             if page.current_source_order is None:
                 if (
-                    source_order != page.pulled - 1
+                    source_order != page.pulled - record_count
                     or page.pulled != page.registered + page.localized
                 ):
                     message = "source record lost its barrier transition"
@@ -829,16 +959,21 @@ class GrantLane:
                 message = "registered source record does not match barrier"
                 raise RuntimeError(message)
             page.current_source_order = None
-            page.registered += 1
+            page.registered += record_count
 
-    async def _mark_localized(self, source_order: int) -> None:
+    async def _mark_localized(
+        self,
+        source_order: int,
+        record_count: int,
+    ) -> None:
+        _types._require_positive_integer(record_count, "record_count")
         async with self._state_lock:
             page = self._require_page_locked()
             if page.current_source_order != source_order:
                 message = "localized source record does not match barrier"
                 raise RuntimeError(message)
             page.current_source_order = None
-            page.localized += 1
+            page.localized += record_count
 
     async def _localize_released(
         self,
@@ -1104,11 +1239,89 @@ class GrantLane:
             raise RuntimeError(message)
         return page
 
+    def _validate_cohort_page(
+        self,
+        cohorts: tuple[_types.CohortSubmission, ...],
+        page_sequence: int,
+    ) -> int:
+        """Validate every cohort/member/payload before page mutation."""
+        _types._require_nonnegative_integer(page_sequence, "page_sequence")
+        total_records = 0
+        for cohort in cohorts:
+            if type(cohort) is not _types.CohortSubmission:
+                message = "calls must contain exact CohortSubmission values"
+                raise TypeError(message)
+            if len(cohort.calls) > self._scheduler._limits.capacity:
+                message = "cohort exceeds the hard shard capacity"
+                raise ValueError(message)
+            ingestion_lease_store._require_member_binding(
+                self._grant,
+                cohort.member,
+            )
+            if cohort.member.feed_id != cohort.feed_id:
+                message = "cohort member and Feed disagree"
+                raise _types.CohortIntegrityError(message)
+            if (
+                cohort._admission_state.status
+                is not _types._AdmissionStatus.UNUSED
+            ):
+                message = "cohort admission hook is not unused"
+                raise _types.CohortIntegrityError(message)
+            for submission in cohort.calls:
+                if submission.feed_id != cohort.feed_id:
+                    message = "call Feed does not match cohort Feed"
+                    raise _types.CohortIntegrityError(message)
+                if submission.source_timestamp != cohort.cohort_timestamp:
+                    message = "call timestamp does not match cohort timestamp"
+                    raise _types.CohortIntegrityError(message)
+                payload_member = self._payload_member(submission.payload)
+                ingestion_lease_store._require_member_binding(
+                    self._grant,
+                    payload_member,
+                )
+                if payload_member is not cohort.member:
+                    message = "call payload member crossed cohort identity"
+                    raise _types.CohortIntegrityError(message)
+            total_records += len(cohort.calls)
+        return total_records
+
+    async def _reject_replay_blocked_page(
+        self,
+        cohorts: tuple[_types.CohortSubmission, ...],
+        page_sequence: int,
+    ) -> None:
+        for cohort in cohorts:
+            shard = self._scheduler._shard_for(cohort.feed_id)
+            if await shard.is_replay_blocked(
+                self._grant,
+                page_sequence,
+                cohort.feed_id,
+            ):
+                message = "same-Feed page is replay-blocked"
+                raise _types.CohortIntegrityError(message)
+
     @staticmethod
-    def _require_submission(submission: object) -> None:
-        if not isinstance(submission, _types.CallSubmission):
-            message = "calls must contain CallSubmission values"
-            raise TypeError(message)
+    def _payload_member(
+        payload: object,
+    ) -> ingestion_lease_store.LeaseMemberIdentity:
+        candidate = getattr(payload, "member", None)
+        if isinstance(candidate, ingestion_lease_store.LeaseMember):
+            candidate = candidate.identity
+        if isinstance(payload, collections.abc.Mapping):
+            mapping = typing.cast(
+                "collections.abc.Mapping[object, object]",
+                payload,
+            )
+            candidate = mapping.get("member", candidate)
+            if isinstance(candidate, ingestion_lease_store.LeaseMember):
+                candidate = candidate.identity
+        if not isinstance(
+            candidate,
+            ingestion_lease_store.LeaseMemberIdentity,
+        ):
+            message = "call payload must carry an issued member"
+            raise _types.CohortIntegrityError(message)
+        return candidate
 
     @staticmethod
     def _require_boundary(
@@ -1152,3 +1365,21 @@ class GrantLane:
             self._scheduler._observe_fatal(exc)
             message = "call settlement observer failed"
             raise SchedulerIntegrityError(message) from exc
+
+    def _notify_unadmitted_cohort(
+        self,
+        cohort: _types.CohortSubmission,
+        settlement: _types.CallSettlement,
+    ) -> None:
+        failure: BaseException | None = None
+        for submission in cohort.calls:
+            try:
+                self._notify_unadmitted_settlement(
+                    submission,
+                    settlement,
+                )
+            except BaseException as exc:
+                if failure is None:
+                    failure = exc
+        if failure is not None:
+            raise failure

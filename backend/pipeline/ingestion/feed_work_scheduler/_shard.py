@@ -23,6 +23,10 @@ class _FeedRetiredError(RuntimeError):
     """Admission reached a Feed retired from this shard."""
 
 
+class _ReplayBlockedError(RuntimeError):
+    """Admission reached a same-Feed/page replay barrier."""
+
+
 class _AdmissionAbortedError(RuntimeError):
     """Admission observed its exact lane closing before registration."""
 
@@ -55,10 +59,17 @@ class _BoundaryReliefRetryableError(RuntimeError):
 class _WorkerSlot:
     slot_id: int
     task: asyncio.Task[None] | None = None
-    active_record: _types._CallRecord | None = None
+    active_cohort: _types._CohortRecord | None = None
     cancellation_sequence: int | None = None
     cancel_expected: bool = False
     abandoned: bool = False
+
+    @property
+    def active_record(self) -> _types._CallRecord | None:
+        """Compatibility projection of the cohort's first record."""
+        if self.active_cohort is None:
+            return None
+        return self.active_cohort.records[0]
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -72,9 +83,14 @@ class _CancellationRequest:
 
 _TERMINAL_EXECUTOR_OUTCOMES = (
     _types._ExecutorCompleted,
+    _types._ExecutorFinalClosurePending,
+    _types._ExecutorReplayableDirectFailure,
     _types._ExecutorRetryable,
+    _types._ExecutorStopped,
     _types._ExecutorAuthorityLost,
     _types._ExecutorMembershipRejected,
+    _types._ExecutorIntegrityFailure,
+    _types._ExecutorOutcomeUnknown,
 )
 
 
@@ -118,6 +134,11 @@ class _Shard:
             _types.CallSettlement,
         ]
         | None = None,
+        page_abort_observer: typing.Callable[
+            [ingestion_lease_store.LeaseGrant, int],
+            typing.Awaitable[None],
+        ]
+        | None = None,
     ) -> None:
         """Create one authoritative shard with injected coordination seams.
 
@@ -132,6 +153,7 @@ class _Shard:
             abandonment_for: Optional external cancellation evidence reader.
             boundary_ready_observer: Optional exact-grant flusher notifier.
             closing_settlement: Optional exact-grant close outcome mapper.
+            page_abort_observer: Optional cross-shard final-pending cleanup.
 
         Raises:
             TypeError: An identifier, limit, or injected seam has wrong type.
@@ -172,6 +194,11 @@ class _Shard:
         if closing_settlement is not None and not callable(closing_settlement):
             message = "closing_settlement must be callable or None"
             raise TypeError(message)
+        if page_abort_observer is not None and not callable(
+            page_abort_observer
+        ):
+            message = "page_abort_observer must be callable or None"
+            raise TypeError(message)
 
         self.shard_id = shard_id
         self._executor = executor
@@ -182,6 +209,7 @@ class _Shard:
         self._abandonment_for = abandonment_for
         self._boundary_ready_observer = boundary_ready_observer
         self._closing_settlement = closing_settlement
+        self._page_abort_observer = page_abort_observer
         self._limits = limits
         self._lock = asyncio.Lock()
         self._work_ready = asyncio.Condition(self._lock)
@@ -194,18 +222,22 @@ class _Shard:
         self._next_sequence = 0
         self._feed_queues: dict[
             uuid.UUID,
-            collections.deque[_types._CallRecord],
+            collections.deque[_types._CohortRecord],
         ] = {}
         self._ready: collections.deque[uuid.UUID] = collections.deque()
         self._ready_members: set[uuid.UUID] = set()
         self._records: dict[int, _types._CallRecord] = {}
-        self._active_by_feed: dict[uuid.UUID, _types._CallRecord] = {}
+        self._active_by_feed: dict[uuid.UUID, _types._CohortRecord] = {}
+        self._retained_by_feed: dict[uuid.UUID, _types._CohortRecord] = {}
         self._active_boundaries: dict[
             uuid.UUID,
             _types._BoundaryRecord,
         ] = {}
         self._retired_scopes: set[
             tuple[ingestion_lease_store.LeaseGrant, uuid.UUID]
+        ] = set()
+        self._replay_blocks: set[
+            tuple[ingestion_lease_store.LeaseGrant, int, uuid.UUID]
         ] = set()
         self._pending_boundaries: dict[
             tuple[ingestion_lease_store.LeaseGrant, uuid.UUID],
@@ -245,15 +277,32 @@ class _Shard:
             for slot in self._workers:
                 self._spawn_worker_locked(slot)
 
-    async def admit(
+    async def admit_cohort(  # noqa: PLR0912, PLR0915
         self,
-        work: _types._CallWork,
+        submission: _types.CohortSubmission,
+        works: tuple[_types._CallWork, ...],
+        signals: _types.LaneSignalView,
         *,
         abort_event: asyncio.Event | None = None,
-    ) -> _types._CallRecord:
-        """Atomically register one capacity-owning source record."""
-        if not isinstance(work, _types._CallWork):
-            message = "work must be _CallWork"
+    ) -> _types._CohortRecord:
+        """Atomically register one N-record Feed FIFO cohort."""
+        if type(submission) is not _types.CohortSubmission:
+            message = "submission must be an exact CohortSubmission"
+            raise TypeError(message)
+        if not isinstance(works, tuple) or not works:
+            message = "works must be a nonempty immutable tuple"
+            raise ValueError(message)
+        if any(type(work) is not _types._CallWork for work in works):
+            message = "works must contain exact _CallWork values"
+            raise TypeError(message)
+        if len(works) != len(submission.calls):
+            message = "work cardinality does not match cohort submission"
+            raise ValueError(message)
+        if len(works) > self._limits.capacity:
+            message = "cohort exceeds the hard shard capacity"
+            raise ValueError(message)
+        if type(signals) is not _types.LaneSignalView:
+            message = "signals must be an exact LaneSignalView"
             raise TypeError(message)
         if abort_event is not None and not isinstance(
             abort_event,
@@ -264,33 +313,65 @@ class _Shard:
 
         async with self._capacity_changed:
             while True:
-                self._raise_admission_error_locked(work, abort_event)
+                self._raise_admission_error_locked(works[0], abort_event)
+                count = len(works)
                 if (
                     not self._pressure_paused
-                    and self._held < self._limits.capacity
+                    and self._held + count <= self._limits.capacity
                 ):
-                    record = _types._CallRecord(
-                        work=work,
-                        local_sequence=self._next_sequence,
+                    identities = tuple(
+                        _types.CohortRecordIdentity(
+                            grant=work.grant,
+                            member=work.member,
+                            page_sequence=work.page_sequence,
+                            feed_id=work.feed_id,
+                            cohort_timestamp=work.cohort_timestamp,
+                            source_order=work.source_order,
+                            local_sequence=self._next_sequence + offset,
+                        )
+                        for offset, work in enumerate(works)
                     )
-                    self._next_sequence += 1
-                    self._records[record.local_sequence] = record
+                    records = tuple(
+                        _types._CallRecord(work=work, identity=identity)
+                        for work, identity in zip(
+                            works,
+                            identities,
+                            strict=True,
+                        )
+                    )
+                    control = _types._CohortControl(identities)
+                    cohort = _types._CohortRecord(
+                        records,
+                        control,
+                        signals,
+                    )
+                    submission._begin_admission()
+                    try:
+                        submission.admission_hook(identities)
+                    except BaseException:
+                        submission._fail_admission()
+                        raise
+                    submission._accept_admission()
+                    self._next_sequence += count
+                    for record in records:
+                        self._records[record.local_sequence] = record
                     queue = self._feed_queues.setdefault(
-                        record.feed_id,
+                        cohort.feed_id,
                         collections.deque(),
                     )
-                    queue.append(record)
-                    self._held += 1
+                    queue.append(cohort)
+                    self._held += count
                     if self._held >= self._limits.high_water:
                         self._pressure_paused = True
                     if (
-                        record.feed_id not in self._active_by_feed
-                        and record.feed_id not in self._active_boundaries
+                        cohort.feed_id not in self._active_by_feed
+                        and cohort.feed_id not in self._retained_by_feed
+                        and cohort.feed_id not in self._active_boundaries
                     ):
-                        self._ensure_ready_locked(record.feed_id)
+                        self._ensure_ready_locked(cohort.feed_id)
                     self._check_conservation_locked()
                     self._work_ready.notify_all()
-                    return record
+                    return cohort
 
                 self._capacity_waiters += 1
                 self._capacity_changed.notify_all()
@@ -382,6 +463,23 @@ class _Shard:
                 if result is _types._BoundaryPressureResult.RETRYABLE:
                     message = "boundary pressure relief settled retryably"
                     raise _BoundaryReliefRetryableError(message)
+
+    async def is_replay_blocked(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+        feed_id: uuid.UUID,
+    ) -> bool:
+        """Return whether one complete Feed/page/grant barrier exists."""
+        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
+            message = "grant must be a LeaseGrant"
+            raise TypeError(message)
+        _types._require_nonnegative_integer(page_sequence, "page_sequence")
+        if not isinstance(feed_id, uuid.UUID):
+            message = "feed_id must be a UUID"
+            raise TypeError(message)
+        async with self._lock:
+            return (grant, page_sequence, feed_id) in self._replay_blocks
 
     async def select_boundary_batch(
         self,
@@ -613,12 +711,19 @@ class _Shard:
             self._check_conservation_locked()
             queued_sequences = set()
             for queue in self._feed_queues.values():
-                for record in queue:
-                    queued_sequences.add(record.local_sequence)
+                for cohort in queue:
+                    for record in cohort.records:
+                        queued_sequences.add(record.local_sequence)
             active_slots = {
-                slot.active_record.local_sequence: slot.slot_id
+                record.local_sequence: slot.slot_id
                 for slot in self._workers
-                if slot.active_record is not None
+                if slot.active_cohort is not None
+                for record in slot.active_cohort.records
+            }
+            retained_sequences = {
+                record.local_sequence
+                for cohort in self._retained_by_feed.values()
+                for record in cohort.records
             }
             records = tuple(
                 _types._RecordSnapshot(
@@ -630,7 +735,16 @@ class _Shard:
                     state=(
                         _types._RecordState.QUEUED
                         if record.local_sequence in queued_sequences
-                        else _types._RecordState.ACTIVE
+                        else (
+                            _types._RecordState.OUTCOME_UNKNOWN
+                            if record.local_sequence in retained_sequences
+                            and self._cohort_is_unknown_retained(record.feed_id)
+                            else (
+                                _types._RecordState.FINAL_CLOSURE_PENDING
+                                if record.local_sequence in retained_sequences
+                                else _types._RecordState.ACTIVE
+                            )
+                        )
                     ),
                     worker_slot=active_slots.get(record.local_sequence),
                 )
@@ -647,8 +761,8 @@ class _Shard:
                         slot.task.done() if slot.task is not None else False
                     ),
                     active_sequence=(
-                        slot.active_record.local_sequence
-                        if slot.active_record is not None
+                        slot.active_cohort.records[0].local_sequence
+                        if slot.active_cohort is not None
                         else None
                     ),
                     cancellation_sequence=slot.cancellation_sequence,
@@ -682,14 +796,21 @@ class _Shard:
             return _types._ShardSnapshot(
                 held=self._held,
                 queued_calls=len(queued_sequences),
-                active_calls=len(self._active_by_feed),
+                active_calls=sum(
+                    len(cohort.records)
+                    for cohort in self._active_by_feed.values()
+                ),
                 pending_boundaries=len(self._pending_boundaries),
                 flushing_boundaries=len(self._flushing_boundaries),
                 pressure_paused=self._pressure_paused,
                 ready_feeds=tuple(self._ready),
                 ready_members=frozenset(self._ready_members),
                 active_feeds=frozenset(
-                    {*self._active_by_feed, *self._active_boundaries}
+                    {
+                        *self._active_by_feed,
+                        *self._retained_by_feed,
+                        *self._active_boundaries,
+                    }
                 ),
                 records=records,
                 boundaries=boundaries,
@@ -704,11 +825,11 @@ class _Shard:
         slot_id: int,
         *,
         wait: bool = True,
-    ) -> _types._CallRecord | None:
-        """Move one fair FIFO record from queued to active count-neutrally."""
+    ) -> _types._CohortRecord | None:
+        """Move one fair FIFO cohort from queued to active count-neutrally."""
         slot = self._require_slot(slot_id)
         while True:
-            released: _types._CallRecord | None = None
+            released: _types._CohortRecord | None = None
             async with self._work_ready:
                 while True:
                     if (
@@ -717,8 +838,8 @@ class _Shard:
                         or self._stopping
                     ):
                         return None
-                    if slot.active_record is not None:
-                        message = "worker slot already owns an active record"
+                    if slot.active_cohort is not None:
+                        message = "worker slot already owns an active cohort"
                         raise RuntimeError(message)
                     if self._ready:
                         feed_id = self._ready.popleft()
@@ -727,59 +848,133 @@ class _Shard:
                             message = "ready Feed already owns an active record"
                             raise RuntimeError(message)
                         queue = self._feed_queues[feed_id]
-                        record = queue.popleft()
+                        cohort = queue.popleft()
                         if not queue:
                             del self._feed_queues[feed_id]
                         if (
                             self._grant_is_closing is not None
-                            and self._grant_is_closing(record.grant)
+                            and self._grant_is_closing(cohort.grant)
                         ):
-                            del self._records[record.local_sequence]
-                            self._held -= 1
+                            for record in cohort.records:
+                                del self._records[record.local_sequence]
+                            self._held -= len(cohort.records)
                             if feed_id in self._feed_queues:
                                 self._ensure_ready_locked(feed_id)
-                            self._after_release_locked(1)
+                            self._after_release_locked(len(cohort.records))
                             self._check_conservation_locked()
-                            released = record
+                            released = cohort
                             break
-                        self._active_by_feed[feed_id] = record
-                        slot.active_record = record
+                        cohort.control.active = True
+                        self._active_by_feed[feed_id] = cohort
+                        slot.active_cohort = cohort
                         self._check_conservation_locked()
-                        return record
+                        return cohort
                     if not wait:
                         return None
                     await self._work_ready.wait()
             if released is not None:
                 await self._notify_settlements(
-                    (released,),
+                    released.records,
                     self._settlement_for_closing(released.grant),
                 )
 
-    async def _terminalize(
+    async def _terminalize(  # noqa: PLR0912
         self,
         slot_id: int,
-        record: _types._CallRecord,
+        cohort: _types._CohortRecord,
         outcome: _types._ExecutorOutcome,
     ) -> None:
-        """Release one settled active record without retaining its outcome."""
+        """Apply exact per-record closure for one active cohort."""
         if not isinstance(outcome, _TERMINAL_EXECUTOR_OUTCOMES):
             message = "outcome is not scheduling-terminal"
             raise TypeError(message)
         retirement = None
+        known_page_abort = isinstance(
+            outcome,
+            (
+                _types._ExecutorRetryable,
+                _types._ExecutorStopped,
+                _types._ExecutorAuthorityLost,
+            ),
+        )
+        notifications: list[
+            tuple[tuple[_types._CallRecord, ...], _types.CallSettlement]
+        ] = []
         async with self._lock:
-            released = self._terminalize_locked(slot_id, record)
-            if not released:
-                message = "active record no longer belongs to worker slot"
+            if not self._active_identity_matches_locked(slot_id, cohort):
+                message = "active cohort no longer belongs to worker slot"
                 raise RuntimeError(message)
+            try:
+                self._require_exact_facts(cohort, outcome)
+            except BaseException as exc:
+                self._retain_active_locked(
+                    slot_id,
+                    cohort,
+                    integrity_failure=exc,
+                )
+                self._check_conservation_locked()
+                return
+            if isinstance(
+                outcome,
+                (
+                    _types._ExecutorIntegrityFailure,
+                    _types._ExecutorOutcomeUnknown,
+                ),
+            ):
+                self._retain_active_locked(
+                    slot_id,
+                    cohort,
+                    outcome=outcome,
+                )
+                self._check_conservation_locked()
+                return
+            if isinstance(outcome, _types._ExecutorFinalClosurePending):
+                self._retain_active_locked(
+                    slot_id,
+                    cohort,
+                    outcome=outcome,
+                )
+                self._check_conservation_locked()
+                return
+            self._release_active_locked(slot_id, cohort, ready=False)
+            notifications.extend(
+                self._notifications_for_facts(cohort, outcome.facts)
+            )
+            if isinstance(outcome, _types._ExecutorReplayableDirectFailure):
+                blocked_records = self._install_replay_barrier_locked(cohort)
+                if blocked_records:
+                    notifications.append(
+                        (
+                            blocked_records,
+                            _types.CallSettlement.REPLAY_BLOCKED,
+                        )
+                    )
             if isinstance(outcome, _types._ExecutorMembershipRejected):
                 retirement = self._retire_feed_locked(
-                    record.grant,
-                    record.feed_id,
+                    cohort.grant,
+                    cohort.feed_id,
                 )
-        await self._notify_settlements(
-            (record,),
-            self._settlement_for_outcome(outcome),
-        )
+            if known_page_abort and self._page_abort_observer is None:
+                abort_released = self._release_page_final_pending_locked(
+                    cohort.grant,
+                    cohort.page_sequence,
+                )
+                if abort_released:
+                    notifications.append(
+                        (
+                            abort_released,
+                            _types.CallSettlement.REPLAY_SAFE_RELEASE,
+                        )
+                    )
+            self._ready_call_or_boundary_locked(cohort.feed_id)
+            self._check_conservation_locked()
+        for records, settlement in notifications:
+            await self._notify_settlements(records, settlement)
+        if known_page_abort and self._page_abort_observer is not None:
+            await self._page_abort_observer(
+                cohort.grant,
+                cohort.page_sequence,
+            )
         if retirement is not None:
             await self._notify_settlements(
                 retirement.released_call_records,
@@ -795,13 +990,14 @@ class _Shard:
             )
             and self._outcome_observer is not None
         ):
-            self._outcome_observer(record, outcome, retirement)
+            self._outcome_observer(cohort.records[0], outcome, retirement)
 
-    async def purge_exact(
+    async def purge_exact(  # noqa: PLR0912
         self,
         grant: ingestion_lease_store.LeaseGrant,
         *,
         settlement: _types.CallSettlement = _types.CallSettlement.ABORTED,
+        preserve_final_pending_pages: frozenset[int] = frozenset(),
     ) -> _types._PurgeResult:
         """Release queued records matching the complete grant only."""
         if not isinstance(grant, ingestion_lease_store.LeaseGrant):
@@ -810,21 +1006,29 @@ class _Shard:
         if not isinstance(settlement, _types.CallSettlement):
             message = "settlement must be a CallSettlement"
             raise TypeError(message)
+        if not isinstance(preserve_final_pending_pages, frozenset) or any(
+            isinstance(page, bool) or not isinstance(page, int) or page < 0
+            for page in preserve_final_pending_pages
+        ):
+            message = "preserve_final_pending_pages must be page integers"
+            raise TypeError(message)
         released_records = []
+        final_pending_records = []
         async with self._lock:
             released: list[int] = []
             for feed_id, queue in tuple(self._feed_queues.items()):
-                kept: collections.deque[_types._CallRecord] = (
+                kept: collections.deque[_types._CohortRecord] = (
                     collections.deque()
                 )
-                for record in queue:
-                    if record.grant == grant:
-                        released.append(record.local_sequence)
-                        released_records.append(record)
-                        del self._records[record.local_sequence]
-                        self._held -= 1
+                for cohort in queue:
+                    if cohort.grant == grant:
+                        for record in cohort.records:
+                            released.append(record.local_sequence)
+                            released_records.append(record)
+                            del self._records[record.local_sequence]
+                        self._held -= len(cohort.records)
                     else:
-                        kept.append(record)
+                        kept.append(cohort)
                 if kept:
                     self._feed_queues[feed_id] = kept
                 else:
@@ -833,13 +1037,39 @@ class _Shard:
             active = tuple(
                 sorted(
                     record.local_sequence
-                    for record in (
+                    for cohort in (
                         *self._active_by_feed.values(),
-                        *self._flushing_boundaries.values(),
                     )
-                    if record.grant == grant
+                    if cohort.grant == grant
+                    for record in cohort.records
                 )
             )
+            active = tuple(
+                sorted(
+                    (
+                        *active,
+                        *(
+                            record.local_sequence
+                            for record in self._flushing_boundaries.values()
+                            if record.grant == grant
+                        ),
+                    )
+                )
+            )
+            for feed_id, cohort in tuple(self._retained_by_feed.items()):
+                if (
+                    cohort.grant != grant
+                    or self._cohort_is_unknown(cohort)
+                    or cohort.page_sequence in preserve_final_pending_pages
+                ):
+                    continue
+                del self._retained_by_feed[feed_id]
+                for record in cohort.records:
+                    released.append(record.local_sequence)
+                    final_pending_records.append(record)
+                    del self._records[record.local_sequence]
+                self._held -= len(cohort.records)
+                self._ready_call_or_boundary_locked(feed_id)
             for scope, record in tuple(self._pending_boundaries.items()):
                 if record.grant != grant:
                     continue
@@ -853,9 +1083,13 @@ class _Shard:
                 active_sequences=active,
             )
         await self._notify_settlements(tuple(released_records), settlement)
+        await self._notify_settlements(
+            tuple(final_pending_records),
+            _types.CallSettlement.REPLAY_SAFE_RELEASE,
+        )
         return result
 
-    async def purge_page(
+    async def purge_page(  # noqa: PLR0912
         self,
         grant: ingestion_lease_store.LeaseGrant,
         page_sequence: int,
@@ -869,20 +1103,21 @@ class _Shard:
         async with self._lock:
             released: list[int] = []
             for feed_id, queue in tuple(self._feed_queues.items()):
-                kept: collections.deque[_types._CallRecord] = (
+                kept: collections.deque[_types._CohortRecord] = (
                     collections.deque()
                 )
-                for record in queue:
+                for cohort in queue:
                     if (
-                        record.grant == grant
-                        and record.work.page_sequence == page_sequence
+                        cohort.grant == grant
+                        and cohort.page_sequence == page_sequence
                     ):
-                        released.append(record.local_sequence)
-                        released_records.append(record)
-                        del self._records[record.local_sequence]
-                        self._held -= 1
+                        for record in cohort.records:
+                            released.append(record.local_sequence)
+                            released_records.append(record)
+                            del self._records[record.local_sequence]
+                        self._held -= len(cohort.records)
                     else:
-                        kept.append(record)
+                        kept.append(cohort)
                 if kept:
                     self._feed_queues[feed_id] = kept
                 else:
@@ -891,11 +1126,26 @@ class _Shard:
             active = tuple(
                 sorted(
                     record.local_sequence
-                    for record in self._active_by_feed.values()
-                    if record.grant == grant
-                    and record.work.page_sequence == page_sequence
+                    for cohort in self._active_by_feed.values()
+                    if cohort.grant == grant
+                    and cohort.page_sequence == page_sequence
+                    for record in cohort.records
                 )
             )
+            for feed_id, cohort in tuple(self._retained_by_feed.items()):
+                if (
+                    cohort.grant != grant
+                    or cohort.page_sequence != page_sequence
+                    or self._cohort_is_unknown(cohort)
+                ):
+                    continue
+                del self._retained_by_feed[feed_id]
+                for record in cohort.records:
+                    released.append(record.local_sequence)
+                    released_records.append(record)
+                    del self._records[record.local_sequence]
+                self._held -= len(cohort.records)
+                self._ready_call_or_boundary_locked(feed_id)
             for scope, record in tuple(self._pending_boundaries.items()):
                 if record.grant != grant or page_sequence not in (
                     record.provisional_page_sequence,
@@ -973,6 +1223,9 @@ class _Shard:
             self._retired_scopes = {
                 scope for scope in self._retired_scopes if scope[0] != grant
             }
+            self._replay_blocks = {
+                key for key in self._replay_blocks if key[0] != grant
+            }
 
     def _retire_feed_locked(
         self,
@@ -982,22 +1235,23 @@ class _Shard:
         """Retire one exact scope while the shard lock is held."""
         self._retired_scopes.add((grant, feed_id))
         queue = self._feed_queues.get(feed_id, collections.deque())
-        kept: collections.deque[_types._CallRecord] = collections.deque()
+        kept: collections.deque[_types._CohortRecord] = collections.deque()
         released = []
         released_call_records = []
         released_calls = []
         released_boundaries = []
-        for record in queue:
-            if record.grant == grant:
-                released.append(record.local_sequence)
-                released_call_records.append(record)
-                released_calls.append(
-                    (record.work.page_sequence, record.work.source_order)
-                )
-                del self._records[record.local_sequence]
-                self._held -= 1
+        for cohort in queue:
+            if cohort.grant == grant:
+                for record in cohort.records:
+                    released.append(record.local_sequence)
+                    released_call_records.append(record)
+                    released_calls.append(
+                        (record.work.page_sequence, record.work.source_order)
+                    )
+                    del self._records[record.local_sequence]
+                self._held -= len(cohort.records)
             else:
-                kept.append(record)
+                kept.append(cohort)
         if kept:
             self._feed_queues[feed_id] = kept
         else:
@@ -1017,10 +1271,27 @@ class _Shard:
             self._held -= 1
         active = self._active_by_feed.get(feed_id)
         active_sequence = (
-            active.local_sequence
+            active.records[0].local_sequence
             if active is not None and active.grant == grant
             else None
         )
+        retained = self._retained_by_feed.get(feed_id)
+        if (
+            retained is not None
+            and retained.grant == grant
+            and not self._cohort_is_unknown(retained)
+        ):
+            del self._retained_by_feed[feed_id]
+            for record in retained.records:
+                released.append(record.local_sequence)
+                released_call_records.append(record)
+                released_calls.append(
+                    (record.work.page_sequence, record.work.source_order)
+                )
+                del self._records[record.local_sequence]
+            self._held -= len(retained.records)
+        elif retained is not None and retained.grant == grant:
+            active_sequence = retained.records[0].local_sequence
         active_boundary = self._active_boundaries.get(feed_id)
         if active_boundary is not None and active_boundary.grant == grant:
             active_sequence = active_boundary.local_sequence
@@ -1208,10 +1479,21 @@ class _Shard:
                             *self._flushing_boundaries.values(),
                         )
                     )
+                    or any(
+                        cohort.grant == grant
+                        and self._cohort_is_unknown(cohort)
+                        for cohort in self._retained_by_feed.values()
+                    )
                     or self._fatal is not None
                 )
             )
             self._raise_fatal_locked()
+            if any(
+                cohort.grant == grant and self._cohort_is_unknown(cohort)
+                for cohort in self._retained_by_feed.values()
+            ):
+                message = "exact grant retains outcome-unknown work"
+                raise _ShardUndrainedError(message)
 
     async def wait_for_fatal(self) -> None:
         """Wait until first persistent scheduler-integrity evidence exists."""
@@ -1284,26 +1566,28 @@ class _Shard:
         """
         try:
             while True:
-                record = await self._take_next(slot.slot_id)
-                if record is None:
+                cohort = await self._take_next(slot.slot_id)
+                if cohort is None:
                     return
                 try:
-                    outcome = await self._executor.execute(record.execution())
+                    outcome = await self._executor.execute(
+                        self._execution_for(cohort)
+                    )
                     expected, abandoned = await self._cancellation_state(
                         slot,
-                        record,
+                        cohort,
                     )
                     if abandoned:
                         return
-                    if isinstance(outcome, _types._ExecutorIntegrityFailure):
-                        await self._mark_fatal(outcome.failure)
-                        return
                     if not isinstance(outcome, _TERMINAL_EXECUTOR_OUTCOMES):
-                        failure = _InvalidExecutorOutcome(
-                            "executor returned an invalid outcome"
+                        await self._retain_invalid_active(
+                            slot.slot_id,
+                            cohort,
+                            _InvalidExecutorOutcome(
+                                "executor returned an invalid outcome"
+                            ),
                         )
-                        await self._mark_fatal(failure)
-                        return
+                        continue
                     if expected:
                         failure = _ShardUndrainedError(
                             "executor swallowed registered cancellation"
@@ -1312,18 +1596,18 @@ class _Shard:
                         return
                     await self._terminalize(
                         slot.slot_id,
-                        record,
+                        cohort,
                         outcome,
                     )
                 except asyncio.CancelledError:
                     expected, abandoned = await self._cancellation_state(
                         slot,
-                        record,
+                        cohort,
                     )
                     if expected and not abandoned:
-                        await self._terminalize_cancelled_if_active(
+                        await self._settle_cancelled_cohort(
                             slot,
-                            record,
+                            cohort,
                         )
                     elif not abandoned:
                         failure = _UnexpectedWorkerCancellation(
@@ -1331,6 +1615,13 @@ class _Shard:
                         )
                         await self._mark_fatal(failure)
                     raise
+                except _types.CohortIntegrityError as exc:
+                    await self._retain_invalid_active(
+                        slot.slot_id,
+                        cohort,
+                        exc,
+                    )
+                    continue
                 except BaseException as exc:
                     await self._mark_fatal(exc)
                     raise
@@ -1349,37 +1640,406 @@ class _Shard:
     async def _terminalize_cancelled_if_active(
         self,
         slot: _WorkerSlot,
-        record: _types._CallRecord,
+        cohort: _types._CohortRecord,
     ) -> None:
-        async with self._lock:
-            released = self._terminalize_locked(slot.slot_id, record)
-        if released:
-            await self._notify_settlements(
-                (record,),
-                self._settlement_for_closing(record.grant),
-            )
+        await self._settle_cancelled_cohort(slot, cohort)
 
-    def _terminalize_locked(
+    def _execution_for(
+        self,
+        cohort: _types._CohortRecord,
+    ) -> _types.CohortExecution:
+        control = cohort.control
+
+        def retain(request: _types.OutcomeUnknownRetentionRequest) -> None:
+            self._accept_retention(control, request)
+
+        def handoff(outcome: object) -> None:
+            self._accept_known_handoff(control, outcome)
+
+        return _types.CohortExecution(
+            calls=tuple(record.execution() for record in cohort.records),
+            signals=cohort.signals,
+            retention=_types._issue_retention_handle(
+                cohort.identities,
+                retain,
+            ),
+            cancellation_handoff=_types._issue_cancellation_handoff(
+                cohort.identities,
+                handoff,
+            ),
+        )
+
+    @staticmethod
+    def _accept_retention(
+        control: _types._CohortControl,
+        request: _types.OutcomeUnknownRetentionRequest,
+    ) -> None:
+        if type(request) is not _types.OutcomeUnknownRetentionRequest:
+            message = "retention request has the wrong type"
+            failure = _types.CohortIntegrityError(message)
+            if control.active:
+                control.integrity_failure = failure
+            raise failure
+        if not control.active:
+            message = "retention handle is stale"
+            raise _types.CohortIntegrityError(message)
+        if request.terminal_facts.identities != control.identities:
+            message = "retention request crossed cohort identity"
+            control.integrity_failure = _types.CohortIntegrityError(message)
+            raise control.integrity_failure
+        if control.known_handoff is not None:
+            message = "known and unknown cancellation handoffs conflict"
+            control.integrity_failure = _types.CohortIntegrityError(message)
+            raise control.integrity_failure
+        if control.retention_request is None:
+            control.retention_request = request
+            return
+        if control.retention_request != request:
+            message = "retention request changed cause or terminal facts"
+            control.integrity_failure = _types.CohortIntegrityError(message)
+            raise control.integrity_failure
+
+    @staticmethod
+    def _accept_known_handoff(
+        control: _types._CohortControl,
+        outcome: object,
+    ) -> None:
+        allowed = (
+            _types._ExecutorCompleted,
+            _types._ExecutorFinalClosurePending,
+            _types._ExecutorReplayableDirectFailure,
+            _types._ExecutorRetryable,
+            _types._ExecutorAuthorityLost,
+            _types._ExecutorMembershipRejected,
+        )
+        if not isinstance(outcome, allowed):
+            message = "cancellation handoff requires a definitive known outcome"
+            failure = _types.CohortIntegrityError(message)
+            if control.active:
+                control.integrity_failure = failure
+            raise failure
+        if not control.active:
+            message = "cancellation handoff is stale"
+            raise _types.CohortIntegrityError(message)
+        if outcome.facts.identities != control.identities:
+            message = "cancellation handoff crossed cohort identity"
+            control.integrity_failure = _types.CohortIntegrityError(message)
+            raise control.integrity_failure
+        if control.retention_request is not None:
+            message = "known and unknown cancellation handoffs conflict"
+            control.integrity_failure = _types.CohortIntegrityError(message)
+            raise control.integrity_failure
+        if control.known_handoff is None:
+            control.known_handoff = outcome
+            return
+        if control.known_handoff != outcome:
+            message = "cancellation handoff changed terminal outcome"
+            control.integrity_failure = _types.CohortIntegrityError(message)
+            raise control.integrity_failure
+
+    @staticmethod
+    def _require_exact_facts(
+        cohort: _types._CohortRecord,
+        outcome: _types._ExecutorOutcome,
+    ) -> None:
+        facts = getattr(outcome, "facts", None)
+        if type(facts) is not _types.CohortTerminalFacts:
+            message = "executor outcome omitted exact terminal facts"
+            raise _types.CohortIntegrityError(message)
+        if facts.identities != cohort.identities:
+            message = "executor terminal facts crossed active cohort"
+            raise _types.CohortIntegrityError(message)
+
+    @staticmethod
+    def _notifications_for_facts(
+        cohort: _types._CohortRecord,
+        facts: _types.CohortTerminalFacts,
+    ) -> tuple[
+        tuple[tuple[_types._CallRecord, ...], _types.CallSettlement],
+        ...,
+    ]:
+        notifications = []
+        for record, fact in zip(
+            cohort.records,
+            facts.records,
+            strict=True,
+        ):
+            if (
+                fact.closure_state
+                is _types.CohortRecordClosureState.DURABLY_CLOSED
+            ):
+                settlement = _types.CallSettlement.COMPLETED
+            elif (
+                fact.closure_state
+                is _types.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+            ):
+                settlement = _types.CallSettlement.REPLAY_SAFE_RELEASE
+            else:
+                message = "released outcome contains a retained closure state"
+                raise _types.CohortIntegrityError(message)
+            notifications.append(((record,), settlement))
+        return tuple(notifications)
+
+    def _active_identity_matches_locked(
         self,
         slot_id: int,
-        record: _types._CallRecord,
+        cohort: _types._CohortRecord,
     ) -> bool:
         slot = self._require_slot(slot_id)
-        current = slot.active_record
-        if current is not record:
+        if slot.active_cohort is not cohort:
             return False
-        if self._active_by_feed.get(record.feed_id) is not record:
-            message = "Feed and worker active ownership disagree"
+        if self._active_by_feed.get(cohort.feed_id) is not cohort:
+            message = "Feed and worker cohort ownership disagree"
             raise RuntimeError(message)
-        slot.active_record = None
-        del self._active_by_feed[record.feed_id]
-        del self._records[record.local_sequence]
-        self._held -= 1
-        if self._fatal is None:
-            self._ready_call_or_boundary_locked(record.feed_id)
-        self._after_release_locked(1)
-        self._check_conservation_locked()
         return True
+
+    def _release_active_locked(
+        self,
+        slot_id: int,
+        cohort: _types._CohortRecord,
+        *,
+        ready: bool,
+    ) -> None:
+        if not self._active_identity_matches_locked(slot_id, cohort):
+            message = "active cohort ownership changed before release"
+            raise RuntimeError(message)
+        slot = self._require_slot(slot_id)
+        slot.active_cohort = None
+        del self._active_by_feed[cohort.feed_id]
+        cohort.control.active = False
+        for record in cohort.records:
+            del self._records[record.local_sequence]
+        self._held -= len(cohort.records)
+        if ready and self._fatal is None:
+            self._ready_call_or_boundary_locked(cohort.feed_id)
+        self._after_release_locked(len(cohort.records))
+
+    def _retain_active_locked(
+        self,
+        slot_id: int,
+        cohort: _types._CohortRecord,
+        *,
+        outcome: object | None = None,
+        integrity_failure: BaseException | None = None,
+    ) -> None:
+        if not self._active_identity_matches_locked(slot_id, cohort):
+            message = "active cohort ownership changed before retention"
+            raise RuntimeError(message)
+        slot = self._require_slot(slot_id)
+        slot.active_cohort = None
+        del self._active_by_feed[cohort.feed_id]
+        cohort.control.active = False
+        cohort.control.retained_outcome = outcome
+        if integrity_failure is not None:
+            cohort.control.integrity_failure = integrity_failure
+        self._retained_by_feed[cohort.feed_id] = cohort
+        self._worker_changed.set()
+
+    async def _retain_invalid_active(
+        self,
+        slot_id: int,
+        cohort: _types._CohortRecord,
+        failure: BaseException,
+    ) -> None:
+        async with self._lock:
+            self._retain_active_locked(
+                slot_id,
+                cohort,
+                integrity_failure=failure,
+            )
+            self._check_conservation_locked()
+
+    async def _settle_cancelled_cohort(
+        self,
+        slot: _WorkerSlot,
+        cohort: _types._CohortRecord,
+    ) -> None:
+        handoff = cohort.control.known_handoff
+        if handoff is not None and cohort.control.integrity_failure is None:
+            await self._terminalize(
+                slot.slot_id,
+                cohort,
+                typing.cast("_types._ExecutorOutcome", handoff),
+            )
+            return
+        notifications = []
+        async with self._lock:
+            if not self._active_identity_matches_locked(slot.slot_id, cohort):
+                return
+            if (
+                cohort.control.retention_request is not None
+                or cohort.control.integrity_failure is not None
+            ):
+                self._retain_active_locked(
+                    slot.slot_id,
+                    cohort,
+                    outcome=cohort.control.retention_request,
+                    integrity_failure=cohort.control.integrity_failure,
+                )
+                self._check_conservation_locked()
+                return
+            self._release_active_locked(slot.slot_id, cohort, ready=False)
+            notifications.append(
+                (cohort.records, _types.CallSettlement.REPLAY_SAFE_RELEASE)
+            )
+            if self._page_abort_observer is None:
+                abort_released = self._release_page_final_pending_locked(
+                    cohort.grant,
+                    cohort.page_sequence,
+                )
+                if abort_released:
+                    notifications.append(
+                        (
+                            abort_released,
+                            _types.CallSettlement.REPLAY_SAFE_RELEASE,
+                        )
+                    )
+            self._ready_call_or_boundary_locked(cohort.feed_id)
+            self._check_conservation_locked()
+        for records, settlement in notifications:
+            await self._notify_settlements(records, settlement)
+        if self._page_abort_observer is not None:
+            await self._page_abort_observer(
+                cohort.grant,
+                cohort.page_sequence,
+            )
+
+    def _install_replay_barrier_locked(
+        self,
+        failed: _types._CohortRecord,
+    ) -> tuple[_types._CallRecord, ...]:
+        key = (failed.grant, failed.page_sequence, failed.feed_id)
+        self._replay_blocks.add(key)
+        queue = self._feed_queues.get(failed.feed_id, collections.deque())
+        kept: collections.deque[_types._CohortRecord] = collections.deque()
+        released = []
+        for cohort in queue:
+            if (
+                cohort.grant == failed.grant
+                and cohort.page_sequence == failed.page_sequence
+            ):
+                for record in cohort.records:
+                    released.append(record)
+                    del self._records[record.local_sequence]
+                self._held -= len(cohort.records)
+            else:
+                kept.append(cohort)
+        if kept:
+            self._feed_queues[failed.feed_id] = kept
+        else:
+            self._feed_queues.pop(failed.feed_id, None)
+            self._remove_ready_locked(failed.feed_id)
+        scope = (failed.grant, failed.feed_id)
+        boundary = self._pending_boundaries.get(scope)
+        released_boundary = 0
+        if boundary is not None and failed.page_sequence in (
+            boundary.provisional_page_sequence,
+            boundary.promotion_page_sequence,
+        ):
+            rollback_target = (
+                boundary.promotion_rollback_target
+                if boundary.promotion_page_sequence == failed.page_sequence
+                else boundary.stable_target
+            )
+            if rollback_target is None:
+                del self._pending_boundaries[scope]
+                self._held -= 1
+                released_boundary = 1
+            else:
+                boundary.target = rollback_target
+                boundary.stable_target = rollback_target
+                boundary.provisional_page_sequence = None
+                boundary.provisional_count = 0
+                boundary.promotion_page_sequence = None
+                boundary.promotion_rollback_target = None
+        self._after_release_locked(len(released) + released_boundary)
+        return tuple(released)
+
+    def _release_page_final_pending_locked(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+    ) -> tuple[_types._CallRecord, ...]:
+        matching = tuple(
+            cohort
+            for cohort in self._retained_by_feed.values()
+            if cohort.grant == grant and cohort.page_sequence == page_sequence
+        )
+        if any(self._cohort_is_unknown(cohort) for cohort in matching):
+            return ()
+        released = []
+        for cohort in matching:
+            self._retained_by_feed.pop(cohort.feed_id, None)
+            for record in cohort.records:
+                released.append(record)
+                del self._records[record.local_sequence]
+            self._held -= len(cohort.records)
+            self._ready_call_or_boundary_locked(cohort.feed_id)
+        self._after_release_locked(len(released))
+        return tuple(released)
+
+    async def page_has_unknown_retention(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+    ) -> bool:
+        """Return whether one exact page has sticky unknown evidence."""
+        async with self._lock:
+            return any(
+                cohort.grant == grant
+                and cohort.page_sequence == page_sequence
+                and self._cohort_is_unknown(cohort)
+                for cohort in self._retained_by_feed.values()
+            )
+
+    async def unknown_retained_pages(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> frozenset[int]:
+        """Return exact pages with sticky unknown evidence for a grant."""
+        async with self._lock:
+            return frozenset(
+                cohort.page_sequence
+                for cohort in self._retained_by_feed.values()
+                if cohort.grant == grant and self._cohort_is_unknown(cohort)
+            )
+
+    async def release_page_final_pending(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+    ) -> int:
+        """Replay-release one exact page's known final-pending records."""
+        async with self._lock:
+            released = self._release_page_final_pending_locked(
+                grant,
+                page_sequence,
+            )
+            self._check_conservation_locked()
+        await self._notify_settlements(
+            released,
+            _types.CallSettlement.REPLAY_SAFE_RELEASE,
+        )
+        return len(released)
+
+    @staticmethod
+    def _cohort_is_unknown(cohort: _types._CohortRecord) -> bool:
+        return (
+            cohort.control.retention_request is not None
+            or cohort.control.integrity_failure is not None
+            or isinstance(
+                cohort.control.retained_outcome,
+                (
+                    _types._ExecutorIntegrityFailure,
+                    _types._ExecutorOutcomeUnknown,
+                    _types.OutcomeUnknownRetentionRequest,
+                ),
+            )
+        )
+
+    def _cohort_is_unknown_retained(self, feed_id: uuid.UUID) -> bool:
+        cohort = self._retained_by_feed.get(feed_id)
+        return cohort is not None and self._cohort_is_unknown(cohort)
 
     async def _replace_cancelled_worker(
         self,
@@ -1390,7 +2050,7 @@ class _Shard:
             if slot.task is not request.task or not request.task.done():
                 message = "old worker has not settled"
                 raise _ShardUndrainedError(message)
-            if slot.active_record is not None:
+            if slot.active_cohort is not None:
                 failure = _ShardUndrainedError(
                     "cancelled worker retained active ownership"
                 )
@@ -1406,12 +2066,13 @@ class _Shard:
     async def _cancellation_state(
         self,
         slot: _WorkerSlot,
-        record: _types._CallRecord,
+        cohort: _types._CohortRecord,
     ) -> tuple[bool, bool]:
         async with self._lock:
             expected = (
                 slot.cancel_expected
-                and slot.cancellation_sequence == record.local_sequence
+                and slot.cancellation_sequence
+                == cohort.records[0].local_sequence
             )
             return expected, slot.abandoned
 
@@ -1460,6 +2121,8 @@ class _Shard:
         if feed_id in self._ready_members:
             return
         if feed_id in self._active_boundaries:
+            return
+        if feed_id in self._retained_by_feed:
             return
         if feed_id not in self._feed_queues:
             message = "cannot ready a Feed without queued calls"
@@ -1580,6 +2243,7 @@ class _Shard:
         self._pending_boundaries[scope] = record
         if (
             record.feed_id not in self._active_by_feed
+            and record.feed_id not in self._retained_by_feed
             and record.feed_id not in self._active_boundaries
             and record.feed_id in self._feed_queues
         ):
@@ -1588,6 +2252,7 @@ class _Shard:
     def _ready_call_or_boundary_locked(self, feed_id: uuid.UUID) -> None:
         if (
             feed_id in self._active_by_feed
+            or feed_id in self._retained_by_feed
             or feed_id in self._active_boundaries
         ):
             return
@@ -1611,6 +2276,7 @@ class _Shard:
             and (include_suspended or not record.retry_suspended)
             and record.feed_id not in self._feed_queues
             and record.feed_id not in self._active_by_feed
+            and record.feed_id not in self._retained_by_feed
             and record.feed_id not in self._active_boundaries
             and (record.grant, record.feed_id) not in self._retired_scopes
             and not self._is_grant_closing(record.grant)
@@ -1703,6 +2369,10 @@ class _Shard:
         if (work.grant, work.feed_id) in self._retired_scopes:
             message = "Feed is retired from this shard"
             raise _FeedRetiredError(message)
+        replay_key = (work.grant, work.page_sequence, work.feed_id)
+        if replay_key in self._replay_blocks:
+            message = "Feed/page is replay-blocked"
+            raise _ReplayBlockedError(message)
 
     def _raise_boundary_admission_error_locked(
         self,
@@ -1720,6 +2390,14 @@ class _Shard:
         if scope in self._retired_scopes:
             message = "Feed is retired from this shard"
             raise _FeedRetiredError(message)
+        replay_key = (
+            boundary_input.grant,
+            boundary_input.page_sequence,
+            boundary_input.boundary.feed_id,
+        )
+        if replay_key in self._replay_blocks:
+            message = "Feed/page is replay-blocked"
+            raise _ReplayBlockedError(message)
 
     def _raise_fatal_locked(self) -> None:
         failure = self._fatal or self._global_fatal_failure()
@@ -1748,7 +2426,7 @@ class _Shard:
             raise ValueError(message)
         return self._workers[slot_id]
 
-    def _check_conservation_locked(self) -> None:
+    def _check_conservation_locked(self) -> None:  # noqa: PLR0912
         """Validate counted capacity and exclusive ownership under the lock.
 
         Raises:
@@ -1758,11 +2436,21 @@ class _Shard:
         Callers treat any failure as scheduler-integrity evidence; this method
         never repairs uncertain state or releases capacity speculatively.
         """
-        queued = sum(len(queue) for queue in self._feed_queues.values())
-        active = len(self._active_by_feed)
+        queued = sum(
+            len(cohort.records)
+            for queue in self._feed_queues.values()
+            for cohort in queue
+        )
+        active = sum(
+            len(cohort.records) for cohort in self._active_by_feed.values()
+        )
+        retained = sum(
+            len(cohort.records) for cohort in self._retained_by_feed.values()
+        )
         conserved = (
             queued
             + active
+            + retained
             + len(self._pending_boundaries)
             + len(self._flushing_boundaries)
         )
@@ -1781,11 +2469,19 @@ class _Shard:
         if set(self._active_by_feed) & self._ready_members:
             message = "active Feed also appears in the ready ring"
             raise RuntimeError(message)
+        if set(self._retained_by_feed) & self._ready_members:
+            message = "retained Feed also appears in the ready ring"
+            raise RuntimeError(message)
         if set(self._active_boundaries) & self._ready_members:
             message = "boundary-owned Feed also appears in the ready ring"
             raise RuntimeError(message)
         if set(self._active_by_feed) & set(self._active_boundaries):
             message = "Feed has both call and boundary ownership"
+            raise RuntimeError(message)
+        if set(self._retained_by_feed) & (
+            set(self._active_by_feed) | set(self._active_boundaries)
+        ):
+            message = "retained Feed has another active owner"
             raise RuntimeError(message)
         if set(self._active_boundaries) != {
             record.feed_id for record in self._flushing_boundaries.values()
@@ -1805,13 +2501,29 @@ class _Shard:
             message = "flushing boundary map contains a pending record"
             raise RuntimeError(message)
         active_sequences = {
-            record.local_sequence for record in self._active_by_feed.values()
+            record.local_sequence
+            for cohort in self._active_by_feed.values()
+            for record in cohort.records
         }
         slot_sequences = {
-            slot.active_record.local_sequence
+            record.local_sequence
             for slot in self._workers
-            if slot.active_record is not None
+            if slot.active_cohort is not None
+            for record in slot.active_cohort.records
         }
         if active_sequences != slot_sequences:
             message = "Feed and fixed-worker ownership disagree"
+            raise RuntimeError(message)
+        call_sequences = {
+            record.local_sequence
+            for queue in self._feed_queues.values()
+            for cohort in queue
+            for record in cohort.records
+        } | active_sequences | {
+            record.local_sequence
+            for cohort in self._retained_by_feed.values()
+            for record in cohort.records
+        }
+        if call_sequences != set(self._records):
+            message = "record registry and cohort ownership disagree"
             raise RuntimeError(message)
