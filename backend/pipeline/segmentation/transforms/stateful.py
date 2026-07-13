@@ -602,7 +602,7 @@ class OrderedStitchAudioFn(beam.DoFn):
        network blip or VM preemption forces Pub/Sub to actively re-deliver un-acked duplicates. Our isolated Beam
        SequenceBuffer beautifully filters duplicate frames, entirely preventing false positive VAD speech boundaries.
     3. Bounded Self-Chaining Drains: When unrolling out-of-order backlogs, emissions are
-       clamped to `MAX_CHUNKS_PER_WINDMILL_BUNDLE` (25 chunks) and a watermark timer is
+       clamped to `MAX_CHUNKS_PER_WINDMILL_BUNDLE` (300 chunks) and a watermark timer is
        re-armed to open fresh bundles, preventing 300-second bundle lease evictions
        while reducing intermediate timer queuing delays during catch-up.
     """
@@ -1353,7 +1353,7 @@ class OrderedStitchAudioFn(beam.DoFn):
 
             # Cap the drain based on our remaining bundle capacity.
             # In a fresh timer-activated bundle, processed_in_bundle starts at 0, so
-            # we can drain up to the full MAX_CHUNKS_PER_WINDMILL_BUNDLE (25 chunks).
+            # we can drain up to the full MAX_CHUNKS_PER_WINDMILL_BUNDLE (300 chunks).
             initial_expected_ts = curr_context.expected_next_chunk_start_ms
             new_expected_next_ts, new_buffer_elements, elements_to_emit = (
                 seq_buf.drain_ready_elements(
