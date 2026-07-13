@@ -12,8 +12,14 @@ MAIN_TAG: Final = "main"
 DEFAULT_SIGNIFICANT_GAP_MS: Final = 800
 
 
+# Maximum wall-clock duration (in seconds) a worker can spend inside a single Dataflow
+# bundle. Sized to 1/5th of Google Cloud Windmill's hard 300-second RPC commit lease
+# limit, leaving a generous 240-second safety margin for GCS uploads and state checkpointing.
+MAX_WINDMILL_BUNDLE_DURATION_SEC: Final = 60.0
+
 # Memory & GCS prefetch backstop / active per-bundle cap: Maximum number of chunks popped
-# and prefetched per bundle during backfills, acting as a hard item-count processing limit. Sized to
+# and prefetched per bundle during backfills, acting alongside the wall-clock budget
+# (MAX_WINDMILL_BUNDLE_DURATION_SEC) as a hard item-count processing limit. Sized to
 # ~50 minutes of audio (~300 chunks), which takes roughly ~8 seconds to compute, preventing
 # instantaneous heap unrolls from flooding memory with thousands of in-flight GCS futures.
 MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 300

@@ -378,6 +378,7 @@ def process_ordering(  # noqa: PLR0912, PLR0915
     is_backfill: bool,
     session_changed: bool = False,
     max_emit: int = MAX_CHUNKS_PER_WINDMILL_BUNDLE,
+    deadline_monotonic: float | None = None,
 ) -> tuple[list[datatypes.BufferedChunk], datatypes.ActiveStitchingState, bool]:
     """Handles chronological ordering via SequenceBuffer."""
     key_str, metadata = element
@@ -437,6 +438,7 @@ def process_ordering(  # noqa: PLR0912, PLR0915
                     buffer_elements=buffer_elements,
                     epsilon_ms=epsilon_ms,
                     max_emit=max_emit - 1,  # -1 for the current chunk
+                    deadline_monotonic=deadline_monotonic,
                 )
             )
             to_emit.extend(drained)
@@ -446,7 +448,14 @@ def process_ordering(  # noqa: PLR0912, PLR0915
             for c in remaining_elements:
                 out_of_order_buffer_state.add(c)
             has_buffer_elements = len(remaining_elements) > 0
-            clamped = len(drained) >= (max_emit - 1)
+            clamped = bool(
+                len(drained) >= (max_emit - 1)
+                or (
+                    deadline_monotonic is not None
+                    and time.monotonic() >= deadline_monotonic
+                    and remaining_elements
+                )
+            )
         else:
             has_buffer_elements = False
             clamped = False
@@ -701,8 +710,18 @@ class OrderedStitchAudioFn(beam.DoFn):
         self.engine.setup()
 
     def start_bundle(self) -> None:
-        """Initializes the bundle-level processed chunk counter to enforce lease limits."""
+        """Initializes the bundle-level counters and monotonic start timestamp to enforce lease limits."""
         self.processed_in_bundle = 0
+        self.bundle_start_time_monotonic = time.monotonic()
+
+    def _get_bundle_deadline_monotonic(self) -> float:
+        """Returns the monotonic timestamp at which the current worker bundle budget expires."""
+        if not hasattr(self, "bundle_start_time_monotonic"):
+            self.bundle_start_time_monotonic = time.monotonic()
+        return (
+            self.bundle_start_time_monotonic
+            + trans_constants.MAX_WINDMILL_BUNDLE_DURATION_SEC
+        )
 
     def _yield_tagged_outputs(
         self,
@@ -727,8 +746,13 @@ class OrderedStitchAudioFn(beam.DoFn):
                 yield res
 
     def _is_bundle_budget_exhausted(self) -> bool:
+        """Check if the current worker bundle has exhausted its time or prefetch budget."""
+        if not hasattr(self, "bundle_start_time_monotonic"):
+            self.bundle_start_time_monotonic = time.monotonic()
+        elapsed_sec = time.monotonic() - self.bundle_start_time_monotonic
         return (
-            self.processed_in_bundle
+            elapsed_sec >= trans_constants.MAX_WINDMILL_BUNDLE_DURATION_SEC
+            or self.processed_in_bundle
             >= trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
         )
 
@@ -852,6 +876,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                 session_changed=session_changed,
                 max_emit=trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
                 - self.processed_in_bundle,
+                deadline_monotonic=self._get_bundle_deadline_monotonic(),
             )
             task_logger = _get_task_logger(
                 feed_id,
@@ -1176,7 +1201,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                         expected_next_ts=new_expected,
                         buffer_elements=buffer_elements,
                         epsilon_ms=trans_constants.DEFAULT_FLOAT_TOLERANCE_MS,
-                        max_emit=MAX_CHUNKS_PER_WINDMILL_BUNDLE,
+                        max_emit=trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
+                        - self.processed_in_bundle,
+                        deadline_monotonic=self._get_bundle_deadline_monotonic(),
                     )
                 )
 
@@ -1190,8 +1217,17 @@ class OrderedStitchAudioFn(beam.DoFn):
                     self.stitch_config.backfill_lateness_threshold_ms,
                 )
 
-                clamped = (
-                    len(elements_to_emit) >= MAX_CHUNKS_PER_WINDMILL_BUNDLE
+                clamped = bool(
+                    new_buffer_elements
+                    and (
+                        len(elements_to_emit)
+                        >= (
+                            trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
+                            - self.processed_in_bundle
+                        )
+                        or time.monotonic()
+                        >= self._get_bundle_deadline_monotonic()
+                    )
                 )
                 if new_buffer_elements:
                     timer_active = _reschedule_gap_timeout(
@@ -1326,6 +1362,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                     epsilon_ms=trans_constants.DEFAULT_FLOAT_TOLERANCE_MS,
                     max_emit=trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
                     - self.processed_in_bundle,
+                    deadline_monotonic=self._get_bundle_deadline_monotonic(),
                 )
             )
 
@@ -1333,9 +1370,16 @@ class OrderedStitchAudioFn(beam.DoFn):
             for c in new_buffer_elements:
                 out_of_order_buffer_state.add(c)
 
-            clamped = len(elements_to_emit) >= (
-                trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
-                - self.processed_in_bundle
+            clamped = bool(
+                new_buffer_elements
+                and (
+                    len(elements_to_emit)
+                    >= (
+                        trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
+                        - self.processed_in_bundle
+                    )
+                    or time.monotonic() >= self._get_bundle_deadline_monotonic()
+                )
             )
             if new_buffer_elements and clamped:
                 # Still clamped, re-arm the deferral timer to self-chain into

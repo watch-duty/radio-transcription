@@ -1758,6 +1758,26 @@ class OrderedStitchAudioTest(unittest.TestCase):
         )
         self.assertEqual(curr_context.expected_next_chunk_start_ms, 102000)
 
+    def test_is_bundle_budget_exhausted_by_time_limit(self) -> None:
+        """Verifies _is_bundle_budget_exhausted returns True when wall-clock time limit is exceeded."""
+        fn = OrderedStitchAudioFn(
+            order_config=OrderRestorerConfig(),
+            stitch_config=get_test_stitch_config(),
+        )
+        fn.start_bundle()
+        # Mock time.monotonic() to simulate passage of 61 seconds (limit is 60s)
+        with patch(
+            "backend.pipeline.segmentation.transforms.stateful.time.monotonic"
+        ) as mock_mono:
+            # First call in start_bundle was real, or suppose we set it manually
+            fn.bundle_start_time_monotonic = 100.0
+            mock_mono.return_value = 161.0
+            self.assertTrue(fn._is_bundle_budget_exhausted())
+
+            # If not exceeded (e.g. 50 seconds elapsed)
+            mock_mono.return_value = 150.0
+            self.assertFalse(fn._is_bundle_budget_exhausted())
+
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
     )
