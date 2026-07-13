@@ -10,7 +10,7 @@ from google.genai import types
 from backend.pipeline.common import constants
 from backend.pipeline.common.exceptions import (
     InvalidFinishReasonError,
-    MaxTokensReachedError,
+    PartialTranscriptionError,
 )
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers.chirp import (
@@ -768,12 +768,13 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             transcriber.setup()
 
-            with self.assertRaises(MaxTokensReachedError) as context:
+            with self.assertRaises(PartialTranscriptionError) as context:
                 await transcriber.transcribe(
                     audio_data=b"\x00" * 100,
                     duration_ms=1000,
                 )
-            self.assertIn("Max Tokens Reached", str(context.exception))
+            self.assertEqual(context.exception.reason, "MAX_TOKENS")
+            self.assertEqual(context.exception.partial_text, "")
 
     async def test_gemini_transcriber_no_candidates(self) -> None:
         """Verifies that empty candidates response raises GeminiTransientTranscriptionError."""

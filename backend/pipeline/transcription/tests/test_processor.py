@@ -27,6 +27,7 @@ from backend.pipeline.common import tracing_utils
 from backend.pipeline.common.clients.audio_segments_client import (
     AsyncAudioSegmentsClient,
 )
+from backend.pipeline.common.exceptions import PartialTranscriptionError
 from backend.pipeline.schema_types.normalized_audio_pb2 import (
     NormalizedAudio,
 )
@@ -167,6 +168,82 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
                 "text": "Hello world",
                 "errors": [],
             },
+        )
+
+    async def test_process_event_partial_transcription(self) -> None:
+        """Verifies behavior when speech API returns a partial transcription error."""
+        # Setup mocks
+        mock_transcriber = MagicMock(spec=Transcriber)
+        mock_transcriber.transcribe.side_effect = PartialTranscriptionError(
+            partial_text="This is a partial", reason="MAX_TOKENS"
+        )
+
+        mock_publisher = MagicMock()
+        mock_future = Future()
+        mock_future.set_result("msg-12345")
+        mock_publisher.publish.return_value = mock_future
+        mock_publisher.topic_path.return_value = (
+            "projects/test-proj/topics/egress"
+        )
+
+        mock_audio_segments_client = MagicMock(spec=AsyncAudioSegmentsClient)
+
+        # Build dummy claim proto
+        claim = NormalizedAudio(
+            segment_id="tx-1111",
+            feed_id="feed-2222",
+            missing_prior_context=False,
+            missing_post_context=False,
+            source_audio_uris=["gs://bucket/raw1.flac"],
+            canonical_audio_uri="gs://bucket/normalized.flac",
+            playback_audio_uri="gs://bucket/normalized.m4a",
+            feed_name="Test Feed",
+            start_timestamp={"seconds": 1000, "nanos": 1000000},
+            end_timestamp={"seconds": 1005, "nanos": 2000000},
+        )
+
+        # Serialize and wrap in Pub/Sub envelope
+        data_bytes = claim.SerializeToString()
+        envelope = {
+            "message": {
+                "data": base64.b64encode(data_bytes).decode("utf-8"),
+                "attributes": {
+                    "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+                },
+                "messageId": "msg-1",
+            }
+        }
+
+        cloud_event = CloudEvent(
+            attributes={
+                "type": "google.cloud.pubsub.topic.v1.messagePublished",
+                "source": "test-source",
+            },
+            data=envelope,
+        )
+
+        processor = TranscriptionEventProcessor(
+            project_id="test-proj",
+            output_topic="projects/test-proj/topics/egress",
+            transcriber=mock_transcriber,
+            publisher=mock_publisher,
+            audio_segments_client=mock_audio_segments_client,
+        )
+
+        # Run process_event
+        await processor.process_event(cloud_event)
+
+        # Verify add_audio_segment_annotation was called with partial text and error
+        mock_audio_segments_client.add_audio_segment_annotation.assert_called_once_with(
+            audio_segment_id="tx-1111",
+            annotation_type=audio_segments_models.AnnotationType.TRANSCRIPT,
+            data={
+                "text": "This is a partial",
+                "errors": ["Partial transcription (MAX_TOKENS)"],
+            },
+        )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription", "success"
         )
 
     async def test_process_event_empty_transcription(self) -> None:

@@ -38,9 +38,14 @@ class NonRetryableError(Exception):
     """Exception raised for non-retryable errors that should not trigger a message retry."""
 
 
-class MaxTokensReachedError(NonRetryableError):
-    """Raised when a transcription model hits the maximum token limit."""
-
-
 class InvalidFinishReasonError(NonRetryableError):
     """Raised when a transcription model returns an invalid finish reason (e.g., safety filters)."""
+
+
+class PartialTranscriptionError(Exception):
+    """Raised when a transcription is partial/truncated but still contains valid text."""
+
+    def __init__(self, partial_text: str, reason: str) -> None:
+        super().__init__(f"Partial transcription due to: {reason}")
+        self.partial_text = partial_text
+        self.reason = reason

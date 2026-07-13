@@ -21,6 +21,7 @@ from opentelemetry.trace import StatusCode
 
 from backend.pipeline.common import constants
 from backend.pipeline.common.clients import audio_segments_client
+from backend.pipeline.common.exceptions import PartialTranscriptionError
 from backend.pipeline.common.log_helper import record_pipeline_stage
 from backend.pipeline.common.tracing_utils import (
     get_tracer,
@@ -177,10 +178,20 @@ class TranscriptionEventProcessor:
             span.set_attribute("segment_id", claim.segment_id)
             span.set_attribute("feed_id", claim.feed_id)
             span.set_attribute("duration_ms", duration_ms)
-            transcript = await self.transcriber.transcribe(
-                uri=claim.transcription_audio_uri or claim.canonical_audio_uri,
-                duration_ms=duration_ms,
-            )
+            try:
+                transcript = await self.transcriber.transcribe(
+                    uri=claim.transcription_audio_uri
+                    or claim.canonical_audio_uri,
+                    duration_ms=duration_ms,
+                )
+            except PartialTranscriptionError as e:
+                logger.warning(
+                    "Saved partial transcript for segment %s. Reason: %s",
+                    claim.segment_id,
+                    e.reason,
+                )
+                errors.append(f"Partial transcription ({e.reason})")
+                transcript = e.partial_text
 
         transcript = transcript.strip() if transcript else ""
         return self._record_status_and_get_fallback_text(transcript, errors)

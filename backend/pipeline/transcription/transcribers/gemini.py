@@ -299,8 +299,9 @@ class GeminiTranscriber(base.Transcriber):
 
         if not candidate.content or not candidate.content.parts:
             if reason_str == types.FinishReason.MAX_TOKENS.name:
-                msg = "Max Tokens Reached"
-                raise exceptions.MaxTokensReachedError(msg)
+                raise exceptions.PartialTranscriptionError(
+                    partial_text="", reason="MAX_TOKENS"
+                )
             if reason_str == types.FinishReason.STOP.name:
                 logger.info(
                     "Gemini returned empty content (finish reason: STOP)."
@@ -330,4 +331,12 @@ class GeminiTranscriber(base.Transcriber):
         if not text_parts:
             return ""
 
-        return "".join(text_parts).strip()
+        transcript = "".join(text_parts).strip()
+
+        if reason_str == types.FinishReason.MAX_TOKENS.name:
+            raise exceptions.PartialTranscriptionError(
+                partial_text=transcript,
+                reason="MAX_TOKENS",
+            )
+
+        return transcript
