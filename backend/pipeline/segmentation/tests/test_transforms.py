@@ -505,6 +505,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 timestamp=Timestamp(100),
                 transmission_context_state=mock_state,
                 last_start_ms_state=MagicMock(),
+                out_of_order_buffer_state=MagicMock(),
                 gap_timer_event=MagicMock(),
                 gap_timer_event_v2=MagicMock(),
                 gap_timer_proc=MagicMock(),
@@ -567,6 +568,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 timestamp=Timestamp(200),
                 transmission_context_state=mock_state,
                 last_start_ms_state=MagicMock(),
+                out_of_order_buffer_state=MagicMock(),
                 gap_timer_event=MagicMock(),
                 gap_timer_event_v2=MagicMock(),
                 gap_timer_proc=MagicMock(),
@@ -672,6 +674,8 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 element=element,
                 timestamp=timestamp,
                 transmission_context_state=transmission_context_state,  # type: ignore
+                last_start_ms_state=MagicMock(),
+                out_of_order_buffer_state=MockBagState(),  # type: ignore
                 gap_timer_event=gap_timer_event,
                 gap_timer_event_v2=MagicMock(),
                 gap_timer_proc=gap_timer_proc,
@@ -2133,6 +2137,7 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
             )
         )
         mock_last_start_ms = MockValueState(None)
+        mock_state_buffer = MockBagState()
 
         metadata = ChunkMetadata(
             gcs_uri="gs://bucket/chunk1.flac",
@@ -2148,6 +2153,7 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
                 timestamp=Timestamp(100),
                 transmission_context_state=mock_state_context,  # type: ignore
                 last_start_ms_state=mock_last_start_ms,  # type: ignore
+                out_of_order_buffer_state=mock_state_buffer,  # type: ignore
                 gap_timer_event=MagicMock(),
                 gap_timer_event_v2=MagicMock(),
                 gap_timer_proc=MagicMock(),
@@ -2227,6 +2233,7 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
             )
         )
         mock_last_start_ms = MockValueState(None)
+        mock_state_buffer = MockBagState()
 
         metadata = ChunkMetadata(
             gcs_uri="gs://bucket/long_continuous.flac",
@@ -2241,6 +2248,7 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
                 timestamp=Timestamp(100),
                 transmission_context_state=mock_state_context,  # type: ignore
                 last_start_ms_state=mock_last_start_ms,  # type: ignore
+                out_of_order_buffer_state=mock_state_buffer,  # type: ignore
                 gap_timer_event=MagicMock(),
                 gap_timer_event_v2=MagicMock(),
                 gap_timer_proc=MagicMock(),
@@ -2468,6 +2476,7 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
             )
         )
         mock_last_start_ms = MockValueState(None)
+        mock_state_buffer = MockBagState()
 
         metadata = ChunkMetadata(
             gcs_uri="gs://bucket/long_silence.flac",
@@ -2482,6 +2491,7 @@ class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
                 timestamp=Timestamp(100),
                 transmission_context_state=mock_state_context,  # type: ignore
                 last_start_ms_state=mock_last_start_ms,  # type: ignore
+                out_of_order_buffer_state=mock_state_buffer,  # type: ignore
                 gap_timer_event=MagicMock(),
                 gap_timer_event_v2=MagicMock(),
                 gap_timer_proc=MagicMock(),
@@ -3080,7 +3090,7 @@ class DlqTaggingTest(unittest.TestCase):
         )
 
         # Create fn and states
-        fn, mock_state_context, _, mock_last_start_ms = (
+        fn, mock_state_context, mock_state_buffer, mock_last_start_ms = (
             self._make_fn_and_states(OrderedStitchAudioFn)
         )
         # Override config to ensure max_transmission_duration_ms=5000
@@ -3116,6 +3126,7 @@ class DlqTaggingTest(unittest.TestCase):
                     timestamp=Timestamp(10),
                     transmission_context_state=mock_state_context,
                     last_start_ms_state=mock_last_start_ms,
+                    out_of_order_buffer_state=mock_state_buffer,
                     gap_timer_event=MagicMock(),
                     gap_timer_event_v2=MagicMock(),
                     gap_timer_proc=MagicMock(),
@@ -3170,6 +3181,7 @@ class DlqTaggingTest(unittest.TestCase):
                     timestamp=Timestamp(10.1),
                     transmission_context_state=mock_state_context,
                     last_start_ms_state=mock_last_start_ms,
+                    out_of_order_buffer_state=mock_state_buffer,
                     gap_timer_event=MagicMock(),
                     gap_timer_event_v2=MagicMock(),
                     gap_timer_proc=MagicMock(),
@@ -3233,6 +3245,7 @@ class DlqTaggingTest(unittest.TestCase):
                     timestamp=Timestamp(10),
                     transmission_context_state=mock_state_context,
                     last_start_ms_state=mock_last_start_ms,
+                    out_of_order_buffer_state=mock_state_buffer,
                     gap_timer_event=MagicMock(),
                     gap_timer_event_v2=MagicMock(),
                     gap_timer_proc=MagicMock(),

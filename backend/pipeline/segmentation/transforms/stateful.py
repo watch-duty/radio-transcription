@@ -424,17 +424,18 @@ def _drain_and_update_bag(
 def process_ordering(
     element: tuple[str, datatypes.ChunkMetadata],
     timestamp: Timestamp,
-    curr_context: datatypes.TransmissionContext,
+    curr_context: datatypes.ActiveStitchingState,
     out_of_order_buffer_state: Any,
     gap_timer_event: Any,
     gap_timer_proc: Any,
     order_config: datatypes.OrderRestorerConfig,
     *,
     is_backfill: bool,
+    session_changed: bool,
     max_emit: int = MAX_CHUNKS_PER_WINDMILL_BUNDLE,
     deadline_monotonic: float | None = None,
 ) -> tuple[list[datatypes.BufferedChunk], datatypes.ActiveStitchingState, bool]:
-    """Handles session change detection and chronological ordering via SequenceBuffer."""
+    """Handles chronological ordering via SequenceBuffer."""
     key_str, metadata = element
     if "#" in key_str:
         feed_id, _ = key_str.split("#", 1)
@@ -442,14 +443,6 @@ def process_ordering(
         feed_id = key_str
     task_logger = _get_task_logger(
         feed_id, metadata.session_id, "sequence-buffer"
-    )
-
-    curr_context, session_changed = _handle_session_transition(
-        curr_context=curr_context,
-        metadata=metadata,
-        gap_timer_event=gap_timer_event,
-        gap_timer_proc=gap_timer_proc,
-        task_logger=task_logger,
     )
 
     seq_buf = sequence_buffer.SequenceBuffer(order_config)
@@ -799,12 +792,13 @@ class OrderedStitchAudioFn(beam.DoFn):
         last_start_ms_state: Any,
         out_of_order_buffer_state: Any,
         deferred_drain_timer: Any,
+        *,
+        state_changed: bool = False,
     ) -> bool:
         """Buffers the incoming chunk and arms deferral timer if bundle budget is exhausted."""
         if not self._is_bundle_budget_exhausted():
             return False
 
-        state_changed = False
         if isinstance(curr_context, datatypes.IdleFeedState):
             curr_context = datatypes.ActiveStitchingState(
                 session_id=metadata.session_id,
@@ -853,6 +847,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         timestamp: Timestamp,
         transmission_context_state: Any,
         last_start_ms_state: Any,
+        curr_context: datatypes.ActiveStitchingState,
     ) -> None:
         """Parks remaining chunks back into state and schedules deferred drain."""
         for c in remaining_chunks:
@@ -860,17 +855,86 @@ class OrderedStitchAudioFn(beam.DoFn):
         deferred_drain_timer.set(
             timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
         )
-        curr_context = (
-            transmission_context_state.read() or datatypes.IdleFeedState()
+        curr_context = replace(
+            curr_context,
+            order_timer_active=True,
         )
-        if not curr_context.order_timer_active:
-            curr_context = replace(curr_context, order_timer_active=True)
         _write_transmission_context(
             transmission_context_state,
             curr_context,
             last_start_ms_state,
             out_of_order_buffer_state,
         )
+
+    def _manage_deferred_drain_timers(
+        self,
+        new_buffer_elements: list[datatypes.BufferedChunk],
+        elements_to_emit: list[datatypes.BufferedChunk],
+        initial_expected_ts: int | None,
+        new_expected_next_ts: int | None,
+        timestamp: Timestamp,
+        deferred_drain_timer: Any,
+        gap_timer_event: Any,
+        gap_timer_proc: Any,
+        curr_context: datatypes.ActiveStitchingState,
+        transmission_context_state: Any,
+        last_start_ms_state: Any,
+        out_of_order_buffer_state: Any,
+    ) -> datatypes.ActiveStitchingState:
+        """Handles timer scheduling and state write for deferred drains."""
+        timer_active = len(new_buffer_elements) > 0
+        clamped = bool(
+            new_buffer_elements
+            and (
+                len(elements_to_emit)
+                >= (
+                    trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
+                    - self.processed_in_bundle
+                )
+                or time.monotonic() >= self._get_bundle_deadline_monotonic()
+            )
+        )
+        if new_buffer_elements and clamped:
+            # Still clamped, re-arm the deferral timer to self-chain into
+            # another bundle!
+            # Dynamic leap-frog: Align the timer deadline with the start time
+            # of the oldest unprocessed chunk currently waiting in the buffer.
+            # If there's a gap (e.g. downtime), this leaps the entire gap in exactly 1 step!
+            oldest_chunk_ts_sec = new_buffer_elements[0].timestamp_ms / 1000.0
+            next_deadline = max(
+                timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                Timestamp(seconds=oldest_chunk_ts_sec),
+            )
+            deferred_drain_timer.set(next_deadline)
+        elif new_buffer_elements and not clamped:
+            oldest_chunk_ts = new_buffer_elements[0].timestamp_ms
+            is_backfill = _evaluate_is_backfill(
+                oldest_chunk_ts,
+                self.stitch_config.backfill_lateness_threshold_ms,
+            )
+            timer_active = _reschedule_gap_timeout(
+                gap_timer_event=gap_timer_event,
+                gap_timer_proc=gap_timer_proc,
+                order_config=self.order_config,
+                timestamp=timestamp,
+                clamped=False,
+                is_backfill=is_backfill,
+                new_expected=initial_expected_ts,
+                new_expected_next_ts=new_expected_next_ts,
+            )
+
+        curr_context = replace(
+            curr_context,
+            expected_next_chunk_start_ms=new_expected_next_ts,
+            order_timer_active=timer_active,
+        )
+        _write_transmission_context(
+            transmission_context_state,
+            curr_context,
+            last_start_ms_state,
+            out_of_order_buffer_state,
+        )
+        return curr_context
 
     def _yield_tagged_outputs(
         self,
@@ -926,9 +990,28 @@ class OrderedStitchAudioFn(beam.DoFn):
             else None
         )
 
-        curr_context, _state_changed = _migrate_legacy_buffer(
+        curr_context, state_changed = _migrate_legacy_buffer(
             curr_context, out_of_order_buffer_state
         )
+
+        task_logger = _get_task_logger(
+            feed_id, metadata.session_id, "sequence-buffer"
+        )
+        curr_context, session_changed = _handle_session_transition(
+            curr_context=curr_context,
+            metadata=metadata,
+            gap_timer_event=gap_timer_event_v2,
+            gap_timer_proc=gap_timer_proc,
+            task_logger=task_logger,
+        )
+        if session_changed:
+            state_changed = True
+            stale_timer_event.clear()
+            stale_timer_proc.clear()
+            curr_context = replace(
+                curr_context, prior_audio_tail=None, sample_rate=None
+            )
+            out_of_order_buffer_state.clear()
 
         # Windmill lease & memory guard
         if self._buffer_chunk_on_budget_exhausted(
@@ -939,6 +1022,7 @@ class OrderedStitchAudioFn(beam.DoFn):
             last_start_ms_state,
             out_of_order_buffer_state,
             deferred_drain_timer,
+            state_changed=state_changed,
         ):
             return
 
@@ -963,6 +1047,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                 gap_timer_proc,
                 self.order_config,
                 is_backfill=is_backfill,
+                session_changed=session_changed,
                 max_emit=trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
                 - self.processed_in_bundle,
                 deadline_monotonic=self._get_bundle_deadline_monotonic(),
@@ -1006,18 +1091,15 @@ class OrderedStitchAudioFn(beam.DoFn):
                 for i, chunk in enumerate(elements_to_emit):
                     if i > 0 and self._is_bundle_budget_exhausted():
                         self._defer_remaining_chunks(
-                            elements_to_emit[i:],
-                            out_of_order_buffer_state,
-                            deferred_drain_timer,
-                            timestamp,
-                            transmission_context_state,
-                            last_start_ms_state,
+                            remaining_chunks=elements_to_emit[i:],
+                            out_of_order_buffer_state=out_of_order_buffer_state,
+                            deferred_drain_timer=deferred_drain_timer,
+                            timestamp=timestamp,
+                            transmission_context_state=transmission_context_state,
+                            last_start_ms_state=last_start_ms_state,
+                            curr_context=curr_context,
                         )
                         break
-                    curr_context = (
-                        transmission_context_state.read()
-                        or datatypes.IdleFeedState()
-                    )
                     if isinstance(curr_context, datatypes.IdleFeedState):
                         curr_context = datatypes.ActiveStitchingState(
                             session_id=metadata.session_id,
@@ -1286,26 +1368,21 @@ class OrderedStitchAudioFn(beam.DoFn):
 
                     for i, chunk in enumerate(elements_to_emit):
                         if i > 0 and self._is_bundle_budget_exhausted():
-                            curr_context = (
-                                transmission_context_state.read()
-                                or datatypes.IdleFeedState()
-                            )
                             for remaining_chunk in elements_to_emit[i:]:
                                 out_of_order_buffer_state.add(remaining_chunk)
-                            if not curr_context.order_timer_active:
-                                _reschedule_gap_timeout(
-                                    gap_timer_event=gap_timer_event,
-                                    gap_timer_proc=gap_timer_proc,
-                                    order_config=self.order_config,
-                                    timestamp=timestamp,
-                                    clamped=True,
-                                    is_backfill=is_backfill,
-                                    new_expected=new_expected,
-                                    new_expected_next_ts=previous_expected_ts,
-                                )
-                                curr_context = replace(
-                                    curr_context, order_timer_active=True
-                                )
+                            _reschedule_gap_timeout(
+                                gap_timer_event=gap_timer_event,
+                                gap_timer_proc=gap_timer_proc,
+                                order_config=self.order_config,
+                                timestamp=timestamp,
+                                clamped=True,
+                                is_backfill=is_backfill,
+                                new_expected=new_expected,
+                                new_expected_next_ts=curr_context.expected_next_chunk_start_ms,
+                            )
+                            curr_context = replace(
+                                curr_context, order_timer_active=True
+                            )
                             _write_transmission_context(
                                 transmission_context_state,
                                 curr_context,
@@ -1313,10 +1390,6 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 out_of_order_buffer_state,
                             )
                             break
-                        curr_context = (
-                            transmission_context_state.read()
-                            or datatypes.IdleFeedState()
-                        )
                         if isinstance(curr_context, datatypes.IdleFeedState):
                             curr_context = datatypes.ActiveStitchingState(
                                 session_id=active_session_id,
@@ -1363,6 +1436,8 @@ class OrderedStitchAudioFn(beam.DoFn):
         stale_timer_proc: RuntimeTimer = STALE_TIMER_PROC_PARAM,  # type: ignore
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
         deferred_drain_timer: RuntimeTimer = DEFERRED_DRAIN_TIMER,  # type: ignore
+        gap_timer_event: RuntimeTimer = GAP_TIMER_EVENT_V2,  # type: ignore
+        gap_timer_proc: RuntimeTimer = GAP_TIMER_PROC,  # type: ignore
     ) -> Iterator[
         tuple[str, datatypes.FlushRequest] | beam.pvalue.TaggedOutput
     ]:
@@ -1420,42 +1495,19 @@ class OrderedStitchAudioFn(beam.DoFn):
             for c in new_buffer_elements:
                 out_of_order_buffer_state.add(c)
 
-            clamped = bool(
-                new_buffer_elements
-                and (
-                    len(elements_to_emit)
-                    >= (
-                        trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
-                        - self.processed_in_bundle
-                    )
-                    or time.monotonic() >= self._get_bundle_deadline_monotonic()
-                )
-            )
-            if new_buffer_elements and clamped:
-                # Still clamped, re-arm the deferral timer to self-chain into
-                # another bundle!
-                # Dynamic leap-frog: Align the timer deadline with the start time
-                # of the oldest unprocessed chunk currently waiting in the buffer.
-                # If there's a gap (e.g. downtime), this leaps the entire gap in exactly 1 step!
-                oldest_chunk_ts_sec = (
-                    new_buffer_elements[0].timestamp_ms / 1000.0
-                )
-                next_deadline = max(
-                    timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
-                    Timestamp(seconds=oldest_chunk_ts_sec),
-                )
-                deferred_drain_timer.set(next_deadline)
-
-            curr_context = replace(
-                curr_context,
-                expected_next_chunk_start_ms=new_expected_next_ts,
-                order_timer_active=len(new_buffer_elements) > 0,
-            )
-            _write_transmission_context(
-                transmission_context_state,
-                curr_context,
-                last_start_ms_state,
-                out_of_order_buffer_state,
+            curr_context = self._manage_deferred_drain_timers(
+                new_buffer_elements=new_buffer_elements,
+                elements_to_emit=elements_to_emit,
+                initial_expected_ts=initial_expected_ts,
+                new_expected_next_ts=new_expected_next_ts,
+                timestamp=timestamp,
+                deferred_drain_timer=deferred_drain_timer,
+                gap_timer_event=gap_timer_event,
+                gap_timer_proc=gap_timer_proc,
+                curr_context=curr_context,
+                transmission_context_state=transmission_context_state,
+                last_start_ms_state=last_start_ms_state,
+                out_of_order_buffer_state=out_of_order_buffer_state,
             )
 
             if elements_to_emit:
@@ -1473,19 +1525,15 @@ class OrderedStitchAudioFn(beam.DoFn):
                 for i, chunk in enumerate(elements_to_emit):
                     if i > 0 and self._is_bundle_budget_exhausted():
                         self._defer_remaining_chunks(
-                            elements_to_emit[i:],
-                            out_of_order_buffer_state,
-                            deferred_drain_timer,
-                            timestamp,
-                            transmission_context_state,
-                            last_start_ms_state,
+                            remaining_chunks=elements_to_emit[i:],
+                            out_of_order_buffer_state=out_of_order_buffer_state,
+                            deferred_drain_timer=deferred_drain_timer,
+                            timestamp=timestamp,
+                            transmission_context_state=transmission_context_state,
+                            last_start_ms_state=last_start_ms_state,
+                            curr_context=curr_context,
                         )
                         break
-                    # Fetch current state context
-                    curr_context = (
-                        transmission_context_state.read()
-                        or datatypes.IdleFeedState()
-                    )
                     if isinstance(curr_context, datatypes.IdleFeedState):
                         curr_context = datatypes.ActiveStitchingState(
                             session_id=active_session_id,
