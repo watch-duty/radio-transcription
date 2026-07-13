@@ -1,5 +1,5 @@
 -- HOT-protection guard. Runs against the schema produced by applying all
--- files under sql/ingestion/*.sql to fresh PostgreSQL 15/16 instances.
+-- files under sql/ingestion/*.sql to a fresh PostgreSQL 16 instance.
 -- Returns one row per (index, column, reference kind) that violates the HOT
 -- invariant — CI fails the build if any row is returned.
 --
