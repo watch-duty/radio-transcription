@@ -70,28 +70,40 @@ def ChunkMetadata(*args: Any, **kwargs: Any) -> Any:
 class MockValueState:
     def __init__(self, initial: Any = None) -> None:
         self.val = initial
+        self.read_count = 0
+        self.write_count = 0
+        self.clear_count = 0
 
     def read(self) -> Any:
+        self.read_count += 1
         return self.val
 
     def write(self, val: Any) -> None:
+        self.write_count += 1
         self.val = val
 
     def clear(self) -> None:
+        self.clear_count += 1
         self.val = None
 
 
 class MockBagState:
     def __init__(self) -> None:
         self.items: list[Any] = []
+        self.read_count = 0
+        self.add_count = 0
+        self.clear_count = 0
 
     def read(self) -> list[Any]:
+        self.read_count += 1
         return self.items
 
     def add(self, item: Any) -> None:
+        self.add_count += 1
         self.items.append(item)
 
     def clear(self) -> None:
+        self.clear_count += 1
         self.items = []
 
 
@@ -672,6 +684,8 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 element=element,
                 timestamp=timestamp,
                 transmission_context_state=transmission_context_state,  # type: ignore
+                last_start_ms_state=MockValueState(None),  # type: ignore
+                out_of_order_buffer_state=MockBagState(),  # type: ignore
                 gap_timer_event=gap_timer_event,
                 gap_timer_event_v2=MagicMock(),
                 gap_timer_proc=gap_timer_proc,
@@ -1338,6 +1352,92 @@ class OrderedStitchAudioTest(unittest.TestCase):
                 processed_uris,
                 {f"gs://test-bucket/path/to/chunk{i}.flac" for i in [1, 2, 3]},
             )
+
+    @patch(
+        "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
+    )
+    def test_batch_state_access_once_per_bundle(
+        self, mock_audio_processor: MagicMock
+    ) -> None:
+        """Verifies that processing a multi-chunk bundle reads and writes Beam state cells exactly once per batch."""
+        mock_processor_inst = mock_audio_processor.return_value
+
+        def make_chunk_data(
+            uri: str, timestamp_ms: int, *args: Any, **kwargs: Any
+        ) -> AudioChunkData:
+            return AudioChunkData(
+                start_ms=timestamp_ms,
+                audio=np.zeros(16000, dtype=np.float32),
+                sample_rate=16000,
+                speech_segments=[],
+                gcs_uri=uri,
+                duration_ms=1000,
+            )
+
+        mock_processor_inst.download_audio_and_detect.side_effect = (
+            make_chunk_data
+        )
+        mock_processor_inst.preprocess_audio.side_effect = lambda x: x
+
+        order_config = OrderRestorerConfig(out_of_order_timeout_ms=1000)
+        stitch_config = get_test_stitch_config(
+            significant_gap_ms=500, stale_timeout_ms=60000
+        )
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        fn.audio_processor = mock_processor_inst
+
+        tx_state = MockValueState(
+            ActiveStitchingState(
+                session_id="session-batch",
+                feed_metadata=FeedMetadata(feed_name="feed-batch"),
+                expected_next_chunk_start_ms=1000,
+                order_timer_active=True,
+            )
+        )
+        last_start_ms_state = MockValueState(1000)
+        ooo_buffer_state = MockBagState()
+        # Add 5 consecutive chronological chunks to the OOO buffer
+        for i in range(5):
+            ooo_buffer_state.add(
+                BufferedChunk(
+                    timestamp_ms=1000 + i * 1000,
+                    gcs_uri=f"gs://test-bucket/batch_{i}.flac",
+                )
+            )
+
+        gap_timer_event = MagicMock()
+        gap_timer_proc = MagicMock()
+        stale_timer_event = MagicMock()
+        stale_timer_proc = MagicMock()
+
+        # Reset call counts before invoking the batch handler
+        tx_state.read_count = 0
+        tx_state.write_count = 0
+        last_start_ms_state.read_count = 0
+        last_start_ms_state.write_count = 0
+
+        list(
+            fn._handle_gap_timeout_common(
+                key_str="feed-batch",
+                transmission_context_state=tx_state,  # type: ignore
+                last_start_ms_state=last_start_ms_state,  # type: ignore
+                out_of_order_buffer_state=ooo_buffer_state,  # type: ignore
+                stale_timer_event=stale_timer_event,
+                stale_timer_proc=stale_timer_proc,
+                timestamp=Timestamp(5.0),
+                gap_timer_event=gap_timer_event,
+                gap_timer_proc=gap_timer_proc,
+                timer_type="processing",
+            )
+        )
+
+        # Assert that despite 5 chunks being processed and stitched, state cells were read/written exactly once per bundle!
+        self.assertEqual(tx_state.read_count, 1)
+        self.assertEqual(tx_state.write_count, 1)
+        self.assertEqual(last_start_ms_state.read_count, 1)
+        self.assertEqual(last_start_ms_state.write_count, 1)
 
 
 class OrderedStitchSpeechSegmentsTest(unittest.TestCase):
