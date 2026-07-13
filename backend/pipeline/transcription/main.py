@@ -21,7 +21,10 @@ from backend.pipeline.common.tracing_utils import (
     setup_tracing,
 )
 from backend.pipeline.transcription.enums import TranscriberType
-from backend.pipeline.transcription.processor import TranscriptionEventProcessor
+from backend.pipeline.transcription.processor import (
+    TranscriptionEventProcessor,
+    is_transient_exception,
+)
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.pipeline.transcription.transcribers.factory import get_transcriber
 
@@ -234,5 +237,15 @@ async def transcribe_claim_check(envelope: dict, request: Request) -> Response:
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Transcription service is not initialized",
         )
-    await processor.process_event(envelope)
+
+    try:
+        await processor.process_event(envelope)
+    except Exception as e:
+        if is_transient_exception(e):
+            # Suppress noisy Uvicorn tracebacks while preserving Pub/Sub retry behavior
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Transient error processing message: {e}",
+            )
+        raise  # Re-raise permanent/unexpected bugs so they are properly logged
     return Response(status_code=status.HTTP_204_NO_CONTENT)
