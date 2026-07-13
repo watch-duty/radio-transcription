@@ -38,12 +38,14 @@ def _grant(
 def _cursor_state(
     cursor: cursor_policy.LeaseCursor,
 ) -> tuple[
+    ingestion_lease_store.LeaseGrant,
     datetime.datetime | None,
     int,
     cursor_policy.PageCandidate | None,
 ]:
-    """Capture every mutable Lease Cursor field for rejection assertions."""
+    """Capture all four observable Lease Cursor fields for rejections."""
     return (
+        cursor.grant,
         cursor.pos,
         cursor.next_page_sequence,
         cursor.outstanding_candidate,
@@ -224,7 +226,9 @@ class TestPageCursorCapability(unittest.TestCase):
         with self.assertRaises(dataclasses.FrozenInstanceError):
             _assign_attribute(receipt, "page_sequence", 1)
 
-    def test_no_progress_candidate_and_settlement_have_no_datetime(self) -> None:
+    def test_no_progress_candidate_and_settlement_have_no_datetime(
+        self,
+    ) -> None:
         cursor = cursor_policy.LeaseCursor(_grant(), pos=_START_POS)
         candidate = cursor.prepare_no_progress()
         settlement = cursor_policy._issue_no_progress_page(candidate)
@@ -242,6 +246,19 @@ class TestPageCursorCapability(unittest.TestCase):
         self.assertFalse(hasattr(candidate, "__dict__"))
         self.assertFalse(hasattr(settlement, "__dict__"))
 
+    def test_replayable_settlement_is_frozen_slotted_o1_value(self) -> None:
+        cursor = cursor_policy.LeaseCursor(_grant(), pos=_START_POS)
+        candidate = cursor.prepare(_NEXT_POS)
+        settlement = cursor_policy._issue_replayable_page(candidate)
+
+        self.assertEqual(
+            tuple(field.name for field in dataclasses.fields(settlement)),
+            ("grant", "page_sequence", "last_pos", "_seal"),
+        )
+        self.assertFalse(hasattr(settlement, "__dict__"))
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            _assign_attribute(settlement, "page_sequence", 1)
+
     def test_private_receipt_surface_is_not_publicly_exported(self) -> None:
         self.assertIn("PageCursorCandidate", cursor_policy.__all__)
         self.assertIn("NoProgressPageCandidate", cursor_policy.__all__)
@@ -249,8 +266,10 @@ class TestPageCursorCapability(unittest.TestCase):
         self.assertIn("LeaseCursor", cursor_policy.__all__)
         self.assertNotIn("_CoveredPage", cursor_policy.__all__)
         self.assertNotIn("_NoProgressPageSettled", cursor_policy.__all__)
+        self.assertNotIn("_ReplayablePageSettled", cursor_policy.__all__)
         self.assertNotIn("_issue_covered_page", cursor_policy.__all__)
         self.assertNotIn("_issue_no_progress_page", cursor_policy.__all__)
+        self.assertNotIn("_issue_replayable_page", cursor_policy.__all__)
 
     def test_direct_candidate_and_receipt_construction_is_rejected(
         self,
@@ -282,6 +301,13 @@ class TestPageCursorCapability(unittest.TestCase):
                 page_sequence=0,
                 _seal=cursor_policy._CandidateSeal(),
             )
+        with self.assertRaises(cursor_policy.CursorIntegrityError):
+            cursor_policy._ReplayablePageSettled(
+                grant=grant,
+                page_sequence=0,
+                last_pos=_NEXT_POS,
+                _seal=cursor_policy._CandidateSeal(),
+            )
 
     def test_private_issuer_rejects_structural_candidate(self) -> None:
         fake = types.SimpleNamespace(
@@ -297,6 +323,10 @@ class TestPageCursorCapability(unittest.TestCase):
         with self.assertRaises(cursor_policy.CursorIntegrityError):
             cursor_policy._issue_no_progress_page(
                 typing.cast("cursor_policy.NoProgressPageCandidate", fake)
+            )
+        with self.assertRaises(cursor_policy.CursorIntegrityError):
+            cursor_policy._issue_replayable_page(
+                typing.cast("cursor_policy.PageCursorCandidate", fake)
             )
 
 
@@ -379,7 +409,9 @@ class TestLeaseCursor(unittest.TestCase):
         self.assertEqual(self.cursor.next_page_sequence, 1)
         self.assertIsNone(self.cursor.outstanding_candidate)
 
-    def test_no_progress_consumes_sequence_without_moving_position(self) -> None:
+    def test_no_progress_consumes_sequence_without_moving_position(
+        self,
+    ) -> None:
         candidate = self.cursor.prepare_no_progress()
         settlement = cursor_policy._issue_no_progress_page(candidate)
         original_pos = self.cursor.pos
@@ -394,6 +426,150 @@ class TestLeaseCursor(unittest.TestCase):
         before_duplicate = _cursor_state(self.cursor)
         with self.assertRaises(cursor_policy.CursorIntegrityError):
             self.cursor.accept_no_progress(settlement)
+        self.assertEqual(_cursor_state(self.cursor), before_duplicate)
+
+    def test_replayable_consumes_sequence_without_moving_position(self) -> None:
+        candidate = self.cursor.prepare(_NEXT_POS)
+        settlement = cursor_policy._issue_replayable_page(candidate)
+        old_pos = self.cursor.pos
+
+        result = self.cursor.accept_replayable(settlement)
+
+        self.assertIsNone(result)
+        self.assertEqual(self.cursor.pos, old_pos)
+        self.assertIs(self.cursor.pos, old_pos)
+        self.assertEqual(self.cursor.next_page_sequence, 1)
+        self.assertIsNone(self.cursor.outstanding_candidate)
+
+        next_request_pos = self.cursor.pos
+        next_candidate = self.cursor.prepare(
+            _NEXT_POS + datetime.timedelta(seconds=10)
+        )
+        self.assertIs(next_request_pos, old_pos)
+        self.assertIs(self.cursor.pos, old_pos)
+        self.assertEqual(next_candidate.page_sequence, 1)
+
+    def test_replayable_rejects_forgery_and_changed_fields_non_mutating(
+        self,
+    ) -> None:
+        candidate = self.cursor.prepare(_NEXT_POS)
+        before = _cursor_state(self.cursor)
+
+        with self.assertRaises(cursor_policy.CursorIntegrityError):
+            cursor_policy._ReplayablePageSettled(
+                grant=candidate.grant,
+                page_sequence=candidate.page_sequence,
+                last_pos=candidate.last_pos,
+                _seal=cursor_policy._CandidateSeal(),
+            )
+        self.assertEqual(_cursor_state(self.cursor), before)
+
+        copied_fields_wrong_seal = cursor_policy._ReplayablePageSettled(
+            grant=candidate.grant,
+            page_sequence=candidate.page_sequence,
+            last_pos=candidate.last_pos,
+            _seal=cursor_policy._CandidateSeal(),
+            _construction_key=cursor_policy._CONSTRUCTION_KEY,
+        )
+        changed_last_pos = cursor_policy._ReplayablePageSettled(
+            grant=candidate.grant,
+            page_sequence=candidate.page_sequence,
+            last_pos=candidate.last_pos + datetime.timedelta(microseconds=1),
+            _seal=cursor_policy._read_seal(candidate),
+            _construction_key=cursor_policy._CONSTRUCTION_KEY,
+        )
+
+        for settlement in (copied_fields_wrong_seal, changed_last_pos):
+            with self.subTest(settlement=settlement):
+                with self.assertRaises(cursor_policy.CursorIntegrityError):
+                    self.cursor.accept_replayable(settlement)
+                self.assertEqual(_cursor_state(self.cursor), before)
+
+    def test_replayable_rejects_crossed_grant_cursor_and_sequence(
+        self,
+    ) -> None:
+        candidate = self.cursor.prepare(_NEXT_POS)
+        before = _cursor_state(self.cursor)
+
+        other_grant_cursor = cursor_policy.LeaseCursor(
+            _grant(fencing_token=2),
+            pos=_START_POS,
+        )
+        crossed_grant = cursor_policy._issue_replayable_page(
+            other_grant_cursor.prepare(_NEXT_POS)
+        )
+        other_cursor = cursor_policy.LeaseCursor(
+            self.grant,
+            pos=_START_POS,
+        )
+        crossed_candidate = cursor_policy._issue_replayable_page(
+            other_cursor.prepare(_NEXT_POS)
+        )
+        skipped_cursor = cursor_policy.LeaseCursor(
+            self.grant,
+            pos=_START_POS,
+        )
+        first = skipped_cursor.prepare(_NEXT_POS)
+        skipped_cursor.accept_replayable(
+            cursor_policy._issue_replayable_page(first)
+        )
+        skipped_sequence = cursor_policy._issue_replayable_page(
+            skipped_cursor.prepare(_NEXT_POS + datetime.timedelta(seconds=1))
+        )
+
+        self.assertEqual(candidate, other_cursor.outstanding_candidate)
+        for settlement in (
+            crossed_grant,
+            crossed_candidate,
+            skipped_sequence,
+        ):
+            with self.subTest(settlement=settlement):
+                with self.assertRaises(cursor_policy.CursorIntegrityError):
+                    self.cursor.accept_replayable(settlement)
+                self.assertEqual(_cursor_state(self.cursor), before)
+                self.assertIs(self.cursor.outstanding_candidate, candidate)
+
+    def test_replayable_rejects_no_progress_and_wrong_settlement_types(
+        self,
+    ) -> None:
+        candidate = self.cursor.prepare(_NEXT_POS)
+        before = _cursor_state(self.cursor)
+        no_progress_cursor = cursor_policy.LeaseCursor(
+            self.grant,
+            pos=_START_POS,
+        )
+        no_progress = no_progress_cursor.prepare_no_progress()
+
+        wrong_settlements = (
+            cursor_policy._issue_no_progress_page(no_progress),
+            cursor_policy._issue_covered_page(candidate),
+            types.SimpleNamespace(
+                grant=candidate.grant,
+                page_sequence=candidate.page_sequence,
+                last_pos=candidate.last_pos,
+            ),
+        )
+        for settlement in wrong_settlements:
+            with self.subTest(settlement=settlement):
+                with self.assertRaises(cursor_policy.CursorIntegrityError):
+                    self.cursor.accept_replayable(
+                        typing.cast(
+                            "cursor_policy._ReplayablePageSettled",
+                            settlement,
+                        )
+                    )
+                self.assertEqual(_cursor_state(self.cursor), before)
+                self.assertIs(self.cursor.outstanding_candidate, candidate)
+
+    def test_replayable_duplicate_use_is_non_mutating(self) -> None:
+        candidate = self.cursor.prepare(_NEXT_POS)
+        settlement = cursor_policy._issue_replayable_page(candidate)
+
+        self.cursor.accept_replayable(settlement)
+        before_duplicate = _cursor_state(self.cursor)
+
+        with self.assertRaises(cursor_policy.CursorIntegrityError):
+            self.cursor.accept_replayable(settlement)
         self.assertEqual(_cursor_state(self.cursor), before_duplicate)
 
     def test_no_progress_rejects_crossed_and_wrong_settlements_non_mutating(
@@ -427,7 +603,9 @@ class TestLeaseCursor(unittest.TestCase):
                 self.assertEqual(_cursor_state(self.cursor), before)
                 self.assertIs(self.cursor.outstanding_candidate, candidate)
 
-    def test_progress_and_no_progress_settlement_types_cannot_cross(self) -> None:
+    def test_progress_and_no_progress_settlement_types_cannot_cross(
+        self,
+    ) -> None:
         no_progress = self.cursor.prepare_no_progress()
         before = _cursor_state(self.cursor)
         progress_cursor = cursor_policy.LeaseCursor(

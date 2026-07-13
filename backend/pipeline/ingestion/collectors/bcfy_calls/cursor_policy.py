@@ -130,6 +130,31 @@ class _CoveredPage:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class _ReplayablePageSettled:
+    """Private proof that one progress page settled for replay."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    page_sequence: int
+    last_pos: datetime.datetime
+    _seal: _CandidateSeal = dataclasses.field(repr=False, compare=False)
+    _construction_key: dataclasses.InitVar[object | None] = None
+
+    def __post_init__(self, _construction_key: object | None) -> None:
+        if _construction_key is not _CONSTRUCTION_KEY:
+            msg = "Replayable page settlements require the private issuer"
+            raise CursorIntegrityError(msg)
+        _require_grant(self.grant)
+        _require_page_sequence(self.page_sequence)
+        _require_integrity_utc_datetime(
+            self.last_pos,
+            field_name="last_pos",
+        )
+        if type(self._seal) is not _CandidateSeal:
+            msg = "Replayable page settlement seal is invalid"
+            raise CursorIntegrityError(msg)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class _NoProgressPageSettled:
     """Private proof that one exact no-progress page settled safely."""
 
@@ -150,7 +175,9 @@ class _NoProgressPageSettled:
 
 
 type PageCandidate = PageCursorCandidate | NoProgressPageCandidate
-type PageSettlement = _CoveredPage | _NoProgressPageSettled
+type PageSettlement = (
+    _CoveredPage | _ReplayablePageSettled | _NoProgressPageSettled
+)
 
 
 def _read_seal(
@@ -261,6 +288,26 @@ def _issue_covered_page(candidate: PageCursorCandidate) -> _CoveredPage:
         msg = "Page cursor candidate seal is invalid"
         raise CursorIntegrityError(msg)
     return _CoveredPage(
+        grant=candidate.grant,
+        page_sequence=candidate.page_sequence,
+        last_pos=candidate.last_pos,
+        _seal=seal,
+        _construction_key=_CONSTRUCTION_KEY,
+    )
+
+
+def _issue_replayable_page(
+    candidate: PageCursorCandidate,
+) -> _ReplayablePageSettled:
+    """Issue a private settlement after definitive replayable finalization."""
+    if type(candidate) is not PageCursorCandidate:
+        msg = "candidate must be an exact PageCursorCandidate"
+        raise CursorIntegrityError(msg)
+    seal = _read_seal(candidate)
+    if type(seal) is not _CandidateSeal:
+        msg = "Page cursor candidate seal is invalid"
+        raise CursorIntegrityError(msg)
+    return _ReplayablePageSettled(
         grant=candidate.grant,
         page_sequence=candidate.page_sequence,
         last_pos=candidate.last_pos,
@@ -480,6 +527,41 @@ class LeaseCursor:
             or settlement.page_sequence != candidate.page_sequence
         ):
             msg = "No-progress settlement fields do not match its candidate"
+            raise CursorIntegrityError(msg)
+
+        self._next_page_sequence += 1
+        self._outstanding_candidate = None
+
+    def accept_replayable(self, settlement: _ReplayablePageSettled) -> None:
+        """Consume one replayable settlement without accepting ``last_pos``."""
+        if type(settlement) is not _ReplayablePageSettled:
+            msg = "settlement must be a private replayable capability"
+            raise CursorIntegrityError(msg)
+
+        candidate = self._outstanding_candidate
+        if type(candidate) is not PageCursorCandidate:
+            msg = "No progress cursor candidate is awaiting settlement"
+            raise CursorIntegrityError(msg)
+        if settlement.grant != self._grant:
+            msg = "Replayable page settlement grant does not match"
+            raise CursorIntegrityError(msg)
+        if settlement.page_sequence != self._next_page_sequence:
+            msg = "Replayable settlement is not the exact next sequence"
+            raise CursorIntegrityError(msg)
+
+        validated_last_pos = _require_integrity_utc_datetime(
+            settlement.last_pos,
+            field_name="settlement.last_pos",
+        )
+        if _read_seal(settlement) is not _read_seal(candidate):
+            msg = "Replayable settlement is for another candidate"
+            raise CursorIntegrityError(msg)
+        if (
+            settlement.grant != candidate.grant
+            or settlement.page_sequence != candidate.page_sequence
+            or validated_last_pos != candidate.last_pos
+        ):
+            msg = "Replayable settlement fields do not match its candidate"
             raise CursorIntegrityError(msg)
 
         self._next_page_sequence += 1
