@@ -24,6 +24,10 @@ from backend.pipeline.ingestion.collectors.bcfy_calls import (
     runtime_adapters,
 )
 from backend.pipeline.ingestion.failure_classifiers import pubsub
+from backend.pipeline.ingestion.feed_work_scheduler import (
+    CohortDirectFailureFact,
+    CohortRecordTerminalReason,
+)
 from backend.pipeline.ingestion.models import AudioMimeType, CapturedChunk
 from backend.pipeline.ingestion.retry import (
     CommittedAwaitableCancelled,
@@ -787,8 +791,10 @@ class BcfyCallsCohortExecutor:
                     feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE
                 )
             elif isinstance(publication.failure, _PUBSUB_RETRYABLE):
-                state.publication_reason = feed_work_scheduler.CohortRecordTerminalReason.PUBLICATION_EXHAUSTED
-                state.direct_failure = feed_work_scheduler.CohortDirectFailureFact(
+                state.publication_reason = (
+                    CohortRecordTerminalReason.PUBLICATION_EXHAUSTED
+                )
+                state.direct_failure = CohortDirectFailureFact(
                     feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
                     pubsub.publish_failure_reason(publication.failure),
                 )
@@ -994,7 +1000,9 @@ class BcfyCallsCohortExecutor:
     def _abandon_unpublished(states: list[_RecordState]) -> None:
         for state in states:
             if state.staged is not None and state.publication_reason is None:
-                state.publication_reason = feed_work_scheduler.CohortRecordTerminalReason.PUBLICATION_ABANDONED
+                state.publication_reason = (
+                    CohortRecordTerminalReason.PUBLICATION_ABANDONED
+                )
 
     @staticmethod
     def _task_is_cancelling() -> bool:
@@ -1115,7 +1123,7 @@ class BcfyCallsCohortExecutor:
         records = []
         for state in states:
             if state.item_failure is not None:
-                reason = feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP
+                reason = CohortRecordTerminalReason.TERMINAL_ITEM_SKIP
             else:
                 reason = state.publication_reason
             if reason is None:

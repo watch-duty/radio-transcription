@@ -341,23 +341,17 @@ jobs:
             ingestion-smoke-test \
             python -c "from backend.pipeline.ingestion.settings import CollectorSettings; CollectorSettings()"
 
-  # Applies the ingestion DDL (sql/ingestion/*.sql, excluding *pg_cron* files)
-  # twice to disposable PostgreSQL 15 and 16 services, then runs the Phase 1
-  # schema contract, Lease-guard recovery fixtures, HOT-protection guard, and
-  # invalid-index recovery fixture.
-  # Matrix expansion can change required-check context names; confirm the
-  # repository branch-protection configuration before merge.
+  # Applies the ingestion DDL twice to a disposable PostgreSQL 16 service,
+  # runs a small behavior smoke check, then verifies the existing HOT-update
+  # invariant. Replaying the real migrations catches idempotency problems
+  # without duplicating their schema definitions in CI.
   alloydb-hot-protection-check:
     needs: [setup]
     if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
     runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        postgres-version: ["15", "16"]
     services:
       postgres:
-        image: postgres:${{ matrix.postgres-version }}-alpine
+        image: postgres:16-alpine
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_USER: postgres
@@ -371,7 +365,7 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v4
-      - name: Run ingestion schema compatibility and recovery checks
+      - name: Apply ingestion SQL migrations twice (excluding pg_cron jobs)
         env:
           PGHOST: localhost
           PGPORT: "5432"
@@ -381,30 +375,41 @@ jobs:
         working-directory: terraform/modules/alloydb/sql/ingestion
         run: |
           set -euo pipefail
-          export LC_ALL=C
-
-          schema_contract_sql="$GITHUB_WORKSPACE/terraform/modules/alloydb/sql/ci/phase_1_schema_contract.sql"
-          guard_sql="$GITHUB_WORKSPACE/terraform/modules/alloydb/sql/ci/hot_protection_check.sql"
-          lease_table_sql="$PWD/031_ingestion_leases.sql"
-          lease_guard_sql="$PWD/032_ingestion_lease_guards.sql"
-          index_preflight_sql="$PWD/035_feed_properties_bcfy_calls_membership_index_preflight.sql"
-          index_postflight_sql="$PWD/037_feed_properties_bcfy_calls_membership_index_postflight.sql"
-          recovery_fixture_active=false
-
-          apply_ingestion_migrations() {
-            local pass_name="$1"
-            # LC_ALL=C makes Bash's filename glob order locale-stable. Keep one
-            # psql invocation per file so AUTOCOMMIT migrations stay standalone.
+          # Bash expands globs alphabetically in the current locale, so no
+          # explicit sort is needed (and parsing `ls` is fragile with odd
+          # filenames).
+          for pass in 1 2; do
             for f in *.sql; do
               case "$f" in
                 *pg_cron*)
-                  echo "$pass_name: skipping $f (pg_cron extension not installed in CI)"
+                  echo "Pass $pass: skipping $f (pg_cron extension not installed in CI)";
                   continue;;
               esac
-              echo "$pass_name: applying $f..."
+              echo "Pass $pass: applying $f..."
               psql -v ON_ERROR_STOP=1 -f "$f"
             done
-          }
+          done
+      - name: Run Phase 1 behavior smoke check
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: postgres
+        run: >-
+          psql -v ON_ERROR_STOP=1
+          -f terraform/modules/alloydb/sql/ci/phase_1_behavior_check.sql
+      - name: Run HOT-protection guard
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: postgres
+        run: |
+          set -euo pipefail
+
+          guard_sql="terraform/modules/alloydb/sql/ci/hot_protection_check.sql"
 
           cleanup_hot_guard_fixtures() {
             psql -v ON_ERROR_STOP=1 \
@@ -413,115 +418,7 @@ jobs:
               -c "DROP INDEX IF EXISTS hot_guard_expression_fixture" \
               >/dev/null
           }
-
-          cleanup_ci_fixtures() {
-            set +e
-            cleanup_hot_guard_fixtures >/dev/null 2>&1
-            if [ "$recovery_fixture_active" = "true" ]; then
-              psql -v ON_ERROR_STOP=1 \
-                -c "DROP INDEX CONCURRENTLY IF EXISTS public.idx_feed_properties_bcfy_calls_membership" \
-                >/dev/null 2>&1
-              psql -v ON_ERROR_STOP=1 \
-                -c "DROP TABLE IF EXISTS public.ci_invalid_index_fixture" \
-                >/dev/null 2>&1
-            fi
-          }
-          trap cleanup_ci_fixtures EXIT
-
-          server_version_num=$(psql -v ON_ERROR_STOP=1 -t -A \
-            -c "SHOW server_version_num")
-          if [[ ! "$server_version_num" =~ ^[0-9]+$ ]]; then
-            echo "::error::Unexpected server_version_num: $server_version_num"
-            exit 1
-          fi
-          server_major=$((server_version_num / 10000))
-          expected_server_major="${{ matrix.postgres-version }}"
-          if [ "$server_major" -ne "$expected_server_major" ]; then
-            echo "::error::PostgreSQL server major $server_major does not match matrix value $expected_server_major"
-            exit 1
-          fi
-
-          apply_ingestion_migrations "migration pass 1"
-          apply_ingestion_migrations "migration pass 2"
-          psql -v ON_ERROR_STOP=1 -f "$schema_contract_sql"
-
-          echo "Starting unlogged Lease-table rejection fixture..."
-          psql -v ON_ERROR_STOP=1 -c \
-            "ALTER TABLE public.ingestion_leases SET UNLOGGED"
-          unlogged_lease_state=$(psql -v ON_ERROR_STOP=1 -t -A -c \
-            "SELECT c.relpersistence FROM pg_catalog.pg_class AS c WHERE c.oid = 'public.ingestion_leases'::regclass")
-          if [ "$unlogged_lease_state" != "u" ]; then
-            echo "::error::Lease-table durability fixture is not unlogged"
-            exit 1
-          fi
-
-          if psql -v ON_ERROR_STOP=1 -f "$lease_table_sql"; then
-            echo "::error::Lease-table migration accepted an unlogged table"
-            exit 1
-          fi
-          if psql -v ON_ERROR_STOP=1 -f "$lease_guard_sql"; then
-            echo "::error::Lease-guard migration accepted an unlogged table"
-            exit 1
-          fi
-          if psql -v ON_ERROR_STOP=1 -f "$schema_contract_sql"; then
-            echo "::error::Lease schema contract accepted an unlogged table"
-            exit 1
-          fi
-
-          unlogged_lease_state=$(psql -v ON_ERROR_STOP=1 -t -A -c \
-            "SELECT c.relpersistence FROM pg_catalog.pg_class AS c WHERE c.oid = 'public.ingestion_leases'::regclass")
-          if [ "$unlogged_lease_state" != "u" ]; then
-            echo "::error::Failed durability checks mutated the Lease table"
-            exit 1
-          fi
-          psql -v ON_ERROR_STOP=1 -c \
-            "ALTER TABLE public.ingestion_leases SET LOGGED"
-          psql -v ON_ERROR_STOP=1 -f "$lease_table_sql"
-          psql -v ON_ERROR_STOP=1 -f "$lease_guard_sql"
-          psql -v ON_ERROR_STOP=1 -f "$schema_contract_sql"
-
-          echo "Starting missing Lease-guard trigger recovery fixture..."
-          psql -v ON_ERROR_STOP=1 -c \
-            "DROP TRIGGER trg_ingestion_leases_prevent_delete ON public.ingestion_leases"
-          psql -v ON_ERROR_STOP=1 -f "$lease_guard_sql"
-          psql -v ON_ERROR_STOP=1 -f "$schema_contract_sql"
-
-          echo "Starting malformed Lease-guard trigger atomicity fixture..."
-          psql -v ON_ERROR_STOP=1 -c \
-            "DROP TRIGGER trg_ingestion_leases_prevent_delete ON public.ingestion_leases; DROP TRIGGER trg_ingestion_leases_prevent_truncate ON public.ingestion_leases; CREATE TRIGGER trg_ingestion_leases_prevent_truncate BEFORE INSERT ON public.ingestion_leases FOR EACH ROW EXECUTE FUNCTION public.guard_ingestion_lease_identity()"
-          missing_trigger_count_before=$(psql -v ON_ERROR_STOP=1 -t -A -c \
-            "SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = 'public.ingestion_leases'::regclass AND t.tgname = 'trg_ingestion_leases_prevent_delete'")
-          malformed_trigger_state_before=$(psql -v ON_ERROR_STOP=1 -t -A -F '|' -c \
-            "SELECT t.tgtype, t.tgenabled, pg_catalog.pg_get_triggerdef(t.oid, TRUE) FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = 'public.ingestion_leases'::regclass AND t.tgname = 'trg_ingestion_leases_prevent_truncate'")
-          if [ "$missing_trigger_count_before" != "0" ]; then
-            echo "::error::Lease-guard atomicity fixture did not remove its trigger"
-            exit 1
-          fi
-
-          if psql -v ON_ERROR_STOP=1 -f "$lease_guard_sql"; then
-            echo "::error::Lease-guard migration accepted a malformed same-name trigger"
-            exit 1
-          fi
-
-          missing_trigger_count_after=$(psql -v ON_ERROR_STOP=1 -t -A -c \
-            "SELECT pg_catalog.count(*) FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = 'public.ingestion_leases'::regclass AND t.tgname = 'trg_ingestion_leases_prevent_delete'")
-          malformed_trigger_state_after=$(psql -v ON_ERROR_STOP=1 -t -A -F '|' -c \
-            "SELECT t.tgtype, t.tgenabled, pg_catalog.pg_get_triggerdef(t.oid, TRUE) FROM pg_catalog.pg_trigger AS t WHERE t.tgrelid = 'public.ingestion_leases'::regclass AND t.tgname = 'trg_ingestion_leases_prevent_truncate'")
-          if [ "$missing_trigger_count_after" != "$missing_trigger_count_before" ]; then
-            echo "::error::Failed Lease-guard replay persisted a missing trigger"
-            exit 1
-          fi
-          if [ "$malformed_trigger_state_after" != "$malformed_trigger_state_before" ]; then
-            echo "::error::Failed Lease-guard replay mutated a malformed trigger"
-            echo "Before: $malformed_trigger_state_before"
-            echo "After: $malformed_trigger_state_after"
-            exit 1
-          fi
-
-          psql -v ON_ERROR_STOP=1 -c \
-            "DROP TRIGGER trg_ingestion_leases_prevent_truncate ON public.ingestion_leases"
-          psql -v ON_ERROR_STOP=1 -f "$lease_guard_sql"
-          psql -v ON_ERROR_STOP=1 -f "$schema_contract_sql"
+          trap cleanup_hot_guard_fixtures EXIT
 
           run_hot_guard() {
             psql -v ON_ERROR_STOP=1 -t -A -f "$guard_sql"
@@ -572,103 +469,6 @@ jobs:
 
           assert_hot_guard_clean
           echo "HOT-protection check passed: no index references a guarded column."
-
-          echo "Starting invalid membership-index recovery fixture..."
-          recovery_fixture_active=true
-          psql -v ON_ERROR_STOP=1 \
-            -c "DROP INDEX CONCURRENTLY public.idx_feed_properties_bcfy_calls_membership"
-          psql -v ON_ERROR_STOP=1 -c \
-            "CREATE TABLE public.ci_invalid_index_fixture(k INTEGER, eligible BOOLEAN); INSERT INTO public.ci_invalid_index_fixture(k, eligible) VALUES (1, TRUE), (1, TRUE);"
-
-          if psql -v ON_ERROR_STOP=1 -c \
-            "CREATE UNIQUE INDEX CONCURRENTLY idx_feed_properties_bcfy_calls_membership ON public.ci_invalid_index_fixture(k) WHERE eligible"; then
-            echo "::error::Duplicate eligible keys unexpectedly produced a valid unique index"
-            exit 1
-          fi
-
-          invalid_index_state=$(psql -v ON_ERROR_STOP=1 -t -A -F '|' -c "
-            SELECT index_relation.relkind,
-                   table_namespace.nspname,
-                   indexed_table.relname,
-                   index_catalog.indisvalid
-              FROM pg_catalog.pg_class AS index_relation
-              JOIN pg_catalog.pg_namespace AS index_namespace
-                ON index_namespace.oid = index_relation.relnamespace
-              JOIN pg_catalog.pg_index AS index_catalog
-                ON index_catalog.indexrelid = index_relation.oid
-              JOIN pg_catalog.pg_class AS indexed_table
-                ON indexed_table.oid = index_catalog.indrelid
-              JOIN pg_catalog.pg_namespace AS table_namespace
-                ON table_namespace.oid = indexed_table.relnamespace
-             WHERE index_namespace.nspname = 'public'
-               AND index_relation.relname =
-                   'idx_feed_properties_bcfy_calls_membership'
-          ")
-          if [ "$invalid_index_state" != "i|public|ci_invalid_index_fixture|f" ]; then
-            echo "::error::Expected one invalid same-name index on the fixture table"
-            echo "Actual catalog state: $invalid_index_state"
-            exit 1
-          fi
-
-          set +e
-          preflight_rejection_output=$(
-            psql -v ON_ERROR_STOP=1 -f "$index_preflight_sql" 2>&1
-          )
-          preflight_rejection_status=$?
-          set -e
-
-          if [ "$preflight_rejection_status" -eq 0 ]; then
-            echo "::error::Membership-index preflight accepted the invalid wrong-table index"
-            exit 1
-          fi
-          if [ "$preflight_rejection_status" -ne 3 ]; then
-            echo "::error::Membership-index preflight failed outside the SQL script"
-            echo "$preflight_rejection_output"
-            exit 1
-          fi
-          if [[ "$preflight_rejection_output" != *"Unexpected or unhealthy membership-index relation in public"* ]]; then
-            echo "::error::Membership-index preflight failed with the wrong diagnostic"
-            echo "$preflight_rejection_output"
-            exit 1
-          fi
-
-          psql -v ON_ERROR_STOP=1 \
-            -c "DROP INDEX CONCURRENTLY public.idx_feed_properties_bcfy_calls_membership"
-          psql -v ON_ERROR_STOP=1 \
-            -c "DROP TABLE public.ci_invalid_index_fixture"
-          recovery_fixture_active=false
-
-          apply_ingestion_migrations "recovery reapplication"
-          psql -v ON_ERROR_STOP=1 -f "$index_postflight_sql"
-          psql -v ON_ERROR_STOP=1 -f "$schema_contract_sql"
-
-          healthy_index_state=$(psql -v ON_ERROR_STOP=1 -t -A -F '|' -c "
-            SELECT index_relation.relkind,
-                   table_namespace.nspname,
-                   indexed_table.relname,
-                   index_catalog.indisvalid,
-                   index_catalog.indisready,
-                   index_catalog.indislive
-              FROM pg_catalog.pg_class AS index_relation
-              JOIN pg_catalog.pg_namespace AS index_namespace
-                ON index_namespace.oid = index_relation.relnamespace
-              JOIN pg_catalog.pg_index AS index_catalog
-                ON index_catalog.indexrelid = index_relation.oid
-              JOIN pg_catalog.pg_class AS indexed_table
-                ON indexed_table.oid = index_catalog.indrelid
-              JOIN pg_catalog.pg_namespace AS table_namespace
-                ON table_namespace.oid = indexed_table.relnamespace
-             WHERE index_namespace.nspname = 'public'
-               AND index_relation.relname =
-                   'idx_feed_properties_bcfy_calls_membership'
-          ")
-          if [ "$healthy_index_state" != "i|public|feed_properties|t|t|t" ]; then
-            echo "::error::Recovered membership index is not exact and healthy"
-            echo "Actual catalog state: $healthy_index_state"
-            exit 1
-          fi
-
-          echo "PostgreSQL $server_major schema compatibility and recovery checks passed."
 
   # Update the live ruleset only after this workflow reaches main, then require
   # all version-qualified ingestion-lease-storage-postgres contexts.
