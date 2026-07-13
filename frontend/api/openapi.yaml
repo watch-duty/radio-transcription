@@ -92,6 +92,17 @@ components:
         - $ref: "#/components/schemas/KeywordConditions"
         - $ref: "#/components/schemas/RegexConditions"
         - $ref: "#/components/schemas/GroupConditions"
+    Tag:
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+      required:
+        - key
+        - value
+      type: object
+      additionalProperties: false
     RuleMetadata:
       properties:
         createdBy:
@@ -119,6 +130,10 @@ components:
           $ref: "#/components/schemas/Scope"
         conditions:
           $ref: "#/components/schemas/RuleConditions"
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
         metadata:
           $ref: "#/components/schemas/RuleMetadata"
       required:
@@ -151,6 +166,10 @@ components:
           $ref: "#/components/schemas/Scope"
         conditions:
           $ref: "#/components/schemas/RuleConditions"
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
       required:
         - ruleName
         - scope
@@ -169,6 +188,10 @@ components:
           $ref: "#/components/schemas/Scope"
         conditions:
           $ref: "#/components/schemas/RuleConditions"
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
       type: object
       additionalProperties: false
     FeedStatus:
@@ -185,17 +208,6 @@ components:
         - failing
         - quarantined
         - deactivated
-    Tag:
-      properties:
-        key:
-          type: string
-        value:
-          type: string
-      required:
-        - key
-        - value
-      type: object
-      additionalProperties: false
     BackendFeedStatusReason:
       type: string
       enum:
