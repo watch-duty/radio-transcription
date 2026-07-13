@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import datetime
+import typing
 import unittest
 import uuid
 from unittest import mock
@@ -1108,6 +1109,272 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
             result,
             ingestion_lease_store.MembershipInvariantViolation,
         )
+
+
+class TestRefreshMembership(unittest.IsolatedAsyncioTestCase):
+    """Tests for atomic revision-aware exact-grant membership refresh."""
+
+    def test_refresh_result_contract_is_closed_frozen_and_slotted(self) -> None:
+        self.assertEqual(
+            set(
+                typing.get_args(
+                    ingestion_lease_store.MembershipRefreshResult.__value__
+                )
+            ),
+            {
+                ingestion_lease_store.MembershipSnapshot,
+                ingestion_lease_store.MembershipUnchanged,
+                ingestion_lease_store.GrantRejected,
+                ingestion_lease_store.MembershipInvariantViolation,
+            },
+        )
+        unchanged = ingestion_lease_store.MembershipUnchanged(_grant(), 4)
+        self.assertTrue(hasattr(type(unchanged), "__slots__"))
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            unchanged.membership_revision = 5  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+
+    async def test_initial_refresh_loads_one_complete_snapshot(self) -> None:
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row(
+            lease_key="00123",
+            membership_revision=4,
+        )
+        connection.fetch.return_value = [_member_row()]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.refresh_membership(
+            _grant("00123"),
+            known_revision=None,
+        )
+
+        self.assertIsInstance(
+            result,
+            ingestion_lease_store.MembershipSnapshot,
+        )
+        assert isinstance(result, ingestion_lease_store.MembershipSnapshot)
+        self.assertEqual(result.membership_revision, 4)
+        self.assertEqual(len(result.members), 1)
+        connection.fetchrow.assert_awaited_once_with(
+            ingestion_lease_queries.LOCK_LEASE_SQL,
+            "bcfy_calls",
+            "00123",
+        )
+        connection.fetch.assert_awaited_once_with(
+            ingestion_lease_queries.LOAD_BCFY_CALLS_MEMBERSHIP_SQL,
+            "00123",
+        )
+        method_names = [item[0] for item in connection.method_calls]
+        self.assertLess(
+            method_names.index("fetchrow"),
+            method_names.index("fetch"),
+        )
+        connection.transaction.assert_called_once_with(
+            isolation="read_committed"
+        )
+
+    async def test_equal_revision_returns_unchanged_without_child_read(
+        self,
+    ) -> None:
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row(membership_revision=4)
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.refresh_membership(
+            _grant(),
+            known_revision=4,
+        )
+
+        self.assertEqual(
+            result,
+            ingestion_lease_store.MembershipUnchanged(_grant(), 4),
+        )
+        connection.fetchrow.assert_awaited_once_with(
+            ingestion_lease_queries.LOCK_LEASE_SQL,
+            "bcfy_calls",
+            "123",
+        )
+        connection.fetch.assert_not_awaited()
+
+    async def test_higher_revision_reloads_once_and_regression_reads_no_child(
+        self,
+    ) -> None:
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.side_effect = [
+            _lease_row(lease_key="00123", membership_revision=5),
+            _lease_row(lease_key="00123", membership_revision=4),
+        ]
+        connection.fetch.return_value = [_member_row()]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+        grant = _grant("00123")
+
+        changed = await store.refresh_membership(
+            grant,
+            known_revision=4,
+        )
+        regressed = await store.refresh_membership(
+            grant,
+            known_revision=5,
+        )
+
+        assert isinstance(changed, ingestion_lease_store.MembershipSnapshot)
+        self.assertEqual(changed.membership_revision, 5)
+        assert isinstance(
+            regressed,
+            ingestion_lease_store.MembershipInvariantViolation,
+        )
+        self.assertIs(
+            regressed.reason,
+            ingestion_lease_store.MembershipInvariantReason.REVISION_REGRESSION,
+        )
+        connection.fetch.assert_awaited_once_with(
+            ingestion_lease_queries.LOAD_BCFY_CALLS_MEMBERSHIP_SQL,
+            "00123",
+        )
+
+    async def test_invalid_known_revisions_fail_before_checkout(self) -> None:
+        invalid_revisions = (-1, True, 1.0, "4")
+
+        for known_revision in invalid_revisions:
+            with self.subTest(known_revision=known_revision):
+                pool = connection_util.make_mock_pool(transaction=True)
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+                with self.assertRaises((TypeError, ValueError)):
+                    await store.refresh_membership(
+                        _grant(),
+                        known_revision=known_revision,  # ty: ignore[invalid-argument-type]
+                    )
+
+                pool.acquire.assert_not_called()
+
+    async def test_exact_grant_rejection_reads_no_children(self) -> None:
+        cases = (
+            None,
+            _lease_row(worker_id=_OTHER_OWNER_ID),
+            _lease_row(fencing_token=8),
+            _lease_row(status="unclaimed"),
+        )
+
+        for lease_row in cases:
+            with self.subTest(lease_row=lease_row):
+                pool = connection_util.make_mock_pool(transaction=True)
+                connection = pool.acquired_connection
+                connection.fetchrow.return_value = lease_row
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+                result = await store.refresh_membership(
+                    _grant(),
+                    known_revision=4,
+                )
+
+                self.assertIsInstance(
+                    result,
+                    ingestion_lease_store.GrantRejected,
+                )
+                connection.fetch.assert_not_awaited()
+
+    async def test_duplicate_exact_routing_key_fails_closed(self) -> None:
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row(lease_key="00123")
+        connection.fetch.return_value = [
+            _member_row(),
+            _member_row(
+                feed_id=uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff"),
+            ),
+        ]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.refresh_membership(
+            _grant("00123"),
+            known_revision=None,
+        )
+
+        assert isinstance(
+            result,
+            ingestion_lease_store.MembershipInvariantViolation,
+        )
+        self.assertIs(
+            result.reason,
+            ingestion_lease_store.MembershipInvariantReason.DUPLICATE_ROUTING_KEY,
+        )
+
+    async def test_textually_distinct_leading_zero_keys_remain_distinct(
+        self,
+    ) -> None:
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row(lease_key="00123")
+        connection.fetch.return_value = [
+            _member_row(),
+            _member_row(
+                feed_id=uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff"),
+                source_feed_id="00123-000045",
+                group_id="000045",
+            ),
+        ]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.refresh_membership(
+            _grant("00123"),
+            known_revision=None,
+        )
+
+        assert isinstance(result, ingestion_lease_store.MembershipSnapshot)
+        self.assertEqual(
+            tuple(member.identity.source_feed_id for member in result.members),
+            ("00123-00045", "00123-000045"),
+        )
+
+    async def test_snapshots_are_frozen_copies_of_each_loaded_page(
+        self,
+    ) -> None:
+        first_row = _member_row()
+        second_row = _member_row(
+            feed_id=uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff"),
+            source_feed_id="00123-00046",
+            group_id="00046",
+        )
+        first_page = [first_row]
+        second_page = [second_row]
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.side_effect = [
+            _lease_row(lease_key="00123", membership_revision=4),
+            _lease_row(lease_key="00123", membership_revision=5),
+        ]
+        connection.fetch.side_effect = [first_page, second_page]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+        grant = _grant("00123")
+
+        first = await store.refresh_membership(
+            grant,
+            known_revision=None,
+        )
+        second = await store.refresh_membership(
+            grant,
+            known_revision=4,
+        )
+        first_row["source_feed_id"] = "mutated"
+        second_row["source_feed_id"] = "mutated"
+        first_page.append(second_row)
+        second_page.clear()
+
+        assert isinstance(first, ingestion_lease_store.MembershipSnapshot)
+        assert isinstance(second, ingestion_lease_store.MembershipSnapshot)
+        self.assertEqual(
+            tuple(member.identity.source_feed_id for member in first.members),
+            ("00123-00045",),
+        )
+        self.assertEqual(
+            tuple(member.identity.source_feed_id for member in second.members),
+            ("00123-00046",),
+        )
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            first.members = ()  # type: ignore[misc]  # ty: ignore[invalid-assignment]
 
 
 class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):

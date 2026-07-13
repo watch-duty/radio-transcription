@@ -450,6 +450,14 @@ class MembershipSnapshot:
     excluded_count: int
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class MembershipUnchanged:
+    """Proof that one exact grant still has the caller's known revision."""
+
+    grant: LeaseGrant
+    membership_revision: int
+
+
 class MembershipInvariantReason(enum.StrEnum):
     """Closed reasons an authoritative membership load can fail closed."""
 
@@ -457,6 +465,8 @@ class MembershipInvariantReason(enum.StrEnum):
     MISSING_IDENTITY = "missing_identity"
     SOURCE_MISMATCH = "source_mismatch"
     NO_ELIGIBLE_MEMBERS = "no_eligible_members"
+    REVISION_REGRESSION = "revision_regression"
+    DUPLICATE_ROUTING_KEY = "duplicate_routing_key"
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -466,6 +476,14 @@ class MembershipInvariantViolation:
     grant: LeaseGrant
     reason: MembershipInvariantReason
     detail: str
+
+
+type MembershipRefreshResult = (
+    MembershipSnapshot
+    | MembershipUnchanged
+    | GrantRejected
+    | MembershipInvariantViolation
+)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -551,6 +569,18 @@ def _require_grant(value: object) -> LeaseGrant:
     if not isinstance(value, LeaseGrant):
         msg = "grant must be a LeaseGrant"
         raise TypeError(msg)
+    return value
+
+
+def _require_known_membership_revision(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        msg = "known_revision must be an integer or None"
+        raise TypeError(msg)
+    if value < 0:
+        msg = "known_revision must be nonnegative"
+        raise ValueError(msg)
     return value
 
 
@@ -1685,7 +1715,34 @@ class IngestionLeaseStore:
         revision increments. The revision returned here invalidates caches; it
         never participates in grant or lifecycle authorization.
         """
+        result = await self.refresh_membership(grant, known_revision=None)
+        if isinstance(result, MembershipUnchanged):
+            msg = "full membership load returned an unchanged result"
+            raise TypeError(msg)
+        return result
+
+    async def refresh_membership(
+        self,
+        grant: LeaseGrant,
+        *,
+        known_revision: int | None,
+    ) -> MembershipRefreshResult:
+        """Conditionally load membership beneath one locked exact grant.
+
+        Args:
+            grant: Complete immutable Lease ownership generation.
+            known_revision: Last authoritative revision, or None initially.
+
+        Returns:
+            A complete snapshot, unchanged proof, grant rejection, or
+            structural invariant violation.
+
+        Raises:
+            TypeError: If the grant or known revision has the wrong type.
+            ValueError: If the source or known revision is invalid.
+        """
         grant = _require_grant(grant)
+        known_revision = _require_known_membership_revision(known_revision)
         if grant.source_type is not feed_store.SourceType.BCFY_CALLS:
             msg = "membership loading supports only bcfy_calls Leases"
             raise ValueError(msg)
@@ -1700,15 +1757,32 @@ class IngestionLeaseStore:
                 rejection = self._grant_rejection(grant, lease_row)
                 if rejection is not None:
                     return rejection
+                if lease_row is None:
+                    msg = "accepted Lease grant lacks a locked row"
+                    raise RuntimeError(msg)
 
                 snapshot = _snapshot_from_row(lease_row)
+                current_revision = snapshot.membership_revision
+                if current_revision == known_revision:
+                    return MembershipUnchanged(grant, current_revision)
+                if (
+                    known_revision is not None
+                    and current_revision < known_revision
+                ):
+                    return MembershipInvariantViolation(
+                        grant,
+                        MembershipInvariantReason.REVISION_REGRESSION,
+                        "locked membership revision regressed below the "
+                        "authoritative cached revision",
+                    )
+
                 rows = await connection.fetch(
                     ingestion_lease_queries.LOAD_BCFY_CALLS_MEMBERSHIP_SQL,
                     grant.lease_key,
                 )
                 return self._membership_result(
                     grant,
-                    snapshot.membership_revision,
+                    current_revision,
                     rows,
                 )
 
@@ -1726,11 +1800,19 @@ class IngestionLeaseStore:
             )
 
         members: list[LeaseMember] = []
+        routing_keys: set[str] = set()
         excluded_count = 0
         for row in rows:
             identity = _membership_identity_from_row(grant, row)
             if isinstance(identity, MembershipInvariantViolation):
                 return identity
+            if identity.source_feed_id in routing_keys:
+                return MembershipInvariantViolation(
+                    grant,
+                    MembershipInvariantReason.DUPLICATE_ROUTING_KEY,
+                    "membership contains a duplicate canonical routing key",
+                )
+            routing_keys.add(identity.source_feed_id)
             member = _member_from_row(identity, row)
             if member.status in (
                 feed_store.FeedStatus.ACTIVE,
