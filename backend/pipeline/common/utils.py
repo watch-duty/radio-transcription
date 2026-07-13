@@ -1,12 +1,27 @@
 """Common utilities for all pipeline packages."""
 
 import logging
+import os
 import uuid
 from typing import Self
 
 import pydantic
 
+from backend.pipeline.common.env import is_gcp_env
+
 logger = logging.getLogger(__name__)
+
+# Default thread pool size for local development environments lacking GCP
+# metrics
+_LOCAL_FALLBACK_THREADS = 16
+
+# Minimum threads required to maintain throughput during single-core VM CPU
+# throttling
+_MIN_THREADS = 4
+
+# Maximum threads capped to prevent connection pool exhaustion and memory bloat
+# on dense VMs
+_MAX_THREADS = 32
 
 
 class ConfigBase(pydantic.BaseModel):
@@ -38,3 +53,35 @@ def generate_segment_id(
     """
     deterministic_id = f"{feed_or_session_id}_{unique_suffix}"
     return str(uuid.uuid5(uuid.NAMESPACE_OID, deterministic_id))
+
+
+def get_optimal_thread_pool_size(
+    env_var: str, default_threads_per_core: int = 4
+) -> int:
+    """Determine thread pool size based on env override or CPU cores."""
+    env_val = os.getenv(env_var)
+    if env_val:
+        try:
+            return max(1, int(env_val))
+        except ValueError:
+            logger.warning(
+                "Invalid %s value: %s, falling back to dynamic calculation",
+                env_var,
+                env_val,
+            )
+
+    if not is_gcp_env():
+        return _LOCAL_FALLBACK_THREADS
+
+    try:
+        sched_getaffinity = getattr(os, "sched_getaffinity", None)
+        if sched_getaffinity:
+            core_count = len(sched_getaffinity(0))
+        else:
+            core_count = os.cpu_count() or _MIN_THREADS
+    except (AttributeError, NotImplementedError):
+        core_count = os.cpu_count() or _MIN_THREADS
+
+    return max(
+        _MIN_THREADS, min(_MAX_THREADS, core_count * default_threads_per_core)
+    )
