@@ -1,6 +1,7 @@
 """A framework-agnostic chronological jitter buffer abstracting gap logic away from Beam state."""
 
 import heapq
+import time
 
 from backend.pipeline.common.log_helper import get_task_logger
 from backend.pipeline.schema_types import (
@@ -50,6 +51,7 @@ class SequenceBuffer:
         traceparent: str | None = None,
         baggage: str | None = None,
         max_emit: int | None = None,
+        deadline_monotonic: float | None = None,
     ) -> tuple[int, list[BufferedChunk], list[BufferedChunk], bool, bool]:
         """Processes a single incoming audio chunk against the expected sequence progression.
 
@@ -92,6 +94,7 @@ class SequenceBuffer:
                     buffer_elements,
                     epsilon_ms,
                     max_emit=max_emit,
+                    deadline_monotonic=deadline_monotonic,
                 )
             )
             if expected_next_ts is None:
@@ -139,6 +142,7 @@ class SequenceBuffer:
         buffer_elements: list[BufferedChunk],
         epsilon_ms: int = DEFAULT_FLOAT_TOLERANCE_MS,
         max_emit: int | None = None,
+        deadline_monotonic: float | None = None,
     ) -> tuple[int | None, list[BufferedChunk], list[BufferedChunk]]:
         """Drain sequentially-ready chunks from the buffer heap.
 
@@ -160,6 +164,8 @@ class SequenceBuffer:
                 spike) would be drained in a single bundle, potentially breaching
                 Windmill's 300-second lease and causing the bundle to be aborted
                 and replayed. See MAX_CHUNKS_PER_WINDMILL_BUNDLE in constants.py.
+            deadline_monotonic: Optional monotonic wall-clock timestamp (in seconds)
+                beyond which draining should stop early to respect bundle time budgets.
         """
         heap = [ComparableChunk(c) for c in buffer_elements]
         heapq.heapify(heap)
@@ -169,6 +175,11 @@ class SequenceBuffer:
             # reached. The caller checks len(emitted) >= max_emit and sets an
             # immediate self-chaining timer so the next bundle drains the rest.
             if max_emit is not None and len(to_emit) >= max_emit:
+                break
+            if (
+                deadline_monotonic is not None
+                and time.monotonic() >= deadline_monotonic
+            ):
                 break
             smallest = heap[0].chunk
             if expected_next_ts is None:

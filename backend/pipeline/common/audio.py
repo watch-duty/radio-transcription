@@ -1,7 +1,5 @@
 """Audio helpers for the ingestion layer."""
 
-from __future__ import annotations
-
 import json
 import logging
 import subprocess
@@ -13,7 +11,7 @@ from backend.pipeline.ingestion import models
 logger = logging.getLogger(__name__)
 
 FFPROBE_TIMEOUT_SEC = 10
-type AudioInputFormat = Literal["mp3"]
+type AudioInputFormat = Literal["mp3", "m4a", "mp4"]
 
 # Maps ffprobe format_name tokens to AudioMimeType. Keys are lower-cased
 # substrings that may appear in a comma-separated format_name string.
@@ -62,6 +60,16 @@ def _map_format_to_mime(format_name: str | None) -> models.AudioMimeType:
     return models.AudioMimeType.MPEG
 
 
+def _is_unusable_duration(duration: str | None) -> bool:
+    """Returns True if ffprobe duration string is missing, N/A, or <= 0."""
+    if duration in (None, "N/A"):
+        return True
+    try:
+        return float(duration) <= 0.0
+    except (ValueError, TypeError):
+        return True
+
+
 def _probe_file(file_path: str, format_args: list[str]) -> ProbeResult:
     """Execute ffprobe JSON metadata inspection on the given file path.
 
@@ -75,7 +83,7 @@ def _probe_file(file_path: str, format_args: list[str]) -> ProbeResult:
         "error",
         *format_args,
         "-show_entries",
-        "format=duration,format_name",
+        "format=duration,format_name:stream=duration,codec_type",
         "-of",
         "json",
         file_path,
@@ -90,15 +98,30 @@ def _probe_file(file_path: str, format_args: list[str]) -> ProbeResult:
     stdout_str = res.stdout.decode(errors="replace").strip()
     try:
         data = json.loads(stdout_str)
-        if isinstance(data, dict):
-            format_info = data.get("format", {})
-            return ProbeResult(
-                duration=format_info.get("duration"),
-                format_name=format_info.get("format_name"),
-            )
-        return ProbeResult(duration=str(data).strip(), format_name=None)
     except json.JSONDecodeError:
         return ProbeResult(duration=stdout_str, format_name=None)
+
+    if not isinstance(data, dict):
+        return ProbeResult(duration=str(data).strip(), format_name=None)
+
+    format_info = data.get("format", {})
+    duration = format_info.get("duration")
+    if _is_unusable_duration(duration):
+        duration = next(
+            (
+                st.get("duration")
+                for st in data.get("streams", [])
+                if isinstance(st, dict)
+                and st.get("codec_type") == "audio"
+                and not _is_unusable_duration(st.get("duration"))
+            ),
+            duration,
+        )
+
+    return ProbeResult(
+        duration=duration,
+        format_name=format_info.get("format_name"),
+    )
 
 
 def _run_verbose_probe(file_path: str) -> str:
@@ -162,7 +185,7 @@ def probe_audio_metadata(
                     e,
                 )
 
-            if result is None or result.duration is None:
+            if result is None or _is_unusable_duration(result.duration):
                 logger.warning(
                     "ffprobe failed to probe metadata with forced format %s; "
                     "retrying with auto-detection",
@@ -184,7 +207,7 @@ def probe_audio_metadata(
                     stderr=stderr_text.encode("utf-8"),
                 ) from e
 
-            if result.duration in (None, "N/A"):
+            if _is_unusable_duration(result.duration):
                 stderr_text = _run_verbose_probe(f.name)
                 raise subprocess.CalledProcessError(
                     returncode=1,

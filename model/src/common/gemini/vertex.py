@@ -24,11 +24,17 @@ Important behavior:
 ``import common.gemini.vertex`` succeeds with only the light core installed.
 """
 
+from __future__ import annotations
+
+import collections.abc  # noqa: TC003 - needed by runtime annotation resolution
+import copy
 import json
 import logging
 import re
 import time
-from typing import Any
+import typing
+
+from common.gemini import context
 
 logger = logging.getLogger(__name__)
 
@@ -44,66 +50,103 @@ GEMINI_SAFETY_SETTINGS = [
     {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
 ]
 
+_US_BATCH_MODEL_IDS = {"gemini-3.1-flash-lite"}
+
 
 def build_request(
     audio_uri: str,
     *,
     system_prompt: str,
     user_prompt: str,
-    generation_config: dict = GEMINI_GENERATION_CONFIG,
-    safety_settings: list = GEMINI_SAFETY_SETTINGS,
+    history: collections.abc.Sequence[context.ContextTurn] | None = None,
+    history_mode: str = "text_turns",
+    generation_config: dict[str, typing.Any] | None = None,
+    safety_settings: list[dict[str, typing.Any]] | None = None,
 ) -> dict:
     """Build the canonical Vertex batch-inference request dict for one audio segment.
 
     Returns the plain-dict batch request consumed by ``submit_batch_inference`` and the
     Gemini batch API — the single shape used by both ``gemini_sft.evaluate`` and
-    the ``gemini_transcribe_audio`` notebook. ``generation_config`` is ``.copy()``-ed so a
-    caller mutating the result never touches the module-level default. Pure dict
-    construction — does not require the ``[vertex]`` extra.
+    the ``gemini_transcribe_audio`` notebook. Configuration values are copied
+    so callers cannot mutate module-level defaults. Pure dictionary
+    construction does not require the ``[vertex]`` extra.
 
-    Field keys are snake_case (``file_data``/``file_uri``/``mime_type``/
-    ``system_instruction``/``generation_config``) on purpose: the google-genai batch
-    endpoint (``client.batches.create``) accepts the proto field names. Vertex may echo
-    the request back in camelCase in batch OUTPUT, so output parsers must read both
-    casings.
+    Field keys are canonical camelCase JSON (``fileData``/``fileUri``/
+    ``mimeType``/``systemInstruction``/``generationConfig``/
+    ``safetySettings``). SFT JSONL, batch input JSONL, and batch output parsing
+    all use the same shape.
+
+    Args:
+        audio_uri: GCS URI for the current FLAC audio segment.
+        system_prompt: System instruction included in the request.
+        user_prompt: User instruction for the current audio turn.
+        history: Prior transcript turns ordered from oldest to newest.
+        history_mode: Context encoding mode used to build request contents.
+        generation_config: Generation parameters copied into the request.
+        safety_settings: Safety settings copied into the request.
+
+    Returns:
+        A canonical batch request wrapper containing plain Python objects.
+
+    Raises:
+        ValueError: If ``history_mode`` is unsupported.
     """
+    contents = context.build_transcription_contents(
+        audio_uri=audio_uri,
+        user_prompt=user_prompt,
+        history=history,
+        history_mode=history_mode,
+    )
+    if generation_config is None:
+        resolved_generation_config = GEMINI_GENERATION_CONFIG
+    else:
+        resolved_generation_config = generation_config
+    if safety_settings is None:
+        resolved_safety_settings = GEMINI_SAFETY_SETTINGS
+    else:
+        resolved_safety_settings = safety_settings
     return {
         "request": {
-            "contents": [
-                {
-                    "role": "user",
-                    "parts": [
-                        # snake_case keys are intentional — see the docstring note.
-                        {
-                            "file_data": {
-                                "file_uri": audio_uri,
-                                "mime_type": "audio/flac",
-                            }
-                        },
-                        {"text": user_prompt},
-                    ],
-                }
-            ],
-            "system_instruction": {
+            "contents": contents,
+            "systemInstruction": {
                 "role": "system",
                 "parts": [{"text": system_prompt}],
             },
-            "generation_config": generation_config.copy(),
-            "safety_settings": list(safety_settings),
+            "generationConfig": copy.deepcopy(resolved_generation_config),
+            "safetySettings": copy.deepcopy(resolved_safety_settings),
         }
     }
 
 
-def parse_batch_output(text: str) -> dict[str, str]:
+def parse_batch_output(
+    lines: collections.abc.Iterable[str],
+) -> dict[str, str]:
     """Parse Vertex Gemini batch output JSONL into ``{audio_uri: prediction}``.
 
-    Vertex echoes the original request in batch output. Current outputs use
-    camelCase for echoed request fields even when callers submit snake_case, so
-    this parser accepts both shapes. Error/status rows, malformed JSONL rows,
-    and output rows without an identifiable audio URI are skipped.
+    Vertex echoes the original request in batch output. This parser accepts the
+    canonical camelCase request shape emitted by ``build_request`` and the
+    legacy snake_case shape used by historical outputs. Error/status rows,
+    malformed JSONL rows, and output rows without an identifiable audio URI
+    are skipped.
+
+    Args:
+        lines: Iterable of complete JSONL rows from Vertex batch output.
+
+    Returns:
+        A mapping from each identifiable audio URI to its prediction text.
+
+    Raises:
+        TypeError: If ``lines`` is one string instead of an iterable of rows.
+        ValueError: If successful rows repeat an identifiable audio URI.
     """
+    if isinstance(lines, str):
+        msg = (
+            "parse_batch_output expects an iterable of JSONL lines, not a "
+            "string"
+        )
+        raise TypeError(msg)
     result: dict[str, str] = {}
-    for line in text.splitlines():
+    for line in lines:
         if not line.strip():
             continue
         try:
@@ -118,49 +161,82 @@ def parse_batch_output(text: str) -> dict[str, str]:
         uri = _extract_request_audio_uri(obj["request"])
         if not uri:
             continue
-        result[uri] = _extract_prediction_text(obj.get("response"))
+        prediction_text = _extract_prediction_text(obj.get("response"))
+        if prediction_text is None:
+            continue
+        if uri in result:
+            msg = f"duplicate audio URI in batch output: {uri}"
+            raise ValueError(msg)
+        result[uri] = prediction_text
     return result
 
 
-def _extract_request_audio_uri(request: dict[str, Any]) -> str | None:
+def _extract_request_audio_uri(
+    request: dict[str, typing.Any],
+) -> str | None:
+    """Return the target audio URI echoed in a batch request.
+
+    Historical batch outputs may use snake_case SDK field names, while current
+    requests use canonical camelCase JSON. When history contains audio, the
+    last URI is the current target because request construction appends the
+    current turn last.
+
+    Args:
+        request: Request object echoed by the Vertex batch API.
+
+    Returns:
+        The last non-empty audio URI, or ``None`` when none is identifiable.
+    """
     contents = request.get("contents", [])
     if not isinstance(contents, list) or not contents:
         return None
-    first_content = contents[0]
-    if not isinstance(first_content, dict):
-        return None
-    parts = first_content.get("parts", [])
-    if not isinstance(parts, list):
-        return None
-    for part in parts:
-        if not isinstance(part, dict):
+    audio_uri: str | None = None
+    for content in contents:
+        if not isinstance(content, dict):
             continue
-        file_data = part.get("file_data") or part.get("fileData")
-        if not isinstance(file_data, dict):
+        parts = content.get("parts", [])
+        if not isinstance(parts, list):
             continue
-        candidate = file_data.get("file_uri") or file_data.get("fileUri")
-        if isinstance(candidate, str) and candidate:
-            return candidate
-    return None
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            file_data = part.get("fileData") or part.get("file_data")
+            if not isinstance(file_data, dict):
+                continue
+            candidate = file_data.get("fileUri") or file_data.get("file_uri")
+            if isinstance(candidate, str) and candidate:
+                audio_uri = candidate
+    return audio_uri
 
 
-def _extract_prediction_text(response: Any) -> str:
+def _extract_prediction_text(response: typing.Any) -> str | None:
+    """Extract prediction text from a structurally successful response.
+
+    Args:
+        response: Parsed Vertex batch response value.
+
+    Returns:
+        The first text part, including an explicit empty string, or ``None``
+        when no prediction text is present.
+    """
     if not isinstance(response, dict):
-        return ""
+        return None
     first_candidate = _first_dict(response.get("candidates"))
     content = first_candidate.get("content", {}) if first_candidate else {}
     if not isinstance(content, dict):
-        return ""
+        return None
     parts = content.get("parts", [])
     if not isinstance(parts, list):
-        return ""
+        return None
     for part in parts:
         if isinstance(part, dict) and isinstance(part.get("text"), str):
             return part["text"]
-    return ""
+    return None
 
 
-def _first_dict(value: Any) -> dict[str, Any] | None:
+def _first_dict(
+    value: typing.Any,
+) -> dict[str, typing.Any] | None:
     if isinstance(value, list) and value and isinstance(value[0], dict):
         return value[0]
     return None
@@ -271,7 +347,7 @@ def submit_tuning_job(
         display_name: Display name for the tuned model resource (encode round-id here).
         project: GCP project ID (required — no silent default).
         location: GCP region (use 'us-central1' for evaluation feature availability).
-        base_model: Base model name. Defaults to 'gemini-3.1-flash-lite'.
+        base_model: Foundation model name. Defaults to 'gemini-3.1-flash-lite'.
         val_uri: Optional GCS URI for validation JSONL. Wires eval_total_loss.
         epoch_count: Number of training epochs (1-100). SDK default is 5.
         adapter_size: Adapter size key — one of ONE, TWO, FOUR, EIGHT, SIXTEEN.
@@ -291,7 +367,7 @@ def submit_tuning_job(
         raise ValueError(msg)
     client = genai.Client(vertexai=True, project=project, location=location)
 
-    cfg_kwargs: dict[str, Any] = {
+    cfg_kwargs: dict[str, typing.Any] = {
         "tuned_model_display_name": display_name,
         "epoch_count": epoch_count,
         "adapter_size": _ADAPTER_ENUM[adapter_size],
@@ -315,7 +391,7 @@ def poll_tuning_job(
     name: str,
     project: str,
     location: str,
-    poll_interval: int = 30,
+    poll_interval: int = 300,
     timeout_hours: float = 24.0,
 ) -> str:
     """Re-fetch a Vertex AI tuning job by name and poll until terminal state.
@@ -327,7 +403,8 @@ def poll_tuning_job(
         name: Vertex AI tuning job resource name (from submit_tuning_job return value).
         project: GCP project ID.
         location: GCP region.
-        poll_interval: Seconds between state-poll requests.
+        poll_interval: Seconds between state-poll requests (default 300, or
+            5 minutes).
         timeout_hours: Max wall-clock hours to poll before raising TimeoutError
             (default 24) -- guards against an indefinite hang on an API/network stall.
 
@@ -400,6 +477,25 @@ def poll_tuning_job(
     return endpoint
 
 
+def _create_batch_inference_job(
+    *,
+    client: typing.Any,
+    model: str,
+    input_uri: str,
+    output_uri: str,
+) -> typing.Any:
+    """Create one batch job and normalize immediate SDK failures."""
+    try:
+        return client.batches.create(
+            model=model,
+            src=input_uri,
+            config={"dest": output_uri},
+        )
+    except Exception as exc:
+        msg = f"Batch inference submission failed: {exc}"
+        raise RuntimeError(msg) from exc
+
+
 def submit_batch_inference(
     *,
     input_uri: str,
@@ -407,8 +503,9 @@ def submit_batch_inference(
     model: str,
     project: str,
     location: str,
-    poll_interval: int = 60,
+    poll_interval: int = 300,
     timeout_hours: float = 24.0,
+    on_submitted: collections.abc.Callable[[str], None] | None = None,
 ) -> str:
     """Submit a Vertex AI batch inference job and poll until a terminal state.
 
@@ -418,9 +515,13 @@ def submit_batch_inference(
         model: Model resource name or base model ID to use for inference.
         project: GCP project ID (required — no silent default).
         location: GCP region for the batch job.
-        poll_interval: Seconds between state-poll requests.
+        poll_interval: Seconds between state-poll requests (default 300, or
+            5 minutes).
         timeout_hours: Max wall-clock hours to poll before raising TimeoutError
-            (default 24) -- guards against an indefinite hang on an API/network stall.
+            (default 24) -- guards against an indefinite hang on an API or
+            network stall.
+        on_submitted: Optional callback invoked with the durable job resource
+            name before polling starts.
 
     Returns:
         Resolved batch output location (GCS URI string).
@@ -428,11 +529,12 @@ def submit_batch_inference(
 
     Raises:
         ImportError: If the ``[vertex]`` extra is not installed.
-        RuntimeError: If the batch job ends in FAILED or CANCELLED state.
+        RuntimeError: If submission fails or the batch job ends in a
+            non-success state.
         TimeoutError: If no terminal state is reached within timeout_hours.
     """
     _require_vertex()
-    batch_location = _resource_location(model) or location
+    batch_location = _batch_location(model, location)
     if batch_location != location:
         logger.info(
             "Using model resource location %s for batch inference instead of %s",
@@ -443,12 +545,64 @@ def submit_batch_inference(
         vertexai=True, project=project, location=batch_location
     )
 
-    batch_job = client.batches.create(
+    batch_job = _create_batch_inference_job(
+        client=client,
         model=model,
-        src=input_uri,
-        config={"dest": output_uri},
+        input_uri=input_uri,
+        output_uri=output_uri,
     )
-    logger.info(f"Submitted batch inference job: {batch_job.name}")
+    job_name = getattr(batch_job, "name", None)
+    if not isinstance(job_name, str) or not job_name.strip():
+        msg = "Batch inference job returned no durable job name."
+        raise RuntimeError(msg)
+    logger.info(f"Submitted batch inference job: {job_name}")
+    if on_submitted is not None:
+        on_submitted(job_name)
+    return poll_batch_inference_job(
+        job_name,
+        project=project,
+        location=batch_location,
+        output_uri=output_uri,
+        poll_interval=poll_interval,
+        timeout_hours=timeout_hours,
+    )
+
+
+def poll_batch_inference_job(
+    name: str,
+    *,
+    project: str,
+    location: str,
+    output_uri: str,
+    poll_interval: int = 300,
+    timeout_hours: float = 24.0,
+) -> str:
+    """Poll an existing Vertex batch inference job to a terminal state.
+
+    Args:
+        name: Durable Vertex batch job resource name.
+        project: GCP project that owns the batch job.
+        location: Fallback Vertex location when ``name`` has no region.
+        output_uri: Requested GCS output URI used when the job omits one.
+        poll_interval: Seconds between state-poll requests.
+        timeout_hours: Maximum wall-clock hours to wait for completion.
+
+    Returns:
+        Resolved batch output location as a GCS URI string.
+
+    Raises:
+        ImportError: If the ``[vertex]`` extra is not installed.
+        RuntimeError: If polling repeatedly fails or the job ends
+            unsuccessfully.
+        TimeoutError: If no terminal state is reached within ``timeout_hours``.
+    """
+    _require_vertex()
+    job_location = resource_location(name, location) or location
+    client = genai.Client(
+        vertexai=True,
+        project=project,
+        location=job_location,
+    )
 
     last_state: str | None = None
     state: str = ""
@@ -456,23 +610,24 @@ def submit_batch_inference(
     consecutive_get_errors = 0
     while True:
         try:
-            cur = client.batches.get(name=batch_job.name)
+            cur = client.batches.get(name=name)
         except Exception as e:
             consecutive_get_errors += 1
             if time.monotonic() >= deadline:
                 msg = (
-                    f"Batch job {batch_job.name} could not be fetched before "
-                    f"the {timeout_hours}h timeout elapsed (last state: {state or 'unknown'})."
+                    f"Batch job {name} could not be fetched before the "
+                    f"{timeout_hours}h timeout elapsed (last state: "
+                    f"{state or 'unknown'})."
                 )
                 raise TimeoutError(msg) from e
             if consecutive_get_errors > _POLL_GET_RETRY_LIMIT:
                 msg = (
-                    f"Could not fetch batch job {batch_job.name} after "
+                    f"Could not fetch batch job {name} after "
                     f"{_POLL_GET_RETRY_LIMIT} retries."
                 )
                 raise RuntimeError(msg) from e
             logger.warning(
-                f"Transient error fetching batch job {batch_job.name}; retrying "
+                f"Transient error fetching batch job {name}; retrying "
                 f"({consecutive_get_errors}/{_POLL_GET_RETRY_LIMIT}): {e}"
             )
             time.sleep(_POLL_GET_RETRY_SLEEP_SECONDS)
@@ -486,7 +641,7 @@ def submit_batch_inference(
             break
         if time.monotonic() >= deadline:
             msg = (
-                f"Batch job {batch_job.name} did not reach a terminal state "
+                f"Batch job {name} did not reach a terminal state "
                 f"within {timeout_hours}h (last state: {state})."
             )
             raise TimeoutError(msg)
@@ -511,7 +666,27 @@ def submit_batch_inference(
     return output_location
 
 
-def _resource_location(resource_name: str) -> str | None:
-    """Extract a Vertex resource location from a full resource name."""
+def resource_location(
+    resource_name: str, default: str | None = None
+) -> str | None:
+    """Extract a Vertex location from a full resource name.
+
+    Args:
+        resource_name: Full Vertex resource name or publisher model ID.
+        default: Value returned when the name contains no location segment.
+
+    Returns:
+        The embedded location when present; otherwise, ``default``.
+    """
     match = _RESOURCE_LOCATION_RE.search(resource_name)
-    return match.group(1) if match else None
+    return match.group(1) if match else default
+
+
+def _batch_location(model: str, location: str) -> str:
+    """Return the Vertex location to use for batch inference."""
+    model_location = resource_location(model)
+    if model_location:
+        return model_location
+    if model.rsplit("/", maxsplit=1)[-1] in _US_BATCH_MODEL_IDS:
+        return "us"
+    return location

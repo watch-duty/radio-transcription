@@ -1,27 +1,15 @@
 from __future__ import annotations
 
 import json
-import sys
 import unittest
-from pathlib import Path
 
-from fake_gcs import FakeStorageClient
-
-_SRC_DIR = str(Path(__file__).resolve().parents[3] / "src")
-if _SRC_DIR not in sys.path:
-    sys.path.insert(0, _SRC_DIR)
-
-from common.inference_manifest import (  # noqa: E402
-    build_inference_manifest_blob_path,
-    build_inference_manifest_rows,
-    model_family_slug_from_model_id,
-    upload_inference_manifest,
-)
+import fake_gcs
+from common import inference_manifest as inference_manifest_lib
 
 
 class TestInferenceManifest(unittest.TestCase):
     def test_path_builder_returns_standard_path(self) -> None:
-        path = build_inference_manifest_blob_path(
+        path = inference_manifest_lib.build_inference_manifest_blob_path(
             inference_dataset_slug="echo/eval",
             model_family_slug="gemini_3_1_flash_lite",
             run_id="run-a",
@@ -36,11 +24,13 @@ class TestInferenceManifest(unittest.TestCase):
 
     def test_model_slug_conversion(self) -> None:
         self.assertEqual(
-            model_family_slug_from_model_id("gemini-3.1-flash-lite"),
+            inference_manifest_lib.model_family_slug_from_model_id(
+                "gemini-3.1-flash-lite"
+            ),
             "gemini_3_1_flash_lite",
         )
         self.assertEqual(
-            model_family_slug_from_model_id(
+            inference_manifest_lib.model_family_slug_from_model_id(
                 "publishers/google/models/gemini-3.1-flash-lite@001"
             ),
             "gemini_3_1_flash_lite",
@@ -48,14 +38,14 @@ class TestInferenceManifest(unittest.TestCase):
 
     def test_model_slug_rejects_endpoint_resource(self) -> None:
         with self.assertRaisesRegex(ValueError, "endpoint resource"):
-            model_family_slug_from_model_id(
+            inference_manifest_lib.model_family_slug_from_model_id(
                 "projects/123/locations/us/endpoints/456"
             )
 
     def test_row_builder_preserves_metadata_and_writes_target_field(
         self,
     ) -> None:
-        rows = build_inference_manifest_rows(
+        rows = inference_manifest_lib.build_inference_manifest_rows(
             model_family_slug="gemini_3_1_flash_lite",
             source_rows=[
                 {
@@ -76,7 +66,7 @@ class TestInferenceManifest(unittest.TestCase):
         self.assertEqual(pred_fields, ["pred_text_gemini_3_1_flash_lite"])
 
     def test_missing_prediction_omits_target_field(self) -> None:
-        rows = build_inference_manifest_rows(
+        rows = inference_manifest_lib.build_inference_manifest_rows(
             model_family_slug="gemini_3_1_flash_lite",
             source_rows=[
                 {"audio_filepath": "gs://audio/a.flac", "text": "alpha"}
@@ -87,7 +77,7 @@ class TestInferenceManifest(unittest.TestCase):
         self.assertNotIn("pred_text_gemini_3_1_flash_lite", rows[0])
 
     def test_empty_prediction_writes_empty_string(self) -> None:
-        rows = build_inference_manifest_rows(
+        rows = inference_manifest_lib.build_inference_manifest_rows(
             model_family_slug="gemini_3_1_flash_lite",
             source_rows=[
                 {"audio_filepath": "gs://audio/a.flac", "text": "alpha"}
@@ -99,7 +89,7 @@ class TestInferenceManifest(unittest.TestCase):
 
     def test_duplicate_audio_uri_rows_raise(self) -> None:
         with self.assertRaisesRegex(ValueError, "unique 'audio_filepath'"):
-            build_inference_manifest_rows(
+            inference_manifest_lib.build_inference_manifest_rows(
                 model_family_slug="gemini_3_1_flash_lite",
                 source_rows=[
                     {
@@ -117,7 +107,7 @@ class TestInferenceManifest(unittest.TestCase):
             )
 
     def test_stale_target_field_is_overwritten(self) -> None:
-        rows = build_inference_manifest_rows(
+        rows = inference_manifest_lib.build_inference_manifest_rows(
             model_family_slug="gemini_3_1_flash_lite",
             source_rows=[
                 {
@@ -134,7 +124,7 @@ class TestInferenceManifest(unittest.TestCase):
     def test_stale_target_field_is_removed_when_prediction_is_missing(
         self,
     ) -> None:
-        rows = build_inference_manifest_rows(
+        rows = inference_manifest_lib.build_inference_manifest_rows(
             model_family_slug="gemini_3_1_flash_lite",
             source_rows=[
                 {
@@ -150,7 +140,7 @@ class TestInferenceManifest(unittest.TestCase):
 
     def test_rejects_non_target_pred_text_field(self) -> None:
         with self.assertRaisesRegex(ValueError, "merged comparison manifest"):
-            build_inference_manifest_rows(
+            inference_manifest_lib.build_inference_manifest_rows(
                 model_family_slug="gemini_3_1_flash_lite",
                 source_rows=[
                     {
@@ -168,7 +158,7 @@ class TestInferenceManifest(unittest.TestCase):
                 with self.assertRaisesRegex(
                     ValueError, "non-empty string 'text'"
                 ):
-                    build_inference_manifest_rows(
+                    inference_manifest_lib.build_inference_manifest_rows(
                         model_family_slug="gemini_3_1_flash_lite",
                         source_rows=[
                             {
@@ -183,7 +173,7 @@ class TestInferenceManifest(unittest.TestCase):
         with self.assertRaisesRegex(
             ValueError, "not present in the source rows"
         ):
-            build_inference_manifest_rows(
+            inference_manifest_lib.build_inference_manifest_rows(
                 model_family_slug="gemini_3_1_flash_lite",
                 source_rows=[
                     {"audio_filepath": "gs://audio/a.flac", "text": "alpha"}
@@ -195,6 +185,7 @@ class TestInferenceManifest(unittest.TestCase):
             )
 
     def test_invalid_path_components_raise(self) -> None:
+        build_path = inference_manifest_lib.build_inference_manifest_blob_path
         invalid_values = {
             "inference_dataset_slug": [
                 "../echo",
@@ -218,14 +209,35 @@ class TestInferenceManifest(unittest.TestCase):
                 kwargs[field_name] = value
                 with self.subTest(field_name=field_name, value=value):
                     with self.assertRaises(ValueError):
-                        build_inference_manifest_blob_path(**kwargs)
+                        build_path(**kwargs)
+
+    def test_validate_artifact_label_returns_valid_labels(self) -> None:
+        for label in ("base", "tuned", "checkpoint_6"):
+            with self.subTest(label=label):
+                self.assertEqual(
+                    inference_manifest_lib.validate_artifact_label(label),
+                    label,
+                )
+
+    def test_validate_artifact_label_rejects_invalid_labels(self) -> None:
+        for label in (
+            "",
+            ".",
+            "..",
+            "bad label",
+            "nested/label",
+            "base.jsonl",
+        ):
+            with self.subTest(label=label):
+                with self.assertRaises(ValueError):
+                    inference_manifest_lib.validate_artifact_label(label)
 
     def test_upload_inference_manifest_writes_jsonl_and_returns_uri(
         self,
     ) -> None:
-        storage = FakeStorageClient()
+        storage = fake_gcs.FakeStorageClient()
 
-        uri = upload_inference_manifest(
+        uri = inference_manifest_lib.upload_inference_manifest(
             storage,
             bucket_name="test-bucket",
             inference_dataset_slug="echo/eval",
