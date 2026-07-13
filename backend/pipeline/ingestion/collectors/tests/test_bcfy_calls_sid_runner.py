@@ -17,6 +17,7 @@ from backend.pipeline.ingestion import (
     feed_work_scheduler,
     grant_control,
 )
+from backend.pipeline.ingestion.collectors.bcfy_calls import sid_processor
 from backend.pipeline.storage import feed_store, ingestion_lease_store
 
 _OWNER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
@@ -256,6 +257,71 @@ class _ControlledScheduler:
             ) from self.failure
 
 
+class _ControlledProcessor:
+    """One Event-gated processor exposing exact settlement evidence."""
+
+    def __init__(self, terminal: BaseException | None = None) -> None:
+        self.terminal = terminal
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.work_stop: asyncio.Event | None = None
+        self.cancelled = False
+        self.settled = asyncio.Event()
+
+    async def run(self, work_stop: asyncio.Event) -> None:
+        self.work_stop = work_stop
+        self.started.set()
+        try:
+            await self.release.wait()
+            if self.terminal is not None:
+                raise self.terminal
+        except asyncio.CancelledError:
+            self.cancelled = True
+            raise
+        finally:
+            self.settled.set()
+
+
+class _ControlledProcessorFactory:
+    """Create exactly one scripted processor per exact runner invocation."""
+
+    def __init__(self, *processors: _ControlledProcessor) -> None:
+        self._script = list(processors)
+        self.calls: list[
+            tuple[
+                ingestion_lease_store.LeaseGrant,
+                ingestion_lease_store.LeaseSnapshot,
+                _ControlledLane,
+            ]
+        ] = []
+        self.processors: list[_ControlledProcessor] = []
+
+    def __call__(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        payload: ingestion_lease_store.LeaseSnapshot,
+        lane: _ControlledLane,
+    ) -> _ControlledProcessor:
+        if lane not in lane.scheduler.opened:
+            message = "processor was constructed before its lane opened"
+            raise AssertionError(message)
+        processor = (
+            self._script.pop(0) if self._script else _ControlledProcessor()
+        )
+        self.calls.append((grant, payload, lane))
+        self.processors.append(processor)
+        return processor
+
+
+def _runner(
+    sid_runner: typing.Any,
+    scheduler: _ControlledScheduler,
+    *processors: _ControlledProcessor,
+) -> tuple[typing.Any, _ControlledProcessorFactory]:
+    factory = _ControlledProcessorFactory(*processors)
+    return sid_runner.BcfyCallsSidRunner(scheduler, factory), factory
+
+
 def _context() -> tuple[
     grant_control.RunContext,
     _TrackedEvent,
@@ -292,7 +358,7 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         sid_runner = _sid_runner_module()
         scheduler = _ControlledScheduler(block_close=True)
-        runner = sid_runner.BcfyCallsSidRunner(scheduler)
+        runner, factory = _runner(sid_runner, scheduler)
         first_context, first_stop, first_loss = _context()
         second_context, second_stop, second_loss = _context()
         first_grant = _grant("150", fencing_token=1)
@@ -311,9 +377,18 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
             [first_grant, second_grant],
         )
         self.assertIsNot(scheduler.opened[0], scheduler.opened[1])
-        self.assertEqual(runner.__slots__, ("_scheduler",))
+        self.assertEqual(runner.__slots__, ("_processor_factory", "_scheduler"))
         self.assertFalse(hasattr(runner, "current_lane"))
         self.assertFalse(hasattr(runner, "_current_lane"))
+        self.assertEqual(len(factory.calls), 2)
+        self.assertEqual(
+            [call[2] for call in factory.calls],
+            scheduler.opened,
+        )
+        self.assertIsNot(
+            factory.processors[0].work_stop,
+            factory.processors[1].work_stop,
+        )
 
         first_stop.set()
         second_stop.set()
@@ -322,6 +397,10 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
             timeout=1,
         )
         for lane in scheduler.opened:
+            processor = factory.processors[scheduler.opened.index(lane)]
+            self.assertTrue(processor.work_stop.is_set())
+            self.assertTrue(processor.cancelled)
+            self.assertTrue(processor.settled.is_set())
             lane.release_close.set()
         outcomes = await asyncio.gather(first, second)
 
@@ -365,7 +444,8 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
         for signal, reason, expected in cases:
             with self.subTest(signal=signal):
                 scheduler = _ControlledScheduler(block_close=True)
-                runner = sid_runner.BcfyCallsSidRunner(scheduler)
+                processor = _ControlledProcessor()
+                runner, _ = _runner(sid_runner, scheduler, processor)
                 context, stop, loss = _context()
                 task = asyncio.create_task(
                     runner.run(_grant(signal), _snapshot(), context)
@@ -378,6 +458,9 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
 
                 self.assertFalse(task.done())
                 self.assertEqual(lane.close_reasons, [reason])
+                self.assertTrue(processor.work_stop.is_set())
+                self.assertTrue(processor.cancelled)
+                self.assertTrue(processor.settled.is_set())
                 lane.release_close.set()
                 self.assertEqual(await task, expected)
                 self.assert_waiters_settled(scheduler, stop, loss)
@@ -385,7 +468,7 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
     async def test_stop_escalates_to_loss_before_acknowledgement(self) -> None:
         sid_runner = _sid_runner_module()
         scheduler = _ControlledScheduler(block_close=True)
-        runner = sid_runner.BcfyCallsSidRunner(scheduler)
+        runner, _ = _runner(sid_runner, scheduler)
         context, stop, loss = _context()
         task = asyncio.create_task(runner.run(_grant(), _snapshot(), context))
         await asyncio.wait_for(scheduler.lane_opened.wait(), timeout=1)
@@ -419,7 +502,7 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         sid_runner = _sid_runner_module()
         scheduler = _ControlledScheduler()
-        runner = sid_runner.BcfyCallsSidRunner(scheduler)
+        runner, _ = _runner(sid_runner, scheduler)
         context, stop, loss = _context()
         stop.set()
         loss.set()
@@ -435,7 +518,7 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
 
         fatal_scheduler = _ControlledScheduler()
         fatal_scheduler.fail(RuntimeError("worker failed"))
-        fatal_runner = sid_runner.BcfyCallsSidRunner(fatal_scheduler)
+        fatal_runner, _ = _runner(sid_runner, fatal_scheduler)
         fatal_context, fatal_stop, fatal_loss = _context()
         fatal_stop.set()
         fatal_loss.set()
@@ -461,7 +544,7 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         sid_runner = _sid_runner_module()
         scheduler = _ControlledScheduler(block_close=True)
-        runner = sid_runner.BcfyCallsSidRunner(scheduler)
+        runner, _ = _runner(sid_runner, scheduler)
         context, stop, loss = _context()
         task = asyncio.create_task(runner.run(_grant(), _snapshot(), context))
         await asyncio.wait_for(scheduler.lane_opened.wait(), timeout=1)
@@ -480,6 +563,144 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
             await task
         self.assert_waiters_settled(scheduler, stop, loss)
 
+    async def test_typed_processor_outcomes_settle_before_exact_close(
+        self,
+    ) -> None:
+        sid_runner = _sid_runner_module()
+        rejection = ingestion_lease_store.GrantRejected(
+            ingestion_lease_store.GrantRejectionReason.MISSING,
+            None,
+        )
+        cases = (
+            (
+                sid_processor.SidProcessorFailure(
+                    feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+                    "bcfy_calls_sid_payload_invalid",
+                ),
+                feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN,
+                grant_control.RunFailed(
+                    feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+                    "bcfy_calls_sid_payload_invalid",
+                ),
+            ),
+            (
+                sid_processor.SidProcessorAuthorityLost(rejection),
+                feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS,
+                grant_control.RunLost(),
+            ),
+            (
+                sid_processor.SidProcessorPlannedDrain(uuid.UUID(int=1)),
+                feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN,
+                grant_control.RunStopped(
+                    grant_control.TerminalCause.PLANNED_DRAIN
+                ),
+            ),
+        )
+        for terminal, reason, expected in cases:
+            with self.subTest(terminal=type(terminal).__name__):
+                scheduler = _ControlledScheduler(block_close=True)
+                processor = _ControlledProcessor(terminal)
+                runner, _ = _runner(sid_runner, scheduler, processor)
+                context, stop, loss = _context()
+                task = asyncio.create_task(
+                    runner.run(_grant(), _snapshot(), context)
+                )
+                await asyncio.wait_for(processor.started.wait(), timeout=1)
+                processor.release.set()
+                lane = scheduler.opened[0]
+                await asyncio.wait_for(lane.close_entered.wait(), timeout=1)
+
+                self.assertTrue(processor.work_stop.is_set())
+                self.assertTrue(processor.settled.is_set())
+                self.assertFalse(processor.cancelled)
+                self.assertFalse(task.done())
+                self.assertEqual(lane.close_reasons, [reason])
+                lane.release_close.set()
+
+                self.assertEqual(await task, expected)
+                self.assert_waiters_settled(scheduler, stop, loss)
+
+    async def test_monotonic_signals_precede_late_processor_failure(
+        self,
+    ) -> None:
+        sid_runner = _sid_runner_module()
+        cases = (
+            ("stop", grant_control.RunStopped(
+                grant_control.TerminalCause.PLANNED_DRAIN
+            )),
+            ("loss", grant_control.RunLost()),
+        )
+        for signal, expected in cases:
+            with self.subTest(signal=signal):
+                scheduler = _ControlledScheduler()
+                processor = _ControlledProcessor(
+                    sid_processor.SidProcessorFailure(
+                        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                        "late metadata failure",
+                    )
+                )
+                runner, _ = _runner(sid_runner, scheduler, processor)
+                context, stop, loss = _context()
+                task = asyncio.create_task(
+                    runner.run(_grant(signal), _snapshot(), context)
+                )
+                await asyncio.wait_for(processor.started.wait(), timeout=1)
+                processor.release.set()
+                if signal == "stop":
+                    stop.set()
+                else:
+                    stop.set()
+                    loss.set()
+
+                self.assertEqual(await task, expected)
+                self.assert_waiters_settled(scheduler, stop, loss)
+
+        scheduler = _ControlledScheduler()
+        processor = _ControlledProcessor(
+            sid_processor.SidProcessorFailure(
+                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                "late metadata failure",
+            )
+        )
+        runner, _ = _runner(sid_runner, scheduler, processor)
+        context, stop, loss = _context()
+        task = asyncio.create_task(runner.run(_grant(), _snapshot(), context))
+        await asyncio.wait_for(processor.started.wait(), timeout=1)
+        processor.release.set()
+        stop.set()
+        loss.set()
+        scheduler.fail(RuntimeError("scheduler failed"))
+
+        with self.assertRaises(sid_runner.SidRunnerIntegrityError):
+            await task
+        self.assert_waiters_settled(scheduler, stop, loss)
+
+    async def test_normal_return_and_unknown_processor_failure_are_integrity(
+        self,
+    ) -> None:
+        sid_runner = _sid_runner_module()
+        for terminal in (None, RuntimeError("unexpected processor failure")):
+            with self.subTest(terminal=repr(terminal)):
+                scheduler = _ControlledScheduler()
+                processor = _ControlledProcessor(terminal)
+                runner, _ = _runner(sid_runner, scheduler, processor)
+                context, stop, loss = _context()
+                task = asyncio.create_task(
+                    runner.run(_grant(), _snapshot(), context)
+                )
+                await asyncio.wait_for(processor.started.wait(), timeout=1)
+                processor.release.set()
+
+                with self.assertRaises(sid_runner.SidRunnerIntegrityError):
+                    await task
+                self.assertEqual(
+                    scheduler.opened[0].close_reasons,
+                    [
+                        feed_work_scheduler.LaneCloseReason.SCHEDULER_SHUTDOWN
+                    ],
+                )
+                self.assert_waiters_settled(scheduler, stop, loss)
+
     async def test_undrained_and_invalid_close_results_are_integrity_failures(
         self,
     ) -> None:
@@ -487,7 +708,7 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
         for result_mode in ("undrained", "invalid", "wrong_grant"):
             with self.subTest(result_mode=result_mode):
                 scheduler = _ControlledScheduler(result_mode=result_mode)
-                runner = sid_runner.BcfyCallsSidRunner(scheduler)
+                runner, _ = _runner(sid_runner, scheduler)
                 context, stop, loss = _context()
                 stop.set()
 
@@ -501,7 +722,8 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         sid_runner = _sid_runner_module()
         scheduler = _ControlledScheduler(block_close=True)
-        runner = sid_runner.BcfyCallsSidRunner(scheduler)
+        processor = _ControlledProcessor()
+        runner, _ = _runner(sid_runner, scheduler, processor)
         context, stop, loss = _context()
         task = asyncio.create_task(runner.run(_grant(), _snapshot(), context))
         await asyncio.wait_for(scheduler.lane_opened.wait(), timeout=1)
@@ -519,6 +741,9 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
             lane.close_reasons,
             [feed_work_scheduler.LaneCloseReason.SCHEDULER_SHUTDOWN],
         )
+        self.assertTrue(processor.work_stop.is_set())
+        self.assertTrue(processor.cancelled)
+        self.assertTrue(processor.settled.is_set())
         self.assertFalse(task.done())
         lane.release_close.set()
 
@@ -536,6 +761,8 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("asyncio.sleep", source)
         self.assertNotIn("cover_page(", source)
         self.assertNotIn("remove_feed(", source)
+        self.assertNotIn("refresh_membership(", source)
+        self.assertNotIn("fetch_sid_page(", source)
         self.assertNotIn("failure_policy", source)
         self.assertNotIn("http_session", source)
         self.assertNotIn("gcs_client", source)
@@ -547,6 +774,15 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             callable(feed_work_scheduler.FeedWorkScheduler.raise_if_failed)
         )
+
+    def test_processor_factory_is_required_and_validated(self) -> None:
+        sid_runner = _sid_runner_module()
+        scheduler = _ControlledScheduler()
+
+        with self.assertRaises(TypeError):
+            sid_runner.BcfyCallsSidRunner(scheduler)
+        with self.assertRaises(TypeError):
+            sid_runner.BcfyCallsSidRunner(scheduler, object())
 
 
 class TestFencedBoundaryCommitter(unittest.IsolatedAsyncioTestCase):
