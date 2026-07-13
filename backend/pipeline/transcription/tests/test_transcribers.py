@@ -9,7 +9,6 @@ from google.genai import types
 
 from backend.pipeline.common import constants
 from backend.pipeline.common.exceptions import (
-    InvalidFinishReasonError,
     PartialTranscriptionError,
 )
 from backend.pipeline.transcription.enums import TranscriberType
@@ -880,13 +879,14 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             transcriber.setup()
 
-            with self.assertRaises(InvalidFinishReasonError) as context:
+            with self.assertRaises(GeminiTranscriptionError) as context:
                 await transcriber.transcribe(
                     audio_data=b"\x00" * 100,
                     duration_ms=1000,
                 )
             self.assertIn(
-                "finished with invalid reason: SAFETY", str(context.exception)
+                "Gemini response blocked by safety filters",
+                str(context.exception),
             )
 
     async def test_gemini_transcriber_transient_empty_response(self) -> None:
@@ -925,6 +925,57 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 )
             self.assertIn(
                 "Incomplete response from Gemini (finish_reason: None).",
+                str(context.exception),
+            )
+
+    async def test_gemini_transcriber_finish_reason_none_safety_block(
+        self,
+    ) -> None:
+        """Verifies that finish_reason=None with blocked ratings raises a permanent GeminiTranscriptionError."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = None
+            mock_candidate.content = None
+
+            # Mock safety rating with a blocked category
+            mock_rating = MagicMock()
+            mock_rating.blocked = True
+            mock_rating.category.name = "HARM_CATEGORY_HATE_SPEECH"
+            mock_rating.probability.name = "HIGH"
+            mock_candidate.safety_ratings = [mock_rating]
+
+            mock_response.candidates = [mock_candidate]
+            mock_response.response_id = "test-id"
+            mock_response.sdk_http_response = None
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            with self.assertRaises(GeminiTranscriptionError) as context:
+                await transcriber.transcribe(
+                    audio_data=b"\x00" * 100,
+                    duration_ms=1000,
+                )
+            self.assertIn(
+                "Gemini response blocked by safety filters.",
+                str(context.exception),
+            )
+            self.assertIn(
+                "HARM_CATEGORY_HATE_SPEECH=HIGH",
                 str(context.exception),
             )
 

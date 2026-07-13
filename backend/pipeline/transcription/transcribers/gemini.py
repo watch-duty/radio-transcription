@@ -252,6 +252,24 @@ class GeminiTranscriber(base.Transcriber):
             else None
         )
 
+        blocked_ratings = self._get_blocked_ratings(candidate)
+        if (
+            reason_str == types.FinishReason.SAFETY.name
+            or blocked_ratings != "None"
+        ):
+            logger.warning(
+                "Gemini response candidate was blocked by safety filters. "
+                "Finish Reason: %s, Blocked Ratings: %s. Response ID: %s",
+                reason_str,
+                blocked_ratings,
+                response_id,
+            )
+            msg = (
+                f"Gemini response blocked by safety filters. "
+                f"Finish Reason: {reason_str}, Blocked Ratings: {blocked_ratings}. (Response ID: {response_id})"
+            )
+            raise GeminiTranscriptionError(msg)
+
         if reason_str is None:
             logger.warning(
                 "Gemini response interrupted (finish_reason is None). "
@@ -277,22 +295,18 @@ class GeminiTranscriber(base.Transcriber):
             return constants.UNINTELLIGIBLE_MARKER
 
         if reason_str not in _VALID_FINISH_REASONS:
-            blocked_ratings = self._get_blocked_ratings(candidate)
             finish_msg = candidate.finish_message or "No finish message"
             logger.warning(
                 "Gemini response finished with invalid reason: %s. "
-                "Finish Message: %s. Blocked Ratings: %s. "
-                "Response ID: %s, Headers: %s",
+                "Finish Message: %s. Response ID: %s, Headers: %s",
                 reason_str,
                 finish_msg,
-                blocked_ratings,
                 response_id,
                 headers,
             )
             msg = (
                 f"Gemini response finished with invalid reason: {reason_str}. "
-                f"Finish Message: {finish_msg}. Blocked Ratings: {blocked_ratings}. "
-                f"(Response ID: {response_id})"
+                f"Finish Message: {finish_msg}. (Response ID: {response_id})"
             )
 
             raise exceptions.InvalidFinishReasonError(msg)
@@ -308,22 +322,9 @@ class GeminiTranscriber(base.Transcriber):
                 )
                 return ""
 
-            blocked_ratings = self._get_blocked_ratings(candidate)
-            finish_msg = candidate.finish_message or "No finish message"
-            logger.warning(
-                "Gemini response candidate had no content or parts. "
-                "Finish reason: %s. Finish Message: %s. Blocked Ratings: %s. "
-                "Response ID: %s, Headers: %s",
-                reason_str,
-                finish_msg,
-                blocked_ratings,
-                response_id,
-                headers,
-            )
             msg = (
                 f"Gemini response candidate had no content or parts. "
-                f"Finish reason: {reason_str}. Finish Message: {finish_msg}. Blocked Ratings: {blocked_ratings}. "
-                f"(Response ID: {response_id})"
+                f"Finish reason: {reason_str}. (Response ID: {response_id})"
             )
             raise exceptions.NonRetryableError(msg)
 
