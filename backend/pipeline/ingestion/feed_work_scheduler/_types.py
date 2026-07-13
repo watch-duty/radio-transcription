@@ -8,6 +8,7 @@ import enum
 import typing
 import uuid
 
+from backend.pipeline.ingestion.collectors.bcfy_calls import cursor_policy
 from backend.pipeline.storage import (
     feed_store,
     ingestion_lease_store,
@@ -700,9 +701,7 @@ def _normalize_failure_detail(value: object) -> str:
     ):
         message = "failure detail contains forbidden sensitive material"
         raise ValueError(message)
-    return status_reason_detail.cap_status_reason_detail_for_storage(
-        normalized
-    )
+    return status_reason_detail.cap_status_reason_detail_for_storage(normalized)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -769,14 +768,16 @@ class CohortRecordTerminalFact:
         if not isinstance(self.terminal_reason, CohortRecordTerminalReason):
             message = "terminal_reason must be a CohortRecordTerminalReason"
             raise TypeError(message)
-        if self.item_failure is not None and type(
-            self.item_failure
-        ) is not CohortItemFailureFact:
+        if (
+            self.item_failure is not None
+            and type(self.item_failure) is not CohortItemFailureFact
+        ):
             message = "item_failure must be a CohortItemFailureFact or None"
             raise TypeError(message)
-        if self.direct_failure is not None and type(
-            self.direct_failure
-        ) is not CohortDirectFailureFact:
+        if (
+            self.direct_failure is not None
+            and type(self.direct_failure) is not CohortDirectFailureFact
+        ):
             message = "direct_failure must be a CohortDirectFailureFact or None"
             raise TypeError(message)
         self._validate_implications()
@@ -814,8 +815,7 @@ class CohortRecordTerminalFact:
             raise CohortIntegrityError(message)
         if self.full_pipeline_completed and (
             not self.participated
-            or self.closure_state
-            is not CohortRecordClosureState.DURABLY_CLOSED
+            or self.closure_state is not CohortRecordClosureState.DURABLY_CLOSED
         ):
             message = "full pipeline requires durable participation"
             raise CohortIntegrityError(message)
@@ -885,6 +885,395 @@ class CohortTerminalFacts:
     def identities(self) -> tuple[CohortRecordIdentity, ...]:
         """Return the exact predecessor-owned identity tuple."""
         return tuple(record.identity for record in self.records)
+
+
+class FinalRecordReleaseBasis(enum.StrEnum):
+    """Closed generic proof authorizing one final-record transition."""
+
+    DURABLE_SOURCE_CLOSURE = "durable_source_closure"
+    ACCEPTED_NO_PROGRESS = "accepted_no_progress"
+    ACCEPTED_REPLAYABLE_FEED = "accepted_replayable_feed"
+    ACCEPTED_MEMBER_RETIREMENT = "accepted_member_retirement"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FinalRecordClosureResolution:
+    """Exact generic closure for one held final-pending record."""
+
+    identity: CohortRecordIdentity
+    closure_state: CohortRecordClosureState
+    release_basis: FinalRecordReleaseBasis
+
+    def __post_init__(self) -> None:
+        if type(self.identity) is not CohortRecordIdentity:
+            message = "identity must be an exact CohortRecordIdentity"
+            raise TypeError(message)
+        if self.closure_state not in {
+            CohortRecordClosureState.DURABLY_CLOSED,
+            CohortRecordClosureState.REPLAY_SAFE_RELEASE,
+        }:
+            message = "final closure must be durable or replay-safe"
+            raise CohortIntegrityError(message)
+        if not isinstance(self.release_basis, FinalRecordReleaseBasis):
+            message = "release_basis must be a FinalRecordReleaseBasis"
+            raise TypeError(message)
+        if (self.closure_state is CohortRecordClosureState.DURABLY_CLOSED) != (
+            self.release_basis is FinalRecordReleaseBasis.DURABLE_SOURCE_CLOSURE
+        ):
+            message = "final closure state and release basis disagree"
+            raise CohortIntegrityError(message)
+
+
+def _require_uuid_tuple(value: object, name: str) -> tuple[uuid.UUID, ...]:
+    if not isinstance(value, tuple) or any(
+        not isinstance(item, uuid.UUID) for item in value
+    ):
+        message = f"{name} must be an immutable UUID tuple"
+        raise TypeError(message)
+    if len(set(value)) != len(value):
+        message = f"{name} must not contain duplicates"
+        raise CohortIntegrityError(message)
+    if value != tuple(sorted(value, key=lambda item: item.int)):
+        message = f"{name} must be in deterministic UUID order"
+        raise CohortIntegrityError(message)
+    return value
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class PageFinalizationContext:
+    """Bounded exact evidence supplied to one source page finalizer."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    page_sequence: int
+    candidate: cursor_policy.PageCandidate
+    cohort_terminal_facts: tuple[CohortTerminalFacts, ...]
+    unresolved_replay_feed_ids: tuple[uuid.UUID, ...]
+    locally_retired_members: tuple[
+        ingestion_lease_store.LeaseMemberIdentity,
+        ...,
+    ]
+    replay_blocked_feed_ids: tuple[uuid.UUID, ...]
+    candidate_boundaries: tuple[BoundaryWork, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
+            message = "grant must be a LeaseGrant"
+            raise TypeError(message)
+        _require_nonnegative_integer(self.page_sequence, "page_sequence")
+        if type(self.candidate) not in {
+            cursor_policy.PageCursorCandidate,
+            cursor_policy.NoProgressPageCandidate,
+        }:
+            message = "candidate must be an exact PageCandidate"
+            raise TypeError(message)
+        if (
+            self.candidate.grant != self.grant
+            or self.candidate.page_sequence != self.page_sequence
+        ):
+            message = "candidate crossed finalization context"
+            raise CohortIntegrityError(message)
+        if not isinstance(self.cohort_terminal_facts, tuple) or any(
+            type(facts) is not CohortTerminalFacts
+            for facts in self.cohort_terminal_facts
+        ):
+            message = "cohort_terminal_facts must contain exact facts"
+            raise TypeError(message)
+        self._validate_facts()
+        replay = _require_uuid_tuple(
+            self.unresolved_replay_feed_ids,
+            "unresolved_replay_feed_ids",
+        )
+        _require_uuid_tuple(
+            self.replay_blocked_feed_ids,
+            "replay_blocked_feed_ids",
+        )
+        replay_facts = {
+            record.identity.feed_id
+            for facts in self.cohort_terminal_facts
+            for record in facts.records
+            if record.terminal_reason
+            is CohortRecordTerminalReason.REPLAYABLE_DIRECT
+        }
+        if set(replay) != replay_facts:
+            message = "unresolved replay Feeds crossed terminal facts"
+            raise CohortIntegrityError(message)
+        if not isinstance(self.locally_retired_members, tuple) or any(
+            not isinstance(
+                member,
+                ingestion_lease_store.LeaseMemberIdentity,
+            )
+            for member in self.locally_retired_members
+        ):
+            message = "locally_retired_members must be issued members"
+            raise TypeError(message)
+        if len({id(member) for member in self.locally_retired_members}) != len(
+            self.locally_retired_members
+        ):
+            message = "locally_retired_members contains duplicate identity"
+            raise CohortIntegrityError(message)
+        for member in self.locally_retired_members:
+            try:
+                ingestion_lease_store._require_member_binding(  # noqa: SLF001
+                    self.grant,
+                    member,
+                )
+            except (TypeError, ValueError) as exc:
+                message = "locally retired member crossed complete grant"
+                raise CohortIntegrityError(message) from exc
+        if not isinstance(self.candidate_boundaries, tuple) or any(
+            type(boundary) is not BoundaryWork
+            for boundary in self.candidate_boundaries
+        ):
+            message = "candidate_boundaries must contain exact boundaries"
+            raise TypeError(message)
+        for boundary in self.candidate_boundaries:
+            try:
+                ingestion_lease_store._require_member_binding(  # noqa: SLF001
+                    self.grant,
+                    boundary.member,
+                )
+            except (TypeError, ValueError) as exc:
+                message = "candidate boundary crossed complete grant"
+                raise CohortIntegrityError(message) from exc
+
+    def _validate_facts(self) -> None:
+        seen: set[CohortRecordIdentity] = set()
+        order = []
+        for facts in self.cohort_terminal_facts:
+            identities = facts.identities
+            if any(
+                identity.grant != self.grant
+                or identity.page_sequence != self.page_sequence
+                for identity in identities
+            ):
+                message = "terminal facts crossed finalization page"
+                raise CohortIntegrityError(message)
+            if seen.intersection(identities):
+                message = "terminal facts duplicate registered identity"
+                raise CohortIntegrityError(message)
+            seen.update(identities)
+            first = identities[0]
+            order.append(
+                (
+                    first.feed_id.int,
+                    first.source_order,
+                    first.local_sequence,
+                )
+            )
+        if order != sorted(order):
+            message = "cohort terminal facts are not deterministic"
+            raise CohortIntegrityError(message)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _AcceptedFinalPage:
+    """Shared exact fields for one accepted final-page disposition."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    page_sequence: int
+    candidate: cursor_policy.PageCandidate
+    boundary_results: tuple[BoundaryResult, ...]
+    final_closure_resolutions: tuple[FinalRecordClosureResolution, ...]
+    source_evidence: object
+
+    def __post_init__(self) -> None:
+        _require_final_result_identity(
+            self.grant,
+            self.page_sequence,
+            self.candidate,
+        )
+        if not isinstance(self.boundary_results, tuple) or any(
+            type(result) is not BoundaryResult
+            for result in self.boundary_results
+        ):
+            message = "boundary_results must contain exact BoundaryResult"
+            raise TypeError(message)
+        if not isinstance(self.final_closure_resolutions, tuple) or any(
+            type(resolution) is not FinalRecordClosureResolution
+            for resolution in self.final_closure_resolutions
+        ):
+            message = "final_closure_resolutions must contain exact values"
+            raise TypeError(message)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FinalPageCovered(_AcceptedFinalPage):
+    """Accepted advancing or equal progress for one exact candidate."""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FinalPageNoProgress(_AcceptedFinalPage):
+    """Accepted source lifecycle for one unusable-lastPos candidate."""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FinalPageReplayable(_AcceptedFinalPage):
+    """Accepted source lifecycle while exact Feed work remains replayable."""
+
+
+def _require_final_result_identity(
+    grant: object,
+    page_sequence: object,
+    candidate: object,
+) -> None:
+    if not isinstance(grant, ingestion_lease_store.LeaseGrant):
+        message = "grant must be a LeaseGrant"
+        raise TypeError(message)
+    exact_sequence = _require_nonnegative_integer(
+        page_sequence,
+        "page_sequence",
+    )
+    if type(candidate) not in {
+        cursor_policy.PageCursorCandidate,
+        cursor_policy.NoProgressPageCandidate,
+    }:
+        message = "candidate must be an exact PageCandidate"
+        raise TypeError(message)
+    if candidate.grant != grant or candidate.page_sequence != exact_sequence:
+        message = "final result crossed candidate identity"
+        raise CohortIntegrityError(message)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FinalPageRetryable:
+    """Definitive proof that the final mutation never started."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    page_sequence: int
+    candidate: cursor_policy.PageCandidate
+    commit_child_mutations_started: bool
+    mutation_could_have_committed: bool
+
+    def __post_init__(self) -> None:
+        _require_final_result_identity(
+            self.grant,
+            self.page_sequence,
+            self.candidate,
+        )
+        if not isinstance(self.commit_child_mutations_started, bool) or not (
+            isinstance(self.mutation_could_have_committed, bool)
+        ):
+            message = "no-commit proof fields must be booleans"
+            raise TypeError(message)
+        if (
+            self.commit_child_mutations_started
+            or self.mutation_could_have_committed
+        ):
+            message = "retryable final page lacks definitive no-commit proof"
+            raise CohortIntegrityError(message)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FinalPageGrantRejected:
+    """The finalizer rejected this complete exact grant."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    page_sequence: int
+    candidate: cursor_policy.PageCandidate
+
+    def __post_init__(self) -> None:
+        _require_final_result_identity(
+            self.grant,
+            self.page_sequence,
+            self.candidate,
+        )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FinalPageOutcomeUnknown:
+    """The final mutation may have committed and must not be resubmitted."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    page_sequence: int
+    candidate: cursor_policy.PageCandidate
+
+    def __post_init__(self) -> None:
+        _require_final_result_identity(
+            self.grant,
+            self.page_sequence,
+            self.candidate,
+        )
+
+
+class _FinalPageUncertainty(enum.StrEnum):
+    """Disjoint retained reason for an unaccepted final-page transition."""
+
+    OUTCOME_UNKNOWN = "outcome_unknown"
+    INTEGRITY_FAILURE = "integrity_failure"
+
+
+type FinalPageResult = (
+    FinalPageCovered
+    | FinalPageNoProgress
+    | FinalPageReplayable
+    | FinalPageRetryable
+    | FinalPageGrantRejected
+    | FinalPageOutcomeUnknown
+)
+
+
+class PageFinalizer(typing.Protocol):
+    """One exact, once-only source lifecycle finalization seam."""
+
+    async def finalize_page(
+        self,
+        context: PageFinalizationContext,
+    ) -> FinalPageResult:
+        """Return one closed final disposition for ``context``."""
+        ...
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class SettledPage:
+    """Accepted page settlement plus exact opaque source evidence."""
+
+    candidate: cursor_policy.PageCandidate
+    lease_settlement: cursor_policy.PageSettlement
+    final_closure_resolutions: tuple[FinalRecordClosureResolution, ...]
+    source_evidence: object
+
+    def __post_init__(self) -> None:
+        settlement_types = {
+            cursor_policy._CoveredPage,  # noqa: SLF001
+            cursor_policy._NoProgressPageSettled,  # noqa: SLF001
+            cursor_policy._ReplayablePageSettled,  # noqa: SLF001
+        }
+        if type(self.candidate) not in {
+            cursor_policy.PageCursorCandidate,
+            cursor_policy.NoProgressPageCandidate,
+        }:
+            message = "candidate must be an exact PageCandidate"
+            raise TypeError(message)
+        if type(self.lease_settlement) not in settlement_types:
+            message = "lease_settlement must be privately issued"
+            raise TypeError(message)
+        if (
+            self.lease_settlement.grant != self.candidate.grant
+            or self.lease_settlement.page_sequence
+            != self.candidate.page_sequence
+            or cursor_policy._read_seal(  # noqa: SLF001
+                self.lease_settlement
+            )
+            is not cursor_policy._read_seal(self.candidate)  # noqa: SLF001
+        ):
+            message = "settled page crossed exact candidate identity"
+            raise CohortIntegrityError(message)
+        if not isinstance(self.final_closure_resolutions, tuple) or any(
+            type(value) is not FinalRecordClosureResolution
+            for value in self.final_closure_resolutions
+        ):
+            message = "final_closure_resolutions must contain exact values"
+            raise TypeError(message)
+
+    @property
+    def grant(self) -> ingestion_lease_store.LeaseGrant:
+        """Return the complete grant carried by the exact candidate."""
+        return self.candidate.grant
+
+    @property
+    def page_sequence(self) -> int:
+        """Return the candidate's exact grant-local page sequence."""
+        return self.candidate.page_sequence
 
 
 class OutcomeUnknownCause(enum.StrEnum):
@@ -1021,8 +1410,7 @@ class CallCompleted:
             CohortTerminalDisposition.SETTLED,
         )
         if any(
-            record.closure_state
-            is not CohortRecordClosureState.DURABLY_CLOSED
+            record.closure_state is not CohortRecordClosureState.DURABLY_CLOSED
             for record in facts.records
         ):
             message = "completed outcome requires durable closure"
@@ -1187,8 +1575,7 @@ class CallOutcomeUnknown:
 
 def _require_all_replay_safe(facts: CohortTerminalFacts) -> None:
     if any(
-        record.closure_state
-        is not CohortRecordClosureState.REPLAY_SAFE_RELEASE
+        record.closure_state is not CohortRecordClosureState.REPLAY_SAFE_RELEASE
         for record in facts.records
     ):
         message = "outcome requires replay-safe closure"
@@ -1434,6 +1821,7 @@ class _RetireFeedResult:
 
     released_sequences: tuple[int, ...]
     released_call_records: tuple[_CallRecord, ...]
+    retained_final_pending_records: tuple[_CallRecord, ...]
     released_calls: tuple[tuple[int, int], ...]
     released_boundaries: tuple[tuple[int, int], ...]
     active_sequence: int | None

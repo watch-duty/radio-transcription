@@ -30,6 +30,8 @@ CohortTerminalFacts = _types.CohortTerminalFacts
 LaneSignalView = _types.LaneSignalView
 OutcomeUnknownCause = _types.OutcomeUnknownCause
 OutcomeUnknownRetentionRequest = _types.OutcomeUnknownRetentionRequest
+PageFinalizationContext = _types.PageFinalizationContext
+PageFinalizer = _types.PageFinalizer
 BoundaryBatchCommitted = _types.BoundaryBatchCommitted
 BoundaryBatchRetryable = _types.BoundaryBatchRetryable
 BoundaryDisposition = _types.BoundaryDisposition
@@ -37,11 +39,20 @@ BoundaryGrantRejected = _types.BoundaryGrantRejected
 BoundaryResult = _types.BoundaryResult
 BoundaryWork = _types.BoundaryWork
 FeedRemoved = _types.FeedRemoved
+FinalPageCovered = _types.FinalPageCovered
+FinalPageGrantRejected = _types.FinalPageGrantRejected
+FinalPageNoProgress = _types.FinalPageNoProgress
+FinalPageOutcomeUnknown = _types.FinalPageOutcomeUnknown
+FinalPageReplayable = _types.FinalPageReplayable
+FinalPageRetryable = _types.FinalPageRetryable
+FinalRecordClosureResolution = _types.FinalRecordClosureResolution
+FinalRecordReleaseBasis = _types.FinalRecordReleaseBasis
 FeedWorkScheduler = _scheduler.FeedWorkScheduler
 GrantLane = _scheduler.GrantLane
 LaneCloseReason = _types.LaneCloseReason
 LaneClosed = _types.LaneClosed
 SchedulerIntegrityError = _scheduler.SchedulerIntegrityError
+SettledPage = _types.SettledPage
 Undrained = _types.Undrained
 
 __all__ = [
@@ -78,12 +89,23 @@ __all__ = [
     "CohortTerminalFacts",
     "FeedRemoved",
     "FeedWorkScheduler",
+    "FinalPageCovered",
+    "FinalPageGrantRejected",
+    "FinalPageNoProgress",
+    "FinalPageOutcomeUnknown",
+    "FinalPageReplayable",
+    "FinalPageRetryable",
+    "FinalRecordClosureResolution",
+    "FinalRecordReleaseBasis",
     "GrantLane",
     "LaneCloseReason",
     "LaneClosed",
     "LaneSignalView",
     "OutcomeUnknownCause",
     "OutcomeUnknownRetentionRequest",
+    "PageFinalizationContext",
+    "PageFinalizer",
     "SchedulerIntegrityError",
+    "SettledPage",
     "Undrained",
 ]

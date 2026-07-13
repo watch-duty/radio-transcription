@@ -54,13 +54,37 @@ def _grant(
     )
 
 
-def _call(feed_id: uuid.UUID, source_order: int) -> object:
-    return feed_work_scheduler.CallSubmission(
+def _open_lane(
+    scheduler: feed_work_scheduler.FeedWorkScheduler,
+    grant: ingestion_lease_store.LeaseGrant,
+) -> feed_work_scheduler.GrantLane:
+    return scheduler.open_lane(
+        grant,
+        stop_requested=asyncio.Event(),
+        grant_lost=asyncio.Event(),
+    )
+
+
+def _call(
+    feed_id: uuid.UUID,
+    source_order: int,
+    *,
+    grant: ingestion_lease_store.LeaseGrant | None = None,
+) -> object:
+    exact_grant = _grant() if grant is None else grant
+    member = _member(feed_id, grant=exact_grant)
+    timestamp = _SOURCE_TIME + datetime.timedelta(seconds=source_order)
+    call = feed_work_scheduler.CallSubmission(
         feed_id=feed_id,
-        source_timestamp=(
-            _SOURCE_TIME + datetime.timedelta(seconds=source_order)
-        ),
-        payload={"source_order": source_order},
+        source_timestamp=timestamp,
+        payload={"source_order": source_order, "member": member},
+    )
+    return feed_work_scheduler.CohortSubmission(
+        member=member,
+        feed_id=feed_id,
+        cohort_timestamp=timestamp,
+        calls=(call,),
+        admission_hook=lambda _identities: None,
     )
 
 
@@ -92,10 +116,41 @@ def _boundary(
     )
 
 
+def _terminal_facts(
+    execution: feed_work_scheduler.CohortExecution,
+) -> feed_work_scheduler.CohortTerminalFacts:
+    return feed_work_scheduler.CohortTerminalFacts(
+        records=tuple(
+            feed_work_scheduler.CohortRecordTerminalFact(
+                identity=call.identity,
+                participated=True,
+                closure_state=(
+                    feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+                ),
+                full_pipeline_completed=True,
+                terminal_reason=(
+                    feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE
+                ),
+            )
+            for call in execution.calls
+        ),
+        disposition=feed_work_scheduler.CohortTerminalDisposition.SETTLED,
+    )
+
+
+def _completed(
+    execution: feed_work_scheduler.CohortExecution,
+) -> feed_work_scheduler.CallCompleted:
+    return feed_work_scheduler.CallCompleted(_terminal_facts(execution))
+
+
 class _ImmediateExecutor:
     async def execute(self, record: object) -> object:
-        del record
-        return feed_work_scheduler.CallCompleted()
+        execution = typing.cast(
+            "feed_work_scheduler.CohortExecution",
+            record,
+        )
+        return _completed(execution)
 
 
 class _GateExecutor:
@@ -105,11 +160,14 @@ class _GateExecutor:
         self.calls = 0
 
     async def execute(self, record: object) -> object:
-        del record
+        execution = typing.cast(
+            "feed_work_scheduler.CohortExecution",
+            record,
+        )
         self.calls += 1
         self.entered.set()
         await self.release.wait()
-        return feed_work_scheduler.CallCompleted()
+        return _completed(execution)
 
 
 class _ControlledCommitter:
@@ -212,7 +270,7 @@ class TestBoundaryOrdering(unittest.IsolatedAsyncioTestCase):
             _limits=_limits(workers=2),
         )
         await scheduler.start()
-        lane = scheduler.open_lane(_grant())
+        lane = _open_lane(scheduler, _grant())
         coordinator = lane._boundary_coordinator
 
         snapshot = await scheduler._snapshot()
@@ -242,7 +300,7 @@ class TestBoundaryOrdering(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         feed_ids = (uuid.UUID(int=1), uuid.UUID(int=2))
         boundaries = _TracingBoundaries((_boundary(feed_ids[0], 10),))
         candidate = cursor_policy.LeaseCursor(grant, pos=None).prepare(
@@ -257,7 +315,8 @@ class TestBoundaryOrdering(unittest.IsolatedAsyncioTestCase):
         )
         try:
             await scheduler._shards[0].wait_for_capacity_waiters(1)
-            self.assertEqual(boundaries.pulled, [])
+            self.assertEqual(boundaries.pulled, [feed_ids[0]])
+            self.assertEqual(committer.calls, [])
             executor.release.set()
             await asyncio.wait_for(coverage, timeout=1)
             self.assertEqual(boundaries.pulled, [feed_ids[0]])
@@ -294,7 +353,7 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
         candidate = cursor.prepare(_SOURCE_TIME)
         feeds = tuple(uuid.UUID(int=index + 3) for index in range(shard_count))
@@ -343,13 +402,15 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
             )
         )
         try:
+            await asyncio.wait_for(executor.entered.wait(), timeout=1)
+            executor.release.set()
             await asyncio.wait_for(promotion_reached.wait(), timeout=1)
             coverage.cancel()
             with self.assertRaises(asyncio.CancelledError):
                 await coverage
 
             snapshot = await scheduler._snapshot()
-            self.assertEqual(snapshot.held, shard_count)
+            self.assertEqual(snapshot.held, 0)
             self.assertTrue(
                 all(shard.queued_calls == 0 for shard in snapshot.shards)
             )
@@ -362,13 +423,7 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone((await lane._snapshot()).page)
             self.assertIs(cursor.outstanding_candidate, candidate)
 
-            executor.release.set()
             await scheduler._wait_for_idle()
-            self.assertTrue(
-                all(
-                    not batch for _grant_value, batch, _final in committer.calls
-                )
-            )
         finally:
             allow_promotion.set()
             executor.release.set()
@@ -398,7 +453,7 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
         candidate = cursor.prepare(_SOURCE_TIME)
         final_promotion = asyncio.Event()
@@ -432,7 +487,10 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
             receipt = await coverage
             coverage.cancel()
 
-            self.assertEqual(cursor.accept(receipt), _SOURCE_TIME)
+            self.assertEqual(
+                cursor.accept(receipt.lease_settlement),
+                _SOURCE_TIME,
+            )
             self.assertIsNone((await lane._snapshot()).page)
             self.assertEqual((await scheduler._snapshot()).held, 0)
             committed = []
@@ -454,7 +512,7 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
             allow_receipt.set()
             await scheduler.close()
 
-    async def test_cross_page_pending_coalesce_rolls_back_on_abort(
+    async def test_cross_page_coalesce_commit_is_shielded_on_cancel(
         self,
     ) -> None:
         executor = _GateExecutor()
@@ -467,19 +525,24 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         feed_id = uuid.UUID(int=1)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
-        first = await asyncio.wait_for(
+        first_coverage = asyncio.create_task(
             lane.cover_page(
                 calls=(_call(feed_id, 0),),
                 boundaries=(_boundary(feed_id, 10),),
                 candidate=cursor.prepare(_SOURCE_TIME),
-            ),
-            timeout=1,
+            )
         )
-        cursor.accept(first)
+        await asyncio.wait_for(executor.entered.wait(), timeout=1)
+        executor.release.set()
+        first = await asyncio.wait_for(first_coverage, timeout=1)
+        cursor.accept(first.lease_settlement)
 
+        second_candidate = cursor.prepare(
+            _SOURCE_TIME + datetime.timedelta(seconds=1)
+        )
         second = asyncio.create_task(
             lane.cover_page(
                 calls=(_call(feed_id, 0),),
@@ -487,45 +550,37 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
                     _boundary(feed_id, 5),
                     _boundary(feed_id, 20),
                 ),
-                candidate=cursor.prepare(
-                    _SOURCE_TIME + datetime.timedelta(seconds=1)
-                ),
+                candidate=second_candidate,
             )
         )
         try:
             await committer.wait_for_calls(2)
             snapshot = await scheduler._shards[0].snapshot()
-            self.assertEqual(snapshot.held, 3)
-            self.assertEqual(snapshot.pending_boundaries, 1)
+            self.assertEqual(snapshot.held, 1)
+            self.assertEqual(snapshot.pending_boundaries, 0)
+            self.assertEqual(snapshot.flushing_boundaries, 1)
             self.assertEqual(len(snapshot.boundaries), 1)
-            pending = snapshot.boundaries[0]
+            flushing = snapshot.boundaries[0]
             self.assertEqual(
-                pending.stable_target,
-                _SOURCE_TIME + datetime.timedelta(seconds=10),
-            )
-            self.assertEqual(
-                pending.target,
+                flushing.target,
                 _SOURCE_TIME + datetime.timedelta(seconds=20),
             )
-            self.assertEqual(pending.provisional_page_sequence, 1)
 
             second.cancel()
+            await asyncio.sleep(0)
+            self.assertFalse(second.done())
+            committer.release.set()
             with self.assertRaises(asyncio.CancelledError):
                 await second
-            rolled_back = (await scheduler._shards[0].snapshot()).boundaries[0]
-            self.assertEqual(
-                rolled_back.target,
-                _SOURCE_TIME + datetime.timedelta(seconds=10),
-            )
-            self.assertIsNone(rolled_back.provisional_page_sequence)
-            self.assertEqual((await scheduler._snapshot()).held, 2)
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+            self.assertIs(cursor.outstanding_candidate, second_candidate)
         finally:
             committer.release.set()
             executor.release.set()
             await scheduler._wait_for_idle()
             await scheduler.close()
 
-    async def test_flushing_target_is_immutable_and_later_target_is_pending(
+    async def test_flushing_target_is_immutable_across_sequential_pages(
         self,
     ) -> None:
         executor = _GateExecutor()
@@ -538,47 +593,58 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         feed_id = uuid.UUID(int=1)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
-        first = await asyncio.wait_for(
+        first_coverage = asyncio.create_task(
             lane.cover_page(
                 calls=(_call(feed_id, 0),),
                 boundaries=(_boundary(feed_id, 10),),
                 candidate=cursor.prepare(_SOURCE_TIME),
-            ),
-            timeout=1,
-        )
-        cursor.accept(first)
-        self.assertEqual(committer.calls, [(grant, (), True)])
-        executor.release.set()
-        await committer.wait_for_calls(2)
-
-        second = asyncio.create_task(
-            lane.cover_page(
-                calls=(),
-                boundaries=(_boundary(feed_id, 20),),
-                candidate=cursor.prepare(
-                    _SOURCE_TIME + datetime.timedelta(seconds=1)
-                ),
             )
         )
+        await asyncio.wait_for(executor.entered.wait(), timeout=1)
+        executor.release.set()
+        await committer.wait_for_calls(1)
         try:
-            await scheduler._shards[0].wait_for_held(2)
             snapshot = await scheduler._shards[0].snapshot()
             self.assertEqual(snapshot.flushing_boundaries, 1)
-            self.assertEqual(snapshot.pending_boundaries, 1)
+            self.assertEqual(snapshot.pending_boundaries, 0)
             self.assertEqual(
                 [boundary.target for boundary in snapshot.boundaries],
+                [_SOURCE_TIME + datetime.timedelta(seconds=10)],
+            )
+            self.assertEqual(snapshot.active_calls, 0)
+
+            committer.release.set()
+            first = await asyncio.wait_for(first_coverage, timeout=1)
+            cursor.accept(first.lease_settlement)
+            second = await asyncio.wait_for(
+                lane.cover_page(
+                    calls=(),
+                    boundaries=(_boundary(feed_id, 20),),
+                    candidate=cursor.prepare(
+                        _SOURCE_TIME + datetime.timedelta(seconds=1)
+                    ),
+                ),
+                timeout=1,
+            )
+            cursor.accept(second.lease_settlement)
+            committed_targets = [
+                boundary.target
+                for _exact_grant, batch, _final in committer.calls
+                for boundary in batch
+            ]
+            self.assertEqual(
+                committed_targets,
                 [
                     _SOURCE_TIME + datetime.timedelta(seconds=10),
                     _SOURCE_TIME + datetime.timedelta(seconds=20),
                 ],
             )
-            self.assertEqual(snapshot.active_calls, 0)
         finally:
             committer.release.set()
-            await asyncio.wait_for(second, timeout=1)
+            await asyncio.gather(first_coverage, return_exceptions=True)
             await scheduler._wait_for_idle()
             await scheduler.close()
 
@@ -594,8 +660,8 @@ class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
         await scheduler.start()
         old = _grant(fencing_token=1)
         successor = _grant(fencing_token=2)
-        old_lane = scheduler.open_lane(old)
-        successor_lane = scheduler.open_lane(successor)
+        old_lane = _open_lane(scheduler, old)
+        successor_lane = _open_lane(scheduler, successor)
         committer.rejected_grants.add(old)
         old_cursor = cursor_policy.LeaseCursor(old, pos=None)
         old_candidate = old_cursor.prepare(_SOURCE_TIME)
@@ -629,12 +695,13 @@ class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
         successor_cursor = cursor_policy.LeaseCursor(successor, pos=None)
         receipt = await successor_lane.cover_page(
             calls=(),
-            boundaries=(
-                _boundary(uuid.UUID(int=1), 2, grant=successor),
-            ),
+            boundaries=(_boundary(uuid.UUID(int=1), 2, grant=successor),),
             candidate=successor_cursor.prepare(_SOURCE_TIME),
         )
-        self.assertEqual(successor_cursor.accept(receipt), _SOURCE_TIME)
+        self.assertEqual(
+            successor_cursor.accept(receipt.lease_settlement),
+            _SOURCE_TIME,
+        )
         await asyncio.wait_for(scheduler._wait_for_idle(), timeout=1)
         self.assertIn(successor, (call[0] for call in committer.calls))
         self.assertFalse((await scheduler._snapshot()).fatal)
@@ -660,7 +727,7 @@ class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
         try:
             receipt = await lane.cover_page(
@@ -671,7 +738,7 @@ class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
                 ),
                 candidate=cursor.prepare(_SOURCE_TIME),
             )
-            cursor.accept(receipt)
+            cursor.accept(receipt.lease_settlement)
             self.assertEqual((await scheduler._snapshot()).held, 0)
 
             later = await lane.cover_page(
@@ -684,7 +751,7 @@ class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
                     _SOURCE_TIME + datetime.timedelta(seconds=1)
                 ),
             )
-            cursor.accept(later)
+            cursor.accept(later.lease_settlement)
             committed_feeds = set()
             for _grant_value, batch, _final in committer.calls:
                 for boundary in batch:
@@ -718,7 +785,7 @@ class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         candidate = cursor_policy.LeaseCursor(grant, pos=None).prepare(
             _SOURCE_TIME
         )
@@ -753,7 +820,7 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
         candidate = cursor.prepare_no_progress()
         coverage = asyncio.create_task(
@@ -765,14 +832,20 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
         )
         try:
             await asyncio.wait_for(executor.entered.wait(), timeout=1)
+            executor.release.set()
             settlement = await asyncio.wait_for(coverage, timeout=1)
 
-            self.assertNotIsInstance(settlement, cursor_policy._CoveredPage)
+            self.assertNotIsInstance(
+                settlement.lease_settlement,
+                cursor_policy._CoveredPage,
+            )
             self.assertEqual(committer.calls, [(grant, (), True)])
             self.assertEqual(committer.final_calls, 1)
-            self.assertEqual((await scheduler._snapshot()).held, 1)
+            self.assertEqual((await scheduler._snapshot()).held, 0)
             original_pos = cursor.pos
-            self.assertIsNone(cursor.accept_no_progress(settlement))
+            self.assertIsNone(
+                cursor.accept_no_progress(settlement.lease_settlement)
+            )
             self.assertIs(cursor.pos, original_pos)
             self.assertEqual(cursor.next_page_sequence, 1)
         finally:
@@ -792,7 +865,7 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
         candidate = cursor.prepare_no_progress()
         boundaries = _TracingBoundaries((_boundary(uuid.UUID(int=1), 1),))
@@ -831,7 +904,7 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
         candidate = cursor.prepare_no_progress()
 
@@ -852,7 +925,7 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
                 boundaries=(),
                 candidate=candidate,
             )
-            cursor.accept_no_progress(settlement)
+            cursor.accept_no_progress(settlement.lease_settlement)
 
             self.assertEqual(committer.calls, [(grant, (), True)] * 2)
             self.assertEqual(committer.final_calls, 2)
@@ -878,7 +951,7 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
         candidate = cursor.prepare_no_progress()
         coverage = asyncio.create_task(
@@ -919,7 +992,7 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
         candidate = cursor.prepare_no_progress()
         coverage = asyncio.create_task(
@@ -943,7 +1016,7 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
             await lane.close()
             await scheduler.close()
 
-    async def test_no_progress_cancel_before_seal_returns_no_settlement(
+    async def test_no_progress_cancel_before_seal_settles_owned_transition(
         self,
     ) -> None:
         committer = _ControlledCommitter()
@@ -954,7 +1027,7 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
         candidate = cursor.prepare_no_progress()
         seal_entered = asyncio.Event()
@@ -963,10 +1036,11 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
 
         async def gated_cover(
             offered: cursor_policy.PageCandidate,
+            result: object,
         ) -> cursor_policy.PageSettlement:
             seal_entered.set()
             await allow_seal.wait()
-            return await cover(offered)
+            return await cover(offered, result)
 
         lane._cover = gated_cover
         coverage = asyncio.create_task(
@@ -979,13 +1053,14 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
         try:
             await asyncio.wait_for(seal_entered.wait(), timeout=1)
             coverage.cancel()
-            with self.assertRaises(asyncio.CancelledError):
-                await coverage
+            allow_seal.set()
+            settled = await asyncio.wait_for(coverage, timeout=1)
 
-            self.assertIs(cursor.outstanding_candidate, candidate)
+            cursor.accept_no_progress(settled.lease_settlement)
+            self.assertIsNone(cursor.outstanding_candidate)
             self.assertEqual(committer.calls, [(grant, (), True)])
             lane_snapshot = await lane._snapshot()
-            self.assertEqual(lane_snapshot.next_page_sequence, 0)
+            self.assertEqual(lane_snapshot.next_page_sequence, 1)
             self.assertIsNone(lane_snapshot.page)
         finally:
             allow_seal.set()
@@ -1002,7 +1077,7 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
 
         try:
@@ -1012,8 +1087,14 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
                 candidate=cursor.prepare(_SOURCE_TIME),
             )
 
-            self.assertIsInstance(receipt, cursor_policy._CoveredPage)
-            self.assertEqual(cursor.accept(receipt), _SOURCE_TIME)
+            self.assertIsInstance(
+                receipt.lease_settlement,
+                cursor_policy._CoveredPage,
+            )
+            self.assertEqual(
+                cursor.accept(receipt.lease_settlement),
+                _SOURCE_TIME,
+            )
             self.assertEqual(committer.final_calls, 1)
             committed = tuple(
                 boundary
@@ -1044,7 +1125,7 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         relief_requested = asyncio.Event()
         request_relief = lane._boundary_coordinator.request_relief
 
@@ -1075,12 +1156,15 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
             )
             snapshot = await scheduler._shards[0].snapshot()
             self.assertEqual(snapshot.held, 400)
-            self.assertEqual(boundaries.pulled, list(feed_ids[:401]))
+            self.assertEqual(boundaries.pulled, list(feed_ids))
             self.assertFalse(coverage.done())
 
             committer.release.set()
             receipt = await asyncio.wait_for(coverage, timeout=2)
-            self.assertEqual(cursor.accept(receipt), _SOURCE_TIME)
+            self.assertEqual(
+                cursor.accept(receipt.lease_settlement),
+                _SOURCE_TIME,
+            )
             self.assertEqual(boundaries.pulled, list(feed_ids))
             self.assertEqual(committer.final_calls, 1)
             self.assertGreater(
@@ -1114,7 +1198,7 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
 
         receipt = await lane.cover_page(
@@ -1123,7 +1207,10 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
             candidate=cursor.prepare(_SOURCE_TIME),
         )
 
-        self.assertEqual(cursor.accept(receipt), _SOURCE_TIME)
+        self.assertEqual(
+            cursor.accept(receipt.lease_settlement),
+            _SOURCE_TIME,
+        )
         self.assertEqual(committer.calls, [(grant, (), True)])
         await lane.close()
         await scheduler.close()
@@ -1149,7 +1236,7 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         relief_requested = asyncio.Event()
         request_relief = lane._boundary_coordinator.request_relief
 
@@ -1203,7 +1290,10 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
                 ),
                 timeout=2,
             )
-            self.assertEqual(cursor.accept(replay), _SOURCE_TIME)
+            self.assertEqual(
+                cursor.accept(replay.lease_settlement),
+                _SOURCE_TIME,
+            )
             await asyncio.wait_for(scheduler._wait_for_idle(), timeout=1)
             self.assertEqual((await scheduler._snapshot()).held, 0)
         finally:
@@ -1226,7 +1316,7 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
         candidate = cursor.prepare(_SOURCE_TIME)
         coverage = asyncio.create_task(
@@ -1263,7 +1353,7 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
         )
         await scheduler.start()
         grant = _grant()
-        lane = scheduler.open_lane(grant)
+        lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
         candidate = cursor.prepare(_SOURCE_TIME)
         coverage = asyncio.create_task(

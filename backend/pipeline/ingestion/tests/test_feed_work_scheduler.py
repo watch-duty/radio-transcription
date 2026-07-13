@@ -18,6 +18,7 @@ _OWNER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _OTHER_OWNER_ID = uuid.UUID("22222222-3333-4444-5555-666666666666")
 _SOURCE_TIME = datetime.datetime(2026, 7, 12, 12, 0, tzinfo=datetime.UTC)
 
+
 def _scheduler_types() -> typing.Any:
     return importlib.import_module(
         "backend.pipeline.ingestion.feed_work_scheduler._types"
@@ -584,6 +585,50 @@ class _UnknownPageAbortExecutor:
         return _stopped(execution)
 
 
+class _AbortBeforeUnknownExecutor:
+    """Return STOPPED before a later cohort reveals unknown outcome."""
+
+    def __init__(self) -> None:
+        self.stopped_returned = asyncio.Event()
+        self.unknown_entered = asyncio.Event()
+        self.release_unknown = asyncio.Event()
+
+    async def execute(self, execution: object) -> object:
+        if not isinstance(execution, feed_work_scheduler.CohortExecution):
+            message = "executor received a private scheduler record"
+            raise TypeError(message)
+        source_order = execution.calls[0].payload["source_order"]
+        if source_order == 0:
+            return _final_closure_pending(execution)
+        if source_order == 1:
+            self.stopped_returned.set()
+            return _stopped(execution)
+        self.unknown_entered.set()
+        await self.release_unknown.wait()
+        return _outcome_unknown(execution)
+
+
+class _FinalPendingWithGatedSiblingExecutor:
+    """Hold a sibling after an earlier Feed becomes final-pending."""
+
+    def __init__(self) -> None:
+        self.pending_returned = asyncio.Event()
+        self.sibling_entered = asyncio.Event()
+        self.release_sibling = asyncio.Event()
+
+    async def execute(self, execution: object) -> object:
+        if not isinstance(execution, feed_work_scheduler.CohortExecution):
+            message = "executor received a private scheduler record"
+            raise TypeError(message)
+        source_order = execution.calls[0].payload["source_order"]
+        if source_order == 0:
+            self.pending_returned.set()
+            return _final_closure_pending(execution)
+        self.sibling_entered.set()
+        await self.release_sibling.wait()
+        return _completed(execution)
+
+
 class _CrossedTerminalFactsExecutor:
     """Return structurally legal facts for the wrong exact identity."""
 
@@ -613,6 +658,117 @@ class _CrossedTerminalFactsExecutor:
             disposition=feed_work_scheduler.CohortTerminalDisposition.SETTLED,
         )
         return feed_work_scheduler.CallCompleted(facts)
+
+
+def _accepted_boundary_results(
+    context: feed_work_scheduler.PageFinalizationContext,
+) -> tuple[feed_work_scheduler.BoundaryResult, ...]:
+    return tuple(
+        feed_work_scheduler.BoundaryResult(
+            boundary,
+            feed_work_scheduler.BoundaryDisposition.COMMITTED,
+        )
+        for boundary in context.candidate_boundaries
+    )
+
+
+def _covered_final_page(
+    context: feed_work_scheduler.PageFinalizationContext,
+    *,
+    resolutions: tuple[
+        feed_work_scheduler.FinalRecordClosureResolution,
+        ...,
+    ] = (),
+    source_evidence: object = None,
+) -> feed_work_scheduler.FinalPageCovered:
+    return feed_work_scheduler.FinalPageCovered(
+        grant=context.grant,
+        page_sequence=context.page_sequence,
+        candidate=context.candidate,
+        boundary_results=_accepted_boundary_results(context),
+        final_closure_resolutions=resolutions,
+        source_evidence=source_evidence,
+    )
+
+
+class _ControlledPageFinalizer:
+    """Capture one final context and settle only when explicitly released."""
+
+    def __init__(
+        self,
+        result_factory: typing.Callable[
+            [feed_work_scheduler.PageFinalizationContext],
+            object,
+        ] = _covered_final_page,
+    ) -> None:
+        self.result_factory = result_factory
+        self.contexts: list[feed_work_scheduler.PageFinalizationContext] = []
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def finalize_page(
+        self,
+        context: feed_work_scheduler.PageFinalizationContext,
+    ) -> object:
+        self.contexts.append(context)
+        self.entered.set()
+        await self.release.wait()
+        return self.result_factory(context)
+
+
+class _NoCommitThenReplayableFinalizer:
+    """Prove no commit once, then await accepted replayable settlement."""
+
+    def __init__(self) -> None:
+        self.contexts: list[feed_work_scheduler.PageFinalizationContext] = []
+        self.retry_entered = asyncio.Event()
+        self.release_retry = asyncio.Event()
+
+    async def finalize_page(
+        self,
+        context: feed_work_scheduler.PageFinalizationContext,
+    ) -> object:
+        self.contexts.append(context)
+        if len(self.contexts) == 1:
+            return feed_work_scheduler.FinalPageRetryable(
+                grant=context.grant,
+                page_sequence=context.page_sequence,
+                candidate=context.candidate,
+                commit_child_mutations_started=False,
+                mutation_could_have_committed=False,
+            )
+        self.retry_entered.set()
+        await self.release_retry.wait()
+        return feed_work_scheduler.FinalPageReplayable(
+            grant=context.grant,
+            page_sequence=context.page_sequence,
+            candidate=context.candidate,
+            boundary_results=_accepted_boundary_results(context),
+            final_closure_resolutions=(),
+            source_evidence=None,
+        )
+
+
+class _PerOrderOutcomeExecutor:
+    """Return one closed outcome factory for each cohort source order."""
+
+    def __init__(
+        self,
+        factories: dict[
+            int,
+            typing.Callable[[feed_work_scheduler.CohortExecution], object],
+        ],
+    ) -> None:
+        self.factories = factories
+        self.executed: list[int] = []
+
+    async def execute(self, execution: object) -> object:
+        if not isinstance(execution, feed_work_scheduler.CohortExecution):
+            message = "executor received a private scheduler record"
+            raise TypeError(message)
+        source_order = execution.calls[0].identity.source_order
+        self.executed.append(source_order)
+        return self.factories[source_order](execution)
 
 
 class _CapturingExecutor:
@@ -666,9 +822,7 @@ class _TracingCalls:
         source_order = typing.cast(
             "dict[str, object]",
             value.calls[0].payload,
-        )[
-            "source_order"
-        ]
+        )["source_order"]
         self.pulled.append(typing.cast("int", source_order))
         self.changed.set()
         return value
@@ -719,13 +873,24 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             "BoundaryWork",
             "FeedRemoved",
             "FeedWorkScheduler",
+            "FinalPageCovered",
+            "FinalPageGrantRejected",
+            "FinalPageNoProgress",
+            "FinalPageOutcomeUnknown",
+            "FinalPageReplayable",
+            "FinalPageRetryable",
+            "FinalRecordClosureResolution",
+            "FinalRecordReleaseBasis",
             "GrantLane",
             "LaneCloseReason",
             "LaneClosed",
             "LaneSignalView",
             "OutcomeUnknownCause",
             "OutcomeUnknownRetentionRequest",
+            "PageFinalizationContext",
+            "PageFinalizer",
             "SchedulerIntegrityError",
+            "SettledPage",
             "Undrained",
         }
         forbidden_fragments = {
@@ -880,10 +1045,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         ) -> typing.Callable[[object], None]:
             def observe(settlement: object) -> None:
                 self.assertFalse(
-                    any(
-                        shard._lock.locked()
-                        for shard in scheduler._shards
-                    )
+                    any(shard._lock.locked() for shard in scheduler._shards)
                 )
                 observed.append(settlement)
                 notified.set()
@@ -900,37 +1062,45 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 observed: list[object] = []
                 notified = asyncio.Event()
 
-                await lane.cover_page(
-                    calls=(
-                        _submission(
-                            uuid.UUID(int=8),
-                            0,
-                            grant=grant,
-                            settlement_observer=observer_for(
-                                scheduler,
-                                observed,
-                                notified,
+                coverage = asyncio.create_task(
+                    lane.cover_page(
+                        calls=(
+                            _submission(
+                                uuid.UUID(int=8),
+                                0,
+                                grant=grant,
+                                settlement_observer=observer_for(
+                                    scheduler,
+                                    observed,
+                                    notified,
+                                ),
                             ),
                         ),
-                    ),
-                    boundaries=(),
-                    candidate=cursor_policy.LeaseCursor(
-                        grant,
-                        pos=None,
-                    ).prepare(_SOURCE_TIME),
+                        boundaries=(),
+                        candidate=cursor_policy.LeaseCursor(
+                            grant,
+                            pos=None,
+                        ).prepare(_SOURCE_TIME),
+                    )
                 )
                 await asyncio.wait_for(executor.entered.wait(), timeout=1)
                 executor.release.set()
                 await asyncio.wait_for(notified.wait(), timeout=1)
 
                 self.assertEqual(observed, [expected])
-                if expected is feed_work_scheduler.CallSettlement.AUTHORITY_LOST:
+                if (
+                    expected
+                    is feed_work_scheduler.CallSettlement.AUTHORITY_LOST
+                ):
                     await lane.close(
                         feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS
                     )
+                await asyncio.gather(coverage, return_exceptions=True)
                 await scheduler.close()
 
-    async def test_observer_can_reenter_lane_and_failure_is_integrity(self) -> None:
+    async def test_observer_can_reenter_lane_and_failure_is_integrity(
+        self,
+    ) -> None:
         executor = _GatedOutcomeExecutor(_completed)
         scheduler = feed_work_scheduler.FeedWorkScheduler(executor)
         await scheduler.start()
@@ -951,23 +1121,27 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             )
             reentered.set()
 
-        await lane.cover_page(
-            calls=(
-                _submission(
-                    uuid.UUID(int=8),
-                    0,
-                    grant=grant,
-                    settlement_observer=close_from_observer,
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _submission(
+                        uuid.UUID(int=8),
+                        0,
+                        grant=grant,
+                        settlement_observer=close_from_observer,
+                    ),
                 ),
-            ),
-            boundaries=(),
-            candidate=cursor_policy.LeaseCursor(
-                grant,
-                pos=None,
-            ).prepare(_SOURCE_TIME),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
         )
+        await asyncio.wait_for(executor.entered.wait(), timeout=1)
         executor.release.set()
         await asyncio.wait_for(reentered.wait(), timeout=1)
+        await asyncio.gather(coverage, return_exceptions=True)
         await lane.close()
         await scheduler.close()
 
@@ -1078,21 +1252,25 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         remove_lane = _open_lane(remove_scheduler, remove_grant)
         remove_observed: dict[int, list[object]] = {0: [], 1: []}
         removed_feed = uuid.UUID(int=1)
-        await remove_lane.cover_page(
-            calls=(
-                _submission(
-                    removed_feed,
-                    source_order,
-                    grant=remove_grant,
-                    settlement_observer=remove_observed[source_order].append,
-                )
-                for source_order in range(2)
-            ),
-            boundaries=(),
-            candidate=cursor_policy.LeaseCursor(
-                remove_grant,
-                pos=None,
-            ).prepare(_SOURCE_TIME),
+        remove_coverage = asyncio.create_task(
+            remove_lane.cover_page(
+                calls=(
+                    _submission(
+                        removed_feed,
+                        source_order,
+                        grant=remove_grant,
+                        settlement_observer=(
+                            remove_observed[source_order].append
+                        ),
+                    )
+                    for source_order in range(2)
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    remove_grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
         )
         await remove_executor.wait_for_started(1)
         await remove_lane.remove_feed(removed_feed)
@@ -1102,6 +1280,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         remove_executor.release_all()
         await remove_scheduler._wait_for_idle()
+        await asyncio.gather(remove_coverage, return_exceptions=True)
         self.assertEqual(
             remove_observed[0],
             [feed_work_scheduler.CallSettlement.COMPLETED],
@@ -1117,29 +1296,34 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         loss_grant = _grant(lease_key="182")
         loss_lane = _open_lane(loss_scheduler, loss_grant)
         loss_observed: dict[int, list[object]] = {0: [], 1: []}
-        await loss_lane.cover_page(
-            calls=(
-                _submission(
-                    uuid.UUID(int=1),
-                    source_order,
-                    grant=loss_grant,
-                    settlement_observer=loss_observed[source_order].append,
-                )
-                for source_order in range(2)
-            ),
-            boundaries=(),
-            candidate=cursor_policy.LeaseCursor(
-                loss_grant,
-                pos=None,
-            ).prepare(_SOURCE_TIME),
+        loss_coverage = asyncio.create_task(
+            loss_lane.cover_page(
+                calls=(
+                    _submission(
+                        uuid.UUID(int=1),
+                        source_order,
+                        grant=loss_grant,
+                        settlement_observer=loss_observed[source_order].append,
+                    )
+                    for source_order in range(2)
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    loss_grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
         )
         await asyncio.wait_for(loss_executor.entered.wait(), timeout=1)
         loss_close = asyncio.create_task(
             loss_lane.close(feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS)
         )
-        await asyncio.wait_for(loss_executor.cancellation_seen.wait(), timeout=1)
+        await asyncio.wait_for(
+            loss_executor.cancellation_seen.wait(), timeout=1
+        )
         loss_executor.settle.set()
         await asyncio.wait_for(loss_close, timeout=1)
+        await asyncio.gather(loss_coverage, return_exceptions=True)
         self.assertEqual(
             loss_observed,
             {
@@ -1189,7 +1373,10 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(calls.pulled, [0, 1, 2])
-            self.assertEqual(cursor.accept(receipt), _SOURCE_TIME)
+            self.assertEqual(
+                cursor.accept(receipt.lease_settlement),
+                _SOURCE_TIME,
+            )
             lane_snapshot = await lane._snapshot()
             self.assertEqual(lane_snapshot.next_page_sequence, 1)
             self.assertIsNone(lane_snapshot.page)
@@ -1278,9 +1465,13 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
 
             await executor.release_completions(1)
             await calls.wait_for_pulled(402)
+            executor.release_all()
             receipt = await asyncio.wait_for(coverage, timeout=1)
             self.assertEqual(calls.pulled, list(range(402)))
-            self.assertEqual(cursor.accept(receipt), _SOURCE_TIME)
+            self.assertEqual(
+                cursor.accept(receipt.lease_settlement),
+                _SOURCE_TIME,
+            )
         finally:
             if not coverage.done():
                 coverage.cancel()
@@ -1503,31 +1694,40 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         successor_lane = _open_lane(scheduler, successor)
         sibling_lane = _open_lane(scheduler, sibling)
         shared_feed = uuid.UUID(int=1)
-        await old_lane.cover_page(
-            calls=(
-                _submission(shared_feed, 0, grant=old),
-                _submission(shared_feed, 1, grant=old),
+        old_coverage = asyncio.create_task(
+            old_lane.cover_page(
+                calls=(
+                    _submission(shared_feed, 0, grant=old),
+                    _submission(shared_feed, 1, grant=old),
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(old, pos=None).prepare(
+                    _SOURCE_TIME
+                ),
             ),
-            boundaries=(),
-            candidate=cursor_policy.LeaseCursor(old, pos=None).prepare(
-                _SOURCE_TIME
+            name="old-coverage",
+        )
+        successor_coverage = asyncio.create_task(
+            successor_lane.cover_page(
+                calls=(_submission(shared_feed, 0, grant=successor),),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    successor,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
             ),
+            name="successor-coverage",
         )
-        await successor_lane.cover_page(
-            calls=(_submission(shared_feed, 0, grant=successor),),
-            boundaries=(),
-            candidate=cursor_policy.LeaseCursor(
-                successor,
-                pos=None,
-            ).prepare(_SOURCE_TIME),
-        )
-        await sibling_lane.cover_page(
-            calls=(_submission(uuid.UUID(int=2), 0, grant=sibling),),
-            boundaries=(),
-            candidate=cursor_policy.LeaseCursor(
-                sibling,
-                pos=None,
-            ).prepare(_SOURCE_TIME),
+        sibling_coverage = asyncio.create_task(
+            sibling_lane.cover_page(
+                calls=(_submission(uuid.UUID(int=2), 0, grant=sibling),),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    sibling,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            ),
+            name="sibling-coverage",
         )
         await executor.wait_for_started(2)
         close = asyncio.create_task(
@@ -1539,14 +1739,27 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(snapshot.closing)
             self.assertFalse(snapshot.closed)
             self.assertFalse(close.done())
-            await scheduler._shards[0].wait_for_held(3)
             records = (await scheduler._snapshot()).shards[0].records
-            self.assertEqual(
-                tuple(record.grant for record in records),
-                (old, successor, sibling),
-            )
+            self.assertIn(successor, {record.grant for record in records})
+            self.assertIn(sibling, {record.grant for record in records})
+            self.assertIn(old, {record.grant for record in records})
 
-            executor.release(0)
+            executor.release_all()
+            old_page, successor_page, sibling_page = await asyncio.gather(
+                old_coverage,
+                successor_coverage,
+                sibling_coverage,
+                return_exceptions=True,
+            )
+            self.assertIsInstance(old_page, RuntimeError)
+            self.assertIsInstance(
+                successor_page,
+                feed_work_scheduler.SettledPage,
+            )
+            self.assertIsInstance(
+                sibling_page,
+                feed_work_scheduler.SettledPage,
+            )
             result = await asyncio.wait_for(close, timeout=1)
             self.assertEqual(
                 result,
@@ -1564,16 +1777,22 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(ValueError, "not newer"):
                 _open_lane(scheduler, old)
             remaining = (await scheduler._snapshot()).shards[0].records
-            self.assertEqual(
-                {record.grant for record in remaining},
-                {successor, sibling},
-            )
+            self.assertEqual(remaining, ())
             self.assertEqual((await scheduler._snapshot()).lane_count, 2)
             self.assertNotIn(old, scheduler._closing_grants)
         finally:
             executor.release_all()
-            await scheduler._wait_for_idle()
-            await scheduler.close()
+            await asyncio.wait_for(scheduler._wait_for_idle(), timeout=1)
+            coverage_tasks = {
+                old_coverage,
+                successor_coverage,
+                sibling_coverage,
+            }
+            await asyncio.gather(
+                *coverage_tasks,
+                return_exceptions=True,
+            )
+            await asyncio.wait_for(scheduler.close(), timeout=1)
 
     async def test_distinct_slot_churn_retains_only_scalar_fences(
         self,
@@ -1644,12 +1863,14 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler.start()
         grant = _grant()
         lane = _open_lane(scheduler, grant)
-        await lane.cover_page(
-            calls=(_submission(uuid.UUID(int=1), 0),),
-            boundaries=(),
-            candidate=cursor_policy.LeaseCursor(grant, pos=None).prepare(
-                _SOURCE_TIME
-            ),
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(_submission(uuid.UUID(int=1), 0),),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(grant, pos=None).prepare(
+                    _SOURCE_TIME
+                ),
+            )
         )
         await asyncio.wait_for(executor.entered.wait(), timeout=1)
         old_worker = scheduler._shards[0]._workers[0].task
@@ -1682,6 +1903,11 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertIsNot(replacement, old_worker)
         self.assertTrue(old_worker.done())
         self.assertFalse(replacement.done())
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "page candidate aborted by precommit_cancellation",
+        ):
+            await asyncio.wait_for(coverage, timeout=1)
         await scheduler.close()
 
     async def test_loss_requests_every_shard_before_cleanup_settles(
@@ -1703,15 +1929,17 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler.start()
         grant = _grant()
         lane = _open_lane(scheduler, grant)
-        await lane.cover_page(
-            calls=(
-                _submission(uuid.UUID(int=1), 0),
-                _submission(uuid.UUID(int=2), 1),
-            ),
-            boundaries=(),
-            candidate=cursor_policy.LeaseCursor(grant, pos=None).prepare(
-                _SOURCE_TIME
-            ),
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _submission(uuid.UUID(int=1), 0),
+                    _submission(uuid.UUID(int=2), 1),
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(grant, pos=None).prepare(
+                    _SOURCE_TIME
+                ),
+            )
         )
         await executor.wait_for_counts(2, 0)
         close = asyncio.create_task(
@@ -1731,6 +1959,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             ),
         )
         self.assertEqual((await scheduler._snapshot()).held, 0)
+        await asyncio.gather(coverage, return_exceptions=True)
         await scheduler.close()
 
     async def test_feed_removal_localizes_blocked_and_queued_records(  # noqa: PLR0915
@@ -1787,11 +2016,11 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                     await asyncio.sleep(0)
             self.assertIsNotNone(barrier)
             self.assertEqual(barrier.pulled, 5)
-            self.assertEqual(barrier.registered, 2)
-            self.assertEqual(barrier.localized, 2)
+            self.assertEqual(barrier.registered, 3)
+            self.assertEqual(barrier.localized, 1)
             self.assertEqual(barrier.current_source_order, 4)
             self.assertFalse(coverage.done())
-            executor.release(0)
+            executor.release_all()
             receipt = await asyncio.wait_for(coverage, timeout=1)
 
             self.assertEqual(
@@ -1804,15 +2033,12 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 ),
             )
             self.assertEqual(calls.pulled, [0, 1, 2, 3, 4])
-            self.assertEqual(cursor.accept(receipt), _SOURCE_TIME)
-            snapshot = await scheduler._snapshot()
-            self.assertEqual(snapshot.held, 2)
             self.assertEqual(
-                tuple(
-                    record.source_order for record in snapshot.shards[0].records
-                ),
-                (3, 4),
+                cursor.accept(receipt.lease_settlement),
+                _SOURCE_TIME,
             )
+            snapshot = await scheduler._snapshot()
+            self.assertEqual(snapshot.held, 0)
 
             next_candidate = cursor.prepare(
                 _SOURCE_TIME + datetime.timedelta(seconds=1)
@@ -1823,10 +2049,10 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 candidate=next_candidate,
             )
             self.assertEqual(
-                cursor.accept(removed_only),
+                cursor.accept(removed_only.lease_settlement),
                 _SOURCE_TIME + datetime.timedelta(seconds=1),
             )
-            self.assertEqual((await scheduler._snapshot()).held, 2)
+            self.assertEqual((await scheduler._snapshot()).held, 0)
 
             executor.release_all()
             await scheduler._wait_for_idle()
@@ -1840,7 +2066,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 candidate=successor_cursor.prepare(_SOURCE_TIME),
             )
             self.assertEqual(
-                successor_cursor.accept(successor_receipt),
+                successor_cursor.accept(successor_receipt.lease_settlement),
                 _SOURCE_TIME,
             )
             await scheduler._wait_for_idle()
@@ -1864,15 +2090,17 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         removed_feed = uuid.UUID(int=8)
         sibling_feed = uuid.UUID(int=16)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
-        first = await lane.cover_page(
-            calls=(_submission(removed_feed, 0),),
-            boundaries=(),
-            candidate=cursor.prepare(_SOURCE_TIME),
+        first_coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(_submission(removed_feed, 0),),
+                boundaries=(),
+                candidate=cursor.prepare(_SOURCE_TIME),
+            )
         )
-        cursor.accept(first)
         await asyncio.wait_for(executor.entered.wait(), timeout=1)
         executor.release.set()
-        await scheduler._wait_for_idle()
+        first = await asyncio.wait_for(first_coverage, timeout=1)
+        cursor.accept(first.lease_settlement)
 
         second = await lane.cover_page(
             calls=(
@@ -1884,7 +2112,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 _SOURCE_TIME + datetime.timedelta(seconds=1)
             ),
         )
-        cursor.accept(second)
+        cursor.accept(second.lease_settlement)
         await scheduler._wait_for_idle()
         self.assertEqual(executor.calls, 2)
         self.assertFalse((await scheduler._snapshot()).fatal)
@@ -1898,15 +2126,17 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         grant = _grant()
         lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
-        receipt = await lane.cover_page(
-            calls=(_submission(uuid.UUID(int=8), 0),),
-            boundaries=(),
-            candidate=cursor.prepare(_SOURCE_TIME),
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(_submission(uuid.UUID(int=8), 0),),
+                boundaries=(),
+                candidate=cursor.prepare(_SOURCE_TIME),
+            )
         )
-        cursor.accept(receipt)
         await asyncio.wait_for(executor.entered.wait(), timeout=1)
         executor.release.set()
         await asyncio.wait_for(lane._closing_event.wait(), timeout=1)
+        await asyncio.gather(coverage, return_exceptions=True)
 
         result = await lane.close(
             feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS
@@ -1941,12 +2171,14 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         await scheduler.start()
         grant = _grant()
         lane = _open_lane(scheduler, grant)
-        await lane.cover_page(
-            calls=(_submission(uuid.UUID(int=1), 0),),
-            boundaries=(),
-            candidate=cursor_policy.LeaseCursor(grant, pos=None).prepare(
-                _SOURCE_TIME
-            ),
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(_submission(uuid.UUID(int=1), 0),),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(grant, pos=None).prepare(
+                    _SOURCE_TIME
+                ),
+            )
         )
         await asyncio.wait_for(executor.entered.wait(), timeout=1)
         worker = scheduler._shards[0]._workers[0].task
@@ -1999,6 +2231,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         executor.settle.set()
         await asyncio.wait_for(worker, timeout=1)
         self.assertEqual((await scheduler._snapshot()).held, 1)
+        await asyncio.gather(coverage, return_exceptions=True)
 
     async def test_unexpected_worker_failure_reaches_every_lane(self) -> None:
         scheduler_types = _scheduler_types()
@@ -2022,39 +2255,24 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         first_lane = _open_lane(scheduler, first_grant)
         sibling_lane = _open_lane(scheduler, sibling_grant)
         first_cursor = cursor_policy.LeaseCursor(first_grant, pos=None)
-        first_cursor.accept(
-            await first_lane.cover_page(
+        first_candidate = first_cursor.prepare(_SOURCE_TIME)
+        first_coverage = asyncio.create_task(
+            first_lane.cover_page(
                 calls=(_submission(failing_feed, 0, grant=first_grant),),
                 boundaries=(),
-                candidate=first_cursor.prepare(_SOURCE_TIME),
+                candidate=first_candidate,
             )
         )
         await asyncio.wait_for(executor.failing_entered.wait(), timeout=1)
         sibling_cursor = cursor_policy.LeaseCursor(sibling_grant, pos=None)
-        sibling_cursor.accept(
-            await sibling_lane.cover_page(
+        sibling_coverage = asyncio.create_task(
+            sibling_lane.cover_page(
                 calls=(_submission(healthy_feed, 0, grant=sibling_grant),),
                 boundaries=(),
                 candidate=sibling_cursor.prepare(_SOURCE_TIME),
             )
         )
         await asyncio.wait_for(executor.healthy_entered.wait(), timeout=1)
-        blocked = asyncio.create_task(
-            sibling_lane.cover_page(
-                calls=(
-                    _submission(
-                        uuid.UUID(int=3),
-                        0,
-                        grant=sibling_grant,
-                    ),
-                ),
-                boundaries=(),
-                candidate=sibling_cursor.prepare(
-                    _SOURCE_TIME + datetime.timedelta(seconds=1)
-                ),
-            )
-        )
-        await scheduler._shards[1].wait_for_capacity_waiters(1)
         executor.release_failure.set()
         await asyncio.wait_for(
             scheduler.integrity_failure_event.wait(),
@@ -2067,19 +2285,44 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             scheduler.raise_if_failed()
         self.assertIsInstance(raised.exception.__cause__, RuntimeError)
 
-        with self.assertRaises(feed_work_scheduler.SchedulerIntegrityError):
-            await blocked
-        with self.assertRaises(feed_work_scheduler.SchedulerIntegrityError):
-            await first_lane.cover_page(
-                calls=(),
-                boundaries=(),
-                candidate=first_cursor.prepare(
-                    _SOURCE_TIME + datetime.timedelta(seconds=1)
-                ),
-            )
         healthy_worker = scheduler._shards[1]._workers[0].task
         executor.release_healthy.set()
         await asyncio.wait_for(healthy_worker, timeout=1)
+        _, pending = await asyncio.wait(
+            {first_coverage, sibling_coverage},
+            timeout=1,
+        )
+        self.assertEqual(
+            pending,
+            set(),
+            tuple(
+                (
+                    task.get_name(),
+                    tuple(
+                        (frame.f_code.co_name, frame.f_lineno)
+                        for frame in task.get_stack()
+                    ),
+                )
+                for task in pending
+            ),
+        )
+        page_results = await asyncio.gather(
+            first_coverage,
+            sibling_coverage,
+            return_exceptions=True,
+        )
+        self.assertTrue(
+            all(
+                isinstance(
+                    result,
+                    (
+                        feed_work_scheduler.SchedulerIntegrityError,
+                        feed_work_scheduler.Undrained,
+                    ),
+                )
+                for result in page_results
+            )
+        )
         self.assertIsInstance(
             await first_lane.close(
                 feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN
@@ -2202,13 +2445,15 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             },
         )
         try:
-            await lane.cover_page(
-                calls=(cohort,),
-                boundaries=(),
-                candidate=cursor_policy.LeaseCursor(
-                    grant,
-                    pos=None,
-                ).prepare(_SOURCE_TIME),
+            coverage = asyncio.create_task(
+                lane.cover_page(
+                    calls=(cohort,),
+                    boundaries=(),
+                    candidate=cursor_policy.LeaseCursor(
+                        grant,
+                        pos=None,
+                    ).prepare(_SOURCE_TIME),
+                )
             )
             await asyncio.wait_for(executor.entered.wait(), timeout=1)
 
@@ -2259,6 +2504,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(await signals.grant_lost.wait())
 
             executor.release.set()
+            await asyncio.wait_for(coverage, timeout=1)
             await scheduler._wait_for_idle()
             self.assertEqual(
                 observed,
@@ -2360,7 +2606,11 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             for name, cohort in cases.items():
                 with self.subTest(name=name):
                     with self.assertRaises(
-                        (TypeError, ValueError, feed_work_scheduler.CohortIntegrityError)
+                        (
+                            TypeError,
+                            ValueError,
+                            feed_work_scheduler.CohortIntegrityError,
+                        )
                     ):
                         await lane.cover_page(
                             calls=(cohort,),
@@ -2575,43 +2825,46 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         lane = _open_lane(scheduler, grant)
         observed = {source_order: [] for source_order in range(3)}
         try:
-            await lane.cover_page(
-                calls=(
-                    _cohort(
-                        failed_feed,
-                        (0,),
-                        grant=grant,
-                        cohort_timestamp=_SOURCE_TIME,
-                        settlement_observers={0: observed[0].append},
-                    ),
-                    _cohort(
-                        failed_feed,
-                        (1,),
-                        grant=grant,
-                        cohort_timestamp=(
-                            _SOURCE_TIME + datetime.timedelta(seconds=1)
+            coverage = asyncio.create_task(
+                lane.cover_page(
+                    calls=(
+                        _cohort(
+                            failed_feed,
+                            (0,),
+                            grant=grant,
+                            cohort_timestamp=_SOURCE_TIME,
+                            settlement_observers={0: observed[0].append},
                         ),
-                        settlement_observers={1: observed[1].append},
+                        _cohort(
+                            failed_feed,
+                            (1,),
+                            grant=grant,
+                            cohort_timestamp=(
+                                _SOURCE_TIME + datetime.timedelta(seconds=1)
+                            ),
+                            settlement_observers={1: observed[1].append},
+                        ),
+                        _cohort(
+                            sibling_feed,
+                            (2,),
+                            grant=grant,
+                            cohort_timestamp=_SOURCE_TIME,
+                            settlement_observers={2: observed[2].append},
+                        ),
                     ),
-                    _cohort(
-                        sibling_feed,
-                        (2,),
-                        grant=grant,
-                        cohort_timestamp=_SOURCE_TIME,
-                        settlement_observers={2: observed[2].append},
-                    ),
-                ),
-                boundaries=(),
-                candidate=cursor_policy.LeaseCursor(
-                    grant,
-                    pos=None,
-                ).prepare(_SOURCE_TIME),
+                    boundaries=(),
+                    candidate=cursor_policy.LeaseCursor(
+                        grant,
+                        pos=None,
+                    ).prepare(_SOURCE_TIME),
+                )
             )
             await executor.wait_for_started(2)
             self.assertIn((0,), executor.started)
             self.assertIn((2,), executor.started)
             self.assertNotIn((1,), executor.started)
             executor.release_failure.set()
+            await asyncio.wait_for(coverage, timeout=1)
             await scheduler._wait_for_idle()
 
             self.assertEqual(
@@ -2720,7 +2973,9 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(len(feed_work_scheduler.CohortTerminalDisposition), 9)
-        self.assertEqual(len(feed_work_scheduler.CohortRecordTerminalReason), 11)
+        self.assertEqual(
+            len(feed_work_scheduler.CohortRecordTerminalReason), 11
+        )
         grant = _grant()
         member = _member(grant, uuid.UUID(int=1))
         identity = feed_work_scheduler.CohortRecordIdentity(
@@ -2758,8 +3013,10 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             reason: feed_work_scheduler.CohortRecordTerminalReason,
             *,
             participated: bool,
-            item_failure: feed_work_scheduler.CohortItemFailureFact | None = None,
-            direct_failure: feed_work_scheduler.CohortDirectFailureFact | None = None,
+            item_failure: feed_work_scheduler.CohortItemFailureFact
+            | None = None,
+            direct_failure: feed_work_scheduler.CohortDirectFailureFact
+            | None = None,
         ) -> feed_work_scheduler.CohortTerminalFacts:
             return feed_work_scheduler.CohortTerminalFacts(
                 records=(
@@ -2897,7 +3154,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         grant = _grant()
         lane = _open_lane(scheduler, grant)
         observed: list[object] = []
-        await lane.cover_page(
+        result = await lane.cover_page(
             calls=(
                 _cohort(
                     uuid.UUID(int=8),
@@ -2913,10 +3170,14 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 pos=None,
             ).prepare(_SOURCE_TIME),
         )
+        self.assertIsInstance(result, feed_work_scheduler.Undrained)
         async with asyncio.timeout(1):
             while True:
                 snapshot = await scheduler._snapshot()
-                if snapshot.shards[0].records[0].state.value == "outcome_unknown":
+                if (
+                    snapshot.shards[0].records[0].state.value
+                    == "outcome_unknown"
+                ):
                     break
                 await asyncio.sleep(0)
         self.assertEqual(snapshot.held, 1)
@@ -2929,7 +3190,9 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             ),
             feed_work_scheduler.Undrained,
         )
-        self.assertIsInstance(await scheduler.close(), feed_work_scheduler.Undrained)
+        self.assertIsInstance(
+            await scheduler.close(), feed_work_scheduler.Undrained
+        )
 
     async def test_final_closure_pending_known_abort_matrix(self) -> None:
         cases = (_stopped, _retryable, _authority_lost)
@@ -2951,28 +3214,30 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 grant = _grant()
                 lane = _open_lane(scheduler, grant)
                 observed = {0: [], 1: []}
-                await lane.cover_page(
-                    calls=(
-                        _cohort(
-                            uuid.UUID(int=1),
-                            (0,),
-                            grant=grant,
-                            cohort_timestamp=_SOURCE_TIME,
-                            settlement_observers={0: observed[0].append},
+                coverage = asyncio.create_task(
+                    lane.cover_page(
+                        calls=(
+                            _cohort(
+                                uuid.UUID(int=1),
+                                (0,),
+                                grant=grant,
+                                cohort_timestamp=_SOURCE_TIME,
+                                settlement_observers={0: observed[0].append},
+                            ),
+                            _cohort(
+                                uuid.UUID(int=2),
+                                (1,),
+                                grant=grant,
+                                cohort_timestamp=_SOURCE_TIME,
+                                settlement_observers={1: observed[1].append},
+                            ),
                         ),
-                        _cohort(
-                            uuid.UUID(int=2),
-                            (1,),
-                            grant=grant,
-                            cohort_timestamp=_SOURCE_TIME,
-                            settlement_observers={1: observed[1].append},
-                        ),
-                    ),
-                    boundaries=(),
-                    candidate=cursor_policy.LeaseCursor(
-                        grant,
-                        pos=None,
-                    ).prepare(_SOURCE_TIME),
+                        boundaries=(),
+                        candidate=cursor_policy.LeaseCursor(
+                            grant,
+                            pos=None,
+                        ).prepare(_SOURCE_TIME),
+                    )
                 )
                 await asyncio.wait_for(executor.abort_entered.wait(), timeout=1)
                 async with asyncio.timeout(1):
@@ -2988,7 +3253,9 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                         await asyncio.sleep(0)
                 executor.release_abort.set()
                 if abort_factory is _authority_lost:
-                    await asyncio.wait_for(lane._closing_event.wait(), timeout=1)
+                    await asyncio.wait_for(
+                        lane._closing_event.wait(), timeout=1
+                    )
                     await asyncio.wait_for(
                         lane.close(
                             feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS
@@ -3010,6 +3277,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                     },
                 )
                 self.assertEqual((await scheduler._snapshot()).held, 0)
+                await asyncio.gather(coverage, return_exceptions=True)
                 await scheduler.close()
 
     async def test_precommit_cancellation_releases_final_pending_once(
@@ -3031,28 +3299,30 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         grant = _grant()
         lane = _open_lane(scheduler, grant)
         observed = {0: [], 1: []}
-        await lane.cover_page(
-            calls=(
-                _cohort(
-                    uuid.UUID(int=1),
-                    (0,),
-                    grant=grant,
-                    cohort_timestamp=_SOURCE_TIME,
-                    settlement_observers={0: observed[0].append},
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _cohort(
+                        uuid.UUID(int=1),
+                        (0,),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                        settlement_observers={0: observed[0].append},
+                    ),
+                    _cohort(
+                        uuid.UUID(int=2),
+                        (1,),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                        settlement_observers={1: observed[1].append},
+                    ),
                 ),
-                _cohort(
-                    uuid.UUID(int=2),
-                    (1,),
-                    grant=grant,
-                    cohort_timestamp=_SOURCE_TIME,
-                    settlement_observers={1: observed[1].append},
-                ),
-            ),
-            boundaries=(),
-            candidate=cursor_policy.LeaseCursor(
-                grant,
-                pos=None,
-            ).prepare(_SOURCE_TIME),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
         )
         await asyncio.wait_for(executor.abort_entered.wait(), timeout=1)
         result = await asyncio.wait_for(
@@ -3068,6 +3338,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual((await scheduler._snapshot()).held, 0)
+        await asyncio.gather(coverage, return_exceptions=True)
         await scheduler.close()
 
     async def test_outcome_unknown_suppresses_page_abort_cleanup(
@@ -3095,28 +3366,30 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             observed[2].append(settlement)
             stopped_settled.set()
 
-        await lane.cover_page(
-            calls=tuple(
-                _cohort(
-                    uuid.UUID(int=source_order + 1),
-                    (source_order,),
-                    grant=grant,
-                    cohort_timestamp=_SOURCE_TIME,
-                    settlement_observers={
-                        source_order: (
-                            observe_stopped
-                            if source_order == 2
-                            else observed[source_order].append
-                        )
-                    },
-                )
-                for source_order in range(3)
-            ),
-            boundaries=(),
-            candidate=cursor_policy.LeaseCursor(
-                grant,
-                pos=None,
-            ).prepare(_SOURCE_TIME),
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=tuple(
+                    _cohort(
+                        uuid.UUID(int=source_order + 1),
+                        (source_order,),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                        settlement_observers={
+                            source_order: (
+                                observe_stopped
+                                if source_order == 2
+                                else observed[source_order].append
+                            )
+                        },
+                    )
+                    for source_order in range(3)
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
         )
         await asyncio.wait_for(executor.abort_entered.wait(), timeout=1)
         async with asyncio.timeout(1):
@@ -3127,10 +3400,17 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                     for shard in snapshot.shards
                     for record in shard.records
                 ]
-                if "final_closure_pending" in states and "outcome_unknown" in states:
+                if (
+                    "final_closure_pending" in states
+                    and "outcome_unknown" in states
+                ):
                     break
                 await asyncio.sleep(0)
         executor.release_abort.set()
+        self.assertIsInstance(
+            await asyncio.wait_for(coverage, timeout=1),
+            feed_work_scheduler.Undrained,
+        )
         await asyncio.wait_for(stopped_settled.wait(), timeout=1)
         snapshot = await scheduler._snapshot()
         self.assertEqual(snapshot.held, 2)
@@ -3149,7 +3429,9 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual((await scheduler._snapshot()).held, 2)
         self.assertEqual(observed[0], [])
-        self.assertIsInstance(await scheduler.close(), feed_work_scheduler.Undrained)
+        self.assertIsInstance(
+            await scheduler.close(), feed_work_scheduler.Undrained
+        )
 
     async def test_cancellation_handoff_and_retention_handle_are_disjoint(
         self,
@@ -3172,24 +3454,26 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 grant = _grant()
                 lane = _open_lane(scheduler, grant)
                 observed = {0: [], 1: []}
-                await lane.cover_page(
-                    calls=(
-                        _cohort(
-                            uuid.UUID(int=1),
-                            (0, 1),
-                            grant=grant,
-                            cohort_timestamp=_SOURCE_TIME,
-                            settlement_observers={
-                                0: observed[0].append,
-                                1: observed[1].append,
-                            },
+                coverage = asyncio.create_task(
+                    lane.cover_page(
+                        calls=(
+                            _cohort(
+                                uuid.UUID(int=1),
+                                (0, 1),
+                                grant=grant,
+                                cohort_timestamp=_SOURCE_TIME,
+                                settlement_observers={
+                                    0: observed[0].append,
+                                    1: observed[1].append,
+                                },
+                            ),
                         ),
-                    ),
-                    boundaries=(),
-                    candidate=cursor_policy.LeaseCursor(
-                        grant,
-                        pos=None,
-                    ).prepare(_SOURCE_TIME),
+                        boundaries=(),
+                        candidate=cursor_policy.LeaseCursor(
+                            grant,
+                            pos=None,
+                        ).prepare(_SOURCE_TIME),
+                    )
                 )
                 await asyncio.wait_for(executor.entered.wait(), timeout=1)
                 worker = scheduler._shards[0]._workers[0].task
@@ -3207,8 +3491,11 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNotNone(executor.caught)
                 with self.assertRaises(asyncio.CancelledError) as propagated:
                     await typing.cast("asyncio.Task[None]", worker)
-                self.assertIsInstance(propagated.exception, asyncio.CancelledError)
+                self.assertIsInstance(
+                    propagated.exception, asyncio.CancelledError
+                )
                 self.assertTrue(executor.reraised_same_object)
+                await asyncio.gather(coverage, return_exceptions=True)
 
                 if unknown:
                     self.assertIsInstance(result, feed_work_scheduler.Undrained)
@@ -3227,7 +3514,9 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                         feed_work_scheduler.Undrained,
                     )
                 else:
-                    self.assertIsInstance(result, feed_work_scheduler.LaneClosed)
+                    self.assertIsInstance(
+                        result, feed_work_scheduler.LaneClosed
+                    )
                     self.assertEqual((await scheduler._snapshot()).held, 0)
                     self.assertEqual(
                         observed,
@@ -3237,6 +3526,1214 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                         },
                     )
                     await scheduler.close()
+
+
+class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
+    async def test_terminal_barrier_waits_for_exact_record_conservation(
+        self,
+    ) -> None:
+        executor = _GatedOutcomeExecutor(_completed)
+        finalizer = _ControlledPageFinalizer()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _cohort(
+                        uuid.UUID(int=81),
+                        (0, 1),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                    ),
+                ),
+                boundaries=(),
+                candidate=cursor.prepare(_SOURCE_TIME),
+            )
+        )
+        try:
+            await asyncio.wait_for(executor.entered.wait(), timeout=1)
+            barrier = (await lane._snapshot()).page
+            self.assertIsNotNone(barrier)
+            self.assertEqual(barrier.pulled_records, 2)
+            self.assertEqual(barrier.registered_records, 2)
+            self.assertEqual(barrier.locally_rejected_records, 0)
+            self.assertEqual(barrier.terminalized_registered_records, 0)
+            self.assertFalse(finalizer.entered.is_set())
+            self.assertFalse(coverage.done())
+
+            executor.release.set()
+            await asyncio.wait_for(finalizer.entered.wait(), timeout=1)
+            context = finalizer.contexts[0]
+            self.assertEqual(len(context.cohort_terminal_facts), 1)
+            self.assertEqual(
+                len(context.cohort_terminal_facts[0].records),
+                2,
+            )
+            self.assertFalse(coverage.done())
+            finalizer.release.set()
+            receipt = await asyncio.wait_for(coverage, timeout=1)
+            self.assertEqual(
+                cursor.accept(receipt.lease_settlement),
+                _SOURCE_TIME,
+            )
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+        finally:
+            executor.release.set()
+            finalizer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_terminal_barrier_local_rejection_is_not_registration(
+        self,
+    ) -> None:
+        finalizer = _ControlledPageFinalizer()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        retired_feed = uuid.UUID(int=82)
+        sibling_feed = uuid.UUID(int=83)
+        await lane.remove_feed(retired_feed)
+        retired_submission = _submission(retired_feed, 0, grant=grant)
+        sibling_submission = _submission(sibling_feed, 1, grant=grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    retired_submission,
+                    sibling_submission,
+                ),
+                boundaries=(),
+                candidate=cursor.prepare(_SOURCE_TIME),
+            )
+        )
+        try:
+            await asyncio.wait_for(finalizer.entered.wait(), timeout=1)
+            barrier = (await lane._snapshot()).page
+            self.assertIsNotNone(barrier)
+            self.assertEqual(barrier.pulled_records, 2)
+            self.assertEqual(barrier.registered_records, 1)
+            self.assertEqual(barrier.locally_rejected_records, 1)
+            self.assertEqual(barrier.terminalized_registered_records, 1)
+            context = finalizer.contexts[0]
+            self.assertEqual(len(context.cohort_terminal_facts), 1)
+            self.assertEqual(
+                context.cohort_terminal_facts[0].records[0].identity.feed_id,
+                sibling_feed,
+            )
+            self.assertEqual(len(context.locally_retired_members), 1)
+            self.assertIs(
+                context.locally_retired_members[0],
+                retired_submission.member,
+            )
+            finalizer.release.set()
+            self.assertEqual(
+                cursor.accept(
+                    (
+                        await asyncio.wait_for(coverage, timeout=1)
+                    ).lease_settlement
+                ),
+                _SOURCE_TIME,
+            )
+        finally:
+            finalizer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_final_closure_pending_waits_for_atomic_resolution(
+        self,
+    ) -> None:
+        observed: list[object] = []
+        source_evidence = object()
+
+        def resolve(
+            context: feed_work_scheduler.PageFinalizationContext,
+        ) -> object:
+            pending = context.cohort_terminal_facts[0].records[0].identity
+            resolution = feed_work_scheduler.FinalRecordClosureResolution(
+                identity=pending,
+                closure_state=(
+                    feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+                ),
+                release_basis=(
+                    feed_work_scheduler.FinalRecordReleaseBasis.DURABLE_SOURCE_CLOSURE
+                ),
+            )
+            return _covered_final_page(
+                context,
+                resolutions=(resolution,),
+                source_evidence=source_evidence,
+            )
+
+        finalizer = _ControlledPageFinalizer(resolve)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _GatedOutcomeExecutor(_final_closure_pending),
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _cohort(
+                        uuid.UUID(int=84),
+                        (0,),
+                        grant=grant,
+                        cohort_timestamp=None,
+                        settlement_observers={0: observed.append},
+                    ),
+                ),
+                boundaries=(),
+                candidate=cursor.prepare(_SOURCE_TIME),
+            )
+        )
+        executor = typing.cast(
+            "_GatedOutcomeExecutor", scheduler._shards[0]._executor
+        )
+        try:
+            await asyncio.wait_for(executor.entered.wait(), timeout=1)
+            executor.release.set()
+            await asyncio.wait_for(finalizer.entered.wait(), timeout=1)
+            self.assertEqual(observed, [])
+            self.assertEqual((await scheduler._snapshot()).held, 1)
+            finalizer.release.set()
+            receipt = await asyncio.wait_for(coverage, timeout=1)
+            self.assertEqual(
+                cursor.accept(receipt.lease_settlement),
+                _SOURCE_TIME,
+            )
+            self.assertIs(receipt.source_evidence, source_evidence)
+            self.assertEqual(len(receipt.final_closure_resolutions), 1)
+            self.assertEqual(
+                observed,
+                [feed_work_scheduler.CallSettlement.COMPLETED],
+            )
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+        finally:
+            executor.release.set()
+            finalizer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_replayable_finalization_releases_same_feed_pending(
+        self,
+    ) -> None:
+        feed_id = uuid.UUID(int=85)
+        observed = {0: [], 1: []}
+
+        def replay(
+            context: feed_work_scheduler.PageFinalizationContext,
+        ) -> object:
+            pending = next(
+                fact.identity
+                for facts in context.cohort_terminal_facts
+                for fact in facts.records
+                if fact.closure_state
+                is feed_work_scheduler.CohortRecordClosureState.FINAL_CLOSURE_PENDING
+            )
+            resolution = feed_work_scheduler.FinalRecordClosureResolution(
+                identity=pending,
+                closure_state=(
+                    feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+                ),
+                release_basis=(
+                    feed_work_scheduler.FinalRecordReleaseBasis.ACCEPTED_REPLAYABLE_FEED
+                ),
+            )
+            return feed_work_scheduler.FinalPageReplayable(
+                grant=context.grant,
+                page_sequence=context.page_sequence,
+                candidate=context.candidate,
+                boundary_results=_accepted_boundary_results(context),
+                final_closure_resolutions=(resolution,),
+                source_evidence=None,
+            )
+
+        finalizer = _ControlledPageFinalizer(replay)
+        executor = _PerOrderOutcomeExecutor(
+            {0: _final_closure_pending, 1: _replayable_direct}
+        )
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _cohort(
+                        feed_id,
+                        (0,),
+                        grant=grant,
+                        cohort_timestamp=None,
+                        settlement_observers={0: observed[0].append},
+                    ),
+                    _cohort(
+                        feed_id,
+                        (1,),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                        settlement_observers={1: observed[1].append},
+                    ),
+                ),
+                boundaries=(),
+                candidate=cursor.prepare(_SOURCE_TIME),
+            )
+        )
+        try:
+            await asyncio.wait_for(finalizer.entered.wait(), timeout=1)
+            context = finalizer.contexts[0]
+            self.assertEqual(executor.executed, [0, 1])
+            self.assertEqual(context.unresolved_replay_feed_ids, (feed_id,))
+            self.assertEqual(context.replay_blocked_feed_ids, (feed_id,))
+            self.assertEqual(observed[0], [])
+            finalizer.release.set()
+            receipt = await asyncio.wait_for(coverage, timeout=1)
+            cursor.accept_replayable(receipt.lease_settlement)
+            self.assertEqual(
+                observed,
+                {
+                    0: [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+                    1: [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+                },
+            )
+            self.assertFalse(
+                await scheduler._shard_for(feed_id).is_replay_blocked(
+                    grant,
+                    0,
+                    feed_id,
+                )
+            )
+        finally:
+            finalizer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_final_closure_pending_malformed_resolution_is_atomic(
+        self,
+    ) -> None:
+        observed = {0: [], 1: []}
+
+        def omit_one(
+            context: feed_work_scheduler.PageFinalizationContext,
+        ) -> object:
+            identity = context.cohort_terminal_facts[0].records[0].identity
+            return _covered_final_page(
+                context,
+                resolutions=(
+                    feed_work_scheduler.FinalRecordClosureResolution(
+                        identity=identity,
+                        closure_state=(
+                            feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+                        ),
+                        release_basis=(
+                            feed_work_scheduler.FinalRecordReleaseBasis.DURABLE_SOURCE_CLOSURE
+                        ),
+                    ),
+                ),
+            )
+
+        finalizer = _ControlledPageFinalizer(omit_one)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _PerOrderOutcomeExecutor(
+                {0: _final_closure_pending, 1: _final_closure_pending}
+            ),
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=tuple(
+                    _cohort(
+                        uuid.UUID(int=90 + source_order),
+                        (source_order,),
+                        grant=grant,
+                        cohort_timestamp=None,
+                        settlement_observers={
+                            source_order: observed[source_order].append
+                        },
+                    )
+                    for source_order in range(2)
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+        )
+        try:
+            await asyncio.wait_for(finalizer.entered.wait(), timeout=1)
+            self.assertEqual((await scheduler._snapshot()).held, 2)
+            finalizer.release.set()
+            self.assertIsInstance(
+                await asyncio.wait_for(coverage, timeout=1),
+                feed_work_scheduler.Undrained,
+            )
+            self.assertEqual(observed, {0: [], 1: []})
+            self.assertEqual((await scheduler._snapshot()).held, 2)
+            self.assertEqual(
+                {
+                    uncertainty
+                    for shard in scheduler._shards
+                    for uncertainty in shard._uncertain_final_pages.values()
+                },
+                {_scheduler_types()._FinalPageUncertainty.INTEGRITY_FAILURE},
+            )
+            self.assertIsInstance(
+                await lane.close(
+                    feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS
+                ),
+                feed_work_scheduler.Undrained,
+            )
+        finally:
+            finalizer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_final_closure_pending_cross_shard_validation_is_atomic(
+        self,
+    ) -> None:
+        observed = {0: [], 1: []}
+
+        def resolve_all(
+            context: feed_work_scheduler.PageFinalizationContext,
+        ) -> object:
+            identities = tuple(
+                record.identity
+                for facts in context.cohort_terminal_facts
+                for record in facts.records
+            )
+            return _covered_final_page(
+                context,
+                resolutions=tuple(
+                    feed_work_scheduler.FinalRecordClosureResolution(
+                        identity=identity,
+                        closure_state=(
+                            feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+                        ),
+                        release_basis=(
+                            feed_work_scheduler.FinalRecordReleaseBasis.DURABLE_SOURCE_CLOSURE
+                        ),
+                    )
+                    for identity in identities
+                ),
+            )
+
+        finalizer = _ControlledPageFinalizer(resolve_all)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _PerOrderOutcomeExecutor(
+                {0: _final_closure_pending, 1: _final_closure_pending}
+            ),
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        grant = _grant()
+        feeds = (uuid.UUID(int=107), uuid.UUID(int=108))
+        self.assertIsNot(
+            scheduler._shard_for(feeds[0]),
+            scheduler._shard_for(feeds[1]),
+        )
+        lane = _open_lane(scheduler, grant)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=tuple(
+                    _cohort(
+                        feed_id,
+                        (source_order,),
+                        grant=grant,
+                        cohort_timestamp=None,
+                        settlement_observers={
+                            source_order: observed[source_order].append
+                        },
+                    )
+                    for source_order, feed_id in enumerate(feeds)
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+        )
+        try:
+            await asyncio.wait_for(finalizer.entered.wait(), timeout=1)
+            rejecting_shard = scheduler._shard_for(feeds[1])
+
+            async def reject_validation(
+                resolutions: object,
+            ) -> None:
+                del resolutions
+                message = "injected cross-shard ownership mismatch"
+                raise feed_work_scheduler.CohortIntegrityError(message)
+
+            rejecting_shard.validate_final_pending = reject_validation
+            finalizer.release.set()
+            self.assertIsInstance(
+                await asyncio.wait_for(coverage, timeout=1),
+                feed_work_scheduler.Undrained,
+            )
+            self.assertEqual(observed, {0: [], 1: []})
+            self.assertEqual((await scheduler._snapshot()).held, 2)
+            self.assertIsInstance(
+                await lane.close(
+                    feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS
+                ),
+                feed_work_scheduler.Undrained,
+            )
+        finally:
+            finalizer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_member_removal_resolves_only_exact_pending_member(
+        self,
+    ) -> None:
+        retired_feed = uuid.UUID(int=92)
+        sibling_feed = uuid.UUID(int=93)
+        grant = _grant()
+        retired_member = _member(grant, retired_feed)
+        observed = {0: [], 1: [], 2: []}
+
+        def accept_retirement(
+            context: feed_work_scheduler.PageFinalizationContext,
+        ) -> object:
+            pending = next(
+                record.identity
+                for facts in context.cohort_terminal_facts
+                for record in facts.records
+                if record.closure_state
+                is feed_work_scheduler.CohortRecordClosureState.FINAL_CLOSURE_PENDING
+            )
+            self.assertIs(context.locally_retired_members[0], retired_member)
+            return _covered_final_page(
+                context,
+                resolutions=(
+                    feed_work_scheduler.FinalRecordClosureResolution(
+                        identity=pending,
+                        closure_state=(
+                            feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+                        ),
+                        release_basis=(
+                            feed_work_scheduler.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT
+                        ),
+                    ),
+                ),
+            )
+
+        finalizer = _ControlledPageFinalizer(accept_retirement)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _PerOrderOutcomeExecutor(
+                {
+                    0: _final_closure_pending,
+                    1: _membership_rejected,
+                    2: _completed,
+                }
+            ),
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        lane = _open_lane(scheduler, grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _cohort(
+                        retired_feed,
+                        (0,),
+                        grant=grant,
+                        cohort_timestamp=None,
+                        member=retired_member,
+                        payload_member=retired_member,
+                        settlement_observers={0: observed[0].append},
+                    ),
+                    _cohort(
+                        retired_feed,
+                        (1,),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                        member=retired_member,
+                        payload_member=retired_member,
+                        settlement_observers={1: observed[1].append},
+                    ),
+                    _cohort(
+                        sibling_feed,
+                        (2,),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                        settlement_observers={2: observed[2].append},
+                    ),
+                ),
+                boundaries=(),
+                candidate=cursor.prepare(_SOURCE_TIME),
+            )
+        )
+        try:
+            await asyncio.wait_for(finalizer.entered.wait(), timeout=1)
+            self.assertEqual(observed[0], [])
+            finalizer.release.set()
+            settled = await asyncio.wait_for(coverage, timeout=1)
+            self.assertEqual(
+                cursor.accept(settled.lease_settlement),
+                _SOURCE_TIME,
+            )
+            self.assertEqual(
+                observed,
+                {
+                    0: [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+                    1: [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+                    2: [feed_work_scheduler.CallSettlement.COMPLETED],
+                },
+            )
+        finally:
+            finalizer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_member_removal_surfaces_final_pending_only_retirement(
+        self,
+    ) -> None:
+        pending_feed = uuid.UUID(int=105)
+        sibling_feed = uuid.UUID(int=106)
+        grant = _grant()
+        pending_member = _member(grant, pending_feed)
+        observed = {0: [], 1: []}
+
+        def accept_retirement(
+            context: feed_work_scheduler.PageFinalizationContext,
+        ) -> object:
+            self.assertEqual(context.locally_retired_members, (pending_member,))
+            identity = context.cohort_terminal_facts[0].records[0].identity
+            return _covered_final_page(
+                context,
+                resolutions=(
+                    feed_work_scheduler.FinalRecordClosureResolution(
+                        identity=identity,
+                        closure_state=(
+                            feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+                        ),
+                        release_basis=(
+                            feed_work_scheduler.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT
+                        ),
+                    ),
+                ),
+            )
+
+        executor = _FinalPendingWithGatedSiblingExecutor()
+        finalizer = _ControlledPageFinalizer(accept_retirement)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        lane = _open_lane(scheduler, grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _cohort(
+                        pending_feed,
+                        (0,),
+                        grant=grant,
+                        cohort_timestamp=None,
+                        member=pending_member,
+                        payload_member=pending_member,
+                        settlement_observers={0: observed[0].append},
+                    ),
+                    _cohort(
+                        sibling_feed,
+                        (1,),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                        settlement_observers={1: observed[1].append},
+                    ),
+                ),
+                boundaries=(),
+                candidate=cursor.prepare(_SOURCE_TIME),
+            )
+        )
+        try:
+            await asyncio.wait_for(executor.pending_returned.wait(), timeout=1)
+            await asyncio.wait_for(executor.sibling_entered.wait(), timeout=1)
+            pending_shard = scheduler._shard_for(pending_feed)
+
+            async def wait_for_final_pending() -> None:
+                while not pending_shard._final_pending:  # noqa: ASYNC110
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_final_pending(), timeout=1)
+            removal = await lane.remove_feed(pending_feed)
+            self.assertEqual(removal.released_count, 0)
+            self.assertTrue(removal.active_retained)
+            self.assertEqual(observed[0], [])
+
+            executor.release_sibling.set()
+            await asyncio.wait_for(finalizer.entered.wait(), timeout=1)
+            finalizer.release.set()
+            settled = await asyncio.wait_for(coverage, timeout=1)
+            self.assertEqual(
+                cursor.accept(settled.lease_settlement),
+                _SOURCE_TIME,
+            )
+            self.assertEqual(
+                observed,
+                {
+                    0: [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+                    1: [feed_work_scheduler.CallSettlement.COMPLETED],
+                },
+            )
+        finally:
+            executor.release_sibling.set()
+            finalizer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_stopped_aborts_without_page_finalizer_or_receipt(
+        self,
+    ) -> None:
+        finalizer = _ControlledPageFinalizer()
+        executor = _GatedOutcomeExecutor(_stopped)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        candidate = cursor.prepare(_SOURCE_TIME)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(_submission(uuid.UUID(int=94), 0, grant=grant),),
+                boundaries=(),
+                candidate=candidate,
+            )
+        )
+        try:
+            await asyncio.wait_for(executor.entered.wait(), timeout=1)
+            executor.release.set()
+            with self.assertRaisesRegex(RuntimeError, "stopped"):
+                await asyncio.wait_for(coverage, timeout=1)
+            self.assertFalse(finalizer.entered.is_set())
+            self.assertIs(cursor.outstanding_candidate, candidate)
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+        finally:
+            executor.release.set()
+            finalizer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_stopped_waits_for_later_outcome_unknown_before_cleanup(
+        self,
+    ) -> None:
+        executor = _AbortBeforeUnknownExecutor()
+        finalizer = _ControlledPageFinalizer()
+        observed = {0: [], 1: [], 2: []}
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=tuple(
+                    _cohort(
+                        uuid.UUID(int=100 + source_order),
+                        (source_order,),
+                        grant=grant,
+                        cohort_timestamp=(
+                            None if source_order == 0 else _SOURCE_TIME
+                        ),
+                        settlement_observers={
+                            source_order: observed[source_order].append
+                        },
+                    )
+                    for source_order in range(3)
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+        )
+        try:
+            await asyncio.wait_for(executor.stopped_returned.wait(), timeout=1)
+            await asyncio.wait_for(executor.unknown_entered.wait(), timeout=1)
+            await asyncio.sleep(0)
+            self.assertFalse(coverage.done())
+            self.assertEqual(observed[0], [])
+            self.assertEqual((await scheduler._snapshot()).held, 2)
+
+            executor.release_unknown.set()
+            self.assertIsInstance(
+                await asyncio.wait_for(coverage, timeout=1),
+                feed_work_scheduler.Undrained,
+            )
+            self.assertFalse(finalizer.entered.is_set())
+            self.assertEqual(observed[0], [])
+            self.assertEqual(observed[2], [])
+            self.assertEqual((await scheduler._snapshot()).held, 2)
+            self.assertIsInstance(
+                await lane.close(
+                    feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS
+                ),
+                feed_work_scheduler.Undrained,
+            )
+        finally:
+            executor.release_unknown.set()
+            finalizer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_page_final_cancellation_is_shielded_to_typed_result(
+        self,
+    ) -> None:
+        finalizer = _ControlledPageFinalizer()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(_submission(uuid.UUID(int=95), 0, grant=grant),),
+                boundaries=(),
+                candidate=cursor.prepare(_SOURCE_TIME),
+            )
+        )
+        try:
+            await asyncio.wait_for(finalizer.entered.wait(), timeout=1)
+            coverage.cancel()
+            coverage.cancel()
+            finalizer.release.set()
+            settled = await asyncio.wait_for(coverage, timeout=1)
+            self.assertEqual(
+                cursor.accept(settled.lease_settlement),
+                _SOURCE_TIME,
+            )
+            self.assertEqual(len(finalizer.contexts), 1)
+        finally:
+            finalizer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_no_progress_replay_releases_final_closure_pending(
+        self,
+    ) -> None:
+        feed_id = uuid.UUID(int=96)
+        observed = {0: [], 1: []}
+
+        def no_progress(
+            context: feed_work_scheduler.PageFinalizationContext,
+        ) -> object:
+            identity = context.cohort_terminal_facts[0].records[0].identity
+            resolution = feed_work_scheduler.FinalRecordClosureResolution(
+                identity=identity,
+                closure_state=(
+                    feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+                ),
+                release_basis=(
+                    feed_work_scheduler.FinalRecordReleaseBasis.ACCEPTED_NO_PROGRESS
+                ),
+            )
+            return feed_work_scheduler.FinalPageNoProgress(
+                grant=context.grant,
+                page_sequence=context.page_sequence,
+                candidate=context.candidate,
+                boundary_results=_accepted_boundary_results(context),
+                final_closure_resolutions=(resolution,),
+                source_evidence=None,
+            )
+
+        finalizer = _ControlledPageFinalizer(no_progress)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _PerOrderOutcomeExecutor(
+                {0: _final_closure_pending, 1: _replayable_direct}
+            ),
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _cohort(
+                        feed_id,
+                        (0,),
+                        grant=grant,
+                        cohort_timestamp=None,
+                        settlement_observers={0: observed[0].append},
+                    ),
+                    _cohort(
+                        feed_id,
+                        (1,),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                        settlement_observers={1: observed[1].append},
+                    ),
+                ),
+                boundaries=(),
+                candidate=cursor.prepare_no_progress(),
+            )
+        )
+        try:
+            await asyncio.wait_for(finalizer.entered.wait(), timeout=1)
+            self.assertEqual(observed[0], [])
+            self.assertEqual(
+                observed[1],
+                [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+            )
+            finalizer.release.set()
+            settled = await asyncio.wait_for(coverage, timeout=1)
+            cursor.accept_no_progress(settled.lease_settlement)
+            self.assertEqual(
+                observed,
+                {
+                    0: [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+                    1: [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+                },
+            )
+            self.assertEqual(cursor.pos, _SOURCE_TIME)
+            self.assertFalse(
+                await scheduler._shard_for(feed_id).is_replay_blocked(
+                    grant,
+                    0,
+                    feed_id,
+                )
+            )
+        finally:
+            finalizer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_no_commit_retryable_retries_only_final_generation(
+        self,
+    ) -> None:
+        replay_feed = uuid.UUID(int=97)
+        observed: list[object] = []
+        finalizer = _NoCommitThenReplayableFinalizer()
+        executor = _ReplayBarrierExecutor(replay_feed)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        candidate = cursor.prepare(_SOURCE_TIME)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _cohort(
+                        replay_feed,
+                        (0,),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                        settlement_observers={0: observed.append},
+                    ),
+                ),
+                boundaries=(),
+                candidate=candidate,
+            )
+        )
+        await asyncio.wait_for(executor.failure_entered.wait(), timeout=1)
+        executor.release_failure.set()
+        await asyncio.wait_for(finalizer.retry_entered.wait(), timeout=1)
+        self.assertFalse(coverage.done())
+        self.assertIs(cursor.outstanding_candidate, candidate)
+        self.assertEqual(executor.started, [(0,)])
+        self.assertEqual(len(finalizer.contexts), 2)
+        self.assertIs(finalizer.contexts[0], finalizer.contexts[1])
+        self.assertTrue(
+            await scheduler._shard_for(replay_feed).is_replay_blocked(
+                grant,
+                candidate.page_sequence,
+                replay_feed,
+            )
+        )
+
+        finalizer.release_retry.set()
+        settled = await asyncio.wait_for(coverage, timeout=1)
+        cursor.accept_replayable(settled.lease_settlement)
+        self.assertEqual(
+            observed,
+            [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+        )
+        self.assertFalse(
+            await scheduler._shard_for(replay_feed).is_replay_blocked(
+                grant,
+                candidate.page_sequence,
+                replay_feed,
+            )
+        )
+        self.assertEqual((await scheduler._snapshot()).held, 0)
+        await scheduler.close()
+
+    async def test_covered_clears_only_preexisting_page_replay_barrier(
+        self,
+    ) -> None:
+        replay_feed = uuid.UUID(int=103)
+        sibling_feed = uuid.UUID(int=104)
+        observed: list[object] = []
+
+        def cover(
+            context: feed_work_scheduler.PageFinalizationContext,
+        ) -> object:
+            self.assertEqual(context.unresolved_replay_feed_ids, ())
+            self.assertEqual(
+                context.replay_blocked_feed_ids,
+                (replay_feed,),
+            )
+            return _covered_final_page(context)
+
+        executor = _CapturingExecutor()
+        finalizer = _ControlledPageFinalizer(cover)
+        finalizer.release.set()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        shard = scheduler._shard_for(replay_feed)
+        async with shard._lock:
+            shard._replay_blocks.update(
+                {
+                    (grant, 0, replay_feed),
+                    (grant, 1, replay_feed),
+                }
+            )
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        settled = await lane.cover_page(
+            calls=(
+                _cohort(
+                    replay_feed,
+                    (0,),
+                    grant=grant,
+                    cohort_timestamp=_SOURCE_TIME,
+                    settlement_observers={0: observed.append},
+                ),
+                _cohort(
+                    sibling_feed,
+                    (1,),
+                    grant=grant,
+                    cohort_timestamp=_SOURCE_TIME,
+                ),
+            ),
+            boundaries=(),
+            candidate=cursor.prepare(_SOURCE_TIME),
+        )
+        self.assertEqual(
+            cursor.accept(settled.lease_settlement),
+            _SOURCE_TIME,
+        )
+        self.assertEqual(
+            observed,
+            [feed_work_scheduler.CallSettlement.REPLAY_BLOCKED],
+        )
+        self.assertEqual(len(executor.executions), 1)
+        execution = typing.cast(
+            "feed_work_scheduler.CohortExecution",
+            executor.executions[0],
+        )
+        self.assertEqual(execution.calls[0].feed_id, sibling_feed)
+        self.assertFalse(await shard.is_replay_blocked(grant, 0, replay_feed))
+        self.assertTrue(await shard.is_replay_blocked(grant, 1, replay_feed))
+        await scheduler.close()
+
+    async def test_page_final_outcome_unknown_retains_pending_undrained(
+        self,
+    ) -> None:
+        feed_id = uuid.UUID(int=98)
+        observed = {0: [], 1: []}
+
+        def unknown(
+            context: feed_work_scheduler.PageFinalizationContext,
+        ) -> object:
+            return feed_work_scheduler.FinalPageOutcomeUnknown(
+                context.grant,
+                context.page_sequence,
+                context.candidate,
+            )
+
+        finalizer = _ControlledPageFinalizer(unknown)
+        executor = _PerOrderOutcomeExecutor(
+            {0: _final_closure_pending, 1: _replayable_direct}
+        )
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _cohort(
+                        feed_id,
+                        (0,),
+                        grant=grant,
+                        cohort_timestamp=None,
+                        settlement_observers={0: observed[0].append},
+                    ),
+                    _cohort(
+                        feed_id,
+                        (1,),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                        settlement_observers={1: observed[1].append},
+                    ),
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+        )
+        try:
+            await asyncio.wait_for(finalizer.entered.wait(), timeout=1)
+            finalizer.release.set()
+            self.assertIsInstance(
+                await asyncio.wait_for(coverage, timeout=1),
+                feed_work_scheduler.Undrained,
+            )
+            self.assertEqual(
+                observed,
+                {
+                    0: [],
+                    1: [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+                },
+            )
+            self.assertEqual((await scheduler._snapshot()).held, 1)
+            self.assertEqual(
+                {
+                    uncertainty
+                    for shard in scheduler._shards
+                    for uncertainty in shard._uncertain_final_pages.values()
+                },
+                {_scheduler_types()._FinalPageUncertainty.OUTCOME_UNKNOWN},
+            )
+            self.assertTrue(
+                await scheduler._shard_for(feed_id).is_replay_blocked(
+                    grant,
+                    0,
+                    feed_id,
+                )
+            )
+            self.assertIsInstance(
+                await lane.close(
+                    feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS
+                ),
+                feed_work_scheduler.Undrained,
+            )
+            self.assertTrue(
+                await scheduler._shard_for(feed_id).is_replay_blocked(
+                    grant,
+                    0,
+                    feed_id,
+                )
+            )
+        finally:
+            finalizer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_outcome_unknown_never_invokes_page_finalizer(
+        self,
+    ) -> None:
+        finalizer = _ControlledPageFinalizer()
+        executor = _GatedOutcomeExecutor(_outcome_unknown)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(_submission(uuid.UUID(int=86), 0, grant=grant),),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+        )
+        try:
+            await asyncio.wait_for(executor.entered.wait(), timeout=1)
+            executor.release.set()
+            result = await asyncio.wait_for(coverage, timeout=1)
+            self.assertIsInstance(result, feed_work_scheduler.Undrained)
+            self.assertFalse(finalizer.entered.is_set())
+            self.assertEqual((await scheduler._snapshot()).held, 1)
+            self.assertIsInstance(
+                await lane.close(
+                    feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS
+                ),
+                feed_work_scheduler.Undrained,
+            )
+        finally:
+            executor.release.set()
+            finalizer.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
 
 
 if __name__ == "__main__":

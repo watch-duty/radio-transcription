@@ -45,6 +45,23 @@ class _DefaultBoundaryCommitter:
         )
 
 
+async def _settle_final_page(
+    awaitable: typing.Awaitable[_types.FinalPageResult],
+) -> _types.FinalPageResult:
+    """Settle one started FinalPage call despite caller cancellation."""
+    task = asyncio.ensure_future(awaitable)
+    while True:
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if not task.done():
+                continue
+            if task.cancelled():
+                message = "started FinalPage call lost its typed outcome"
+                raise _BoundaryCoordinatorError(message) from None
+            return task.result()
+
+
 class _BoundaryCoordinator:
     """One bounded Event/generation flusher for one complete grant."""
 

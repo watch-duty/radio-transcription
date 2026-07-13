@@ -20,6 +20,8 @@ from backend.pipeline.ingestion.feed_work_scheduler import (
 )
 from backend.pipeline.storage import feed_store, ingestion_lease_store
 
+_T = typing.TypeVar("_T")
+
 
 class SchedulerIntegrityError(RuntimeError):
     """The process scheduler can no longer prove safe admission."""
@@ -57,7 +59,7 @@ class _ReadOnlySignal:
 
 @dataclasses.dataclass(slots=True)
 class _PageBarrier:
-    """O(1) state for the one page currently entering a lane."""
+    """Bounded admission and structural terminal state for one page."""
 
     grant: ingestion_lease_store.LeaseGrant
     page_sequence: int
@@ -66,6 +68,33 @@ class _PageBarrier:
     registered: int = 0
     localized: int = 0
     total_records: int = 0
+    pulled_records: int = 0
+    registered_records: int = 0
+    locally_rejected_records: int = 0
+    terminalized_registered_records: int = 0
+    registered_cohorts: dict[
+        _types.CohortRecordIdentity,
+        tuple[_types.CohortRecordIdentity, ...],
+    ] = dataclasses.field(default_factory=dict)
+    terminal_facts: dict[
+        _types.CohortRecordIdentity,
+        _types.CohortTerminalFacts,
+    ] = dataclasses.field(default_factory=dict)
+    neutralized_identities: set[_types.CohortRecordIdentity] = (
+        dataclasses.field(default_factory=set)
+    )
+    unresolved_replay_feed_ids: set[uuid.UUID] = dataclasses.field(
+        default_factory=set
+    )
+    replay_blocked_feed_ids: set[uuid.UUID] = dataclasses.field(
+        default_factory=set
+    )
+    locally_retired_members: list[ingestion_lease_store.LeaseMemberIdentity] = (
+        dataclasses.field(default_factory=list)
+    )
+    abort_reason: str | None = None
+    uncertainty: _types._FinalPageUncertainty | None = None
+    changed: asyncio.Event = dataclasses.field(default_factory=asyncio.Event)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -79,6 +108,10 @@ class _PageSnapshot:
     registered: int
     localized: int
     total_records: int
+    pulled_records: int
+    registered_records: int
+    locally_rejected_records: int
+    terminalized_registered_records: int
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -107,6 +140,68 @@ class _SchedulerSnapshot:
     fatal: bool
 
 
+class _DefaultPageFinalizer:
+    """Compatibility finalizer until the source adapter is injected."""
+
+    async def finalize_page(
+        self,
+        context: _types.PageFinalizationContext,
+    ) -> _types.FinalPageResult:
+        boundaries = tuple(
+            _types.BoundaryResult(
+                boundary,
+                _types.BoundaryDisposition.COMMITTED,
+            )
+            for boundary in context.candidate_boundaries
+        )
+        pending = tuple(
+            record.identity
+            for facts in context.cohort_terminal_facts
+            for record in facts.records
+            if record.closure_state
+            is _types.CohortRecordClosureState.FINAL_CLOSURE_PENDING
+        )
+        resolutions = []
+        for identity in pending:
+            if type(context.candidate) is cursor_policy.NoProgressPageCandidate:
+                basis = _types.FinalRecordReleaseBasis.ACCEPTED_NO_PROGRESS
+            elif identity.feed_id in context.unresolved_replay_feed_ids:
+                basis = _types.FinalRecordReleaseBasis.ACCEPTED_REPLAYABLE_FEED
+            elif any(
+                identity.member is member
+                for member in context.locally_retired_members
+            ):
+                basis = (
+                    _types.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT
+                )
+            else:
+                return _types.FinalPageOutcomeUnknown(
+                    context.grant,
+                    context.page_sequence,
+                    context.candidate,
+                )
+            resolutions.append(
+                _types.FinalRecordClosureResolution(
+                    identity,
+                    _types.CohortRecordClosureState.REPLAY_SAFE_RELEASE,
+                    basis,
+                )
+            )
+        accepted = {
+            "grant": context.grant,
+            "page_sequence": context.page_sequence,
+            "candidate": context.candidate,
+            "boundary_results": boundaries,
+            "final_closure_resolutions": tuple(resolutions),
+            "source_evidence": None,
+        }
+        if type(context.candidate) is cursor_policy.NoProgressPageCandidate:
+            return _types.FinalPageNoProgress(**accepted)
+        if context.unresolved_replay_feed_ids:
+            return _types.FinalPageReplayable(**accepted)
+        return _types.FinalPageCovered(**accepted)
+
+
 class FeedWorkScheduler:
     """One process-wide owner of fixed Feed-affine scheduler shards."""
 
@@ -115,6 +210,7 @@ class FeedWorkScheduler:
         executor: _types.CallExecutor,
         *,
         boundary_committer: _types.BoundaryCommitter | None = None,
+        page_finalizer: _types.PageFinalizer | None = None,
         _limits: _types._SchedulerLimits = _types._PRODUCTION_LIMITS,
         _boundary_batch_size: int = _boundaries._BOUNDARY_BATCH_SIZE,
     ) -> None:
@@ -124,6 +220,8 @@ class FeedWorkScheduler:
             executor: Private full-pipeline adapter for fixed workers.
             boundary_committer: Closed exact-grant persistence seam. Phase 4
                 uses the deterministic default until Phase 5 wires storage.
+            page_finalizer: Closed source-page finalization seam. The
+                deterministic default accepts structurally settled pages.
             _limits: Validated deterministic-test limits. Production callers
                 use the fixed default.
         """
@@ -135,13 +233,20 @@ class FeedWorkScheduler:
         if not callable(getattr(boundary_committer, "commit", None)):
             message = "boundary_committer must provide async commit"
             raise TypeError(message)
+        if page_finalizer is None:
+            page_finalizer = _DefaultPageFinalizer()
+        if not callable(getattr(page_finalizer, "finalize_page", None)):
+            message = "page_finalizer must provide async finalize_page"
+            raise TypeError(message)
         _types._require_positive_integer(
             _boundary_batch_size,
             "_boundary_batch_size",
         )
         self._limits = _limits
         self._boundary_committer = boundary_committer
+        self._page_finalizer = page_finalizer
         self._boundary_batch_size = _boundary_batch_size
+        self._finalization_lock = asyncio.Lock()
         self._lanes: dict[
             ingestion_lease_store.LeaseGrant,
             GrantLane,
@@ -155,7 +260,6 @@ class FeedWorkScheduler:
         self._fatal: BaseException | None = None
         self._fatal_event = asyncio.Event()
         self._fatal_propagation_task: asyncio.Task[None] | None = None
-        self._page_abort_lock = asyncio.Lock()
         self._shards = tuple(
             _shard._Shard(
                 index,
@@ -168,7 +272,11 @@ class FeedWorkScheduler:
                 abandonment_for=self._abandonment.get,
                 boundary_ready_observer=self._observe_boundary_ready,
                 closing_settlement=self._settlement_for_closing,
-                page_abort_observer=self._abort_final_pending_page,
+                page_registration_observer=(self._observe_page_registration),
+                page_terminal_observer=self._observe_page_terminal,
+                page_neutralization_observer=(
+                    self._observe_page_neutralization
+                ),
             )
             for index in range(_limits.shard_count)
         )
@@ -362,27 +470,15 @@ class FeedWorkScheduler:
         self,
         grant: ingestion_lease_store.LeaseGrant,
         page_sequence: int,
+        *,
+        preserve_final_pending: bool = False,
     ) -> None:
-        for shard in self._shards:
-            await shard.purge_page(grant, page_sequence)
-
-    async def _abort_final_pending_page(
-        self,
-        grant: ingestion_lease_store.LeaseGrant,
-        page_sequence: int,
-    ) -> None:
-        """Replay-release known final-pending work across every shard."""
-        async with self._page_abort_lock:
+        async with self._finalization_lock:
             for shard in self._shards:
-                if await shard.page_has_unknown_retention(
+                await shard.purge_page(
                     grant,
                     page_sequence,
-                ):
-                    return
-            for shard in self._shards:
-                await shard.release_page_final_pending(
-                    grant,
-                    page_sequence,
+                    preserve_final_pending=preserve_final_pending,
                 )
 
     async def _abort_boundary_page(
@@ -409,6 +505,87 @@ class FeedWorkScheduler:
         """Irrevocably seal every prepared shard after receipt issuance."""
         for shard in self._shards:
             await shard.seal_boundary_page(grant, page_sequence)
+
+    def _group_final_resolutions(
+        self,
+        resolutions: tuple[_types.FinalRecordClosureResolution, ...],
+    ) -> dict[
+        _shard._Shard,
+        tuple[_types.FinalRecordClosureResolution, ...],
+    ]:
+        by_shard: dict[
+            _shard._Shard,
+            list[_types.FinalRecordClosureResolution],
+        ] = {}
+        for resolution in resolutions:
+            shard = self._shard_for(resolution.identity.feed_id)
+            by_shard.setdefault(shard, []).append(resolution)
+        return {shard: tuple(values) for shard, values in by_shard.items()}
+
+    @staticmethod
+    async def _validate_final_pending(
+        by_shard: dict[
+            _shard._Shard,
+            tuple[_types.FinalRecordClosureResolution, ...],
+        ],
+    ) -> None:
+        for shard, values in by_shard.items():
+            await shard.validate_final_pending(values)
+
+    @staticmethod
+    async def _resolve_final_pending(
+        by_shard: dict[
+            _shard._Shard,
+            tuple[_types.FinalRecordClosureResolution, ...],
+        ],
+    ) -> None:
+        for shard, values in by_shard.items():
+            await shard.resolve_final_pending(values)
+
+    async def _mark_page_finalization_uncertain(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+        uncertainty: _types._FinalPageUncertainty,
+    ) -> None:
+        for shard in self._shards:
+            await shard.mark_page_finalization_uncertain(
+                grant,
+                page_sequence,
+                uncertainty,
+            )
+
+    async def _replay_blocked_feed_ids(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+    ) -> tuple[uuid.UUID, ...]:
+        feed_ids: set[uuid.UUID] = set()
+        for shard in self._shards:
+            feed_ids.update(
+                await shard.replay_blocked_feed_ids(grant, page_sequence)
+            )
+        return tuple(sorted(feed_ids, key=lambda value: value.int))
+
+    async def _clear_replay_barriers(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+        feed_ids: tuple[uuid.UUID, ...],
+    ) -> None:
+        for shard in self._shards:
+            await shard.clear_replay_barriers(
+                grant,
+                page_sequence,
+                feed_ids,
+            )
+
+    async def _is_feed_retired(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        feed_id: uuid.UUID,
+    ) -> bool:
+        return await self._shard_for(feed_id).is_feed_retired(grant, feed_id)
 
     async def _purge_exact(
         self,
@@ -494,6 +671,43 @@ class FeedWorkScheduler:
                 message = "membership outcome omitted retirement evidence"
                 raise RuntimeError(message)
             lane._observe_membership(record, retirement)
+
+    def _observe_page_registration(
+        self,
+        cohort: _types._CohortRecord,
+    ) -> None:
+        lane = self._lanes.get(cohort.grant)
+        if lane is not None:
+            lane._observe_page_registration(cohort)
+
+    def _observe_page_terminal(
+        self,
+        cohort: _types._CohortRecord,
+        outcome: _types._ExecutorOutcome | None,
+        failure: BaseException | None,
+    ) -> None:
+        lane = self._lanes.get(cohort.grant)
+        if lane is not None:
+            lane._observe_page_terminal(cohort, outcome, failure)
+
+    def _observe_page_neutralization(
+        self,
+        records: tuple[_types._CallRecord, ...],
+        *,
+        replay_blocked: bool,
+        retired_member: (ingestion_lease_store.LeaseMemberIdentity | None),
+    ) -> None:
+        by_lane: dict[GrantLane, list[_types._CallRecord]] = {}
+        for record in records:
+            lane = self._lanes.get(record.grant)
+            if lane is not None:
+                by_lane.setdefault(lane, []).append(record)
+        for lane, exact_records in by_lane.items():
+            lane._observe_page_neutralization(
+                tuple(exact_records),
+                replay_blocked=replay_blocked,
+                retired_member=retired_member,
+            )
 
     def _observe_boundary_ready(
         self,
@@ -607,7 +821,7 @@ class GrantLane:
         self._close_changed = asyncio.Event()
         self._next_page_sequence = 0
         self._page: _PageBarrier | None = None
-        self._page_settlement_task: asyncio.Task[None] | None = None
+        self._page_settlement_task: asyncio.Task[object] | None = None
         self._close_strength = _CloseStrength.OPEN
         self._close_reason = _types.LaneCloseReason.PLANNED_DRAIN
         self._close_task: (
@@ -682,7 +896,7 @@ class GrantLane:
         calls: collections.abc.Iterable[_types.CohortSubmission],
         boundaries: collections.abc.Iterable[_types.BoundaryWork],
         candidate: cursor_policy.PageCandidate,
-    ) -> cursor_policy.PageSettlement:
+    ) -> _types.SettledPage | _types.Undrained:
         """Incrementally cover one source-order call page.
 
         Args:
@@ -705,10 +919,6 @@ class GrantLane:
                 cohorts,
                 candidate.page_sequence,
             )
-            await self._reject_replay_blocked_page(
-                cohorts,
-                candidate.page_sequence,
-            )
             no_progress = (
                 type(candidate) is cursor_policy.NoProgressPageCandidate
             )
@@ -721,7 +931,11 @@ class GrantLane:
                 replay_blocked_feeds: set[uuid.UUID] = set()
                 for cohort in cohorts:
                     record_count = len(cohort.calls)
-                    await self._mark_pulled(source_order, record_count)
+                    await self._mark_pulled(
+                        source_order,
+                        record_count,
+                        call_records=True,
+                    )
                     works = tuple(
                         _types._CallWork(
                             feed_id=cohort.feed_id,
@@ -753,6 +967,8 @@ class GrantLane:
                         await self._mark_localized(
                             source_order,
                             record_count,
+                            call_records=True,
+                            retired_member=cohort.member,
                         )
                         source_order += record_count
                         continue
@@ -765,6 +981,8 @@ class GrantLane:
                         await self._mark_localized(
                             source_order,
                             record_count,
+                            call_records=True,
+                            replay_blocked_feed=cohort.feed_id,
                         )
                         source_order += record_count
                         continue
@@ -774,12 +992,19 @@ class GrantLane:
                     except _shard._ShardFatalError as exc:
                         message = "scheduler shard integrity failed"
                         raise SchedulerIntegrityError(message) from exc.failure
-                    await self._mark_registered(source_order, record_count)
+                    await self._mark_registered(
+                        source_order,
+                        record_count,
+                    )
                     source_order += record_count
                 for boundary in page_boundaries:
                     self._require_boundary(boundary)
                     source_order = await self._next_source_order()
-                    await self._mark_pulled(source_order, 1)
+                    await self._mark_pulled(
+                        source_order,
+                        1,
+                        call_records=False,
+                    )
                     shard = self._scheduler._shard_for(boundary.feed_id)
                     if boundary.feed_id in replay_blocked_feeds or (
                         await shard.is_replay_blocked(
@@ -788,7 +1013,11 @@ class GrantLane:
                             boundary.feed_id,
                         )
                     ):
-                        await self._mark_localized(source_order, 1)
+                        await self._mark_localized(
+                            source_order,
+                            1,
+                            call_records=False,
+                        )
                         continue
                     boundary_input = _types._BoundaryInput(
                         boundary=boundary,
@@ -805,7 +1034,21 @@ class GrantLane:
                             ),
                         )
                     except _shard._FeedRetiredError:
-                        await self._mark_localized(source_order, 1)
+                        await self._mark_localized(
+                            source_order,
+                            1,
+                            call_records=False,
+                            retired_member=boundary.member,
+                        )
+                        continue
+                    except _shard._ReplayBlockedError:
+                        replay_blocked_feeds.add(boundary.feed_id)
+                        await self._mark_localized(
+                            source_order,
+                            1,
+                            call_records=False,
+                            replay_blocked_feed=boundary.feed_id,
+                        )
                         continue
                     except _shard._BoundaryReliefRetryableError:
                         message = "boundary pressure relief is retryable"
@@ -824,6 +1067,21 @@ class GrantLane:
                         message = "scheduler shard integrity failed"
                         raise SchedulerIntegrityError(message) from exc.failure
                     await self._mark_registered(source_order, 1)
+                page_state = await self._await_terminal_barrier()
+                if page_state == "uncertain":
+                    uncertainty = await self._page_uncertainty()
+                    await self._scheduler._mark_page_finalization_uncertain(
+                        self._grant,
+                        candidate.page_sequence,
+                        uncertainty,
+                    )
+                    return _types.Undrained(
+                        self._grant,
+                        _types.LaneCloseReason.PLANNED_DRAIN,
+                    )
+                if page_state != "finalizable":
+                    message = f"page candidate aborted by {page_state}"
+                    raise RuntimeError(message)  # noqa: TRY301
                 try:
                     final_result = (
                         await self._boundary_coordinator.request_final()
@@ -841,7 +1099,16 @@ class GrantLane:
                         self._grant,
                         candidate.page_sequence,
                     )
-                page_settlement = await self._cover(candidate)
+                context = await self._build_finalization_context(
+                    candidate,
+                    page_boundaries,
+                )
+                page_settlement = await self._finalize_page(
+                    candidate,
+                    context,
+                )
+                if isinstance(page_settlement, _types.Undrained):
+                    return page_settlement
             except BaseException:
                 cleanup = self._start_page_settlement(
                     self._abort_page(candidate.page_sequence),
@@ -855,17 +1122,6 @@ class GrantLane:
                 except BaseException as cleanup_failure:
                     self._scheduler._observe_fatal(cleanup_failure)
                 raise
-            settlement = self._start_page_settlement(
-                self._scheduler._seal_boundary_page(
-                    self._grant,
-                    candidate.page_sequence,
-                ),
-                name=(
-                    "feed-work-page-seal-"
-                    f"{self._grant.lease_key}-{candidate.page_sequence}"
-                ),
-            )
-            await self._settle_page_task(settlement)
             return page_settlement
 
     async def _snapshot(self) -> _LaneSnapshot:
@@ -882,6 +1138,12 @@ class GrantLane:
                     registered=page.registered,
                     localized=page.localized,
                     total_records=page.total_records,
+                    pulled_records=page.pulled_records,
+                    registered_records=page.registered_records,
+                    locally_rejected_records=(page.locally_rejected_records),
+                    terminalized_registered_records=(
+                        page.terminalized_registered_records
+                    ),
                 )
             )
             return _LaneSnapshot(
@@ -920,6 +1182,8 @@ class GrantLane:
         self,
         source_order: int,
         record_count: int,
+        *,
+        call_records: bool,
     ) -> None:
         _types._require_positive_integer(record_count, "record_count")
         async with self._state_lock:
@@ -930,6 +1194,11 @@ class GrantLane:
                 raise RuntimeError(message)
             page.current_source_order = source_order
             page.pulled += record_count
+            if call_records:
+                page.pulled_records += record_count
+                if page.pulled_records > page.total_records:
+                    message = "page pulled more calls than it declared"
+                    raise RuntimeError(message)
 
     async def _next_source_order(self) -> int:
         async with self._state_lock:
@@ -965,6 +1234,12 @@ class GrantLane:
         self,
         source_order: int,
         record_count: int,
+        *,
+        call_records: bool,
+        retired_member: (
+            ingestion_lease_store.LeaseMemberIdentity | None
+        ) = None,
+        replay_blocked_feed: uuid.UUID | None = None,
     ) -> None:
         _types._require_positive_integer(record_count, "record_count")
         async with self._state_lock:
@@ -974,14 +1249,19 @@ class GrantLane:
                 raise RuntimeError(message)
             page.current_source_order = None
             page.localized += record_count
+            if call_records:
+                page.locally_rejected_records += record_count
+            if retired_member is not None:
+                self._append_retired_member(page, retired_member)
+            if replay_blocked_feed is not None:
+                page.replay_blocked_feed_ids.add(replay_blocked_feed)
+            page.changed.set()
 
     async def _localize_released(
         self,
         released_calls: tuple[tuple[int, int], ...],
     ) -> None:
-        async with self._state_lock:
-            for page_sequence, source_order in released_calls:
-                self._localize_tag(page_sequence, source_order)
+        del released_calls
 
     def _observe_membership(
         self,
@@ -989,12 +1269,7 @@ class GrantLane:
         retirement: _types._RetireFeedResult,
     ) -> None:
         """Localize a terminal membership outcome without another task."""
-        self._localize_tag(
-            record.work.page_sequence,
-            record.work.source_order,
-        )
-        for page_sequence, source_order in retirement.released_calls:
-            self._localize_tag(page_sequence, source_order)
+        del record, retirement
 
     def _localize_tag(
         self,
@@ -1017,9 +1292,549 @@ class GrantLane:
         page.registered -= 1
         page.localized += 1
 
+    @staticmethod
+    def _append_retired_member(
+        page: _PageBarrier,
+        member: ingestion_lease_store.LeaseMemberIdentity,
+    ) -> None:
+        if not any(
+            retained is member for retained in page.locally_retired_members
+        ):
+            page.locally_retired_members.append(member)
+
+    @staticmethod
+    def _mark_page_uncertain(
+        page: _PageBarrier,
+        uncertainty: _types._FinalPageUncertainty,
+    ) -> None:
+        if page.uncertainty is None:
+            page.uncertainty = uncertainty
+        elif page.uncertainty is not uncertainty:
+            page.uncertainty = _types._FinalPageUncertainty.INTEGRITY_FAILURE
+        page.changed.set()
+
+    def _observe_page_registration(
+        self,
+        cohort: _types._CohortRecord,
+    ) -> None:
+        page = self._page
+        if page is None or page.page_sequence != cohort.page_sequence:
+            return
+        identities = cohort.identities
+        first = identities[0]
+        if (
+            cohort.grant != page.grant
+            or first in page.registered_cohorts
+            or any(
+                identity.grant != page.grant
+                or identity.page_sequence != page.page_sequence
+                for identity in identities
+            )
+        ):
+            self._mark_page_uncertain(
+                page,
+                _types._FinalPageUncertainty.INTEGRITY_FAILURE,
+            )
+            return
+        page.registered_cohorts[first] = identities
+        page.registered_records += len(identities)
+        page.changed.set()
+
+    def _observe_page_terminal(
+        self,
+        cohort: _types._CohortRecord,
+        outcome: _types._ExecutorOutcome | None,
+        failure: BaseException | None,
+    ) -> None:
+        page = self._page
+        if page is None or page.page_sequence != cohort.page_sequence:
+            return
+        if failure is not None or outcome is None:
+            self._mark_page_uncertain(
+                page,
+                _types._FinalPageUncertainty.INTEGRITY_FAILURE,
+            )
+            return
+        identities = page.registered_cohorts.get(cohort.identities[0])
+        if identities is None or any(
+            expected is not actual
+            for expected, actual in zip(
+                identities,
+                cohort.identities,
+                strict=True,
+            )
+        ):
+            self._mark_page_uncertain(
+                page,
+                _types._FinalPageUncertainty.INTEGRITY_FAILURE,
+            )
+            return
+        if isinstance(
+            outcome,
+            (
+                _types._ExecutorIntegrityFailure,
+                _types._ExecutorOutcomeUnknown,
+            ),
+        ):
+            uncertainty = (
+                _types._FinalPageUncertainty.INTEGRITY_FAILURE
+                if isinstance(outcome, _types._ExecutorIntegrityFailure)
+                else _types._FinalPageUncertainty.OUTCOME_UNKNOWN
+            )
+            self._mark_page_uncertain(page, uncertainty)
+            return
+        fact_outcomes = (
+            _types._ExecutorCompleted,
+            _types._ExecutorFinalClosurePending,
+            _types._ExecutorReplayableDirectFailure,
+        )
+        if isinstance(outcome, fact_outcomes):
+            page.terminal_facts[identities[0]] = outcome.facts
+        else:
+            page.neutralized_identities.update(identities)
+        if isinstance(outcome, _types._ExecutorReplayableDirectFailure):
+            page.unresolved_replay_feed_ids.add(cohort.feed_id)
+            page.replay_blocked_feed_ids.add(cohort.feed_id)
+        if isinstance(outcome, _types._ExecutorMembershipRejected):
+            self._append_retired_member(
+                page,
+                cohort.records[0].identity.member,
+            )
+        if isinstance(
+            outcome,
+            (
+                _types._ExecutorStopped,
+                _types._ExecutorRetryable,
+                _types._ExecutorAuthorityLost,
+            ),
+        ):
+            page.abort_reason = outcome.facts.disposition.value
+        page.terminalized_registered_records += len(identities)
+        if not self._terminal_accounting_is_valid(page):
+            self._mark_page_uncertain(
+                page,
+                _types._FinalPageUncertainty.INTEGRITY_FAILURE,
+            )
+        page.changed.set()
+
+    def _observe_page_neutralization(
+        self,
+        records: tuple[_types._CallRecord, ...],
+        *,
+        replay_blocked: bool,
+        retired_member: (ingestion_lease_store.LeaseMemberIdentity | None),
+    ) -> None:
+        page = self._page
+        if page is None:
+            return
+        fact_identities = {
+            record.identity
+            for facts in page.terminal_facts.values()
+            for record in facts.records
+        }
+        added = 0
+        for record in records:
+            identity = record.identity
+            if (
+                identity.grant != page.grant
+                or identity.page_sequence != page.page_sequence
+            ):
+                continue
+            registered = any(
+                exact is identity
+                for identities in page.registered_cohorts.values()
+                for exact in identities
+            )
+            if not registered:
+                self._mark_page_uncertain(
+                    page,
+                    _types._FinalPageUncertainty.INTEGRITY_FAILURE,
+                )
+                continue
+            if (
+                identity in fact_identities
+                or identity in page.neutralized_identities
+            ):
+                continue
+            page.neutralized_identities.add(identity)
+            added += 1
+            if replay_blocked:
+                page.replay_blocked_feed_ids.add(identity.feed_id)
+        page.terminalized_registered_records += added
+        if retired_member is not None:
+            self._append_retired_member(page, retired_member)
+        elif not replay_blocked and added:
+            page.abort_reason = "precommit_cancellation"
+        if not self._terminal_accounting_is_valid(page):
+            self._mark_page_uncertain(
+                page,
+                _types._FinalPageUncertainty.INTEGRITY_FAILURE,
+            )
+        page.changed.set()
+
+    @staticmethod
+    def _terminal_accounting_is_valid(page: _PageBarrier) -> bool:
+        fact_records = sum(
+            len(facts.records) for facts in page.terminal_facts.values()
+        )
+        return (
+            page.terminalized_registered_records
+            == fact_records + len(page.neutralized_identities)
+            and page.terminalized_registered_records <= page.registered_records
+        )
+
+    async def _await_terminal_barrier(self) -> str:
+        abort_neutralization_started = False
+        while True:
+            neutralize_abort = False
+            async with self._state_lock:
+                page = self._require_page_locked()
+                if page.uncertainty is not None:
+                    return "uncertain"
+                conserved = (
+                    page.pulled_records
+                    == page.registered_records + page.locally_rejected_records
+                )
+                terminal = (
+                    page.terminalized_registered_records
+                    == page.registered_records
+                )
+                if (
+                    page.pulled_records == page.total_records
+                    and conserved
+                    and terminal
+                    and self._terminal_accounting_is_valid(page)
+                ):
+                    if page.abort_reason is not None:
+                        return page.abort_reason
+                    return "finalizable"
+                if (
+                    page.abort_reason is not None
+                    and not abort_neutralization_started
+                ):
+                    abort_neutralization_started = True
+                    neutralize_abort = True
+                page.changed.clear()
+                changed = page.changed
+            if neutralize_abort:
+                await self._scheduler._purge_page(
+                    self._grant,
+                    page.page_sequence,
+                    preserve_final_pending=True,
+                )
+            else:
+                await changed.wait()
+
+    async def _build_finalization_context(
+        self,
+        candidate: cursor_policy.PageCandidate,
+        boundaries: tuple[_types.BoundaryWork, ...],
+    ) -> _types.PageFinalizationContext:
+        replay_blocked = await self._scheduler._replay_blocked_feed_ids(
+            self._grant,
+            candidate.page_sequence,
+        )
+        accepted_boundaries = []
+        for boundary in boundaries:
+            if boundary.feed_id in replay_blocked:
+                continue
+            if await self._scheduler._is_feed_retired(
+                self._grant,
+                boundary.feed_id,
+            ):
+                continue
+            accepted_boundaries.append(boundary)
+        async with self._state_lock:
+            page = self._require_page_locked()
+            facts = tuple(
+                page.terminal_facts[key]
+                for key in sorted(
+                    page.terminal_facts,
+                    key=lambda identity: (
+                        identity.feed_id.int,
+                        identity.source_order,
+                        identity.local_sequence,
+                    ),
+                )
+            )
+            page.replay_blocked_feed_ids.update(replay_blocked)
+            retired_members = tuple(
+                sorted(
+                    page.locally_retired_members,
+                    key=lambda member: (
+                        member.feed_id.int,
+                        member.source_feed_id,
+                    ),
+                )
+            )
+            return _types.PageFinalizationContext(
+                grant=self._grant,
+                page_sequence=candidate.page_sequence,
+                candidate=candidate,
+                cohort_terminal_facts=facts,
+                unresolved_replay_feed_ids=tuple(
+                    sorted(
+                        page.unresolved_replay_feed_ids,
+                        key=lambda value: value.int,
+                    )
+                ),
+                locally_retired_members=retired_members,
+                replay_blocked_feed_ids=tuple(
+                    sorted(
+                        page.replay_blocked_feed_ids,
+                        key=lambda value: value.int,
+                    )
+                ),
+                candidate_boundaries=tuple(accepted_boundaries),
+            )
+
+    async def _page_uncertainty(self) -> _types._FinalPageUncertainty:
+        async with self._state_lock:
+            page = self._require_page_locked()
+            if page.uncertainty is None:
+                message = "page lacks retained uncertainty"
+                raise RuntimeError(message)
+            return page.uncertainty
+
+    async def _finalize_page(
+        self,
+        candidate: cursor_policy.PageCandidate,
+        context: _types.PageFinalizationContext,
+    ) -> _types.SettledPage | _types.Undrained:
+        while True:
+            try:
+                result = await _boundaries._settle_final_page(
+                    self._scheduler._page_finalizer.finalize_page(context)
+                )
+            except BaseException:
+                return await self._retain_uncertain_page(
+                    candidate.page_sequence,
+                    _types._FinalPageUncertainty.OUTCOME_UNKNOWN,
+                )
+            try:
+                accepted = self._validate_final_result(context, result)
+            except BaseException:
+                return await self._retain_uncertain_page(
+                    candidate.page_sequence,
+                    _types._FinalPageUncertainty.INTEGRITY_FAILURE,
+                )
+            if type(result) is not _types.FinalPageRetryable:
+                break
+            await asyncio.sleep(0)
+        if type(result) is _types.FinalPageOutcomeUnknown:
+            return await self._retain_uncertain_page(
+                candidate.page_sequence,
+                _types._FinalPageUncertainty.OUTCOME_UNKNOWN,
+            )
+        if type(result) is _types.FinalPageGrantRejected:
+            self._request_close(_types.LaneCloseReason.AUTHORITY_LOSS)
+            message = "page finalizer rejected the exact grant"
+            raise _LaneClosedError(message)
+        if accepted is None:
+            return await self._retain_uncertain_page(
+                candidate.page_sequence,
+                _types._FinalPageUncertainty.INTEGRITY_FAILURE,
+            )
+        transition = self._start_page_settlement(
+            self._accept_final_page(candidate, context, accepted),
+            name=(
+                "feed-work-page-accept-"
+                f"{self._grant.lease_key}-{candidate.page_sequence}"
+            ),
+        )
+        try:
+            return await self._settle_page_task(transition)
+        except _LaneClosedError:
+            raise
+        except BaseException:
+            return await self._retain_uncertain_page(
+                candidate.page_sequence,
+                _types._FinalPageUncertainty.INTEGRITY_FAILURE,
+            )
+
+    async def _accept_final_page(
+        self,
+        candidate: cursor_policy.PageCandidate,
+        context: _types.PageFinalizationContext,
+        accepted: _types._AcceptedFinalPage,
+    ) -> _types.SettledPage:
+        """Validate and settle one accepted page as an owned transition."""
+        by_shard = self._scheduler._group_final_resolutions(
+            accepted.final_closure_resolutions
+        )
+        async with self._scheduler._finalization_lock:
+            await self._scheduler._validate_final_pending(by_shard)
+            lease_settlement = await self._cover(candidate, accepted)
+            await self._scheduler._resolve_final_pending(by_shard)
+            await self._scheduler._clear_replay_barriers(
+                self._grant,
+                candidate.page_sequence,
+                context.replay_blocked_feed_ids,
+            )
+            await self._scheduler._seal_boundary_page(
+                self._grant,
+                candidate.page_sequence,
+            )
+        return _types.SettledPage(
+            candidate=candidate,
+            lease_settlement=lease_settlement,
+            final_closure_resolutions=(accepted.final_closure_resolutions),
+            source_evidence=accepted.source_evidence,
+        )
+
+    async def _retain_uncertain_page(
+        self,
+        page_sequence: int,
+        uncertainty: _types._FinalPageUncertainty,
+    ) -> _types.Undrained:
+        async with self._state_lock:
+            page = self._require_page_locked()
+            self._mark_page_uncertain(page, uncertainty)
+        await self._scheduler._mark_page_finalization_uncertain(
+            self._grant,
+            page_sequence,
+            uncertainty,
+        )
+        return _types.Undrained(
+            self._grant,
+            _types.LaneCloseReason.PLANNED_DRAIN,
+        )
+
+    def _validate_final_result(
+        self,
+        context: _types.PageFinalizationContext,
+        result: object,
+    ) -> _types._AcceptedFinalPage | None:
+        result_types = {
+            _types.FinalPageCovered,
+            _types.FinalPageNoProgress,
+            _types.FinalPageReplayable,
+            _types.FinalPageRetryable,
+            _types.FinalPageGrantRejected,
+            _types.FinalPageOutcomeUnknown,
+        }
+        if type(result) not in result_types:
+            message = "page finalizer returned outside closed vocabulary"
+            raise _types.CohortIntegrityError(message)
+        correlated = typing.cast("_types.FinalPageResult", result)
+        if (
+            correlated.grant != context.grant
+            or correlated.page_sequence != context.page_sequence
+            or correlated.candidate is not context.candidate
+        ):
+            message = "page final result crossed exact context"
+            raise _types.CohortIntegrityError(message)
+        if not isinstance(correlated, _types._AcceptedFinalPage):
+            return None
+        self._require_accepted_disposition(context, correlated)
+        self._require_boundary_results(context, correlated)
+        self._require_final_resolutions(context, correlated)
+        return correlated
+
+    @staticmethod
+    def _require_accepted_disposition(
+        context: _types.PageFinalizationContext,
+        result: _types._AcceptedFinalPage,
+    ) -> None:
+        candidate = context.candidate
+        if type(result) is _types.FinalPageCovered and (
+            type(candidate) is not cursor_policy.PageCursorCandidate
+            or context.unresolved_replay_feed_ids
+        ):
+            message = "covered result disagrees with page replay state"
+            raise _types.CohortIntegrityError(message)
+        if (
+            type(result) is _types.FinalPageNoProgress
+            and type(candidate) is not cursor_policy.NoProgressPageCandidate
+        ):
+            message = "no-progress result crossed candidate kind"
+            raise _types.CohortIntegrityError(message)
+        if type(result) is _types.FinalPageReplayable and (
+            type(candidate) is not cursor_policy.PageCursorCandidate
+            or not context.unresolved_replay_feed_ids
+        ):
+            message = "replayable result lacks exact unresolved Feed"
+            raise _types.CohortIntegrityError(message)
+
+    @staticmethod
+    def _require_boundary_results(
+        context: _types.PageFinalizationContext,
+        result: _types._AcceptedFinalPage,
+    ) -> None:
+        if len(result.boundary_results) != len(context.candidate_boundaries):
+            message = "final boundary result cardinality changed"
+            raise _types.CohortIntegrityError(message)
+        for boundary, correlated in zip(
+            context.candidate_boundaries,
+            result.boundary_results,
+            strict=True,
+        ):
+            if (
+                correlated.boundary is not boundary
+                or correlated.disposition
+                is not _types.BoundaryDisposition.COMMITTED
+            ):
+                message = "final boundary result lost exact correlation"
+                raise _types.CohortIntegrityError(message)
+
+    @staticmethod
+    def _require_final_resolutions(
+        context: _types.PageFinalizationContext,
+        result: _types._AcceptedFinalPage,
+    ) -> None:
+        pending = tuple(
+            record.identity
+            for facts in context.cohort_terminal_facts
+            for record in facts.records
+            if record.closure_state
+            is _types.CohortRecordClosureState.FINAL_CLOSURE_PENDING
+        )
+        resolutions = result.final_closure_resolutions
+        if len(resolutions) != len(pending) or any(
+            resolution.identity is not identity
+            for resolution, identity in zip(
+                resolutions,
+                pending,
+                strict=True,
+            )
+        ):
+            message = "final resolutions do not atomically cover pending work"
+            raise _types.CohortIntegrityError(message)
+        for resolution in resolutions:
+            identity = resolution.identity
+            basis = resolution.release_basis
+            if (
+                resolution.closure_state
+                is _types.CohortRecordClosureState.DURABLY_CLOSED
+            ):
+                continue
+            if (
+                basis is _types.FinalRecordReleaseBasis.ACCEPTED_NO_PROGRESS
+                and type(result) is _types.FinalPageNoProgress
+            ):
+                continue
+            if (
+                basis is _types.FinalRecordReleaseBasis.ACCEPTED_REPLAYABLE_FEED
+                and type(result) is _types.FinalPageReplayable
+                and identity.feed_id in context.unresolved_replay_feed_ids
+            ):
+                continue
+            if (
+                basis
+                is _types.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT
+                and any(
+                    identity.member is member
+                    for member in context.locally_retired_members
+                )
+            ):
+                continue
+            message = "final replay-safe resolution lacks exact acceptance"
+            raise _types.CohortIntegrityError(message)
+
     async def _cover(
         self,
         candidate: cursor_policy.PageCandidate,
+        result: _types._AcceptedFinalPage,
     ) -> cursor_policy.PageSettlement:
         async with self._state_lock:
             self._raise_closed_locked()
@@ -1028,15 +1843,23 @@ class GrantLane:
             if page.current_source_order is not None:
                 message = "cannot cover a partially admitted source record"
                 raise RuntimeError(message)
-            if page.pulled != page.registered + page.localized:
-                message = "not every pulled record owns bounded coverage"
+            if (
+                page.pulled_records
+                != page.registered_records + page.locally_rejected_records
+                or page.terminalized_registered_records
+                != page.registered_records
+                or not self._terminal_accounting_is_valid(page)
+            ):
+                message = "page terminal conservation is incomplete"
                 raise RuntimeError(message)
-            if type(candidate) is cursor_policy.PageCursorCandidate:
+            if type(result) is _types.FinalPageCovered:
                 settlement = cursor_policy._issue_covered_page(candidate)
-            elif type(candidate) is cursor_policy.NoProgressPageCandidate:
+            elif type(result) is _types.FinalPageNoProgress:
                 settlement = cursor_policy._issue_no_progress_page(candidate)
+            elif type(result) is _types.FinalPageReplayable:
+                settlement = cursor_policy._issue_replayable_page(candidate)
             else:
-                message = "candidate is outside the closed page vocabulary"
+                message = "result is not an accepted final disposition"
                 raise cursor_policy.CursorIntegrityError(message)
             self._next_page_sequence += 1
             self._page = None
@@ -1057,10 +1880,10 @@ class GrantLane:
 
     def _start_page_settlement(
         self,
-        coroutine: collections.abc.Coroutine[object, object, None],
+        coroutine: collections.abc.Coroutine[object, object, _T],
         *,
         name: str,
-    ) -> asyncio.Task[None]:
+    ) -> asyncio.Task[_T]:
         """Register the lane's one bounded page finalization task.
 
         Args:
@@ -1080,7 +1903,7 @@ class GrantLane:
         self._page_settlement_task = task
         return task
 
-    async def _settle_page_task(self, task: asyncio.Task[None]) -> None:
+    async def _settle_page_task(self, task: asyncio.Task[_T]) -> _T:
         """Keep caller cancellation pending until owned page work settles.
 
         Args:
@@ -1092,13 +1915,11 @@ class GrantLane:
         try:
             while True:
                 try:
-                    await asyncio.shield(task)
+                    return await asyncio.shield(task)
                 except asyncio.CancelledError:
                     if task.done():
-                        task.result()
-                        return
+                        return task.result()
                     continue
-                return
         finally:
             if self._page_settlement_task is task:
                 self._page_settlement_task = None
@@ -1147,11 +1968,12 @@ class GrantLane:
         """Purge, drain or cancel, then publish one strongest result."""
         try:
             await self._scheduler._wake_admission()
-            await self._boundary_coordinator.close()
-            await self._scheduler._purge_exact(
-                self._grant,
-                self._scheduler._settlement_for_closing(self._grant),
-            )
+            async with self._scheduler._finalization_lock:
+                await self._boundary_coordinator.close()
+                await self._scheduler._purge_exact(
+                    self._grant,
+                    self._scheduler._settlement_for_closing(self._grant),
+                )
             while True:
                 if self._close_strength is _CloseStrength.CANCELLING:
                     await self._scheduler._cancel_exact(self._grant)
@@ -1166,8 +1988,10 @@ class GrantLane:
                 await self._scheduler._forget_retired_grant(self._grant)
                 self._scheduler._raise_fatal()
                 self._scheduler._clear_abandonment(self._grant)
-                self._closed = True
-                self._page = None
+                async with self._admission_lock:
+                    async with self._state_lock:
+                        self._closed = True
+                        self._page = None
                 self._scheduler._lane_closed(self)
                 return _types.LaneClosed(
                     self._grant,
@@ -1284,21 +2108,6 @@ class GrantLane:
                     raise _types.CohortIntegrityError(message)
             total_records += len(cohort.calls)
         return total_records
-
-    async def _reject_replay_blocked_page(
-        self,
-        cohorts: tuple[_types.CohortSubmission, ...],
-        page_sequence: int,
-    ) -> None:
-        for cohort in cohorts:
-            shard = self._scheduler._shard_for(cohort.feed_id)
-            if await shard.is_replay_blocked(
-                self._grant,
-                page_sequence,
-                cohort.feed_id,
-            ):
-                message = "same-Feed page is replay-blocked"
-                raise _types.CohortIntegrityError(message)
 
     @staticmethod
     def _payload_member(
