@@ -52,6 +52,7 @@ GrantLane = _scheduler.GrantLane
 LaneCloseReason = _types.LaneCloseReason
 LaneClosed = _types.LaneClosed
 SchedulerIntegrityError = _scheduler.SchedulerIntegrityError
+SchedulerPageEvidence = _types.SchedulerPageEvidence
 SettledPage = _types.SettledPage
 Undrained = _types.Undrained
 
@@ -106,6 +107,7 @@ __all__ = [
     "PageFinalizationContext",
     "PageFinalizer",
     "SchedulerIntegrityError",
+    "SchedulerPageEvidence",
     "SettledPage",
     "Undrained",
 ]

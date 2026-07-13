@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import asyncio
 import collections
+import dataclasses
+import math
 import typing
 
 from backend.pipeline.ingestion.feed_work_scheduler import _shard, _types
 from backend.pipeline.storage import ingestion_lease_store
 
 _BOUNDARY_BATCH_SIZE = 100
+_MAX_FINITE_SECONDS = float.fromhex("0x1.fffffffffffffp+1023")
 
 
 class _BoundaryCoordinatorError(RuntimeError):
@@ -21,6 +24,52 @@ class _BoundaryCoordinatorError(RuntimeError):
 
 class _BoundaryAuthorityLostError(_BoundaryCoordinatorError):
     """The exact boundary committer rejected this grant generation."""
+
+
+type _SelectedBoundaryBatch = tuple[
+    tuple[_shard._Shard, _types._BoundaryRecord],
+    ...,
+]
+
+
+class _BoundaryEvidenceSink(typing.Protocol):
+    """One captured page-local destination for a started flush attempt."""
+
+    @property
+    def boundary_capture_open(self) -> bool: ...
+
+    @property
+    def boundary_capture_complete(self) -> bool: ...
+
+    def close_boundary_capture(self, *, complete: bool) -> None: ...
+
+    def tracks_boundary(self, record: _types._BoundaryRecord) -> bool: ...
+
+    def observe_flush_attempt(
+        self,
+        *,
+        final_logical: bool,
+        latency_seconds: float,
+    ) -> None: ...
+
+    def observe_fence_rejection(self) -> None: ...
+
+    def observe_member_rejections(
+        self,
+        selected: _SelectedBoundaryBatch,
+        dispositions: tuple[_types.BoundaryDisposition, ...],
+    ) -> None: ...
+
+
+@dataclasses.dataclass(slots=True)
+class _DeferredBoundaryEvidence:
+    """One unowned automatic attempt awaiting generation serialization."""
+
+    final_logical: bool
+    latency_seconds: float
+    fence_rejected: bool = False
+    selected: _SelectedBoundaryBatch = ()
+    dispositions: tuple[_types.BoundaryDisposition, ...] = ()
 
 
 class _DefaultBoundaryCommitter:
@@ -73,6 +122,11 @@ class _BoundaryCoordinator:
         *,
         authority_lost: typing.Callable[[], object],
         fatal_observer: typing.Callable[[BaseException], None],
+        monotonic: typing.Callable[[], float],
+        evidence_sink_for: typing.Callable[
+            [_SelectedBoundaryBatch, bool],
+            _BoundaryEvidenceSink | None,
+        ],
         batch_size: int = _BOUNDARY_BATCH_SIZE,
     ) -> None:
         if not isinstance(grant, ingestion_lease_store.LeaseGrant):
@@ -84,12 +138,24 @@ class _BoundaryCoordinator:
         if not callable(getattr(committer, "commit", None)):
             message = "committer must provide async commit"
             raise TypeError(message)
+        for name, callback in (
+            ("authority_lost", authority_lost),
+            ("fatal_observer", fatal_observer),
+            ("monotonic", monotonic),
+            ("evidence_sink_for", evidence_sink_for),
+        ):
+            if not callable(callback):
+                message = f"{name} must be callable"
+                raise TypeError(message)
         _types._require_positive_integer(batch_size, "batch_size")
         self._grant = grant
         self._shards = shards
         self._committer = committer
         self._authority_lost = authority_lost
         self._fatal_observer = fatal_observer
+        self._monotonic = monotonic
+        self._evidence_sink_for = evidence_sink_for
+        self._last_now: float | None = None
         self._batch_size = batch_size
         self._signal = asyncio.Event()
         self._generation_changed = asyncio.Condition()
@@ -97,6 +163,10 @@ class _BoundaryCoordinator:
         self._completed_generation = 0
         self._requested_final = False
         self._retryable_generation: int | None = None
+        self._attempt_active = False
+        self._active_evidence_sink: _BoundaryEvidenceSink | None = None
+        self._requested_evidence_sink: _BoundaryEvidenceSink | None = None
+        self._evidence_cutoff = False
         self._closing = False
         self._abandoned = False
         self._authority_rejected = False
@@ -141,10 +211,53 @@ class _BoundaryCoordinator:
         """Request the page's one required final logical attempt."""
         return await self._request_generation(final_logical=True)
 
+    async def settle_page_evidence(
+        self,
+        evidence_sink: _BoundaryEvidenceSink,
+    ) -> bool:
+        """Wait only started attempts, then close page evidence capture.
+
+        Returns:
+            Whether every attempt captured before the cutoff settled. An
+            abandoned active mutation returns false without blocking forever.
+        """
+        if not evidence_sink.boundary_capture_open:
+            return evidence_sink.boundary_capture_complete
+        try:
+            async with self._generation_changed:
+                self._evidence_cutoff = True
+                self._generation_changed.notify_all()
+                await self._generation_changed.wait_for(
+                    lambda: (
+                        self._abandoned
+                        or (
+                            not self._attempt_active
+                            and (
+                                self._requested_generation
+                                == self._completed_generation
+                                or self._terminally_unavailable()
+                            )
+                        )
+                    )
+                )
+                incomplete_capture = (
+                    self._abandoned
+                    and self._attempt_active
+                    and self._active_evidence_sink is evidence_sink
+                )
+                complete = not incomplete_capture
+                evidence_sink.close_boundary_capture(complete=complete)
+                return complete
+        finally:
+            async with self._generation_changed:
+                self._evidence_cutoff = False
+                self._generation_changed.notify_all()
+
     async def close(self) -> None:
         """Stop selection and await any already-committed batch settlement."""
         self._closing = True
         self._signal.set()
+        await self._notify_generation_waiters()
         if not self._task.done() and not self._abandoned:
             await self._close_changed.wait()
         if self._task.done():
@@ -198,6 +311,16 @@ class _BoundaryCoordinator:
             self._requested_generation += 1
             generation = self._requested_generation
             self._requested_final = final_logical
+            self._requested_evidence_sink = self._capture_evidence_sink(
+                (),
+                logical=True,
+            )
+            if (
+                not final_logical
+                and self._attempt_active
+                and self._active_evidence_sink is None
+            ):
+                self._active_evidence_sink = self._requested_evidence_sink
             self._signal.set()
             await self._generation_changed.wait_for(
                 lambda: (
@@ -211,7 +334,7 @@ class _BoundaryCoordinator:
                 return _types._BoundaryPressureResult.RETRYABLE
             return _types._BoundaryPressureResult.COMPLETED
 
-    async def _run(self) -> None:
+    async def _run(self) -> None:  # noqa: PLR0915
         """Flush signaled batches and complete each bounded generation.
 
         Returns:
@@ -224,22 +347,46 @@ class _BoundaryCoordinator:
             while True:
                 await self._signal.wait()
                 self._signal.clear()
-                if self._closing:
-                    await self._notify_generation_waiters()
-                    return
-                generation = self._requested_generation
-                logical = generation > self._completed_generation
-                final_logical = logical and self._requested_final
-                selected = await self._select_batch(
-                    include_suspended=logical,
-                )
-                if not selected and not logical:
-                    continue
-                retryable = await self._commit_selected(
-                    selected,
-                    final_logical=final_logical,
-                )
                 async with self._generation_changed:
+                    await self._generation_changed.wait_for(
+                        lambda: (
+                            not self._evidence_cutoff
+                            or self._closing
+                            or self._requested_generation
+                            > self._completed_generation
+                        )
+                    )
+                    if self._closing:
+                        self._generation_changed.notify_all()
+                        return
+                    generation = self._requested_generation
+                    logical = generation > self._completed_generation
+                    final_logical = logical and self._requested_final
+                    self._attempt_active = True
+                    self._generation_changed.notify_all()
+                try:
+                    selected = await self._select_batch(
+                        include_suspended=logical,
+                    )
+                    if not selected and not logical:
+                        async with self._generation_changed:
+                            self._attempt_active = False
+                            self._active_evidence_sink = None
+                            self._generation_changed.notify_all()
+                        continue
+                    retryable, deferred_evidence = await self._commit_selected(
+                        selected,
+                        logical=logical,
+                        final_logical=final_logical,
+                    )
+                except BaseException:
+                    async with self._generation_changed:
+                        self._attempt_active = False
+                        self._active_evidence_sink = None
+                        self._generation_changed.notify_all()
+                    raise
+                async with self._generation_changed:
+                    adopted_relief = False
                     if (
                         not logical
                         and self._requested_generation
@@ -248,11 +395,26 @@ class _BoundaryCoordinator:
                     ):
                         generation = self._requested_generation
                         logical = True
+                        adopted_relief = True
+                    if adopted_relief and deferred_evidence is not None:
+                        evidence_sink = (
+                            self._requested_evidence_sink
+                            or self._active_evidence_sink
+                            or self._capture_evidence_sink((), logical=True)
+                        )
+                        self._publish_deferred_evidence(
+                            evidence_sink,
+                            deferred_evidence,
+                        )
+                    self._attempt_active = False
+                    self._active_evidence_sink = None
+                    self._generation_changed.notify_all()
                     if logical:
                         self._completed_generation = generation
                         self._retryable_generation = (
                             generation if retryable else None
                         )
+                        self._requested_evidence_sink = None
                         self._generation_changed.notify_all()
                     pending_final = (
                         self._requested_generation > self._completed_generation
@@ -289,23 +451,24 @@ class _BoundaryCoordinator:
             remaining -= len(records)
         return tuple(selected)
 
-    async def _commit_selected(
+    async def _commit_selected(  # noqa: PLR0912, PLR0915
         self,
-        selected: tuple[
-            tuple[_shard._Shard, _types._BoundaryRecord],
-            ...,
-        ],
+        selected: _SelectedBoundaryBatch,
         *,
+        logical: bool,
         final_logical: bool,
-    ) -> bool:
+    ) -> tuple[bool, _DeferredBoundaryEvidence | None]:
         """Commit and correlate one immutable batch outside shard locks.
 
         Args:
             selected: Detached records paired with their owning shards.
+            logical: Whether a caller owns this attempt, including when its
+                physical batch is empty.
             final_logical: Whether this is the page's required final attempt.
 
         Returns:
-            Whether at least one correlated target must be retried later.
+            Whether a target must be retried and any still-unowned automatic
+            attempt evidence for generation serialization.
 
         Raises:
             _BoundaryCoordinatorError: The committed outcome is lost,
@@ -314,23 +477,134 @@ class _BoundaryCoordinator:
         targets = tuple(
             record.detached_work() for _shard_value, record in selected
         )
-        result, cancelled = await self._settle_committed(
-            self._committer.commit(
-                self._grant,
-                targets,
-                final_logical=final_logical,
-            )
+        evidence_sink = self._capture_evidence_sink(
+            selected,
+            logical=logical,
         )
-        if type(result) is _types.BoundaryGrantRejected:
-            await self._discard_selected(selected)
-            self._authority_rejected = True
-            self._authority_lost()
+        if evidence_sink is None and logical:
+            evidence_sink = self._requested_evidence_sink
+        self._active_evidence_sink = evidence_sink
+        started = self._clock_sample()
+        try:
+            result, cancelled = await self._settle_committed(
+                self._committer.commit(
+                    self._grant,
+                    targets,
+                    final_logical=final_logical,
+                )
+            )
+        except BaseException:
+            flush_latency_seconds = self._elapsed_since(started)
+            failure_sink = evidence_sink
+            if failure_sink is None and self._pending_relief_request():
+                failure_sink = (
+                    self._requested_evidence_sink
+                    or self._capture_evidence_sink((), logical=True)
+                )
+            if failure_sink is not None and self._evidence_sink_is_open(
+                failure_sink
+            ):
+                self._notify_observer(
+                    failure_sink.observe_flush_attempt,
+                    final_logical=final_logical,
+                    latency_seconds=flush_latency_seconds,
+                )
+            raise
+        flush_latency_seconds = self._elapsed_since(started)
+        deferred_evidence = None
+        if evidence_sink is not None and self._evidence_sink_is_open(
+            evidence_sink
+        ):
+            self._notify_observer(
+                evidence_sink.observe_flush_attempt,
+                final_logical=final_logical,
+                latency_seconds=flush_latency_seconds,
+            )
+        elif evidence_sink is None:
+            deferred_evidence = _DeferredBoundaryEvidence(
+                final_logical=final_logical,
+                latency_seconds=flush_latency_seconds,
+            )
+        try:
+            if type(result) is _types.BoundaryGrantRejected:
+                if evidence_sink is not None and self._evidence_sink_is_open(
+                    evidence_sink
+                ):
+                    self._notify_observer(
+                        evidence_sink.observe_fence_rejection
+                    )
+                elif deferred_evidence is not None:
+                    deferred_evidence.fence_rejected = True
+                await self._discard_selected(selected)
+                self._authority_rejected = True
+                self._authority_lost()
+                self._raise_if_cancelled(cancelled=cancelled)
+                return False, deferred_evidence
+            if type(result) is _types.BoundaryBatchRetryable:
+                await self._restore_selected(selected)
+                self._raise_if_cancelled(cancelled=cancelled)
+                return True, deferred_evidence
+            dispositions = self._correlate_dispositions(result, targets)
+
+            member_rejections = dispositions.count(
+                _types.BoundaryDisposition.MEMBER_REJECTED
+            )
+            if member_rejections:
+                if evidence_sink is not None and self._evidence_sink_is_open(
+                    evidence_sink
+                ):
+                    self._notify_observer(
+                        evidence_sink.observe_member_rejections,
+                        selected,
+                        dispositions,
+                    )
+                elif deferred_evidence is not None:
+                    deferred_evidence.selected = selected
+                    deferred_evidence.dispositions = dispositions
+
+            by_shard: dict[
+                _shard._Shard,
+                list[
+                    tuple[
+                        _types._BoundaryRecord,
+                        _types.BoundaryDisposition,
+                    ]
+                ],
+            ] = collections.defaultdict(list)
+            for (shard, record), disposition in zip(
+                selected,
+                dispositions,
+                strict=True,
+            ):
+                by_shard[shard].append((record, disposition))
+            retryable = False
+            for shard, shard_results in by_shard.items():
+                retryable = (
+                    await shard.apply_boundary_results(tuple(shard_results))
+                    or retryable
+                )
             self._raise_if_cancelled(cancelled=cancelled)
-            return False
-        if type(result) is _types.BoundaryBatchRetryable:
-            await self._restore_selected(selected)
-            self._raise_if_cancelled(cancelled=cancelled)
-            return True
+        except BaseException:
+            if deferred_evidence is not None and (
+                self._pending_relief_request()
+            ):
+                late_sink = (
+                    self._requested_evidence_sink
+                    or self._capture_evidence_sink((), logical=True)
+                )
+                self._publish_deferred_evidence(
+                    late_sink,
+                    deferred_evidence,
+                )
+            raise
+        return retryable, deferred_evidence
+
+    @staticmethod
+    def _correlate_dispositions(
+        result: object,
+        targets: tuple[_types.BoundaryWork, ...],
+    ) -> tuple[_types.BoundaryDisposition, ...]:
+        """Validate one closed batch result and preserve target order."""
         if type(result) is not _types.BoundaryBatchCommitted:
             message = "committer returned outside the closed vocabulary"
             raise _BoundaryCoordinatorError(message)
@@ -352,25 +626,102 @@ class _BoundaryCoordinator:
                 message = "committer returned an unknown disposition"
                 raise _BoundaryCoordinatorError(message)
             dispositions.append(correlated.disposition)
+        return tuple(dispositions)
 
-        by_shard: dict[
-            _shard._Shard,
-            list[tuple[_types._BoundaryRecord, _types.BoundaryDisposition]],
-        ] = collections.defaultdict(list)
-        for (shard, record), disposition in zip(
-            selected,
-            dispositions,
-            strict=True,
+    def _clock_sample(self) -> float:
+        try:
+            raw = self._monotonic()
+        except BaseException:
+            if self._last_now is None:
+                self._last_now = 0.0
+            return self._last_now
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            if self._last_now is None:
+                self._last_now = 0.0
+            return self._last_now
+        try:
+            sampled = float(raw)
+        except (OverflowError, ValueError):
+            sampled = math.nan
+        if not math.isfinite(sampled):
+            if self._last_now is None:
+                self._last_now = 0.0
+            return self._last_now
+        if self._last_now is None or sampled > self._last_now:
+            self._last_now = sampled
+        return self._last_now
+
+    def _elapsed_since(self, started: float) -> float:
+        elapsed = self._clock_sample() - started
+        if elapsed <= 0.0:
+            return 0.0
+        if not math.isfinite(elapsed):
+            return _MAX_FINITE_SECONDS
+        return elapsed
+
+    def _capture_evidence_sink(
+        self,
+        selected: _SelectedBoundaryBatch,
+        *,
+        logical: bool,
+    ) -> _BoundaryEvidenceSink | None:
+        try:
+            return self._evidence_sink_for(selected, logical)
+        except BaseException:
+            return None
+
+    def _pending_relief_request(self) -> bool:
+        """Return whether this automatic attempt will satisfy page relief."""
+        return (
+            self._requested_generation > self._completed_generation
+            and not self._requested_final
+        )
+
+    def _publish_deferred_evidence(
+        self,
+        evidence_sink: _BoundaryEvidenceSink | None,
+        evidence: _DeferredBoundaryEvidence,
+    ) -> None:
+        """Publish one settled automatic attempt after relief adopts it."""
+        if evidence_sink is None or not self._evidence_sink_is_open(
+            evidence_sink
         ):
-            by_shard[shard].append((record, disposition))
-        retryable = False
-        for shard, shard_results in by_shard.items():
-            retryable = (
-                await shard.apply_boundary_results(tuple(shard_results))
-                or retryable
+            return
+        self._notify_observer(
+            evidence_sink.observe_flush_attempt,
+            final_logical=evidence.final_logical,
+            latency_seconds=evidence.latency_seconds,
+        )
+        if evidence.fence_rejected:
+            self._notify_observer(evidence_sink.observe_fence_rejection)
+        if evidence.selected:
+            self._notify_observer(
+                evidence_sink.observe_member_rejections,
+                evidence.selected,
+                evidence.dispositions,
             )
-        self._raise_if_cancelled(cancelled=cancelled)
-        return retryable
+
+    @staticmethod
+    def _evidence_sink_is_open(
+        evidence_sink: _BoundaryEvidenceSink | None,
+    ) -> bool:
+        if evidence_sink is None:
+            return False
+        try:
+            return evidence_sink.boundary_capture_open
+        except BaseException:
+            return False
+
+    @staticmethod
+    def _notify_observer(
+        observer: typing.Callable[..., None],
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        try:
+            observer(*args, **kwargs)
+        except BaseException:  # noqa: S110 - evidence is observational
+            pass
 
     async def _discard_selected(
         self,
@@ -407,6 +758,11 @@ class _BoundaryCoordinator:
             if await shard.has_ready_boundary(self._grant):
                 return True
         return False
+
+    def _terminally_unavailable(self) -> bool:
+        return (
+            self._fatal is not None or self._closing or self._authority_rejected
+        )
 
     async def _settle_committed[ResultT](
         self, awaitable: typing.Awaitable[ResultT]

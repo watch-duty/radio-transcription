@@ -144,6 +144,32 @@ def _completed(
     return feed_work_scheduler.CallCompleted(_terminal_facts(execution))
 
 
+def _outcome_unknown(
+    execution: feed_work_scheduler.CohortExecution,
+) -> feed_work_scheduler.CallOutcomeUnknown:
+    return feed_work_scheduler.CallOutcomeUnknown(
+        feed_work_scheduler.CohortTerminalFacts(
+            records=tuple(
+                feed_work_scheduler.CohortRecordTerminalFact(
+                    identity=call.identity,
+                    participated=True,
+                    closure_state=(
+                        feed_work_scheduler.CohortRecordClosureState.OUTCOME_UNKNOWN
+                    ),
+                    full_pipeline_completed=False,
+                    terminal_reason=(
+                        feed_work_scheduler.CohortRecordTerminalReason.OUTCOME_UNKNOWN
+                    ),
+                )
+                for call in execution.calls
+            ),
+            disposition=(
+                feed_work_scheduler.CohortTerminalDisposition.OUTCOME_UNKNOWN
+            ),
+        )
+    )
+
+
 class _ImmediateExecutor:
     async def execute(self, record: object) -> object:
         execution = typing.cast(
@@ -151,6 +177,13 @@ class _ImmediateExecutor:
             record,
         )
         return _completed(execution)
+
+
+class _OutcomeUnknownExecutor:
+    async def execute(self, record: object) -> object:
+        return _outcome_unknown(
+            typing.cast("feed_work_scheduler.CohortExecution", record)
+        )
 
 
 class _GateExecutor:
@@ -246,6 +279,69 @@ class _ControlledCommitter:
             await asyncio.wait_for(self.changed.wait(), timeout=1)
 
 
+class _ControlledClock:
+    """Deterministic monotonic clock advanced only by a test owner."""
+
+    def __init__(self) -> None:
+        self.value = 0.0
+
+    def __call__(self) -> float:
+        return self.value
+
+    def advance(self, seconds: float) -> None:
+        self.value += seconds
+
+
+class _TimedCommitter:
+    """Gate each actual attempt so tests own its exact elapsed time."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, tuple[object, ...], bool]] = []
+        self.changed = asyncio.Event()
+        self.releases: dict[int, asyncio.Event] = {}
+        self.results: collections.deque[object] = collections.deque()
+        self.member_rejected_feeds: set[uuid.UUID] = set()
+
+    async def commit(
+        self,
+        grant: object,
+        boundaries: tuple[object, ...],
+        *,
+        final_logical: bool,
+    ) -> object:
+        call_index = len(self.calls)
+        self.calls.append((grant, boundaries, final_logical))
+        release = self.releases.setdefault(call_index, asyncio.Event())
+        self.changed.set()
+        await release.wait()
+        if self.results:
+            return self.results.popleft()
+        scheduler_types = _types()
+        return scheduler_types.BoundaryBatchCommitted(
+            tuple(
+                scheduler_types.BoundaryResult(
+                    boundary,
+                    (
+                        scheduler_types.BoundaryDisposition.MEMBER_REJECTED
+                        if boundary.feed_id in self.member_rejected_feeds
+                        else scheduler_types.BoundaryDisposition.COMMITTED
+                    ),
+                )
+                for boundary in boundaries
+            )
+        )
+
+    async def wait_for_calls(self, count: int) -> None:
+        while len(self.calls) < count:
+            self.changed.clear()
+            if len(self.calls) >= count:
+                return
+            await asyncio.wait_for(self.changed.wait(), timeout=1)
+
+    def release(self, call_index: int) -> None:
+        self.releases.setdefault(call_index, asyncio.Event()).set()
+
+
 class _TracingBoundaries:
     def __init__(self, boundaries: typing.Iterable[object]) -> None:
         self._boundaries = iter(boundaries)
@@ -326,6 +422,517 @@ class TestBoundaryOrdering(unittest.IsolatedAsyncioTestCase):
                 coverage.cancel()
                 await asyncio.gather(coverage, return_exceptions=True)
             await scheduler._wait_for_idle()
+            await scheduler.close()
+
+
+class TestBoundaryEvidence(unittest.IsolatedAsyncioTestCase):
+    async def test_unknown_evidence_waits_for_inflight_early_flush(
+        self,
+    ) -> None:
+        clock = _ControlledClock()
+        committer = _TimedCommitter()
+        observed: list[feed_work_scheduler.SchedulerPageEvidence] = []
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _OutcomeUnknownExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+            _monotonic=clock,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(_call(uuid.UUID(int=1), 0, grant=grant),),
+                boundaries=(_boundary(uuid.UUID(int=2), 1, grant=grant),),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+                evidence_observer=observed.append,
+            )
+        )
+
+        try:
+            await committer.wait_for_calls(1)
+            self.assertFalse(committer.calls[0][2])
+            self.assertFalse(coverage.done())
+            clock.advance(2.0)
+            committer.release(0)
+            self.assertIsInstance(
+                await asyncio.wait_for(coverage, timeout=1),
+                feed_work_scheduler.Undrained,
+            )
+
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(observed[0].early_flush_attempt_count, 1)
+            self.assertEqual(observed[0].total_flush_latency_seconds, 2.0)
+            self.assertEqual((await scheduler._snapshot()).held, 1)
+            self.assertIsNone(lane._page.evidence_observer)
+        finally:
+            committer.release(0)
+            await scheduler.close()
+
+    async def test_unknown_cancellation_retains_page_after_evidence_settlement(
+        self,
+    ) -> None:
+        clock = _ControlledClock()
+        committer = _TimedCommitter()
+        observed: list[feed_work_scheduler.SchedulerPageEvidence] = []
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _OutcomeUnknownExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+            _monotonic=clock,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(_call(uuid.UUID(int=1), 0, grant=grant),),
+                boundaries=(_boundary(uuid.UUID(int=2), 1, grant=grant),),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+                evidence_observer=observed.append,
+            )
+        )
+
+        try:
+            await committer.wait_for_calls(1)
+            for _unused in range(100):
+                if (
+                    lane._page is not None
+                    and lane._page.uncertainty is not None
+                ):
+                    break
+                await asyncio.sleep(0)
+            self.assertIsNotNone(lane._page)
+            self.assertIsNotNone(lane._page.uncertainty)
+
+            coverage.cancel()
+            await asyncio.sleep(0)
+            self.assertFalse(coverage.done())
+            clock.advance(2.0)
+            committer.release(0)
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(coverage, timeout=1)
+
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(observed[0].early_flush_attempt_count, 1)
+            self.assertEqual(observed[0].total_flush_latency_seconds, 2.0)
+            self.assertEqual((await scheduler._snapshot()).held, 1)
+            self.assertIsNotNone((await lane._snapshot()).page)
+            self.assertIsNone(lane._page.evidence_observer)
+        finally:
+            committer.release(0)
+            await scheduler.close()
+
+    async def test_evidence_cutoff_does_not_start_post_final_followup_flush(
+        self,
+    ) -> None:
+        clock = _ControlledClock()
+        committer = _TimedCommitter()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+            _boundary_batch_size=1,
+            _monotonic=clock,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        ready_check_entered = asyncio.Event()
+        release_ready_check = asyncio.Event()
+        has_ready_boundary = lane._boundary_coordinator._has_ready_boundary
+
+        async def gated_has_ready_boundary() -> bool:
+            ready_check_entered.set()
+            await release_ready_check.wait()
+            return await has_ready_boundary()
+
+        lane._boundary_coordinator._has_ready_boundary = (
+            gated_has_ready_boundary
+        )
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(),
+                boundaries=tuple(
+                    _boundary(uuid.UUID(int=index), index, grant=grant)
+                    for index in range(1, 4)
+                ),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+        )
+
+        try:
+            await committer.wait_for_calls(1)
+            self.assertTrue(committer.calls[0][2])
+            clock.advance(1.0)
+            committer.release(0)
+            await asyncio.wait_for(ready_check_entered.wait(), timeout=1)
+            for _unused in range(100):
+                if coverage.done():
+                    break
+                await asyncio.sleep(0)
+            self.assertTrue(coverage.done())
+            evidence = coverage.result().scheduler_evidence
+
+            self.assertEqual(len(committer.calls), 1)
+            self.assertEqual(evidence.early_flush_attempt_count, 0)
+            self.assertEqual(evidence.final_flush_attempt_count, 1)
+            self.assertEqual(evidence.total_flush_latency_seconds, 1.0)
+            self.assertEqual(evidence.maximum_flush_latency_seconds, 1.0)
+
+            release_ready_check.set()
+            await committer.wait_for_calls(2)
+            self.assertFalse(committer.calls[1][2])
+            committer.release(1)
+            await committer.wait_for_calls(3)
+            self.assertFalse(committer.calls[2][2])
+            committer.release(2)
+            await asyncio.wait_for(scheduler._wait_for_idle(), timeout=1)
+            self.assertEqual(evidence.early_flush_attempt_count, 0)
+        finally:
+            release_ready_check.set()
+            for index in range(3):
+                committer.release(index)
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_rolled_back_stable_boundary_is_not_page_evidence(
+        self,
+    ) -> None:
+        clock = _ControlledClock()
+        committer = _TimedCommitter()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+            _monotonic=clock,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        coordinator = lane._boundary_coordinator
+        page = await lane._begin_page(1, 0, evidence_observer=None)
+        shard = scheduler._shards[0]
+        async with coordinator._generation_changed:
+            coordinator._evidence_cutoff = True
+        record = await shard.admit_boundary(
+            _types()._BoundaryInput(
+                _boundary(uuid.UUID(int=1), 2, grant=grant),
+                grant,
+                0,
+                1,
+            ),
+            abort_event=asyncio.Event(),
+            pressure_relief=coordinator.request_relief,
+        )
+        page.evidence.observe_boundary_registration(record)
+        record.stable_target = _SOURCE_TIME
+        await shard.abort_boundary_page(grant, 1)
+
+        try:
+            async with coordinator._generation_changed:
+                coordinator._evidence_cutoff = False
+                coordinator._signal.set()
+                coordinator._generation_changed.notify_all()
+            await committer.wait_for_calls(1)
+            clock.advance(2.0)
+            committer.release(0)
+            await asyncio.wait_for(scheduler._wait_for_idle(), timeout=1)
+            await coordinator.settle_page_evidence(page.evidence)
+            evidence = page.evidence.freeze()
+
+            self.assertEqual(record.target, _SOURCE_TIME)
+            self.assertEqual(evidence.early_flush_attempt_count, 0)
+            self.assertEqual(evidence.total_flush_latency_seconds, 0.0)
+        finally:
+            committer.release(0)
+            await lane._abort_page(page)
+            await scheduler.close()
+
+    async def test_relief_adopts_inflight_old_boundary_evidence(self) -> None:
+        clock = _ControlledClock()
+        committer = _TimedCommitter()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+            _monotonic=clock,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        page = await lane._begin_page(1, 0, evidence_observer=None)
+        coordinator = lane._boundary_coordinator
+        shard = scheduler._shards[0]
+        await shard.admit_boundary(
+            _types()._BoundaryInput(
+                _boundary(uuid.UUID(int=1), 1, grant=grant),
+                grant,
+                0,
+                0,
+            ),
+            abort_event=asyncio.Event(),
+            pressure_relief=coordinator.request_relief,
+        )
+        await shard.promote_boundary_page(grant, 0)
+        await shard.seal_boundary_page(grant, 0)
+        coordinator.notify_ready()
+
+        relief: asyncio.Task[object] | None = None
+        try:
+            await committer.wait_for_calls(1)
+            relief = asyncio.create_task(coordinator.request_relief())
+            for _unused in range(100):
+                if coordinator.requested_generation == 1:
+                    break
+                await asyncio.sleep(0)
+            self.assertEqual(coordinator.requested_generation, 1)
+            clock.advance(3.0)
+            committer.release(0)
+            await asyncio.wait_for(relief, timeout=1)
+            await asyncio.wait_for(
+                coordinator.settle_page_evidence(page.evidence),
+                timeout=1,
+            )
+            evidence = page.evidence.freeze()
+
+            self.assertEqual(len(committer.calls), 1)
+            self.assertEqual(evidence.early_flush_attempt_count, 1)
+            self.assertEqual(evidence.total_flush_latency_seconds, 3.0)
+        finally:
+            committer.release(0)
+            if relief is not None and not relief.done():
+                relief.cancel()
+                await asyncio.gather(relief, return_exceptions=True)
+            await lane._abort_page(page)
+            await scheduler.close()
+
+    async def test_empty_pressure_relief_attempt_belongs_to_page_evidence(
+        self,
+    ) -> None:
+        clock = _ControlledClock()
+        committer = _TimedCommitter()
+        executor = _GateExecutor()
+        observed: list[feed_work_scheduler.SchedulerPageEvidence] = []
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            boundary_committer=committer,
+            _limits=_limits(
+                capacity=1,
+                workers=1,
+                high_water=1,
+                resume_at=0,
+            ),
+            _monotonic=clock,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(_call(uuid.UUID(int=1), 0, grant=grant),),
+                boundaries=(_boundary(uuid.UUID(int=2), 1, grant=grant),),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+                evidence_observer=observed.append,
+            )
+        )
+
+        try:
+            await committer.wait_for_calls(1)
+            self.assertEqual(committer.calls[0], (grant, (), False))
+            clock.advance(2.0)
+            committer.release(0)
+            await scheduler._shards[0].wait_for_capacity_waiters(1)
+            coverage.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await coverage
+
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(observed[0].early_flush_attempt_count, 1)
+            self.assertEqual(observed[0].total_flush_latency_seconds, 2.0)
+            self.assertEqual(observed[0].pressure_wait_seconds, 2.0)
+        finally:
+            committer.release(0)
+            executor.release.set()
+            await scheduler._wait_for_idle()
+            await scheduler.close()
+
+    async def test_evidence_times_early_and_final_flush_attempts(self) -> None:
+        clock = _ControlledClock()
+        committer = _TimedCommitter()
+        rejected_feed = uuid.UUID(int=1)
+        committer.member_rejected_feeds.add(rejected_feed)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(
+                capacity=2,
+                workers=1,
+                high_water=1,
+                resume_at=0,
+            ),
+            _monotonic=clock,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(),
+                boundaries=(
+                    _boundary(rejected_feed, 1, grant=grant),
+                    _boundary(uuid.UUID(int=2), 2, grant=grant),
+                ),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+        )
+
+        try:
+            await committer.wait_for_calls(1)
+            self.assertFalse(committer.calls[0][2])
+            clock.advance(2.0)
+            committer.release(0)
+            await committer.wait_for_calls(2)
+            self.assertTrue(committer.calls[1][2])
+            clock.advance(3.0)
+            committer.release(1)
+            evidence = (
+                await asyncio.wait_for(coverage, timeout=1)
+            ).scheduler_evidence
+
+            self.assertEqual(evidence.early_flush_attempt_count, 1)
+            self.assertEqual(evidence.final_flush_attempt_count, 1)
+            self.assertEqual(evidence.total_flush_latency_seconds, 5.0)
+            self.assertEqual(evidence.maximum_flush_latency_seconds, 3.0)
+            self.assertEqual(evidence.member_rejection_count, 1)
+            self.assertEqual(evidence.fence_rejection_count, 0)
+            self.assertTrue(evidence.pressure_encountered)
+            self.assertEqual(evidence.pressure_wait_count, 1)
+            self.assertEqual(evidence.pressure_wait_seconds, 2.0)
+            self.assertEqual(evidence.maximum_held_count, 1)
+        finally:
+            committer.release(0)
+            committer.release(1)
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_retryable_flush_latency_evidence_precedes_failure(
+        self,
+    ) -> None:
+        clock = _ControlledClock()
+        committer = _TimedCommitter()
+        committer.results.append(_types().BoundaryBatchRetryable())
+        observed: list[feed_work_scheduler.SchedulerPageEvidence] = []
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+            _monotonic=clock,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+                evidence_observer=observed.append,
+            )
+        )
+
+        try:
+            await committer.wait_for_calls(1)
+            clock.advance(1.5)
+            committer.release(0)
+            with self.assertRaisesRegex(RuntimeError, "retryable"):
+                await asyncio.wait_for(coverage, timeout=1)
+
+            self.assertEqual(len(observed), 1)
+            evidence = observed[0]
+            self.assertEqual(evidence.early_flush_attempt_count, 0)
+            self.assertEqual(evidence.final_flush_attempt_count, 1)
+            self.assertEqual(evidence.total_flush_latency_seconds, 1.5)
+            self.assertEqual(evidence.maximum_flush_latency_seconds, 1.5)
+            self.assertEqual(evidence.fence_rejection_count, 0)
+        finally:
+            committer.release(0)
+            await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_fence_rejection_is_counted_before_authority_failure(
+        self,
+    ) -> None:
+        clock = _ControlledClock()
+        committer = _TimedCommitter()
+        committer.results.append(_types().BoundaryGrantRejected())
+        observed: list[feed_work_scheduler.SchedulerPageEvidence] = []
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+            _monotonic=clock,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+                evidence_observer=observed.append,
+            )
+        )
+
+        try:
+            await committer.wait_for_calls(1)
+            clock.advance(2.5)
+            committer.release(0)
+            with self.assertRaises(RuntimeError):
+                await asyncio.wait_for(coverage, timeout=1)
+
+            self.assertEqual(len(observed), 1)
+            evidence = observed[0]
+            self.assertEqual(evidence.final_flush_attempt_count, 1)
+            self.assertEqual(evidence.total_flush_latency_seconds, 2.5)
+            self.assertEqual(evidence.fence_rejection_count, 1)
+            self.assertEqual(evidence.member_rejection_count, 0)
+            self.assertIsInstance(
+                await lane.close(
+                    feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS
+                ),
+                feed_work_scheduler.LaneClosed,
+            )
+        finally:
+            committer.release(0)
+            await asyncio.gather(coverage, return_exceptions=True)
             await scheduler.close()
 
 
@@ -980,37 +1587,50 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
             await scheduler._wait_for_idle()
             await scheduler.close()
 
-    async def test_no_progress_cancel_during_final_flush_returns_no_settlement(
+    async def test_no_progress_cancel_during_final_flush_waits_for_evidence(
         self,
     ) -> None:
         committer = _ControlledCommitter()
         committer.block_final_number = 1
+        clock = _ControlledClock()
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             _ImmediateExecutor(),
             boundary_committer=committer,
             _limits=_limits(),
+            _monotonic=clock,
         )
         await scheduler.start()
         grant = _grant()
         lane = _open_lane(scheduler, grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
         candidate = cursor.prepare_no_progress()
+        observed: list[feed_work_scheduler.SchedulerPageEvidence] = []
         coverage = asyncio.create_task(
             lane.cover_page(
                 calls=(),
                 boundaries=(),
                 candidate=candidate,
+                evidence_observer=observed.append,
             )
         )
         try:
             await committer.wait_for_calls(1)
             coverage.cancel()
+            for _unused in range(5):
+                await asyncio.sleep(0)
+            self.assertFalse(coverage.done())
+            clock.advance(2.0)
+            committer.release.set()
             with self.assertRaises(asyncio.CancelledError):
                 await coverage
 
             self.assertIs(cursor.outstanding_candidate, candidate)
             self.assertEqual(committer.calls, [(grant, (), True)])
             self.assertEqual((await lane._snapshot()).next_page_sequence, 0)
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(observed[0].final_flush_attempt_count, 1)
+            self.assertEqual(observed[0].total_flush_latency_seconds, 2.0)
+            self.assertEqual(observed[0].maximum_flush_latency_seconds, 2.0)
         finally:
             committer.release.set()
             await lane.close()
@@ -1343,9 +1963,12 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
             feed_work_scheduler.Undrained,
         )
 
-    async def test_never_settling_committed_close_is_undrained(self) -> None:
+    async def test_never_settling_commit_suppresses_incomplete_evidence(
+        self,
+    ) -> None:
         committer = _ControlledCommitter()
         committer.block_nonempty = True
+        observed: list[feed_work_scheduler.SchedulerPageEvidence] = []
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             _ImmediateExecutor(),
             boundary_committer=committer,
@@ -1361,6 +1984,7 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
                 calls=(),
                 boundaries=(_boundary(uuid.UUID(int=1), 1),),
                 candidate=candidate,
+                evidence_observer=observed.append,
             )
         )
         await committer.wait_for_calls(1)
@@ -1384,6 +2008,7 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
         snapshot = await scheduler._snapshot()
         self.assertTrue(snapshot.fatal)
         self.assertEqual(snapshot.held, 1)
+        self.assertEqual(observed, [])
         self.assertIs(lane._boundary_coordinator.task, coordinator_task)
         self.assertFalse(coordinator_task.done())
         self.assertIsInstance(
@@ -1394,6 +2019,7 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
         committer.release.set()
         await asyncio.wait_for(coordinator_task, timeout=1)
         self.assertEqual((await scheduler._snapshot()).held, 0)
+        self.assertEqual(observed, [])
 
 
 if __name__ == "__main__":

@@ -391,6 +391,19 @@ class _GateExecutor:
             event.set()
 
 
+class _ControlledClock:
+    """Deterministic monotonic clock advanced only by a test owner."""
+
+    def __init__(self) -> None:
+        self.value = 0.0
+
+    def __call__(self) -> float:
+        return self.value
+
+    def advance(self, seconds: float) -> None:
+        self.value += seconds
+
+
 class _DelayedCancellationExecutor:
     """Executor that exposes cancellation and an explicit settle winner."""
 
@@ -562,6 +575,26 @@ class _CancellationCapabilityExecutor:
             except asyncio.CancelledError as propagated:
                 self.reraised_same_object = propagated is exc
                 raise
+
+
+class _HoldFirstThenCompleteExecutor:
+    """Keep the first canceled-page cohort active during its retry."""
+
+    def __init__(self) -> None:
+        self.first_entered = asyncio.Event()
+        self.release_first = asyncio.Event()
+        self.calls = 0
+
+    async def execute(self, execution: object) -> object:
+        if not isinstance(execution, feed_work_scheduler.CohortExecution):
+            message = "executor received a private scheduler record"
+            raise TypeError(message)
+        self.calls += 1
+        if self.calls > 1:
+            return _completed(execution)
+        self.first_entered.set()
+        await self.release_first.wait()
+        return _completed(execution)
 
 
 class _UnknownPageAbortExecutor:
@@ -838,6 +871,556 @@ class _TracingCalls:
 class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
     """Exact lanes, incremental coverage, and bounded task contracts."""
 
+    async def test_scheduler_page_evidence_is_bounded_and_payload_free(
+        self,
+    ) -> None:
+        evidence = feed_work_scheduler.SchedulerPageEvidence(
+            admitted_record_count=3,
+            admitted_cohort_count=2,
+            terminal_record_count=3,
+            replay_blocked_record_count=1,
+            total_queue_wait_seconds=5.0,
+            maximum_queue_wait_seconds=3.0,
+            oldest_queue_age_seconds=2.0,
+            pressure_encountered=True,
+            pressure_wait_count=1,
+            pressure_wait_seconds=4.0,
+            maximum_held_count=4,
+            maximum_queue_depth=3,
+            maximum_worker_utilization_numerator=2,
+            worker_utilization_denominator=4,
+            early_flush_attempt_count=1,
+            final_flush_attempt_count=1,
+            total_flush_latency_seconds=7.0,
+            maximum_flush_latency_seconds=5.0,
+            fence_rejection_count=0,
+            member_rejection_count=1,
+        )
+
+        self.assertFalse(hasattr(evidence, "__dict__"))
+        self.assertTrue(
+            all(
+                isinstance(value, (bool, int, float))
+                for value in dataclasses.asdict(evidence).values()
+            )
+        )
+        self.assertNotIn("payload", repr(evidence).casefold())
+        self.assertNotIn("url", repr(evidence).casefold())
+        with self.assertRaises((dataclasses.FrozenInstanceError, TypeError)):
+            evidence.admitted_record_count = 4  # type: ignore[misc]
+
+        invalid = (
+            {"admitted_record_count": True},
+            {"terminal_record_count": 4},
+            {"total_queue_wait_seconds": float("nan")},
+            {"maximum_queue_wait_seconds": float("inf")},
+            {"oldest_queue_age_seconds": 4.0},
+            {"pressure_encountered": False},
+            {"pressure_wait_count": True},
+            {"pressure_wait_count": -1, "pressure_encountered": False},
+            {
+                "total_queue_wait_seconds": 1.0,
+                "maximum_queue_wait_seconds": 0.0,
+                "oldest_queue_age_seconds": 0.0,
+            },
+            {"maximum_queue_depth": 5},
+            {"maximum_worker_utilization_numerator": 5},
+            {"total_flush_latency_seconds": 4.0},
+            {
+                "total_flush_latency_seconds": 1.0,
+                "maximum_flush_latency_seconds": 0.0,
+            },
+        )
+        for changes in invalid:
+            with self.subTest(changes=changes):
+                with self.assertRaises((TypeError, ValueError)):
+                    dataclasses.replace(evidence, **changes)
+
+        self.assertEqual(
+            (
+                _scheduler_types().PRODUCTION_SHARD_COUNT,
+                _scheduler_types().PRODUCTION_SHARD_CAPACITY,
+                _scheduler_types().PRODUCTION_WORKERS_PER_SHARD,
+                _scheduler_types().PRODUCTION_HIGH_WATER,
+                _scheduler_types().PRODUCTION_RESUME_AT,
+            ),
+            (8, 500, 4, 400, 299),
+        )
+
+    async def test_settled_page_evidence_has_exact_no_queue_zeroes(
+        self,
+    ) -> None:
+        clock = _ControlledClock()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            _monotonic=clock,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        observed: list[feed_work_scheduler.SchedulerPageEvidence] = []
+
+        try:
+            settled = await lane.cover_page(
+                calls=(),
+                boundaries=(),
+                candidate=cursor.prepare(_SOURCE_TIME),
+                evidence_observer=observed.append,
+            )
+
+            self.assertIsInstance(settled, feed_work_scheduler.SettledPage)
+            self.assertEqual(observed, [])
+            evidence = settled.scheduler_evidence
+            self.assertEqual(evidence.admitted_record_count, 0)
+            self.assertEqual(evidence.admitted_cohort_count, 0)
+            self.assertEqual(evidence.total_queue_wait_seconds, 0.0)
+            self.assertEqual(evidence.maximum_queue_wait_seconds, 0.0)
+            self.assertEqual(evidence.oldest_queue_age_seconds, 0.0)
+            self.assertFalse(evidence.pressure_encountered)
+            self.assertEqual(evidence.pressure_wait_count, 0)
+            self.assertEqual(evidence.pressure_wait_seconds, 0.0)
+            self.assertEqual(evidence.maximum_held_count, 0)
+            self.assertEqual(evidence.maximum_queue_depth, 0)
+            self.assertEqual(
+                evidence.maximum_worker_utilization_numerator,
+                0,
+            )
+            self.assertEqual(evidence.worker_utilization_denominator, 32)
+            self.assertEqual(evidence.early_flush_attempt_count, 0)
+            self.assertEqual(evidence.final_flush_attempt_count, 1)
+            self.assertEqual(evidence.total_flush_latency_seconds, 0.0)
+            self.assertEqual(evidence.maximum_flush_latency_seconds, 0.0)
+            self.assertEqual(evidence.fence_rejection_count, 0)
+            self.assertEqual(evidence.member_rejection_count, 0)
+        finally:
+            await scheduler.close()
+
+    async def test_queue_wait_counts_multi_record_cohort_once_and_keeps_age(
+        self,
+    ) -> None:
+        limits = _scheduler_types()._SchedulerLimits(
+            shard_count=1,
+            capacity=4,
+            workers_per_shard=1,
+            high_water=4,
+            resume_at=2,
+        )
+        clock = _ControlledClock()
+        executor = _GateExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+            _monotonic=clock,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _cohort(
+                        uuid.UUID(int=1),
+                        (0,),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                    ),
+                    _cohort(
+                        uuid.UUID(int=2),
+                        (1, 2, 3),
+                        grant=grant,
+                        cohort_timestamp=_SOURCE_TIME,
+                    ),
+                ),
+                boundaries=(),
+                candidate=cursor.prepare(_SOURCE_TIME),
+            )
+        )
+
+        try:
+            await executor.wait_for_started(1)
+            async with asyncio.timeout(1):
+                while True:
+                    page = (await lane._snapshot()).page
+                    if page is not None and page.registered_records == 4:
+                        break
+                    await asyncio.sleep(0)
+            clock.advance(3.0)
+            await executor.release_completions(1)
+            await executor.wait_for_started(2)
+            executor.release_all()
+            settled = await asyncio.wait_for(coverage, timeout=1)
+            evidence = settled.scheduler_evidence
+
+            self.assertEqual(evidence.admitted_record_count, 4)
+            self.assertEqual(evidence.admitted_cohort_count, 2)
+            self.assertEqual(evidence.terminal_record_count, 4)
+            self.assertEqual(evidence.total_queue_wait_seconds, 3.0)
+            self.assertEqual(evidence.maximum_queue_wait_seconds, 3.0)
+            self.assertEqual(evidence.oldest_queue_age_seconds, 3.0)
+            self.assertFalse(evidence.pressure_encountered)
+            self.assertEqual(evidence.pressure_wait_count, 0)
+            self.assertEqual(evidence.pressure_wait_seconds, 0.0)
+            self.assertEqual(evidence.maximum_held_count, 4)
+            self.assertEqual(evidence.maximum_queue_depth, 4)
+            self.assertEqual(
+                evidence.maximum_worker_utilization_numerator,
+                1,
+            )
+            self.assertEqual(evidence.worker_utilization_denominator, 1)
+        finally:
+            executor.release_all()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_empty_page_evidence_excludes_sibling_lane_load(self) -> None:
+        limits = _scheduler_types()._SchedulerLimits(
+            shard_count=1,
+            capacity=4,
+            workers_per_shard=1,
+            high_water=4,
+            resume_at=2,
+        )
+        executor = _GateExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+        )
+        await scheduler.start()
+        busy_grant = _grant(lease_key="150")
+        empty_grant = _grant(lease_key="151")
+        busy_lane = _open_lane(scheduler, busy_grant)
+        empty_lane = _open_lane(scheduler, empty_grant)
+        busy_coverage = asyncio.create_task(
+            busy_lane.cover_page(
+                calls=(
+                    _submission(uuid.UUID(int=1), 0, grant=busy_grant),
+                    _submission(uuid.UUID(int=2), 1, grant=busy_grant),
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    busy_grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+        )
+
+        try:
+            await executor.wait_for_started(1)
+            async with asyncio.timeout(1):
+                while True:
+                    page = (await busy_lane._snapshot()).page
+                    if page is not None and page.registered_records == 2:
+                        break
+                    await asyncio.sleep(0)
+
+            settled = await empty_lane.cover_page(
+                calls=(),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    empty_grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+            evidence = settled.scheduler_evidence
+
+            self.assertEqual(evidence.maximum_held_count, 0)
+            self.assertEqual(evidence.maximum_queue_depth, 0)
+            self.assertEqual(
+                evidence.maximum_worker_utilization_numerator,
+                0,
+            )
+            self.assertFalse(evidence.pressure_encountered)
+        finally:
+            busy_coverage.cancel()
+            executor.release_all()
+            await asyncio.gather(busy_coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_pressure_evidence_times_only_blocked_admission(self) -> None:
+        limits = _scheduler_types()._SchedulerLimits(
+            shard_count=1,
+            capacity=2,
+            workers_per_shard=1,
+            high_water=1,
+            resume_at=0,
+        )
+        clock = _ControlledClock()
+        executor = _GateExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+            _monotonic=clock,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _submission(uuid.UUID(int=1), 0, grant=grant),
+                    _cohort(
+                        uuid.UUID(int=2),
+                        (1,),
+                        grant=grant,
+                        cohort_timestamp=(
+                            _SOURCE_TIME + datetime.timedelta(seconds=1)
+                        ),
+                        admission_hook=lambda _identities: clock.advance(2.0),
+                    ),
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+        )
+
+        try:
+            await scheduler._shards[0].wait_for_capacity_waiters(1)
+            clock.advance(5.0)
+            await executor.release_completions(1)
+            await executor.wait_for_started(2)
+            executor.release_all()
+            evidence = (
+                await asyncio.wait_for(coverage, timeout=1)
+            ).scheduler_evidence
+
+            self.assertTrue(evidence.pressure_encountered)
+            self.assertEqual(evidence.pressure_wait_count, 1)
+            self.assertEqual(evidence.pressure_wait_seconds, 5.0)
+            self.assertEqual(evidence.maximum_held_count, 1)
+        finally:
+            executor.release_all()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_typed_abort_evidence_observer_is_contained_and_reentrant(
+        self,
+    ) -> None:
+        clock = _ControlledClock()
+        executor = _GatedOutcomeExecutor(_stopped)
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _monotonic=clock,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        observed: list[feed_work_scheduler.SchedulerPageEvidence] = []
+
+        def observe(
+            evidence: feed_work_scheduler.SchedulerPageEvidence,
+        ) -> None:
+            observed.append(evidence)
+            lane._request_close(
+                feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN
+            )
+            message = "contained evidence observer failure"
+            raise RuntimeError(message)
+
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(_submission(uuid.UUID(int=8), 0, grant=grant),),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+                evidence_observer=observe,
+            )
+        )
+        try:
+            await asyncio.wait_for(executor.entered.wait(), timeout=1)
+            clock.advance(2.0)
+            executor.release.set()
+            with self.assertRaisesRegex(RuntimeError, "stopped"):
+                await asyncio.wait_for(coverage, timeout=1)
+
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(observed[0].admitted_record_count, 1)
+            self.assertEqual(observed[0].terminal_record_count, 1)
+            self.assertEqual(observed[0].final_flush_attempt_count, 0)
+        finally:
+            executor.release.set()
+            await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_repeated_cancellation_observes_failure_evidence_once(
+        self,
+    ) -> None:
+        limits = _scheduler_types()._SchedulerLimits(
+            shard_count=1,
+            capacity=2,
+            workers_per_shard=1,
+            high_water=1,
+            resume_at=0,
+        )
+        clock = _ControlledClock()
+        executor = _GateExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+            _monotonic=clock,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        observed: list[feed_work_scheduler.SchedulerPageEvidence] = []
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _submission(uuid.UUID(int=1), 0, grant=grant),
+                    _submission(uuid.UUID(int=2), 1, grant=grant),
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+                evidence_observer=observed.append,
+            )
+        )
+
+        try:
+            await scheduler._shards[0].wait_for_capacity_waiters(1)
+            clock.advance(4.0)
+            coverage.cancel()
+            coverage.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await coverage
+
+            self.assertEqual(len(observed), 1)
+            self.assertTrue(observed[0].pressure_encountered)
+            self.assertEqual(observed[0].pressure_wait_count, 1)
+            self.assertEqual(observed[0].pressure_wait_seconds, 4.0)
+        finally:
+            executor.release_all()
+            await scheduler._wait_for_idle()
+            await scheduler.close()
+
+    async def test_queue_wait_closes_before_purge_settlement_observer(
+        self,
+    ) -> None:
+        limits = _scheduler_types()._SchedulerLimits(
+            shard_count=1,
+            capacity=2,
+            workers_per_shard=1,
+            high_water=2,
+            resume_at=1,
+        )
+        clock = _ControlledClock()
+        executor = _GateExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=limits,
+            _monotonic=clock,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        observed: list[feed_work_scheduler.SchedulerPageEvidence] = []
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _submission(uuid.UUID(int=1), 0, grant=grant),
+                    _submission(
+                        uuid.UUID(int=2),
+                        1,
+                        grant=grant,
+                        settlement_observer=lambda _settlement: clock.advance(
+                            10.0
+                        ),
+                    ),
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+                evidence_observer=observed.append,
+            )
+        )
+
+        try:
+            await executor.wait_for_started(1)
+            async with asyncio.timeout(1):
+                while True:
+                    page = (await lane._snapshot()).page
+                    if page is not None and page.registered_records == 2:
+                        break
+                    await asyncio.sleep(0)
+            clock.advance(4.0)
+            coverage.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await coverage
+
+            self.assertEqual(len(observed), 1)
+            self.assertEqual(observed[0].total_queue_wait_seconds, 4.0)
+            self.assertEqual(observed[0].maximum_queue_wait_seconds, 4.0)
+            self.assertEqual(observed[0].oldest_queue_age_seconds, 4.0)
+        finally:
+            executor.release_all()
+            await scheduler._wait_for_idle()
+            await scheduler.close()
+
+    async def test_page_evidence_retry_excludes_active_same_sequence_work(
+        self,
+    ) -> None:
+        executor = _HoldFirstThenCompleteExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            _limits=_scheduler_types()._SchedulerLimits(
+                shard_count=1,
+                capacity=3,
+                workers_per_shard=2,
+                high_water=3,
+                resume_at=2,
+            ),
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        candidate = cursor.prepare(_SOURCE_TIME)
+        first = asyncio.create_task(
+            lane.cover_page(
+                calls=(_submission(uuid.UUID(int=1), 0, grant=grant),),
+                boundaries=(),
+                candidate=candidate,
+            )
+        )
+
+        try:
+            await asyncio.wait_for(executor.first_entered.wait(), timeout=1)
+            first.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await first
+            self.assertEqual((await scheduler._snapshot()).held, 1)
+
+            settled = await lane.cover_page(
+                calls=(_submission(uuid.UUID(int=2), 0, grant=grant),),
+                boundaries=(),
+                candidate=candidate,
+            )
+
+            self.assertEqual(
+                settled.scheduler_evidence.admitted_record_count, 1
+            )
+            self.assertEqual(settled.scheduler_evidence.maximum_held_count, 1)
+            self.assertEqual(settled.scheduler_evidence.maximum_queue_depth, 1)
+        finally:
+            executor.release_first.set()
+            await asyncio.gather(first, return_exceptions=True)
+            await scheduler._wait_for_idle()
+            await scheduler.close()
+
     async def test_public_exports_are_narrow_and_immutable(self) -> None:
         expected = {
             "CallAuthorityLost",
@@ -890,6 +1473,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             "PageFinalizationContext",
             "PageFinalizer",
             "SchedulerIntegrityError",
+            "SchedulerPageEvidence",
             "SettledPage",
             "Undrained",
         }
@@ -2815,10 +3399,12 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         failed_feed = uuid.UUID(int=1)
         sibling_feed = uuid.UUID(int=2)
+        clock = _ControlledClock()
         executor = _ReplayBarrierExecutor(failed_feed)
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             executor,
             _limits=limits,
+            _monotonic=clock,
         )
         await scheduler.start()
         grant = _grant()
@@ -2863,8 +3449,9 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             self.assertIn((0,), executor.started)
             self.assertIn((2,), executor.started)
             self.assertNotIn((1,), executor.started)
+            clock.advance(6.0)
             executor.release_failure.set()
-            await asyncio.wait_for(coverage, timeout=1)
+            settled = await asyncio.wait_for(coverage, timeout=1)
             await scheduler._wait_for_idle()
 
             self.assertEqual(
@@ -2876,6 +3463,14 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 },
             )
             self.assertEqual((await scheduler._snapshot()).held, 0)
+            evidence = settled.scheduler_evidence
+            self.assertEqual(evidence.admitted_record_count, 3)
+            self.assertEqual(evidence.admitted_cohort_count, 3)
+            self.assertEqual(evidence.terminal_record_count, 3)
+            self.assertEqual(evidence.replay_blocked_record_count, 1)
+            self.assertEqual(evidence.total_queue_wait_seconds, 6.0)
+            self.assertEqual(evidence.maximum_queue_wait_seconds, 6.0)
+            self.assertEqual(evidence.oldest_queue_age_seconds, 6.0)
         finally:
             executor.release_failure.set()
             await scheduler.close()
@@ -4617,6 +5212,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
         await scheduler.start()
         grant = _grant()
         lane = _open_lane(scheduler, grant)
+        evidence_observed: list[feed_work_scheduler.SchedulerPageEvidence] = []
         coverage = asyncio.create_task(
             lane.cover_page(
                 calls=(
@@ -4640,6 +5236,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
                     grant,
                     pos=None,
                 ).prepare(_SOURCE_TIME),
+                evidence_observer=evidence_observed.append,
             )
         )
         try:
@@ -4657,6 +5254,12 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
                 },
             )
             self.assertEqual((await scheduler._snapshot()).held, 1)
+            self.assertEqual(len(evidence_observed), 1)
+            self.assertEqual(
+                evidence_observed[0].admitted_record_count,
+                2,
+            )
+            self.assertEqual(evidence_observed[0].terminal_record_count, 2)
             self.assertEqual(
                 {
                     uncertainty
@@ -4672,6 +5275,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
                     feed_id,
                 )
             )
+            self.assertEqual(len(evidence_observed), 1)
             self.assertIsInstance(
                 await lane.close(
                     feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS

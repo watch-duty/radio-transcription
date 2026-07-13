@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import enum
+import math
 import typing
 import uuid
 
@@ -40,6 +41,20 @@ def _require_nonnegative_integer(value: object, name: str) -> int:
         message = f"{name} must be nonnegative"
         raise ValueError(message)
     return value
+
+
+def _require_nonnegative_finite_number(value: object, name: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        message = f"{name} must be a number"
+        raise TypeError(message)
+    try:
+        numeric = float(value)
+    except OverflowError:
+        numeric = math.inf
+    if not math.isfinite(numeric) or numeric < 0:
+        message = f"{name} must be finite and nonnegative"
+        raise ValueError(message)
+    return numeric
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1224,12 +1239,169 @@ class PageFinalizer(typing.Protocol):
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class SchedulerPageEvidence:
+    """Bounded scalar evidence captured by one page's scheduling owners.
+
+    Attributes:
+        admitted_record_count: Call records registered by this exact page.
+        admitted_cohort_count: Call cohorts registered by this exact page.
+        terminal_record_count: Registered records with a terminal disposition.
+        replay_blocked_record_count: Records rejected by replay protection.
+        total_queue_wait_seconds: Sum of completed and live cohort residence.
+        maximum_queue_wait_seconds: Longest observed cohort residence.
+        oldest_queue_age_seconds: Oldest observed live cohort residence.
+        pressure_encountered: Whether admission waited under pressure.
+        pressure_wait_count: Number of distinct pressure waits.
+        pressure_wait_seconds: Total time spent blocked under pressure.
+        maximum_held_count: Peak exact-page call and boundary records held.
+        maximum_queue_depth: Peak exact-page queued call-record count.
+        maximum_worker_utilization_numerator: Peak exact-page active workers.
+        worker_utilization_denominator: Fixed scheduler worker count.
+        early_flush_attempt_count: Exact-page non-final boundary attempts.
+        final_flush_attempt_count: Exact-page final logical attempts.
+        total_flush_latency_seconds: Sum of exact-page flush latencies.
+        maximum_flush_latency_seconds: Longest exact-page flush latency.
+        fence_rejection_count: Exact-grant boundary/final fence rejections.
+        member_rejection_count: Call and boundary member rejections.
+    """
+
+    admitted_record_count: int
+    admitted_cohort_count: int
+    terminal_record_count: int
+    replay_blocked_record_count: int
+    total_queue_wait_seconds: float
+    maximum_queue_wait_seconds: float
+    oldest_queue_age_seconds: float
+    pressure_encountered: bool
+    pressure_wait_count: int
+    pressure_wait_seconds: float
+    maximum_held_count: int
+    maximum_queue_depth: int
+    maximum_worker_utilization_numerator: int
+    worker_utilization_denominator: int
+    early_flush_attempt_count: int
+    final_flush_attempt_count: int
+    total_flush_latency_seconds: float
+    maximum_flush_latency_seconds: float
+    fence_rejection_count: int
+    member_rejection_count: int
+
+    def __post_init__(self) -> None:  # noqa: PLR0912
+        integer_fields = (
+            ("admitted_record_count", self.admitted_record_count),
+            ("admitted_cohort_count", self.admitted_cohort_count),
+            ("terminal_record_count", self.terminal_record_count),
+            ("replay_blocked_record_count", self.replay_blocked_record_count),
+            ("maximum_held_count", self.maximum_held_count),
+            ("maximum_queue_depth", self.maximum_queue_depth),
+            (
+                "maximum_worker_utilization_numerator",
+                self.maximum_worker_utilization_numerator,
+            ),
+            ("pressure_wait_count", self.pressure_wait_count),
+            ("early_flush_attempt_count", self.early_flush_attempt_count),
+            ("final_flush_attempt_count", self.final_flush_attempt_count),
+            ("fence_rejection_count", self.fence_rejection_count),
+            ("member_rejection_count", self.member_rejection_count),
+        )
+        for name, value in integer_fields:
+            _require_nonnegative_integer(value, name)
+        _require_positive_integer(
+            self.worker_utilization_denominator,
+            "worker_utilization_denominator",
+        )
+        duration_fields = (
+            ("total_queue_wait_seconds", self.total_queue_wait_seconds),
+            ("maximum_queue_wait_seconds", self.maximum_queue_wait_seconds),
+            ("oldest_queue_age_seconds", self.oldest_queue_age_seconds),
+            ("pressure_wait_seconds", self.pressure_wait_seconds),
+            ("total_flush_latency_seconds", self.total_flush_latency_seconds),
+            (
+                "maximum_flush_latency_seconds",
+                self.maximum_flush_latency_seconds,
+            ),
+        )
+        for name, value in duration_fields:
+            _require_nonnegative_finite_number(value, name)
+        if type(self.pressure_encountered) is not bool:
+            message = "pressure_encountered must be a bool"
+            raise TypeError(message)
+        if self.admitted_cohort_count > self.admitted_record_count:
+            message = "admitted cohorts cannot exceed admitted records"
+            raise ValueError(message)
+        if self.terminal_record_count > self.admitted_record_count:
+            message = "terminal records cannot exceed admitted records"
+            raise ValueError(message)
+        if (
+            self.oldest_queue_age_seconds > self.maximum_queue_wait_seconds
+            or self.maximum_queue_wait_seconds > self.total_queue_wait_seconds
+        ):
+            message = "queue age and residence totals are inconsistent"
+            raise ValueError(message)
+        if (self.total_queue_wait_seconds == 0.0) != (
+            self.maximum_queue_wait_seconds == 0.0
+        ):
+            message = "queue residence total and maximum must zero together"
+            raise ValueError(message)
+        if self.admitted_cohort_count == 0 and any(
+            value != 0.0
+            for value in (
+                self.total_queue_wait_seconds,
+                self.maximum_queue_wait_seconds,
+                self.oldest_queue_age_seconds,
+            )
+        ):
+            message = "queue timing requires an admitted cohort"
+            raise ValueError(message)
+        encountered = self.pressure_wait_count > 0
+        if self.pressure_encountered is not encountered:
+            message = "pressure encounter and wait count disagree"
+            raise ValueError(message)
+        if self.pressure_wait_count == 0 and self.pressure_wait_seconds != 0.0:
+            message = "pressure time requires an observed pressure wait"
+            raise ValueError(message)
+        if self.maximum_queue_depth > self.maximum_held_count:
+            message = "queue depth cannot exceed held work"
+            raise ValueError(message)
+        if (
+            self.maximum_worker_utilization_numerator
+            > self.worker_utilization_denominator
+        ):
+            message = "worker utilization exceeds its fixed denominator"
+            raise ValueError(message)
+        flush_attempt_count = (
+            self.early_flush_attempt_count + self.final_flush_attempt_count
+        )
+        if flush_attempt_count == 0 and any(
+            value != 0.0
+            for value in (
+                self.total_flush_latency_seconds,
+                self.maximum_flush_latency_seconds,
+            )
+        ):
+            message = "flush latency requires an actual flush attempt"
+            raise ValueError(message)
+        if (
+            self.maximum_flush_latency_seconds
+            > self.total_flush_latency_seconds
+        ):
+            message = "maximum flush latency exceeds total latency"
+            raise ValueError(message)
+        if (self.total_flush_latency_seconds == 0.0) != (
+            self.maximum_flush_latency_seconds == 0.0
+        ):
+            message = "flush latency total and maximum must zero together"
+            raise ValueError(message)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class SettledPage:
-    """Accepted page settlement plus exact opaque source evidence."""
+    """Accepted page settlement plus exact scheduler and source evidence."""
 
     candidate: cursor_policy.PageCandidate
     lease_settlement: cursor_policy.PageSettlement
     final_closure_resolutions: tuple[FinalRecordClosureResolution, ...]
+    scheduler_evidence: SchedulerPageEvidence
     source_evidence: object
 
     def __post_init__(self) -> None:
@@ -1263,6 +1435,9 @@ class SettledPage:
             for value in self.final_closure_resolutions
         ):
             message = "final_closure_resolutions must contain exact values"
+            raise TypeError(message)
+        if type(self.scheduler_evidence) is not SchedulerPageEvidence:
+            message = "scheduler_evidence must be exact SchedulerPageEvidence"
             raise TypeError(message)
 
     @property

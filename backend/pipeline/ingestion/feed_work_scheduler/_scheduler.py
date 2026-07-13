@@ -9,6 +9,8 @@ import asyncio
 import collections.abc
 import dataclasses
 import enum
+import math
+import time
 import typing
 import uuid
 
@@ -21,6 +23,7 @@ from backend.pipeline.ingestion.feed_work_scheduler import (
 from backend.pipeline.storage import feed_store, ingestion_lease_store
 
 _T = typing.TypeVar("_T")
+_MAX_FINITE_SECONDS = float.fromhex("0x1.fffffffffffffp+1023")
 
 
 class SchedulerIntegrityError(RuntimeError):
@@ -29,6 +32,10 @@ class SchedulerIntegrityError(RuntimeError):
 
 class _LaneClosedError(RuntimeError):
     """An exact lane closed before page coverage linearized."""
+
+
+def _raise_cancelled() -> typing.Never:
+    raise asyncio.CancelledError
 
 
 class _CloseStrength(enum.IntEnum):
@@ -58,11 +65,400 @@ class _ReadOnlySignal:
 
 
 @dataclasses.dataclass(slots=True)
+class _PageEvidenceAccumulator:
+    """Mutable scalars plus only the page's live work and queue stamps."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    page_sequence: int
+    monotonic: typing.Callable[[], float] = dataclasses.field(repr=False)
+    worker_utilization_denominator: int
+    admitted_record_count: int = 0
+    admitted_cohort_count: int = 0
+    terminal_record_count: int = 0
+    replay_blocked_record_count: int = 0
+    total_queue_wait_seconds: float = 0.0
+    maximum_queue_wait_seconds: float = 0.0
+    oldest_queue_age_seconds: float = 0.0
+    pressure_wait_count: int = 0
+    pressure_wait_seconds: float = 0.0
+    maximum_held_count: int = 0
+    maximum_queue_depth: int = 0
+    maximum_worker_utilization_numerator: int = 0
+    early_flush_attempt_count: int = 0
+    final_flush_attempt_count: int = 0
+    total_flush_latency_seconds: float = 0.0
+    maximum_flush_latency_seconds: float = 0.0
+    fence_rejection_count: int = 0
+    member_rejection_count: int = 0
+    _queued_at: dict[_types.CohortRecordIdentity, float] = dataclasses.field(
+        default_factory=dict,
+        repr=False,
+    )
+    _live_identities: dict[int, _types.CohortRecordIdentity] = (
+        dataclasses.field(default_factory=dict, repr=False)
+    )
+    _boundary_records: dict[int, _types._BoundaryRecord] = dataclasses.field(
+        default_factory=dict,
+        repr=False,
+    )
+    _boundary_capture_open: bool = dataclasses.field(default=True, repr=False)
+    _boundary_capture_complete: bool | None = dataclasses.field(
+        default=None,
+        repr=False,
+    )
+    _last_now: float | None = dataclasses.field(default=None, repr=False)
+
+    @staticmethod
+    def _bounded_duration(started: float, finished: float) -> float:
+        elapsed = finished - started
+        if elapsed <= 0.0:
+            return 0.0
+        if not math.isfinite(elapsed):
+            return _MAX_FINITE_SECONDS
+        return elapsed
+
+    @staticmethod
+    def _bounded_sum(current: float, increment: float) -> float:
+        total = current + increment
+        if not math.isfinite(total):
+            return _MAX_FINITE_SECONDS
+        return total
+
+    def now(self) -> float:
+        """Read one contained, nondecreasing finite clock sample."""
+        try:
+            raw = self.monotonic()
+        except BaseException:
+            if self._last_now is None:
+                self._last_now = 0.0
+            return self._last_now
+        if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+            if self._last_now is None:
+                self._last_now = 0.0
+            return self._last_now
+        try:
+            sampled = float(raw)
+        except (OverflowError, ValueError):
+            sampled = math.nan
+        if not math.isfinite(sampled):
+            if self._last_now is None:
+                self._last_now = 0.0
+            return self._last_now
+        if self._last_now is None or sampled > self._last_now:
+            self._last_now = sampled
+        return self._last_now
+
+    def _observe_oldest(self, now: float) -> None:
+        if not self._queued_at:
+            return
+        oldest = self._bounded_duration(min(self._queued_at.values()), now)
+        self.oldest_queue_age_seconds = max(
+            self.oldest_queue_age_seconds,
+            oldest,
+        )
+
+    def _close_queue_residence(
+        self,
+        first_identity: _types.CohortRecordIdentity,
+        now: float,
+    ) -> None:
+        admitted_at = self._queued_at.pop(first_identity, None)
+        if admitted_at is None:
+            return
+        elapsed = self._bounded_duration(admitted_at, now)
+        self.total_queue_wait_seconds = self._bounded_sum(
+            self.total_queue_wait_seconds,
+            elapsed,
+        )
+        self.maximum_queue_wait_seconds = max(
+            self.maximum_queue_wait_seconds,
+            elapsed,
+        )
+
+    def observe_registration(
+        self,
+        identities: tuple[_types.CohortRecordIdentity, ...],
+    ) -> None:
+        first_identity = identities[0]
+        now = self.now()
+        self._observe_oldest(now)
+        if first_identity in self._queued_at:
+            return
+        for identity in identities:
+            self._live_identities[id(identity)] = identity
+        self._queued_at[first_identity] = now
+        self.admitted_record_count += len(identities)
+        self.admitted_cohort_count += 1
+
+    def observe_boundary_registration(
+        self,
+        record: _types._BoundaryRecord,
+    ) -> None:
+        """Retain only an exact live boundary identity for scalar sampling."""
+        if self.page_sequence not in (
+            record.provisional_page_sequence,
+            record.promotion_page_sequence,
+        ):
+            return
+        self._boundary_records[id(record)] = record
+
+    def tracks_identity(
+        self,
+        identity: _types.CohortRecordIdentity,
+    ) -> bool:
+        """Return whether ``identity`` is object-identical page admission."""
+        return self._live_identities.get(id(identity)) is identity
+
+    def tracks_boundary(self, record: _types._BoundaryRecord) -> bool:
+        """Return whether ``record`` is an object-identical page boundary."""
+        return self._boundary_records.get(id(record)) is record and (
+            self.page_sequence
+            in (
+                record.provisional_page_sequence,
+                record.promotion_page_sequence,
+                record.aborted_page_sequence,
+            )
+        )
+
+    @property
+    def boundary_capture_open(self) -> bool:
+        """Return whether a new boundary attempt may capture this page."""
+        return self._boundary_capture_open
+
+    @property
+    def boundary_capture_complete(self) -> bool:
+        """Return whether every captured attempt settled before closure."""
+        return self._boundary_capture_complete is True
+
+    def close_boundary_capture(self, *, complete: bool) -> None:
+        """Close this page to new boundary evidence after quiescence."""
+        if type(complete) is not bool:
+            message = "boundary capture completeness must be a bool"
+            raise TypeError(message)
+        if not self._boundary_capture_open:
+            return
+        self._boundary_capture_open = False
+        self._boundary_capture_complete = complete
+
+    def observe_dispatch(
+        self,
+        first_identity: _types.CohortRecordIdentity,
+    ) -> None:
+        now = self.now()
+        self._observe_oldest(now)
+        self._close_queue_residence(first_identity, now)
+
+    def observe_terminal(
+        self,
+        record_count: int,
+        *,
+        member_rejected: bool,
+    ) -> None:
+        self.terminal_record_count += record_count
+        if member_rejected:
+            self.member_rejection_count += record_count
+
+    def observe_neutralization(
+        self,
+        first_identities: tuple[_types.CohortRecordIdentity, ...],
+        record_count: int,
+        *,
+        replay_blocked: bool,
+        member_rejected: bool,
+    ) -> None:
+        now = self.now()
+        self._observe_oldest(now)
+        for first_identity in first_identities:
+            self._close_queue_residence(first_identity, now)
+        self.terminal_record_count += record_count
+        if replay_blocked:
+            self.replay_blocked_record_count += record_count
+        if member_rejected:
+            self.member_rejection_count += record_count
+
+    def observe_unadmitted(
+        self,
+        record_count: int,
+        *,
+        replay_blocked: bool,
+        member_rejected: bool,
+    ) -> None:
+        if replay_blocked:
+            self.replay_blocked_record_count += record_count
+        if member_rejected:
+            self.member_rejection_count += record_count
+
+    def observe_pressure_wait(self, started: float) -> None:
+        elapsed = self._bounded_duration(started, self.now())
+        self.pressure_wait_count += 1
+        self.pressure_wait_seconds = self._bounded_sum(
+            self.pressure_wait_seconds,
+            elapsed,
+        )
+
+    def observe_sample(
+        self,
+        *,
+        held: int,
+        queue_depth: int,
+        active_workers: int,
+        queued_first_identities: tuple[
+            _types.CohortRecordIdentity,
+            ...,
+        ],
+        live_identities: tuple[_types.CohortRecordIdentity, ...],
+        live_boundary_records: tuple[_types._BoundaryRecord, ...],
+    ) -> None:
+        now = self.now()
+        self._observe_oldest(now)
+        live_queue_identity_ids = {
+            id(identity) for identity in queued_first_identities
+        }
+        for first_identity in tuple(self._queued_at):
+            if id(first_identity) not in live_queue_identity_ids:
+                self._close_queue_residence(first_identity, now)
+        self._live_identities = {
+            id(identity): identity for identity in live_identities
+        }
+        self._boundary_records = {
+            id(record): record for record in live_boundary_records
+        }
+        self.maximum_held_count = max(self.maximum_held_count, held)
+        self.maximum_queue_depth = max(
+            self.maximum_queue_depth,
+            queue_depth,
+        )
+        self.maximum_worker_utilization_numerator = max(
+            self.maximum_worker_utilization_numerator,
+            active_workers,
+        )
+
+    def observe_flush_attempt(
+        self,
+        *,
+        final_logical: bool,
+        latency_seconds: float,
+    ) -> None:
+        if final_logical:
+            self.final_flush_attempt_count += 1
+        else:
+            self.early_flush_attempt_count += 1
+        latency = (
+            latency_seconds
+            if math.isfinite(latency_seconds) and latency_seconds >= 0.0
+            else 0.0
+        )
+        self.total_flush_latency_seconds = self._bounded_sum(
+            self.total_flush_latency_seconds,
+            latency,
+        )
+        self.maximum_flush_latency_seconds = max(
+            self.maximum_flush_latency_seconds,
+            latency,
+        )
+
+    def observe_fence_rejection(self) -> None:
+        self.fence_rejection_count += 1
+
+    def observe_member_rejections(
+        self,
+        selected: _boundaries._SelectedBoundaryBatch,
+        dispositions: tuple[_types.BoundaryDisposition, ...],
+    ) -> None:
+        self.member_rejection_count += sum(
+            disposition is _types.BoundaryDisposition.MEMBER_REJECTED
+            and self.tracks_boundary(record)
+            for (_shard_value, record), disposition in zip(
+                selected,
+                dispositions,
+                strict=True,
+            )
+        )
+
+    def freeze(self) -> _types.SchedulerPageEvidence:
+        """Return one immutable view without retaining completed history."""
+        now = self.now()
+        self._observe_oldest(now)
+        live_residences = tuple(
+            self._bounded_duration(admitted_at, now)
+            for admitted_at in self._queued_at.values()
+        )
+        live_total = 0.0
+        for elapsed in live_residences:
+            live_total = self._bounded_sum(live_total, elapsed)
+        total_queue_wait = self._bounded_sum(
+            self.total_queue_wait_seconds,
+            live_total,
+        )
+        maximum_queue_wait = max(
+            self.maximum_queue_wait_seconds,
+            max(live_residences, default=0.0),
+        )
+        return _types.SchedulerPageEvidence(
+            admitted_record_count=self.admitted_record_count,
+            admitted_cohort_count=self.admitted_cohort_count,
+            terminal_record_count=self.terminal_record_count,
+            replay_blocked_record_count=self.replay_blocked_record_count,
+            total_queue_wait_seconds=total_queue_wait,
+            maximum_queue_wait_seconds=maximum_queue_wait,
+            oldest_queue_age_seconds=self.oldest_queue_age_seconds,
+            pressure_encountered=self.pressure_wait_count > 0,
+            pressure_wait_count=self.pressure_wait_count,
+            pressure_wait_seconds=self.pressure_wait_seconds,
+            maximum_held_count=self.maximum_held_count,
+            maximum_queue_depth=self.maximum_queue_depth,
+            maximum_worker_utilization_numerator=(
+                self.maximum_worker_utilization_numerator
+            ),
+            worker_utilization_denominator=(
+                self.worker_utilization_denominator
+            ),
+            early_flush_attempt_count=self.early_flush_attempt_count,
+            final_flush_attempt_count=self.final_flush_attempt_count,
+            total_flush_latency_seconds=self.total_flush_latency_seconds,
+            maximum_flush_latency_seconds=self.maximum_flush_latency_seconds,
+            fence_rejection_count=self.fence_rejection_count,
+            member_rejection_count=self.member_rejection_count,
+        )
+
+
+class _ObservedCallExecutor:
+    """Record actual dispatch immediately before delegating execution."""
+
+    def __init__(
+        self,
+        delegate: _types.CallExecutor,
+        dispatch_observer: typing.Callable[[_types.CohortExecution], None],
+    ) -> None:
+        self._delegate = delegate
+        self._dispatch_observer = dispatch_observer
+
+    def __getattr__(self, name: str) -> object:
+        """Preserve private deterministic-test inspection of the delegate."""
+        return getattr(self._delegate, name)
+
+    async def execute(
+        self,
+        execution: _types.CohortExecution,
+    ) -> _types._ExecutorOutcome:
+        try:
+            self._dispatch_observer(execution)
+        except BaseException:  # noqa: S110 - evidence is observational
+            pass
+        return await self._delegate.execute(execution)
+
+
+@dataclasses.dataclass(slots=True)
 class _PageBarrier:
     """Bounded admission and structural terminal state for one page."""
 
     grant: ingestion_lease_store.LeaseGrant
     page_sequence: int
+    evidence: _PageEvidenceAccumulator
+    evidence_observer: (
+        typing.Callable[[_types.SchedulerPageEvidence], None] | None
+    ) = None
+    evidence_published: bool = False
     current_source_order: int | None = None
     pulled: int = 0
     registered: int = 0
@@ -213,6 +609,7 @@ class FeedWorkScheduler:
         page_finalizer: _types.PageFinalizer | None = None,
         _limits: _types._SchedulerLimits = _types._PRODUCTION_LIMITS,
         _boundary_batch_size: int = _boundaries._BOUNDARY_BATCH_SIZE,
+        _monotonic: typing.Callable[[], float] = time.monotonic,
     ) -> None:
         """Create one scheduler with immutable production or test limits.
 
@@ -224,9 +621,16 @@ class FeedWorkScheduler:
                 deterministic default accepts structurally settled pages.
             _limits: Validated deterministic-test limits. Production callers
                 use the fixed default.
+            _monotonic: Monotonic clock seam for deterministic evidence tests.
         """
         if not isinstance(_limits, _types._SchedulerLimits):
             message = "_limits must be _SchedulerLimits"
+            raise TypeError(message)
+        if not callable(getattr(executor, "execute", None)):
+            message = "executor must provide async execute(record)"
+            raise TypeError(message)
+        if not callable(_monotonic):
+            message = "_monotonic must be callable"
             raise TypeError(message)
         if boundary_committer is None:
             boundary_committer = _boundaries._DefaultBoundaryCommitter()
@@ -243,6 +647,7 @@ class FeedWorkScheduler:
             "_boundary_batch_size",
         )
         self._limits = _limits
+        self._monotonic = _monotonic
         self._boundary_committer = boundary_committer
         self._page_finalizer = page_finalizer
         self._boundary_batch_size = _boundary_batch_size
@@ -260,10 +665,14 @@ class FeedWorkScheduler:
         self._fatal: BaseException | None = None
         self._fatal_event = asyncio.Event()
         self._fatal_propagation_task: asyncio.Task[None] | None = None
+        observed_executor = _ObservedCallExecutor(
+            executor,
+            self._observe_page_dispatch,
+        )
         self._shards = tuple(
             _shard._Shard(
                 index,
-                executor,
+                observed_executor,
                 limits=_limits,
                 outcome_observer=self._observe_outcome,
                 grant_is_closing=self._closing_grants.__contains__,
@@ -654,6 +1063,69 @@ class FeedWorkScheduler:
         index = _types._shard_index(feed_id, self._limits)
         return self._shards[index]
 
+    def _sample_page_evidence(
+        self,
+        evidence: _PageEvidenceAccumulator,
+    ) -> None:
+        """Sample instantaneous scalar load without retaining a snapshot."""
+        try:
+            live_identities = tuple(
+                record.identity
+                for shard in self._shards
+                for record in shard._records.values()
+                if evidence.tracks_identity(record.identity)
+            )
+            live_boundary_records = tuple(
+                record
+                for shard in self._shards
+                for record in (
+                    *shard._pending_boundaries.values(),
+                    *shard._flushing_boundaries.values(),
+                )
+                if evidence.tracks_boundary(record)
+            )
+            held = len(live_identities) + len(live_boundary_records)
+            queued_first_identities = tuple(
+                cohort.identities[0]
+                for shard in self._shards
+                for queue in shard._feed_queues.values()
+                for cohort in queue
+                if evidence.tracks_identity(cohort.identities[0])
+            )
+            queue_depth = sum(
+                len(cohort.records)
+                for shard in self._shards
+                for queue in shard._feed_queues.values()
+                for cohort in queue
+                if evidence.tracks_identity(cohort.identities[0])
+            )
+            active_workers = sum(
+                slot.active_cohort is not None
+                and evidence.tracks_identity(slot.active_cohort.identities[0])
+                for shard in self._shards
+                for slot in shard._workers
+            )
+            evidence.observe_sample(
+                held=held,
+                queue_depth=queue_depth,
+                active_workers=active_workers,
+                queued_first_identities=queued_first_identities,
+                live_identities=live_identities,
+                live_boundary_records=live_boundary_records,
+            )
+        except BaseException:  # noqa: S110 - evidence is observational
+            pass
+
+    def _observe_page_dispatch(
+        self,
+        execution: _types.CohortExecution,
+    ) -> None:
+        """Observe the exact active-worker transition before delegation."""
+        first_identity = execution.calls[0].identity
+        lane = self._lanes.get(first_identity.grant)
+        if lane is not None:
+            lane._observe_page_dispatch(first_identity)
+
     def _observe_outcome(
         self,
         record: _types._CallRecord,
@@ -837,6 +1309,8 @@ class GrantLane:
                 _types.LaneCloseReason.AUTHORITY_LOSS
             ),
             fatal_observer=scheduler._observe_fatal,
+            monotonic=scheduler._monotonic,
+            evidence_sink_for=self._boundary_evidence_sink,
             batch_size=scheduler._boundary_batch_size,
         )
 
@@ -844,6 +1318,75 @@ class GrantLane:
     def grant(self) -> ingestion_lease_store.LeaseGrant:
         """Return the complete immutable grant bound to this lane."""
         return self._grant
+
+    def _boundary_evidence_sink(
+        self,
+        selected: _boundaries._SelectedBoundaryBatch,
+        logical: bool,  # noqa: FBT001 - private callback protocol
+    ) -> _PageEvidenceAccumulator | None:
+        """Capture the exact page owner before external boundary mutation."""
+        page = self._page
+        if page is None or not page.evidence.boundary_capture_open:
+            return None
+        if logical or any(
+            page.evidence.tracks_boundary(record)
+            for _shard_value, record in selected
+        ):
+            return page.evidence
+        return None
+
+    def _wrap_settlement_observer(
+        self,
+        evidence: _PageEvidenceAccumulator,
+        observer: typing.Callable[[_types.CallSettlement], None] | None,
+    ) -> typing.Callable[[_types.CallSettlement], None]:
+        """Close physically released queue residence before user callbacks."""
+
+        def observe(settlement: _types.CallSettlement) -> None:
+            self._scheduler._sample_page_evidence(evidence)
+            if observer is not None:
+                observer(settlement)
+
+        return observe
+
+    @staticmethod
+    def _time_pressured_submission(
+        page: _PageBarrier,
+        cohort: _types.CohortSubmission,
+        started: float,
+    ) -> tuple[_types.CohortSubmission, typing.Callable[[], None]]:
+        """End pressure timing immediately before the admission hook runs."""
+        finished = False
+
+        def finish() -> None:
+            nonlocal finished
+            if finished:
+                return
+            finished = True
+            try:
+                page.evidence.observe_pressure_wait(started)
+            except BaseException:  # noqa: S110 - evidence is observational
+                pass
+
+        def admission_hook(
+            identities: tuple[_types.CohortRecordIdentity, ...],
+        ) -> None:
+            finish()
+            cohort.admission_hook(identities)
+
+        observed = _types.CohortSubmission(
+            member=cohort.member,
+            feed_id=cohort.feed_id,
+            cohort_timestamp=cohort.cohort_timestamp,
+            calls=cohort.calls,
+            admission_hook=admission_hook,
+        )
+        object.__setattr__(
+            observed,
+            "_admission_state",
+            cohort._admission_state,
+        )
+        return observed, finish
 
     async def remove_feed(self, feed_id: uuid.UUID) -> _types.FeedRemoved:
         """Retire one Feed only from this lane's complete grant."""
@@ -896,6 +1439,9 @@ class GrantLane:
         calls: collections.abc.Iterable[_types.CohortSubmission],
         boundaries: collections.abc.Iterable[_types.BoundaryWork],
         candidate: cursor_policy.PageCandidate,
+        evidence_observer: (
+            typing.Callable[[_types.SchedulerPageEvidence], None] | None
+        ) = None,
     ) -> _types.SettledPage | _types.Undrained:
         """Incrementally cover one source-order call page.
 
@@ -903,6 +1449,7 @@ class GrantLane:
             calls: Exact cohorts in frozen provider source order.
             boundaries: Single-pass trailing Feed completion boundaries.
             candidate: Exact cursor candidate awaiting bounded coverage.
+            evidence_observer: Optional contained terminal-failure observer.
 
         Returns:
             Private sealed receipt consumable only by ``LeaseCursor``.
@@ -911,6 +1458,9 @@ class GrantLane:
             CursorIntegrityError: Candidate authority or sequence is wrong.
             RuntimeError: The lane or scheduler is closing or failed.
         """
+        if evidence_observer is not None and not callable(evidence_observer):
+            message = "evidence_observer must be callable or None"
+            raise TypeError(message)
         async with self._admission_lock:
             await self._validate_candidate(candidate)
             cohorts = tuple(calls)
@@ -925,7 +1475,11 @@ class GrantLane:
             if no_progress:
                 self._require_no_progress_boundaries_empty(page_boundaries)
                 page_boundaries = ()
-            await self._begin_page(candidate.page_sequence, total_records)
+            page = await self._begin_page(
+                candidate.page_sequence,
+                total_records,
+                evidence_observer=evidence_observer,
+            )
             try:
                 source_order = 0
                 replay_blocked_feeds: set[uuid.UUID] = set()
@@ -946,19 +1500,47 @@ class GrantLane:
                             payload=submission.payload,
                             page_sequence=candidate.page_sequence,
                             settlement_observer=(
-                                submission.settlement_observer
+                                self._wrap_settlement_observer(
+                                    page.evidence,
+                                    submission.settlement_observer,
+                                )
                             ),
                         )
                         for offset, submission in enumerate(cohort.calls)
                     )
                     shard = self._scheduler._shard_for(cohort.feed_id)
-                    try:
-                        await shard.admit_cohort(
-                            cohort,
-                            works,
-                            self._signals,
-                            abort_event=self._closing_event,
+                    pressure_started = (
+                        page.evidence.now()
+                        if self._cohort_admission_is_pressured(
+                            shard,
+                            cohort.feed_id,
+                            candidate.page_sequence,
+                            record_count,
                         )
+                        else None
+                    )
+                    admitted_cohort = cohort
+                    finish_pressure: typing.Callable[[], None] | None = None
+                    if pressure_started is not None:
+                        admitted_cohort, finish_pressure = (
+                            self._time_pressured_submission(
+                                page,
+                                cohort,
+                                pressure_started,
+                            )
+                        )
+                    try:
+                        try:
+                            await shard.admit_cohort(
+                                admitted_cohort,
+                                works,
+                                self._signals,
+                                abort_event=self._closing_event,
+                            )
+                        finally:
+                            if finish_pressure is not None:
+                                finish_pressure()
+                            self._scheduler._sample_page_evidence(page.evidence)
                     except _shard._FeedRetiredError:
                         self._notify_unadmitted_cohort(
                             cohort,
@@ -1025,14 +1607,33 @@ class GrantLane:
                         source_order=source_order,
                         page_sequence=candidate.page_sequence,
                     )
-                    try:
-                        await shard.admit_boundary(
-                            boundary_input,
-                            abort_event=self._closing_event,
-                            pressure_relief=(
-                                self._boundary_coordinator.request_relief
-                            ),
+                    pressure_started = (
+                        page.evidence.now()
+                        if self._boundary_admission_is_pressured(
+                            shard,
+                            boundary,
+                            candidate.page_sequence,
                         )
+                        else None
+                    )
+                    try:
+                        try:
+                            boundary_record = await shard.admit_boundary(
+                                boundary_input,
+                                abort_event=self._closing_event,
+                                pressure_relief=(
+                                    self._boundary_coordinator.request_relief
+                                ),
+                            )
+                            page.evidence.observe_boundary_registration(
+                                boundary_record
+                            )
+                        finally:
+                            if pressure_started is not None:
+                                page.evidence.observe_pressure_wait(
+                                    pressure_started
+                                )
+                            self._scheduler._sample_page_evidence(page.evidence)
                     except _shard._FeedRetiredError:
                         await self._mark_localized(
                             source_order,
@@ -1075,10 +1676,21 @@ class GrantLane:
                         candidate.page_sequence,
                         uncertainty,
                     )
-                    return _types.Undrained(
+                    undrained = _types.Undrained(
                         self._grant,
                         _types.LaneCloseReason.PLANNED_DRAIN,
                     )
+                    (
+                        evidence_complete,
+                        cancelled,
+                    ) = await self._settle_uncertain_page_evidence(page)
+                    self._publish_page_evidence(
+                        page,
+                        complete=evidence_complete,
+                    )
+                    if cancelled:
+                        _raise_cancelled()
+                    return undrained
                 if page_state != "finalizable":
                     message = f"page candidate aborted by {page_state}"
                     raise RuntimeError(message)  # noqa: TRY301
@@ -1108,19 +1720,33 @@ class GrantLane:
                     context,
                 )
                 if isinstance(page_settlement, _types.Undrained):
+                    (
+                        evidence_complete,
+                        cancelled,
+                    ) = await self._settle_uncertain_page_evidence(page)
+                    self._publish_page_evidence(
+                        page,
+                        complete=evidence_complete,
+                    )
+                    if cancelled:
+                        _raise_cancelled()
                     return page_settlement
+            except asyncio.CancelledError:
+                if page.uncertainty is not None:
+                    if not page.evidence_published:
+                        (
+                            evidence_complete,
+                            _cancelled,
+                        ) = await self._settle_uncertain_page_evidence(page)
+                        self._publish_page_evidence(
+                            page,
+                            complete=evidence_complete,
+                        )
+                    raise
+                await self._abort_and_publish_page(page)
+                raise
             except BaseException:
-                cleanup = self._start_page_settlement(
-                    self._abort_page(candidate.page_sequence),
-                    name=(
-                        "feed-work-page-abort-"
-                        f"{self._grant.lease_key}-{candidate.page_sequence}"
-                    ),
-                )
-                try:
-                    await self._settle_page_task(cleanup)
-                except BaseException as cleanup_failure:
-                    self._scheduler._observe_fatal(cleanup_failure)
+                await self._abort_and_publish_page(page)
                 raise
             return page_settlement
 
@@ -1166,17 +1792,109 @@ class GrantLane:
         self,
         page_sequence: int,
         total_records: int,
-    ) -> None:
+        *,
+        evidence_observer: (
+            typing.Callable[[_types.SchedulerPageEvidence], None] | None
+        ),
+    ) -> _PageBarrier:
         async with self._state_lock:
             self._raise_closed_locked()
             if self._page is not None:
                 message = "lane already owns a live page"
                 raise RuntimeError(message)
-            self._page = _PageBarrier(
+            page = _PageBarrier(
                 grant=self._grant,
                 page_sequence=page_sequence,
+                evidence=_PageEvidenceAccumulator(
+                    grant=self._grant,
+                    page_sequence=page_sequence,
+                    monotonic=self._scheduler._monotonic,
+                    worker_utilization_denominator=(
+                        self._scheduler._limits.shard_count
+                        * self._scheduler._limits.workers_per_shard
+                    ),
+                ),
+                evidence_observer=evidence_observer,
                 total_records=total_records,
             )
+            self._page = page
+        self._scheduler._sample_page_evidence(page.evidence)
+        return page
+
+    def _cohort_admission_is_pressured(
+        self,
+        shard: _shard._Shard,
+        feed_id: uuid.UUID,
+        page_sequence: int,
+        record_count: int,
+    ) -> bool:
+        if (
+            self._closing_event.is_set()
+            or self._scheduler._fatal is not None
+            or shard._fatal is not None
+            or not shard._admission_open
+            or shard._stopping
+            or shard._closed
+            or (self._grant, feed_id) in shard._retired_scopes
+            or (self._grant, page_sequence, feed_id) in shard._replay_blocks
+        ):
+            return False
+        return (
+            shard._pressure_paused
+            or shard._held + record_count > shard._limits.capacity
+        )
+
+    def _boundary_admission_is_pressured(
+        self,
+        shard: _shard._Shard,
+        boundary: _types.BoundaryWork,
+        page_sequence: int,
+    ) -> bool:
+        scope = (self._grant, boundary.feed_id)
+        if (
+            self._closing_event.is_set()
+            or self._scheduler._fatal is not None
+            or shard._fatal is not None
+            or not shard._admission_open
+            or shard._stopping
+            or shard._closed
+            or scope in shard._retired_scopes
+            or (
+                self._grant,
+                page_sequence,
+                boundary.feed_id,
+            )
+            in shard._replay_blocks
+            or scope in shard._pending_boundaries
+        ):
+            return False
+        return shard._pressure_paused or shard._held >= shard._limits.capacity
+
+    def _publish_page_evidence(
+        self,
+        page: _PageBarrier,
+        *,
+        complete: bool = True,
+    ) -> None:
+        """Publish one contained immutable failure/unknown observation."""
+        if page.evidence_published:
+            return
+        page.evidence_published = True
+        observer = page.evidence_observer
+        page.evidence_observer = None
+        if not complete:
+            return
+        self._scheduler._sample_page_evidence(page.evidence)
+        try:
+            evidence = page.evidence.freeze()
+        except BaseException:
+            return
+        if observer is None:
+            return
+        try:
+            observer(evidence)
+        except BaseException:  # noqa: S110 - user observer is contained
+            pass
 
     async def _mark_pulled(
         self,
@@ -1256,6 +1974,17 @@ class GrantLane:
             if replay_blocked_feed is not None:
                 page.replay_blocked_feed_ids.add(replay_blocked_feed)
             page.changed.set()
+            try:
+                page.evidence.observe_unadmitted(
+                    record_count,
+                    replay_blocked=(
+                        call_records and replay_blocked_feed is not None
+                    ),
+                    member_rejected=retired_member is not None,
+                )
+            except BaseException:  # noqa: S110 - evidence is observational
+                pass
+        self._scheduler._sample_page_evidence(page.evidence)
 
     async def _localize_released(
         self,
@@ -1338,7 +2067,30 @@ class GrantLane:
             return
         page.registered_cohorts[first] = identities
         page.registered_records += len(identities)
+        try:
+            page.evidence.observe_registration(identities)
+        except BaseException:  # noqa: S110 - evidence is observational
+            pass
+        self._scheduler._sample_page_evidence(page.evidence)
         page.changed.set()
+
+    def _observe_page_dispatch(
+        self,
+        first_identity: _types.CohortRecordIdentity,
+    ) -> None:
+        page = self._page
+        if (
+            page is None
+            or first_identity.grant != page.grant
+            or first_identity.page_sequence != page.page_sequence
+            or first_identity not in page.registered_cohorts
+        ):
+            return
+        try:
+            page.evidence.observe_dispatch(first_identity)
+        except BaseException:  # noqa: S110 - evidence is observational
+            pass
+        self._scheduler._sample_page_evidence(page.evidence)
 
     def _observe_page_terminal(
         self,
@@ -1349,6 +2101,7 @@ class GrantLane:
         page = self._page
         if page is None or page.page_sequence != cohort.page_sequence:
             return
+        self._scheduler._sample_page_evidence(page.evidence)
         if failure is not None or outcome is None:
             self._mark_page_uncertain(
                 page,
@@ -1410,6 +2163,16 @@ class GrantLane:
         ):
             page.abort_reason = outcome.facts.disposition.value
         page.terminalized_registered_records += len(identities)
+        try:
+            page.evidence.observe_terminal(
+                len(identities),
+                member_rejected=isinstance(
+                    outcome,
+                    _types._ExecutorMembershipRejected,
+                ),
+            )
+        except BaseException:  # noqa: S110 - evidence is observational
+            pass
         if not self._terminal_accounting_is_valid(page):
             self._mark_page_uncertain(
                 page,
@@ -1433,6 +2196,7 @@ class GrantLane:
             for record in facts.records
         }
         added = 0
+        neutralized_firsts: list[_types.CohortRecordIdentity] = []
         for record in records:
             identity = record.identity
             if (
@@ -1440,12 +2204,15 @@ class GrantLane:
                 or identity.page_sequence != page.page_sequence
             ):
                 continue
-            registered = any(
-                exact is identity
-                for identities in page.registered_cohorts.values()
-                for exact in identities
+            first_identity = next(
+                (
+                    first
+                    for first, identities in page.registered_cohorts.items()
+                    if any(exact is identity for exact in identities)
+                ),
+                None,
             )
-            if not registered:
+            if first_identity is None:
                 self._mark_page_uncertain(
                     page,
                     _types._FinalPageUncertainty.INTEGRITY_FAILURE,
@@ -1458,9 +2225,24 @@ class GrantLane:
                 continue
             page.neutralized_identities.add(identity)
             added += 1
+            if not any(
+                retained is first_identity for retained in neutralized_firsts
+            ):
+                neutralized_firsts.append(first_identity)
             if replay_blocked:
                 page.replay_blocked_feed_ids.add(identity.feed_id)
         page.terminalized_registered_records += added
+        if added:
+            try:
+                page.evidence.observe_neutralization(
+                    tuple(neutralized_firsts),
+                    added,
+                    replay_blocked=replay_blocked,
+                    member_rejected=retired_member is not None,
+                )
+            except BaseException:  # noqa: S110 - evidence is observational
+                pass
+        self._scheduler._sample_page_evidence(page.evidence)
         if retired_member is not None:
             self._append_retired_member(page, retired_member)
         elif not replay_blocked and added:
@@ -1627,6 +2409,12 @@ class GrantLane:
                 _types._FinalPageUncertainty.OUTCOME_UNKNOWN,
             )
         if type(result) is _types.FinalPageGrantRejected:
+            page = self._page
+            if page is not None:
+                try:
+                    page.evidence.observe_fence_rejection()
+                except BaseException:  # noqa: S110 - evidence is observational
+                    pass
             self._request_close(_types.LaneCloseReason.AUTHORITY_LOSS)
             message = "page finalizer rejected the exact grant"
             raise _LaneClosedError(message)
@@ -1662,9 +2450,26 @@ class GrantLane:
         by_shard = self._scheduler._group_final_resolutions(
             accepted.final_closure_resolutions
         )
+        async with self._state_lock:
+            page = self._require_page_locked()
+            if page.page_sequence != candidate.page_sequence:
+                message = "page evidence crossed final candidate sequence"
+                raise RuntimeError(message)
+            evidence_accumulator = page.evidence
+        evidence_complete = (
+            await self._boundary_coordinator.settle_page_evidence(
+                evidence_accumulator
+            )
+        )
+        if not evidence_complete:
+            message = "page evidence capture was abandoned before settlement"
+            raise _boundaries._BoundaryCoordinatorError(message)
         async with self._scheduler._finalization_lock:
             await self._scheduler._validate_final_pending(by_shard)
-            lease_settlement = await self._cover(candidate, accepted)
+            lease_settlement, scheduler_evidence = await self._cover(
+                candidate,
+                accepted,
+            )
             await self._scheduler._resolve_final_pending(by_shard)
             await self._scheduler._clear_replay_barriers(
                 self._grant,
@@ -1679,6 +2484,7 @@ class GrantLane:
             candidate=candidate,
             lease_settlement=lease_settlement,
             final_closure_resolutions=(accepted.final_closure_resolutions),
+            scheduler_evidence=scheduler_evidence,
             source_evidence=accepted.source_evidence,
         )
 
@@ -1835,7 +2641,10 @@ class GrantLane:
         self,
         candidate: cursor_policy.PageCandidate,
         result: _types._AcceptedFinalPage,
-    ) -> cursor_policy.PageSettlement:
+    ) -> tuple[
+        cursor_policy.PageSettlement,
+        _types.SchedulerPageEvidence,
+    ]:
         async with self._state_lock:
             self._raise_closed_locked()
             self._validate_candidate_locked(candidate)
@@ -1861,22 +2670,69 @@ class GrantLane:
             else:
                 message = "result is not an accepted final disposition"
                 raise cursor_policy.CursorIntegrityError(message)
+            self._scheduler._sample_page_evidence(page.evidence)
+            scheduler_evidence = page.evidence.freeze()
             self._next_page_sequence += 1
             self._page = None
-            return settlement
+            return settlement, scheduler_evidence
 
-    async def _abort_page(self, page_sequence: int) -> None:
+    async def _abort_page(self, page: _PageBarrier) -> bool:
         await self._scheduler._abort_boundary_page(
             self._grant,
-            page_sequence,
+            page.page_sequence,
         )
-        await self._scheduler._purge_page(self._grant, page_sequence)
+        evidence_complete = (
+            await self._boundary_coordinator.settle_page_evidence(page.evidence)
+        )
+        await self._scheduler._purge_page(self._grant, page.page_sequence)
         async with self._state_lock:
-            if (
-                self._page is not None
-                and self._page.page_sequence == page_sequence
-            ):
+            if self._page is page:
                 self._page = None
+        return evidence_complete
+
+    async def _abort_and_publish_page(self, page: _PageBarrier) -> None:
+        """Settle owned abort cleanup and publish only complete evidence."""
+        cleanup = self._start_page_settlement(
+            self._abort_page(page),
+            name=(
+                "feed-work-page-abort-"
+                f"{self._grant.lease_key}-{page.page_sequence}"
+            ),
+        )
+        evidence_complete = False
+        try:
+            evidence_complete = await self._settle_page_task(cleanup)
+        except BaseException as cleanup_failure:
+            self._scheduler._observe_fatal(cleanup_failure)
+        self._publish_page_evidence(
+            page,
+            complete=evidence_complete,
+        )
+
+    async def _settle_uncertain_page_evidence(
+        self,
+        page: _PageBarrier,
+    ) -> tuple[bool, bool]:
+        """Settle started evidence while remembering caller cancellation."""
+        task = self._start_page_settlement(
+            self._boundary_coordinator.settle_page_evidence(page.evidence),
+            name=(
+                "feed-work-page-evidence-"
+                f"{self._grant.lease_key}-{page.page_sequence}"
+            ),
+        )
+        cancelled = False
+        try:
+            while True:
+                try:
+                    return await asyncio.shield(task), cancelled
+                except asyncio.CancelledError:
+                    cancelled = True
+                    if task.done():
+                        return task.result(), cancelled
+        finally:
+            if self._page_settlement_task is task:
+                self._page_settlement_task = None
 
     def _start_page_settlement(
         self,
