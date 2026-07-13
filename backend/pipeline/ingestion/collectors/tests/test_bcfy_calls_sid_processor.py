@@ -5,6 +5,7 @@ from __future__ import annotations
 # The processor deliberately keeps its page algorithms private and deep.
 import asyncio
 import collections
+import dataclasses
 import datetime
 import inspect
 import typing
@@ -13,8 +14,14 @@ import uuid
 
 from backend.pipeline.ingestion import feed_work_scheduler, models
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    boundary_verdict,
+    cursor_policy,
     provider,
+    runtime_adapters,
     sid_processor,
+)
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    pipeline as cohort_pipeline,
 )
 from backend.pipeline.storage import feed_store, ingestion_lease_store
 
@@ -164,11 +171,12 @@ class _RecordingLane:
         trace: list[str] | None = None,
     ) -> None:
         self.removed: list[uuid.UUID] = []
+        self.retired: set[uuid.UUID] = set()
         self.trace = trace
         self.cover_actions = collections.deque(cover_actions)
         self.covers: list[
             tuple[
-                tuple[feed_work_scheduler.CallSubmission, ...],
+                tuple[feed_work_scheduler.CohortSubmission, ...],
                 tuple[feed_work_scheduler.BoundaryWork, ...],
                 object,
             ]
@@ -179,6 +187,7 @@ class _RecordingLane:
         feed_id: uuid.UUID,
     ) -> feed_work_scheduler.FeedRemoved:
         self.removed.append(feed_id)
+        self.retired.add(feed_id)
         return feed_work_scheduler.FeedRemoved(
             grant=_GRANT,
             feed_id=feed_id,
@@ -186,10 +195,13 @@ class _RecordingLane:
             active_retained=True,
         )
 
+    async def is_feed_retired(self, feed_id: uuid.UUID) -> bool:
+        return feed_id in self.retired
+
     async def cover_page(
         self,
         *,
-        calls: typing.Iterable[feed_work_scheduler.CallSubmission],
+        calls: typing.Iterable[feed_work_scheduler.CohortSubmission],
         boundaries: typing.Iterable[feed_work_scheduler.BoundaryWork],
         candidate: object,
     ) -> object:
@@ -202,27 +214,30 @@ class _RecordingLane:
             action = self.cover_actions.popleft()
             if isinstance(action, _AsyncGate):
                 action = await action.wait()
+            if callable(action):
+                action = action(call_values, boundary_values, candidate)
+                if inspect.isawaitable(action):
+                    action = await action
             if isinstance(action, BaseException):
-                for call in call_values:
-                    if call.settlement_observer is not None:
-                        call.settlement_observer(
-                            feed_work_scheduler.CallSettlement.ABORTED
-                        )
+                for cohort in call_values:
+                    for call in cohort.calls:
+                        if call.settlement_observer is not None:
+                            call.settlement_observer(
+                                feed_work_scheduler.CallSettlement.ABORTED
+                            )
                 raise action
+            if isinstance(
+                action,
+                (
+                    feed_work_scheduler.SettledPage,
+                    feed_work_scheduler.Undrained,
+                ),
+            ):
+                return action
             if action is not None:
                 message = "unknown scripted cover action"
                 raise AssertionError(message)
-        if isinstance(candidate, sid_processor.cursor_policy.PageCursorCandidate):
-            return sid_processor.cursor_policy._issue_covered_page(candidate)
-        if isinstance(
-            candidate,
-            sid_processor.cursor_policy.NoProgressPageCandidate,
-        ):
-            return sid_processor.cursor_policy._issue_no_progress_page(
-                candidate
-            )
-        message = "unexpected candidate"
-        raise AssertionError(message)
+        return _settled_page(call_values, boundary_values, candidate)
 
 
 class _RecordingWait:
@@ -288,6 +303,7 @@ def _processor(
     lane: _RecordingLane | None = None,
     calls_provider: _ScriptedProvider | None = None,
     wait: _RecordingWait | None = None,
+    session_id_factory: typing.Callable[[], str] | None = None,
 ) -> tuple[sid_processor.BcfyCallsSidProcessor, _RecordingLane]:
     selected_lane = lane or _RecordingLane()
     processor = sid_processor.BcfyCallsSidProcessor(
@@ -297,6 +313,9 @@ def _processor(
         selected_lane,
         now=lambda: _NOW,
         wait=wait or _RecordingWait(),
+        session_id_factory=(
+            session_id_factory or sid_processor._new_session_id
+        ),
     )
     return processor, selected_lane
 
@@ -326,6 +345,432 @@ def _page(
         http_attempt_count=0,
         response_byte_count=0,
         response_row_count=len(calls),
+    )
+
+
+def _prepared_work(
+    processor: sid_processor.BcfyCallsSidProcessor,
+    calls: typing.Iterable[object],
+    *,
+    replay_feed_ids: frozenset[uuid.UUID] = frozenset(),
+    frozen_routes: (
+        typing.Mapping[str, sid_processor._MemberState] | None
+    ) = None,
+) -> sid_processor._PreparedPageWork:
+    lease_cursor = processor._lease_cursor
+    if lease_cursor is None:
+        message = "processor membership must be initialized"
+        raise AssertionError(message)
+    candidate = cursor_policy.LeaseCursor(
+        _GRANT,
+        pos=lease_cursor.pos,
+    ).prepare_no_progress()
+    return processor._prepare_page_work(
+        calls,
+        candidate=candidate,
+        replay_feed_ids=replay_feed_ids,
+        frozen_routes=frozen_routes,
+    )
+
+
+def _prepared_calls(
+    processor: sid_processor.BcfyCallsSidProcessor,
+    calls: typing.Iterable[object],
+    *,
+    replay_feed_ids: frozenset[uuid.UUID] = frozenset(),
+    frozen_routes: (
+        typing.Mapping[str, sid_processor._MemberState] | None
+    ) = None,
+) -> tuple[feed_work_scheduler.CallSubmission, ...]:
+    prepared = _prepared_work(
+        processor,
+        calls,
+        replay_feed_ids=replay_feed_ids,
+        frozen_routes=frozen_routes,
+    )
+    return tuple(call for cohort in prepared.cohorts for call in cohort.calls)
+
+
+def _admit_prepared(
+    prepared: sid_processor._PreparedPageWork,
+) -> tuple[
+    tuple[
+        feed_work_scheduler.CallSubmission,
+        feed_work_scheduler.CohortRecordIdentity,
+        cohort_pipeline.ScheduledCohortEntry,
+    ],
+    ...,
+]:
+    admitted = []
+    source_order = 0
+    local_sequence = 0
+    for cohort in prepared.cohorts:
+        identities = tuple(
+            feed_work_scheduler.CohortRecordIdentity(
+                grant=_GRANT,
+                member=cohort.member,
+                page_sequence=prepared.ledger.page_sequence,
+                feed_id=cohort.feed_id,
+                cohort_timestamp=cohort.cohort_timestamp,
+                source_order=source_order + offset,
+                local_sequence=local_sequence + offset,
+            )
+            for offset, _call in enumerate(cohort.calls)
+        )
+        source_order += len(cohort.calls)
+        local_sequence += len(cohort.calls)
+        cohort.admission_hook(identities)
+        payload = typing.cast(
+            "cohort_pipeline.ScheduledCohortPayload",
+            cohort.calls[0].payload,
+        )
+        admitted.extend(
+            zip(cohort.calls, identities, payload.entries, strict=True)
+        )
+    return tuple(admitted)
+
+
+def _complete_admitted(
+    admitted: tuple[
+        feed_work_scheduler.CallSubmission,
+        feed_work_scheduler.CohortRecordIdentity,
+        cohort_pipeline.ScheduledCohortEntry,
+    ],
+) -> None:
+    call, identity, entry = admitted
+    ledger = sid_processor.gap_ledger._owner_for(entry.obligation)
+    ledger.resolve_success(entry.obligation, identity)
+    assert call.settlement_observer is not None
+    call.settlement_observer(feed_work_scheduler.CallSettlement.COMPLETED)
+
+
+def _submission_urls(
+    calls: typing.Iterable[feed_work_scheduler.CallSubmission],
+) -> list[str]:
+    offsets: dict[int, int] = {}
+    urls = []
+    for call in calls:
+        payload = typing.cast(
+            "cohort_pipeline.ScheduledCohortPayload",
+            call.payload,
+        )
+        key = id(payload)
+        offset = offsets.get(key, 0)
+        urls.append(payload.entries[offset].audio_url)
+        offsets[key] = offset + 1
+    return urls
+
+
+def _scheduler_evidence(
+    *,
+    record_count: int,
+    cohort_count: int,
+) -> feed_work_scheduler.SchedulerPageEvidence:
+    return feed_work_scheduler.SchedulerPageEvidence(
+        admitted_record_count=record_count,
+        admitted_cohort_count=cohort_count,
+        terminal_record_count=record_count,
+        replay_blocked_record_count=0,
+        total_queue_wait_seconds=0.0,
+        maximum_queue_wait_seconds=0.0,
+        oldest_queue_age_seconds=0.0,
+        pressure_encountered=False,
+        pressure_wait_count=0,
+        pressure_wait_seconds=0.0,
+        maximum_held_count=record_count,
+        maximum_queue_depth=record_count,
+        maximum_worker_utilization_numerator=0,
+        worker_utilization_denominator=1,
+        early_flush_attempt_count=0,
+        final_flush_attempt_count=1,
+        total_flush_latency_seconds=0.0,
+        maximum_flush_latency_seconds=0.0,
+        fence_rejection_count=0,
+        member_rejection_count=0,
+    )
+
+
+def _closure_cap(
+    candidate: cursor_policy.PageCursorCandidate,
+    boundary: feed_work_scheduler.BoundaryWork,
+) -> object:
+    result = ingestion_lease_store.ChildMutationResult(
+        feed_id=boundary.feed_id,
+        disposition=ingestion_lease_store.ChildDisposition.APPLIED,
+        cursor_effect=ingestion_lease_store.CursorEffect.ADVANCED,
+        lifecycle_effect=ingestion_lease_store.LifecycleEffect.NONE,
+    )
+    seal = runtime_adapters._FeedClosureCapSeal(
+        grant=candidate.grant,
+        page_sequence=candidate.page_sequence,
+        feed_id=boundary.feed_id,
+        accepted_through=candidate.last_pos,
+        requested_target=candidate.last_pos,
+        command_kind=runtime_adapters._FinalChildCommandKind.OBSERVATION,
+        result=result,
+        _construction_key=runtime_adapters._FEED_CLOSURE_CAP_CONSTRUCTION_KEY,
+    )
+    return runtime_adapters._FeedClosureCap(
+        grant=candidate.grant,
+        page_sequence=candidate.page_sequence,
+        feed_id=boundary.feed_id,
+        accepted_through=candidate.last_pos,
+        requested_target=candidate.last_pos,
+        command_kind=runtime_adapters._FinalChildCommandKind.OBSERVATION,
+        result=result,
+        _seal=seal,
+    )
+
+
+def _settled_page(
+    cohorts: tuple[feed_work_scheduler.CohortSubmission, ...],
+    boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
+    candidate: object,
+) -> feed_work_scheduler.SettledPage:
+    if type(candidate) not in {
+        cursor_policy.PageCursorCandidate,
+        cursor_policy.NoProgressPageCandidate,
+    }:
+        message = "unexpected candidate"
+        raise AssertionError(message)
+    typed_candidate = typing.cast("cursor_policy.PageCandidate", candidate)
+    identities = []
+    terminal_facts = []
+    local_sequence = 0
+    for cohort in cohorts:
+        cohort_identities = tuple(
+            feed_work_scheduler.CohortRecordIdentity(
+                grant=_GRANT,
+                member=cohort.member,
+                page_sequence=typed_candidate.page_sequence,
+                feed_id=cohort.feed_id,
+                cohort_timestamp=cohort.cohort_timestamp,
+                source_order=len(identities) + offset,
+                local_sequence=local_sequence + offset,
+            )
+            for offset, _call in enumerate(cohort.calls)
+        )
+        local_sequence += len(cohort.calls)
+        cohort.admission_hook(cohort_identities)
+        records = []
+        payload = typing.cast(
+            "cohort_pipeline.ScheduledCohortPayload",
+            cohort.calls[0].payload,
+        )
+        for identity, call, entry in zip(
+            cohort_identities,
+            cohort.calls,
+            payload.entries,
+            strict=True,
+        ):
+            ledger = sid_processor.gap_ledger._owner_for(entry.obligation)
+            ledger.resolve_success(entry.obligation, identity)
+            if call.settlement_observer is not None:
+                call.settlement_observer(
+                    feed_work_scheduler.CallSettlement.COMPLETED
+                )
+            records.append(
+                feed_work_scheduler.CohortRecordTerminalFact(
+                    identity=identity,
+                    participated=True,
+                    closure_state=(
+                        feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+                    ),
+                    full_pipeline_completed=True,
+                    terminal_reason=(
+                        feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE
+                    ),
+                )
+            )
+        identities.extend(cohort_identities)
+        terminal_facts.append(
+            feed_work_scheduler.CohortTerminalFacts(
+                records=tuple(records),
+                disposition=feed_work_scheduler.CohortTerminalDisposition.SETTLED,
+            )
+        )
+    members_by_id = {
+        member.feed_id: member
+        for member in (
+            *(cohort.member for cohort in cohorts),
+            *(boundary.member for boundary in boundaries),
+        )
+    }
+    verdict = boundary_verdict.decide_page_verdict(
+        boundary_verdict.PageVerdictInput(
+            grant=_GRANT,
+            page_sequence=typed_candidate.page_sequence,
+            members=tuple(
+                members_by_id[key]
+                for key in sorted(members_by_id, key=lambda value: value.int)
+            ),
+            record_identities=tuple(
+                sorted(
+                    identities,
+                    key=lambda value: (
+                        value.feed_id.int,
+                        value.source_order,
+                        value.local_sequence,
+                    ),
+                )
+            ),
+            cohort_terminal_facts=tuple(
+                sorted(
+                    terminal_facts,
+                    key=lambda value: (
+                        value.records[0].identity.feed_id.int,
+                        value.records[0].identity.source_order,
+                    ),
+                )
+            ),
+            child_recovery_candidates=(),
+            lease_recovery_candidate=False,
+        )
+    )
+    caps = (
+        tuple(
+            typing.cast("typing.Any", _closure_cap(typed_candidate, boundary))
+            for boundary in sorted(
+                boundaries,
+                key=lambda value: value.feed_id.int,
+            )
+        )
+        if type(typed_candidate) is cursor_policy.PageCursorCandidate
+        else ()
+    )
+    source_evidence = runtime_adapters.PageFinalizationEvidence(
+        verdict=verdict,
+        closure_caps=caps,
+        quarantined_feed_ids=(),
+        item_to_feed_promotion_count=verdict.item_to_feed_promotion_count,
+    )
+    if type(typed_candidate) is cursor_policy.PageCursorCandidate:
+        lease_settlement = cursor_policy._issue_covered_page(typed_candidate)
+    else:
+        lease_settlement = cursor_policy._issue_no_progress_page(
+            typed_candidate
+        )
+    return feed_work_scheduler.SettledPage(
+        candidate=typed_candidate,
+        lease_settlement=lease_settlement,
+        final_closure_resolutions=(),
+        scheduler_evidence=_scheduler_evidence(
+            record_count=len(identities),
+            cohort_count=len(cohorts),
+        ),
+        source_evidence=source_evidence,
+    )
+
+
+def _replayable_settled_page(
+    cohorts: tuple[feed_work_scheduler.CohortSubmission, ...],
+    boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
+    candidate: object,
+) -> feed_work_scheduler.SettledPage:
+    del boundaries
+    if type(candidate) is not cursor_policy.PageCursorCandidate:
+        message = "replayable test settlement requires a progress candidate"
+        raise AssertionError(message)
+    identities = []
+    terminal_facts = []
+    source_order = 0
+    for cohort in cohorts:
+        cohort_identities = tuple(
+            feed_work_scheduler.CohortRecordIdentity(
+                grant=_GRANT,
+                member=cohort.member,
+                page_sequence=candidate.page_sequence,
+                feed_id=cohort.feed_id,
+                cohort_timestamp=cohort.cohort_timestamp,
+                source_order=source_order + offset,
+                local_sequence=source_order + offset,
+            )
+            for offset, _call in enumerate(cohort.calls)
+        )
+        source_order += len(cohort.calls)
+        cohort.admission_hook(cohort_identities)
+        records = []
+        for identity, call in zip(
+            cohort_identities,
+            cohort.calls,
+            strict=True,
+        ):
+            if call.settlement_observer is not None:
+                call.settlement_observer(
+                    feed_work_scheduler.CallSettlement.RETRYABLE
+                )
+            records.append(
+                feed_work_scheduler.CohortRecordTerminalFact(
+                    identity=identity,
+                    participated=True,
+                    closure_state=(
+                        feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+                    ),
+                    full_pipeline_completed=False,
+                    terminal_reason=(
+                        feed_work_scheduler.CohortRecordTerminalReason.REPLAYABLE_DIRECT
+                    ),
+                    direct_failure=feed_work_scheduler.CohortDirectFailureFact(
+                        feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+                        "selected direct precommit failure",
+                    ),
+                )
+            )
+        identities.extend(cohort_identities)
+        terminal_facts.append(
+            feed_work_scheduler.CohortTerminalFacts(
+                tuple(records),
+                feed_work_scheduler.CohortTerminalDisposition.REPLAYABLE_DIRECT,
+            )
+        )
+    members = tuple(
+        {cohort.member.feed_id: cohort.member for cohort in cohorts}[feed_id]
+        for feed_id in sorted(
+            {cohort.member.feed_id for cohort in cohorts},
+            key=lambda value: value.int,
+        )
+    )
+    verdict = boundary_verdict.decide_page_verdict(
+        boundary_verdict.PageVerdictInput(
+            grant=_GRANT,
+            page_sequence=candidate.page_sequence,
+            members=members,
+            record_identities=tuple(
+                sorted(
+                    identities,
+                    key=lambda value: (
+                        value.feed_id.int,
+                        value.source_order,
+                    ),
+                )
+            ),
+            cohort_terminal_facts=tuple(
+                sorted(
+                    terminal_facts,
+                    key=lambda value: (
+                        value.records[0].identity.feed_id.int,
+                        value.records[0].identity.source_order,
+                    ),
+                )
+            ),
+            child_recovery_candidates=(),
+            lease_recovery_candidate=False,
+        )
+    )
+    return feed_work_scheduler.SettledPage(
+        candidate=candidate,
+        lease_settlement=cursor_policy._issue_replayable_page(candidate),
+        final_closure_resolutions=(),
+        scheduler_evidence=_scheduler_evidence(
+            record_count=len(identities),
+            cohort_count=len(cohorts),
+        ),
+        source_evidence=runtime_adapters.PageFinalizationEvidence(
+            verdict=verdict,
+            closure_caps=(),
+            quarantined_feed_ids=(),
+            item_to_feed_promotion_count=(verdict.item_to_feed_promotion_count),
+        ),
     )
 
 
@@ -364,16 +809,16 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         )
         processor, _ = _processor(store)
         await processor._refresh_membership()
-        old_page = processor._prepare_call_submissions(
-            [_raw_call("00123-00046", "https://audio/new")]
+        old_page = _prepared_calls(
+            processor, [_raw_call("00123-00046", "https://audio/new")]
         )
 
         await processor._refresh_membership()
 
         self.assertEqual(list(old_page), [])
         next_page = list(
-            processor._prepare_call_submissions(
-                [_raw_call("00123-00046", "https://audio/new")]
+            _prepared_calls(
+                processor, [_raw_call("00123-00046", "https://audio/new")]
             )
         )
         self.assertEqual([call.feed_id for call in next_page], [_FEED_B])
@@ -388,17 +833,17 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         )
         processor, lane = _processor(store)
         await processor._refresh_membership()
-        pending = list(
-            processor._prepare_call_submissions(
-                [_raw_call("00123-00046", "https://audio/retired")]
-            )
-        )[0]
+        prepared = _prepared_work(
+            processor,
+            [_raw_call("00123-00046", "https://audio/retired")],
+        )
+        pending = _admit_prepared(prepared)[0]
 
         await processor._refresh_membership()
 
         self.assertEqual(lane.removed, [_FEED_B])
         self.assertNotIn("https://audio/retired", processor._pending_by_url)
-        pending.settlement_observer(feed_work_scheduler.CallSettlement.COMPLETED)
+        _complete_admitted(pending)
         self.assertNotIn("https://audio/retired", processor._recent_urls)
         with self.assertRaises(sid_processor.SidProcessorPlannedDrain):
             await processor._refresh_membership()
@@ -411,22 +856,26 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         await processor._refresh_membership()
 
         submissions = list(
-            processor._prepare_call_submissions(
+            _prepared_calls(
+                processor,
                 [
                     _raw_call("123-45", "https://audio/normalized"),
                     _raw_call(12345, "https://audio/integer"),
                     _raw_call("00123-00046", "https://audio/unknown"),
                     _raw_call("00123-00045", "https://audio/exact"),
-                ]
+                ],
             )
         )
 
         self.assertEqual(len(submissions), 1)
         self.assertEqual(submissions[0].feed_id, _FEED_A)
         payload = submissions[0].payload
-        self.assertIsInstance(payload, sid_processor.ScheduledCallPayload)
-        assert isinstance(payload, sid_processor.ScheduledCallPayload)
-        self.assertEqual(payload.audio_url, "https://audio/exact")
+        self.assertIsInstance(
+            payload,
+            cohort_pipeline.ScheduledCohortPayload,
+        )
+        assert isinstance(payload, cohort_pipeline.ScheduledCohortPayload)
+        self.assertEqual(payload.entries[0].audio_url, "https://audio/exact")
 
     async def test_malformed_siblings_are_item_local(self) -> None:
         store = _ScriptedMembershipStore(
@@ -445,11 +894,11 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             _raw_call("00123-00045", "https://audio/valid"),
         ]
 
-        submissions = list(processor._prepare_call_submissions(calls))
+        submissions = list(_prepared_calls(processor, calls))
 
         self.assertEqual(len(submissions), 1)
         self.assertEqual(
-            submissions[0].payload.audio_url,
+            _submission_urls(submissions)[0],
             "https://audio/valid",
         )
 
@@ -469,7 +918,8 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             level="WARNING",
         ) as captured:
             submissions = list(
-                processor._prepare_call_submissions(
+                _prepared_calls(
+                    processor,
                     [
                         _raw_call(
                             "00123-00045",
@@ -486,12 +936,12 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
                             "https://audio/newer",
                             1_783_908_002,
                         ),
-                    ]
+                    ],
                 )
             )
 
         self.assertEqual(
-            [call.payload.audio_url for call in submissions],
+            _submission_urls(submissions),
             ["https://audio/missing", "https://audio/newer"],
         )
         self.assertIsNone(submissions[0].source_timestamp)
@@ -515,17 +965,18 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         await processor._refresh_membership()
 
         submissions = list(
-            processor._prepare_call_submissions(
+            _prepared_calls(
+                processor,
                 [
                     _raw_call("00123-00045", "https://audio/later", 20),
                     _raw_call("00123-00045", "https://audio/equal-a", 10),
                     _raw_call("00123-00045", "https://audio/equal-b", 10),
-                ]
+                ],
             )
         )
 
         self.assertEqual(
-            [call.payload.audio_url for call in submissions],
+            _submission_urls(submissions),
             [
                 "https://audio/equal-a",
                 "https://audio/equal-b",
@@ -544,14 +995,14 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         processor, _ = _processor(store)
         await processor._refresh_membership()
 
-        submissions = list(
-            processor._prepare_call_submissions(
-                [
-                    _raw_call("00123-00045", "https://audio/shared"),
-                    _raw_call("00123-00046", "https://audio/shared"),
-                ]
-            )
+        prepared = _prepared_work(
+            processor,
+            [
+                _raw_call("00123-00045", "https://audio/shared"),
+                _raw_call("00123-00046", "https://audio/shared"),
+            ],
         )
+        submissions = _admit_prepared(prepared)
 
         self.assertEqual(len(submissions), 1)
         self.assertEqual(
@@ -569,23 +1020,27 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         for settlement in feed_work_scheduler.CallSettlement:
             with self.subTest(settlement=settlement.value):
                 url = f"https://audio/{settlement.value}"
-                submission = list(
-                    processor._prepare_call_submissions(
-                        [_raw_call("00123-00045", url)]
-                    )
-                )[0]
+                prepared = _prepared_work(
+                    processor,
+                    [_raw_call("00123-00045", url)],
+                )
+                admitted = _admit_prepared(prepared)[0]
+                submission = admitted[0]
                 self.assertEqual(processor._pending_by_url[url], _FEED_A)
 
                 assert submission.settlement_observer is not None
-                submission.settlement_observer(settlement)
+                if settlement is feed_work_scheduler.CallSettlement.COMPLETED:
+                    _complete_admitted(admitted)
+                else:
+                    submission.settlement_observer(settlement)
 
                 self.assertNotIn(url, processor._pending_by_url)
                 if settlement is feed_work_scheduler.CallSettlement.COMPLETED:
                     self.assertIn(url, processor._recent_urls)
                     self.assertEqual(
                         list(
-                            processor._prepare_call_submissions(
-                                [_raw_call("00123-00045", url)]
+                            _prepared_calls(
+                                processor, [_raw_call("00123-00045", url)]
                             )
                         ),
                         [],
@@ -601,21 +1056,17 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         await processor._refresh_membership()
 
         for index in range(1_001):
-            submission = list(
-                processor._prepare_call_submissions(
-                    [
-                        _raw_call(
-                            "00123-00045",
-                            f"https://audio/{index}",
-                            1_783_908_100 + index,
-                        )
-                    ]
-                )
-            )[0]
-            assert submission.settlement_observer is not None
-            submission.settlement_observer(
-                feed_work_scheduler.CallSettlement.COMPLETED
+            prepared = _prepared_work(
+                processor,
+                [
+                    _raw_call(
+                        "00123-00045",
+                        f"https://audio/{index}",
+                        1_783_908_100 + index,
+                    )
+                ],
             )
+            _complete_admitted(_admit_prepared(prepared)[0])
 
         self.assertEqual(len(processor._recent_order), 1_000)
         self.assertEqual(len(processor._recent_urls), 1_000)
@@ -632,14 +1083,14 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         )
         processor, lane = _processor(store)
         await processor._refresh_membership()
-        calls = list(
-            processor._prepare_call_submissions(
-                [
-                    _raw_call("00123-00045", "https://audio/a"),
-                    _raw_call("00123-00046", "https://audio/b"),
-                ]
-            )
+        prepared = _prepared_work(
+            processor,
+            [
+                _raw_call("00123-00045", "https://audio/a"),
+                _raw_call("00123-00046", "https://audio/b"),
+            ],
         )
+        calls = _admit_prepared(prepared)
 
         await processor._refresh_membership()
 
@@ -648,10 +1099,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             processor._pending_by_url,
             {"https://audio/b": _FEED_B},
         )
-        assert calls[0].settlement_observer is not None
-        calls[0].settlement_observer(
-            feed_work_scheduler.CallSettlement.COMPLETED
-        )
+        _complete_admitted(calls[0])
         self.assertNotIn("https://audio/a", processor._recent_urls)
 
         processor.close()
@@ -659,9 +1107,13 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(processor._pending_by_url, {})
         self.assertEqual(processor._recent_urls, set())
         self.assertEqual(list(processor._recent_order), [])
+        self.assertEqual(processor._session_by_member, {})
+        self.assertEqual(processor._member_by_session, {})
         self.assertEqual(processor._members_by_source, {})
 
-    async def test_adopt_null_member_on_valid_empty_page_then_route(self) -> None:
+    async def test_adopt_null_member_on_valid_empty_page_then_route(
+        self,
+    ) -> None:
         store = _ScriptedMembershipStore(
             _snapshot(
                 4,
@@ -697,14 +1149,15 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             sid_processor.MemberRouteState.NORMAL,
         )
         routed = list(
-            processor._prepare_call_submissions(
+            _prepared_calls(
+                processor,
                 [
                     _raw_call(
                         "00123-00045",
                         "https://audio/following-poll",
                         target.timestamp() + 1,
                     )
-                ]
+                ],
             )
         )
         self.assertEqual(len(routed), 1)
@@ -733,7 +1186,11 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
     async def test_adopt_missing_malformed_and_regressive_last_pos_retained(
         self,
     ) -> None:
-        cases = (None, "malformed", (_NOW - datetime.timedelta(minutes=1)).timestamp())
+        cases = (
+            None,
+            "malformed",
+            (_NOW - datetime.timedelta(minutes=1)).timestamp(),
+        )
         for last_pos in cases:
             with self.subTest(last_pos=last_pos):
                 member_a = _member(
@@ -839,7 +1296,9 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             sid_processor.MemberRouteState.ADOPTING,
         )
 
-    async def test_replay_initial_floor_does_not_mark_initial_member(self) -> None:
+    async def test_replay_initial_floor_does_not_mark_initial_member(
+        self,
+    ) -> None:
         old_cursor = _NOW - datetime.timedelta(minutes=30)
         store = _ScriptedMembershipStore(
             _snapshot(
@@ -860,7 +1319,9 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             sid_processor.MemberRouteState.NORMAL,
         )
 
-    async def test_replay_coalesces_minimum_with_five_minute_clamp(self) -> None:
+    async def test_replay_coalesces_minimum_with_five_minute_clamp(
+        self,
+    ) -> None:
         current = _NOW - datetime.timedelta(seconds=30)
         member_a = _member(_FEED_A, "00123-00045", cursor=current)
         store = _ScriptedMembershipStore(
@@ -1195,12 +1656,8 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         pressure_gate = _AsyncGate(None)
         first_stop = asyncio.Event()
         second_stop = asyncio.Event()
-        first_provider = _ScriptedProvider(
-            _page(last_pos=_NOW.timestamp())
-        )
-        second_provider = _ScriptedProvider(
-            _page(last_pos=_NOW.timestamp())
-        )
+        first_provider = _ScriptedProvider(_page(last_pos=_NOW.timestamp()))
+        second_provider = _ScriptedProvider(_page(last_pos=_NOW.timestamp()))
         first, _ = _processor(
             _ScriptedMembershipStore(
                 _snapshot(4, _member(_FEED_A, "00123-00045"))
@@ -1232,9 +1689,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         stop_requested = asyncio.Event()
-        calls_provider = _ScriptedProvider(
-            _page(last_pos=_NOW.timestamp())
-        )
+        calls_provider = _ScriptedProvider(_page(last_pos=_NOW.timestamp()))
         wait = _RecordingWait()
         processor, _ = _processor(
             _ScriptedMembershipStore(
@@ -1252,7 +1707,9 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(wait.calls, [])
         self.assertEqual(processor._consecutive_failures, 0)
 
-    async def test_pressure_removal_error_is_not_store_uncertainty(self) -> None:
+    async def test_pressure_removal_error_is_not_store_uncertainty(
+        self,
+    ) -> None:
         class _RemovalFailureLane(_RecordingLane):
             async def remove_feed(
                 self,
@@ -1271,9 +1728,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
                 _snapshot(5, member_b),
             ),
             lane=_RemovalFailureLane(),
-            calls_provider=_ScriptedProvider(
-                _page(last_pos=_NOW.timestamp())
-            ),
+            calls_provider=_ScriptedProvider(_page(last_pos=_NOW.timestamp())),
             wait=wait,
         )
 
@@ -1341,9 +1796,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             _ScriptedMembershipStore(
                 _snapshot(4, _member(_FEED_A, "00123-00045"))
             ),
-            calls_provider=_ScriptedProvider(
-                _page(last_pos=_NOW.timestamp())
-            ),
+            calls_provider=_ScriptedProvider(_page(last_pos=_NOW.timestamp())),
             wait=wait,
         )
         processor._consecutive_failures = 9
@@ -1434,9 +1887,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         stop_requested = asyncio.Event()
-        calls_provider = _ScriptedProvider(
-            _page(last_pos=_NOW.timestamp())
-        )
+        calls_provider = _ScriptedProvider(_page(last_pos=_NOW.timestamp()))
         wait = _StoppingWait(stop_after=2)
         store = _ScriptedMembershipStore(
             TimeoutError("membership timed out"),
@@ -1513,9 +1964,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls_provider.calls, [])
 
         stop_requested = asyncio.Event()
-        refresh_gate = _AsyncGate(
-            _snapshot(4, _member(_FEED_A, "00123-00045"))
-        )
+        refresh_gate = _AsyncGate(_snapshot(4, _member(_FEED_A, "00123-00045")))
         store = _ScriptedMembershipStore(refresh_gate)
         processor, _ = _processor(store, calls_provider=calls_provider)
         task = asyncio.create_task(processor.run(stop_requested))
@@ -1526,6 +1975,425 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(store.calls), 1)
         self.assertEqual(calls_provider.calls, [])
+
+    async def test_candidate_first_cohort_grouping_and_atomic_admission(
+        self,
+    ) -> None:
+        sessions = []
+
+        def session_id() -> str:
+            sessions.append("stable-session")
+            return sessions[-1]
+
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(
+                    4,
+                    _member(
+                        _FEED_A,
+                        "00123-00045",
+                        cursor=datetime.datetime.fromtimestamp(
+                            0,
+                            datetime.UTC,
+                        ),
+                    ),
+                )
+            ),
+            session_id_factory=session_id,
+        )
+        await processor._refresh_membership()
+        assert processor._lease_cursor is not None
+        candidate = processor._lease_cursor.prepare(_NOW)
+
+        prepared = processor._prepare_page_work(
+            [
+                _raw_call("00123-00045", "https://audio/t10-a", 10),
+                _raw_call("00123-00045", "https://audio/missing-a", ...),
+                _raw_call("00123-00045", "https://audio/t10-b", 10),
+                _raw_call("00123-00045", "https://audio/missing-b", ...),
+                _raw_call("00123-00045", "https://audio/t20", 20),
+                _raw_call("00123-00045", "https://audio/t10-b", 10),
+            ],
+            candidate=candidate,
+        )
+
+        self.assertEqual(prepared.ledger.page_sequence, candidate.page_sequence)
+        self.assertEqual(
+            [len(cohort.calls) for cohort in prepared.cohorts], [1, 1, 2, 1]
+        )
+        self.assertEqual(
+            [cohort.cohort_timestamp for cohort in prepared.cohorts],
+            [
+                None,
+                None,
+                datetime.datetime.fromtimestamp(10, datetime.UTC),
+                datetime.datetime.fromtimestamp(20, datetime.UTC),
+            ],
+        )
+        self.assertEqual(
+            [entry.source_order for entry in prepared.entries],
+            [0, 1, 2, 3, 4],
+        )
+        self.assertEqual(
+            [entry.audio_url for entry in prepared.entries],
+            [
+                "https://audio/missing-a",
+                "https://audio/missing-b",
+                "https://audio/t10-a",
+                "https://audio/t10-b",
+                "https://audio/t20",
+            ],
+        )
+        self.assertEqual(sessions, ["stable-session"])
+        self.assertEqual(
+            {
+                typing.cast(
+                    "cohort_pipeline.ScheduledCohortPayload",
+                    cohort.calls[0].payload,
+                ).session_id
+                for cohort in prepared.cohorts
+            },
+            {"stable-session"},
+        )
+        self.assertEqual(processor._pending_by_url, {})
+
+        cohort = prepared.cohorts[2]
+        identities = tuple(
+            feed_work_scheduler.CohortRecordIdentity(
+                grant=_GRANT,
+                member=cohort.member,
+                page_sequence=candidate.page_sequence,
+                feed_id=cohort.feed_id,
+                cohort_timestamp=cohort.cohort_timestamp,
+                source_order=2 + offset,
+                local_sequence=offset,
+            )
+            for offset, _call in enumerate(cohort.calls)
+        )
+        processor._pending_by_url["https://audio/t10-b"] = _FEED_A
+        with self.assertRaises(feed_work_scheduler.CohortIntegrityError):
+            cohort.admission_hook(identities)
+        payload = typing.cast(
+            "cohort_pipeline.ScheduledCohortPayload",
+            cohort.calls[0].payload,
+        )
+        self.assertTrue(
+            all(
+                prepared.ledger.state(entry.obligation)
+                is sid_processor.gap_ledger.MissingCallState.DRAFT
+                for entry in payload.entries
+            )
+        )
+        processor._pending_by_url.clear()
+
+        cohort.admission_hook(identities)
+        self.assertEqual(
+            processor._pending_by_url,
+            {
+                "https://audio/t10-a": _FEED_A,
+                "https://audio/t10-b": _FEED_A,
+            },
+        )
+        for call in cohort.calls:
+            assert call.settlement_observer is not None
+            call.settlement_observer(
+                feed_work_scheduler.CallSettlement.RETRYABLE
+            )
+        self.assertEqual(processor._pending_by_url, {})
+
+    async def test_stable_session_collision_fails_before_lane_mutation(
+        self,
+    ) -> None:
+        factory_calls = 0
+
+        def collide() -> str:
+            nonlocal factory_calls
+            factory_calls += 1
+            return "same-session"
+
+        processor, lane = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(
+                    4,
+                    _member(_FEED_A, "00123-00045"),
+                    _member(_FEED_B, "00123-00046"),
+                )
+            ),
+            session_id_factory=collide,
+        )
+        await processor._refresh_membership()
+        assert processor._lease_cursor is not None
+        candidate = processor._lease_cursor.prepare(_NOW)
+
+        with self.assertRaises(feed_work_scheduler.CohortIntegrityError):
+            processor._prepare_page_work(
+                [
+                    _raw_call("00123-00045", "https://audio/a"),
+                    _raw_call("00123-00046", "https://audio/b"),
+                ],
+                candidate=candidate,
+            )
+
+        self.assertEqual(factory_calls, 2)
+        self.assertEqual(lane.covers, [])
+        self.assertEqual(processor._pending_by_url, {})
+
+    async def test_replayable_page_consumes_sequence_without_moving_pos(
+        self,
+    ) -> None:
+        initial = _NOW - datetime.timedelta(seconds=30)
+        lane = _RecordingLane(_replayable_settled_page)
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(
+                    4,
+                    _member(_FEED_A, "00123-00045", cursor=initial),
+                )
+            ),
+            lane=lane,
+        )
+        await processor._refresh_membership()
+
+        await processor._settle_page(
+            _page(
+                _raw_call(
+                    "00123-00045",
+                    "https://audio/replay",
+                    initial.timestamp() + 1,
+                ),
+                last_pos=_NOW.timestamp(),
+            ),
+            request=processor._select_request_position(),
+        )
+
+        assert processor._lease_cursor is not None
+        self.assertEqual(processor._lease_cursor.pos, initial)
+        self.assertEqual(processor._lease_cursor.next_page_sequence, 1)
+        self.assertIsNone(processor._lease_cursor.outstanding_candidate)
+        self.assertEqual(processor._select_request_position().pos, initial)
+        self.assertEqual(processor._pending_by_url, {})
+        self.assertEqual(processor._recent_urls, set())
+        self.assertEqual(len(lane.covers), 1)
+
+    async def test_undrained_page_retains_candidate_and_is_not_resubmitted(
+        self,
+    ) -> None:
+        lane = _RecordingLane(
+            feed_work_scheduler.Undrained(
+                _GRANT,
+                feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN,
+            )
+        )
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_A, "00123-00045"))
+            ),
+            lane=lane,
+        )
+        await processor._refresh_membership()
+
+        with self.assertRaises(sid_processor.SidProcessorUndrained):
+            await processor._settle_page(
+                _page(
+                    _raw_call("00123-00045", "https://audio/unknown"),
+                    last_pos=(_NOW + datetime.timedelta(seconds=1)).timestamp(),
+                ),
+                request=processor._select_request_position(),
+            )
+
+        assert processor._lease_cursor is not None
+        self.assertIsNotNone(processor._lease_cursor.outstanding_candidate)
+        self.assertIsNotNone(processor._active_page_ledger)
+        self.assertEqual(len(lane.covers), 1)
+        with self.assertRaises(cursor_policy.CursorIntegrityError):
+            await processor._settle_page(
+                _page(
+                    last_pos=(_NOW + datetime.timedelta(seconds=2)).timestamp()
+                ),
+                request=processor._select_request_position(),
+            )
+        self.assertEqual(len(lane.covers), 1)
+
+    async def test_quarantine_tombstone_survives_unchanged_membership(
+        self,
+    ) -> None:
+        member = _member(_FEED_A, "00123-00045")
+
+        def quarantine(
+            cohorts: tuple[feed_work_scheduler.CohortSubmission, ...],
+            boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
+            candidate: object,
+        ) -> feed_work_scheduler.SettledPage:
+            settled = _settled_page(cohorts, boundaries, candidate)
+            evidence = typing.cast(
+                "runtime_adapters.PageFinalizationEvidence",
+                settled.source_evidence,
+            )
+            return dataclasses.replace(
+                settled,
+                source_evidence=dataclasses.replace(
+                    evidence,
+                    quarantined_feed_ids=(_FEED_A,),
+                ),
+            )
+
+        lane = _RecordingLane(quarantine)
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, member),
+                ingestion_lease_store.MembershipUnchanged(_GRANT, 4),
+                _snapshot(5, member),
+            ),
+            lane=lane,
+        )
+        await processor._refresh_membership()
+        await processor._settle_page(
+            _page(last_pos=(_NOW + datetime.timedelta(seconds=1)).timestamp()),
+            request=processor._select_request_position(),
+        )
+
+        self.assertEqual(lane.removed, [_FEED_A])
+        self.assertEqual(processor._members_by_id, {})
+        self.assertIn(_FEED_A, processor._retired_feed_ids)
+        await processor._refresh_membership()
+        self.assertEqual(processor._members_by_id, {})
+        with self.assertRaises(sid_processor.SidProcessorPlannedDrain):
+            await processor._refresh_membership()
+
+    async def test_unanimous_page_failure_promotes_only_after_page_close(
+        self,
+    ) -> None:
+        def promote(
+            cohorts: tuple[feed_work_scheduler.CohortSubmission, ...],
+            boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
+            candidate: object,
+        ) -> feed_work_scheduler.SettledPage:
+            settled = _settled_page(cohorts, boundaries, candidate)
+            assert isinstance(candidate, cursor_policy.PageCursorCandidate)
+            identities = []
+            facts = []
+            source_order = 0
+            for cohort in cohorts:
+                records = []
+                for offset, _call in enumerate(cohort.calls):
+                    identity = feed_work_scheduler.CohortRecordIdentity(
+                        grant=_GRANT,
+                        member=cohort.member,
+                        page_sequence=candidate.page_sequence,
+                        feed_id=cohort.feed_id,
+                        cohort_timestamp=cohort.cohort_timestamp,
+                        source_order=source_order + offset,
+                        local_sequence=source_order + offset,
+                    )
+                    identities.append(identity)
+                    records.append(
+                        feed_work_scheduler.CohortRecordTerminalFact(
+                            identity=identity,
+                            participated=True,
+                            closure_state=(
+                                feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+                            ),
+                            full_pipeline_completed=False,
+                            terminal_reason=(
+                                feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP
+                            ),
+                            item_failure=(
+                                feed_work_scheduler.CohortItemFailureFact(
+                                    feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+                                    "terminal item skip",
+                                )
+                            ),
+                        )
+                    )
+                source_order += len(cohort.calls)
+                facts.append(
+                    feed_work_scheduler.CohortTerminalFacts(
+                        tuple(records),
+                        feed_work_scheduler.CohortTerminalDisposition.SETTLED,
+                    )
+                )
+            members = tuple(
+                cohort.member
+                for cohort in sorted(
+                    cohorts,
+                    key=lambda value: value.feed_id.int,
+                )
+            )
+            verdict = boundary_verdict.decide_page_verdict(
+                boundary_verdict.PageVerdictInput(
+                    grant=_GRANT,
+                    page_sequence=candidate.page_sequence,
+                    members=members,
+                    record_identities=tuple(
+                        sorted(
+                            identities,
+                            key=lambda value: (
+                                value.feed_id.int,
+                                value.source_order,
+                            ),
+                        )
+                    ),
+                    cohort_terminal_facts=tuple(
+                        sorted(
+                            facts,
+                            key=lambda value: (
+                                value.records[0].identity.feed_id.int,
+                                value.records[0].identity.source_order,
+                            ),
+                        )
+                    ),
+                    child_recovery_candidates=(),
+                    lease_recovery_candidate=False,
+                )
+            )
+            evidence = typing.cast(
+                "runtime_adapters.PageFinalizationEvidence",
+                settled.source_evidence,
+            )
+            return dataclasses.replace(
+                settled,
+                source_evidence=dataclasses.replace(
+                    evidence,
+                    verdict=verdict,
+                    item_to_feed_promotion_count=(
+                        verdict.item_to_feed_promotion_count
+                    ),
+                ),
+            )
+
+        lane = _RecordingLane(promote)
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(
+                    4,
+                    _member(_FEED_A, "00123-00045"),
+                    _member(_FEED_B, "00123-00046"),
+                )
+            ),
+            lane=lane,
+        )
+        await processor._refresh_membership()
+        target = _NOW + datetime.timedelta(seconds=1)
+
+        with self.assertRaises(sid_processor.SidProcessorFailure) as raised:
+            await processor._settle_page(
+                _page(
+                    _raw_call("00123-00045", "https://audio/a"),
+                    _raw_call("00123-00046", "https://audio/b"),
+                    last_pos=target.timestamp(),
+                ),
+                request=processor._select_request_position(),
+            )
+
+        self.assertIs(
+            raised.exception.status_reason,
+            feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+        )
+        self.assertEqual(raised.exception.reason, "terminal item skip")
+        assert processor._lease_cursor is not None
+        self.assertEqual(processor._lease_cursor.pos, target)
+        self.assertIsNone(processor._active_page_ledger)
+        self.assertEqual(processor._pending_by_url, {})
 
     async def test_stop_cancellation_during_fetch_and_cover_is_preserved(
         self,
@@ -1570,9 +2438,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             _ScriptedMembershipStore(
                 _snapshot(4, _member(_FEED_A, "00123-00045"))
             ),
-            calls_provider=_ScriptedProvider(
-                _page(last_pos=_NOW.timestamp())
-            ),
+            calls_provider=_ScriptedProvider(_page(last_pos=_NOW.timestamp())),
             wait=wait,
         )
 

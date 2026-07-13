@@ -518,9 +518,13 @@ class MissingCallLedger:
             message = "settled page lacks exact scheduler evidence"
             raise MissingCallIntegrityError(message)
         scheduler_evidence = settled_page.scheduler_evidence
-        if scheduler_evidence.admitted_record_count != len(
-            self._records
-        ) or scheduler_evidence.terminal_record_count != len(self._records):
+        admitted_record_count = sum(
+            record.identity is not None for record in self._records
+        )
+        if (
+            scheduler_evidence.admitted_record_count != admitted_record_count
+            or scheduler_evidence.terminal_record_count != admitted_record_count
+        ):
             message = "page ledger and scheduler record counts disagree"
             raise MissingCallIntegrityError(message)
         return source_evidence
@@ -660,9 +664,6 @@ class MissingCallLedger:
         if not isinstance(caps, tuple):
             message = "closure caps must be an immutable tuple"
             raise TypeError(message)
-        known_feed_ids = {
-            record.member.identity.feed_id for record in self._records
-        }
         candidate = settled_page.candidate
         if type(candidate) is cursor_policy.NoProgressPageCandidate:
             if caps:
@@ -691,8 +692,8 @@ class MissingCallLedger:
             ) as exc:
                 message = "closure cap is forged or crossed"
                 raise MissingCallIntegrityError(message) from exc
-            if not covered or feed_id not in known_feed_ids:
-                message = "closure cap crossed page target or Feed membership"
+            if not covered:
+                message = "closure cap crossed page target"
                 raise MissingCallIntegrityError(message)
             if feed_id in cap_by_feed:
                 message = "closure caps repeat a Feed"

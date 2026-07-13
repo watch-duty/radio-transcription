@@ -317,6 +317,14 @@ class BcfyCallsSidRunner:
             return _TerminalSelection(_TerminalSignal.LOSS)
         if isinstance(exception, sid_processor.SidProcessorPlannedDrain):
             return _TerminalSelection(_TerminalSignal.STOP)
+        if isinstance(exception, sid_processor.SidProcessorUndrained):
+            message = "SID processor retained an undrained exact page"
+            integrity = SidRunnerIntegrityError(message)
+            integrity.__cause__ = exception
+            return _TerminalSelection(
+                _TerminalSignal.INTEGRITY,
+                integrity=integrity,
+            )
         if exception is None:
             message = "SID processor returned normally without a stop signal"
             return _TerminalSelection(

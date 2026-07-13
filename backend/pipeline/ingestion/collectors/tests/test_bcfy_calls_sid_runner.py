@@ -651,6 +651,33 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
 
                 self.assert_waiters_settled(scheduler, stop, loss)
 
+    async def test_processor_undrained_is_sticky_runner_integrity(self) -> None:
+        sid_runner = _sid_runner_module()
+        grant = _grant()
+        terminal = sid_processor.SidProcessorUndrained(
+            feed_work_scheduler.Undrained(
+                grant,
+                feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN,
+            )
+        )
+        scheduler = _ControlledScheduler()
+        processor = _ControlledProcessor(terminal)
+        runner, _ = _runner(sid_runner, scheduler, processor)
+        context, stop, loss = _context()
+        task = asyncio.create_task(runner.run(grant, _snapshot(), context))
+        await asyncio.wait_for(processor.started.wait(), timeout=1)
+        processor.release.set()
+
+        with self.assertRaises(sid_runner.SidRunnerIntegrityError) as raised:
+            await task
+
+        self.assertIs(raised.exception.__cause__, terminal)
+        self.assertEqual(
+            scheduler.opened[0].close_reasons,
+            [feed_work_scheduler.LaneCloseReason.SCHEDULER_SHUTDOWN],
+        )
+        self.assert_waiters_settled(scheduler, stop, loss)
+
     async def test_raw_cancellation_cleans_lane_but_preserves_cancelled_error(
         self,
     ) -> None:

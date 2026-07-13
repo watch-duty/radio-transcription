@@ -5339,6 +5339,186 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(coverage, return_exceptions=True)
             await scheduler.close()
 
+    async def test_member_rejected_boundary_accepts_exact_retirement_release(
+        self,
+    ) -> None:
+        feed_id = uuid.UUID(int=151)
+        grant = _grant()
+        member = _member(grant, feed_id)
+        observed = []
+
+        def reject_boundary(
+            context: feed_work_scheduler.PageFinalizationContext,
+        ) -> object:
+            identity = context.cohort_terminal_facts[0].records[0].identity
+            return feed_work_scheduler.FinalPageCovered(
+                grant=context.grant,
+                page_sequence=context.page_sequence,
+                candidate=context.candidate,
+                boundary_results=tuple(
+                    feed_work_scheduler.BoundaryResult(
+                        boundary,
+                        feed_work_scheduler.BoundaryDisposition.MEMBER_REJECTED,
+                    )
+                    for boundary in context.candidate_boundaries
+                ),
+                final_closure_resolutions=(
+                    feed_work_scheduler.FinalRecordClosureResolution(
+                        identity=identity,
+                        closure_state=(
+                            feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+                        ),
+                        release_basis=(
+                            feed_work_scheduler.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT
+                        ),
+                    ),
+                ),
+                source_evidence=None,
+            )
+
+        finalizer = _ControlledPageFinalizer(reject_boundary)
+        finalizer.release.set()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _GatedOutcomeExecutor(_final_closure_pending),
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        lane = _open_lane(scheduler, grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=None)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _cohort(
+                        feed_id,
+                        (0,),
+                        grant=grant,
+                        cohort_timestamp=None,
+                        member=member,
+                        payload_member=member,
+                        settlement_observers={0: observed.append},
+                    ),
+                ),
+                boundaries=(
+                    feed_work_scheduler.BoundaryWork(member, _SOURCE_TIME),
+                ),
+                candidate=cursor.prepare(_SOURCE_TIME),
+            )
+        )
+        executor = typing.cast(
+            "_GatedOutcomeExecutor",
+            scheduler._shards[0]._executor,
+        )
+        try:
+            await asyncio.wait_for(executor.entered.wait(), timeout=1)
+            executor.release.set()
+            settled = await asyncio.wait_for(coverage, timeout=1)
+            self.assertIsInstance(settled, feed_work_scheduler.SettledPage)
+            assert isinstance(settled, feed_work_scheduler.SettledPage)
+            self.assertEqual(
+                cursor.accept(settled.lease_settlement),
+                _SOURCE_TIME,
+            )
+            self.assertEqual(
+                observed,
+                [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+            )
+            self.assertTrue(await lane.is_feed_retired(feed_id))
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+        finally:
+            executor.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
+    async def test_member_rejected_boundary_rejects_durable_resolution(
+        self,
+    ) -> None:
+        feed_id = uuid.UUID(int=152)
+        grant = _grant()
+        member = _member(grant, feed_id)
+        observed = []
+
+        def cross_boundary(
+            context: feed_work_scheduler.PageFinalizationContext,
+        ) -> object:
+            identity = context.cohort_terminal_facts[0].records[0].identity
+            return feed_work_scheduler.FinalPageCovered(
+                grant=context.grant,
+                page_sequence=context.page_sequence,
+                candidate=context.candidate,
+                boundary_results=tuple(
+                    feed_work_scheduler.BoundaryResult(
+                        boundary,
+                        feed_work_scheduler.BoundaryDisposition.MEMBER_REJECTED,
+                    )
+                    for boundary in context.candidate_boundaries
+                ),
+                final_closure_resolutions=(
+                    feed_work_scheduler.FinalRecordClosureResolution(
+                        identity=identity,
+                        closure_state=(
+                            feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
+                        ),
+                        release_basis=(
+                            feed_work_scheduler.FinalRecordReleaseBasis.DURABLE_SOURCE_CLOSURE
+                        ),
+                    ),
+                ),
+                source_evidence=None,
+            )
+
+        finalizer = _ControlledPageFinalizer(cross_boundary)
+        finalizer.release.set()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _GatedOutcomeExecutor(_final_closure_pending),
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        lane = _open_lane(scheduler, grant)
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _cohort(
+                        feed_id,
+                        (0,),
+                        grant=grant,
+                        cohort_timestamp=None,
+                        member=member,
+                        payload_member=member,
+                        settlement_observers={0: observed.append},
+                    ),
+                ),
+                boundaries=(
+                    feed_work_scheduler.BoundaryWork(member, _SOURCE_TIME),
+                ),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+        )
+        executor = typing.cast(
+            "_GatedOutcomeExecutor",
+            scheduler._shards[0]._executor,
+        )
+        try:
+            await asyncio.wait_for(executor.entered.wait(), timeout=1)
+            executor.release.set()
+            self.assertIsInstance(
+                await asyncio.wait_for(coverage, timeout=1),
+                feed_work_scheduler.Undrained,
+            )
+            self.assertEqual(observed, [])
+            self.assertFalse(await lane.is_feed_retired(feed_id))
+            self.assertEqual((await scheduler._snapshot()).held, 1)
+        finally:
+            executor.release.set()
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+            await scheduler.close()
+
 
 if __name__ == "__main__":
     unittest.main()

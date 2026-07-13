@@ -105,7 +105,7 @@ def _scheduler_evidence(
 ) -> feed_work_scheduler.SchedulerPageEvidence:
     return feed_work_scheduler.SchedulerPageEvidence(
         admitted_record_count=record_count,
-        admitted_cohort_count=1,
+        admitted_cohort_count=int(record_count > 0),
         terminal_record_count=record_count,
         replay_blocked_record_count=0,
         total_queue_wait_seconds=0.0,
@@ -392,6 +392,91 @@ def test_missing_timestamp_closes_only_with_own_feed_cap_and_resolution() -> (
                 cap=_closure_cap(grant, member),
             )
         )
+
+
+def test_quiet_sibling_cap_is_valid_but_cannot_replace_own_feed_cap() -> None:
+    grant = _grant()
+    member = _member(grant)
+    quiet_sibling = _member(grant, feed_id=_FEED_B, group_id="46")
+    ledger = gap_ledger.MissingCallLedger(grant, 0)
+    obligation = _draft(ledger, member, timestamp=None)
+    identity = _identity(grant, member, timestamp=None)
+    ledger.admit((obligation,), (identity,))
+    ledger.mark_terminal_skip(
+        obligation,
+        identity,
+        feed_work_scheduler.CohortItemFailureFact(
+            feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            "item_download_failed",
+        ),
+        1,
+    )
+    resolution = feed_work_scheduler.FinalRecordClosureResolution(
+        identity,
+        feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED,
+        feed_work_scheduler.FinalRecordReleaseBasis.DURABLE_SOURCE_CLOSURE,
+    )
+    _observe_final_resolution(ledger, obligation, resolution)
+    page = _settled_page(
+        grant,
+        member,
+        resolution,
+        cap=_closure_cap(grant, member),
+    )
+    source_evidence = page.source_evidence
+    assert isinstance(
+        source_evidence,
+        runtime_adapters.PageFinalizationEvidence,
+    )
+    page = dataclasses.replace(
+        page,
+        source_evidence=dataclasses.replace(
+            source_evidence,
+            closure_caps=(
+                _closure_cap(grant, member),
+                _closure_cap(grant, quiet_sibling),
+            ),
+        ),
+    )
+
+    with mock.patch.object(telemetry.logger, "log") as emit:
+        ledger.close_page(page)
+
+    assert ledger.state(obligation) is gap_ledger.MissingCallState.EMITTED
+    emit.assert_called_once()
+
+
+def test_unadmitted_replay_release_closes_with_zero_scheduler_records() -> None:
+    grant = _grant()
+    member = _member(grant)
+    ledger = gap_ledger.MissingCallLedger(grant, 0)
+    obligation = _draft(ledger, member, timestamp=None)
+    ledger.observe_settlement(
+        obligation,
+        feed_work_scheduler.CallSettlement.REPLAY_BLOCKED,
+    )
+    identity = _identity(grant, member, timestamp=None)
+    placeholder = feed_work_scheduler.FinalRecordClosureResolution(
+        identity,
+        feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE,
+        feed_work_scheduler.FinalRecordReleaseBasis.ACCEPTED_NO_PROGRESS,
+    )
+    page = dataclasses.replace(
+        _settled_page(
+            grant,
+            member,
+            placeholder,
+            no_progress=True,
+        ),
+        final_closure_resolutions=(),
+        scheduler_evidence=_scheduler_evidence(0),
+    )
+
+    ledger.close_page(page)
+
+    assert ledger.state(obligation) is (
+        gap_ledger.MissingCallState.REPLAY_RELEASED
+    )
 
 
 def test_page_close_requires_exact_scheduler_record_conservation() -> None:

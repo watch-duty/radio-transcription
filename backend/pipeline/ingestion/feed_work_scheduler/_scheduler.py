@@ -1410,6 +1410,13 @@ class GrantLane:
             active_retained=result.active_sequence is not None,
         )
 
+    async def is_feed_retired(self, feed_id: uuid.UUID) -> bool:
+        """Return whether this exact lane has retired one Feed scope."""
+        if not isinstance(feed_id, uuid.UUID):
+            message = "feed_id must be a UUID"
+            raise TypeError(message)
+        return await self._scheduler._is_feed_retired(self._grant, feed_id)
+
     async def close(
         self,
         reason: _types.LaneCloseReason = (_types.LaneCloseReason.PLANNED_DRAIN),
@@ -2471,6 +2478,14 @@ class GrantLane:
                 accepted,
             )
             await self._scheduler._resolve_final_pending(by_shard)
+            for boundary_result in accepted.boundary_results:
+                if boundary_result.disposition is (
+                    _types.BoundaryDisposition.MEMBER_REJECTED
+                ):
+                    await self._scheduler._retire_feed(
+                        self._grant,
+                        boundary_result.boundary.feed_id,
+                    )
             await self._scheduler._clear_replay_barriers(
                 self._grant,
                 candidate.page_sequence,
@@ -2533,8 +2548,15 @@ class GrantLane:
         if not isinstance(correlated, _types._AcceptedFinalPage):
             return None
         self._require_accepted_disposition(context, correlated)
-        self._require_boundary_results(context, correlated)
-        self._require_final_resolutions(context, correlated)
+        rejected_members = self._require_boundary_results(
+            context,
+            correlated,
+        )
+        self._require_final_resolutions(
+            context,
+            correlated,
+            rejected_members=rejected_members,
+        )
         return correlated
 
     @staticmethod
@@ -2566,27 +2588,41 @@ class GrantLane:
     def _require_boundary_results(
         context: _types.PageFinalizationContext,
         result: _types._AcceptedFinalPage,
-    ) -> None:
+    ) -> tuple[ingestion_lease_store.LeaseMemberIdentity, ...]:
         if len(result.boundary_results) != len(context.candidate_boundaries):
             message = "final boundary result cardinality changed"
             raise _types.CohortIntegrityError(message)
+        rejected_members = []
         for boundary, correlated in zip(
             context.candidate_boundaries,
             result.boundary_results,
             strict=True,
         ):
+            valid_dispositions = {
+                _types.BoundaryDisposition.COMMITTED,
+                _types.BoundaryDisposition.MEMBER_REJECTED,
+            }
             if (
                 correlated.boundary is not boundary
-                or correlated.disposition
-                is not _types.BoundaryDisposition.COMMITTED
+                or correlated.disposition not in valid_dispositions
             ):
                 message = "final boundary result lost exact correlation"
                 raise _types.CohortIntegrityError(message)
+            if correlated.disposition is (
+                _types.BoundaryDisposition.MEMBER_REJECTED
+            ):
+                rejected_members.append(boundary.member)
+        return tuple(rejected_members)
 
     @staticmethod
     def _require_final_resolutions(
         context: _types.PageFinalizationContext,
         result: _types._AcceptedFinalPage,
+        *,
+        rejected_members: tuple[
+            ingestion_lease_store.LeaseMemberIdentity,
+            ...,
+        ],
     ) -> None:
         pending = tuple(
             record.identity
@@ -2609,6 +2645,21 @@ class GrantLane:
         for resolution in resolutions:
             identity = resolution.identity
             basis = resolution.release_basis
+            boundary_rejected = any(
+                identity.member is member for member in rejected_members
+            )
+            if boundary_rejected:
+                if (
+                    resolution.closure_state
+                    is _types.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+                    and basis
+                    is _types.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT
+                ):
+                    continue
+                message = (
+                    "member-rejected boundary retained non-retirement work"
+                )
+                raise _types.CohortIntegrityError(message)
             if (
                 resolution.closure_state
                 is _types.CohortRecordClosureState.DURABLY_CLOSED
@@ -2630,7 +2681,10 @@ class GrantLane:
                 is _types.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT
                 and any(
                     identity.member is member
-                    for member in context.locally_retired_members
+                    for member in (
+                        *context.locally_retired_members,
+                        *rejected_members,
+                    )
                 )
             ):
                 continue

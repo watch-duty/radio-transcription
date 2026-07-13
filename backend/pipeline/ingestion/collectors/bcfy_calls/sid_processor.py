@@ -20,8 +20,14 @@ from backend.pipeline.ingestion import feed_work_scheduler
 from backend.pipeline.ingestion import models as ingestion_models
 from backend.pipeline.ingestion.collectors import control_flow
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    boundary_verdict,
     cursor_policy,
+    gap_ledger,
     provider,
+    runtime_adapters,
+)
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    pipeline as cohort_pipeline,
 )
 from backend.pipeline.storage import feed_store, ingestion_lease_store
 
@@ -65,15 +71,6 @@ class _MemberState:
     def feed_id(self) -> uuid.UUID:
         """Return the authoritative immutable Feed UUID."""
         return self.member.identity.feed_id
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class ScheduledCallPayload:
-    """Frozen scheduler payload for one exact routed provider item."""
-
-    member: ingestion_lease_store.LeaseMember
-    audio_url: str
-    raw_call: collections.abc.Mapping[str, object]
 
 
 class SidProcessorFailure(RuntimeError):
@@ -120,6 +117,17 @@ class SidProcessorPlannedDrain(RuntimeError):
         super().__init__("bcfy_calls_sid_member_reactivated")
 
 
+class SidProcessorUndrained(RuntimeError):
+    """The page retained uncertain work and cannot begin another poll."""
+
+    def __init__(self, result: feed_work_scheduler.Undrained) -> None:
+        if not isinstance(result, feed_work_scheduler.Undrained):
+            message = "result must be an Undrained"
+            raise TypeError(message)
+        self.result = result
+        super().__init__("bcfy_calls_sid_page_undrained")
+
+
 class _MembershipRefreshUncertain(RuntimeError):
     """The store could not prove one authoritative refresh result."""
 
@@ -162,22 +170,23 @@ class _GrantLane(typing.Protocol):
         """Retire one Feed without affecting siblings."""
         ...
 
+    async def is_feed_retired(self, feed_id: uuid.UUID) -> bool:
+        """Return exact lane-local retirement for one Feed."""
+        ...
+
     async def cover_page(
         self,
         *,
-        calls: collections.abc.Iterable[
-            feed_work_scheduler.CallSubmission
-        ],
-        boundaries: collections.abc.Iterable[
-            feed_work_scheduler.BoundaryWork
-        ],
+        calls: collections.abc.Iterable[feed_work_scheduler.CohortSubmission],
+        boundaries: collections.abc.Iterable[feed_work_scheduler.BoundaryWork],
         candidate: cursor_policy.PageCandidate,
-    ) -> cursor_policy.PageSettlement:
+    ) -> feed_work_scheduler.SettledPage | feed_work_scheduler.Undrained:
         """Settle one bounded progress or no-progress page."""
         ...
 
 
 type _Now = collections.abc.Callable[[], datetime.datetime]
+type _SessionIdFactory = collections.abc.Callable[[], str]
 type _Wait = collections.abc.Callable[
     [asyncio.Event, float],
     collections.abc.Awaitable[None],
@@ -206,6 +215,21 @@ class _PageRequest:
     routes: collections.abc.Mapping[str, _MemberState]
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PreparedPageWork:
+    """One page ledger plus its exact immutable cohort stream."""
+
+    ledger: gap_ledger.MissingCallLedger
+    cohorts: tuple[feed_work_scheduler.CohortSubmission, ...]
+    entries: tuple[cohort_pipeline.ScheduledCohortEntry, ...]
+    entry_feed_ids: tuple[uuid.UUID, ...]
+
+
+def _new_session_id() -> str:
+    """Return one bounded invocation-local connection session identifier."""
+    return str(uuid.uuid4())
+
+
 class BcfyCallsSidProcessor:
     """Own one exact grant's membership, cursor, routing, and URL state."""
 
@@ -218,6 +242,7 @@ class BcfyCallsSidProcessor:
         *,
         now: _Now,
         wait: _Wait = control_flow.sleep_or_cancel,
+        session_id_factory: _SessionIdFactory = _new_session_id,
     ) -> None:
         if not isinstance(grant, ingestion_lease_store.LeaseGrant):
             message = "grant must be a LeaseGrant"
@@ -231,12 +256,16 @@ class BcfyCallsSidProcessor:
         if not callable(wait):
             message = "wait must be callable"
             raise TypeError(message)
+        if not callable(session_id_factory):
+            message = "session_id_factory must be callable"
+            raise TypeError(message)
         self._grant = grant
         self._membership_store = membership_store
         self._provider = calls_provider
         self._lane = lane
         self._now = now
         self._wait = wait
+        self._session_id_factory = session_id_factory
         self._lease_cursor: cursor_policy.LeaseCursor | None = None
         self._snapshot: ingestion_lease_store.MembershipSnapshot | None = None
         self._members_by_source: dict[str, _MemberState] = {}
@@ -247,6 +276,15 @@ class BcfyCallsSidProcessor:
             collections.deque(maxlen=_RECENT_URL_LIMIT)
         )
         self._recent_urls: set[str] = set()
+        self._session_by_member: dict[
+            int,
+            tuple[ingestion_lease_store.LeaseMemberIdentity, str],
+        ] = {}
+        self._member_by_session: dict[
+            str,
+            ingestion_lease_store.LeaseMemberIdentity,
+        ] = {}
+        self._active_page_ledger: gap_ledger.MissingCallLedger | None = None
         self._consecutive_failures = 0
 
     async def run(self, stop_requested: asyncio.Event) -> None:
@@ -268,6 +306,9 @@ class BcfyCallsSidProcessor:
 
                 if stop_requested.is_set():
                     return
+                if not self._members_by_id:
+                    await self._wait(stop_requested, _POLL_INTERVAL_SEC)
+                    continue
                 request = self._select_request_position()
                 if stop_requested.is_set():
                     return
@@ -584,47 +625,55 @@ class BcfyCallsSidProcessor:
         ):
             _log_invalid_last_pos()
             last_pos = None
+        if last_pos is None:
+            candidate = lease_cursor.prepare_no_progress()
+            boundaries: tuple[feed_work_scheduler.BoundaryWork, ...] = ()
+        else:
+            candidate = lease_cursor.prepare(last_pos)
+            boundaries = tuple(
+                feed_work_scheduler.BoundaryWork(
+                    state.member.identity,
+                    last_pos,
+                )
+                for state in self._progress_participants(request)
+            )
 
-        calls = self._prepare_call_submissions(
+        prepared = self._prepare_page_work(
             page.calls,
+            candidate=candidate,
             replay_feed_ids=request.replay_feed_ids,
             frozen_routes=request.routes,
         )
-        if last_pos is None:
-            candidate = lease_cursor.prepare_no_progress()
-            settlement = await self._lane.cover_page(
-                calls=calls,
-                boundaries=(),
+        if self._active_page_ledger is not None:
+            message = "processor already retains an unsettled page ledger"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        self._active_page_ledger = prepared.ledger
+        try:
+            settled = await self._lane.cover_page(
+                calls=prepared.cohorts,
+                boundaries=boundaries,
                 candidate=candidate,
             )
-            lease_cursor.accept_no_progress(settlement)
-            return
-
-        candidate = lease_cursor.prepare(last_pos)
-        participants = self._progress_participants(request)
-        boundaries = tuple(
-            feed_work_scheduler.BoundaryWork(
-                state.member.identity,
-                last_pos,
-            )
-            for state in participants
+        except BaseException:
+            if self._page_obligations_are_released(prepared):
+                self._active_page_ledger = None
+            raise
+        if isinstance(settled, feed_work_scheduler.Undrained):
+            raise SidProcessorUndrained(settled)
+        if type(settled) is not feed_work_scheduler.SettledPage:
+            message = "SID lane returned outside the closed page contract"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        if (
+            settled.candidate is not candidate
+            or settled.grant != self._grant
+            or settled.page_sequence != candidate.page_sequence
+        ):
+            message = "settled page crossed exact processor candidate"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        await self._consume_source_evidence(
+            settled,
+            prepared=prepared,
         )
-        receipt = await self._lane.cover_page(
-            calls=calls,
-            boundaries=boundaries,
-            candidate=candidate,
-        )
-        lease_cursor.accept(receipt)
-        for state in participants:
-            state.effective_cursor = _maximum_cursor(
-                state.effective_cursor,
-                last_pos,
-            )
-            if state.route_state in (
-                MemberRouteState.ADOPTING,
-                MemberRouteState.REPLAY_PENDING,
-            ):
-                state.route_state = MemberRouteState.NORMAL
 
     def _progress_participants(
         self,
@@ -633,27 +682,36 @@ class BcfyCallsSidProcessor:
         """Return frozen members authorized for valid page boundaries."""
         participants: list[_MemberState] = []
         for state in request.routes.values():
-            if (
-                state.route_state
-                in (MemberRouteState.NORMAL, MemberRouteState.ADOPTING)
-                or (
-                    state.route_state is MemberRouteState.REPLAY_PENDING
-                    and state.feed_id in request.replay_feed_ids
-                )
+            if state.route_state in (
+                MemberRouteState.NORMAL,
+                MemberRouteState.ADOPTING,
+            ) or (
+                state.route_state is MemberRouteState.REPLAY_PENDING
+                and state.feed_id in request.replay_feed_ids
             ):
                 participants.append(state)
         return tuple(participants)
 
-    def _prepare_call_submissions(
+    def _prepare_page_work(
         self,
         raw_calls: collections.abc.Iterable[object],
         *,
+        candidate: cursor_policy.PageCandidate,
         replay_feed_ids: frozenset[uuid.UUID] = frozenset(),
         frozen_routes: (
             collections.abc.Mapping[str, _MemberState] | None
         ) = None,
-    ) -> collections.abc.Iterator[feed_work_scheduler.CallSubmission]:
-        """Freeze, validate, sort, filter, and lazily register one page."""
+    ) -> _PreparedPageWork:
+        """Freeze one candidate page into exact timestamp cohorts."""
+        if type(candidate) not in {
+            cursor_policy.PageCursorCandidate,
+            cursor_policy.NoProgressPageCandidate,
+        }:
+            message = "candidate must be an exact PageCandidate"
+            raise TypeError(message)
+        if candidate.grant != self._grant:
+            message = "candidate crossed processor grant"
+            raise feed_work_scheduler.CohortIntegrityError(message)
         page_routes = (
             dict(self._members_by_source)
             if frozen_routes is None
@@ -671,44 +729,107 @@ class BcfyCallsSidProcessor:
         validated.sort(
             key=lambda item: (item.sort_timestamp, item.source_order)
         )
+        ledger = gap_ledger.MissingCallLedger(
+            self._grant,
+            candidate.page_sequence,
+        )
+        grouped: dict[
+            tuple[uuid.UUID, datetime.datetime | None, int | None],
+            list[_ValidatedCall],
+        ] = {}
+        seen_urls: set[str] = set()
+        for item in validated:
+            state = item.state
+            eligible = state.route_state is MemberRouteState.NORMAL
+            if state.route_state is MemberRouteState.REPLAY_PENDING:
+                eligible = state.feed_id in replay_feed_ids
+            if not eligible:
+                continue
+            if (
+                item.source_timestamp is not None
+                and state.effective_cursor is not None
+                and item.source_timestamp <= state.effective_cursor
+            ):
+                continue
+            if (
+                item.audio_url in seen_urls
+                or item.audio_url in self._pending_by_url
+                or item.audio_url in self._recent_urls
+            ):
+                continue
+            seen_urls.add(item.audio_url)
+            singleton = (
+                item.source_order if item.source_timestamp is None else None
+            )
+            key = (state.feed_id, item.source_timestamp, singleton)
+            grouped.setdefault(key, []).append(item)
 
-        def submissions() -> collections.abc.Iterator[
-            feed_work_scheduler.CallSubmission
-        ]:
-            for item in validated:
-                state = item.state
-                eligible = state.route_state is MemberRouteState.NORMAL
-                if state.route_state is MemberRouteState.REPLAY_PENDING:
-                    eligible = state.feed_id in replay_feed_ids
-                if not eligible:
-                    continue
-                if (
-                    item.source_timestamp is not None
-                    and state.effective_cursor is not None
-                    and item.source_timestamp <= state.effective_cursor
-                ):
-                    continue
-                if (
-                    item.audio_url in self._pending_by_url
-                    or item.audio_url in self._recent_urls
-                ):
-                    continue
-                self._pending_by_url[item.audio_url] = state.feed_id
-                yield feed_work_scheduler.CallSubmission(
+        cohorts = []
+        page_entries = []
+        entry_feed_ids = []
+        next_source_order = 0
+        for items in grouped.values():
+            state = items[0].state
+            entries = []
+            for item in items:
+                source_order = next_source_order
+                next_source_order += 1
+                obligation = ledger.draft(
+                    state.member,
+                    audio_url=item.audio_url,
+                    provider_ts=item.source_timestamp,
+                    source_order=source_order,
+                )
+                entry = cohort_pipeline.ScheduledCohortEntry(
+                    source_order=source_order,
+                    audio_url=item.audio_url,
+                    raw_call=item.raw_call,
+                    receipt_time=_require_utc_datetime(
+                        self._now(),
+                        field_name="now",
+                    ),
+                    obligation=obligation,
+                )
+                entries.append(entry)
+                page_entries.append(entry)
+                entry_feed_ids.append(state.feed_id)
+            payload = cohort_pipeline.ScheduledCohortPayload(
+                member=state.member,
+                session_id=self._session_id(state.member.identity),
+                entries=tuple(entries),
+            )
+            calls = tuple(
+                feed_work_scheduler.CallSubmission(
                     feed_id=state.feed_id,
                     source_timestamp=item.source_timestamp,
-                    payload=ScheduledCallPayload(
-                        member=state.member,
-                        audio_url=item.audio_url,
-                        raw_call=item.raw_call,
-                    ),
+                    payload=payload,
                     settlement_observer=self._settlement_observer(
-                        item.audio_url,
+                        payload,
+                        entry,
                         state.feed_id,
                     ),
                 )
-
-        return submissions()
+                for item, entry in zip(items, entries, strict=True)
+            )
+            cohorts.append(
+                feed_work_scheduler.CohortSubmission(
+                    member=state.member.identity,
+                    feed_id=state.feed_id,
+                    cohort_timestamp=items[0].source_timestamp,
+                    calls=calls,
+                    admission_hook=self._admission_hook(
+                        payload,
+                        tuple(entry.audio_url for entry in entries),
+                        state.feed_id,
+                    ),
+                )
+            )
+        return _PreparedPageWork(
+            ledger=ledger,
+            cohorts=tuple(cohorts),
+            entries=tuple(page_entries),
+            entry_feed_ids=tuple(entry_feed_ids),
+        )
 
     def _validate_call(  # noqa: PLR0911
         self,
@@ -736,9 +857,7 @@ class BcfyCallsSidProcessor:
             source_timestamp = None
             logger.warning(
                 "bcfy_calls call missing 'ts' (API pagination key)",
-                extra={
-                    "json_fields": {"event_type": "bcfy_calls_missing_ts"}
-                },
+                extra={"json_fields": {"event_type": "bcfy_calls_missing_ts"}},
             )
         else:
             if (
@@ -767,12 +886,14 @@ class BcfyCallsSidProcessor:
 
     def _settlement_observer(
         self,
-        audio_url: str,
+        payload: cohort_pipeline.ScheduledCohortPayload,
+        entry: cohort_pipeline.ScheduledCohortEntry,
         feed_id: uuid.UUID,
-    ) -> collections.abc.Callable[
-        [feed_work_scheduler.CallSettlement], None
-    ]:
-        """Create one synchronous history-free URL settlement observer."""
+    ) -> collections.abc.Callable[[feed_work_scheduler.CallSettlement], None]:
+        """Pair the exact ledger release with grant-local URL state."""
+        ledger = gap_ledger._owner_for(entry.obligation)  # noqa: SLF001
+        ledger_observer = payload.settlement_observer(entry.source_order)
+        audio_url = entry.audio_url
 
         def observe(settlement: feed_work_scheduler.CallSettlement) -> None:
             if not isinstance(
@@ -781,16 +902,240 @@ class BcfyCallsSidProcessor:
             ):
                 message = "settlement must be a CallSettlement"
                 raise TypeError(message)
+            ledger_observer(settlement)
             if self._pending_by_url.get(audio_url) != feed_id:
+                return
+            state = ledger.state(entry.obligation)
+            if state is gap_ledger.MissingCallState.FINAL_CLOSURE_PENDING:
                 return
             del self._pending_by_url[audio_url]
             if (
-                settlement is feed_work_scheduler.CallSettlement.COMPLETED
+                state
+                in {
+                    gap_ledger.MissingCallState.RESOLVED,
+                    gap_ledger.MissingCallState.EMITTED,
+                }
                 and feed_id not in self._retired_feed_ids
             ):
                 self._append_recent(audio_url, feed_id)
 
         return observe
+
+    def _admission_hook(
+        self,
+        payload: cohort_pipeline.ScheduledCohortPayload,
+        audio_urls: tuple[str, ...],
+        feed_id: uuid.UUID,
+    ) -> collections.abc.Callable[
+        [tuple[feed_work_scheduler.CohortRecordIdentity, ...]],
+        None,
+    ]:
+        """Atomically bind exact identities before making URLs pending."""
+
+        def admit(
+            identities: tuple[
+                feed_work_scheduler.CohortRecordIdentity,
+                ...,
+            ],
+        ) -> None:
+            if any(
+                audio_url in self._pending_by_url
+                or audio_url in self._recent_urls
+                for audio_url in audio_urls
+            ):
+                message = "cohort URL became ineligible before admission"
+                raise feed_work_scheduler.CohortIntegrityError(message)
+            payload.admission_hook(identities)
+            for audio_url in audio_urls:
+                self._pending_by_url[audio_url] = feed_id
+
+        return admit
+
+    def _session_id(
+        self,
+        member: ingestion_lease_store.LeaseMemberIdentity,
+    ) -> str:
+        """Return one stable invocation-local session for an issued member."""
+        key = id(member)
+        cached = self._session_by_member.get(key)
+        if cached is not None:
+            cached_member, session_id = cached
+            if cached_member is not member:
+                message = "member identity key was reused during invocation"
+                raise feed_work_scheduler.CohortIntegrityError(message)
+            return session_id
+        session_id = self._session_id_factory()
+        if not isinstance(session_id, str):
+            message = "session_id_factory must return a string"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        prior = self._member_by_session.get(session_id)
+        if prior is not None and prior is not member:
+            message = "session_id_factory collided across issued members"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        self._session_by_member[key] = (member, session_id)
+        self._member_by_session[session_id] = member
+        return session_id
+
+    async def _consume_source_evidence(
+        self,
+        settled: feed_work_scheduler.SettledPage,
+        *,
+        prepared: _PreparedPageWork,
+    ) -> None:
+        """Consume one accepted page exactly once, then apply local effects."""
+        source_evidence = settled.source_evidence
+        if type(source_evidence) is not (
+            runtime_adapters.PageFinalizationEvidence
+        ):
+            message = "settled page lacks exact Calls source evidence"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        verdict = source_evidence.verdict
+        if (
+            verdict.grant != self._grant
+            or verdict.page_sequence != settled.page_sequence
+        ):
+            message = "Calls source evidence crossed processor page"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+
+        prepared.ledger.close_page(settled)
+        self._finalize_page_urls(prepared)
+        lease_cursor = self._lease_cursor
+        if lease_cursor is None:
+            message = "accepted page lost its Lease Cursor"
+            raise RuntimeError(message)
+        settlement = settled.lease_settlement
+        if type(settlement) is cursor_policy._CoveredPage:  # noqa: SLF001
+            lease_cursor.accept(settlement)
+        elif type(settlement) is cursor_policy._NoProgressPageSettled:  # noqa: SLF001
+            lease_cursor.accept_no_progress(settlement)
+        elif type(settlement) is cursor_policy._ReplayablePageSettled:  # noqa: SLF001
+            lease_cursor.accept_replayable(settlement)
+        else:
+            message = "settled page carries an unknown cursor settlement"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+
+        self._apply_closure_caps(settled, source_evidence.closure_caps)
+        await self._reconcile_lane_retirements()
+        for feed_id in source_evidence.quarantined_feed_ids:
+            await self._retire_local_feed(feed_id, remove_from_lane=True)
+        self._active_page_ledger = None
+
+        if (
+            verdict.selected_scope
+            is boundary_verdict.NewlyChargedScope.LEASE_ONLY
+            and verdict.lease_failure is not None
+        ):
+            raise SidProcessorFailure(
+                verdict.lease_failure.status_reason,
+                verdict.lease_failure.detail,
+            )
+
+    def _apply_closure_caps(
+        self,
+        settled: feed_work_scheduler.SettledPage,
+        caps: tuple[object, ...],
+    ) -> None:
+        """Advance only Feed routes proven through exact source caps."""
+        candidate = settled.candidate
+        if type(candidate) is cursor_policy.NoProgressPageCandidate:
+            return
+        if type(candidate) is not cursor_policy.PageCursorCandidate:
+            message = "accepted page carries an unknown candidate"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        for cap in caps:
+            try:
+                feed_id = runtime_adapters.feed_closure_cap_feed_id(cap)
+                covered = runtime_adapters.feed_closure_cap_covers(
+                    cap,
+                    grant=self._grant,
+                    page_sequence=candidate.page_sequence,
+                    feed_id=feed_id,
+                    requested_target=candidate.last_pos,
+                )
+            except (
+                TypeError,
+                ValueError,
+                runtime_adapters.BoundaryAdapterIntegrityError,
+            ) as exc:
+                message = "closure cap crossed processor authority"
+                raise feed_work_scheduler.CohortIntegrityError(message) from exc
+            if not covered:
+                message = "closure cap does not cover processor candidate"
+                raise feed_work_scheduler.CohortIntegrityError(message)
+            state = self._members_by_id.get(feed_id)
+            if state is None:
+                continue
+            state.effective_cursor = _maximum_cursor(
+                state.effective_cursor,
+                candidate.last_pos,
+            )
+            if state.route_state in {
+                MemberRouteState.ADOPTING,
+                MemberRouteState.REPLAY_PENDING,
+            }:
+                state.route_state = MemberRouteState.NORMAL
+
+    async def _reconcile_lane_retirements(self) -> None:
+        """Mirror scheduler-local exact Feed retirement into routing state."""
+        for feed_id in tuple(self._members_by_id):
+            if await self._lane.is_feed_retired(feed_id):
+                await self._retire_local_feed(
+                    feed_id,
+                    remove_from_lane=False,
+                )
+
+    async def _retire_local_feed(
+        self,
+        feed_id: uuid.UUID,
+        *,
+        remove_from_lane: bool,
+    ) -> None:
+        """Tombstone one exact Feed and clear only its local work state."""
+        if feed_id in self._retired_feed_ids:
+            return
+        if remove_from_lane:
+            await self._lane.remove_feed(feed_id)
+        state = self._members_by_id.pop(feed_id, None)
+        if state is not None:
+            source_feed_id = state.member.identity.source_feed_id
+            if self._members_by_source.get(source_feed_id) is state:
+                del self._members_by_source[source_feed_id]
+            state.route_state = MemberRouteState.RETIRED
+        self._retired_feed_ids.add(feed_id)
+        self._clear_feed_urls(feed_id)
+
+    def _finalize_page_urls(self, prepared: _PreparedPageWork) -> None:
+        """Apply final close states that settle after scheduler observers."""
+        for entry, feed_id in zip(
+            prepared.entries,
+            prepared.entry_feed_ids,
+            strict=True,
+        ):
+            if self._pending_by_url.get(entry.audio_url) != feed_id:
+                continue
+            state = prepared.ledger.state(entry.obligation)
+            if state is gap_ledger.MissingCallState.REPLAY_RELEASED:
+                del self._pending_by_url[entry.audio_url]
+            elif state in {
+                gap_ledger.MissingCallState.RESOLVED,
+                gap_ledger.MissingCallState.EMITTED,
+            }:
+                del self._pending_by_url[entry.audio_url]
+                if feed_id not in self._retired_feed_ids:
+                    self._append_recent(entry.audio_url, feed_id)
+
+    @staticmethod
+    def _page_obligations_are_released(prepared: _PreparedPageWork) -> bool:
+        """Return whether known abort cleanup left no retained obligation."""
+        closed = {
+            gap_ledger.MissingCallState.RESOLVED,
+            gap_ledger.MissingCallState.EMITTED,
+            gap_ledger.MissingCallState.REPLAY_RELEASED,
+        }
+        return all(
+            prepared.ledger.state(entry.obligation) in closed
+            for entry in prepared.entries
+        )
 
     def _append_recent(self, audio_url: str, feed_id: uuid.UUID) -> None:
         """Append one unique completion while synchronizing deque and set."""
@@ -821,6 +1166,8 @@ class BcfyCallsSidProcessor:
         self._pending_by_url.clear()
         self._recent_order.clear()
         self._recent_urls.clear()
+        self._session_by_member.clear()
+        self._member_by_session.clear()
         self._members_by_source.clear()
         self._members_by_id.clear()
         self._retired_feed_ids.clear()
@@ -856,9 +1203,7 @@ def _log_invalid_last_pos() -> None:
     """Emit the existing low-cardinality invalid progress diagnostic."""
     logger.warning(
         "bcfy_calls response contained invalid lastPos",
-        extra={
-            "json_fields": {"event_type": "bcfy_calls_invalid_last_pos"}
-        },
+        extra={"json_fields": {"event_type": "bcfy_calls_invalid_last_pos"}},
     )
 
 
