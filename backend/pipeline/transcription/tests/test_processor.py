@@ -36,7 +36,7 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
 from backend.pipeline.transcription.processor import (
     CHIRP_UNINTELLIGIBLE_MARKER,
     TranscriptionEventProcessor,
-    _is_transient_exception,
+    is_transient_exception,
 )
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.pipeline.transcription.transcribers.gemini import (
@@ -1120,45 +1120,45 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
 
 
 class IsTransientExceptionTest(unittest.TestCase):
-    """Unit tests for the _is_transient_exception helper."""
+    """Unit tests for the is_transient_exception helper."""
 
     def test_google_api_call_error_transient(self) -> None:
         e = GoogleAPICallError("Resource exhausted")
         e.code = 429
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
         e = GoogleAPICallError("Internal error")
         e.code = 500
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
         e = GoogleAPICallError("Conflict")
         e.code = 409
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
         e = GoogleAPICallError("Bad request")
         e.code = 400
-        self.assertFalse(_is_transient_exception(e))
+        self.assertFalse(is_transient_exception(e))
 
     def test_google_genai_api_error_transient(self) -> None:
         e = genai_errors.APIError(429, {})
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
         e = genai_errors.APIError(503, {})
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
         e = genai_errors.APIError(400, {})
-        self.assertFalse(_is_transient_exception(e))
+        self.assertFalse(is_transient_exception(e))
 
     def test_httpx_errors_transient(self) -> None:
         mock_request = httpx.Request("GET", "https://example.com")
         e = httpx.ReadTimeout("Timeout", request=mock_request)
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
         e = httpx.ConnectError("Connection refused", request=mock_request)
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
         e = httpx.RequestError("Request failed", request=mock_request)
-        self.assertTrue(_is_transient_exception(e))
+        self.assertTrue(is_transient_exception(e))
 
 
 class TranscriptionProcessorTracingTest(unittest.IsolatedAsyncioTestCase):
