@@ -3,7 +3,7 @@
 import concurrent.futures
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any, Literal, TypedDict
 
 import apache_beam as beam
 import numpy as np
@@ -244,3 +244,23 @@ class ScheduleStaleTimerAction(StateMachineAction):
     """Action emitted to adjust Beam Watermark timers for dead-transmission recovery."""
 
     deadline_ms: int
+
+
+class StitcherDlqPayload(TypedDict):
+    """Payload emitted to the Dead Letter Queue when chunk stitching fails."""
+
+    feed_id: str
+    gcs_uri: str
+    session_id: str
+    error_message: str
+    traceparent: str | None
+
+
+@dataclass(frozen=True)
+class StitcherChunkResult:
+    """Structured output returned after processing and stitching a chronological chunk."""
+
+    outputs: list[tuple[str, FlushRequest] | tuple[str, StitcherDlqPayload]]
+    next_context: TransmissionContext
+    next_expected_ts: int
+    next_last_start_ms: int | None
