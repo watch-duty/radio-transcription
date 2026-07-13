@@ -148,6 +148,7 @@ class FeedWorkScheduler:
                 global_fatal=lambda: self._fatal,
                 abandonment_for=self._abandonment.get,
                 boundary_ready_observer=self._observe_boundary_ready,
+                closing_settlement=self._settlement_for_closing,
             )
             for index in range(_limits.shard_count)
         )
@@ -357,9 +358,10 @@ class FeedWorkScheduler:
     async def _purge_exact(
         self,
         grant: ingestion_lease_store.LeaseGrant,
+        settlement: _types.CallSettlement,
     ) -> None:
         for shard in self._shards:
-            await shard.purge_exact(grant)
+            await shard.purge_exact(grant, settlement=settlement)
 
     async def _wait_exact_empty(
         self,
@@ -434,6 +436,18 @@ class FeedWorkScheduler:
         lane = self._lanes.get(grant)
         if lane is not None:
             lane._boundary_coordinator.notify_ready()
+
+    def _settlement_for_closing(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> _types.CallSettlement:
+        lane = self._lanes.get(grant)
+        if (
+            lane is not None
+            and lane._close_reason is _types.LaneCloseReason.AUTHORITY_LOSS
+        ):
+            return _types.CallSettlement.AUTHORITY_LOST
+        return _types.CallSettlement.ABORTED
 
     def _publish_grant_close(
         self,
@@ -598,8 +612,8 @@ class GrantLane:
         *,
         calls: collections.abc.Iterable[_types.CallSubmission],
         boundaries: collections.abc.Iterable[_types.BoundaryWork],
-        candidate: cursor_policy.PageCursorCandidate,
-    ) -> cursor_policy._CoveredPage:
+        candidate: cursor_policy.PageCandidate,
+    ) -> cursor_policy.PageSettlement:
         """Incrementally cover one source-order call page.
 
         Args:
@@ -616,6 +630,13 @@ class GrantLane:
         """
         async with self._admission_lock:
             await self._validate_candidate(candidate)
+            no_progress = (
+                type(candidate) is cursor_policy.NoProgressPageCandidate
+            )
+            page_boundaries = boundaries
+            if no_progress:
+                self._require_no_progress_boundaries_empty(boundaries)
+                page_boundaries = ()
             await self._begin_page(candidate.page_sequence)
             try:
                 for source_order, submission in enumerate(calls):
@@ -628,6 +649,7 @@ class GrantLane:
                         source_timestamp=submission.source_timestamp,
                         payload=submission.payload,
                         page_sequence=candidate.page_sequence,
+                        settlement_observer=submission.settlement_observer,
                     )
                     shard = self._scheduler._shard_for(submission.feed_id)
                     try:
@@ -636,6 +658,10 @@ class GrantLane:
                             abort_event=self._closing_event,
                         )
                     except _shard._FeedRetiredError:
+                        self._notify_unadmitted_settlement(
+                            submission,
+                            _types.CallSettlement.MEMBERSHIP_REJECTED,
+                        )
                         await self._mark_localized(source_order)
                         continue
                     except _shard._AdmissionAbortedError as exc:
@@ -645,7 +671,7 @@ class GrantLane:
                         message = "scheduler shard integrity failed"
                         raise SchedulerIntegrityError(message) from exc.failure
                     await self._mark_registered(source_order)
-                for boundary in boundaries:
+                for boundary in page_boundaries:
                     self._require_boundary(boundary)
                     source_order = await self._next_source_order()
                     await self._mark_pulled(source_order)
@@ -685,7 +711,9 @@ class GrantLane:
                         raise SchedulerIntegrityError(message) from exc.failure
                     await self._mark_registered(source_order)
                 try:
-                    await self._boundary_coordinator.request_final()
+                    final_result = (
+                        await self._boundary_coordinator.request_final()
+                    )
                 except _boundaries._BoundaryAuthorityLostError as exc:
                     message = "exact grant lost boundary authority"
                     raise _LaneClosedError(message) from exc
@@ -693,11 +721,13 @@ class GrantLane:
                     self._scheduler._raise_fatal()
                     message = "boundary coordinator integrity failed"
                     raise SchedulerIntegrityError(message) from exc
-                await self._scheduler._promote_boundary_page(
-                    self._grant,
-                    candidate.page_sequence,
-                )
-                receipt = await self._cover(candidate)
+                self._require_final_boundary_settlement(final_result)
+                if not no_progress:
+                    await self._scheduler._promote_boundary_page(
+                        self._grant,
+                        candidate.page_sequence,
+                    )
+                page_settlement = await self._cover(candidate)
             except BaseException:
                 cleanup = self._start_page_settlement(
                     self._abort_page(candidate.page_sequence),
@@ -722,7 +752,7 @@ class GrantLane:
                 ),
             )
             await self._settle_page_task(settlement)
-            return receipt
+            return page_settlement
 
     async def _snapshot(self) -> _LaneSnapshot:
         async with self._state_lock:
@@ -749,7 +779,7 @@ class GrantLane:
 
     async def _validate_candidate(
         self,
-        candidate: cursor_policy.PageCursorCandidate,
+        candidate: cursor_policy.PageCandidate,
     ) -> None:
         async with self._state_lock:
             self._raise_closed_locked()
@@ -854,8 +884,8 @@ class GrantLane:
 
     async def _cover(
         self,
-        candidate: cursor_policy.PageCursorCandidate,
-    ) -> cursor_policy._CoveredPage:
+        candidate: cursor_policy.PageCandidate,
+    ) -> cursor_policy.PageSettlement:
         async with self._state_lock:
             self._raise_closed_locked()
             self._validate_candidate_locked(candidate)
@@ -866,10 +896,16 @@ class GrantLane:
             if page.pulled != page.registered + page.localized:
                 message = "not every pulled record owns bounded coverage"
                 raise RuntimeError(message)
-            receipt = cursor_policy._issue_covered_page(candidate)
+            if type(candidate) is cursor_policy.PageCursorCandidate:
+                settlement = cursor_policy._issue_covered_page(candidate)
+            elif type(candidate) is cursor_policy.NoProgressPageCandidate:
+                settlement = cursor_policy._issue_no_progress_page(candidate)
+            else:
+                message = "candidate is outside the closed page vocabulary"
+                raise cursor_policy.CursorIntegrityError(message)
             self._next_page_sequence += 1
             self._page = None
-            return receipt
+            return settlement
 
     async def _abort_page(self, page_sequence: int) -> None:
         await self._scheduler._abort_boundary_page(
@@ -977,7 +1013,10 @@ class GrantLane:
         try:
             await self._scheduler._wake_admission()
             await self._boundary_coordinator.close()
-            await self._scheduler._purge_exact(self._grant)
+            await self._scheduler._purge_exact(
+                self._grant,
+                self._scheduler._settlement_for_closing(self._grant),
+            )
             while True:
                 if self._close_strength is _CloseStrength.CANCELLING:
                     await self._scheduler._cancel_exact(self._grant)
@@ -1037,10 +1076,13 @@ class GrantLane:
 
     def _validate_candidate_locked(
         self,
-        candidate: cursor_policy.PageCursorCandidate,
+        candidate: cursor_policy.PageCandidate,
     ) -> None:
-        if type(candidate) is not cursor_policy.PageCursorCandidate:
-            message = "candidate must be an exact PageCursorCandidate"
+        if type(candidate) not in (
+            cursor_policy.PageCursorCandidate,
+            cursor_policy.NoProgressPageCandidate,
+        ):
+            message = "candidate must be an exact PageCandidate"
             raise cursor_policy.CursorIntegrityError(message)
         if candidate.grant != self._grant:
             message = "candidate grant does not match the exact lane"
@@ -1075,3 +1117,38 @@ class GrantLane:
         if type(boundary) is not _types.BoundaryWork:
             message = "boundaries must contain exact BoundaryWork values"
             raise TypeError(message)
+
+    @staticmethod
+    def _require_no_progress_boundaries_empty(
+        boundaries: collections.abc.Iterable[_types.BoundaryWork],
+    ) -> None:
+        iterator = iter(boundaries)
+        try:
+            next(iterator)
+        except StopIteration:
+            return
+        message = "no-progress pages must not contain boundaries"
+        raise cursor_policy.CursorIntegrityError(message)
+
+    @staticmethod
+    def _require_final_boundary_settlement(
+        result: _types._BoundaryPressureResult,
+    ) -> None:
+        if result is _types._BoundaryPressureResult.RETRYABLE:
+            message = "final logical boundary flush is retryable"
+            raise RuntimeError(message)
+
+    def _notify_unadmitted_settlement(
+        self,
+        submission: _types.CallSubmission,
+        settlement: _types.CallSettlement,
+    ) -> None:
+        observer = submission.settlement_observer
+        if observer is None:
+            return
+        try:
+            observer(settlement)
+        except BaseException as exc:
+            self._scheduler._observe_fatal(exc)
+            message = "call settlement observer failed"
+            raise SchedulerIntegrityError(message) from exc

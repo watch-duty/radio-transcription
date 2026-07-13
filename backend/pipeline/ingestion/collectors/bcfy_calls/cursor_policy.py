@@ -16,6 +16,8 @@ __all__ = [
     "BootstrapDecision",
     "CursorIntegrityError",
     "LeaseCursor",
+    "NoProgressPageCandidate",
+    "PageCandidate",
     "PageCursorCandidate",
     "bootstrap_cursor",
 ]
@@ -83,6 +85,26 @@ class PageCursorCandidate:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class NoProgressPageCandidate:
+    """Immutable exact-next candidate carrying no cursor evidence."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    page_sequence: int
+    _seal: _CandidateSeal = dataclasses.field(repr=False, compare=False)
+    _construction_key: dataclasses.InitVar[object | None] = None
+
+    def __post_init__(self, _construction_key: object | None) -> None:
+        if _construction_key is not _CONSTRUCTION_KEY:
+            msg = "No-progress candidates must be prepared by LeaseCursor"
+            raise CursorIntegrityError(msg)
+        _require_grant(self.grant)
+        _require_page_sequence(self.page_sequence)
+        if type(self._seal) is not _CandidateSeal:
+            msg = "No-progress candidate seal is invalid"
+            raise CursorIntegrityError(msg)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class _CoveredPage:
     """Private proof that one exact page obtained bounded coverage."""
 
@@ -107,8 +129,32 @@ class _CoveredPage:
             raise CursorIntegrityError(msg)
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _NoProgressPageSettled:
+    """Private proof that one exact no-progress page settled safely."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    page_sequence: int
+    _seal: _CandidateSeal = dataclasses.field(repr=False, compare=False)
+    _construction_key: dataclasses.InitVar[object | None] = None
+
+    def __post_init__(self, _construction_key: object | None) -> None:
+        if _construction_key is not _CONSTRUCTION_KEY:
+            msg = "No-progress settlements require the private issuer"
+            raise CursorIntegrityError(msg)
+        _require_grant(self.grant)
+        _require_page_sequence(self.page_sequence)
+        if type(self._seal) is not _CandidateSeal:
+            msg = "No-progress settlement seal is invalid"
+            raise CursorIntegrityError(msg)
+
+
+type PageCandidate = PageCursorCandidate | NoProgressPageCandidate
+type PageSettlement = _CoveredPage | _NoProgressPageSettled
+
+
 def _read_seal(
-    value: PageCursorCandidate | _CoveredPage,
+    value: PageCandidate | PageSettlement,
 ) -> _CandidateSeal:
     """Read the module-private capability without exposing public access."""
     return object.__getattribute__(value, "_seal")
@@ -223,6 +269,25 @@ def _issue_covered_page(candidate: PageCursorCandidate) -> _CoveredPage:
     )
 
 
+def _issue_no_progress_page(
+    candidate: NoProgressPageCandidate,
+) -> _NoProgressPageSettled:
+    """Issue a private settlement after bounded no-progress coverage."""
+    if type(candidate) is not NoProgressPageCandidate:
+        msg = "candidate must be an exact NoProgressPageCandidate"
+        raise CursorIntegrityError(msg)
+    seal = _read_seal(candidate)
+    if type(seal) is not _CandidateSeal:
+        msg = "No-progress candidate seal is invalid"
+        raise CursorIntegrityError(msg)
+    return _NoProgressPageSettled(
+        grant=candidate.grant,
+        page_sequence=candidate.page_sequence,
+        _seal=seal,
+        _construction_key=_CONSTRUCTION_KEY,
+    )
+
+
 class LeaseCursor:
     """Grant-local monotonic cursor advanced by exact covered receipts.
 
@@ -266,7 +331,7 @@ class LeaseCursor:
             else _require_integrity_utc_datetime(pos, field_name="pos")
         )
         self._next_page_sequence = 0
-        self._outstanding_candidate: PageCursorCandidate | None = None
+        self._outstanding_candidate: PageCandidate | None = None
 
     @property
     def grant(self) -> ingestion_lease_store.LeaseGrant:
@@ -284,7 +349,7 @@ class LeaseCursor:
         return self._next_page_sequence
 
     @property
-    def outstanding_candidate(self) -> PageCursorCandidate | None:
+    def outstanding_candidate(self) -> PageCandidate | None:
         """Return the candidate currently awaiting scheduler coverage."""
         return self._outstanding_candidate
 
@@ -322,6 +387,20 @@ class LeaseCursor:
         self._outstanding_candidate = candidate
         return candidate
 
+    def prepare_no_progress(self) -> NoProgressPageCandidate:
+        """Prepare one exact-next candidate carrying no cursor evidence."""
+        if self._outstanding_candidate is not None:
+            msg = "A page cursor candidate is already outstanding"
+            raise CursorIntegrityError(msg)
+        candidate = NoProgressPageCandidate(
+            grant=self._grant,
+            page_sequence=self._next_page_sequence,
+            _seal=_CandidateSeal(),
+            _construction_key=_CONSTRUCTION_KEY,
+        )
+        self._outstanding_candidate = candidate
+        return candidate
+
     def accept(self, receipt: _CoveredPage) -> datetime.datetime:
         """Consume the exact outstanding covered-page receipt once.
 
@@ -340,8 +419,8 @@ class LeaseCursor:
             raise CursorIntegrityError(msg)
 
         candidate = self._outstanding_candidate
-        if candidate is None:
-            msg = "No page cursor candidate is awaiting coverage"
+        if type(candidate) is not PageCursorCandidate:
+            msg = "No progress cursor candidate is awaiting coverage"
             raise CursorIntegrityError(msg)
         if receipt.grant != self._grant:
             msg = "Covered page receipt grant does not match"
@@ -376,3 +455,32 @@ class LeaseCursor:
         self._next_page_sequence += 1
         self._outstanding_candidate = None
         return validated_last_pos
+
+    def accept_no_progress(self, settlement: _NoProgressPageSettled) -> None:
+        """Consume the exact no-progress settlement without moving ``pos``."""
+        if type(settlement) is not _NoProgressPageSettled:
+            msg = "settlement must be a private no-progress capability"
+            raise CursorIntegrityError(msg)
+
+        candidate = self._outstanding_candidate
+        if type(candidate) is not NoProgressPageCandidate:
+            msg = "No no-progress candidate is awaiting coverage"
+            raise CursorIntegrityError(msg)
+        if settlement.grant != self._grant:
+            msg = "No-progress settlement grant does not match"
+            raise CursorIntegrityError(msg)
+        if settlement.page_sequence != self._next_page_sequence:
+            msg = "No-progress settlement is not the exact next sequence"
+            raise CursorIntegrityError(msg)
+        if _read_seal(settlement) is not _read_seal(candidate):
+            msg = "No-progress settlement is for another candidate"
+            raise CursorIntegrityError(msg)
+        if (
+            settlement.grant != candidate.grant
+            or settlement.page_sequence != candidate.page_sequence
+        ):
+            msg = "No-progress settlement fields do not match its candidate"
+            raise CursorIntegrityError(msg)
+
+        self._next_page_sequence += 1
+        self._outstanding_candidate = None

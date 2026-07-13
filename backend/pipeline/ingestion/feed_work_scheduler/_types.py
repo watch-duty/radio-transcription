@@ -88,6 +88,40 @@ def _shard_index(
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class CallExecution:
+    """Stable immutable call view passed across the executor boundary."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    feed_id: uuid.UUID
+    source_timestamp: datetime.datetime | None
+    payload: object
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
+            message = "grant must be a LeaseGrant"
+            raise TypeError(message)
+        if not isinstance(self.feed_id, uuid.UUID):
+            message = "feed_id must be a UUID"
+            raise TypeError(message)
+        if self.source_timestamp is not None and not isinstance(
+            self.source_timestamp,
+            datetime.datetime,
+        ):
+            message = "source_timestamp must be a datetime or None"
+            raise TypeError(message)
+
+
+class CallSettlement(enum.StrEnum):
+    """Closed terminal or release notification for one submitted call."""
+
+    COMPLETED = "completed"
+    RETRYABLE = "retryable"
+    AUTHORITY_LOST = "authority_lost"
+    MEMBERSHIP_REJECTED = "membership_rejected"
+    ABORTED = "aborted"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class CallSubmission:
     """One opaque source-order call offered to an exact grant lane.
 
@@ -98,15 +132,24 @@ class CallSubmission:
     """
 
     feed_id: uuid.UUID
-    source_timestamp: datetime.datetime
+    source_timestamp: datetime.datetime | None
     payload: object
+    settlement_observer: typing.Callable[[CallSettlement], None] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.feed_id, uuid.UUID):
             message = "feed_id must be a UUID"
             raise TypeError(message)
-        if not isinstance(self.source_timestamp, datetime.datetime):
-            message = "source_timestamp must be a datetime"
+        if self.source_timestamp is not None and not isinstance(
+            self.source_timestamp,
+            datetime.datetime,
+        ):
+            message = "source_timestamp must be a datetime or None"
+            raise TypeError(message)
+        if self.settlement_observer is not None and not callable(
+            self.settlement_observer
+        ):
+            message = "settlement_observer must be callable or None"
             raise TypeError(message)
 
 
@@ -115,16 +158,19 @@ class BoundaryWork:
     """One trailing Feed boundary offered after a page's call stream.
 
     Attributes:
-        feed_id: Authoritative Feed identity used for shard affinity.
+        member: Store-issued member identity retained through persistence.
         target: Validated UTC completion boundary that may only coalesce up.
     """
 
-    feed_id: uuid.UUID
+    member: ingestion_lease_store.LeaseMemberIdentity
     target: datetime.datetime
 
     def __post_init__(self) -> None:
-        if not isinstance(self.feed_id, uuid.UUID):
-            message = "feed_id must be a UUID"
+        if not isinstance(
+            self.member,
+            ingestion_lease_store.LeaseMemberIdentity,
+        ):
+            message = "member must be a LeaseMemberIdentity"
             raise TypeError(message)
         if not isinstance(self.target, datetime.datetime):
             message = "target must be a datetime"
@@ -132,6 +178,11 @@ class BoundaryWork:
         if self.target.utcoffset() != datetime.timedelta(0):
             message = "target must be UTC-aware"
             raise ValueError(message)
+
+    @property
+    def feed_id(self) -> uuid.UUID:
+        """Return the member's authoritative Feed identity cheaply."""
+        return self.member.feed_id
 
 
 class BoundaryDisposition(enum.StrEnum):
@@ -175,7 +226,14 @@ class BoundaryGrantRejected:
     """The committer rejected the complete exact grant or fence."""
 
 
-type BoundaryCommitResult = BoundaryBatchCommitted | BoundaryGrantRejected
+@dataclasses.dataclass(frozen=True, slots=True)
+class BoundaryBatchRetryable:
+    """One whole physical batch attempt settled transiently."""
+
+
+type BoundaryCommitResult = (
+    BoundaryBatchCommitted | BoundaryBatchRetryable | BoundaryGrantRejected
+)
 
 
 class BoundaryCommitter(typing.Protocol):
@@ -199,9 +257,10 @@ class _CallWork:
     feed_id: uuid.UUID
     grant: ingestion_lease_store.LeaseGrant
     source_order: int
-    source_timestamp: datetime.datetime
+    source_timestamp: datetime.datetime | None
     payload: object
     page_sequence: int
+    settlement_observer: typing.Callable[[CallSettlement], None] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.feed_id, uuid.UUID):
@@ -211,10 +270,18 @@ class _CallWork:
             message = "grant must be a LeaseGrant"
             raise TypeError(message)
         _require_nonnegative_integer(self.source_order, "source_order")
-        if not isinstance(self.source_timestamp, datetime.datetime):
-            message = "source_timestamp must be a datetime"
+        if self.source_timestamp is not None and not isinstance(
+            self.source_timestamp,
+            datetime.datetime,
+        ):
+            message = "source_timestamp must be a datetime or None"
             raise TypeError(message)
         _require_nonnegative_integer(self.page_sequence, "page_sequence")
+        if self.settlement_observer is not None and not callable(
+            self.settlement_observer
+        ):
+            message = "settlement_observer must be callable or None"
+            raise TypeError(message)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -237,6 +304,15 @@ class _CallRecord:
     @property
     def grant(self) -> ingestion_lease_store.LeaseGrant:
         return self.work.grant
+
+    def execution(self) -> CallExecution:
+        """Project the private record into its stable executor value."""
+        return CallExecution(
+            grant=self.work.grant,
+            feed_id=self.work.feed_id,
+            source_timestamp=self.work.source_timestamp,
+            payload=self.work.payload,
+        )
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -264,7 +340,7 @@ class _BoundaryRecord:
     """One counted pending or immutable detached boundary observation."""
 
     grant: ingestion_lease_store.LeaseGrant
-    feed_id: uuid.UUID
+    member: ingestion_lease_store.LeaseMemberIdentity
     local_sequence: int
     source_order: int
     created_page_sequence: int
@@ -278,9 +354,13 @@ class _BoundaryRecord:
     promotion_page_sequence: int | None = None
     promotion_rollback_target: datetime.datetime | None = None
 
+    @property
+    def feed_id(self) -> uuid.UUID:
+        return self.member.feed_id
+
     def detached_work(self) -> BoundaryWork:
         """Return the immutable target passed across the I/O boundary."""
-        return BoundaryWork(self.feed_id, self.target)
+        return BoundaryWork(self.member, self.target)
 
 
 class _BoundaryPressureResult(enum.StrEnum):
@@ -424,7 +504,7 @@ type _ExecutorOutcome = (
 class CallExecutor(typing.Protocol):
     """Narrow injected seam awaited only by an unlocked fixed worker."""
 
-    async def execute(self, record: _CallRecord) -> _ExecutorOutcome:
+    async def execute(self, execution: CallExecution) -> _ExecutorOutcome:
         """Settle one already-registered call through a closed outcome."""
         ...
 
@@ -515,6 +595,7 @@ class _RetireFeedResult:
     """Localized Feed retirement result for later lane coordination."""
 
     released_sequences: tuple[int, ...]
+    released_call_records: tuple[_CallRecord, ...]
     released_calls: tuple[tuple[int, int], ...]
     released_boundaries: tuple[tuple[int, int], ...]
     active_sequence: int | None

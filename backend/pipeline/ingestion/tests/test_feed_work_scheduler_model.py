@@ -52,6 +52,20 @@ def _grant(
     )
 
 
+def _member(
+    grant: ingestion_lease_store.LeaseGrant,
+    feed_id: uuid.UUID,
+) -> ingestion_lease_store.LeaseMemberIdentity:
+    return ingestion_lease_store._issue_member_identity(
+        grant,
+        feed_id=feed_id,
+        source_type=feed_store.SourceType.BCFY_CALLS,
+        source_feed_id=f"{grant.lease_key}-{feed_id.int}",
+        sid=grant.lease_key,
+        group_id=str(feed_id.int),
+    )
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class _ModelLimits:
     capacity: int = 5
@@ -782,12 +796,21 @@ class TestSchedulerConstants(unittest.TestCase):
             work=work,
             local_sequence=11,
         )
+        execution = scheduler_types.CallExecution(
+            grant=grant,
+            feed_id=_FEED_IDS[0],
+            source_timestamp=None,
+            payload=payload,
+        )
 
         self.assertIs(work.grant, grant)
         self.assertIs(work.payload, payload)
         self.assertEqual(record.local_sequence, 11)
         self.assertFalse(hasattr(work, "__dict__"))
         self.assertFalse(hasattr(record, "__dict__"))
+        self.assertFalse(hasattr(execution, "__dict__"))
+        self.assertIsNone(execution.source_timestamp)
+        self.assertIs(execution.payload, payload)
         with self.assertRaises(dataclasses.FrozenInstanceError):
             _assign_attribute(record, "local_sequence", 12)
 
@@ -799,6 +822,7 @@ class TestSchedulerConstants(unittest.TestCase):
             scheduler_types._ExecutorAuthorityLost(),
             scheduler_types._ExecutorMembershipRejected(),
             scheduler_types._ExecutorIntegrityFailure(RuntimeError("boom")),
+            scheduler_types.BoundaryBatchRetryable(),
         )
         forbidden = {
             "backoff",
@@ -1130,9 +1154,12 @@ class _ImmediateExecutor:
     def __init__(self) -> None:
         self.sequences: list[int] = []
 
-    async def execute(self, record: object) -> object:
+    async def execute(self, execution: object) -> object:
         scheduler_types = _scheduler_types()
-        self.sequences.append(record.local_sequence)
+        if not isinstance(execution, scheduler_types.CallExecution):
+            message = "executor received a private scheduler record"
+            raise TypeError(message)
+        self.sequences.append(execution.payload["source_order"])
         return scheduler_types._ExecutorCompleted()
 
 
@@ -1142,9 +1169,12 @@ class _GateExecutor:
         self.changed = asyncio.Event()
         self._release: dict[int, asyncio.Event] = {}
 
-    async def execute(self, record: object) -> object:
+    async def execute(self, execution: object) -> object:
         scheduler_types = _scheduler_types()
-        sequence = record.local_sequence
+        if not isinstance(execution, scheduler_types.CallExecution):
+            message = "executor received a private scheduler record"
+            raise TypeError(message)
+        sequence = execution.payload["source_order"]
         self._release.setdefault(sequence, asyncio.Event())
         self.started.append(sequence)
         self.changed.set()
@@ -1169,8 +1199,10 @@ class _CancellationExecutor:
         self.cancellation_seen = asyncio.Event()
         self.release = asyncio.Event()
 
-    async def execute(self, record: object) -> object:
-        del record
+    async def execute(self, execution: object) -> object:
+        if not isinstance(execution, _scheduler_types().CallExecution):
+            message = "executor received a private scheduler record"
+            raise TypeError(message)
         scheduler_types = _scheduler_types()
         self.entered.set()
         try:
@@ -1198,8 +1230,10 @@ class _FailingExecutor:
     def __init__(self) -> None:
         self.entered = asyncio.Event()
 
-    async def execute(self, record: object) -> object:
-        del record
+    async def execute(self, execution: object) -> object:
+        if not isinstance(execution, _scheduler_types().CallExecution):
+            message = "executor received a private scheduler record"
+            raise TypeError(message)
         self.entered.set()
         message = "unexpected executor failure"
         raise RuntimeError(message)
@@ -1218,7 +1252,7 @@ def _call_work(
         grant=grant,
         source_order=source_order,
         source_timestamp=source_timestamp,
-        payload=object(),
+        payload={"source_order": source_order},
         page_sequence=0,
     )
 
@@ -1282,8 +1316,8 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
                         await shard.admit_boundary(
                             scheduler_types._BoundaryInput(
                                 boundary=scheduler_types.BoundaryWork(
-                                    feed_id,
-                                    target,
+                                    member=_member(grant, feed_id),
+                                    target=target,
                                 ),
                                 grant=grant,
                                 source_order=source_order,

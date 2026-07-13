@@ -64,9 +64,30 @@ def _call(feed_id: uuid.UUID, source_order: int) -> object:
     )
 
 
-def _boundary(feed_id: uuid.UUID, seconds: int) -> object:
-    return _types().BoundaryWork(
+def _member(
+    feed_id: uuid.UUID,
+    *,
+    grant: ingestion_lease_store.LeaseGrant | None = None,
+) -> ingestion_lease_store.LeaseMemberIdentity:
+    exact_grant = _grant() if grant is None else grant
+    return ingestion_lease_store._issue_member_identity(
+        exact_grant,
         feed_id=feed_id,
+        source_type=feed_store.SourceType.BCFY_CALLS,
+        source_feed_id=f"{exact_grant.lease_key}-{feed_id.int}",
+        sid=exact_grant.lease_key,
+        group_id=str(feed_id.int),
+    )
+
+
+def _boundary(
+    feed_id: uuid.UUID,
+    seconds: int,
+    *,
+    grant: ingestion_lease_store.LeaseGrant | None = None,
+) -> object:
+    return _types().BoundaryWork(
+        member=_member(feed_id, grant=grant),
         target=_SOURCE_TIME + datetime.timedelta(seconds=seconds),
     )
 
@@ -108,6 +129,9 @@ class _ControlledCommitter:
         self.scripted_dispositions: collections.deque[object] = (
             collections.deque()
         )
+        self.scripted_batch_results: collections.deque[object] = (
+            collections.deque()
+        )
 
     async def commit(
         self,
@@ -135,6 +159,8 @@ class _ControlledCommitter:
         scheduler_types = _types()
         if grant in self.rejected_grants:
             return scheduler_types.BoundaryGrantRejected()
+        if self.scripted_batch_results:
+            return self.scripted_batch_results.popleft()
         scripted = (
             self.scripted_dispositions.popleft()
             if boundaries and self.scripted_dispositions
@@ -603,7 +629,9 @@ class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
         successor_cursor = cursor_policy.LeaseCursor(successor, pos=None)
         receipt = await successor_lane.cover_page(
             calls=(),
-            boundaries=(_boundary(uuid.UUID(int=1), 2),),
+            boundaries=(
+                _boundary(uuid.UUID(int=1), 2, grant=successor),
+            ),
             candidate=successor_cursor.prepare(_SOURCE_TIME),
         )
         self.assertEqual(successor_cursor.accept(receipt), _SOURCE_TIME)
@@ -710,6 +738,162 @@ class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
             await scheduler.close(),
             feed_work_scheduler.Undrained,
         )
+
+
+class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
+    async def test_no_progress_calls_are_bounded_with_one_empty_final_flush(
+        self,
+    ) -> None:
+        committer = _ControlledCommitter()
+        executor = _GateExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            boundary_committer=committer,
+            _limits=_limits(),
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
+        candidate = cursor.prepare_no_progress()
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(_call(uuid.UUID(int=1), 0),),
+                boundaries=(),
+                candidate=candidate,
+            )
+        )
+        try:
+            await asyncio.wait_for(executor.entered.wait(), timeout=1)
+            settlement = await asyncio.wait_for(coverage, timeout=1)
+
+            self.assertNotIsInstance(settlement, cursor_policy._CoveredPage)
+            self.assertEqual(committer.calls, [(grant, (), True)])
+            self.assertEqual(committer.final_calls, 1)
+            self.assertEqual((await scheduler._snapshot()).held, 1)
+            original_pos = cursor.pos
+            self.assertIsNone(cursor.accept_no_progress(settlement))
+            self.assertIs(cursor.pos, original_pos)
+            self.assertEqual(cursor.next_page_sequence, 1)
+        finally:
+            executor.release.set()
+            await scheduler._wait_for_idle()
+            await scheduler.close()
+
+    async def test_no_progress_rejects_boundary_before_admitting_calls(
+        self,
+    ) -> None:
+        committer = _ControlledCommitter()
+        executor = _GateExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            boundary_committer=committer,
+            _limits=_limits(),
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
+        candidate = cursor.prepare_no_progress()
+        boundaries = _TracingBoundaries((_boundary(uuid.UUID(int=1), 1),))
+
+        try:
+            with self.assertRaisesRegex(
+                cursor_policy.CursorIntegrityError,
+                "no-progress.*boundaries",
+            ):
+                await lane.cover_page(
+                    calls=(_call(uuid.UUID(int=2), 0),),
+                    boundaries=boundaries,
+                    candidate=candidate,
+                )
+
+            self.assertEqual(boundaries.pulled, [uuid.UUID(int=1)])
+            self.assertEqual(executor.calls, 0)
+            self.assertEqual(committer.calls, [])
+            self.assertIs(cursor.outstanding_candidate, candidate)
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+        finally:
+            await scheduler.close()
+
+    async def test_empty_final_batch_retryable_aborts_then_explicit_retry(
+        self,
+    ) -> None:
+        scheduler_types = _types()
+        committer = _ControlledCommitter()
+        committer.scripted_batch_results.append(
+            scheduler_types.BoundaryBatchRetryable()
+        )
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
+        candidate = cursor.prepare_no_progress()
+
+        try:
+            with self.assertRaisesRegex(RuntimeError, "retryable"):
+                await lane.cover_page(
+                    calls=(),
+                    boundaries=(),
+                    candidate=candidate,
+                )
+
+            self.assertIs(cursor.outstanding_candidate, candidate)
+            self.assertEqual((await lane._snapshot()).next_page_sequence, 0)
+            self.assertEqual(committer.calls, [(grant, (), True)])
+
+            settlement = await lane.cover_page(
+                calls=(),
+                boundaries=(),
+                candidate=candidate,
+            )
+            cursor.accept_no_progress(settlement)
+
+            self.assertEqual(committer.calls, [(grant, (), True)] * 2)
+            self.assertEqual(committer.final_calls, 2)
+            self.assertEqual(cursor.next_page_sequence, 1)
+            self.assertEqual(cursor.pos, _SOURCE_TIME)
+        finally:
+            await scheduler.close()
+
+    async def test_equal_position_remains_progress_with_quiet_boundary(
+        self,
+    ) -> None:
+        committer = _ControlledCommitter()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
+
+        try:
+            receipt = await lane.cover_page(
+                calls=(),
+                boundaries=(_boundary(uuid.UUID(int=1), 0),),
+                candidate=cursor.prepare(_SOURCE_TIME),
+            )
+
+            self.assertIsInstance(receipt, cursor_policy._CoveredPage)
+            self.assertEqual(cursor.accept(receipt), _SOURCE_TIME)
+            self.assertEqual(committer.final_calls, 1)
+            committed = tuple(
+                boundary
+                for _exact_grant, boundaries, _final in committer.calls
+                for boundary in boundaries
+            )
+            self.assertEqual(len(committed), 1)
+            self.assertEqual(committed[0].target, _SOURCE_TIME)
+        finally:
+            await scheduler.close()
 
 
 class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):

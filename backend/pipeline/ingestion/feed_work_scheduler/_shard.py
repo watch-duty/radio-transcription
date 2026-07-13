@@ -113,6 +113,11 @@ class _Shard:
             None,
         ]
         | None = None,
+        closing_settlement: typing.Callable[
+            [ingestion_lease_store.LeaseGrant],
+            _types.CallSettlement,
+        ]
+        | None = None,
     ) -> None:
         """Create one authoritative shard with injected coordination seams.
 
@@ -126,6 +131,7 @@ class _Shard:
             global_fatal: Optional process-level failure reader.
             abandonment_for: Optional external cancellation evidence reader.
             boundary_ready_observer: Optional exact-grant flusher notifier.
+            closing_settlement: Optional exact-grant close outcome mapper.
 
         Raises:
             TypeError: An identifier, limit, or injected seam has wrong type.
@@ -163,6 +169,9 @@ class _Shard:
         ):
             message = "boundary_ready_observer must be callable or None"
             raise TypeError(message)
+        if closing_settlement is not None and not callable(closing_settlement):
+            message = "closing_settlement must be callable or None"
+            raise TypeError(message)
 
         self.shard_id = shard_id
         self._executor = executor
@@ -172,6 +181,7 @@ class _Shard:
         self._global_fatal = global_fatal
         self._abandonment_for = abandonment_for
         self._boundary_ready_observer = boundary_ready_observer
+        self._closing_settlement = closing_settlement
         self._limits = limits
         self._lock = asyncio.Lock()
         self._work_ready = asyncio.Condition(self._lock)
@@ -335,7 +345,7 @@ class _Shard:
                 ):
                     record = _types._BoundaryRecord(
                         grant=boundary_input.grant,
-                        feed_id=boundary_input.boundary.feed_id,
+                        member=boundary_input.boundary.member,
                         local_sequence=self._next_sequence,
                         source_order=boundary_input.source_order,
                         created_page_sequence=(boundary_input.page_sequence),
@@ -423,6 +433,7 @@ class _Shard:
     ) -> bool:
         """Settle one already-validated immutable batch exactly once."""
         retryable = False
+        released_calls = []
         async with self._lock:
             for record, disposition in results:
                 current = self._flushing_boundaries.get(record.local_sequence)
@@ -443,13 +454,18 @@ class _Shard:
                         disposition
                         is _types.BoundaryDisposition.MEMBER_REJECTED
                     ):
-                        self._retire_feed_locked(
+                        retirement = self._retire_feed_locked(
                             record.grant,
                             record.feed_id,
                         )
+                        released_calls.extend(retirement.released_call_records)
                     self._ready_call_or_boundary_locked(record.feed_id)
                     self._after_release_locked(1)
             self._check_conservation_locked()
+        await self._notify_settlements(
+            tuple(released_calls),
+            _types.CallSettlement.MEMBERSHIP_REJECTED,
+        )
         return retryable
 
     async def discard_boundary_batch(
@@ -472,6 +488,27 @@ class _Shard:
                 released += 1
                 self._ready_call_or_boundary_locked(record.feed_id)
             self._after_release_locked(released)
+            self._check_conservation_locked()
+
+    async def restore_boundary_batch(
+        self,
+        records: tuple[_types._BoundaryRecord, ...],
+    ) -> None:
+        """Restore a whole transiently failed batch without item outcomes."""
+        async with self._lock:
+            for record in records:
+                if (
+                    self._flushing_boundaries.get(record.local_sequence)
+                    is not record
+                ):
+                    message = "retryable boundary identity changed"
+                    raise RuntimeError(message)
+                if self._active_boundaries.get(record.feed_id) is not record:
+                    message = "retryable boundary Feed ownership changed"
+                    raise RuntimeError(message)
+                del self._flushing_boundaries[record.local_sequence]
+                del self._active_boundaries[record.feed_id]
+                self._restore_retryable_boundary_locked(record)
             self._check_conservation_locked()
 
     async def promote_boundary_page(
@@ -670,45 +707,53 @@ class _Shard:
     ) -> _types._CallRecord | None:
         """Move one fair FIFO record from queued to active count-neutrally."""
         slot = self._require_slot(slot_id)
-        async with self._work_ready:
-            while True:
-                if (
-                    self._fatal is not None
-                    or self._global_fatal_failure() is not None
-                    or self._stopping
-                ):
-                    return None
-                if slot.active_record is not None:
-                    message = "worker slot already owns an active record"
-                    raise RuntimeError(message)
-                if self._ready:
-                    feed_id = self._ready.popleft()
-                    self._ready_members.remove(feed_id)
-                    if feed_id in self._active_by_feed:
-                        message = "ready Feed already owns an active record"
-                        raise RuntimeError(message)
-                    queue = self._feed_queues[feed_id]
-                    record = queue.popleft()
-                    if not queue:
-                        del self._feed_queues[feed_id]
+        while True:
+            released: _types._CallRecord | None = None
+            async with self._work_ready:
+                while True:
                     if (
-                        self._grant_is_closing is not None
-                        and self._grant_is_closing(record.grant)
+                        self._fatal is not None
+                        or self._global_fatal_failure() is not None
+                        or self._stopping
                     ):
-                        del self._records[record.local_sequence]
-                        self._held -= 1
-                        if feed_id in self._feed_queues:
-                            self._ensure_ready_locked(feed_id)
-                        self._after_release_locked(1)
+                        return None
+                    if slot.active_record is not None:
+                        message = "worker slot already owns an active record"
+                        raise RuntimeError(message)
+                    if self._ready:
+                        feed_id = self._ready.popleft()
+                        self._ready_members.remove(feed_id)
+                        if feed_id in self._active_by_feed:
+                            message = "ready Feed already owns an active record"
+                            raise RuntimeError(message)
+                        queue = self._feed_queues[feed_id]
+                        record = queue.popleft()
+                        if not queue:
+                            del self._feed_queues[feed_id]
+                        if (
+                            self._grant_is_closing is not None
+                            and self._grant_is_closing(record.grant)
+                        ):
+                            del self._records[record.local_sequence]
+                            self._held -= 1
+                            if feed_id in self._feed_queues:
+                                self._ensure_ready_locked(feed_id)
+                            self._after_release_locked(1)
+                            self._check_conservation_locked()
+                            released = record
+                            break
+                        self._active_by_feed[feed_id] = record
+                        slot.active_record = record
                         self._check_conservation_locked()
-                        continue
-                    self._active_by_feed[feed_id] = record
-                    slot.active_record = record
-                    self._check_conservation_locked()
-                    return record
-                if not wait:
-                    return None
-                await self._work_ready.wait()
+                        return record
+                    if not wait:
+                        return None
+                    await self._work_ready.wait()
+            if released is not None:
+                await self._notify_settlements(
+                    (released,),
+                    self._settlement_for_closing(released.grant),
+                )
 
     async def _terminalize(
         self,
@@ -731,6 +776,15 @@ class _Shard:
                     record.grant,
                     record.feed_id,
                 )
+        await self._notify_settlements(
+            (record,),
+            self._settlement_for_outcome(outcome),
+        )
+        if retirement is not None:
+            await self._notify_settlements(
+                retirement.released_call_records,
+                _types.CallSettlement.MEMBERSHIP_REJECTED,
+            )
         if (
             isinstance(
                 outcome,
@@ -746,11 +800,17 @@ class _Shard:
     async def purge_exact(
         self,
         grant: ingestion_lease_store.LeaseGrant,
+        *,
+        settlement: _types.CallSettlement = _types.CallSettlement.ABORTED,
     ) -> _types._PurgeResult:
         """Release queued records matching the complete grant only."""
         if not isinstance(grant, ingestion_lease_store.LeaseGrant):
             message = "grant must be a LeaseGrant"
             raise TypeError(message)
+        if not isinstance(settlement, _types.CallSettlement):
+            message = "settlement must be a CallSettlement"
+            raise TypeError(message)
+        released_records = []
         async with self._lock:
             released: list[int] = []
             for feed_id, queue in tuple(self._feed_queues.items()):
@@ -760,6 +820,7 @@ class _Shard:
                 for record in queue:
                     if record.grant == grant:
                         released.append(record.local_sequence)
+                        released_records.append(record)
                         del self._records[record.local_sequence]
                         self._held -= 1
                     else:
@@ -787,10 +848,12 @@ class _Shard:
                 self._held -= 1
             self._after_release_locked(len(released))
             self._check_conservation_locked()
-            return _types._PurgeResult(
+            result = _types._PurgeResult(
                 released_sequences=tuple(sorted(released)),
                 active_sequences=active,
             )
+        await self._notify_settlements(tuple(released_records), settlement)
+        return result
 
     async def purge_page(
         self,
@@ -802,6 +865,7 @@ class _Shard:
             message = "grant must be a LeaseGrant"
             raise TypeError(message)
         _types._require_nonnegative_integer(page_sequence, "page_sequence")
+        released_records = []
         async with self._lock:
             released: list[int] = []
             for feed_id, queue in tuple(self._feed_queues.items()):
@@ -814,6 +878,7 @@ class _Shard:
                         and record.work.page_sequence == page_sequence
                     ):
                         released.append(record.local_sequence)
+                        released_records.append(record)
                         del self._records[record.local_sequence]
                         self._held -= 1
                     else:
@@ -866,10 +931,15 @@ class _Shard:
             )
             self._after_release_locked(len(released))
             self._check_conservation_locked()
-            return _types._PurgeResult(
+            result = _types._PurgeResult(
                 released_sequences=tuple(sorted(released)),
                 active_sequences=active,
             )
+        await self._notify_settlements(
+            tuple(released_records),
+            _types.CallSettlement.ABORTED,
+        )
+        return result
 
     async def retire_feed(
         self,
@@ -884,7 +954,12 @@ class _Shard:
             message = "feed_id must be a UUID"
             raise TypeError(message)
         async with self._lock:
-            return self._retire_feed_locked(grant, feed_id)
+            result = self._retire_feed_locked(grant, feed_id)
+        await self._notify_settlements(
+            result.released_call_records,
+            _types.CallSettlement.MEMBERSHIP_REJECTED,
+        )
+        return result
 
     async def forget_retired_grant(
         self,
@@ -909,11 +984,13 @@ class _Shard:
         queue = self._feed_queues.get(feed_id, collections.deque())
         kept: collections.deque[_types._CallRecord] = collections.deque()
         released = []
+        released_call_records = []
         released_calls = []
         released_boundaries = []
         for record in queue:
             if record.grant == grant:
                 released.append(record.local_sequence)
+                released_call_records.append(record)
                 released_calls.append(
                     (record.work.page_sequence, record.work.source_order)
                 )
@@ -953,6 +1030,7 @@ class _Shard:
         self._check_conservation_locked()
         return _types._RetireFeedResult(
             released_sequences=tuple(released),
+            released_call_records=tuple(released_call_records),
             released_calls=tuple(released_calls),
             released_boundaries=tuple(released_boundaries),
             active_sequence=active_sequence,
@@ -1210,7 +1288,7 @@ class _Shard:
                 if record is None:
                     return
                 try:
-                    outcome = await self._executor.execute(record)
+                    outcome = await self._executor.execute(record.execution())
                     expected, abandoned = await self._cancellation_state(
                         slot,
                         record,
@@ -1274,7 +1352,12 @@ class _Shard:
         record: _types._CallRecord,
     ) -> None:
         async with self._lock:
-            self._terminalize_locked(slot.slot_id, record)
+            released = self._terminalize_locked(slot.slot_id, record)
+        if released:
+            await self._notify_settlements(
+                (record,),
+                self._settlement_for_closing(record.grant),
+            )
 
     def _terminalize_locked(
         self,
@@ -1539,6 +1622,55 @@ class _Shard:
     ) -> None:
         if self._boundary_ready_observer is not None:
             self._boundary_ready_observer(grant)
+
+    async def _notify_settlements(
+        self,
+        records: tuple[_types._CallRecord, ...],
+        settlement: _types.CallSettlement,
+    ) -> None:
+        """Invoke every released record callback outside the shard lock."""
+        if not isinstance(settlement, _types.CallSettlement):
+            message = "settlement must be a CallSettlement"
+            raise TypeError(message)
+        failure: BaseException | None = None
+        for record in records:
+            observer = record.work.settlement_observer
+            if observer is None:
+                continue
+            try:
+                observer(settlement)
+            except BaseException as exc:
+                if failure is None:
+                    failure = exc
+        if failure is not None:
+            await self._mark_fatal(failure)
+
+    @staticmethod
+    def _settlement_for_outcome(
+        outcome: _types._ExecutorOutcome,
+    ) -> _types.CallSettlement:
+        if isinstance(outcome, _types._ExecutorCompleted):
+            return _types.CallSettlement.COMPLETED
+        if isinstance(outcome, _types._ExecutorRetryable):
+            return _types.CallSettlement.RETRYABLE
+        if isinstance(outcome, _types._ExecutorAuthorityLost):
+            return _types.CallSettlement.AUTHORITY_LOST
+        if isinstance(outcome, _types._ExecutorMembershipRejected):
+            return _types.CallSettlement.MEMBERSHIP_REJECTED
+        message = "executor outcome is not scheduling-terminal"
+        raise TypeError(message)
+
+    def _settlement_for_closing(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> _types.CallSettlement:
+        if self._closing_settlement is None:
+            return _types.CallSettlement.ABORTED
+        settlement = self._closing_settlement(grant)
+        if not isinstance(settlement, _types.CallSettlement):
+            message = "closing settlement callback returned an invalid value"
+            raise TypeError(message)
+        return settlement
 
     def _is_grant_closing(
         self,

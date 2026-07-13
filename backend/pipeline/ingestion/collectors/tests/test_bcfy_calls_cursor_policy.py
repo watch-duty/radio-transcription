@@ -40,7 +40,7 @@ def _cursor_state(
 ) -> tuple[
     datetime.datetime | None,
     int,
-    cursor_policy.PageCursorCandidate | None,
+    cursor_policy.PageCandidate | None,
 ]:
     """Capture every mutable Lease Cursor field for rejection assertions."""
     return (
@@ -224,11 +224,33 @@ class TestPageCursorCapability(unittest.TestCase):
         with self.assertRaises(dataclasses.FrozenInstanceError):
             _assign_attribute(receipt, "page_sequence", 1)
 
+    def test_no_progress_candidate_and_settlement_have_no_datetime(self) -> None:
+        cursor = cursor_policy.LeaseCursor(_grant(), pos=_START_POS)
+        candidate = cursor.prepare_no_progress()
+        settlement = cursor_policy._issue_no_progress_page(candidate)
+
+        self.assertEqual(
+            tuple(field.name for field in dataclasses.fields(candidate)),
+            ("grant", "page_sequence", "_seal"),
+        )
+        self.assertEqual(
+            tuple(field.name for field in dataclasses.fields(settlement)),
+            ("grant", "page_sequence", "_seal"),
+        )
+        self.assertFalse(hasattr(candidate, "last_pos"))
+        self.assertFalse(hasattr(settlement, "last_pos"))
+        self.assertFalse(hasattr(candidate, "__dict__"))
+        self.assertFalse(hasattr(settlement, "__dict__"))
+
     def test_private_receipt_surface_is_not_publicly_exported(self) -> None:
         self.assertIn("PageCursorCandidate", cursor_policy.__all__)
+        self.assertIn("NoProgressPageCandidate", cursor_policy.__all__)
+        self.assertIn("PageCandidate", cursor_policy.__all__)
         self.assertIn("LeaseCursor", cursor_policy.__all__)
         self.assertNotIn("_CoveredPage", cursor_policy.__all__)
+        self.assertNotIn("_NoProgressPageSettled", cursor_policy.__all__)
         self.assertNotIn("_issue_covered_page", cursor_policy.__all__)
+        self.assertNotIn("_issue_no_progress_page", cursor_policy.__all__)
 
     def test_direct_candidate_and_receipt_construction_is_rejected(
         self,
@@ -248,6 +270,18 @@ class TestPageCursorCapability(unittest.TestCase):
                 last_pos=_NEXT_POS,
                 _seal=cursor_policy._CandidateSeal(),
             )
+        with self.assertRaises(cursor_policy.CursorIntegrityError):
+            cursor_policy.NoProgressPageCandidate(
+                grant=grant,
+                page_sequence=0,
+                _seal=cursor_policy._CandidateSeal(),
+            )
+        with self.assertRaises(cursor_policy.CursorIntegrityError):
+            cursor_policy._NoProgressPageSettled(
+                grant=grant,
+                page_sequence=0,
+                _seal=cursor_policy._CandidateSeal(),
+            )
 
     def test_private_issuer_rejects_structural_candidate(self) -> None:
         fake = types.SimpleNamespace(
@@ -259,6 +293,10 @@ class TestPageCursorCapability(unittest.TestCase):
         with self.assertRaises(cursor_policy.CursorIntegrityError):
             cursor_policy._issue_covered_page(
                 typing.cast("cursor_policy.PageCursorCandidate", fake)
+            )
+        with self.assertRaises(cursor_policy.CursorIntegrityError):
+            cursor_policy._issue_no_progress_page(
+                typing.cast("cursor_policy.NoProgressPageCandidate", fake)
             )
 
 
@@ -340,6 +378,80 @@ class TestLeaseCursor(unittest.TestCase):
         self.assertEqual(self.cursor.pos, _START_POS)
         self.assertEqual(self.cursor.next_page_sequence, 1)
         self.assertIsNone(self.cursor.outstanding_candidate)
+
+    def test_no_progress_consumes_sequence_without_moving_position(self) -> None:
+        candidate = self.cursor.prepare_no_progress()
+        settlement = cursor_policy._issue_no_progress_page(candidate)
+        original_pos = self.cursor.pos
+
+        result = self.cursor.accept_no_progress(settlement)
+
+        self.assertIsNone(result)
+        self.assertIs(self.cursor.pos, original_pos)
+        self.assertEqual(self.cursor.next_page_sequence, 1)
+        self.assertIsNone(self.cursor.outstanding_candidate)
+
+        before_duplicate = _cursor_state(self.cursor)
+        with self.assertRaises(cursor_policy.CursorIntegrityError):
+            self.cursor.accept_no_progress(settlement)
+        self.assertEqual(_cursor_state(self.cursor), before_duplicate)
+
+    def test_no_progress_rejects_crossed_and_wrong_settlements_non_mutating(
+        self,
+    ) -> None:
+        candidate = self.cursor.prepare_no_progress()
+        before = _cursor_state(self.cursor)
+        other_grant = cursor_policy.LeaseCursor(
+            _grant(fencing_token=2),
+            pos=_START_POS,
+        )
+        other_candidate = other_grant.prepare_no_progress()
+        crossed = cursor_policy._issue_no_progress_page(other_candidate)
+        same_grant = cursor_policy.LeaseCursor(self.grant, pos=_START_POS)
+        wrong_seal = cursor_policy._issue_no_progress_page(
+            same_grant.prepare_no_progress()
+        )
+        skipped_cursor = cursor_policy.LeaseCursor(self.grant, pos=_START_POS)
+        first = skipped_cursor.prepare_no_progress()
+        skipped_cursor.accept_no_progress(
+            cursor_policy._issue_no_progress_page(first)
+        )
+        skipped = cursor_policy._issue_no_progress_page(
+            skipped_cursor.prepare_no_progress()
+        )
+
+        for settlement in (crossed, wrong_seal, skipped):
+            with self.subTest(settlement=settlement):
+                with self.assertRaises(cursor_policy.CursorIntegrityError):
+                    self.cursor.accept_no_progress(settlement)
+                self.assertEqual(_cursor_state(self.cursor), before)
+                self.assertIs(self.cursor.outstanding_candidate, candidate)
+
+    def test_progress_and_no_progress_settlement_types_cannot_cross(self) -> None:
+        no_progress = self.cursor.prepare_no_progress()
+        before = _cursor_state(self.cursor)
+        progress_cursor = cursor_policy.LeaseCursor(
+            self.grant,
+            pos=_START_POS,
+        )
+        progress = progress_cursor.prepare(_NEXT_POS)
+        progress_before = _cursor_state(progress_cursor)
+
+        with self.assertRaises(cursor_policy.CursorIntegrityError):
+            self.cursor.accept(
+                cursor_policy._issue_no_progress_page(no_progress)
+            )
+        self.assertEqual(_cursor_state(self.cursor), before)
+        with self.assertRaises(cursor_policy.CursorIntegrityError):
+            self.cursor.accept_no_progress(
+                cursor_policy._issue_covered_page(progress)
+            )
+        self.assertEqual(_cursor_state(self.cursor), before)
+        with self.assertRaises(cursor_policy.CursorIntegrityError):
+            progress_cursor.accept_no_progress(
+                cursor_policy._issue_no_progress_page(no_progress)
+            )
+        self.assertEqual(_cursor_state(progress_cursor), progress_before)
 
     def test_absent_or_structural_receipt_is_non_mutating(self) -> None:
         candidate = self.cursor.prepare(_NEXT_POS)

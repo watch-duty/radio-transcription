@@ -310,6 +310,10 @@ class _BoundaryCoordinator:
             self._authority_lost()
             self._raise_if_cancelled(cancelled=cancelled)
             return False
+        if type(result) is _types.BoundaryBatchRetryable:
+            await self._restore_selected(selected)
+            self._raise_if_cancelled(cancelled=cancelled)
+            return True
         if type(result) is not _types.BoundaryBatchCommitted:
             message = "committer returned outside the closed vocabulary"
             raise _BoundaryCoordinatorError(message)
@@ -365,6 +369,21 @@ class _BoundaryCoordinator:
             by_shard[shard].append(record)
         for shard, records in by_shard.items():
             await shard.discard_boundary_batch(tuple(records))
+
+    async def _restore_selected(
+        self,
+        selected: tuple[
+            tuple[_shard._Shard, _types._BoundaryRecord],
+            ...,
+        ],
+    ) -> None:
+        by_shard: dict[_shard._Shard, list[_types._BoundaryRecord]] = (
+            collections.defaultdict(list)
+        )
+        for shard, record in selected:
+            by_shard[shard].append(record)
+        for shard, records in by_shard.items():
+            await shard.restore_boundary_batch(tuple(records))
 
     async def _has_ready_boundary(self) -> bool:
         for shard in self._shards:
