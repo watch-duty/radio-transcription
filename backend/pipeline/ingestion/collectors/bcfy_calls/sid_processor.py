@@ -14,7 +14,10 @@ import types
 import typing
 import uuid
 
+import asyncpg
+
 from backend.pipeline.ingestion import feed_work_scheduler
+from backend.pipeline.ingestion import models as ingestion_models
 from backend.pipeline.ingestion.collectors import control_flow
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     cursor_policy,
@@ -25,6 +28,20 @@ from backend.pipeline.storage import feed_store, ingestion_lease_store
 logger = logging.getLogger(__name__)
 
 _RECENT_URL_LIMIT = 1_000
+_POLL_INTERVAL_SEC = 10.0
+_MAX_CONSECUTIVE_FAILURES = 10
+_TRANSIENT_PROVIDER_FAILURES = frozenset(
+    {
+        feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
+        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+    }
+)
+_MEMBERSHIP_UNCERTAINTY_ERRORS = (
+    asyncpg.PostgresConnectionError,
+    asyncpg.InterfaceError,
+    OSError,
+)
 
 
 class MemberRouteState(enum.StrEnum):
@@ -101,6 +118,10 @@ class SidProcessorPlannedDrain(RuntimeError):
             raise TypeError(message)
         self.feed_id = feed_id
         super().__init__("bcfy_calls_sid_member_reactivated")
+
+
+class _MembershipRefreshUncertain(RuntimeError):
+    """The store could not prove one authoritative refresh result."""
 
 
 class _MembershipStore(typing.Protocol):
@@ -226,6 +247,69 @@ class BcfyCallsSidProcessor:
             collections.deque(maxlen=_RECENT_URL_LIMIT)
         )
         self._recent_urls: set[str] = set()
+        self._consecutive_failures = 0
+
+    async def run(self, stop_requested: asyncio.Event) -> None:
+        """Run immediate completion-paced logical SID polls until stopped."""
+        if not isinstance(stop_requested, asyncio.Event):
+            message = "stop_requested must be an asyncio.Event"
+            raise TypeError(message)
+        try:
+            while not stop_requested.is_set():
+                try:
+                    await self._refresh_membership()
+                except _MembershipRefreshUncertain:
+                    await self._record_logical_failure(
+                        stop_requested,
+                        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                        "bcfy_calls_sid_membership_refresh_failed",
+                    )
+                    continue
+
+                if stop_requested.is_set():
+                    return
+                request = self._select_request_position()
+                if stop_requested.is_set():
+                    return
+                try:
+                    page = await self._provider.fetch_sid_page(
+                        self._grant.lease_key,
+                        request.pos,
+                        subject_id=self._grant.lease_key,
+                        shutdown_event=stop_requested,
+                    )
+                except ingestion_models.FeedFailure as exc:
+                    if exc.status_reason not in _TRANSIENT_PROVIDER_FAILURES:
+                        raise SidProcessorFailure(
+                            exc.status_reason,
+                            exc.reason,
+                        ) from exc
+                    await self._record_logical_failure(
+                        stop_requested,
+                        exc.status_reason,
+                        exc.reason,
+                    )
+                    continue
+
+                await self._settle_page(page, request=request)
+                self._consecutive_failures = 0
+                if stop_requested.is_set():
+                    return
+                await self._wait(stop_requested, _POLL_INTERVAL_SEC)
+        finally:
+            self.close()
+
+    async def _record_logical_failure(
+        self,
+        stop_requested: asyncio.Event,
+        status_reason: feed_store.FeedStatusReason,
+        reason: str,
+    ) -> None:
+        """Count one completed logical failure and pace retry or terminate."""
+        self._consecutive_failures += 1
+        if self._consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+            raise SidProcessorFailure(status_reason, reason)
+        await self._wait(stop_requested, _POLL_INTERVAL_SEC)
 
     def _member_state(self, feed_id: uuid.UUID) -> _MemberState:
         """Return one current member state or fail closed."""
@@ -244,10 +328,13 @@ class BcfyCallsSidProcessor:
             if self._snapshot is None
             else self._snapshot.membership_revision
         )
-        result = await self._membership_store.refresh_membership(
-            self._grant,
-            known_revision=known_revision,
-        )
+        try:
+            result = await self._membership_store.refresh_membership(
+                self._grant,
+                known_revision=known_revision,
+            )
+        except _MEMBERSHIP_UNCERTAINTY_ERRORS as exc:
+            raise _MembershipRefreshUncertain from exc
         if isinstance(result, ingestion_lease_store.GrantRejected):
             raise SidProcessorAuthorityLost(result)
         if isinstance(

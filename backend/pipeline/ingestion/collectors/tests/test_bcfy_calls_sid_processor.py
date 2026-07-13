@@ -3,21 +3,20 @@
 from __future__ import annotations
 
 # The processor deliberately keeps its page algorithms private and deep.
+import asyncio
 import collections
 import datetime
+import inspect
 import typing
 import unittest
 import uuid
 
-from backend.pipeline.ingestion import feed_work_scheduler
+from backend.pipeline.ingestion import feed_work_scheduler, models
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     provider,
     sid_processor,
 )
 from backend.pipeline.storage import feed_store, ingestion_lease_store
-
-if typing.TYPE_CHECKING:
-    import asyncio
 
 _OWNER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _FEED_A = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
@@ -77,8 +76,13 @@ def _snapshot(
 class _ScriptedMembershipStore:
     """Return immutable scripted refresh outcomes and record revisions."""
 
-    def __init__(self, *results: object) -> None:
+    def __init__(
+        self,
+        *results: object,
+        trace: list[str] | None = None,
+    ) -> None:
         self.results = collections.deque(results)
+        self.trace = trace
         self.calls: list[
             tuple[ingestion_lease_store.LeaseGrant, int | None]
         ] = []
@@ -89,15 +93,27 @@ class _ScriptedMembershipStore:
         *,
         known_revision: int | None,
     ) -> object:
+        if self.trace is not None:
+            self.trace.append("refresh")
         self.calls.append((grant, known_revision))
-        return self.results.popleft()
+        result = self.results.popleft()
+        if isinstance(result, _AsyncGate):
+            result = await result.wait()
+        if isinstance(result, BaseException):
+            raise result
+        return result
 
 
 class _ScriptedProvider:
     """Return complete provider envelopes without network or credentials."""
 
-    def __init__(self, *pages: provider.CallsPageEnvelope) -> None:
+    def __init__(
+        self,
+        *pages: object,
+        trace: list[str] | None = None,
+    ) -> None:
         self.pages = collections.deque(pages)
+        self.trace = trace
         self.calls: list[
             tuple[str, datetime.datetime | None, object, asyncio.Event]
         ] = []
@@ -110,15 +126,44 @@ class _ScriptedProvider:
         subject_id: object,
         shutdown_event: asyncio.Event,
     ) -> provider.CallsPageEnvelope:
+        if self.trace is not None:
+            self.trace.append("fetch")
         self.calls.append((sid, pos, subject_id, shutdown_event))
-        return self.pages.popleft()
+        result = self.pages.popleft()
+        if isinstance(result, _AsyncGate):
+            result = await result.wait()
+        if isinstance(result, BaseException):
+            raise result
+        if not isinstance(result, provider.CallsPageEnvelope):
+            message = "scripted provider result must be a page"
+            raise TypeError(message)
+        return result
+
+
+class _AsyncGate:
+    """Expose one awaited stage and release it deterministically."""
+
+    def __init__(self, result: object) -> None:
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+        self.result = result
+
+    async def wait(self) -> object:
+        self.entered.set()
+        await self.release.wait()
+        return self.result
 
 
 class _RecordingLane:
     """Record exact coverage/retirement without downstream work."""
 
-    def __init__(self, *cover_actions: BaseException) -> None:
+    def __init__(
+        self,
+        *cover_actions: object,
+        trace: list[str] | None = None,
+    ) -> None:
         self.removed: list[uuid.UUID] = []
+        self.trace = trace
         self.cover_actions = collections.deque(cover_actions)
         self.covers: list[
             tuple[
@@ -147,17 +192,25 @@ class _RecordingLane:
         boundaries: typing.Iterable[feed_work_scheduler.BoundaryWork],
         candidate: object,
     ) -> object:
+        if self.trace is not None:
+            self.trace.append("cover")
         call_values = tuple(calls)
         boundary_values = tuple(boundaries)
         self.covers.append((call_values, boundary_values, candidate))
         if self.cover_actions:
-            failure = self.cover_actions.popleft()
-            for call in call_values:
-                if call.settlement_observer is not None:
-                    call.settlement_observer(
-                        feed_work_scheduler.CallSettlement.ABORTED
-                    )
-            raise failure
+            action = self.cover_actions.popleft()
+            if isinstance(action, _AsyncGate):
+                action = await action.wait()
+            if isinstance(action, BaseException):
+                for call in call_values:
+                    if call.settlement_observer is not None:
+                        call.settlement_observer(
+                            feed_work_scheduler.CallSettlement.ABORTED
+                        )
+                raise action
+            if action is not None:
+                message = "unknown scripted cover action"
+                raise AssertionError(message)
         if isinstance(candidate, sid_processor.cursor_policy.PageCursorCandidate):
             return sid_processor.cursor_policy._issue_covered_page(candidate)
         if isinstance(
@@ -174,15 +227,58 @@ class _RecordingLane:
 class _RecordingWait:
     """Record interruptible waits without sleeping."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, trace: list[str] | None = None) -> None:
         self.calls: list[tuple[asyncio.Event, float]] = []
+        self.trace = trace
 
     async def __call__(
         self,
         stop_requested: asyncio.Event,
         seconds: float,
     ) -> None:
+        if self.trace is not None:
+            self.trace.append("wait")
         self.calls.append((stop_requested, seconds))
+
+
+class _StoppingWait(_RecordingWait):
+    """Stop after an exact count while preserving every wait duration."""
+
+    def __init__(
+        self,
+        *,
+        stop_after: int,
+        trace: list[str] | None = None,
+    ) -> None:
+        super().__init__(trace=trace)
+        self.stop_after = stop_after
+
+    async def __call__(
+        self,
+        stop_requested: asyncio.Event,
+        seconds: float,
+    ) -> None:
+        await super().__call__(stop_requested, seconds)
+        if len(self.calls) == self.stop_after:
+            stop_requested.set()
+
+
+class _BlockingWait(_RecordingWait):
+    """Wait until the supplied stop signal requests cancellation."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.entered = asyncio.Event()
+
+    async def __call__(
+        self,
+        stop_requested: asyncio.Event,
+        seconds: float,
+    ) -> None:
+        await super().__call__(stop_requested, seconds)
+        self.entered.set()
+        await stop_requested.wait()
+        raise asyncio.CancelledError
 
 
 def _processor(
@@ -1023,6 +1119,494 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(processor._lease_cursor.pos, cursor)
         self.assertEqual(processor._lease_cursor.next_page_sequence, 1)
+
+    async def test_cadence_immediate_refresh_fetch_cover_wait_order(
+        self,
+    ) -> None:
+        trace: list[str] = []
+        stop_requested = asyncio.Event()
+        store = _ScriptedMembershipStore(
+            _snapshot(4, _member(_FEED_A, "00123-00045")),
+            trace=trace,
+        )
+        calls_provider = _ScriptedProvider(
+            _page(last_pos=_NOW.timestamp()),
+            trace=trace,
+        )
+        lane = _RecordingLane(trace=trace)
+        wait = _StoppingWait(stop_after=1, trace=trace)
+        processor, _ = _processor(
+            store,
+            lane=lane,
+            calls_provider=calls_provider,
+            wait=wait,
+        )
+
+        await processor.run(stop_requested)
+
+        self.assertEqual(trace, ["refresh", "fetch", "cover", "wait"])
+        self.assertEqual(store.calls, [(_GRANT, None)])
+        self.assertEqual(len(calls_provider.calls), 1)
+        self.assertEqual(calls_provider.calls[0][0], "00123")
+        self.assertEqual(calls_provider.calls[0][2], "00123")
+        self.assertIs(calls_provider.calls[0][3], stop_requested)
+        self.assertEqual(wait.calls, [(stop_requested, 10.0)])
+
+    async def test_overlap_pressure_cover_blocks_fetch_and_cadence(
+        self,
+    ) -> None:
+        cover_gate = _AsyncGate(None)
+        stop_requested = asyncio.Event()
+        store = _ScriptedMembershipStore(
+            _snapshot(4, _member(_FEED_A, "00123-00045")),
+            ingestion_lease_store.MembershipUnchanged(_GRANT, 4),
+        )
+        calls_provider = _ScriptedProvider(
+            _page(last_pos=_NOW.timestamp()),
+            _page(last_pos=(_NOW + datetime.timedelta(seconds=1)).timestamp()),
+        )
+        lane = _RecordingLane(cover_gate)
+        wait = _StoppingWait(stop_after=1)
+        processor, _ = _processor(
+            store,
+            lane=lane,
+            calls_provider=calls_provider,
+            wait=wait,
+        )
+
+        task = asyncio.create_task(processor.run(stop_requested))
+        await cover_gate.entered.wait()
+        self.assertEqual(len(store.calls), 1)
+        self.assertEqual(len(calls_provider.calls), 1)
+        self.assertEqual(wait.calls, [])
+        self.assertEqual(processor._consecutive_failures, 0)
+
+        cover_gate.release.set()
+        await task
+
+        self.assertEqual(len(calls_provider.calls), 1)
+        self.assertEqual(wait.calls, [(stop_requested, 10.0)])
+
+    async def test_pressure_is_local_to_each_exact_processor(self) -> None:
+        pressure_gate = _AsyncGate(None)
+        first_stop = asyncio.Event()
+        second_stop = asyncio.Event()
+        first_provider = _ScriptedProvider(
+            _page(last_pos=_NOW.timestamp())
+        )
+        second_provider = _ScriptedProvider(
+            _page(last_pos=_NOW.timestamp())
+        )
+        first, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_A, "00123-00045"))
+            ),
+            lane=_RecordingLane(pressure_gate),
+            calls_provider=first_provider,
+            wait=_StoppingWait(stop_after=1),
+        )
+        second, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_B, "00123-00046"))
+            ),
+            calls_provider=second_provider,
+            wait=_StoppingWait(stop_after=1),
+        )
+
+        first_task = asyncio.create_task(first.run(first_stop))
+        await pressure_gate.entered.wait()
+        await second.run(second_stop)
+
+        self.assertEqual(len(first_provider.calls), 1)
+        self.assertEqual(len(second_provider.calls), 1)
+        self.assertFalse(first_task.done())
+
+        pressure_gate.release.set()
+        await first_task
+
+    async def test_pressure_lane_error_is_not_membership_retry_evidence(
+        self,
+    ) -> None:
+        stop_requested = asyncio.Event()
+        calls_provider = _ScriptedProvider(
+            _page(last_pos=_NOW.timestamp())
+        )
+        wait = _RecordingWait()
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_A, "00123-00045"))
+            ),
+            lane=_RecordingLane(OSError("lane pressure failed")),
+            calls_provider=calls_provider,
+            wait=wait,
+        )
+
+        with self.assertRaisesRegex(OSError, "lane pressure failed"):
+            await processor.run(stop_requested)
+
+        self.assertEqual(len(calls_provider.calls), 1)
+        self.assertEqual(wait.calls, [])
+        self.assertEqual(processor._consecutive_failures, 0)
+
+    async def test_pressure_removal_error_is_not_store_uncertainty(self) -> None:
+        class _RemovalFailureLane(_RecordingLane):
+            async def remove_feed(
+                self,
+                feed_id: uuid.UUID,
+            ) -> feed_work_scheduler.FeedRemoved:
+                del feed_id
+                message = "lane removal failed"
+                raise OSError(message)
+
+        member_a = _member(_FEED_A, "00123-00045")
+        member_b = _member(_FEED_B, "00123-00046")
+        wait = _RecordingWait()
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, member_a),
+                _snapshot(5, member_b),
+            ),
+            lane=_RemovalFailureLane(),
+            calls_provider=_ScriptedProvider(
+                _page(last_pos=_NOW.timestamp())
+            ),
+            wait=wait,
+        )
+
+        with self.assertRaisesRegex(OSError, "lane removal failed"):
+            await processor.run(asyncio.Event())
+
+        self.assertEqual(len(wait.calls), 1)
+        self.assertEqual(processor._consecutive_failures, 0)
+
+    async def test_cadence_revision_during_fetch_applies_next_poll(
+        self,
+    ) -> None:
+        fetch_gate = _AsyncGate(
+            _page(
+                _raw_call(
+                    "00123-00046",
+                    "https://audio/not-yet-a-member",
+                    _NOW.timestamp() + 0.5,
+                ),
+                last_pos=_NOW.timestamp() + 1,
+            )
+        )
+        member_a = _member(_FEED_A, "00123-00045")
+        member_b = _member(_FEED_B, "00123-00046")
+        store = _ScriptedMembershipStore(
+            _snapshot(4, member_a),
+            _snapshot(5, member_a, member_b),
+        )
+        calls_provider = _ScriptedProvider(
+            fetch_gate,
+            _page(
+                _raw_call(
+                    "00123-00046",
+                    "https://audio/member-on-next-poll",
+                    _NOW.timestamp() + 1.5,
+                ),
+                last_pos=_NOW.timestamp() + 2,
+            ),
+        )
+        lane = _RecordingLane()
+        wait = _StoppingWait(stop_after=2)
+        stop_requested = asyncio.Event()
+        processor, _ = _processor(
+            store,
+            lane=lane,
+            calls_provider=calls_provider,
+            wait=wait,
+        )
+
+        task = asyncio.create_task(processor.run(stop_requested))
+        await fetch_gate.entered.wait()
+        self.assertEqual(store.calls, [(_GRANT, None)])
+        fetch_gate.release.set()
+        await task
+
+        self.assertEqual(store.calls, [(_GRANT, None), (_GRANT, 4)])
+        self.assertEqual([len(calls) for calls, _, _ in lane.covers], [0, 1])
+        self.assertEqual(lane.covers[1][0][0].feed_id, _FEED_B)
+        self.assertEqual(len(calls_provider.calls), 2)
+
+    async def test_cadence_success_resets_nine_logical_failures(self) -> None:
+        stop_requested = asyncio.Event()
+        wait = _StoppingWait(stop_after=1)
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_A, "00123-00045"))
+            ),
+            calls_provider=_ScriptedProvider(
+                _page(last_pos=_NOW.timestamp())
+            ),
+            wait=wait,
+        )
+        processor._consecutive_failures = 9
+
+        await processor.run(stop_requested)
+
+        self.assertEqual(processor._consecutive_failures, 0)
+        self.assertEqual(wait.calls, [(stop_requested, 10.0)])
+
+    async def test_cadence_tenth_transient_preserves_failure(self) -> None:
+        stop_requested = asyncio.Event()
+        calls_provider = _ScriptedProvider(
+            models.FeedFailure(
+                feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
+                "provider rate limit",
+            )
+        )
+        wait = _RecordingWait()
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_A, "00123-00045"))
+            ),
+            calls_provider=calls_provider,
+            wait=wait,
+        )
+        processor._consecutive_failures = 9
+
+        with self.assertRaises(sid_processor.SidProcessorFailure) as caught:
+            await processor.run(stop_requested)
+
+        self.assertIs(
+            caught.exception.status_reason,
+            feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
+        )
+        self.assertEqual(caught.exception.reason, "provider rate limit")
+        self.assertEqual(wait.calls, [])
+
+    async def test_cadence_authentication_failure_waits_below_limit(
+        self,
+    ) -> None:
+        stop_requested = asyncio.Event()
+        wait = _StoppingWait(stop_after=1)
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_A, "00123-00045"))
+            ),
+            calls_provider=_ScriptedProvider(
+                models.FeedFailure(
+                    feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                    "provider authentication refresh failed",
+                )
+            ),
+            wait=wait,
+        )
+
+        await processor.run(stop_requested)
+
+        self.assertEqual(processor._consecutive_failures, 1)
+        self.assertEqual(wait.calls, [(stop_requested, 10.0)])
+
+    async def test_cadence_nontransient_provider_failure_is_immediate(
+        self,
+    ) -> None:
+        wait = _RecordingWait()
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_A, "00123-00045"))
+            ),
+            calls_provider=_ScriptedProvider(
+                models.FeedFailure(
+                    feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+                    "invalid provider envelope",
+                )
+            ),
+            wait=wait,
+        )
+
+        with self.assertRaises(sid_processor.SidProcessorFailure) as caught:
+            await processor.run(asyncio.Event())
+
+        self.assertIs(
+            caught.exception.status_reason,
+            feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+        )
+        self.assertEqual(wait.calls, [])
+
+    async def test_cadence_membership_uncertainty_skips_fetch_then_recovers(
+        self,
+    ) -> None:
+        stop_requested = asyncio.Event()
+        calls_provider = _ScriptedProvider(
+            _page(last_pos=_NOW.timestamp())
+        )
+        wait = _StoppingWait(stop_after=2)
+        store = _ScriptedMembershipStore(
+            TimeoutError("membership timed out"),
+            _snapshot(4, _member(_FEED_A, "00123-00045")),
+        )
+        processor, _ = _processor(
+            store,
+            calls_provider=calls_provider,
+            wait=wait,
+        )
+
+        await processor.run(stop_requested)
+
+        self.assertEqual(store.calls, [(_GRANT, None), (_GRANT, None)])
+        self.assertEqual(len(calls_provider.calls), 1)
+        self.assertEqual(wait.calls, [(stop_requested, 10.0)] * 2)
+        self.assertEqual(processor._consecutive_failures, 0)
+
+    async def test_cadence_grant_rejection_has_no_fetch_or_wait(self) -> None:
+        calls_provider = _ScriptedProvider()
+        wait = _RecordingWait()
+        rejection = ingestion_lease_store.GrantRejected(
+            ingestion_lease_store.GrantRejectionReason.MISSING,
+            None,
+        )
+        processor, _ = _processor(
+            _ScriptedMembershipStore(rejection),
+            calls_provider=calls_provider,
+            wait=wait,
+        )
+
+        with self.assertRaises(sid_processor.SidProcessorAuthorityLost):
+            await processor.run(asyncio.Event())
+
+        self.assertEqual(calls_provider.calls, [])
+        self.assertEqual(wait.calls, [])
+
+    async def test_cadence_reactivation_planned_drain_precedes_fetch(
+        self,
+    ) -> None:
+        member_a = _member(_FEED_A, "00123-00045")
+        member_b = _member(_FEED_B, "00123-00046")
+        calls_provider = _ScriptedProvider(
+            _page(last_pos=_NOW.timestamp()),
+            _page(last_pos=_NOW.timestamp()),
+        )
+        store = _ScriptedMembershipStore(
+            _snapshot(4, member_a),
+            _snapshot(5, member_b),
+            _snapshot(6, member_a, member_b),
+        )
+        processor, _ = _processor(
+            store,
+            calls_provider=calls_provider,
+            wait=_RecordingWait(),
+        )
+
+        with self.assertRaises(sid_processor.SidProcessorPlannedDrain):
+            await processor.run(asyncio.Event())
+
+        self.assertEqual(len(store.calls), 3)
+        self.assertEqual(len(calls_provider.calls), 2)
+
+    async def test_stop_before_refresh_and_after_blocked_refresh(self) -> None:
+        stop_requested = asyncio.Event()
+        stop_requested.set()
+        store = _ScriptedMembershipStore()
+        calls_provider = _ScriptedProvider()
+        processor, _ = _processor(store, calls_provider=calls_provider)
+
+        await processor.run(stop_requested)
+
+        self.assertEqual(store.calls, [])
+        self.assertEqual(calls_provider.calls, [])
+
+        stop_requested = asyncio.Event()
+        refresh_gate = _AsyncGate(
+            _snapshot(4, _member(_FEED_A, "00123-00045"))
+        )
+        store = _ScriptedMembershipStore(refresh_gate)
+        processor, _ = _processor(store, calls_provider=calls_provider)
+        task = asyncio.create_task(processor.run(stop_requested))
+        await refresh_gate.entered.wait()
+        stop_requested.set()
+        refresh_gate.release.set()
+        await task
+
+        self.assertEqual(len(store.calls), 1)
+        self.assertEqual(calls_provider.calls, [])
+
+    async def test_stop_cancellation_during_fetch_and_cover_is_preserved(
+        self,
+    ) -> None:
+        for stage in ("fetch", "cover"):
+            with self.subTest(stage=stage):
+                stop_requested = asyncio.Event()
+                cancellation_gate = _AsyncGate(asyncio.CancelledError())
+                calls_provider = _ScriptedProvider(
+                    cancellation_gate
+                    if stage == "fetch"
+                    else _page(last_pos=_NOW.timestamp())
+                )
+                lane = _RecordingLane(
+                    cancellation_gate if stage == "cover" else None
+                )
+                if stage == "fetch":
+                    lane = _RecordingLane()
+                processor, _ = _processor(
+                    _ScriptedMembershipStore(
+                        _snapshot(4, _member(_FEED_A, "00123-00045"))
+                    ),
+                    lane=lane,
+                    calls_provider=calls_provider,
+                )
+                task = asyncio.create_task(processor.run(stop_requested))
+                await cancellation_gate.entered.wait()
+                stop_requested.set()
+                cancellation_gate.release.set()
+
+                with self.assertRaises(asyncio.CancelledError):
+                    await task
+
+                self.assertEqual(processor._pending_by_url, {})
+
+    async def test_stop_wait_cancels_promptly_and_clears_local_state(
+        self,
+    ) -> None:
+        stop_requested = asyncio.Event()
+        wait = _BlockingWait()
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_A, "00123-00045"))
+            ),
+            calls_provider=_ScriptedProvider(
+                _page(last_pos=_NOW.timestamp())
+            ),
+            wait=wait,
+        )
+
+        task = asyncio.create_task(processor.run(stop_requested))
+        await wait.entered.wait()
+        stop_requested.set()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+
+        self.assertEqual(processor._members_by_id, {})
+        self.assertEqual(processor._pending_by_url, {})
+        self.assertIsNone(processor._snapshot)
+
+    async def test_cadence_source_has_no_gate_ticker_or_runtime_ownership(
+        self,
+    ) -> None:
+        run_source = inspect.getsource(sid_processor.BcfyCallsSidProcessor.run)
+        module_source = inspect.getsource(sid_processor)
+
+        for forbidden in (
+            "5.0",
+            "monotonic",
+            "deadline",
+            "create_task",
+            "set_retrying",
+            "last_attempt",
+            "missed_tick",
+        ):
+            self.assertNotIn(forbidden, run_source)
+        for forbidden in (
+            "ClientSession",
+            ".claim(",
+            ".heartbeat(",
+            ".finalize(",
+            "pubsub",
+            "gcs",
+        ):
+            self.assertNotIn(forbidden, module_source)
 
 
 if __name__ == "__main__":
