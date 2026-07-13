@@ -1145,4 +1145,97 @@ describe('FeedConfigurationView', () => {
       );
     });
   });
+
+  it('does not display the timezone update warning when registering a new feed even if system/timezone is entered', async () => {
+    renderView();
+
+    const tagKeyInput = screen.getByLabelText('Key');
+    fireEvent.change(tagKeyInput, { target: { value: 'system/timezone' } });
+
+    // The alert should not be in the document since we are in register mode (not editing)
+    expect(
+      screen.queryByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).not.toBeInTheDocument();
+  });
+
+  it('displays the timezone update warning when editing a feed that already has a timezone tag', async () => {
+    // Add system/timezone to mock feeds
+    const timezoneFeed: Feed = {
+      id: 'feed-3',
+      name: 'Timezone Fire Dispatch',
+      sourceType: SourceType.BCFY_FEEDS,
+      sourceFeedId: '44556',
+      status: 'active',
+      substatus: 'active',
+      tags: [{ key: 'system/timezone', value: 'America/Los_Angeles' }],
+    };
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [timezoneFeed],
+      total: 1,
+    });
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Timezone Fire Dispatch')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Timezone Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    // The alert should be in the document immediately
+    expect(
+      screen.getByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('displays the timezone update warning when typing or editing a tag key to system/timezone while editing a feed', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Marin Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const tagKeyInput = screen.getAllByLabelText('Key')[0];
+    fireEvent.change(tagKeyInput, { target: { value: 'system/timezone' } });
+
+    // Warning is displayed immediately upon typing
+    expect(
+      screen.getByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).toBeInTheDocument();
+
+    // Now test editing an existing row key
+    // Reset key input
+    fireEvent.change(tagKeyInput, { target: { value: '' } });
+    expect(
+      screen.queryByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).not.toBeInTheDocument();
+
+    // The first row key input is index 1 (index 0 is the new tag key input field)
+    const existingRowKeyInput = screen.getAllByLabelText('Key')[1];
+    fireEvent.change(existingRowKeyInput, {
+      target: { value: 'system/timezone' },
+    });
+
+    expect(
+      screen.getByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).toBeInTheDocument();
+  });
 });

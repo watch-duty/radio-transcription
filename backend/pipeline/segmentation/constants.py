@@ -11,42 +11,25 @@ MAIN_TAG: Final = "main"
 # Pipeline Defaults
 DEFAULT_SIGNIFICANT_GAP_MS: Final = 800
 
-# Operational Sizing Sweet Spot: Maximum number of chunks emitted per
-# Dataflow bundle by our stateful ordering DoFns. Why exactly 10 chunks
-# (~150 seconds of raw audio)?
-#
-# 1. Multiprocessing Work-Stealing Parallelism: Python enforces the Global
-#    Interpreter Lock (GIL). If we computed 50+ chunks at a time, a single
-#    worker VM would entirely monopolize its CPU core, causing severe Head-of-
-#    Line starvation across our remaining autoscaled worker machines.
-#    Clamping at 10 chunks keeps steady-state DAG compute time at ~6 seconds,
-#    enabling central Windmill servers to instantly work-steal and distribute
-#    subsequent chained bundles to completely different idle VMs.
-#
-# 2. Transaction Rollback "Blast Radius": If a sudden GCP network glitch or
-#    downstream database exception occurs, Windmill must entirely roll back
-#    the active bundle transaction. A 10-chunk clamp limits your re-drive
-#    compute penalty perfectly to just a few seconds of compute effort.
-#
-# 3. Synchronous Checkpointing: Committing SSD state Checkpoints every ~6
-#    seconds guarantees that downstream windowed joins, active database
-#    deduplication FSMs, and live custom Stackdriver user execution
-#    counters (`chunks_received`) remain 100% active, live, and real-time.
-#
-# 4. Resilient Backlog Recovery: Under heavy backlog catch-up load, GIL
-#    contention and GCS latency can slow down sequential chunk processing
-#    by ~30x (up to 18.5s per chunk). A 10-chunk clamp guarantees that even
-#    under worst-case load, the bundle completes in ~185s, keeping it safely
-#    below the hard 300-second Windmill lease limit and preventing infinite
-#    timeout rollback loops.
-MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 10
+
+# Maximum wall-clock duration (in seconds) a worker can spend inside a single Dataflow
+# bundle. Sized to 1/5th of Google Cloud Windmill's hard 300-second RPC commit lease
+# limit, leaving a generous 240-second safety margin for GCS uploads and state checkpointing.
+MAX_WINDMILL_BUNDLE_DURATION_SEC: Final = 60.0
+
+# Memory & GCS prefetch backstop / active per-bundle cap: Maximum number of chunks popped
+# and prefetched per bundle during backfills, acting alongside the wall-clock budget
+# (MAX_WINDMILL_BUNDLE_DURATION_SEC) as a hard item-count processing limit. Sized to
+# ~50 minutes of audio (~300 chunks), which takes roughly ~8 seconds to compute, preventing
+# instantaneous heap unrolls from flooding memory with thousands of in-flight GCS futures.
+MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 300
 
 # Resilient Runner V2 Gate: Minimum timer advancement (in seconds) to satisfy Dataflow Streaming
 # Engine forward-progression invariants. In Apache Beam, scheduling a self-chaining recursive timer
 # at un-advanced Event-Time (`timestamp + 0`) risks triggering un-progressed circular watermark
 # dependencies, resulting in CommitStatus: NOT_FOUND commit loops or work-item evictions.
 # We beautifully advance self-chaining timers by the true physical Event-Time duration of the audio
-# successfully emitted in the bundle (e.g., ~150s), while maintaining this 1ms epsilon as an absolute
+# successfully emitted in the bundle (e.g., ~375s), while maintaining this 1ms epsilon as an absolute
 # bulletproof safety lower-bound to guarantee forward progress across every edge case. See PR #727.
 WINDMILL_TIMER_MIN_ADVANCE_SECS: Final = 0.001
 GCS_DOWNLOAD_TIMEOUT_SEC: Final = 30

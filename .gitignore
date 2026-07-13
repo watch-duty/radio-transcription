@@ -88,6 +88,12 @@ backend/pipeline/schema_types/streaming_state.py
 
 # SFT pipeline build outputs (D-16 governance: JSONL may contain NonCommercial
 # UWB-ATCC data and proprietary Watch Duty Echo transcripts — not git-committed).
-# Per-run records (config.json, wer_summary.*, ledger.md) remain trackable.
+# Per-run records (config.json, wer_summary.*) remain trackable.
 model/scripts/sft/results/**/*.jsonl
 model/scripts/sft/results/**/*.jsonl.gz
+
+# Local SFT/operator experiment artifacts.
+/results/
+*.local.toml
+model/data/inference_manifests/*.jsonl
+model/data/inference_manifests/*.jsonl.gz

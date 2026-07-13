@@ -50,14 +50,15 @@ editable model package install.
 The unified strict train/eval input contract used before provider-specific
 model input conversion. Each row is row-per-audio-segment JSONL with required
 `audio_filepath`, `text`, `offset`, `duration`, `example_id`, and `segment_id`
-fields. Strict `audio_filepath` values are model-ready `gs://...flac` clip
-URIs, and `(example_id, segment_id)` is the logical row identity, unique within
-one manifest.
+fields. Optional metadata may include `split`, `dataset`, and `source_audio`;
+when present, `dataset.name`, `dataset.family`,
+`source_audio.audio_filepath`, `source_audio.offset`, and
+`source_audio.duration` are validated.
 
-Optional shallow metadata may include `split`, `lang`, `dataset`,
-`source_audio`, and `audio_processing`. Strict validation through
-`validate_canonical_manifest(...)` ignores unknown row fields, unknown metadata
-keys, and prediction-enriched fields such as `pred_text_*`. See
+Strict `audio_filepath` values are model-ready `gs://...flac` clip URIs, and
+`(example_id, segment_id)` must be unique within one manifest. Strict
+validation tolerates unknown row-level fields, unknown keys inside optional
+metadata objects, and prediction-enriched fields such as `pred_text_*`. See
 `model/data/manifests/README.md` for the detailed contract.
 
 ### Train, Validation, And Eval Splits
@@ -97,18 +98,26 @@ tune` can resume polling the same paid job after a local process exit.
 
 ### Eval Artifact
 
-Evaluation outputs that let maintainers inspect or recalculate model quality,
-including local `wer_summary.{json,md}`, ledger rows, and GCS paths to raw
-Vertex batch inference results.
+Evaluation outputs that let maintainers inspect or recalculate the quality of
+the one `[eval.model]` target owned by a prepared round. Each evaluation writes
+one local and GCS `wer_summary.{json,md}` report containing one target, together
+with target-labeled raw provider or online prediction artifacts and a normalized
+inference-manifest URI.
+### Online Prediction Attempt
+
+A raw online endpoint eval record for one audio URI. It may contain a
+successful transcript or an execution error. Only successful attempts become
+prediction records in normalized inference manifests.
 
 ### Normalized Inference Manifest
 
 A scorer-ready eval artifact that preserves canonical manifest rows and adds
 model prediction fields. It requires reference transcription text on every row;
 a single row owns a single inference input; prediction records must belong to
-that manifest's rows. A `pred_text_*` field is present only when a prediction
-record existed for that row, and an empty string value means the prediction
-record existed and contained empty text.
+that manifest's rows. A `pred_text_*` field is present only when a successful
+prediction record existed for that row. An empty string value means the provider
+successfully returned empty text. Missing provider outputs and unresolved online
+errors omit the field and are scored as empty hypotheses in eval reports.
 
 ## Ingestion Context
 
