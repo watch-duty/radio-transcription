@@ -41,8 +41,18 @@ from backend.pipeline.ingestion import (
     memory_watchdog,
     quarantine_telemetry,
     sid_grant_control,
+    source_runtime_specs,
     status_reason_detail,
     worker_profiles,
+)
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    provider as bcfy_calls_provider,
+)
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    runtime_adapters as bcfy_calls_runtime_adapters,
+)
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    sid_processor as bcfy_calls_sid_processor,
 )
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     sid_runner as bcfy_calls_sid_runner,
@@ -324,36 +334,27 @@ def _sid_fencing_token(grant: ingestion_lease_store.LeaseGrant) -> int:
 
 
 class _UnconnectedCallExecutor:
-    """Fail closed until a later phase wires the SID call pipeline."""
+    """Fail closed until Phase 6 wires the durable SID call pipeline."""
 
     async def execute(self, record: object) -> typing.Never:
         del record
-        message = "Phase 4 call executor is unconnected"
+        message = "Phase 5 call executor is unconnected"
         raise feed_work_scheduler.SchedulerIntegrityError(message)
 
 
-class _UnconnectedBoundaryCommitter:
-    """Fail closed until a later phase wires boundary persistence."""
-
-    async def commit(
-        self,
-        grant: ingestion_lease_store.LeaseGrant,
-        boundaries: tuple[object, ...],
-        *,
-        final_logical: bool,
-    ) -> typing.Never:
-        del grant, boundaries, final_logical
-        message = "Phase 4 boundary committer is unconnected"
-        raise feed_work_scheduler.SchedulerIntegrityError(message)
-
-
-def _create_unconnected_feed_work_scheduler() -> (
-    feed_work_scheduler.FeedWorkScheduler
-):
-    """Create the sole Phase 4 scheduler with no data-plane authority."""
+def _create_sid_feed_work_scheduler(
+    data_store: ingestion_lease_store.IngestionLeaseStore,
+    actor_id: str,
+) -> feed_work_scheduler.FeedWorkScheduler:
+    """Create the sole SID scheduler with fenced quiet progress only."""
     return feed_work_scheduler.FeedWorkScheduler(
         _UnconnectedCallExecutor(),
-        boundary_committer=_UnconnectedBoundaryCommitter(),
+        boundary_committer=(
+            bcfy_calls_runtime_adapters.FencedBoundaryCommitter(
+                data_store,
+                actor_id=actor_id,
+            )
+        ),
     )
 
 
@@ -379,6 +380,7 @@ class _SidRunnerResources:
 
     data_store: ingestion_lease_store.IngestionLeaseStore
     heartbeat_store: ingestion_lease_store.IngestionLeaseStore
+    calls_provider: bcfy_calls_provider.CallsProviderClient
     capture_resources: CaptureResources
     gcs_client: gcs_client.GcsClient
     pubsub_client: pubsub_client.PubSubClient
@@ -391,6 +393,10 @@ type _SidStoreFactory = Callable[
     [asyncpg.Pool],
     ingestion_lease_store.IngestionLeaseStore,
 ]
+type _SidProviderFactory = Callable[
+    [aiohttp.ClientSession, str],
+    bcfy_calls_provider.CallsProviderClient,
+]
 type _SidRunnerFactory = Callable[
     [_SidRunnerResources],
     grant_control.GrantRunner[
@@ -398,7 +404,10 @@ type _SidRunnerFactory = Callable[
         ingestion_lease_store.LeaseSnapshot,
     ],
 ]
-type _SchedulerFactory = Callable[[], object]
+type _SchedulerFactory = Callable[
+    [ingestion_lease_store.IngestionLeaseStore, str],
+    object,
+]
 
 
 class CollectorRuntime:
@@ -431,6 +440,8 @@ class CollectorRuntime:
         settings: Runtime configuration. Defaults to ``CollectorSettings()``.
         runtime_actor_id: Optional producer-owned audit actor. Defaults to the
             configured runtime service actor.
+        sid_provider_factory: Narrow deterministic-test seam for the one
+            shared SID Calls provider.
         scheduler_factory: Narrow deterministic-test seam for the one
             selected-SID process scheduler.
 
@@ -443,6 +454,7 @@ class CollectorRuntime:
         runtime_actor_id: str | None = None,
         *,
         sid_store_factory: _SidStoreFactory | None = None,
+        sid_provider_factory: _SidProviderFactory | None = None,
         sid_runner_factory: _SidRunnerFactory | None = None,
         scheduler_factory: _SchedulerFactory | None = None,
     ) -> None:
@@ -456,9 +468,14 @@ class CollectorRuntime:
             settings.worker_profile
         )
         self._sid_store_factory = sid_store_factory
+        self._sid_provider_factory = (
+            bcfy_calls_provider.CallsProviderClient
+            if sid_provider_factory is None
+            else sid_provider_factory
+        )
         self._sid_runner_factory = sid_runner_factory
         self._scheduler_factory = (
-            _create_unconnected_feed_work_scheduler
+            _create_sid_feed_work_scheduler
             if scheduler_factory is None
             else scheduler_factory
         )
@@ -495,6 +512,9 @@ class CollectorRuntime:
         ) = None
         self._sid_heartbeat_store: (
             ingestion_lease_store.IngestionLeaseStore | None
+        ) = None
+        self._sid_calls_provider: (
+            bcfy_calls_provider.CallsProviderClient | None
         ) = None
         self._feed_work_scheduler: (
             feed_work_scheduler.FeedWorkScheduler | None
@@ -579,27 +599,57 @@ class CollectorRuntime:
             authority_kind=worker_profiles.AuthorityKind.FEED.value,
         )
 
-    @staticmethod
     def _sid_terminal_decision(
+        self,
         outcome: grant_control.RunOutcome,
     ) -> grant_control.TerminalDecision:
-        """Select the only Phase 3 controlled SID terminal actions."""
+        """Select one SID Lease terminal action exactly once."""
         if isinstance(outcome, grant_control.RunFailed):
-            msg = "Phase 3 controlled SID runner returned failure evidence"
-            raise grant_control.GrantControlIntegrityError(msg)
+            return self._failure_terminal_decision(
+                outcome,
+                authority_kind=worker_profiles.AuthorityKind.SID_LEASE,
+                event_type="sid_failure_policy_decision",
+            )
         if isinstance(outcome, grant_control.RunStopped):
             return grant_control.NeutralRelease(outcome.cause)
         return grant_control.NeutralRelease(grant_control.TerminalCause.NORMAL)
 
     async def _start_feed_work_scheduler(self) -> None:
-        """Start one process scheduler only for a selected SID domain."""
+        """Construct and start one shared selected-SID resource set."""
         selected_sid = any(
             allocation.domain_id is grant_control.DomainId.SID
             for allocation in self._collector_settings.worker_profile.allocations
         )
         if not selected_sid or self._feed_work_scheduler is not None:
             return
-        candidate = self._scheduler_factory()
+        if any(
+            resource is not None
+            for resource in (
+                self._sid_data_store,
+                self._sid_heartbeat_store,
+                self._sid_calls_provider,
+            )
+        ):
+            message = "partial SID resources exist without a scheduler"
+            raise RuntimeError(message)
+        store_factory = (
+            self._sid_store_factory or ingestion_lease_store.IngestionLeaseStore
+        )
+        self._sid_data_store = store_factory(self._data_pool)
+        self._sid_heartbeat_store = store_factory(self._heartbeat_pool)
+        self._sid_calls_provider = self._sid_provider_factory(
+            self._http_session,
+            source_runtime_specs.url_base_for(SourceType.BCFY_CALLS),
+        )
+        if not callable(
+            getattr(self._sid_calls_provider, "fetch_sid_page", None)
+        ):
+            message = "SID provider factory returned an invalid provider"
+            raise TypeError(message)
+        candidate = self._scheduler_factory(
+            self._sid_data_store,
+            self._runtime_actor_id,
+        )
         if not _is_feed_work_scheduler(candidate):
             message = "scheduler factory returned an invalid scheduler"
             raise TypeError(message)
@@ -655,37 +705,54 @@ class CollectorRuntime:
             if scheduler is None:
                 msg = "Selected SID domain requires a started scheduler"
                 raise RuntimeError(msg)
-            if allocation.claims_enabled and (
-                self._sid_store_factory is None
-                or self._sid_runner_factory is None
+            data_store = self._sid_data_store
+            heartbeat_store = self._sid_heartbeat_store
+            calls_provider = self._sid_calls_provider
+            if (
+                data_store is None
+                or heartbeat_store is None
+                or calls_provider is None
             ):
-                msg = (
-                    "Claims-enabled SID allocation requires controlled "
-                    "store and runner factories"
-                )
-                raise ValueError(msg)
-            store_factory = (
-                self._sid_store_factory
-                or ingestion_lease_store.IngestionLeaseStore
-            )
-            self._sid_data_store = store_factory(self._data_pool)
-            self._sid_heartbeat_store = store_factory(self._heartbeat_pool)
+                msg = "Selected SID domain requires shared SID resources"
+                raise RuntimeError(msg)
             sid_control = sid_grant_control.SidGrantControl(
-                self._sid_data_store,
-                self._sid_heartbeat_store,
+                data_store,
+                heartbeat_store,
                 SourceType.BCFY_CALLS,
                 abandonment,
             )
             if self._sid_runner_factory is None:
+
+                def processor_factory(
+                    grant: ingestion_lease_store.LeaseGrant,
+                    payload: ingestion_lease_store.LeaseSnapshot,
+                    lane: feed_work_scheduler.GrantLane,
+                    *,
+                    _data_store: ingestion_lease_store.IngestionLeaseStore = data_store,
+                    _calls_provider: bcfy_calls_provider.CallsProviderClient = calls_provider,
+                ) -> bcfy_calls_sid_processor.BcfyCallsSidProcessor:
+                    del payload
+                    return bcfy_calls_sid_processor.BcfyCallsSidProcessor(
+                        grant,
+                        _data_store,
+                        _calls_provider,
+                        lane,
+                        now=lambda: datetime.datetime.now(datetime.UTC),
+                    )
+
                 sid_runner: grant_control.GrantRunner[
                     ingestion_lease_store.LeaseGrant,
                     ingestion_lease_store.LeaseSnapshot,
-                ] = bcfy_calls_sid_runner.BcfyCallsSidRunner(scheduler)
+                ] = bcfy_calls_sid_runner.BcfyCallsSidRunner(
+                    scheduler,
+                    processor_factory,
+                )
             else:
                 sid_runner = self._sid_runner_factory(
                     _SidRunnerResources(
-                        data_store=self._sid_data_store,
-                        heartbeat_store=self._sid_heartbeat_store,
+                        data_store=data_store,
+                        heartbeat_store=heartbeat_store,
+                        calls_provider=calls_provider,
                         capture_resources=self._capture_resources,
                         gcs_client=self._gcs_client,
                         pubsub_client=self._pubsub_client,
@@ -694,9 +761,9 @@ class CollectorRuntime:
                         feed_work_scheduler=scheduler,
                     )
                 )
-                if not callable(getattr(sid_runner, "run", None)):
-                    msg = "SID runner factory returned an invalid runner"
-                    raise TypeError(msg)
+            if not callable(getattr(sid_runner, "run", None)):
+                msg = "SID runner factory returned an invalid runner"
+                raise TypeError(msg)
             registrations.append(
                 grant_supervisor.RegisteredDomain(
                     domain_id=grant_control.DomainId.SID,
@@ -941,71 +1008,87 @@ class CollectorRuntime:
             raise grant_control.GrantControlIntegrityError(msg)
         raise failure
 
+    def _failure_terminal_decision(
+        self,
+        outcome: grant_control.RunFailed,
+        *,
+        authority_kind: worker_profiles.AuthorityKind,
+        event_type: str,
+    ) -> grant_control.TerminalDecision:
+        """Apply one shared direct metadata failure policy."""
+        action = failure_policy.classify_failure_policy(outcome.status_reason)
+        post_bookmark_gap = (
+            outcome.status_reason
+            is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+        )
+        fields: dict[str, object] = {
+            "event_type": event_type,
+            "authority_kind": authority_kind.value,
+            "status_reason": outcome.status_reason.value,
+            "reason": outcome.reason,
+            "executed_action": action.value,
+            "replay_missing": post_bookmark_gap,
+            "data_gap_known": post_bookmark_gap,
+        }
+        log_message = (
+            "Feed failure policy decision"
+            if authority_kind is worker_profiles.AuthorityKind.FEED
+            else "SID failure policy decision"
+        )
+        if (
+            action
+            is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+        ):
+            logger.info(
+                log_message,
+                extra={"json_fields": fields},
+            )
+            return grant_control.BudgetedFailureDecision(
+                failure_threshold=(
+                    self._collector_settings.feed_failure_threshold
+                ),
+                backoff_base_sec=feed_lifecycle.DEFAULT_BACKOFF_BASE_SEC,
+                backoff_max_sec=feed_lifecycle.DEFAULT_BACKOFF_MAX_SEC,
+                status_reason=outcome.status_reason,
+                actor_id=self._runtime_actor_id,
+                reason=outcome.reason,
+            )
+        retry_after = self._non_budgeted_retry_after()
+        fields["retry_after"] = retry_after.isoformat()
+        logger.info(
+            log_message,
+            extra={"json_fields": fields},
+        )
+        if (
+            authority_kind is worker_profiles.AuthorityKind.FEED
+            and post_bookmark_gap
+        ):
+            logger.error(
+                "Post-bookmark publish failure",
+                extra={
+                    "json_fields": {
+                        **fields,
+                        "event_type": "post_bookmark_publish_failure",
+                    }
+                },
+            )
+        return grant_control.NonBudgetedFailureDecision(
+            retry_after=retry_after,
+            status_reason=outcome.status_reason,
+            actor_id=self._runtime_actor_id,
+            reason=outcome.reason,
+        )
+
     def _feed_terminal_decision(
         self,
         outcome: grant_control.RunOutcome,
     ) -> grant_control.TerminalDecision:
         """Select one legacy-compatible terminal action exactly once."""
         if isinstance(outcome, grant_control.RunFailed):
-            action = failure_policy.classify_failure_policy(
-                outcome.status_reason
-            )
-            fields: dict[str, object] = {
-                "event_type": "feed_failure_policy_decision",
-                "status_reason": outcome.status_reason.value,
-                "reason": outcome.reason,
-                "executed_action": action.value,
-                "replay_missing": (
-                    outcome.status_reason
-                    is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
-                ),
-                "data_gap_known": (
-                    outcome.status_reason
-                    is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
-                ),
-            }
-            if (
-                action
-                is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-            ):
-                logger.info(
-                    "Feed failure policy decision",
-                    extra={"json_fields": fields},
-                )
-                return grant_control.BudgetedFailureDecision(
-                    failure_threshold=(
-                        self._collector_settings.feed_failure_threshold
-                    ),
-                    backoff_base_sec=(feed_lifecycle.DEFAULT_BACKOFF_BASE_SEC),
-                    backoff_max_sec=feed_lifecycle.DEFAULT_BACKOFF_MAX_SEC,
-                    status_reason=outcome.status_reason,
-                    actor_id=self._runtime_actor_id,
-                    reason=outcome.reason,
-                )
-            retry_after = self._non_budgeted_retry_after()
-            fields["retry_after"] = retry_after.isoformat()
-            logger.info(
-                "Feed failure policy decision",
-                extra={"json_fields": fields},
-            )
-            if (
-                outcome.status_reason
-                is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
-            ):
-                logger.error(
-                    "Post-bookmark publish failure",
-                    extra={
-                        "json_fields": {
-                            **fields,
-                            "event_type": "post_bookmark_publish_failure",
-                        }
-                    },
-                )
-            return grant_control.NonBudgetedFailureDecision(
-                retry_after=retry_after,
-                status_reason=outcome.status_reason,
-                actor_id=self._runtime_actor_id,
-                reason=outcome.reason,
+            return self._failure_terminal_decision(
+                outcome,
+                authority_kind=worker_profiles.AuthorityKind.FEED,
+                event_type="feed_failure_policy_decision",
             )
         if isinstance(outcome, grant_control.RunStopped):
             return grant_control.NeutralRelease(outcome.cause)
