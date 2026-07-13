@@ -969,6 +969,192 @@ class TestRecoveryDecisions(unittest.TestCase):
         self.assertEqual(verdict.child_recovery_candidates, ())
 
 
+class TestFinalMutationPlan(unittest.TestCase):
+    """Pure final child matrix preserves the selected lifecycle scope."""
+
+    def test_direct_failures_aggregate_to_one_cursor_bearing_transition(
+        self,
+    ) -> None:
+        grant = _grant()
+        failed = _member(grant, 901)
+        quiet = _member(grant, 902)
+        cohorts = (
+            _one_record_feed(
+                grant,
+                failed,
+                0,
+                feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE,
+            ),
+            _one_record_feed(
+                grant,
+                failed,
+                1,
+                feed_work_scheduler.CohortRecordTerminalReason.PUBLICATION_EXHAUSTED,
+                status_reason=(
+                    feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
+                ),
+                detail="first direct failure",
+            ),
+            _one_record_feed(
+                grant,
+                failed,
+                2,
+                feed_work_scheduler.CohortRecordTerminalReason.PUBLICATION_EXHAUSTED,
+                status_reason=(
+                    feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
+                ),
+                detail="second direct failure",
+            ),
+        )
+        verdict = boundary_verdict.decide_page_verdict(
+            _page(
+                grant,
+                (failed, quiet),
+                cohorts,
+                child_recovery_candidates=(failed, quiet),
+                lease_recovery_candidate=True,
+            )
+        )
+        target = _SOURCE_TIME + datetime.timedelta(minutes=1)
+        boundaries = tuple(
+            feed_work_scheduler.BoundaryWork(member, target)
+            for member in (failed, quiet)
+        )
+        policy = ingestion_lease_store.BudgetedFailure(9, 17, 701)
+
+        plan = boundary_verdict.plan_final_mutations(
+            verdict,
+            candidate_boundaries=boundaries,
+            unresolved_replay_feed_ids=(),
+            replay_blocked_feed_ids=(),
+            locally_retired_members=(),
+            requested_target=target,
+            boundary_settled_utc=_SOURCE_TIME,
+            budgeted_failure=policy,
+        )
+
+        self.assertEqual(len(plan.commands), 2)
+        failure, observation = (command.mutation for command in plan.commands)
+        self.assertIs(
+            type(failure), ingestion_lease_store.FeedFailureTransition
+        )
+        assert isinstance(failure, ingestion_lease_store.FeedFailureTransition)
+        self.assertIs(failure.member, failed)
+        self.assertIs(failure.action, policy)
+        self.assertEqual(failure.reason, "first direct failure")
+        self.assertEqual(failure.completion_cursor, target)
+        self.assertIs(
+            failure.charge_mode,
+            ingestion_lease_store.FeedFailureChargeMode.ONE_SHOT,
+        )
+        self.assertEqual(
+            observation,
+            ingestion_lease_store.SourceObservation(quiet, target),
+        )
+        self.assertIs(
+            type(plan.lease_effect),
+            ingestion_lease_store.FinalizeLeaseRecovery,
+        )
+
+    def test_no_progress_observes_only_successful_participants(self) -> None:
+        grant = _grant()
+        successful = _member(grant, 951)
+        quiet = _member(grant, 952)
+        verdict = boundary_verdict.decide_page_verdict(
+            _page(
+                grant,
+                (successful, quiet),
+                (
+                    _one_record_feed(
+                        grant,
+                        successful,
+                        0,
+                        feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE,
+                    ),
+                ),
+                child_recovery_candidates=(successful, quiet),
+                lease_recovery_candidate=True,
+            )
+        )
+
+        plan = boundary_verdict.plan_final_mutations(
+            verdict,
+            candidate_boundaries=(),
+            unresolved_replay_feed_ids=(),
+            replay_blocked_feed_ids=(),
+            locally_retired_members=(),
+            requested_target=None,
+            boundary_settled_utc=_SOURCE_TIME,
+            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+        )
+
+        self.assertEqual(
+            tuple(command.mutation for command in plan.commands),
+            (ingestion_lease_store.SourceObservation(successful, None),),
+        )
+        self.assertEqual(plan.boundary_command_count, 0)
+
+    def test_promoted_page_uses_only_neutral_failed_child_progress(
+        self,
+    ) -> None:
+        grant = _grant()
+        failed_a = _member(grant, 1001)
+        failed_b = _member(grant, 1002)
+        quiet = _member(grant, 1003)
+        cohorts = (
+            _one_record_feed(
+                grant,
+                failed_a,
+                0,
+                feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP,
+            ),
+            _one_record_feed(
+                grant,
+                failed_b,
+                1,
+                feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP,
+            ),
+        )
+        verdict = boundary_verdict.decide_page_verdict(
+            _page(
+                grant,
+                (failed_a, failed_b, quiet),
+                cohorts,
+                child_recovery_candidates=(failed_a, failed_b, quiet),
+                lease_recovery_candidate=True,
+            )
+        )
+        target = _SOURCE_TIME + datetime.timedelta(minutes=1)
+        boundaries = tuple(
+            feed_work_scheduler.BoundaryWork(member, target)
+            for member in (failed_a, failed_b, quiet)
+        )
+
+        plan = boundary_verdict.plan_final_mutations(
+            verdict,
+            candidate_boundaries=boundaries,
+            unresolved_replay_feed_ids=(),
+            replay_blocked_feed_ids=(),
+            locally_retired_members=(),
+            requested_target=target,
+            boundary_settled_utc=_SOURCE_TIME,
+            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+        )
+
+        self.assertIs(
+            type(plan.lease_effect),
+            ingestion_lease_store.NoLeaseEffect,
+        )
+        self.assertEqual(
+            tuple(type(command.mutation) for command in plan.commands),
+            (ingestion_lease_store.ClosedCohortProgress,) * 3,
+        )
+        self.assertEqual(
+            tuple(command.mutation.member for command in plan.commands),
+            (failed_a, failed_b, quiet),
+        )
+
+
 class TestFinalizableFactValidation(unittest.TestCase):
     """Only exact complete predecessor facts can reach verdict policy."""
 

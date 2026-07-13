@@ -3,16 +3,14 @@
 from __future__ import annotations
 
 import dataclasses
+import datetime
 import enum
 import typing
+import uuid
 
-from backend.pipeline.ingestion import feed_work_scheduler
+from backend.pipeline.ingestion import failure_policy, feed_work_scheduler
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.storage import feed_store, ingestion_lease_store
-
-if typing.TYPE_CHECKING:
-    import datetime
-    import uuid
 
 MIXED_DIRECT_FAILURE_REASON = "mixed_direct_failures"
 MIXED_FEED_FAILURE_REASON = "mixed_feed_failures"
@@ -284,6 +282,88 @@ class PageVerdict:
         if self.lease_recovery_candidate and self.preserved_lease_recovery:
             message = "Lease recovery cannot be selected and preserved"
             raise BoundaryVerdictIntegrityError(message)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FinalMutationCommand:
+    """One exact child command and its optional source page boundary."""
+
+    mutation: ingestion_lease_store.ChildMutation
+    boundary: feed_work_scheduler.BoundaryWork | None
+
+    def __post_init__(self) -> None:
+        if type(self.mutation) not in {
+            ingestion_lease_store.SourceObservation,
+            ingestion_lease_store.ClosedCohortProgress,
+            ingestion_lease_store.FeedFailureTransition,
+        }:
+            message = "final mutation command has an unsupported exact type"
+            raise TypeError(message)
+        if self.boundary is not None and (
+            type(self.boundary) is not feed_work_scheduler.BoundaryWork
+        ):
+            message = "boundary must be exact BoundaryWork or None"
+            raise TypeError(message)
+        if (
+            self.boundary is not None
+            and self.boundary.member is not self.mutation.member
+        ):
+            message = "final mutation command crossed boundary member"
+            raise BoundaryVerdictIntegrityError(message)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FinalMutationPlan:
+    """Pure deterministic child transaction for one page verdict."""
+
+    verdict: PageVerdict
+    commands: tuple[FinalMutationCommand, ...]
+    boundary_command_count: int
+    lease_effect: ingestion_lease_store.LeaseEffect
+    requested_target: datetime.datetime | None
+
+    def __post_init__(self) -> None:
+        if type(self.verdict) is not PageVerdict:
+            message = "verdict must be an exact PageVerdict"
+            raise TypeError(message)
+        if not isinstance(self.commands, tuple) or any(
+            type(command) is not FinalMutationCommand
+            for command in self.commands
+        ):
+            message = "commands must contain exact FinalMutationCommand"
+            raise TypeError(message)
+        _require_nonnegative_integer(
+            self.boundary_command_count,
+            "boundary_command_count",
+        )
+        if self.boundary_command_count > len(self.commands):
+            message = "boundary command count exceeds command count"
+            raise BoundaryVerdictIntegrityError(message)
+        if any(
+            command.boundary is None
+            for command in self.commands[: self.boundary_command_count]
+        ) or any(
+            command.boundary is not None
+            for command in self.commands[self.boundary_command_count :]
+        ):
+            message = "boundary commands are not a deterministic prefix"
+            raise BoundaryVerdictIntegrityError(message)
+        feed_ids = tuple(
+            command.mutation.member.feed_id for command in self.commands
+        )
+        if len(set(feed_ids)) != len(feed_ids):
+            message = "final mutation plan repeats a Feed"
+            raise BoundaryVerdictIntegrityError(message)
+        if type(self.lease_effect) not in {
+            ingestion_lease_store.NoLeaseEffect,
+            ingestion_lease_store.FinalizeLeaseRecovery,
+        }:
+            message = "lease_effect has an unsupported exact type"
+            raise TypeError(message)
+        _require_optional_utc_datetime(
+            self.requested_target,
+            "requested_target",
+        )
 
 
 def _require_nonnegative_integer(value: object, name: str) -> int:
@@ -852,6 +932,353 @@ def _aggregate_lease_failure(
     return BoundaryFailure(
         feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
         MIXED_FEED_FAILURE_REASON,
+    )
+
+
+def _require_optional_utc_datetime(
+    value: object,
+    name: str,
+) -> datetime.datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, datetime.datetime):
+        message = f"{name} must be a datetime or None"
+        raise TypeError(message)
+    if value.utcoffset() != datetime.timedelta(0):
+        message = f"{name} must be UTC-aware"
+        raise ValueError(message)
+    return value
+
+
+def _failure_action(
+    failure: BoundaryFailure,
+    *,
+    budgeted_failure: ingestion_lease_store.BudgetedFailure,
+    boundary_settled_utc: datetime.datetime,
+) -> ingestion_lease_store.LeaseFailureAction:
+    action = failure_policy.classify_failure_policy(failure.status_reason)
+    if action is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET:
+        return budgeted_failure
+    return ingestion_lease_store.NonBudgetedFailure(boundary_settled_utc)
+
+
+def _require_identity_tuple(
+    value: object,
+    name: str,
+) -> tuple[object, ...]:
+    if not isinstance(value, tuple):
+        message = f"{name} must be an immutable tuple"
+        raise TypeError(message)
+    return value
+
+
+def _require_uuid_tuple(
+    value: object,
+    name: str,
+) -> tuple[uuid.UUID, ...]:
+    items = _require_identity_tuple(value, name)
+    if any(not isinstance(item, uuid.UUID) for item in items):
+        message = f"{name} must contain UUID values"
+        raise TypeError(message)
+    typed = typing.cast("tuple[uuid.UUID, ...]", items)
+    if len(set(typed)) != len(typed):
+        message = f"{name} must not contain duplicates"
+        raise BoundaryVerdictIntegrityError(message)
+    if typed != tuple(sorted(typed, key=lambda item: item.int)):
+        message = f"{name} must be in deterministic UUID order"
+        raise BoundaryVerdictIntegrityError(message)
+    return typed
+
+
+def _require_retired_member_tuple(
+    value: object,
+) -> tuple[ingestion_lease_store.LeaseMemberIdentity, ...]:
+    items = _require_identity_tuple(value, "locally_retired_members")
+    if any(
+        not isinstance(item, ingestion_lease_store.LeaseMemberIdentity)
+        for item in items
+    ):
+        message = "locally_retired_members must contain issued members"
+        raise TypeError(message)
+    typed = typing.cast(
+        "tuple[ingestion_lease_store.LeaseMemberIdentity, ...]",
+        items,
+    )
+    feed_ids = tuple(member.feed_id for member in typed)
+    if len(set(feed_ids)) != len(feed_ids):
+        message = "locally_retired_members must not repeat a Feed"
+        raise BoundaryVerdictIntegrityError(message)
+    return typed
+
+
+def _require_final_plan_policy(
+    value: object,
+) -> ingestion_lease_store.BudgetedFailure:
+    if type(value) is not ingestion_lease_store.BudgetedFailure:
+        message = "budgeted_failure must be an exact BudgetedFailure"
+        raise TypeError(message)
+    try:
+        validated = ingestion_lease_store.BudgetedFailure(
+            value.failure_threshold,
+            value.backoff_base_sec,
+            value.backoff_max_sec,
+        )
+    except (TypeError, ValueError) as error:
+        raise BoundaryVerdictIntegrityError(str(error)) from error
+    if validated != value:
+        message = "budgeted_failure changed after validation"
+        raise BoundaryVerdictIntegrityError(message)
+    return value
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _FinalPlanIndexes:
+    """Validated lookup state for deterministic final mutation selection."""
+
+    boundaries_by_id: dict[uuid.UUID, feed_work_scheduler.BoundaryWork]
+    unresolved: frozenset[uuid.UUID]
+    replay_blocked: frozenset[uuid.UUID]
+    retired: dict[uuid.UUID, ingestion_lease_store.LeaseMemberIdentity]
+    failures_by_id: dict[uuid.UUID, FeedFailureDecision]
+
+
+def _prepare_final_plan_indexes(
+    verdict: PageVerdict,
+    candidate_boundaries: object,
+    unresolved_replay_feed_ids: object,
+    replay_blocked_feed_ids: object,
+    locally_retired_members: object,
+    target: datetime.datetime | None,
+) -> _FinalPlanIndexes:
+    boundaries = _require_identity_tuple(
+        candidate_boundaries,
+        "candidate_boundaries",
+    )
+    unresolved = frozenset(
+        _require_uuid_tuple(
+            unresolved_replay_feed_ids,
+            "unresolved_replay_feed_ids",
+        )
+    )
+    replay_blocked = frozenset(
+        _require_uuid_tuple(
+            replay_blocked_feed_ids,
+            "replay_blocked_feed_ids",
+        )
+    )
+    retired_members = _require_retired_member_tuple(locally_retired_members)
+    feed_facts_by_id = {
+        feed.member.feed_id: feed for feed in verdict.feed_facts
+    }
+    boundaries_by_id: dict[uuid.UUID, feed_work_scheduler.BoundaryWork] = {}
+    for boundary in boundaries:
+        if type(boundary) is not feed_work_scheduler.BoundaryWork:
+            message = "candidate boundaries must contain exact BoundaryWork"
+            raise TypeError(message)
+        feed = feed_facts_by_id.get(boundary.feed_id)
+        if feed is None or boundary.member is not feed.member:
+            message = "candidate boundary crossed verdict membership"
+            raise BoundaryVerdictIntegrityError(message)
+        if boundary.feed_id in boundaries_by_id:
+            message = "candidate boundaries repeat a Feed"
+            raise BoundaryVerdictIntegrityError(message)
+        if target is None or boundary.target != target:
+            message = "candidate boundary crossed requested page target"
+            raise BoundaryVerdictIntegrityError(message)
+        boundaries_by_id[boundary.feed_id] = boundary
+
+    if unresolved.intersection(replay_blocked):
+        message = "a Feed cannot be unresolved and replay-blocked"
+        raise BoundaryVerdictIntegrityError(message)
+    if any(feed_id not in feed_facts_by_id for feed_id in unresolved):
+        message = "unresolved replay Feed is outside verdict membership"
+        raise BoundaryVerdictIntegrityError(message)
+    retired = {member.feed_id: member for member in retired_members}
+    for feed_id, member in retired.items():
+        feed = feed_facts_by_id.get(feed_id)
+        if feed is not None and feed.member is not member:
+            message = "locally retired member crossed verdict membership"
+            raise BoundaryVerdictIntegrityError(message)
+    return _FinalPlanIndexes(
+        boundaries_by_id=boundaries_by_id,
+        unresolved=unresolved,
+        replay_blocked=replay_blocked,
+        retired=retired,
+        failures_by_id={
+            failure.member.feed_id: failure for failure in verdict.failed_feeds
+        },
+    )
+
+
+def _plan_one_feed_mutation(
+    feed: FeedBoundaryFacts,
+    indexes: _FinalPlanIndexes,
+    *,
+    promoted: bool,
+    target: datetime.datetime | None,
+    policy: ingestion_lease_store.BudgetedFailure,
+    settled_utc: datetime.datetime,
+) -> ingestion_lease_store.ChildMutation | None:
+    feed_id = feed.member.feed_id
+    if feed_id in indexes.replay_blocked or feed_id in indexes.retired:
+        return None
+    boundary = indexes.boundaries_by_id.get(feed_id)
+    failure = indexes.failures_by_id.get(feed_id)
+    mutation: ingestion_lease_store.ChildMutation | None = None
+    if failure is not None and not promoted:
+        completion_cursor = (
+            boundary.target
+            if boundary is not None and feed_id not in indexes.unresolved
+            else None
+        )
+        mutation = ingestion_lease_store.FeedFailureTransition(
+            member=feed.member,
+            action=_failure_action(
+                failure.failure,
+                budgeted_failure=policy,
+                boundary_settled_utc=settled_utc,
+            ),
+            status_reason=failure.failure.status_reason,
+            reason=failure.failure.detail,
+            completion_cursor=completion_cursor,
+            charge_mode=ingestion_lease_store.FeedFailureChargeMode.ONE_SHOT,
+        )
+    elif promoted and boundary is not None:
+        mutation = ingestion_lease_store.ClosedCohortProgress(
+            feed.member,
+            None,
+            boundary.target,
+        )
+    elif feed.participated:
+        if target is not None and boundary is None:
+            message = "successful participant lacks its exact boundary"
+            raise BoundaryVerdictIntegrityError(message)
+        mutation = ingestion_lease_store.SourceObservation(
+            feed.member,
+            None if boundary is None else boundary.target,
+        )
+    elif boundary is not None:
+        mutation = ingestion_lease_store.SourceObservation(
+            feed.member,
+            boundary.target,
+        )
+    return mutation
+
+
+def _order_final_commands(
+    candidate_boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
+    mutations_by_id: dict[uuid.UUID, ingestion_lease_store.ChildMutation],
+) -> tuple[tuple[FinalMutationCommand, ...], int]:
+    boundary_commands: list[FinalMutationCommand] = []
+    used_feed_ids: set[uuid.UUID] = set()
+    for boundary in candidate_boundaries:
+        mutation = mutations_by_id.get(boundary.feed_id)
+        if mutation is None:
+            message = "candidate boundary lacks one exact child mutation"
+            raise BoundaryVerdictIntegrityError(message)
+        boundary_commands.append(FinalMutationCommand(mutation, boundary))
+        used_feed_ids.add(boundary.feed_id)
+    extra_commands = tuple(
+        FinalMutationCommand(mutations_by_id[feed_id], None)
+        for feed_id in sorted(
+            set(mutations_by_id) - used_feed_ids,
+            key=lambda value: value.int,
+        )
+    )
+    commands = tuple(boundary_commands) + extra_commands
+    return commands, len(boundary_commands)
+
+
+def plan_final_mutations(
+    verdict: PageVerdict,
+    *,
+    candidate_boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
+    unresolved_replay_feed_ids: tuple[uuid.UUID, ...],
+    replay_blocked_feed_ids: tuple[uuid.UUID, ...],
+    locally_retired_members: tuple[
+        ingestion_lease_store.LeaseMemberIdentity,
+        ...,
+    ],
+    requested_target: datetime.datetime | None,
+    boundary_settled_utc: datetime.datetime,
+    budgeted_failure: ingestion_lease_store.BudgetedFailure,
+) -> FinalMutationPlan:
+    """Build one deterministic final child transaction without I/O.
+
+    Args:
+        verdict: Exact pure page failure decision.
+        candidate_boundaries: Scheduler-approved trailing Feed boundaries.
+        unresolved_replay_feed_ids: Feeds whose replay barrier suppresses
+            trailing cursor closure.
+        replay_blocked_feed_ids: Feeds rejected by an earlier replay barrier.
+        locally_retired_members: Exact issued members retired by the scheduler.
+        requested_target: Valid page lastPos, or None for unusable progress.
+        boundary_settled_utc: One injected UTC settlement instant shared by
+            every non-budgeted failure in this batch.
+        budgeted_failure: Mandatory runtime policy propagated by identity.
+
+    Returns:
+        Exact caller-ordered commands and parent recovery effect.
+
+    Raises:
+        TypeError: An input uses an unsupported type.
+        BoundaryVerdictIntegrityError: Authority or ordering crosses.
+    """
+    if type(verdict) is not PageVerdict:
+        message = "verdict must be an exact PageVerdict"
+        raise TypeError(message)
+    target = _require_optional_utc_datetime(
+        requested_target,
+        "requested_target",
+    )
+    settled_utc = _require_optional_utc_datetime(
+        boundary_settled_utc,
+        "boundary_settled_utc",
+    )
+    if settled_utc is None:
+        message = "boundary_settled_utc must not be None"
+        raise ValueError(message)
+    policy = _require_final_plan_policy(budgeted_failure)
+    indexes = _prepare_final_plan_indexes(
+        verdict,
+        candidate_boundaries,
+        unresolved_replay_feed_ids,
+        replay_blocked_feed_ids,
+        locally_retired_members,
+        target,
+    )
+    mutations_by_id: dict[
+        uuid.UUID,
+        ingestion_lease_store.ChildMutation,
+    ] = {}
+    promoted = verdict.selected_scope is NewlyChargedScope.LEASE_ONLY
+    for feed in verdict.feed_facts:
+        mutation = _plan_one_feed_mutation(
+            feed,
+            indexes,
+            promoted=promoted,
+            target=target,
+            policy=policy,
+            settled_utc=settled_utc,
+        )
+        if mutation is not None:
+            mutations_by_id[feed.member.feed_id] = mutation
+
+    commands, boundary_command_count = _order_final_commands(
+        candidate_boundaries,
+        mutations_by_id,
+    )
+    lease_effect: ingestion_lease_store.LeaseEffect
+    if promoted:
+        lease_effect = ingestion_lease_store.NoLeaseEffect()
+    else:
+        lease_effect = ingestion_lease_store.FinalizeLeaseRecovery()
+    return FinalMutationPlan(
+        verdict=verdict,
+        commands=commands,
+        boundary_command_count=boundary_command_count,
+        lease_effect=lease_effect,
+        requested_target=target,
     )
 
 
