@@ -1509,6 +1509,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             item.gcs_uri for item in out_of_order_buffer_state.items
         }
         self.assertEqual(buffered_uris, {chunks[1].gcs_uri, chunks[2].gcs_uri})
+        self.assertEqual(curr_context.expected_next_chunk_start_ms, 101000)
 
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
@@ -1632,6 +1633,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
             item.gcs_uri for item in out_of_order_buffer_state.items
         }
         self.assertEqual(buffered_uris, {chunks[1].gcs_uri, chunks[2].gcs_uri})
+        self.assertEqual(curr_context.expected_next_chunk_start_ms, 101000)
 
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
@@ -1757,6 +1759,7 @@ class OrderedStitchAudioTest(unittest.TestCase):
         self.assertEqual(
             out_of_order_buffer_state.items[0].gcs_uri, chunks[1].gcs_uri
         )
+        self.assertEqual(curr_context.expected_next_chunk_start_ms, 102000)
 
 
 class OrderedStitchSpeechSegmentsTest(unittest.TestCase):

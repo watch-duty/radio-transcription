@@ -1061,13 +1061,6 @@ class OrderedStitchAudioFn(beam.DoFn):
             )
             task_logger.debug(f"[Process] Processing chunk {metadata.gcs_uri}")
 
-            if session_changed:
-                stale_timer_event.clear()
-                stale_timer_proc.clear()
-                curr_context = replace(
-                    curr_context, prior_audio_tail=None, sample_rate=None
-                )
-
             # Commit sequence context updates
             _write_transmission_context(
                 transmission_context_state,
@@ -1090,6 +1083,10 @@ class OrderedStitchAudioFn(beam.DoFn):
                 previous_expected_ts = initial_expected_ts
                 for i, chunk in enumerate(elements_to_emit):
                     if i > 0 and self._is_bundle_budget_exhausted():
+                        curr_context = replace(
+                            curr_context,
+                            expected_next_chunk_start_ms=previous_expected_ts,
+                        )
                         self._defer_remaining_chunks(
                             remaining_chunks=elements_to_emit[i:],
                             out_of_order_buffer_state=out_of_order_buffer_state,
@@ -1370,6 +1367,11 @@ class OrderedStitchAudioFn(beam.DoFn):
                         if i > 0 and self._is_bundle_budget_exhausted():
                             for remaining_chunk in elements_to_emit[i:]:
                                 out_of_order_buffer_state.add(remaining_chunk)
+                            curr_context = replace(
+                                curr_context,
+                                expected_next_chunk_start_ms=previous_expected_ts,
+                                order_timer_active=True,
+                            )
                             _reschedule_gap_timeout(
                                 gap_timer_event=gap_timer_event,
                                 gap_timer_proc=gap_timer_proc,
@@ -1378,10 +1380,7 @@ class OrderedStitchAudioFn(beam.DoFn):
                                 clamped=True,
                                 is_backfill=is_backfill,
                                 new_expected=new_expected,
-                                new_expected_next_ts=curr_context.expected_next_chunk_start_ms,
-                            )
-                            curr_context = replace(
-                                curr_context, order_timer_active=True
+                                new_expected_next_ts=previous_expected_ts,
                             )
                             _write_transmission_context(
                                 transmission_context_state,
@@ -1524,6 +1523,10 @@ class OrderedStitchAudioFn(beam.DoFn):
 
                 for i, chunk in enumerate(elements_to_emit):
                     if i > 0 and self._is_bundle_budget_exhausted():
+                        curr_context = replace(
+                            curr_context,
+                            expected_next_chunk_start_ms=previous_expected_ts,
+                        )
                         self._defer_remaining_chunks(
                             remaining_chunks=elements_to_emit[i:],
                             out_of_order_buffer_state=out_of_order_buffer_state,
