@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import collections
 import collections.abc
 import dataclasses
@@ -140,10 +141,24 @@ class _GrantLane(typing.Protocol):
         """Retire one Feed without affecting siblings."""
         ...
 
+    async def cover_page(
+        self,
+        *,
+        calls: collections.abc.Iterable[
+            feed_work_scheduler.CallSubmission
+        ],
+        boundaries: collections.abc.Iterable[
+            feed_work_scheduler.BoundaryWork
+        ],
+        candidate: cursor_policy.PageCandidate,
+    ) -> cursor_policy.PageSettlement:
+        """Settle one bounded progress or no-progress page."""
+        ...
+
 
 type _Now = collections.abc.Callable[[], datetime.datetime]
 type _Wait = collections.abc.Callable[
-    [typing.Any, float],
+    [asyncio.Event, float],
     collections.abc.Awaitable[None],
 ]
 
@@ -158,6 +173,16 @@ class _ValidatedCall:
     source_timestamp: datetime.datetime | None
     sort_timestamp: float
     raw_call: collections.abc.Mapping[str, object]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PageRequest:
+    """Frozen request position and page membership participation."""
+
+    pos: datetime.datetime | None
+    replay_feed_ids: frozenset[uuid.UUID]
+    snapshot: ingestion_lease_store.MembershipSnapshot
+    routes: collections.abc.Mapping[str, _MemberState]
 
 
 class BcfyCallsSidProcessor:
@@ -402,20 +427,157 @@ class BcfyCallsSidProcessor:
                 "bcfy_calls_sid_membership_invalid",
             )
 
+    def _select_request_position(self) -> _PageRequest:
+        """Freeze one normal or replay-override provider request position."""
+        snapshot = self._snapshot
+        lease_cursor = self._lease_cursor
+        if snapshot is None or lease_cursor is None:
+            message = "membership must be loaded before selecting SID pos"
+            raise RuntimeError(message)
+
+        replay_states = tuple(
+            state
+            for state in self._members_by_id.values()
+            if state.route_state is MemberRouteState.REPLAY_PENDING
+        )
+        position = lease_cursor.pos
+        replay_feed_ids: frozenset[uuid.UUID] = frozenset()
+        if replay_states:
+            replay_cursors = tuple(
+                state.effective_cursor for state in replay_states
+            )
+            if any(cursor is None for cursor in replay_cursors):
+                raise SidProcessorFailure(
+                    feed_store.FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
+                    "bcfy_calls_sid_membership_invalid",
+                )
+            typed_cursors = typing.cast(
+                "tuple[datetime.datetime, ...]",
+                replay_cursors,
+            )
+            replay_floor = _require_utc_datetime(
+                self._now(),
+                field_name="now",
+            ) - datetime.timedelta(minutes=5)
+            position = max(min(typed_cursors), replay_floor)
+            replay_feed_ids = frozenset(
+                state.feed_id for state in replay_states
+            )
+
+        return _PageRequest(
+            pos=position,
+            replay_feed_ids=replay_feed_ids,
+            snapshot=snapshot,
+            routes=types.MappingProxyType(dict(self._members_by_source)),
+        )
+
+    async def _settle_page(
+        self,
+        page: provider.CallsPageEnvelope,
+        *,
+        request: _PageRequest,
+    ) -> None:
+        """Settle one HTTP-success page as progress or no-progress."""
+        lease_cursor = self._lease_cursor
+        if lease_cursor is None:
+            message = "membership must be loaded before page settlement"
+            raise RuntimeError(message)
+        if not isinstance(page, provider.CallsPageEnvelope):
+            message = "page must be a CallsPageEnvelope"
+            raise TypeError(message)
+        if not isinstance(request, _PageRequest):
+            message = "request must be a frozen page request"
+            raise TypeError(message)
+
+        last_pos = _last_pos_to_datetime(page.last_pos)
+        if (
+            last_pos is not None
+            and lease_cursor.pos is not None
+            and last_pos < lease_cursor.pos
+        ):
+            _log_invalid_last_pos()
+            last_pos = None
+
+        calls = self._prepare_call_submissions(
+            page.calls,
+            replay_feed_ids=request.replay_feed_ids,
+            frozen_routes=request.routes,
+        )
+        if last_pos is None:
+            candidate = lease_cursor.prepare_no_progress()
+            settlement = await self._lane.cover_page(
+                calls=calls,
+                boundaries=(),
+                candidate=candidate,
+            )
+            lease_cursor.accept_no_progress(settlement)
+            return
+
+        candidate = lease_cursor.prepare(last_pos)
+        participants = self._progress_participants(request)
+        boundaries = tuple(
+            feed_work_scheduler.BoundaryWork(
+                state.member.identity,
+                last_pos,
+            )
+            for state in participants
+        )
+        receipt = await self._lane.cover_page(
+            calls=calls,
+            boundaries=boundaries,
+            candidate=candidate,
+        )
+        lease_cursor.accept(receipt)
+        for state in participants:
+            state.effective_cursor = _maximum_cursor(
+                state.effective_cursor,
+                last_pos,
+            )
+            if state.route_state in (
+                MemberRouteState.ADOPTING,
+                MemberRouteState.REPLAY_PENDING,
+            ):
+                state.route_state = MemberRouteState.NORMAL
+
+    def _progress_participants(
+        self,
+        request: _PageRequest,
+    ) -> tuple[_MemberState, ...]:
+        """Return frozen members authorized for valid page boundaries."""
+        participants: list[_MemberState] = []
+        for state in request.routes.values():
+            if (
+                state.route_state
+                in (MemberRouteState.NORMAL, MemberRouteState.ADOPTING)
+                or (
+                    state.route_state is MemberRouteState.REPLAY_PENDING
+                    and state.feed_id in request.replay_feed_ids
+                )
+            ):
+                participants.append(state)
+        return tuple(participants)
+
     def _prepare_call_submissions(
         self,
         raw_calls: collections.abc.Iterable[object],
         *,
         replay_feed_ids: frozenset[uuid.UUID] = frozenset(),
+        frozen_routes: (
+            collections.abc.Mapping[str, _MemberState] | None
+        ) = None,
     ) -> collections.abc.Iterator[feed_work_scheduler.CallSubmission]:
         """Freeze, validate, sort, filter, and lazily register one page."""
-        frozen_routes = dict(self._members_by_source)
+        page_routes = (
+            dict(self._members_by_source)
+            if frozen_routes is None
+            else frozen_routes
+        )
         validated: list[_ValidatedCall] = []
         for source_order, raw_call in enumerate(raw_calls):
             item = self._validate_call(
                 source_order,
                 raw_call,
-                frozen_routes,
+                page_routes,
             )
             if item is not None:
                 validated.append(item)
@@ -580,6 +742,37 @@ class BcfyCallsSidProcessor:
 
 
 _MISSING = object()
+
+
+def _last_pos_to_datetime(value: object | None) -> datetime.datetime | None:
+    """Parse current Calls progress compatibility without inventing time."""
+    if value is None or isinstance(value, bool):
+        _log_invalid_last_pos()
+        return None
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        _log_invalid_last_pos()
+        return None
+    if not math.isfinite(numeric_value):
+        _log_invalid_last_pos()
+        return None
+    try:
+        timestamp = int(numeric_value)
+        return datetime.datetime.fromtimestamp(timestamp, datetime.UTC)
+    except (OSError, OverflowError, ValueError):
+        _log_invalid_last_pos()
+        return None
+
+
+def _log_invalid_last_pos() -> None:
+    """Emit the existing low-cardinality invalid progress diagnostic."""
+    logger.warning(
+        "bcfy_calls response contained invalid lastPos",
+        extra={
+            "json_fields": {"event_type": "bcfy_calls_invalid_last_pos"}
+        },
+    )
 
 
 def _require_utc_datetime(

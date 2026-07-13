@@ -22,6 +22,9 @@ if typing.TYPE_CHECKING:
 _OWNER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _FEED_A = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _FEED_B = uuid.UUID("bbbbbbbb-cccc-dddd-eeee-ffffffffffff")
+_FEED_C = uuid.UUID("cccccccc-dddd-eeee-ffff-000000000000")
+_FEED_D = uuid.UUID("dddddddd-eeee-ffff-0000-111111111111")
+_FEED_E = uuid.UUID("eeeeeeee-ffff-0000-1111-222222222222")
 _NOW = datetime.datetime(2026, 7, 13, 1, 0, tzinfo=datetime.UTC)
 _GRANT = ingestion_lease_store.LeaseGrant(
     feed_store.SourceType.BCFY_CALLS,
@@ -112,10 +115,18 @@ class _ScriptedProvider:
 
 
 class _RecordingLane:
-    """Record exact Feed retirement without running downstream work."""
+    """Record exact coverage/retirement without downstream work."""
 
-    def __init__(self) -> None:
+    def __init__(self, *cover_actions: BaseException) -> None:
         self.removed: list[uuid.UUID] = []
+        self.cover_actions = collections.deque(cover_actions)
+        self.covers: list[
+            tuple[
+                tuple[feed_work_scheduler.CallSubmission, ...],
+                tuple[feed_work_scheduler.BoundaryWork, ...],
+                object,
+            ]
+        ] = []
 
     async def remove_feed(
         self,
@@ -128,6 +139,36 @@ class _RecordingLane:
             released_count=0,
             active_retained=True,
         )
+
+    async def cover_page(
+        self,
+        *,
+        calls: typing.Iterable[feed_work_scheduler.CallSubmission],
+        boundaries: typing.Iterable[feed_work_scheduler.BoundaryWork],
+        candidate: object,
+    ) -> object:
+        call_values = tuple(calls)
+        boundary_values = tuple(boundaries)
+        self.covers.append((call_values, boundary_values, candidate))
+        if self.cover_actions:
+            failure = self.cover_actions.popleft()
+            for call in call_values:
+                if call.settlement_observer is not None:
+                    call.settlement_observer(
+                        feed_work_scheduler.CallSettlement.ABORTED
+                    )
+            raise failure
+        if isinstance(candidate, sid_processor.cursor_policy.PageCursorCandidate):
+            return sid_processor.cursor_policy._issue_covered_page(candidate)
+        if isinstance(
+            candidate,
+            sid_processor.cursor_policy.NoProgressPageCandidate,
+        ):
+            return sid_processor.cursor_policy._issue_no_progress_page(
+                candidate
+            )
+        message = "unexpected candidate"
+        raise AssertionError(message)
 
 
 class _RecordingWait:
@@ -148,15 +189,17 @@ def _processor(
     store: _ScriptedMembershipStore,
     *,
     lane: _RecordingLane | None = None,
+    calls_provider: _ScriptedProvider | None = None,
+    wait: _RecordingWait | None = None,
 ) -> tuple[sid_processor.BcfyCallsSidProcessor, _RecordingLane]:
     selected_lane = lane or _RecordingLane()
     processor = sid_processor.BcfyCallsSidProcessor(
         _GRANT,
         store,
-        _ScriptedProvider(),
+        calls_provider or _ScriptedProvider(),
         selected_lane,
         now=lambda: _NOW,
-        wait=_RecordingWait(),
+        wait=wait or _RecordingWait(),
     )
     return processor, selected_lane
 
@@ -170,6 +213,20 @@ def _raw_call(
     if ts is not ...:
         result["ts"] = ts
     return result
+
+
+def _page(
+    *calls: object,
+    last_pos: object | None,
+) -> provider.CallsPageEnvelope:
+    payload: dict[str, object] = {"calls": list(calls)}
+    if last_pos is not None:
+        payload["lastPos"] = last_pos
+    return provider.CallsPageEnvelope(
+        payload=payload,
+        calls=calls,
+        last_pos=last_pos,
+    )
 
 
 class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
@@ -503,6 +560,469 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(processor._recent_urls, set())
         self.assertEqual(list(processor._recent_order), [])
         self.assertEqual(processor._members_by_source, {})
+
+    async def test_adopt_null_member_on_valid_empty_page_then_route(self) -> None:
+        store = _ScriptedMembershipStore(
+            _snapshot(
+                4,
+                _member(_FEED_A, "00123-00045", cursor=None),
+            )
+        )
+        processor, lane = _processor(store)
+        await processor._refresh_membership()
+        request = processor._select_request_position()
+        target = _NOW + datetime.timedelta(seconds=10)
+
+        await processor._settle_page(
+            _page(
+                _raw_call("00123-00045", "https://audio/adoption"),
+                last_pos=target.timestamp(),
+            ),
+            request=request,
+        )
+
+        calls, boundaries, _ = lane.covers[0]
+        self.assertEqual(calls, ())
+        self.assertEqual(
+            boundaries,
+            (
+                feed_work_scheduler.BoundaryWork(
+                    processor._member_state(_FEED_A).member.identity,
+                    target,
+                ),
+            ),
+        )
+        self.assertIs(
+            processor._member_state(_FEED_A).route_state,
+            sid_processor.MemberRouteState.NORMAL,
+        )
+        routed = list(
+            processor._prepare_call_submissions(
+                [
+                    _raw_call(
+                        "00123-00045",
+                        "https://audio/following-poll",
+                        target.timestamp() + 1,
+                    )
+                ]
+            )
+        )
+        self.assertEqual(len(routed), 1)
+
+    async def test_adopt_new_null_member_classification(self) -> None:
+        member_a = _member(
+            _FEED_A,
+            "00123-00045",
+            cursor=_NOW - datetime.timedelta(seconds=30),
+        )
+        member_b = _member(_FEED_B, "00123-00046", cursor=None)
+        store = _ScriptedMembershipStore(
+            _snapshot(4, member_a),
+            _snapshot(5, member_a, member_b),
+        )
+        processor, _ = _processor(store)
+        await processor._refresh_membership()
+
+        await processor._refresh_membership()
+
+        self.assertIs(
+            processor._member_state(_FEED_B).route_state,
+            sid_processor.MemberRouteState.ADOPTING,
+        )
+
+    async def test_adopt_missing_malformed_and_regressive_last_pos_retained(
+        self,
+    ) -> None:
+        cases = (None, "malformed", (_NOW - datetime.timedelta(minutes=1)).timestamp())
+        for last_pos in cases:
+            with self.subTest(last_pos=last_pos):
+                member_a = _member(
+                    _FEED_A,
+                    "00123-00045",
+                    cursor=_NOW - datetime.timedelta(seconds=30),
+                )
+                member_b = _member(_FEED_B, "00123-00046", cursor=None)
+                store = _ScriptedMembershipStore(
+                    _snapshot(4, member_a),
+                    _snapshot(5, member_a, member_b),
+                )
+                processor, lane = _processor(store)
+                await processor._refresh_membership()
+                await processor._refresh_membership()
+                original_cursor = processor._lease_cursor.pos
+
+                await processor._settle_page(
+                    _page(last_pos=last_pos),
+                    request=processor._select_request_position(),
+                )
+
+                _, boundaries, candidate = lane.covers[0]
+                self.assertEqual(boundaries, ())
+                self.assertIsInstance(
+                    candidate,
+                    sid_processor.cursor_policy.NoProgressPageCandidate,
+                )
+                self.assertEqual(processor._lease_cursor.pos, original_cursor)
+                self.assertIs(
+                    processor._member_state(_FEED_B).route_state,
+                    sid_processor.MemberRouteState.ADOPTING,
+                )
+
+    async def test_adopt_aborted_coverage_retains_state(self) -> None:
+        lane = _RecordingLane(RuntimeError("cover aborted"))
+        store = _ScriptedMembershipStore(
+            _snapshot(
+                4,
+                _member(_FEED_A, "00123-00045", cursor=None),
+            )
+        )
+        processor, _ = _processor(store, lane=lane)
+        await processor._refresh_membership()
+
+        with self.assertRaisesRegex(RuntimeError, "cover aborted"):
+            await processor._settle_page(
+                _page(last_pos=_NOW.timestamp()),
+                request=processor._select_request_position(),
+            )
+
+        self.assertIs(
+            processor._member_state(_FEED_A).route_state,
+            sid_processor.MemberRouteState.ADOPTING,
+        )
+        self.assertIsNotNone(
+            processor._lease_cursor.outstanding_candidate,
+        )
+
+    async def test_replay_classifies_older_equal_newer_and_null_joins(
+        self,
+    ) -> None:
+        current = _NOW - datetime.timedelta(seconds=30)
+        member_a = _member(_FEED_A, "00123-00045", cursor=current)
+        store = _ScriptedMembershipStore(
+            _snapshot(4, member_a),
+            _snapshot(
+                5,
+                member_a,
+                _member(
+                    _FEED_B,
+                    "00123-00046",
+                    cursor=current - datetime.timedelta(seconds=1),
+                ),
+                _member(_FEED_C, "00123-00047", cursor=current),
+                _member(
+                    _FEED_D,
+                    "00123-00048",
+                    cursor=current + datetime.timedelta(seconds=1),
+                ),
+                _member(_FEED_E, "00123-00049", cursor=None),
+            ),
+        )
+        processor, _ = _processor(store)
+        await processor._refresh_membership()
+
+        await processor._refresh_membership()
+
+        self.assertIs(
+            processor._member_state(_FEED_B).route_state,
+            sid_processor.MemberRouteState.REPLAY_PENDING,
+        )
+        self.assertIs(
+            processor._member_state(_FEED_C).route_state,
+            sid_processor.MemberRouteState.NORMAL,
+        )
+        self.assertIs(
+            processor._member_state(_FEED_D).route_state,
+            sid_processor.MemberRouteState.NORMAL,
+        )
+        self.assertIs(
+            processor._member_state(_FEED_E).route_state,
+            sid_processor.MemberRouteState.ADOPTING,
+        )
+
+    async def test_replay_initial_floor_does_not_mark_initial_member(self) -> None:
+        old_cursor = _NOW - datetime.timedelta(minutes=30)
+        store = _ScriptedMembershipStore(
+            _snapshot(
+                4,
+                _member(_FEED_A, "00123-00045", cursor=old_cursor),
+            )
+        )
+        processor, _ = _processor(store)
+
+        await processor._refresh_membership()
+
+        self.assertEqual(
+            processor._lease_cursor.pos,
+            _NOW - datetime.timedelta(minutes=5),
+        )
+        self.assertIs(
+            processor._member_state(_FEED_A).route_state,
+            sid_processor.MemberRouteState.NORMAL,
+        )
+
+    async def test_replay_coalesces_minimum_with_five_minute_clamp(self) -> None:
+        current = _NOW - datetime.timedelta(seconds=30)
+        member_a = _member(_FEED_A, "00123-00045", cursor=current)
+        store = _ScriptedMembershipStore(
+            _snapshot(4, member_a),
+            _snapshot(
+                5,
+                member_a,
+                _member(
+                    _FEED_B,
+                    "00123-00046",
+                    cursor=_NOW - datetime.timedelta(minutes=20),
+                ),
+                _member(
+                    _FEED_C,
+                    "00123-00047",
+                    cursor=_NOW - datetime.timedelta(minutes=2),
+                ),
+            ),
+        )
+        processor, _ = _processor(store)
+        await processor._refresh_membership()
+        await processor._refresh_membership()
+        before_cursor = processor._lease_cursor.pos
+
+        request = processor._select_request_position()
+
+        self.assertEqual(
+            request.pos,
+            _NOW - datetime.timedelta(minutes=5),
+        )
+        self.assertEqual(request.replay_feed_ids, frozenset({_FEED_B, _FEED_C}))
+        self.assertEqual(processor._lease_cursor.pos, before_cursor)
+
+    async def test_replay_valid_override_routes_all_and_consumes_state(
+        self,
+    ) -> None:
+        current = _NOW - datetime.timedelta(seconds=30)
+        member_a = _member(_FEED_A, "00123-00045", cursor=current)
+        member_b = _member(
+            _FEED_B,
+            "00123-00046",
+            cursor=_NOW - datetime.timedelta(minutes=2),
+        )
+        store = _ScriptedMembershipStore(
+            _snapshot(4, member_a),
+            _snapshot(5, member_a, member_b),
+        )
+        processor, lane = _processor(store)
+        await processor._refresh_membership()
+        await processor._refresh_membership()
+        target = _NOW + datetime.timedelta(seconds=10)
+        request = processor._select_request_position()
+
+        await processor._settle_page(
+            _page(
+                _raw_call(
+                    "00123-00045",
+                    "https://audio/normal-on-override",
+                    current.timestamp() + 1,
+                ),
+                _raw_call(
+                    "00123-00046",
+                    "https://audio/replay",
+                    (_NOW - datetime.timedelta(minutes=1)).timestamp(),
+                ),
+                last_pos=target.timestamp(),
+            ),
+            request=request,
+        )
+
+        calls, boundaries, _ = lane.covers[0]
+        self.assertEqual(
+            [call.feed_id for call in calls],
+            [_FEED_B, _FEED_A],
+        )
+        self.assertEqual(
+            {boundary.feed_id for boundary in boundaries},
+            {_FEED_A, _FEED_B},
+        )
+        self.assertEqual(processor._lease_cursor.pos, target)
+        self.assertIs(
+            processor._member_state(_FEED_B).route_state,
+            sid_processor.MemberRouteState.NORMAL,
+        )
+
+    async def test_replay_no_progress_retains_override_and_cursor(self) -> None:
+        current = _NOW - datetime.timedelta(seconds=30)
+        member_a = _member(_FEED_A, "00123-00045", cursor=current)
+        member_b = _member(
+            _FEED_B,
+            "00123-00046",
+            cursor=_NOW - datetime.timedelta(minutes=2),
+        )
+        store = _ScriptedMembershipStore(
+            _snapshot(4, member_a),
+            _snapshot(5, member_a, member_b),
+        )
+        processor, lane = _processor(store)
+        await processor._refresh_membership()
+        await processor._refresh_membership()
+        request = processor._select_request_position()
+        before_cursor = processor._lease_cursor.pos
+
+        await processor._settle_page(
+            _page(
+                _raw_call(
+                    "00123-00046",
+                    "https://audio/no-progress-replay",
+                    (_NOW - datetime.timedelta(minutes=1)).timestamp(),
+                ),
+                last_pos="invalid",
+            ),
+            request=request,
+        )
+
+        calls, boundaries, _ = lane.covers[0]
+        self.assertEqual([call.feed_id for call in calls], [_FEED_B])
+        self.assertEqual(boundaries, ())
+        self.assertEqual(processor._lease_cursor.pos, before_cursor)
+        self.assertIs(
+            processor._member_state(_FEED_B).route_state,
+            sid_processor.MemberRouteState.REPLAY_PENDING,
+        )
+        self.assertEqual(
+            processor._select_request_position().pos,
+            request.pos,
+        )
+
+    async def test_replay_aborted_override_retains_state_and_unwinds_url(
+        self,
+    ) -> None:
+        current = _NOW - datetime.timedelta(seconds=30)
+        member_a = _member(_FEED_A, "00123-00045", cursor=current)
+        member_b = _member(
+            _FEED_B,
+            "00123-00046",
+            cursor=_NOW - datetime.timedelta(minutes=2),
+        )
+        lane = _RecordingLane(RuntimeError("override aborted"))
+        store = _ScriptedMembershipStore(
+            _snapshot(4, member_a),
+            _snapshot(5, member_a, member_b),
+        )
+        processor, _ = _processor(store, lane=lane)
+        await processor._refresh_membership()
+        await processor._refresh_membership()
+
+        with self.assertRaisesRegex(RuntimeError, "override aborted"):
+            await processor._settle_page(
+                _page(
+                    _raw_call(
+                        "00123-00046",
+                        "https://audio/aborted-override",
+                        (_NOW - datetime.timedelta(minutes=1)).timestamp(),
+                    ),
+                    last_pos=_NOW.timestamp(),
+                ),
+                request=processor._select_request_position(),
+            )
+
+        self.assertIs(
+            processor._member_state(_FEED_B).route_state,
+            sid_processor.MemberRouteState.REPLAY_PENDING,
+        )
+        self.assertNotIn(
+            "https://audio/aborted-override",
+            processor._pending_by_url,
+        )
+
+    async def test_adopt_null_sibling_on_valid_replay_override(self) -> None:
+        current = _NOW - datetime.timedelta(seconds=30)
+        member_a = _member(_FEED_A, "00123-00045", cursor=current)
+        member_b = _member(
+            _FEED_B,
+            "00123-00046",
+            cursor=_NOW - datetime.timedelta(minutes=2),
+        )
+        member_c = _member(_FEED_C, "00123-00047", cursor=None)
+        store = _ScriptedMembershipStore(
+            _snapshot(4, member_a),
+            _snapshot(5, member_a, member_b, member_c),
+        )
+        processor, lane = _processor(store)
+        await processor._refresh_membership()
+        await processor._refresh_membership()
+        target = _NOW + datetime.timedelta(seconds=1)
+
+        await processor._settle_page(
+            _page(
+                _raw_call(
+                    "00123-00047",
+                    "https://audio/ignored-adoption",
+                    target.timestamp(),
+                ),
+                last_pos=target.timestamp(),
+            ),
+            request=processor._select_request_position(),
+        )
+
+        calls, boundaries, _ = lane.covers[0]
+        self.assertEqual(calls, ())
+        self.assertEqual(
+            {boundary.feed_id for boundary in boundaries},
+            {_FEED_A, _FEED_B, _FEED_C},
+        )
+        self.assertIs(
+            processor._member_state(_FEED_C).route_state,
+            sid_processor.MemberRouteState.NORMAL,
+        )
+
+    async def test_last_pos_float_string_equal_uses_progress_path(self) -> None:
+        cursor = _NOW - datetime.timedelta(seconds=30)
+        store = _ScriptedMembershipStore(
+            _snapshot(4, _member(_FEED_A, "00123-00045", cursor=cursor))
+        )
+        processor, lane = _processor(store)
+        await processor._refresh_membership()
+
+        await processor._settle_page(
+            _page(last_pos=f"{cursor.timestamp():.1f}"),
+            request=processor._select_request_position(),
+        )
+
+        _, boundaries, candidate = lane.covers[0]
+        self.assertIsInstance(
+            candidate,
+            sid_processor.cursor_policy.PageCursorCandidate,
+        )
+        self.assertEqual([boundary.target for boundary in boundaries], [cursor])
+        self.assertEqual(processor._lease_cursor.pos, cursor)
+
+    async def test_no_progress_routes_calls_without_boundaries_or_cursor(
+        self,
+    ) -> None:
+        cursor = _NOW - datetime.timedelta(seconds=30)
+        store = _ScriptedMembershipStore(
+            _snapshot(4, _member(_FEED_A, "00123-00045", cursor=cursor))
+        )
+        processor, lane = _processor(store)
+        await processor._refresh_membership()
+
+        await processor._settle_page(
+            _page(
+                _raw_call(
+                    "00123-00045",
+                    "https://audio/no-progress",
+                    cursor.timestamp() + 1,
+                ),
+                last_pos=None,
+            ),
+            request=processor._select_request_position(),
+        )
+
+        calls, boundaries, candidate = lane.covers[0]
+        self.assertEqual([call.feed_id for call in calls], [_FEED_A])
+        self.assertEqual(boundaries, ())
+        self.assertIsInstance(
+            candidate,
+            sid_processor.cursor_policy.NoProgressPageCandidate,
+        )
+        self.assertEqual(processor._lease_cursor.pos, cursor)
+        self.assertEqual(processor._lease_cursor.next_page_sequence, 1)
 
 
 if __name__ == "__main__":
