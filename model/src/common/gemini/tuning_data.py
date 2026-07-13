@@ -8,7 +8,12 @@ No GCP project or bucket constants are defined in this module. All GCP identifie
 caller-supplied parameters.
 """
 
-from typing import Any
+from __future__ import annotations
+
+import collections.abc  # noqa: TC003 - needed by runtime annotation resolution
+import typing
+
+from common.gemini import context
 
 
 def build_audio_tuning_example(
@@ -16,7 +21,9 @@ def build_audio_tuning_example(
     gt_text: str,
     system_prompt: str,
     user_prompt: str,
-) -> dict[str, Any]:
+    history: collections.abc.Sequence[context.ContextTurn] | None = None,
+    history_mode: str = "text_turns",
+) -> dict[str, typing.Any]:
     """Build a single Gemini/Vertex AI audio-SFT JSONL example.
 
     The caller supplies ``system_prompt`` and ``user_prompt`` so prompt text stays
@@ -29,40 +36,43 @@ def build_audio_tuning_example(
             ``common.gemini.prompts``).
         user_prompt: Per-turn user instruction (e.g. from
             ``common.gemini.prompts``).
+        history: Previous same-source turns. Prior audio URIs are retained for
+            provenance, but prior context is emitted as transcript text only.
+        history_mode: ``text_turns`` emits prior user/model turns with
+            text-only user turns and transcript model turns. ``transcript``
+            folds prior transcripts into the current user prompt.
+            ``guarded_transcript_block`` folds prior transcripts into a
+            guarded block that explicitly says not to re-transcribe or continue
+            prior turns.
 
     Returns:
         A dict matching the current Vertex AI audio-SFT JSONL schema:
-        ``{systemInstruction, contents: [{role:user, parts:[fileData, text]},
-                                          {role:model, parts:[text]}]}``.
+        ``{systemInstruction, contents: [history..., current user, target]}``.
     """
+    contents = context.build_transcription_contents(
+        audio_uri=audio_uri,
+        user_prompt=user_prompt,
+        history=history,
+        history_mode=history_mode,
+    )
+    contents.append({"role": "model", "parts": [{"text": gt_text}]})
     return {
         "systemInstruction": {
             "role": "system",
             "parts": [{"text": system_prompt}],
         },
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "fileData": {
-                            "mimeType": "audio/flac",
-                            "fileUri": audio_uri,
-                        }
-                    },
-                    {"text": user_prompt},
-                ],
-            },
-            {"role": "model", "parts": [{"text": gt_text}]},
-        ],
+        "contents": contents,
     }
 
 
-def validate_audio_tuning_example(example: dict[str, Any]) -> bool:
-    """Return True if the example matches the Vertex AI audio-SFT JSONL schema.
+def validate_audio_tuning_example(example: dict[str, typing.Any]) -> bool:
+    """Return True if the example matches the local audio-SFT data contract.
 
-    Validates the shape locally before submitting a paid tuning job. Rejects
-    legacy ``{input_text, output_text}`` and flat ``{prompt, response}`` shapes.
+    This intentionally avoids provider-specific checks such as audio count,
+    file URI scheme, MIME type, or other API constraints that may change over
+    time. Vertex remains the source of truth for those constraints. Local
+    preflight only rejects examples missing the wrapper fields or the
+    non-empty target text needed by our training data contract.
 
     Args:
         example: A dict produced by ``build_audio_tuning_example`` or parsed
@@ -74,51 +84,20 @@ def validate_audio_tuning_example(example: dict[str, Any]) -> bool:
     if "systemInstruction" not in example:
         return False
     contents = example.get("contents")
-    if not isinstance(contents, list) or len(contents) != 2:
+    if not isinstance(contents, list) or not contents:
         return False
-    user_turn, model_turn = contents
-    if not isinstance(user_turn, dict) or not isinstance(model_turn, dict):
+    target_turn = contents[-1]
+    if not isinstance(target_turn, dict) or target_turn.get("role") != "model":
         return False
-    if user_turn.get("role") != "user" or model_turn.get("role") != "model":
-        return False
-
-    file_data = _extract_user_file_data(user_turn)
-    if not _is_valid_audio_file_data(file_data):
-        return False
-
-    model_text = _extract_model_text(model_turn)
-    return bool(model_text.strip())
+    return bool(_extract_model_text(target_turn).strip())
 
 
-def _extract_user_file_data(user_turn: dict[str, Any]) -> dict[str, Any] | None:
-    user_parts = user_turn.get("parts", [])
-    file_parts = [
-        p for p in user_parts if isinstance(p, dict) and "fileData" in p
-    ]
-    if not file_parts:
-        return None
-    fd = file_parts[0]["fileData"]
-    if not isinstance(fd, dict):
-        return None
-    return fd
-
-
-def _is_valid_audio_file_data(file_data: dict[str, Any] | None) -> bool:
-    if file_data is None:
-        return False
-    file_uri = file_data.get("fileUri", "")
-    return (
-        isinstance(file_uri, str)
-        and file_uri.startswith("gs://")
-        and file_data.get("mimeType") == "audio/flac"
-    )
-
-
-def _extract_model_text(model_turn: dict[str, Any]) -> str:
+def _extract_model_text(model_turn: dict[str, typing.Any]) -> str:
     model_parts = model_turn.get("parts", [])
     if not isinstance(model_parts, list) or not model_parts:
         return ""
     first_model_part = model_parts[0]
     if not isinstance(first_model_part, dict):
         return ""
-    return first_model_part.get("text") or ""
+    text = first_model_part.get("text")
+    return text if isinstance(text, str) else ""
