@@ -1,0 +1,43 @@
+{
+  "absence_flags": {
+    "current_scoring_text": true,
+    "realized_correct_history": true
+  },
+  "artifact_kind": "reference_absent_entity_predicted_preflight",
+  "assignment_count": 1500,
+  "authenticated_loader_implementation_sha256": "17f752d1f99e644751921bfa548c397f539050582ee66169a36162f21392f03f",
+  "condition": "reference_absent_entity_predicted",
+  "evidentiary_status": "post_outcome_exploratory_lexical_stress",
+  "frame_sha256": "f87109ae9a84440e58575feace65eb4bc71101b4b5ad0c9c42f834c3c43b0ee3",
+  "generation_command": "python -m experiments.scripts.predicted_history_tempting_entity",
+  "pattern_class_counts": {
+    "alphanumeric_identifier": 1125,
+    "location_suffix_phrase": 118,
+    "operational_code_phrase": 7,
+    "prefixed_operational_identifier": 250
+  },
+  "pattern_classes": [
+    "prefixed_operational_identifier",
+    "alphanumeric_identifier",
+    "operational_code_phrase",
+    "location_suffix_phrase"
+  ],
+  "private_assignment_registry_sha256": "bd761a877a5acadfac4ec969158d3b78b746a5be8a9891ebd53abb3c913cf8f7",
+  "protocol_sha256": "5fadcd1d35486cf679696d01b5aa4a1a8b5137a5b76aceecf6671081bbc77de2",
+  "provider_request_count": 1500,
+  "request_implementation_fingerprint": "7e337201c5cc490229e57c89fbe3e5c723219158360e810802431dcbe6098408",
+  "request_safety_flags": {
+    "complete_authenticated_turns_only": true,
+    "current_audio_only": true,
+    "donor_audio_excluded": true,
+    "synthetic_text_excluded": true
+  },
+  "schema_version": 1,
+  "selected_target_set_sha256": "6893e19f1b6abf5fa2048600c68a483860f0ac6770ca2f7e84a3abc010fde36a",
+  "selection_implementation_sha256": "a840c56b4b2a3ab1b1a2792d139bb12f00a83f687296327e93209f16c66e9cd4",
+  "stress_preflight_file_sha256": "1fde2de7e6fc4a9e3898e9c2fc197bc93d5140f8ed2654aba87796265944f272",
+  "study_id": "predicted_history_reference_absent_entity_development_v1",
+  "target_count": 3,
+  "target_row_count": 500,
+  "tokenizer_implementation_sha256": "bd5c1bb0fdff92450a09b01e953804c48cf892f96587f559a1b2e7d6b2023907"
+}

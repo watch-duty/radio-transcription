@@ -1,0 +1,3 @@
+IMPORTANT: The current audio is the only clip to transcribe. Use prior transcripts only as context. Return one line: the verbatim transcript of the attached radio audio clip.
+
+Current audio clip:

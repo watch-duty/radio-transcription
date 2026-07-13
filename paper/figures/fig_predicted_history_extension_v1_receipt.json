@@ -1,0 +1,138 @@
+{
+  "artifact_kind": "predicted_history_extension_figures_v1",
+  "figure_contract": {
+    "context_copy_role": "reference_proxy_lexical_diagnostic_not_semantic_hallucination",
+    "cross_target_role": "descriptive_unmatched_historical_systems",
+    "curve_conditions": [
+      "P0",
+      "R1",
+      "R2",
+      "R4",
+      "R8"
+    ],
+    "curve_prior_turn_caps": [
+      0,
+      1,
+      2,
+      4,
+      8
+    ],
+    "detached_prompt_control": "R0",
+    "full_width_inches": 6.75,
+    "matrix_cell_content": "wer_with_95_percent_ci",
+    "matrix_cell_count": 18,
+    "matrix_detached_control": "R0",
+    "matrix_main_conditions": [
+      "P0",
+      "R1",
+      "R2",
+      "R4",
+      "R8"
+    ],
+    "metrics": [
+      "wer",
+      "context_copy_rate"
+    ],
+    "palette": "Okabe-Ito",
+    "png_dpi": 300,
+    "population": "main_p13_primary_4098",
+    "population_row_count": 4098,
+    "response_model_versions_matched": true,
+    "target_styles": {
+      "base": {
+        "color": "#0072B2",
+        "linestyle": "-",
+        "marker": "o"
+      },
+      "no_context_sft": {
+        "color": "#E69F00",
+        "linestyle": "--",
+        "marker": "s"
+      },
+      "prior_context_sft": {
+        "color": "#009E73",
+        "linestyle": "-.",
+        "marker": "^"
+      }
+    },
+    "targets": [
+      "base",
+      "no_context_sft",
+      "prior_context_sft"
+    ],
+    "tradeoff_excludes_r0": true,
+    "tradeoff_includes_p0": true,
+    "uncertainty": "analyzer_supplied_95_percent_cluster_bootstrap_ci"
+  },
+  "generator": {
+    "matplotlib_version": "3.11.0",
+    "numpy_version": "2.5.1",
+    "path": "paper/figures/gen_fig_predicted_history_extension_v1.py",
+    "sha256": "f048098273827425c9eea4e20cf164a83069dd7cef76e6d0861b62d0e1224c78"
+  },
+  "input": {
+    "analysis_id": "predicted_history_extension_analysis_v1",
+    "analysis_identity": {
+      "analysis_code": "aa900d6fdc0b1b99de5be7e7115203261e8abd3d1804b8bef901d01b03a48cf3",
+      "analysis_components": "9da9859d02a0ed2686ede5742fc6abab6f3e7f9396c5b80d0d3cf93329cde446",
+      "entity_operational": "b28c43a6178b306fb31f3dafacd2a4bc7a81db17b80e4471213dcc0a6fa775ef",
+      "entity_plan": "b06618c81e77e603fe6e98471a50639cc5bc15bd8e8c7af082ce0ad550b3a10b",
+      "entity_preflight": "f1d975b6ebbb4a56b86610c5f6c8b8d44c9a2e50b78c8dd76d1e6bb49e4a5f4b",
+      "entity_protocol": "5fadcd1d35486cf679696d01b5aa4a1a8b5137a5b76aceecf6671081bbc77de2",
+      "entity_receipt": "1eb4a42732d6feab8a4512f20dfc5d5a9d0125de4d39653c2c048337534ba3ed",
+      "p13_operational": "3ea90f9f1bc56a42245f7886aee5978b4d6374299ab8afa1400e2ce8004e814f",
+      "p13_plan": "ac01ea64ec4faa6dfe26f95ed280197227f328fb38868d6a54c33c3700c4c894",
+      "p13_preflight": "4d4157d0525c124b74df0dbb958ae2bc734d84fcdbcae8b8ef1c4ebc039960c0",
+      "p13_protocol": "abc2c5dd31f0219814542403e0752af9ab747c646de91fca065092c6e223c4cd",
+      "p13_receipt": "a749489d3c399adbb29d196a4bbaa085f641fa96a562f4f7efbbec148489ca0f",
+      "parent_analysis_result": "47d010e6f7af4b5c6e3bbb8a5159106ae3b1b4742265ce76f0320d0f444e230c",
+      "parent_frame_sha256": "f87109ae9a84440e58575feace65eb4bc71101b4b5ad0c9c42f834c3c43b0ee3",
+      "parent_matrix_receipt_sha256": "e2386e01b97f205c6ac4a629aa1b5579e1f2ae4d31eb3d85e4bd1ac9706a7f0f",
+      "parent_stress_plan_sha256": "4be1efbed8f897320b2ce73f43e9c90dda2e0feb955782d606850f8f87eaeb94",
+      "parent_stress_receipt_sha256": "ad0544275528ad35e5e84990500115beabcc4c2847dca295cb1c821db7975977",
+      "private_assignment_registry": "bd761a877a5acadfac4ec969158d3b78b746a5be8a9891ebd53abb3c913cf8f7"
+    },
+    "bytes": 319832,
+    "path": "experiments/results/predicted_history_extension_analysis.json",
+    "sha256": "fb8fede35b125dabf66659289c8c4f77562122e31a2a5a25f68dbf9d852b5aa2"
+  },
+  "outputs": {
+    "data/predicted_history_extension_v1.csv": {
+      "bytes": 3307,
+      "sha256": "8c5018a3d16ddaae1dd1879b6a939c560055710b1310bc6d8afaa7126a814e37"
+    },
+    "data/predicted_history_extension_v1.json": {
+      "bytes": 11531,
+      "sha256": "3c1ee9416721752c3531b16802eee7a21e100573f03f850eee36ab9e3ef5665c"
+    },
+    "fig_predicted_history_extension_exact_p13_v1.pdf": {
+      "bytes": 32734,
+      "sha256": "072166a74020002a3f2f0fa89b089475664488c0121318e919003b0e97dac174"
+    },
+    "fig_predicted_history_extension_exact_p13_v1.png": {
+      "bytes": 102971,
+      "sha256": "6fac6c3bbc2f43d6052ede2b14afd523cf32332db69ea00c9ef065f2e359ac3e"
+    },
+    "fig_predicted_history_extension_matrix_v1.pdf": {
+      "bytes": 60395,
+      "sha256": "276bdabedccf4360f5738770169f1368a494ff53289d895361723dd634288eef"
+    },
+    "fig_predicted_history_extension_matrix_v1.png": {
+      "bytes": 241150,
+      "sha256": "edf5d1afb484cf71add995ee83b442dfcb5dc2e6e8f98e854403eadda6b43150"
+    },
+    "fig_predicted_history_extension_tradeoff_v1.pdf": {
+      "bytes": 30455,
+      "sha256": "13cde92aa8222f0417cd2cdccf645ae2f37715ea4d251406d8434153666e8a1f"
+    },
+    "fig_predicted_history_extension_tradeoff_v1.png": {
+      "bytes": 112336,
+      "sha256": "35a328d660ab8733f64dd8df0e71b9ed49906a3bf3292acb94d62d00d09db976"
+    }
+  },
+  "reproduction": {
+    "generate": "uv run --script paper/figures/gen_fig_predicted_history_extension_v1.py",
+    "test": "uv run --script experiments/scripts/run_predicted_history_extension_figure_tests.py"
+  },
+  "schema_version": 1
+}

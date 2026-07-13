@@ -1,0 +1,4697 @@
+{
+  "analysis_id": "predicted_history_postoutcome_breakdown_v1",
+  "identity": {
+    "authenticated_inputs": {
+      "frame_sha256": "f87109ae9a84440e58575feace65eb4bc71101b4b5ad0c9c42f834c3c43b0ee3",
+      "selected_cells": {
+        "R0-base": {
+          "histories_sha256": "2fe49a2fd36bbc446c9df509edf163cade67aa1c927b836fe2922644cf134a4b",
+          "history_turns_sha256": "0842eb1f493b7e4f98902f87a03b47029b6db702ec8a419462be8c97abfe88fb",
+          "model_version_set_sha256": "efa44a091e264573c5a4b3b294e67e7f84d7cc8ad343df8b0414760ff8ac5383",
+          "predictions_sha256": "ecdc441c145ec0eec915893c285a954c91f7b3759f8b600a209b8d7dff60214e",
+          "provider_errors_sha256": "ce2931a00c6ad7dac5f5b91e0b178ac894dc6383d561b59c769b749bd0792017",
+          "telemetry_sha256": "557c045d808487e13eaa9cf382dc6d00beded9ad42e8727097f6ffba313e6562"
+        },
+        "R0-no_context_sft": {
+          "histories_sha256": "2fe49a2fd36bbc446c9df509edf163cade67aa1c927b836fe2922644cf134a4b",
+          "history_turns_sha256": "0842eb1f493b7e4f98902f87a03b47029b6db702ec8a419462be8c97abfe88fb",
+          "model_version_set_sha256": "1956f747759d155afb66dd465dabea1df64583bed9ff76e67bb8a975d5ddd3e9",
+          "predictions_sha256": "ea49356d8a16a7ba576b9e43160939b31d767cc078063df5fafecb30ea80da04",
+          "provider_errors_sha256": "ce2931a00c6ad7dac5f5b91e0b178ac894dc6383d561b59c769b749bd0792017",
+          "telemetry_sha256": "e7d1f269f0c0c454f5e68bfa56cabb95fa06db9e838315d30a03ed0261a246a3"
+        },
+        "R0-prior_context_sft": {
+          "histories_sha256": "2fe49a2fd36bbc446c9df509edf163cade67aa1c927b836fe2922644cf134a4b",
+          "history_turns_sha256": "0842eb1f493b7e4f98902f87a03b47029b6db702ec8a419462be8c97abfe88fb",
+          "model_version_set_sha256": "1956f747759d155afb66dd465dabea1df64583bed9ff76e67bb8a975d5ddd3e9",
+          "predictions_sha256": "17662bcbb905bc3fdc8e1195b4554f4833826ca5b052fc4257230837703658bf",
+          "provider_errors_sha256": "ce2931a00c6ad7dac5f5b91e0b178ac894dc6383d561b59c769b749bd0792017",
+          "telemetry_sha256": "ac7618d75b4a1bbb711488655c5f2ee6ed43652d97943e6872bd84273ea293f5"
+        },
+        "R1-base": {
+          "histories_sha256": "959e64cd99627812eef40009a5a783344a011b347558cc7bc8394ec41f6bcb54",
+          "history_turns_sha256": "ad4a70d7a2f875aecdc197a773a83672752d3b8746d1306705dc348d7af04af8",
+          "model_version_set_sha256": "efa44a091e264573c5a4b3b294e67e7f84d7cc8ad343df8b0414760ff8ac5383",
+          "predictions_sha256": "06e738d265baac90b05096449895608be80298812c3cd773560994fee524fb26",
+          "provider_errors_sha256": "ce2931a00c6ad7dac5f5b91e0b178ac894dc6383d561b59c769b749bd0792017",
+          "telemetry_sha256": "c20df3322d59e1cd0509ebfa8f1d56931dd86151f627b6035e686a06411efabc"
+        },
+        "R1-no_context_sft": {
+          "histories_sha256": "9120dfd65c1129362f6dad84673d3261af223dcf84acb47b80dfaf61ce669a64",
+          "history_turns_sha256": "7e6455ddcabbc106135e550f0edd3fe1f43ff8ecd3da5e6827a1375794d646e6",
+          "model_version_set_sha256": "1956f747759d155afb66dd465dabea1df64583bed9ff76e67bb8a975d5ddd3e9",
+          "predictions_sha256": "55d1ad19797f553e7c89a3176ed1c2f2197fc890297a4a29706a2298ca923198",
+          "provider_errors_sha256": "ce2931a00c6ad7dac5f5b91e0b178ac894dc6383d561b59c769b749bd0792017",
+          "telemetry_sha256": "27cfd62823df387029fccee8688493e52035cf5f183c55890f0fedcac296c548"
+        },
+        "R1-prior_context_sft": {
+          "histories_sha256": "129be49109461f6883dda0551367774eae154729f112f604695cb4e15c21f93f",
+          "history_turns_sha256": "7eacc1a5a633a53c31bcfe5195033587b2caf73f2fa06e1698a082176b638793",
+          "model_version_set_sha256": "1956f747759d155afb66dd465dabea1df64583bed9ff76e67bb8a975d5ddd3e9",
+          "predictions_sha256": "ab013543d367ccce3e1948f3b077dccf9839c118cd2bb31274bf191604e3914c",
+          "provider_errors_sha256": "ce2931a00c6ad7dac5f5b91e0b178ac894dc6383d561b59c769b749bd0792017",
+          "telemetry_sha256": "de5e49afd9633ffe3f3c247772ee4cdcab5e102215d307291e1b1365d42e5d08"
+        },
+        "R8-base": {
+          "histories_sha256": "3c65a8f8baf0b952ff2a15f8a458e7bf7dffaa46efa25b948b08edbe61b1e35a",
+          "history_turns_sha256": "d7bb32e412e82a661dfb4d1dde5d217c3245bac469d909b19a4add67e9b793b5",
+          "model_version_set_sha256": "efa44a091e264573c5a4b3b294e67e7f84d7cc8ad343df8b0414760ff8ac5383",
+          "predictions_sha256": "dcb77020c44aa656672a9bcaf1f2573d6cd0e0857619034a1e9c22245233d298",
+          "provider_errors_sha256": "ce2931a00c6ad7dac5f5b91e0b178ac894dc6383d561b59c769b749bd0792017",
+          "telemetry_sha256": "c66615ecf8471c2025b39647db9a3c24d47a62a536fd2e8a2c727988d35d0c1f"
+        },
+        "R8-no_context_sft": {
+          "histories_sha256": "b7cb9400b5bfe9d76de45aa94120a5db2b074927d9cb9e8a49c58cf2cefa6455",
+          "history_turns_sha256": "c20e708979b9110bbcc61de08c26601ac87a85a2f336f4ca11f6d72e5f4ab0a0",
+          "model_version_set_sha256": "1956f747759d155afb66dd465dabea1df64583bed9ff76e67bb8a975d5ddd3e9",
+          "predictions_sha256": "e3be42ad54451cec8363a4e772dc3c48cf3f6fbe14b54890dea2b8a0a2c85bda",
+          "provider_errors_sha256": "ce2931a00c6ad7dac5f5b91e0b178ac894dc6383d561b59c769b749bd0792017",
+          "telemetry_sha256": "7a39310372bd286d1f320cb00d1801608d674864441360396c7133650a53f98d"
+        },
+        "R8-prior_context_sft": {
+          "histories_sha256": "d8b6b93b5578b4a8ae0cfd82920b7aa1f57bb25f9423798df9a5326ebeee9ab5",
+          "history_turns_sha256": "6d0f1ff89423e38798d708eafccac40b1fa2cea5edcf2272f9734218741a473b",
+          "model_version_set_sha256": "1956f747759d155afb66dd465dabea1df64583bed9ff76e67bb8a975d5ddd3e9",
+          "predictions_sha256": "c9899f5ab89fd98ecce0a81349baa75af92377575ed2e3612469c43d43016230",
+          "provider_errors_sha256": "ce2931a00c6ad7dac5f5b91e0b178ac894dc6383d561b59c769b749bd0792017",
+          "telemetry_sha256": "af2c3fe1bfbedc8929fe4d96f1dc76facd37cbd4aca5ef839b9e2d5629270504"
+        }
+      },
+      "selected_cells_sha256": "2017e980dd2a1727e61a2ab9a18fea00487be9eba07bc1e388e2c6ae2f25a379"
+    },
+    "breakdown_protocol_sha256": "8acc8b6ee37f9cacb59625512dfc67ce298d58e1f731ef194c1a40593647629f",
+    "components": {
+      "canonical_scoring_sha256": "875802a47d71103abdc1da911c05a94f0e9613c00086739d97bebd887cc986fe",
+      "main6_breakdown_analysis_sha256": "14ba7b537a558175c6a76aaeb8cf82054374a048e6f493767b9b25c0ef820a67",
+      "predicted_history_analysis_sha256": "695e658a18a6a21b3862f6b0c1c8876b3567afe0214c11a8a3dce3e424d068c9",
+      "predicted_history_breakdown_sha256": "203711d0ec0d310ced296c349b4ea7ab100181573adc61281e3b94b3b749a558"
+    },
+    "pseudonym_salt_sha256": "8b58a10a9880bdfbd3990b1f3b4ac89d1106fefb6a7182cd450a0c9269037123",
+    "upstream_protocol_sha256": "01557d73ee6257158385a6f676f4bfb09a182414f1224beb090ff57568c4f5f3"
+  },
+  "interpretation": {
+    "acoustic_support": "not_adjudicated",
+    "confirmatory_status": "not_confirmatory",
+    "lexical_metrics": "automatic_reference_proxies",
+    "ranking_status": "not_performed",
+    "semantic_safety": "not_measured",
+    "subgroup_effect_status": "descriptive_not_causal"
+  },
+  "method": {
+    "analysis_status": "post_outcome_exploratory_descriptive",
+    "bootstrap_engine": "source_cluster_then_rows_with_replacement",
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 20260711,
+    "confidence": 0.95,
+    "interval_min_clusters": 5,
+    "lexical_proxy_status": "automatic_reference_proxy_only",
+    "metric_definitions": {
+      "context_copy_rate": {
+        "denominator": "successful_rows_with_nonempty_safety_tokenized_realized_history_rows_without_realized_history_contribute_neither_numerator_nor_denominator",
+        "numerator": "successful_rows_with_nonempty_safety_tokenized_history_and_a_prediction_span_of_at_least_3_tokens_found_within_one_prior_turn_but_absent_from_the_current_reference"
+      },
+      "prior_only_token_rate": {
+        "denominator": "all_safety_token_occurrences_in_successful_predictions",
+        "numerator": "sum_over_safety_tokens_of_minimum_of_maximum_prediction_count_minus_reference_count_or_zero_and_history_count_on_successful_outputs"
+      },
+      "wer": {
+        "denominator": "canonical_normalized_reference_words",
+        "numerator": "canonical_normalized_word_substitutions_plus_deletions_plus_insertions"
+      }
+    },
+    "multiple_comparison_policy": "none_exploratory_no_tests",
+    "quantile_method": "r7_linear",
+    "quartile_boundary": "left_open_right_closed",
+    "semantic_safety_status": "not_measured",
+    "stratum_seed_derivation": "sha256_salt_independent_membership_domain_offset_from_base_seed"
+  },
+  "reproduction": {
+    "authentication_gate": "requires the ignored authenticated input binding and an owner-only exact 32-byte HMAC salt file",
+    "byte_comparison_argv": [
+      [
+        "cmp",
+        "experiments/results/predicted_history_breakdown.json",
+        "experiments/results/reproductions/predicted_history_breakdown.json"
+      ],
+      [
+        "cmp",
+        "experiments/results/predicted_history_breakdown.csv",
+        "experiments/results/reproductions/predicted_history_breakdown.csv"
+      ],
+      [
+        "cmp",
+        "paper/tables/predicted_history_breakdown.md",
+        "paper/tables/reproductions/predicted_history_breakdown.md"
+      ]
+    ],
+    "byte_equality_salt_requirement": "OWNER_ONLY_HMAC_SALT_FILE must resolve to the same salt whose SHA256 is recorded in identity.pseudonym_salt_sha256",
+    "fresh_output_argv": [
+      "env",
+      "PYTHONPATH=.:model/src",
+      "uv",
+      "run",
+      "--project",
+      "model",
+      "--frozen",
+      "python",
+      "-m",
+      "experiments.scripts.predicted_history_breakdown",
+      "--protocol",
+      "experiments/configs/predicted_history_breakdown_protocol.toml",
+      "--pseudonym-salt-env",
+      "OWNER_ONLY_HMAC_SALT_FILE",
+      "--json-output",
+      "experiments/results/reproductions/predicted_history_breakdown.json",
+      "--csv-output",
+      "experiments/results/reproductions/predicted_history_breakdown.csv",
+      "--table-output",
+      "paper/tables/reproductions/predicted_history_breakdown.md"
+    ],
+    "fresh_outputs_must_not_exist": true,
+    "provider_inference": "none_existing_authenticated_inputs_only"
+  },
+  "schema_version": 1,
+  "scope": {
+    "effect": "R8_minus_R1_within_target_fixed_p13",
+    "nonzero_prompt_family": "p13",
+    "primary_policy": "common_normalized_nonempty_reference",
+    "primary_row_count": 4098,
+    "provider_inference_performed": false,
+    "provider_row_count": 4108,
+    "source_cluster_count": 615,
+    "source_family_count": 4,
+    "targets": [
+      "base",
+      "no_context_sft",
+      "prior_context_sft"
+    ],
+    "windows": [
+      0,
+      1,
+      8
+    ]
+  },
+  "status": "post_outcome_exploratory_descriptive",
+  "strata": [
+    {
+      "dimension": "duration_seconds",
+      "row_count": 1026,
+      "source_cluster_count": 294,
+      "stratum_id": "q1",
+      "targets": {
+        "base": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 2257,
+                "estimate": 59.680992467877715,
+                "lower": 54.676309461156805,
+                "numerator": 1347,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 64.55317187079879
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 841,
+                "estimate": 4.399524375743163,
+                "lower": 2.4315002803434944,
+                "numerator": 37,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 6.736534825086669
+              },
+              "prior_only_token_rate": {
+                "denominator": 1602,
+                "estimate": 20.474406991260924,
+                "lower": 15.405689820037368,
+                "numerator": 328,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 25.898927016904544
+              },
+              "wer": {
+                "denominator": 2257,
+                "estimate": 71.7766947275144,
+                "lower": 63.84717868708703,
+                "numerator": 1620,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 79.94172609030517
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 908,
+                "estimate": 2.5330396475770924,
+                "lower": 0.6841365940350628,
+                "numerator": 23,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 5.346871219249898
+              },
+              "prior_only_token_rate": {
+                "denominator": 1567,
+                "estimate": 19.974473516273132,
+                "lower": 14.64872654660538,
+                "numerator": 313,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 25.877301239700095
+              },
+              "wer": {
+                "denominator": 2257,
+                "estimate": 69.7828976517501,
+                "lower": 61.175011705585646,
+                "numerator": 1575,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 79.30268429043419
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": -1.8664847281660708,
+                "lower": -3.726354902714174,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.16389045900488414
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": -0.4999334749877917,
+                "lower": -4.558397418025559,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 3.6807078598675456
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -1.9937970757642915,
+                "lower": -7.299041731308667,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 3.623537398188822
+              }
+            }
+          }
+        },
+        "no_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 2257,
+                "estimate": 39.43287549844927,
+                "lower": 34.96522325599005,
+                "numerator": 890,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 43.853188641017425
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 921,
+                "estimate": 1.4115092290988056,
+                "lower": 0.4296110419824416,
+                "numerator": 13,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.613065326633166
+              },
+              "prior_only_token_rate": {
+                "denominator": 1669,
+                "estimate": 7.549430796884362,
+                "lower": 4.063173136099877,
+                "numerator": 126,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 11.713292564196179
+              },
+              "wer": {
+                "denominator": 2257,
+                "estimate": 41.07221976074435,
+                "lower": 35.30414457982434,
+                "numerator": 927,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 47.23684831444545
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 921,
+                "estimate": 0.3257328990228013,
+                "lower": 0.0,
+                "numerator": 3,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 0.8772143774069316
+              },
+              "prior_only_token_rate": {
+                "denominator": 1619,
+                "estimate": 6.79431747992588,
+                "lower": 4.625396986970684,
+                "numerator": 110,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 9.12390129268631
+              },
+              "wer": {
+                "denominator": 2257,
+                "estimate": 36.73017279574657,
+                "lower": 32.19392734764057,
+                "numerator": 829,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 41.606026337187025
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": -1.0857763300760044,
+                "lower": -2.3097938190558183,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.0
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": -0.7551133169584823,
+                "lower": -4.833080479386069,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 2.6979855768836676
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -4.342046964997785,
+                "lower": -8.236319909101029,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.9910223716885107
+              }
+            }
+          }
+        },
+        "prior_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 2257,
+                "estimate": 36.73017279574657,
+                "lower": 32.382870081015106,
+                "numerator": 829,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 41.10828512462426
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 914,
+                "estimate": 0.2188183807439825,
+                "lower": 0.0,
+                "numerator": 2,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 0.7308205298060416
+              },
+              "prior_only_token_rate": {
+                "denominator": 1611,
+                "estimate": 4.531346989447548,
+                "lower": 2.4208322524306607,
+                "numerator": 73,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 7.67471834585837
+              },
+              "wer": {
+                "denominator": 2257,
+                "estimate": 37.08462560921577,
+                "lower": 32.24228151590565,
+                "numerator": 837,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 42.051016425468255
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 921,
+                "estimate": 0.6514657980456026,
+                "lower": 0.10100247184839331,
+                "numerator": 6,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 1.441321754126631
+              },
+              "prior_only_token_rate": {
+                "denominator": 1624,
+                "estimate": 9.852216748768473,
+                "lower": 6.985831196656246,
+                "numerator": 160,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 12.82770466028957
+              },
+              "wer": {
+                "denominator": 2257,
+                "estimate": 34.95790872840053,
+                "lower": 30.232238691541017,
+                "numerator": 789,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 39.785507823833576
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 0.43264741730162004,
+                "lower": -0.11299584729295596,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 1.1702463653289188
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 5.320869759320925,
+                "lower": 2.428603555339643,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 8.130244119888813
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -2.1267168808152377,
+                "lower": -4.799120144621218,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.35034068051459305
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "dimension": "duration_seconds",
+      "row_count": 1024,
+      "source_cluster_count": 312,
+      "stratum_id": "q2",
+      "targets": {
+        "base": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 4400,
+                "estimate": 45.22727272727273,
+                "lower": 41.250765770460205,
+                "numerator": 1990,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 49.21553765150249
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 849,
+                "estimate": 2.8268551236749118,
+                "lower": 1.284390582261252,
+                "numerator": 24,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.844290657439446
+              },
+              "prior_only_token_rate": {
+                "denominator": 2954,
+                "estimate": 6.601218686526743,
+                "lower": 4.5969470415589715,
+                "numerator": 195,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 8.986622114474335
+              },
+              "wer": {
+                "denominator": 4400,
+                "estimate": 46.56818181818182,
+                "lower": 41.97274468809818,
+                "numerator": 2049,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 51.284349748066184
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 891,
+                "estimate": 2.132435465768799,
+                "lower": 0.8860759493670886,
+                "numerator": 19,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 3.78156938451056
+              },
+              "prior_only_token_rate": {
+                "denominator": 2914,
+                "estimate": 10.91283459162663,
+                "lower": 8.654212060175233,
+                "numerator": 318,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 13.260052374652066
+              },
+              "wer": {
+                "denominator": 4400,
+                "estimate": 44.36363636363637,
+                "lower": 40.14115902552488,
+                "numerator": 1952,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 48.70721967030297
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": -0.6944196579061126,
+                "lower": -2.2948784514938407,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.8357266195107479
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 4.311615905099887,
+                "lower": 1.895888937569397,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 6.683577824983716
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -2.2045454545454533,
+                "lower": -4.186887594302549,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.2296054070858619
+              }
+            }
+          }
+        },
+        "no_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 4400,
+                "estimate": 32.09090909090909,
+                "lower": 28.783129738473672,
+                "numerator": 1412,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 35.313023031256705
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 903,
+                "estimate": 1.1074197120708749,
+                "lower": 0.32430683110294767,
+                "numerator": 10,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.15323913118309
+              },
+              "prior_only_token_rate": {
+                "denominator": 3152,
+                "estimate": 3.1408629441624365,
+                "lower": 1.9468878066163806,
+                "numerator": 99,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.747021860538529
+              },
+              "wer": {
+                "denominator": 4400,
+                "estimate": 31.477272727272727,
+                "lower": 28.196385509090412,
+                "numerator": 1385,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 34.84782757008554
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 903,
+                "estimate": 1.6611295681063123,
+                "lower": 0.7134212495550104,
+                "numerator": 15,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.874135772063405
+              },
+              "prior_only_token_rate": {
+                "denominator": 3131,
+                "estimate": 6.004471414883424,
+                "lower": 4.575769501026525,
+                "numerator": 188,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 7.538376809449947
+              },
+              "wer": {
+                "denominator": 4400,
+                "estimate": 29.0,
+                "lower": 25.88940452525725,
+                "numerator": 1276,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 32.167997927504466
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 0.5537098560354374,
+                "lower": -0.5464480874316939,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 1.713638790889672
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 2.8636084707209877,
+                "lower": 0.9796235271390723,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 4.588635380411586
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -2.4772727272727266,
+                "lower": -4.21906871270164,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.9365159716116449
+              }
+            }
+          }
+        },
+        "prior_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 4400,
+                "estimate": 32.88636363636363,
+                "lower": 29.60904382990874,
+                "numerator": 1447,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 36.159855858790046
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 897,
+                "estimate": 1.1148272017837235,
+                "lower": 0.3525160953972956,
+                "numerator": 10,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.1105667225013955
+              },
+              "prior_only_token_rate": {
+                "denominator": 3149,
+                "estimate": 3.9377580184185454,
+                "lower": 2.8104496767864102,
+                "numerator": 124,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 5.160195977052587
+              },
+              "wer": {
+                "denominator": 4400,
+                "estimate": 31.045454545454547,
+                "lower": 27.887212945845615,
+                "numerator": 1366,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 34.26331777470676
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 902,
+                "estimate": 2.2172949002217295,
+                "lower": 1.132852729145211,
+                "numerator": 20,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 3.5847107966412337
+              },
+              "prior_only_token_rate": {
+                "denominator": 3172,
+                "estimate": 7.786885245901639,
+                "lower": 6.18995070130722,
+                "numerator": 247,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 9.375023107068914
+              },
+              "wer": {
+                "denominator": 4400,
+                "estimate": 29.522727272727273,
+                "lower": 26.245397728072522,
+                "numerator": 1299,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 32.77607054805997
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 1.102467698438006,
+                "lower": -0.11299754582406611,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 2.4357801427342802
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 3.849127227483094,
+                "lower": 2.4187717400644244,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 5.301944655822991
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -1.5227272727272734,
+                "lower": -3.0867298480510503,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.04512463343108527
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "dimension": "duration_seconds",
+      "row_count": 1023,
+      "source_cluster_count": 369,
+      "stratum_id": "q3",
+      "targets": {
+        "base": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 6998,
+                "estimate": 38.86824807087739,
+                "lower": 35.59975912456796,
+                "numerator": 2720,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 42.04701234000728
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 817,
+                "estimate": 2.570379436964504,
+                "lower": 1.2304147370332763,
+                "numerator": 21,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.1554959785522785
+              },
+              "prior_only_token_rate": {
+                "denominator": 5122,
+                "estimate": 3.3971105037094884,
+                "lower": 2.272227562139942,
+                "numerator": 174,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.809860392118219
+              },
+              "wer": {
+                "denominator": 6998,
+                "estimate": 38.62532152043441,
+                "lower": 35.12632819873356,
+                "numerator": 2703,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 42.34519293724472
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 850,
+                "estimate": 4.352941176470588,
+                "lower": 2.527310924369748,
+                "numerator": 37,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 6.474009231920822
+              },
+              "prior_only_token_rate": {
+                "denominator": 5144,
+                "estimate": 6.104199066874028,
+                "lower": 4.76365592656378,
+                "numerator": 314,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 7.408894507168856
+              },
+              "wer": {
+                "denominator": 6998,
+                "estimate": 37.19634181194627,
+                "lower": 33.78049885316108,
+                "numerator": 2603,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 40.70288213851442
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 1.7825617395060838,
+                "lower": -0.19699210669038403,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 3.9007921530585628
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 2.707088563164539,
+                "lower": 1.2036999845378051,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 4.02808197901431
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -1.4289797084881428,
+                "lower": -2.7222149911019025,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.17058053891394942
+              }
+            }
+          }
+        },
+        "no_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 6998,
+                "estimate": 27.679336953415262,
+                "lower": 25.046547315899648,
+                "numerator": 1937,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 30.266139459102927
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 861,
+                "estimate": 1.5098722415795587,
+                "lower": 0.5868201009334697,
+                "numerator": 13,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.659671062799442
+              },
+              "prior_only_token_rate": {
+                "denominator": 5434,
+                "estimate": 2.061096797938903,
+                "lower": 1.267496597490763,
+                "numerator": 112,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 3.062305791239407
+              },
+              "wer": {
+                "denominator": 6998,
+                "estimate": 26.821949128322377,
+                "lower": 24.310774722195447,
+                "numerator": 1877,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 29.308075122672488
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 861,
+                "estimate": 3.484320557491289,
+                "lower": 1.8427518427518428,
+                "numerator": 30,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 5.414886729741852
+              },
+              "prior_only_token_rate": {
+                "denominator": 5438,
+                "estimate": 4.597278411180581,
+                "lower": 3.4529053236408584,
+                "numerator": 250,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 5.80724567018775
+              },
+              "wer": {
+                "denominator": 6998,
+                "estimate": 25.32152043440983,
+                "lower": 22.978484543114448,
+                "numerator": 1772,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 27.6881751547154
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 1.9744483159117303,
+                "lower": 0.5347415091780127,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 3.6746254754934937
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 2.5361816132416783,
+                "lower": 1.4193666118761221,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 3.578766135366288
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -1.5004286939125464,
+                "lower": -2.56277836255208,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.4293583321438222
+              }
+            }
+          }
+        },
+        "prior_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 6998,
+                "estimate": 28.122320663046583,
+                "lower": 25.48132445756996,
+                "numerator": 1968,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 30.769286754002913
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 858,
+                "estimate": 1.6317016317016317,
+                "lower": 0.5694706790056753,
+                "numerator": 14,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.983577482955592
+              },
+              "prior_only_token_rate": {
+                "denominator": 5491,
+                "estimate": 2.0032780914223274,
+                "lower": 1.4154772752266194,
+                "numerator": 110,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.6782998708026917
+              },
+              "wer": {
+                "denominator": 6998,
+                "estimate": 26.450414404115463,
+                "lower": 23.891068167319656,
+                "numerator": 1851,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 28.997606337323262
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 861,
+                "estimate": 5.458768873403019,
+                "lower": 3.354018670733068,
+                "numerator": 47,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 7.7451325600662795
+              },
+              "prior_only_token_rate": {
+                "denominator": 5487,
+                "estimate": 5.886641151813377,
+                "lower": 4.615377515229832,
+                "numerator": 323,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 7.152727800560166
+              },
+              "wer": {
+                "denominator": 6998,
+                "estimate": 25.150042869391253,
+                "lower": 22.70959666063503,
+                "numerator": 1760,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 27.636551472212783
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 3.8270672417013873,
+                "lower": 2.016686636686634,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 5.806460669622307
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 3.8833630603910496,
+                "lower": 2.7774398998790475,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 5.015052970065312
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -1.30037153472421,
+                "lower": -2.4202432923754666,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.15566271657380218
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "dimension": "duration_seconds",
+      "row_count": 1025,
+      "source_cluster_count": 435,
+      "stratum_id": "q4",
+      "targets": {
+        "base": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 14768,
+                "estimate": 21.607529794149514,
+                "lower": 19.654879568191625,
+                "numerator": 3191,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 23.854293292733413
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 762,
+                "estimate": 5.118110236220472,
+                "lower": 2.9947721744011977,
+                "numerator": 39,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 7.875350427100182
+              },
+              "prior_only_token_rate": {
+                "denominator": 12708,
+                "estimate": 1.4479068303430909,
+                "lower": 1.0177749791423107,
+                "numerator": 184,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 1.9616726896593748
+              },
+              "wer": {
+                "denominator": 14768,
+                "estimate": 21.187703141928495,
+                "lower": 19.233172351220055,
+                "numerator": 3129,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 23.426037657297194
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 790,
+                "estimate": 9.113924050632912,
+                "lower": 6.337189285250417,
+                "numerator": 72,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 12.532325581395348
+              },
+              "prior_only_token_rate": {
+                "denominator": 12687,
+                "estimate": 3.184361945298337,
+                "lower": 2.4706664028870313,
+                "numerator": 404,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 3.8739658184106154
+              },
+              "wer": {
+                "denominator": 14768,
+                "estimate": 20.34127843986999,
+                "lower": 18.329177119744926,
+                "numerator": 3004,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 22.729886537474226
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 3.9958138144124398,
+                "lower": 2.123035961182132,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 6.128521104398674
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 1.736455114955246,
+                "lower": 1.1989090922892447,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 2.246046171113424
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -0.8464247020585063,
+                "lower": -1.4219684350120243,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.20277281639529182
+              }
+            }
+          }
+        },
+        "no_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 14768,
+                "estimate": 17.070693391115928,
+                "lower": 15.561987710095192,
+                "numerator": 2521,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 18.74502910894378
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 796,
+                "estimate": 3.64321608040201,
+                "lower": 2.0472325827692592,
+                "numerator": 29,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 5.668642112203308
+              },
+              "prior_only_token_rate": {
+                "denominator": 13070,
+                "estimate": 1.0022953328232593,
+                "lower": 0.7104778211726067,
+                "numerator": 131,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 1.3144336411870785
+              },
+              "wer": {
+                "denominator": 14768,
+                "estimate": 16.556067172264356,
+                "lower": 15.085304506656142,
+                "numerator": 2445,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 18.166258299130963
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 796,
+                "estimate": 6.909547738693467,
+                "lower": 4.389705751611077,
+                "numerator": 55,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 10.068050668543279
+              },
+              "prior_only_token_rate": {
+                "denominator": 13068,
+                "estimate": 2.433425160697888,
+                "lower": 1.8033732721772593,
+                "numerator": 318,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 3.04270347582303
+              },
+              "wer": {
+                "denominator": 14768,
+                "estimate": 16.075297941495126,
+                "lower": 14.520397524570976,
+                "numerator": 2374,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 17.860773968297625
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 3.266331658291457,
+                "lower": 1.3635380379817958,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 5.562601557103722
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 1.4311298278746287,
+                "lower": 0.9215341648875034,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 1.9101314714821318
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -0.48076923076922995,
+                "lower": -1.035852741095484,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.08985337543125392
+              }
+            }
+          }
+        },
+        "prior_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 14768,
+                "estimate": 17.44312026002167,
+                "lower": 15.848223408863138,
+                "numerator": 2576,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 19.160930261153315
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 793,
+                "estimate": 5.296343001261034,
+                "lower": 3.302427250853994,
+                "numerator": 42,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 7.7885952712100135
+              },
+              "prior_only_token_rate": {
+                "denominator": 13121,
+                "estimate": 1.310875695450042,
+                "lower": 0.9487428556949258,
+                "numerator": 172,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 1.7150584354281233
+              },
+              "wer": {
+                "denominator": 14768,
+                "estimate": 16.81338028169014,
+                "lower": 15.273507422577893,
+                "numerator": 2483,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 18.525429847244727
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 796,
+                "estimate": 10.050251256281408,
+                "lower": 6.969945940444547,
+                "numerator": 80,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 13.670137454314315
+              },
+              "prior_only_token_rate": {
+                "denominator": 13114,
+                "estimate": 3.0654262620100656,
+                "lower": 2.3220116060244553,
+                "numerator": 402,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 3.8057750710876728
+              },
+              "wer": {
+                "denominator": 14768,
+                "estimate": 16.312296858071505,
+                "lower": 14.675097176274289,
+                "numerator": 2409,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 18.2224632461962
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 4.753908255020374,
+                "lower": 2.5831543183574937,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 7.353876326710585
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 1.7545505665600236,
+                "lower": 1.1687306253497645,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 2.307731757508354
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -0.5010834236186348,
+                "lower": -1.127844180198246,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.16557427845185135
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "dimension": "normalized_reference_word_count",
+      "row_count": 1279,
+      "source_cluster_count": 357,
+      "stratum_id": "q1",
+      "targets": {
+        "base": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 2706,
+                "estimate": 57.46489283074649,
+                "lower": 52.463760729217455,
+                "numerator": 1555,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 62.307341778907514
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 1052,
+                "estimate": 3.4220532319391634,
+                "lower": 1.8552797479562113,
+                "numerator": 36,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 5.335812726721027
+              },
+              "prior_only_token_rate": {
+                "denominator": 2273,
+                "estimate": 14.210294764628244,
+                "lower": 10.572215657514713,
+                "numerator": 323,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 18.189328678117562
+              },
+              "wer": {
+                "denominator": 2706,
+                "estimate": 67.73835920177383,
+                "lower": 59.75910416200237,
+                "numerator": 1833,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 76.1385072873158
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 1123,
+                "estimate": 2.13713268032057,
+                "lower": 0.5977717033946461,
+                "numerator": 24,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.436704044225595
+              },
+              "prior_only_token_rate": {
+                "denominator": 2231,
+                "estimate": 15.105333930972659,
+                "lower": 11.60905555503158,
+                "numerator": 337,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 19.069752647232892
+              },
+              "wer": {
+                "denominator": 2706,
+                "estimate": 65.63192904656319,
+                "lower": 57.36702009424735,
+                "numerator": 1776,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 74.78094347026756
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": -1.2849205516185935,
+                "lower": -2.823288011831786,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.4044002222097725
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 0.8950391663444144,
+                "lower": -2.2773394241057177,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 4.117252714396104
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -2.1064301552106457,
+                "lower": -6.830742240644387,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 3.0862851636512194
+              }
+            }
+          }
+        },
+        "no_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 2706,
+                "estimate": 38.654841093865485,
+                "lower": 34.380468208393445,
+                "numerator": 1046,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 43.026485696895016
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 1140,
+                "estimate": 1.3157894736842106,
+                "lower": 0.39215686274509803,
+                "numerator": 15,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.5304630568253543
+              },
+              "prior_only_token_rate": {
+                "denominator": 2363,
+                "estimate": 6.474820143884892,
+                "lower": 3.5142294708484383,
+                "numerator": 153,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 10.163919369060448
+              },
+              "wer": {
+                "denominator": 2706,
+                "estimate": 40.42867701404287,
+                "lower": 34.8439347522696,
+                "numerator": 1094,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 46.61169045532275
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 1140,
+                "estimate": 0.5263157894736842,
+                "lower": 0.08410428931875526,
+                "numerator": 6,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 1.1840779981021383
+              },
+              "prior_only_token_rate": {
+                "denominator": 2306,
+                "estimate": 6.2445793581960105,
+                "lower": 4.507974165887228,
+                "numerator": 144,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 8.08771158439754
+              },
+              "wer": {
+                "denominator": 2706,
+                "estimate": 35.809312638580934,
+                "lower": 31.52766373540693,
+                "numerator": 969,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 40.156169966584145
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": -0.7894736842105264,
+                "lower": -2.0735261747555986,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.29850746268656714
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": -0.2302407856888813,
+                "lower": -3.6153811644532903,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 2.4620461417203585
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -4.6193643754619345,
+                "lower": -8.45830807657474,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -1.415979141896658
+              }
+            }
+          }
+        },
+        "prior_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 2706,
+                "estimate": 37.17664449371767,
+                "lower": 33.0735613312159,
+                "numerator": 1006,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 41.40693600154381
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 1134,
+                "estimate": 0.3527336860670194,
+                "lower": 0.0,
+                "numerator": 4,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 0.9140843807604693
+              },
+              "prior_only_token_rate": {
+                "denominator": 2310,
+                "estimate": 3.722943722943723,
+                "lower": 2.110244884693798,
+                "numerator": 86,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 6.037350192453144
+              },
+              "wer": {
+                "denominator": 2706,
+                "estimate": 36.58536585365854,
+                "lower": 31.926707791211058,
+                "numerator": 990,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 41.43345997810548
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 1139,
+                "estimate": 0.8779631255487269,
+                "lower": 0.19820136557543375,
+                "numerator": 10,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 1.7257039055404177
+              },
+              "prior_only_token_rate": {
+                "denominator": 2319,
+                "estimate": 8.322552824493316,
+                "lower": 6.325806236812614,
+                "numerator": 193,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 10.372569725179646
+              },
+              "wer": {
+                "denominator": 2706,
+                "estimate": 34.405025868440504,
+                "lower": 30.15807234052692,
+                "numerator": 931,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 38.68653738555317
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 0.5252294394817075,
+                "lower": -0.18551341131986296,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 1.3202302471187122
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 4.599609101549593,
+                "lower": 2.3831895575059807,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 6.539079566982898
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -2.1803399852180334,
+                "lower": -4.791982136568938,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.35405645655990814
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "dimension": "normalized_reference_word_count",
+      "row_count": 894,
+      "source_cluster_count": 307,
+      "stratum_id": "q2",
+      "targets": {
+        "base": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 3966,
+                "estimate": 43.620776601109434,
+                "lower": 39.50375574308623,
+                "numerator": 1730,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 47.68536135263597
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 718,
+                "estimate": 3.6211699164345403,
+                "lower": 1.6085575373050698,
+                "numerator": 26,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 6.158442472679086
+              },
+              "prior_only_token_rate": {
+                "denominator": 2656,
+                "estimate": 7.417168674698795,
+                "lower": 5.097749264476633,
+                "numerator": 197,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 10.069192981521914
+              },
+              "wer": {
+                "denominator": 3966,
+                "estimate": 44.730206757438225,
+                "lower": 40.16810135393087,
+                "numerator": 1774,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 49.30451764454979
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 755,
+                "estimate": 2.5165562913907285,
+                "lower": 0.9549429500135775,
+                "numerator": 19,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.579029681033096
+              },
+              "prior_only_token_rate": {
+                "denominator": 2635,
+                "estimate": 9.297912713472487,
+                "lower": 6.73607927832628,
+                "numerator": 245,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 12.114088686573286
+              },
+              "wer": {
+                "denominator": 3966,
+                "estimate": 42.05748865355522,
+                "lower": 37.76217892510831,
+                "numerator": 1668,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 46.36018286164589
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": -1.1046136250438119,
+                "lower": -2.9771805976907886,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.6791582587131063
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 1.8807440387736918,
+                "lower": -0.5928089785477861,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 4.250098438937342
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -2.672718103883007,
+                "lower": -4.82290736260133,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.43371862348807605
+              }
+            }
+          }
+        },
+        "no_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 3966,
+                "estimate": 29.147755925365608,
+                "lower": 25.86389594661981,
+                "numerator": 1156,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 32.414647043297784
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 764,
+                "estimate": 0.9162303664921466,
+                "lower": 0.14450345736472905,
+                "numerator": 7,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 1.92561629835524
+              },
+              "prior_only_token_rate": {
+                "denominator": 2754,
+                "estimate": 2.7233115468409586,
+                "lower": 1.6108807810908121,
+                "numerator": 75,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.1542221925771985
+              },
+              "wer": {
+                "denominator": 3966,
+                "estimate": 27.634896621280888,
+                "lower": 24.408193433823083,
+                "numerator": 1096,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 30.91880938701926
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 764,
+                "estimate": 1.7015706806282722,
+                "lower": 0.5908201635708467,
+                "numerator": 13,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 3.1211961610486876
+              },
+              "prior_only_token_rate": {
+                "denominator": 2745,
+                "estimate": 4.590163934426229,
+                "lower": 3.266855996716725,
+                "numerator": 126,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 6.036418532358874
+              },
+              "wer": {
+                "denominator": 3966,
+                "estimate": 25.71860816944024,
+                "lower": 22.707880448929682,
+                "numerator": 1020,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 28.699726036256937
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 0.7853403141361256,
+                "lower": -0.37365752488319187,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 2.1660929239641886
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 1.8668523875852707,
+                "lower": 0.07090431391561804,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 3.546571847010694
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -1.9162884518406464,
+                "lower": -3.4137700231047154,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.5346019378736009
+              }
+            }
+          }
+        },
+        "prior_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 3966,
+                "estimate": 29.500756429652043,
+                "lower": 26.251782519744218,
+                "numerator": 1170,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 32.831381748884596
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 758,
+                "estimate": 0.9234828496042217,
+                "lower": 0.2339112969339236,
+                "numerator": 7,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 1.9074220013307996
+              },
+              "prior_only_token_rate": {
+                "denominator": 2768,
+                "estimate": 3.3598265895953756,
+                "lower": 2.3393121536444013,
+                "numerator": 93,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.467717273683349
+              },
+              "wer": {
+                "denominator": 3966,
+                "estimate": 27.66011094301563,
+                "lower": 24.5786115735334,
+                "numerator": 1097,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 30.784919808387922
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 764,
+                "estimate": 3.141361256544503,
+                "lower": 1.617196257613739,
+                "numerator": 24,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.92040520984081
+              },
+              "prior_only_token_rate": {
+                "denominator": 2777,
+                "estimate": 7.166006481814908,
+                "lower": 5.453345807824211,
+                "numerator": 199,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 8.894135945934003
+              },
+              "wer": {
+                "denominator": 3966,
+                "estimate": 26.50025214321735,
+                "lower": 23.269810149978877,
+                "numerator": 1051,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 29.841041153016086
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 2.2178784069402813,
+                "lower": 0.8294992293972752,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 3.818776091743893
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 3.8061798922195327,
+                "lower": 2.2825705563608576,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 5.384569956884225
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -1.1598587997982825,
+                "lower": -2.8836263871229484,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.5544800786106393
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "dimension": "normalized_reference_word_count",
+      "row_count": 1012,
+      "source_cluster_count": 376,
+      "stratum_id": "q3",
+      "targets": {
+        "base": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 7383,
+                "estimate": 35.933902207774615,
+                "lower": 32.76582819617721,
+                "numerator": 2653,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 38.9565801674274
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 819,
+                "estimate": 3.663003663003663,
+                "lower": 2.215148668248945,
+                "numerator": 30,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 5.471145410168025
+              },
+              "prior_only_token_rate": {
+                "denominator": 5318,
+                "estimate": 3.7608123354644603,
+                "lower": 2.809466132683383,
+                "numerator": 200,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.842999959958099
+              },
+              "wer": {
+                "denominator": 7383,
+                "estimate": 35.60883109846946,
+                "lower": 32.398866672614986,
+                "numerator": 2629,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 38.81598452947157
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 853,
+                "estimate": 6.213364595545134,
+                "lower": 4.1419747128655535,
+                "numerator": 53,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 8.594708766303844
+              },
+              "prior_only_token_rate": {
+                "denominator": 5335,
+                "estimate": 7.216494845360825,
+                "lower": 5.87291997768171,
+                "numerator": 385,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 8.591415227819125
+              },
+              "wer": {
+                "denominator": 7383,
+                "estimate": 34.335635920357575,
+                "lower": 30.939623034470397,
+                "numerator": 2535,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 37.75406549792615
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 2.5503609325414716,
+                "lower": 0.6269736418756594,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 4.664578855675882
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 3.4556825098963646,
+                "lower": 2.2406421310065405,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 4.667413977433168
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -1.2731951781118838,
+                "lower": -2.4081806758164412,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.11255993853187299
+              }
+            }
+          }
+        },
+        "no_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 7383,
+                "estimate": 25.653528375998917,
+                "lower": 23.116363317066256,
+                "numerator": 1894,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 28.05302945111733
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 862,
+                "estimate": 2.4361948955916475,
+                "lower": 1.2958823397755124,
+                "numerator": 21,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 3.871114871078087
+              },
+              "prior_only_token_rate": {
+                "denominator": 5717,
+                "estimate": 2.116494665034109,
+                "lower": 1.4184986218717066,
+                "numerator": 121,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.996420717290574
+              },
+              "wer": {
+                "denominator": 7383,
+                "estimate": 25.098198564269268,
+                "lower": 22.646950122478668,
+                "numerator": 1853,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 27.43387529765079
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 862,
+                "estimate": 4.756380510440835,
+                "lower": 2.9689377553472722,
+                "numerator": 41,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 6.85106943688792
+              },
+              "prior_only_token_rate": {
+                "denominator": 5723,
+                "estimate": 4.979905643893063,
+                "lower": 3.875545050219623,
+                "numerator": 285,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 6.113232703080806
+              },
+              "wer": {
+                "denominator": 7383,
+                "estimate": 23.5947446837329,
+                "lower": 21.331875856604853,
+                "numerator": 1742,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 25.89903259562441
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 2.320185614849188,
+                "lower": 1.0440835266821344,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 3.896103896103896
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 2.863410978858954,
+                "lower": 1.9678935423325303,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 3.7835469570459277
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -1.5034538805363695,
+                "lower": -2.5422960204207454,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.4832245910614829
+              }
+            }
+          }
+        },
+        "prior_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 7383,
+                "estimate": 26.46620614926182,
+                "lower": 24.01377882732661,
+                "numerator": 1954,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 28.84559305247567
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 859,
+                "estimate": 2.561117578579744,
+                "lower": 1.3095010905125408,
+                "numerator": 22,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.135382783199131
+              },
+              "prior_only_token_rate": {
+                "denominator": 5775,
+                "estimate": 2.406926406926407,
+                "lower": 1.7162195816057548,
+                "numerator": 139,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 3.1905196133930724
+              },
+              "wer": {
+                "denominator": 7383,
+                "estimate": 25.3690911553569,
+                "lower": 22.945000397888425,
+                "numerator": 1873,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 27.770758142515238
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 862,
+                "estimate": 6.844547563805104,
+                "lower": 4.529606342377063,
+                "numerator": 59,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 9.48169601987881
+              },
+              "prior_only_token_rate": {
+                "denominator": 5780,
+                "estimate": 6.211072664359862,
+                "lower": 4.936819957947254,
+                "numerator": 359,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 7.457310701742115
+              },
+              "wer": {
+                "denominator": 7383,
+                "estimate": 24.150074495462547,
+                "lower": 21.741864581290972,
+                "numerator": 1783,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 26.58779361727011
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 4.283429985225361,
+                "lower": 2.2928339392109787,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 6.432053037604708
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 3.804146257433455,
+                "lower": 2.705952770295256,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 4.880799492064284
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -1.2190166598943541,
+                "lower": -2.281056921547535,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.14905397411675472
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "dimension": "normalized_reference_word_count",
+      "row_count": 913,
+      "source_cluster_count": 413,
+      "stratum_id": "q4",
+      "targets": {
+        "base": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 14368,
+                "estimate": 23.03730512249443,
+                "lower": 20.777946579278364,
+                "numerator": 3310,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 25.63997764742732
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 680,
+                "estimate": 4.264705882352941,
+                "lower": 2.2590219724569547,
+                "numerator": 29,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 6.814993529303011
+              },
+              "prior_only_token_rate": {
+                "denominator": 12139,
+                "estimate": 1.3263036493945135,
+                "lower": 0.9029951078585565,
+                "numerator": 161,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 1.8511725097058829
+              },
+              "wer": {
+                "denominator": 14368,
+                "estimate": 22.724109131403118,
+                "lower": 20.394490232443488,
+                "numerator": 3265,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 25.339918181349777
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 708,
+                "estimate": 7.768361581920904,
+                "lower": 4.99390606443529,
+                "numerator": 55,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 11.076368513706088
+              },
+              "prior_only_token_rate": {
+                "denominator": 12111,
+                "estimate": 3.15415737759062,
+                "lower": 2.410003518597961,
+                "numerator": 382,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 3.883445327583306
+              },
+              "wer": {
+                "denominator": 14368,
+                "estimate": 21.958518930957684,
+                "lower": 19.52673395064725,
+                "numerator": 3155,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 24.647443042175816
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 3.503655699567963,
+                "lower": 1.4189856138449117,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 5.8038106951297666
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 1.8278537281961067,
+                "lower": 1.2478670219279078,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 2.3815243330127456
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -0.765590200445434,
+                "lower": -1.3996241025578646,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.11038383114689589
+              }
+            }
+          }
+        },
+        "no_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 14368,
+                "estimate": 18.54120267260579,
+                "lower": 16.77605863459644,
+                "numerator": 2664,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 20.552302880344403
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 715,
+                "estimate": 3.076923076923077,
+                "lower": 1.5873015873015872,
+                "numerator": 22,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 5.008971431234562
+              },
+              "prior_only_token_rate": {
+                "denominator": 12491,
+                "estimate": 0.9526859338723881,
+                "lower": 0.6536616235446495,
+                "numerator": 119,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 1.273302437366191
+              },
+              "wer": {
+                "denominator": 14368,
+                "estimate": 18.03312917594655,
+                "lower": 16.29204869702675,
+                "numerator": 2591,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 19.96963935578301
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 715,
+                "estimate": 6.013986013986014,
+                "lower": 3.4690381006771642,
+                "numerator": 43,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 9.13542519503376
+              },
+              "prior_only_token_rate": {
+                "denominator": 12482,
+                "estimate": 2.4915878865566414,
+                "lower": 1.7810732284464483,
+                "numerator": 311,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 3.1891774149248757
+              },
+              "wer": {
+                "denominator": 14368,
+                "estimate": 17.538975501113587,
+                "lower": 15.644142188944947,
+                "numerator": 2520,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 19.68712651874469
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 2.937062937062937,
+                "lower": 0.8928239758013164,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 5.39811933432553
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 1.5389019526842533,
+                "lower": 0.9787497617386524,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 2.1138416953020065
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -0.4941536748329618,
+                "lower": -1.0855670910060762,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.14403424099787704
+              }
+            }
+          }
+        },
+        "prior_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 14368,
+                "estimate": 18.722160356347437,
+                "lower": 16.94829505677046,
+                "numerator": 2690,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 20.675878578434542
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 711,
+                "estimate": 4.922644163150492,
+                "lower": 2.880584421351808,
+                "numerator": 35,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 7.340755813716995
+              },
+              "prior_only_token_rate": {
+                "denominator": 12519,
+                "estimate": 1.286045211278856,
+                "lower": 0.929980564397333,
+                "numerator": 161,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 1.6933119001048444
+              },
+              "wer": {
+                "denominator": 14368,
+                "estimate": 17.935690423162583,
+                "lower": 16.20965389847837,
+                "numerator": 2577,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 19.8701793019711
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 715,
+                "estimate": 8.391608391608392,
+                "lower": 5.474837958991877,
+                "numerator": 60,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 11.672602810379606
+              },
+              "prior_only_token_rate": {
+                "denominator": 12521,
+                "estimate": 3.0428879482469453,
+                "lower": 2.239178999689869,
+                "numerator": 381,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 3.870420111455164
+              },
+              "wer": {
+                "denominator": 14368,
+                "estimate": 17.344097995545656,
+                "lower": 15.500586859881988,
+                "numerator": 2492,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 19.39518040671268
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 3.4689642284578994,
+                "lower": 1.3887057979757136,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 5.881080352834213
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 1.7568427369680892,
+                "lower": 1.1237992279131115,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 2.363203992800659
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -0.5915924276169271,
+                "lower": -1.232062320096751,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.09121586564410948
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "dimension": "source_family",
+      "row_count": 212,
+      "source_cluster_count": 58,
+      "stratum_id": "family_4c3745b67e8b2870112abf88a5a2b61b2c830468532bfe7a2e87256e0cd80284",
+      "targets": {
+        "base": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 1470,
+                "estimate": 35.64625850340136,
+                "lower": 29.14524559563434,
+                "numerator": 524,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 42.724698986400504
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 144,
+                "estimate": 0.6944444444444444,
+                "lower": 0.0,
+                "numerator": 1,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 3.053435114503817
+              },
+              "prior_only_token_rate": {
+                "denominator": 1191,
+                "estimate": 1.9311502938706968,
+                "lower": 0.7929375789774988,
+                "numerator": 23,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 3.4697801005521685
+              },
+              "wer": {
+                "denominator": 1470,
+                "estimate": 35.034013605442176,
+                "lower": 28.46647798742138,
+                "numerator": 515,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 42.08286461969223
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 151,
+                "estimate": 1.3245033112582782,
+                "lower": 0.0,
+                "numerator": 2,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.348505434782599
+              },
+              "prior_only_token_rate": {
+                "denominator": 1192,
+                "estimate": 3.942953020134228,
+                "lower": 1.7123287671232876,
+                "numerator": 47,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 7.342023682637065
+              },
+              "wer": {
+                "denominator": 1470,
+                "estimate": 37.27891156462585,
+                "lower": 29.499897820163486,
+                "numerator": 548,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 45.91638607783317
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 0.6300588668138338,
+                "lower": -0.13781624190884206,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 2.919656976196211
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 2.0118027262635314,
+                "lower": 0.21135828016188135,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 4.877862607559781
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": 2.2448979591836746,
+                "lower": -0.3283048016269155,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 5.836200095761421
+              }
+            }
+          }
+        },
+        "no_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 1470,
+                "estimate": 26.73469387755102,
+                "lower": 21.13453724092529,
+                "numerator": 393,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 32.74400559734308
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 154,
+                "estimate": 0.0,
+                "lower": 0.0,
+                "numerator": 0,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 0.0
+              },
+              "prior_only_token_rate": {
+                "denominator": 1262,
+                "estimate": 0.7131537242472267,
+                "lower": 0.17888687989691793,
+                "numerator": 9,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 1.3324216923796162
+              },
+              "wer": {
+                "denominator": 1470,
+                "estimate": 26.258503401360546,
+                "lower": 20.468166058114203,
+                "numerator": 386,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 32.27815348426933
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 154,
+                "estimate": 0.0,
+                "lower": 0.0,
+                "numerator": 0,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 0.0
+              },
+              "prior_only_token_rate": {
+                "denominator": 1270,
+                "estimate": 1.2598425196850394,
+                "lower": 0.44517682059711317,
+                "numerator": 16,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.231413826127053
+              },
+              "wer": {
+                "denominator": 1470,
+                "estimate": 25.578231292517007,
+                "lower": 20.197004220086328,
+                "numerator": 376,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 31.07264124967659
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 0.0,
+                "lower": 0.0,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.0
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 0.5466887954378127,
+                "lower": -0.00270245045190043,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 1.2615196272139766
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -0.6802721088435391,
+                "lower": -2.281146459133461,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.5844345836218394
+              }
+            }
+          }
+        },
+        "prior_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 1470,
+                "estimate": 27.891156462585034,
+                "lower": 22.125887639760126,
+                "numerator": 410,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 34.041360944156985
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 153,
+                "estimate": 0.0,
+                "lower": 0.0,
+                "numerator": 0,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 0.0
+              },
+              "prior_only_token_rate": {
+                "denominator": 1294,
+                "estimate": 1.0819165378670788,
+                "lower": 0.39649892824333977,
+                "numerator": 14,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 1.8775524396128411
+              },
+              "wer": {
+                "denominator": 1470,
+                "estimate": 26.19047619047619,
+                "lower": 20.60810810810811,
+                "numerator": 385,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 31.962973431317124
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 154,
+                "estimate": 0.0,
+                "lower": 0.0,
+                "numerator": 0,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 0.0
+              },
+              "prior_only_token_rate": {
+                "denominator": 1285,
+                "estimate": 1.556420233463035,
+                "lower": 0.6118580846634282,
+                "numerator": 20,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.6354594910566815
+              },
+              "wer": {
+                "denominator": 1470,
+                "estimate": 25.64625850340136,
+                "lower": 20.10936626222037,
+                "numerator": 377,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 31.38788362523771
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 0.0,
+                "lower": 0.0,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.0
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 0.4745036955959563,
+                "lower": -0.29675721536562555,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 1.4062257717704147
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -0.5442176870748305,
+                "lower": -1.862296254754353,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.6644656354683627
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "dimension": "source_family",
+      "row_count": 1020,
+      "source_cluster_count": 25,
+      "stratum_id": "family_cfe4a0c17333295ddaf2e81d70107fff8776f38a35428023e9e714d555eaaf0a",
+      "targets": {
+        "base": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 6083,
+                "estimate": 39.7336840374815,
+                "lower": 34.79791724064743,
+                "numerator": 2417,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 45.58421511839279
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 943,
+                "estimate": 3.605514316012725,
+                "lower": 2.158273381294964,
+                "numerator": 34,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 5.429363075196408
+              },
+              "prior_only_token_rate": {
+                "denominator": 4574,
+                "estimate": 6.493222562308701,
+                "lower": 4.228663150576317,
+                "numerator": 297,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 9.871350409662663
+              },
+              "wer": {
+                "denominator": 6083,
+                "estimate": 42.248890350156174,
+                "lower": 35.99256661974432,
+                "numerator": 2570,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 49.81179468243318
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 988,
+                "estimate": 2.935222672064777,
+                "lower": 1.314049658106933,
+                "numerator": 29,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 5.250926224409644
+              },
+              "prior_only_token_rate": {
+                "denominator": 4503,
+                "estimate": 8.61647790361981,
+                "lower": 6.73907017103324,
+                "numerator": 388,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 11.318496402911023
+              },
+              "wer": {
+                "denominator": 6083,
+                "estimate": 38.993917474930136,
+                "lower": 32.82248794266862,
+                "numerator": 2372,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 46.33888130347209
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": -0.670291643947948,
+                "lower": -2.730294453350521,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 1.6143387512445952
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 2.1232553413111086,
+                "lower": -0.41806828677093627,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 4.038879239890538
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -3.254972875226038,
+                "lower": -5.101294456267127,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -1.681931966491912
+              }
+            }
+          }
+        },
+        "no_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 6083,
+                "estimate": 29.196120335360842,
+                "lower": 24.59477622825268,
+                "numerator": 1776,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 34.00802344386294
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 995,
+                "estimate": 1.1055276381909547,
+                "lower": 0.2272406266050334,
+                "numerator": 11,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.2691358479445984
+              },
+              "prior_only_token_rate": {
+                "denominator": 4727,
+                "estimate": 2.4962978633382695,
+                "lower": 1.5218160589855978,
+                "numerator": 118,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.077222737802457
+              },
+              "wer": {
+                "denominator": 6083,
+                "estimate": 28.48923228670064,
+                "lower": 23.749591944462775,
+                "numerator": 1733,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 33.60477779378111
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 995,
+                "estimate": 1.5075376884422111,
+                "lower": 0.48306268552470755,
+                "numerator": 15,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.998572337296562
+              },
+              "prior_only_token_rate": {
+                "denominator": 4691,
+                "estimate": 5.457258580260072,
+                "lower": 4.081187011113962,
+                "numerator": 256,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 7.309079725597519
+              },
+              "wer": {
+                "denominator": 6083,
+                "estimate": 26.48364293933914,
+                "lower": 21.73159680024989,
+                "numerator": 1611,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 31.566564155580853
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 0.40201005025125647,
+                "lower": -0.842708471493264,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 1.7271405888111553
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 2.960960716921803,
+                "lower": 1.4593381108647447,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 4.428973900338085
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -2.0055893473615,
+                "lower": -3.638278891274032,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.4288274607764787
+              }
+            }
+          }
+        },
+        "prior_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 6083,
+                "estimate": 29.311195133979943,
+                "lower": 24.86144772770024,
+                "numerator": 1783,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 34.2029865329127
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 985,
+                "estimate": 1.218274111675127,
+                "lower": 0.36809815950920244,
+                "numerator": 12,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.4169654060802945
+              },
+              "prior_only_token_rate": {
+                "denominator": 4716,
+                "estimate": 3.095843935538592,
+                "lower": 2.03663876257076,
+                "numerator": 146,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.75540513096426
+              },
+              "wer": {
+                "denominator": 6083,
+                "estimate": 28.07825086306099,
+                "lower": 23.654153113373788,
+                "numerator": 1708,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 32.716681794218196
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 995,
+                "estimate": 3.2160804020100504,
+                "lower": 1.668172690763052,
+                "numerator": 32,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 5.158194223395788
+              },
+              "prior_only_token_rate": {
+                "denominator": 4710,
+                "estimate": 7.749469214437367,
+                "lower": 6.086945090620196,
+                "numerator": 365,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 9.791843070048774
+              },
+              "wer": {
+                "denominator": 6083,
+                "estimate": 26.894624362978792,
+                "lower": 22.251488237088807,
+                "numerator": 1636,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 31.884959315651717
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 1.9978062903349234,
+                "lower": 0.6537580108889983,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 3.499353459637392
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 4.653625278898775,
+                "lower": 3.2053992132712272,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 6.175570640363056
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -1.1836265000821982,
+                "lower": -2.890183766974415,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.5634010943684666
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "dimension": "source_family",
+      "row_count": 1239,
+      "source_cluster_count": 35,
+      "stratum_id": "family_d2bdf7e7e9214a9b572ef85ec0e5e3fe6c2569a36dd7b7b866cc9ac9d90409b5",
+      "targets": {
+        "base": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 7923,
+                "estimate": 31.856619967184148,
+                "lower": 25.443884259860113,
+                "numerator": 2524,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 40.63609674452473
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 1115,
+                "estimate": 3.1390134529147984,
+                "lower": 1.0141948274279855,
+                "numerator": 35,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 6.329301917533523
+              },
+              "prior_only_token_rate": {
+                "denominator": 5880,
+                "estimate": 4.761904761904762,
+                "lower": 2.873776808039789,
+                "numerator": 280,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 8.33834121428554
+              },
+              "wer": {
+                "denominator": 7923,
+                "estimate": 33.850814085573646,
+                "lower": 26.478557208889516,
+                "numerator": 2682,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 44.54778825945105
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 1199,
+                "estimate": 4.420350291909925,
+                "lower": 1.6073658351203888,
+                "numerator": 53,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 8.244033078442959
+              },
+              "prior_only_token_rate": {
+                "denominator": 5874,
+                "estimate": 9.397344228804902,
+                "lower": 6.670020195482559,
+                "numerator": 552,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 14.22823931858725
+              },
+              "wer": {
+                "denominator": 7923,
+                "estimate": 32.563422945853844,
+                "lower": 25.027442138746856,
+                "numerator": 2580,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 43.49862675307733
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 1.2813368389951263,
+                "lower": -0.5156584783739567,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 3.462853109340638
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 4.635439466900141,
+                "lower": 3.0175178623232766,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 7.130857590282555
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -1.2873911397198015,
+                "lower": -3.1170385451126776,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.6363708318365305
+              }
+            }
+          }
+        },
+        "no_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 7923,
+                "estimate": 25.141991669822037,
+                "lower": 21.013584805081425,
+                "numerator": 1992,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 30.74740036506276
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 1203,
+                "estimate": 1.5793848711554448,
+                "lower": 0.5608974358974359,
+                "numerator": 19,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.887835740666886
+              },
+              "prior_only_token_rate": {
+                "denominator": 6208,
+                "estimate": 2.899484536082474,
+                "lower": 1.697990133188726,
+                "numerator": 180,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 5.04715697772706
+              },
+              "wer": {
+                "denominator": 7923,
+                "estimate": 25.24296352391771,
+                "lower": 21.03728436144384,
+                "numerator": 2000,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 31.041223973799625
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 1203,
+                "estimate": 3.0756442227763925,
+                "lower": 1.4319743357900603,
+                "numerator": 37,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 5.10403008486506
+              },
+              "prior_only_token_rate": {
+                "denominator": 6162,
+                "estimate": 6.101914962674456,
+                "lower": 4.668953496350726,
+                "numerator": 376,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 8.248632593341
+              },
+              "wer": {
+                "denominator": 7923,
+                "estimate": 22.54196642685851,
+                "lower": 18.492359003963532,
+                "numerator": 1786,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 28.139772051078054
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 1.4962593516209477,
+                "lower": -0.341296928327645,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 3.4482758620689653
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 3.2024304265919823,
+                "lower": 1.3812618146190376,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 5.0681902472384985
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -2.700997097059197,
+                "lower": -4.272846393942532,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -1.3899601766219185
+              }
+            }
+          }
+        },
+        "prior_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 7923,
+                "estimate": 24.940047961630697,
+                "lower": 21.080930413734983,
+                "numerator": 1976,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 30.172203526595148
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 1199,
+                "estimate": 1.3344453711426187,
+                "lower": 0.35810205908683973,
+                "numerator": 16,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.696650862722175
+              },
+              "prior_only_token_rate": {
+                "denominator": 6141,
+                "estimate": 2.6217228464419478,
+                "lower": 1.6645166719573226,
+                "numerator": 161,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.2346828808150185
+              },
+              "wer": {
+                "denominator": 7923,
+                "estimate": 24.473053136438217,
+                "lower": 20.471611622770837,
+                "numerator": 1939,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 29.9391531530913
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 1203,
+                "estimate": 4.488778054862843,
+                "lower": 2.3565677785392665,
+                "numerator": 54,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 7.022488723692351
+              },
+              "prior_only_token_rate": {
+                "denominator": 6179,
+                "estimate": 7.9139019258779735,
+                "lower": 5.854764588042004,
+                "numerator": 489,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 11.215750895461763
+              },
+              "wer": {
+                "denominator": 7923,
+                "estimate": 22.327401236905214,
+                "lower": 18.23540430826958,
+                "numerator": 1769,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 27.88098663724407
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 3.1543326837202246,
+                "lower": 1.4563121101101024,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 5.177473606232452
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 5.292179079436026,
+                "lower": 3.851971882846435,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 7.558860584967788
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -2.1456518995330036,
+                "lower": -3.4932753892205555,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.6851025356770593
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "dimension": "source_family",
+      "row_count": 1627,
+      "source_cluster_count": 497,
+      "stratum_id": "family_d9802a9e56c66fc8b496baa71556b77db30a8fe5e1c876f03d6611556d69afa0",
+      "targets": {
+        "base": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 12947,
+                "estimate": 29.21912412141809,
+                "lower": 27.00058417177415,
+                "numerator": 3783,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 31.538367760583675
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 1067,
+                "estimate": 4.779756326148079,
+                "lower": 3.184699672210224,
+                "numerator": 51,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 6.528231431861464
+              },
+              "prior_only_token_rate": {
+                "denominator": 10741,
+                "estimate": 2.6161437482543524,
+                "lower": 2.0269568574900125,
+                "numerator": 281,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 3.2591863071832
+              },
+              "wer": {
+                "denominator": 12947,
+                "estimate": 28.840658067505984,
+                "lower": 26.675006604770648,
+                "numerator": 3734,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 31.21057612790287
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 1101,
+                "estimate": 6.085376930063578,
+                "lower": 4.2365236648652775,
+                "numerator": 67,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 8.058682712215319
+              },
+              "prior_only_token_rate": {
+                "denominator": 10743,
+                "estimate": 3.3696360420739087,
+                "lower": 2.728042282337249,
+                "numerator": 362,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.057460551234739
+              },
+              "wer": {
+                "denominator": 12947,
+                "estimate": 28.068278365644552,
+                "lower": 25.93149855994225,
+                "numerator": 3634,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 30.35807387371008
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 1.3056206039154992,
+                "lower": -0.17797010827946735,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 2.824524876852795
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 0.7534922938195563,
+                "lower": 0.27321064660979194,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 1.2424885906095111
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -0.772379701861432,
+                "lower": -1.37767332695639,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": -0.1976970358308841
+              }
+            }
+          }
+        },
+        "no_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 12947,
+                "estimate": 20.074148451378697,
+                "lower": 18.403029045580766,
+                "numerator": 2599,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 21.86938379429268
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 1129,
+                "estimate": 3.100088573959256,
+                "lower": 1.853372960154763,
+                "numerator": 35,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 4.513274336283186
+              },
+              "prior_only_token_rate": {
+                "denominator": 11128,
+                "estimate": 1.4468008626887132,
+                "lower": 0.9741390579379696,
+                "numerator": 161,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.048170079204152
+              },
+              "wer": {
+                "denominator": 12947,
+                "estimate": 19.42534950181509,
+                "lower": 17.737309713265375,
+                "numerator": 2515,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 21.22154518766414
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 1129,
+                "estimate": 4.517271922054916,
+                "lower": 2.9386304309695523,
+                "numerator": 51,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 6.267036251083011
+              },
+              "prior_only_token_rate": {
+                "denominator": 11133,
+                "estimate": 1.9581424593550705,
+                "lower": 1.4689489468767989,
+                "numerator": 218,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.551718604652865
+              },
+              "wer": {
+                "denominator": 12947,
+                "estimate": 19.139569012126362,
+                "lower": 17.45916207323129,
+                "numerator": 2478,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 20.937339517472644
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 1.41718334809566,
+                "lower": 0.4370629370629371,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 2.575921817657634
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 0.5113415966663573,
+                "lower": 0.10395901362939257,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.8536391947479569
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -0.2857804896887295,
+                "lower": -0.7792178622982983,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.17496916961274567
+              }
+            }
+          }
+        },
+        "prior_context_sft": {
+          "cells": {
+            "R0": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": null,
+                "lower": null,
+                "numerator": null,
+                "status": "structurally_undefined_no_history",
+                "unit": "percent",
+                "upper": null
+              },
+              "wer": {
+                "denominator": 12947,
+                "estimate": 20.475785896346643,
+                "lower": 18.728431296712223,
+                "numerator": 2651,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 22.313265823405835
+              }
+            },
+            "R1": {
+              "context_copy_rate": {
+                "denominator": 1125,
+                "estimate": 3.5555555555555554,
+                "lower": 2.222174779390834,
+                "numerator": 40,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 5.0645119705340695
+              },
+              "prior_only_token_rate": {
+                "denominator": 11221,
+                "estimate": 1.4080741466892435,
+                "lower": 1.0657182063930235,
+                "numerator": 158,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 1.7795981507053693
+              },
+              "wer": {
+                "denominator": 12947,
+                "estimate": 19.34811153162895,
+                "lower": 17.642655437150474,
+                "numerator": 2505,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 21.151481535446308
+              }
+            },
+            "R8": {
+              "context_copy_rate": {
+                "denominator": 1128,
+                "estimate": 5.939716312056738,
+                "lower": 4.170442231841689,
+                "numerator": 67,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 7.846594859457252
+              },
+              "prior_only_token_rate": {
+                "denominator": 11223,
+                "estimate": 2.2988505747126435,
+                "lower": 1.8394196791193809,
+                "numerator": 258,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 2.795309689152075
+              },
+              "wer": {
+                "denominator": 12947,
+                "estimate": 19.11639762107052,
+                "lower": 17.434048142267514,
+                "numerator": 2475,
+                "status": "descriptive_percentile_interval",
+                "unit": "percent",
+                "upper": 20.867221496853418
+              }
+            }
+          },
+          "effects": {
+            "R8_minus_R1": {
+              "context_copy_rate": {
+                "denominator": null,
+                "estimate": 2.384160756501182,
+                "lower": 1.131829787414848,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 3.759383953926127
+              },
+              "prior_only_token_rate": {
+                "denominator": null,
+                "estimate": 0.8907764280234001,
+                "lower": 0.5300831565670775,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 1.2729159034368085
+              },
+              "wer": {
+                "denominator": null,
+                "estimate": -0.2317139105584296,
+                "lower": -0.6948280289617852,
+                "numerator": null,
+                "status": "descriptive_percentile_interval",
+                "unit": "percentage_points",
+                "upper": 0.2195150661741848
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "thresholds": {
+    "duration_seconds": {
+      "q1_upper": 0.863,
+      "q2_upper": 1.495,
+      "q3_upper": 2.65275
+    },
+    "normalized_reference_word_count": {
+      "q1_upper": 3.0,
+      "q2_upper": 5.0,
+      "q3_upper": 9.0
+    }
+  }
+}

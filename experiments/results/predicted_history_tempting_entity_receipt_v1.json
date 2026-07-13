@@ -1,0 +1,58 @@
+{
+  "artifact_kind": "reference_absent_entity_predicted_execution_receipt",
+  "cells": [
+    {
+      "cell_id": "S-reference_absent_entity_predicted-base",
+      "correct_r8_comparison_eligible": true,
+      "finalized_receipt_sha256": "c07ef972662571a5bfd18a901883851e55f00f80e2acb1c293b7ecf6d227208b",
+      "finalized_snapshot_sha256": "a92cbd23a1206ec7fad1604efbe5b944fe63093ed8a9b42945f5310df4c5e77b",
+      "observed_model_version_set_sha256": "efa44a091e264573c5a4b3b294e67e7f84d7cc8ad343df8b0414760ff8ac5383",
+      "parent_model_version_set_sha256": "efa44a091e264573c5a4b3b294e67e7f84d7cc8ad343df8b0414760ff8ac5383",
+      "provider_error_count": 0,
+      "provider_row_count": 500,
+      "successful_prediction_count": 500,
+      "target": "base",
+      "verified_final_receipt_gcs_generation": 1783966828016920
+    },
+    {
+      "cell_id": "S-reference_absent_entity_predicted-no_context_sft",
+      "correct_r8_comparison_eligible": true,
+      "finalized_receipt_sha256": "0c5d044d88ac836c6ea8af1071ad538bbd4f967bb2bce45f3dc591571c3d1515",
+      "finalized_snapshot_sha256": "134971cc7c8cd4a645e2a62cb1905549c4b5b54a9467bb02d6836addfb9f16d6",
+      "observed_model_version_set_sha256": "1956f747759d155afb66dd465dabea1df64583bed9ff76e67bb8a975d5ddd3e9",
+      "parent_model_version_set_sha256": "1956f747759d155afb66dd465dabea1df64583bed9ff76e67bb8a975d5ddd3e9",
+      "provider_error_count": 0,
+      "provider_row_count": 500,
+      "successful_prediction_count": 500,
+      "target": "no_context_sft",
+      "verified_final_receipt_gcs_generation": 1783966828603138
+    },
+    {
+      "cell_id": "S-reference_absent_entity_predicted-prior_context_sft",
+      "correct_r8_comparison_eligible": true,
+      "finalized_receipt_sha256": "6752a0545a2e17e230a9cede20f8ec1a887053b0ddb40e928d8f6cf44b383314",
+      "finalized_snapshot_sha256": "f199b1ea0062f2abdf48fe1abb76da4f6ca1e05864f90c831f7f91ce4d4ef085",
+      "observed_model_version_set_sha256": "1956f747759d155afb66dd465dabea1df64583bed9ff76e67bb8a975d5ddd3e9",
+      "parent_model_version_set_sha256": "1956f747759d155afb66dd465dabea1df64583bed9ff76e67bb8a975d5ddd3e9",
+      "provider_error_count": 0,
+      "provider_row_count": 500,
+      "successful_prediction_count": 500,
+      "target": "prior_context_sft",
+      "verified_final_receipt_gcs_generation": 1783966828514450
+    }
+  ],
+  "condition": "reference_absent_entity_predicted",
+  "evidentiary_status": "post_outcome_exploratory_lexical_stress",
+  "parent_model_version_set_sha256": {
+    "base": "efa44a091e264573c5a4b3b294e67e7f84d7cc8ad343df8b0414760ff8ac5383",
+    "no_context_sft": "1956f747759d155afb66dd465dabea1df64583bed9ff76e67bb8a975d5ddd3e9",
+    "prior_context_sft": "1956f747759d155afb66dd465dabea1df64583bed9ff76e67bb8a975d5ddd3e9"
+  },
+  "plan_file_sha256": "b06618c81e77e603fe6e98471a50639cc5bc15bd8e8c7af082ce0ad550b3a10b",
+  "plan_sha256": "ddfe32bc98f63a38c7fa48ba8b4b0afaaf35de7f39c6619b7ee37404e02609c6",
+  "private_registry_sha256": "bd761a877a5acadfac4ec969158d3b78b746a5be8a9891ebd53abb3c913cf8f7",
+  "provider_request_count": 1500,
+  "schema_version": 1,
+  "selected_target_set_sha256": "6893e19f1b6abf5fa2048600c68a483860f0ac6770ca2f7e84a3abc010fde36a",
+  "study_id": "predicted_history_reference_absent_entity_development_v1"
+}

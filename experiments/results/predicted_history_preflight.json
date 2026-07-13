@@ -1,0 +1,60 @@
+{
+  "audio_duration_seconds": 8611.569,
+  "evidentiary_status": "development",
+  "gcs_metadata_verified": true,
+  "generation_command": "python -m experiments.scripts.predicted_history_study",
+  "history_source": "own_prior_prediction_only",
+  "provider_row_count": 4108,
+  "provider_schema_fields": [
+    "stable_id",
+    "source_key",
+    "source_family",
+    "split",
+    "offset",
+    "duration"
+  ],
+  "reference_access": "scoring_only_after_cell_finalization",
+  "schedules": {
+    "R1": {
+      "dependency_item_count": 3492,
+      "private_schedule_sha256": "977cad13b54faf4443e56c611b47a14edd313845fea2034424bfb50ae62022d1",
+      "row_count": 4108,
+      "rows_with_dependencies": 3492,
+      "wave_count": 132,
+      "window": 1
+    },
+    "R2": {
+      "dependency_item_count": 6415,
+      "private_schedule_sha256": "13d51b788294344009136b7505fb3bf1e3fe777559c9b27196de04c5f4361562",
+      "row_count": 4108,
+      "rows_with_dependencies": 3492,
+      "wave_count": 132,
+      "window": 2
+    },
+    "R4": {
+      "dependency_item_count": 11189,
+      "private_schedule_sha256": "b44fddad80ffa8e8752be63369b274b8219039dd34d667fd4de7b3272886a5ec",
+      "row_count": 4108,
+      "rows_with_dependencies": 3492,
+      "wave_count": 132,
+      "window": 4
+    },
+    "R8": {
+      "dependency_item_count": 18974,
+      "private_schedule_sha256": "f33554705b936c85b31903d7fba1452ff69144ff848d010b6af1fa64204810b9",
+      "row_count": 4108,
+      "rows_with_dependencies": 3492,
+      "wave_count": 132,
+      "window": 8
+    }
+  },
+  "schema_version": 1,
+  "source_byte_count": 10087980,
+  "source_cluster_count": 615,
+  "source_family_count": 4,
+  "source_locator_sha256": "117c40a93dc783c6fac4ddfe9a52118febc73c3211e5263a3789e1a0297c59de",
+  "source_object_generation": 1782598138961426,
+  "source_object_md5": "oHWnmD03/VfrgCucvUufIw==",
+  "source_object_sha256": "f87109ae9a84440e58575feace65eb4bc71101b4b5ad0c9c42f834c3c43b0ee3",
+  "study_id": "predicted_history_development_v1"
+}

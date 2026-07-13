@@ -1,0 +1,50 @@
+{
+  "analysis_replay": {
+    "bootstrap_resamples": 10000,
+    "bootstrap_seed": 20260711,
+    "donor_replicates": 100,
+    "donor_seed": 20260712,
+    "output_count": 6,
+    "status": "byte_identical"
+  },
+  "artifact_kind": "predicted_history_reproduction_receipt",
+  "artifacts": {
+    "experiments/results/predicted_history_analysis.csv": "fc67d021a24e63cdb4aa8a2016b30666cca6e8d51b0739bee5a0f5af5f0433a6",
+    "experiments/results/predicted_history_analysis.json": "47d010e6f7af4b5c6e3bbb8a5159106ae3b1b4742265ce76f0320d0f444e230c",
+    "experiments/results/predicted_history_cost_receipt.json": "0a6994d50ac8ff8c7f65328d03031d29fc39170baf489eacf7b9580bacc39c94",
+    "experiments/results/predicted_history_matrix_operational_v2.json": "ed1632629c821aad3530987822d3ca1ce9dff2031a884441061e3e060cff04f4",
+    "experiments/results/predicted_history_matrix_plan_v2.json": "363eaee6104387db95987574f0789133ed8f910877a62ca77f6d915c51a96cb1",
+    "experiments/results/predicted_history_matrix_receipt_v2.json": "e2386e01b97f205c6ac4a629aa1b5579e1f2ae4d31eb3d85e4bd1ac9706a7f0f",
+    "experiments/results/predicted_history_matrix_transport_recovery_v2.json": "775f5c2feaa02b00a47fc8909a6b34e58ac3624c6294ecf5302b26921dae5482",
+    "experiments/results/predicted_history_stress_plan_v2.json": "4be1efbed8f897320b2ce73f43e9c90dda2e0feb955782d606850f8f87eaeb94",
+    "experiments/results/predicted_history_stress_receipt_v2.json": "ad0544275528ad35e5e84990500115beabcc4c2847dca295cb1c821db7975977",
+    "paper/figures/data/predicted_history_tradeoff.csv": "169cc3438a6d38671347c0e5eb18ac7967255eaf8d7cebf21d0093949737e1f6",
+    "paper/figures/data/predicted_history_windows.csv": "719478723a6b0871eced0fb17f5450de47d5eaa1008c11bba485d01421bce87d",
+    "paper/figures/fig_predicted_history_receipt.json": "da55d55f857a25324dc19b5006e8f663876d5613e47d2d48e20dddaa38640d73",
+    "paper/figures/fig_predicted_history_tradeoff.pdf": "86a22b79411044025235d6bd4248cb948ee79a4d176d2ac02f73954ec0255ba8",
+    "paper/figures/fig_predicted_history_tradeoff.png": "680f2942b4e7da8b820b3250b2021b0910962b61d7cdf7974a0bfb61c65d52dd",
+    "paper/figures/fig_predicted_history_windows.pdf": "272e74def39d038127af8081a86c4e4b3cc2d89ea7c5d7ecf6c05df328fa0e9f",
+    "paper/figures/fig_predicted_history_windows.png": "ffed5d151dddf4a7219df77bbd8bb51ca9426512bc125c64c5e71e9f68a20ff1",
+    "paper/tables/predicted_history_main.md": "fb9c3560792efd2f6491e895b9b5f971b94fcc01a5a5d3a958246702d3875b43",
+    "paper/tables/predicted_history_stress.md": "10871db9d774b26a98b1330ab60bea851f121a011832947327ae430b9d72a958"
+  },
+  "cost_replay": {
+    "status": "byte_identical",
+    "total_usage_derived_cost_usd": 31.407530982567003
+  },
+  "evidentiary_status": "development",
+  "execution_spans": {
+    "matrix_artifact_mtime_span_seconds": 6252,
+    "matrix_span_includes_transport_recovery_waits": true,
+    "stress_artifact_mtime_span_seconds": 126,
+    "timing_basis": "local_first_to_last_private_artifact_mtime"
+  },
+  "figure_replay": {
+    "output_count": 4,
+    "receipt_sha256": "da55d55f857a25324dc19b5006e8f663876d5613e47d2d48e20dddaa38640d73",
+    "status": "create_or_verified_identical"
+  },
+  "registered_terminal_request_count": 66120,
+  "schema_version": 1,
+  "study_id": "predicted_history_development_v1"
+}

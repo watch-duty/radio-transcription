@@ -1,0 +1,23 @@
+{
+  "artifact_kind": "predicted_history_matrix_transport_recovery_receipt",
+  "automatic_recovery_cap": 3,
+  "billing_reconciled": false,
+  "conservative_orphan_attempt_count": 2,
+  "conservative_orphan_cost_usd": 0.000656066667,
+  "conservative_total_usage_derived_cost_usd": 28.939656860667,
+  "evidentiary_status": "development",
+  "matrix_operational_file_sha256": "ed1632629c821aad3530987822d3ca1ce9dff2031a884441061e3e060cff04f4",
+  "matrix_receipt_file_sha256": "e2386e01b97f205c6ac4a629aa1b5579e1f2ae4d31eb3d85e4bd1ac9706a7f0f",
+  "no_artifact_threshold_seconds": 900,
+  "orphan_attempt_cost_proxy_usd": 0.0003280333333333333,
+  "provider_receipt_status": "unknown_cancelled_during_tcp_connect",
+  "registered_terminal_row_count": 61620,
+  "registered_terminal_usage_derived_cost_usd": 28.939000794,
+  "schema_version": 1,
+  "scientific_prediction_admission": "excluded_no_terminal_artifact",
+  "study_id": "predicted_history_development_v1",
+  "terminal_provider_error_count": 0,
+  "terminal_retry_count": 0,
+  "transport_recovery_count": 2,
+  "unused_recovery_capacity": 1
+}

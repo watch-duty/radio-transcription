@@ -1,0 +1,44 @@
+{
+  "artifact_kind": "predicted_history_concept_figures",
+  "contract": {
+    "bytes": 2941,
+    "sha256": "b2282814118b3d41380391b0a03b76ba57efb22a2a9ca3231989ac4c6b669e83"
+  },
+  "figure_contract": {
+    "history_source": "same_target_rolling_predictions_only",
+    "matrix_columns": [
+      "R0",
+      "R1",
+      "R2",
+      "R4",
+      "R8"
+    ],
+    "matrix_rows": [
+      "base",
+      "no_context_sft",
+      "prior_context_sft"
+    ],
+    "reference_is_history_donor": false,
+    "reference_is_inference_input": false,
+    "registered_cells": 15
+  },
+  "outputs": {
+    "fig_factorial_matrix.pdf": {
+      "bytes": 105641,
+      "sha256": "b4763c19eaa2e42330ad1202440bc7828b6b9ae9f1484bd853a4e1e6a3b11de7"
+    },
+    "fig_factorial_matrix.png": {
+      "bytes": 216371,
+      "sha256": "81a23cf967b18a7a512debdf21c90b7e8906397ea625edaa6143beb5839860bb"
+    },
+    "fig_task_contract.pdf": {
+      "bytes": 73561,
+      "sha256": "ba30cf71cdb2cd66b3d5333d900192ba8dcb466173032095d0f71446d3479942"
+    },
+    "fig_task_contract.png": {
+      "bytes": 206588,
+      "sha256": "e797db3aeef0fba6fb7643a5085efee35941c5caf15d902983e79537f3048dd1"
+    }
+  },
+  "schema_version": 1
+}

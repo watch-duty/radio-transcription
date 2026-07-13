@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "study_id": "predicted_history_eval_v2",
+  "history_contract": {
+    "source": "same_target_rolling_predictions_only",
+    "reference_usage": "scoring_only_after_inference",
+    "reference_is_inference_input": false,
+    "reference_is_history_donor": false,
+    "desired_current_audio_content_authority": true,
+    "eligibility": [
+      "same source",
+      "strictly earlier",
+      "end-before-start",
+      "oldest to newest",
+      "usable model output"
+    ]
+  },
+  "task": {
+    "title": "Prediction-only rolling context at inference",
+    "history_title": "Rolling predicted history",
+    "history_badge": "MODEL PREDICTIONS ONLY",
+    "history_cards": [
+      "prediction at t-k",
+      "...",
+      "prediction at t-1"
+    ],
+    "history_role": "Desired: written-form assistance only",
+    "audio_title": "Current audio x_t",
+    "audio_subtitle": "the only attached audio",
+    "audio_role": "Desired content + span authority",
+    "interface_title": "P13 request interface",
+    "interface_subtitle": "selected Gemini target",
+    "output_title": "Current target only",
+    "output_subtitle": "prediction at t",
+    "feedback": "prediction at t may enter a later request after eligibility checks",
+    "scoring": "After inference only: compare prediction at t with current reference y_t. The reference is never an input or history donor."
+  },
+  "matrix": {
+    "title": "Registered prediction-only serving matrix",
+    "registered_cells": 15,
+    "registered_requests": 61620,
+    "rows": [
+      {
+        "id": "base",
+        "label": "Base publisher target",
+        "training_note": "no supervised adaptation"
+      },
+      {
+        "id": "no_context_sft",
+        "label": "No-context SFT target",
+        "training_note": "historical domain SFT"
+      },
+      {
+        "id": "prior_context_sft",
+        "label": "Prior-context SFT target",
+        "training_note": "historical context-targeted SFT"
+      }
+    ],
+    "columns": [
+      {
+        "id": "R0",
+        "window": 0,
+        "prompt": "Option D",
+        "history": "current audio only"
+      },
+      {
+        "id": "R1",
+        "window": 1,
+        "prompt": "P13",
+        "history": "up to 1 prior prediction"
+      },
+      {
+        "id": "R2",
+        "window": 2,
+        "prompt": "P13",
+        "history": "up to 2 prior predictions"
+      },
+      {
+        "id": "R4",
+        "window": 4,
+        "prompt": "P13",
+        "history": "up to 4 prior predictions"
+      },
+      {
+        "id": "R8",
+        "window": 8,
+        "prompt": "P13",
+        "history": "up to 8 prior predictions"
+      }
+    ],
+    "r0_caveat": "Rk-R0 changes prompt, serialization, and history: a serving-bundle contrast.",
+    "fixed_p13_caveat": "R2/R4/R8-R1 holds P13 fixed: a larger-window contrast.",
+    "target_caveat": "Across-row gaps compare historically unmatched target bundles; they are not causal SFT effects."
+  }
+}

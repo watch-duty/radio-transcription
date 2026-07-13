@@ -1,0 +1,38 @@
+{
+  "artifact_kind": "predicted_history_stress_preflight",
+  "assignment_count": 500,
+  "conditions": [
+    "correct_r8",
+    "unrelated_predicted",
+    "stale_same_source_predicted",
+    "shuffled_correct_predicted"
+  ],
+  "donor_slots_per_condition": 8,
+  "evidentiary_status": "development",
+  "generation_command": "python -m experiments.scripts.predicted_history_stress",
+  "history_source": "same_target_finalized_predictions_only",
+  "new_provider_conditions": [
+    "unrelated_predicted",
+    "stale_same_source_predicted",
+    "shuffled_correct_predicted"
+  ],
+  "private_assignment_sha256": "dff134cc7501022a8e82708222175e124e02ff9f96b6a8fd4ffec3623796d050",
+  "provider_row_count": 4108,
+  "r8_schedule_sha256": "f33554705b936c85b31903d7fba1452ff69144ff848d010b6af1fa64204810b9",
+  "reference_access": "forbidden_during_assignment_and_population",
+  "requested_target_row_count": 500,
+  "schema_version": 1,
+  "seed": 20260711,
+  "selected_source_cluster_count": 47,
+  "selected_source_family_count": 3,
+  "selected_target_set_sha256": "6893e19f1b6abf5fa2048600c68a483860f0ac6770ca2f7e84a3abc010fde36a",
+  "selection_inputs": "hashes_family_source_timing_duration_dependency_metadata_only",
+  "source_object_generation": 1782598138961426,
+  "source_object_sha256": "f87109ae9a84440e58575feace65eb4bc71101b4b5ad0c9c42f834c3c43b0ee3",
+  "study_id": "predicted_history_development_v1",
+  "target_row_count": 500,
+  "unrelated_deployment_claim_eligible": false,
+  "unrelated_temporal_semantics": "noncausal_cross_source_counterfactual_offsets_not_comparable",
+  "unusable_prediction_policy": "omit_frozen_slot_without_refill",
+  "window": 8
+}
