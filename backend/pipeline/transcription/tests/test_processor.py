@@ -245,6 +245,9 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
         self.mock_record_pipeline_stage.assert_any_call(
             "transcription", "success"
         )
+        self.mock_record_pipeline_stage.assert_any_call(
+            "transcription_status", "partial"
+        )
 
     async def test_process_event_empty_transcription(self) -> None:
         """Verifies behavior when speech API returns empty transcription."""

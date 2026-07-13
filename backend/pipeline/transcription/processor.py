@@ -132,7 +132,13 @@ class TranscriptionEventProcessor:
             )
         except Exception as e:
             record_pipeline_stage("transcription", "error")
-            record_pipeline_stage("transcription_status", "error")
+            err_msg = str(e).lower()
+            if "safety" in err_msg or "blocked" in err_msg:
+                record_pipeline_stage("transcription_status", "safety_blocked")
+            elif is_transient_exception(e):
+                record_pipeline_stage("transcription_status", "transient_error")
+            else:
+                record_pipeline_stage("transcription_status", "error")
             if is_transient_exception(e):
                 logger.warning(
                     "Transient failure processing transcription claim for transmission %s (feed %s): %s. "
@@ -191,14 +197,13 @@ class TranscriptionEventProcessor:
                     e.reason,
                 )
                 errors.append(f"Partial transcription ({e.reason})")
-                transcript = e.partial_text
+                record_pipeline_stage("transcription_status", "partial")
+                return e.partial_text.strip() if e.partial_text else ""
 
         transcript = transcript.strip() if transcript else ""
-        return self._record_status_and_get_fallback_text(transcript, errors)
+        return self._record_status_and_get_fallback_text(transcript)
 
-    def _record_status_and_get_fallback_text(
-        self, transcript: str, errors: list[str]
-    ) -> str:
+    def _record_status_and_get_fallback_text(self, transcript: str) -> str:
         """Determines transcription status and returns the formatted text."""
         if not transcript:
             # We intentionally do NOT append to `errors` here. Appending an error causes
