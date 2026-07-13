@@ -717,6 +717,9 @@ class OrderedStitchAudioFn(beam.DoFn):
     def _get_bundle_deadline_monotonic(self) -> float:
         """Returns the monotonic timestamp at which the current worker bundle budget expires."""
         if not hasattr(self, "bundle_start_time_monotonic"):
+            logger.warning(
+                "bundle_start_time_monotonic was not initialized; falling back to current time.monotonic()."
+            )
             self.bundle_start_time_monotonic = time.monotonic()
         return (
             self.bundle_start_time_monotonic
@@ -748,6 +751,9 @@ class OrderedStitchAudioFn(beam.DoFn):
     def _is_bundle_budget_exhausted(self) -> bool:
         """Check if the current worker bundle has exhausted its time or prefetch budget."""
         if not hasattr(self, "bundle_start_time_monotonic"):
+            logger.warning(
+                "bundle_start_time_monotonic was not initialized; falling back to current time.monotonic()."
+            )
             self.bundle_start_time_monotonic = time.monotonic()
         elapsed_sec = time.monotonic() - self.bundle_start_time_monotonic
         return (
