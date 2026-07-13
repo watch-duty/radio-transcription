@@ -11,6 +11,18 @@ from backend.pipeline.common.env import is_gcp_env
 
 logger = logging.getLogger(__name__)
 
+# Default thread pool size for local development environments lacking GCP
+# metrics
+_LOCAL_FALLBACK_THREADS = 16
+
+# Minimum threads required to maintain throughput during single-core VM CPU
+# throttling
+_MIN_THREADS = 4
+
+# Maximum threads capped to prevent connection pool exhaustion and memory bloat
+# on dense VMs
+_MAX_THREADS = 32
+
 
 class ConfigBase(pydantic.BaseModel):
     """Base Pydantic model for JSON configuration classes."""
@@ -59,15 +71,17 @@ def get_optimal_thread_pool_size(
             )
 
     if not is_gcp_env():
-        return 16
+        return _LOCAL_FALLBACK_THREADS
 
     try:
         sched_getaffinity = getattr(os, "sched_getaffinity", None)
         if sched_getaffinity:
             core_count = len(sched_getaffinity(0))
         else:
-            core_count = os.cpu_count() or 4
+            core_count = os.cpu_count() or _MIN_THREADS
     except (AttributeError, NotImplementedError):
-        core_count = os.cpu_count() or 4
+        core_count = os.cpu_count() or _MIN_THREADS
 
-    return max(4, min(32, core_count * default_threads_per_core))
+    return max(
+        _MIN_THREADS, min(_MAX_THREADS, core_count * default_threads_per_core)
+    )

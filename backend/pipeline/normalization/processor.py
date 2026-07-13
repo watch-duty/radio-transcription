@@ -50,7 +50,11 @@ _CLASSIFICATION_MAP = {
 }
 
 # We dynamically derive the thread pool based on CPU limits.
-# Cloud Run allows 4 concurrent requests, and each request can spawn up to 3 parallel uploads.
+# NOTE: Cloud Run concurrency is currently configured in the deployment repository Terraform
+# (watch-duty/radio-transcription-deployment). It allows 4 concurrent requests, and each
+# request can spawn up to 3 parallel uploads. If concurrency is bumped in the deploy config,
+# `default_threads_per_core` MUST be manually kept in sync here to avoid silently
+# under-provisioning threads (which leads to queuing delays without explicit failures).
 # Assuming standard 4-core instance, 4 * 3 = 12 threads will handle peak load without queuing.
 _GLOBAL_UPLOAD_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
     max_workers=get_optimal_thread_pool_size(
