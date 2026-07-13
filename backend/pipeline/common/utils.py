@@ -74,11 +74,12 @@ def get_optimal_thread_pool_size(
         return _LOCAL_FALLBACK_THREADS
 
     try:
-        sched_getaffinity = getattr(os, "sched_getaffinity", None)
-        if sched_getaffinity:
-            core_count = len(sched_getaffinity(0))
-        else:
-            core_count = os.cpu_count() or _MIN_THREADS
+        sched_getaffinity_fn = getattr(os, "sched_getaffinity", None)
+        core_count = (
+            len(sched_getaffinity_fn(0))
+            if sched_getaffinity_fn
+            else (os.cpu_count() or _MIN_THREADS)
+        )
     except (AttributeError, NotImplementedError):
         core_count = os.cpu_count() or _MIN_THREADS
 
