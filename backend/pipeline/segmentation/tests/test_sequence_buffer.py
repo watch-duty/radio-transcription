@@ -1,3 +1,4 @@
+import time
 import unittest
 
 from backend.pipeline.segmentation.datatypes import OrderRestorerConfig
@@ -204,6 +205,29 @@ class TestSequenceBuffer(unittest.TestCase):
         self.assertEqual(len(new_buffer), 2)
         self.assertEqual(new_buffer[0].gcs_uri, "gs://chunk5")
         self.assertEqual(new_buffer[1].gcs_uri, "gs://chunk6")
+
+    def test_deadline_monotonic_clamp(self) -> None:
+        """Verifies that drain_ready_elements respects deadline_monotonic, leaving remaining chunks in the buffer."""
+        initial_buffer = [
+            BufferedChunk(timestamp_ms=7000, gcs_uri="gs://chunk3"),
+            BufferedChunk(timestamp_ms=10000, gcs_uri="gs://chunk4"),
+            BufferedChunk(timestamp_ms=13000, gcs_uri="gs://chunk5"),
+        ]
+
+        (
+            new_expected,
+            new_buffer,
+            to_emit,
+        ) = self.buffer.drain_ready_elements(
+            expected_next_ts=7000,
+            buffer_elements=initial_buffer,
+            epsilon_ms=10,
+            deadline_monotonic=time.monotonic() - 10.0,  # Expired in past
+        )
+
+        self.assertEqual(len(to_emit), 0)
+        self.assertEqual(new_expected, 7000)
+        self.assertEqual(len(new_buffer), 3)
 
     def test_tracing_context_propagation(self) -> None:
         """Verifies that traceparent and baggage are correctly propagated to emitted and buffered chunks."""

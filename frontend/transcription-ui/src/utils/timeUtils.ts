@@ -89,18 +89,45 @@ export function getRelativeTimeString(
   return rtf.format(-diffDays, 'day');
 }
 
-export function formatDuration(seconds: number): string {
+export function formatDuration(
+  seconds: number,
+  showSeconds: boolean = true
+): string {
   if (seconds < 1) {
-    return '<1 sec';
+    return showSeconds ? '<1 sec' : '<1 min';
   }
   const roundedSeconds = Math.round(seconds);
   if (roundedSeconds < 60) {
-    return `${roundedSeconds} sec`;
+    return showSeconds ? `${roundedSeconds} sec` : '<1 min';
   }
   const minutes = Math.floor(roundedSeconds / 60);
-  const remainingSeconds = roundedSeconds % 60;
-  if (remainingSeconds === 0) {
-    return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
+
+  if (!showSeconds) {
+    if (hours === 0) {
+      return `${minutes} min`;
+    }
+    if (remainingMinutes === 0) {
+      return `${hours} hr`;
+    }
+    return `${hours} hr ${remainingMinutes} min`;
   }
-  return `${minutes} min ${remainingSeconds} sec`;
+
+  const remainingSeconds = roundedSeconds % 60;
+  if (hours === 0) {
+    if (remainingSeconds === 0) {
+      return `${minutes} min`;
+    }
+    return `${minutes} min ${remainingSeconds} sec`;
+  }
+
+  const parts = [`${hours} hr`];
+  if (remainingMinutes > 0) {
+    parts.push(`${remainingMinutes} min`);
+  }
+  if (remainingSeconds > 0) {
+    parts.push(`${remainingSeconds} sec`);
+  }
+  return parts.join(' ');
 }

@@ -398,7 +398,7 @@ jobs:
           PGDATABASE: postgres
         run: >-
           psql -v ON_ERROR_STOP=1
-          -f terraform/modules/alloydb/sql/ci/phase_1_behavior_check.sql
+          -f terraform/modules/alloydb/sql/ci/ingestion_leases_behavior_check.sql
       - name: Run HOT-protection guard
         env:
           PGHOST: localhost

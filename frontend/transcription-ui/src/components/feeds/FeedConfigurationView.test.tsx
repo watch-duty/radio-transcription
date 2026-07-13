@@ -1145,4 +1145,206 @@ describe('FeedConfigurationView', () => {
       );
     });
   });
+
+  it('does not display the timezone update warning when registering a new feed even if system/timezone is entered', async () => {
+    renderView();
+
+    const tagKeyInput = screen.getByLabelText('Key');
+    fireEvent.change(tagKeyInput, { target: { value: 'system/timezone' } });
+
+    // The alert should not be in the document since we are in register mode (not editing)
+    expect(
+      screen.queryByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).not.toBeInTheDocument();
+  });
+
+  it('displays the timezone update warning when editing a feed that already has a timezone tag', async () => {
+    // Add system/timezone to mock feeds
+    const timezoneFeed: Feed = {
+      id: 'feed-3',
+      name: 'Timezone Fire Dispatch',
+      sourceType: SourceType.BCFY_FEEDS,
+      sourceFeedId: '44556',
+      status: 'active',
+      substatus: 'active',
+      tags: [{ key: 'system/timezone', value: 'America/Los_Angeles' }],
+    };
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [timezoneFeed],
+      total: 1,
+    });
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Timezone Fire Dispatch')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Timezone Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    // The alert should be in the document immediately
+    expect(
+      screen.getByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('displays the timezone update warning when typing or editing a tag key to system/timezone while editing a feed', async () => {
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Marin Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    const tagKeyInput = screen.getAllByLabelText('Key')[0];
+    fireEvent.change(tagKeyInput, { target: { value: 'system/timezone' } });
+
+    // Warning is displayed immediately upon typing
+    expect(
+      screen.getByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).toBeInTheDocument();
+
+    // Now test editing an existing row key
+    // Reset key input
+    fireEvent.change(tagKeyInput, { target: { value: '' } });
+    expect(
+      screen.queryByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).not.toBeInTheDocument();
+
+    // The first row key input is index 1 (index 0 is the new tag key input field)
+    const existingRowKeyInput = screen.getAllByLabelText('Key')[1];
+    fireEvent.change(existingRowKeyInput, {
+      target: { value: 'system/timezone' },
+    });
+
+    expect(
+      screen.getByText(
+        'After updating the timezone, please deactivate and reset the feed.'
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('should show timezone tag information alert only when Source Type is Fire Notifications', async () => {
+    renderView();
+
+    // Default source type is Broadcastify Feeds. Verify the timezone info alert is not displayed.
+    expect(
+      screen.queryByText(
+        'The "system/timezone" tag can be used to correct the timestamps.',
+        { exact: false }
+      )
+    ).not.toBeInTheDocument();
+
+    // Select Source Type "Fire Notifications" in the dropdown
+    const formCard = screen.getByTestId('feed-config-card');
+    const selectDropdown = within(formCard).getByRole('combobox', {
+      name: /Source Type/i,
+    });
+    fireEvent.mouseDown(selectDropdown);
+
+    const listbox = await screen.findByRole('listbox');
+    const fireNotificationsOption =
+      await within(listbox).findByText('Fire Notifications');
+    fireEvent.click(fireNotificationsOption);
+
+    // Verify the alert is now displayed with both lines of text
+    expect(
+      screen.getByText(
+        'The "system/timezone" tag can be used to correct the timestamps.',
+        { exact: false }
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'It is highly recommended to add the "system/timezone" tag; defaulting to UTC timestamps can cause alignment issues if the source feed actually uses a local timezone.'
+      )
+    ).toBeInTheDocument();
+
+    // Switch back to Broadcastify Feeds and verify alert disappears
+    fireEvent.mouseDown(selectDropdown);
+    const listbox2 = await screen.findByRole('listbox');
+    const bcfyFeedsOption =
+      await within(listbox2).findByText('Broadcastify Feeds');
+    fireEvent.click(bcfyFeedsOption);
+
+    expect(
+      screen.queryByText(
+        'The "system/timezone" tag can be used to correct the timestamps.',
+        { exact: false }
+      )
+    ).not.toBeInTheDocument();
+  });
+
+  it('displays the timezone info alert in edit mode for a Fire Notifications feed', async () => {
+    // Add a mock Fire Notifications feed
+    const fireFeed: Feed = {
+      id: 'feed-4',
+      name: 'Test Fire Feed',
+      sourceType: SourceType.FIRE_NOTIFICATIONS,
+      sourceFeedId: 'fire-123',
+      status: 'active',
+      substatus: 'active',
+      tags: [],
+    };
+    vi.mocked(listFeeds).mockResolvedValue({
+      feeds: [fireFeed],
+      total: 1,
+    });
+
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Test Fire Feed')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Test Fire Feed',
+    });
+    fireEvent.click(editBtn);
+
+    // Verify the info alert is displayed immediately in edit mode since it is a Fire Notifications feed
+    expect(
+      screen.getByText(
+        'The "system/timezone" tag can be used to correct the timestamps.',
+        { exact: false }
+      )
+    ).toBeInTheDocument();
+  });
+
+  it('does not display the timezone info alert in edit mode for a non-Fire Notifications feed', async () => {
+    // marin feed in mockFeeds is SourceType.BCFY_FEEDS
+    renderView();
+
+    await waitFor(() => {
+      expect(screen.getByText('Marin Fire Dispatch')).toBeInTheDocument();
+    });
+
+    const editBtn = screen.getByRole('button', {
+      name: 'Edit Marin Fire Dispatch',
+    });
+    fireEvent.click(editBtn);
+
+    // Verify the info alert is not displayed since it is BCFY_FEEDS
+    expect(
+      screen.queryByText(
+        'The "system/timezone" tag can be used to correct the timestamps.',
+        { exact: false }
+      )
+    ).not.toBeInTheDocument();
+  });
 });

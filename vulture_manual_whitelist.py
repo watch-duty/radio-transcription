@@ -45,3 +45,6 @@ after_values
 
 # FastAPI discovers this route handler through decorator registration.
 receive_feed_change_notification
+
+# StitcherDlqPayload TypedDict fields consumed by structure definition and dictionary creation.
+error_message

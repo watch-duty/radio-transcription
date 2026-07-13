@@ -1,6 +1,11 @@
 -- Maintained Broadcastify Calls membership metadata. Existing rows remain in
 -- the valid legacy state because all three columns are nullable with no
 -- default and this migration performs no data rewrite.
+-- Bound ACCESS EXCLUSIVE lock acquisition so this migration fails instead of
+-- queueing behind long-running work and blocking later feed_properties traffic.
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+
 ALTER TABLE public.feed_properties
     ADD COLUMN IF NOT EXISTS bcfy_calls_sid TEXT;
 
@@ -41,3 +46,5 @@ EXCEPTION
     WHEN duplicate_object THEN NULL;
 END
 $migration$;
+
+COMMIT;

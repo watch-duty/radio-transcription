@@ -575,10 +575,30 @@ export function FeedConfigurationEdit({
                 Tags (e.g. county, agency, state) allow for better
                 searchability, grouping, and routing of notifications.
               </Typography>
-              <Alert severity="info" sx={{ mb: 2 }}>
-                The system/timezone tag can be used to correct the timestamps.
-                This is only supported in Fire Notification feeds.
-              </Alert>
+              {feedSourceType === SourceType.FIRE_NOTIFICATIONS && (
+                <Alert severity="info" sx={{ mb: 2 }}>
+                  <Typography variant="body2" component="div">
+                    The "system/timezone" tag can be used to correct the
+                    timestamps. This is only supported in Fire Notification
+                    feeds.
+                  </Typography>
+                  <Typography variant="body2" component="div" sx={{ mt: 0.5 }}>
+                    It is highly recommended to add the "system/timezone" tag;
+                    defaulting to UTC timestamps can cause alignment issues if
+                    the source feed actually uses a local timezone.
+                  </Typography>
+                </Alert>
+              )}
+              {isEditing &&
+                (newTagKey.trim() === SYSTEM_TIMEZONE ||
+                  feedTags.some(
+                    (tag) => tag.key.trim() === SYSTEM_TIMEZONE
+                  )) && (
+                  <Alert severity="warning" sx={{ mb: 2 }}>
+                    After updating the timezone, please deactivate and reset the
+                    feed.
+                  </Alert>
+                )}
 
               <Stack
                 direction="row"

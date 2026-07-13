@@ -10,11 +10,8 @@ CREATE TABLE IF NOT EXISTS public.ingestion_leases (
     last_heartbeat TIMESTAMPTZ NULL,
     failure_count INTEGER NOT NULL DEFAULT 0,
     retry_after TIMESTAMPTZ NULL,
-    unclaimed_since TIMESTAMPTZ NULL,
     status_reason TEXT NULL,
     status_reason_detail TEXT NULL,
-    status_reason_updated_at TIMESTAMPTZ NULL,
-    audit_revision BIGINT NOT NULL DEFAULT 0,
     membership_revision BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -30,8 +27,6 @@ CREATE TABLE IF NOT EXISTS public.ingestion_leases (
         CHECK (fencing_token >= 0),
     CONSTRAINT ingestion_leases_failure_count_nonnegative
         CHECK (failure_count >= 0),
-    CONSTRAINT ingestion_leases_audit_revision_nonnegative
-        CHECK (audit_revision >= 0),
     CONSTRAINT ingestion_leases_membership_revision_nonnegative
         CHECK (membership_revision >= 0),
     CONSTRAINT ingestion_leases_owner_heartbeat_pair
