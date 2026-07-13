@@ -6,6 +6,7 @@ from backend.pipeline.ingestion import (
     grant_control,
     router,
     settings,
+    source_runtime_specs,
     worker_profiles,
 )
 from backend.pipeline.storage import feed_store
@@ -56,12 +57,14 @@ def _validate_feed_domain_configuration(
 
 def _validate_sid_domain_configuration(
     allocation: worker_profiles.DomainAllocation,
+    collector_settings: settings.CollectorSettings,
 ) -> None:
     catalog_entry = worker_profiles.DOMAIN_CATALOG.get(
         grant_control.DomainId.SID
     )
     if (
         catalog_entry is None
+        or allocation.domain_id is not grant_control.DomainId.SID
         or catalog_entry.domain_id is not grant_control.DomainId.SID
         or catalog_entry.authority_kind
         is not worker_profiles.AuthorityKind.SID_LEASE
@@ -69,8 +72,76 @@ def _validate_sid_domain_configuration(
     ):
         msg = "Static SID domain catalog configuration is invalid"
         raise RuntimeError(msg)
-    if allocation.claims_enabled:
-        msg = "Phase 3 SID claims must remain disabled"
+    calls_spec = source_runtime_specs.source_spec(
+        feed_store.SourceType.BCFY_CALLS
+    )
+    if (
+        not calls_spec.claimable
+        or calls_spec.default_cap is None
+        or calls_spec.topic_kind is not source_runtime_specs.TopicKind.SEGMENTED
+        or calls_spec.source_type is not feed_store.SourceType.BCFY_CALLS
+    ):
+        msg = "Static SID Calls source configuration is invalid"
+        raise RuntimeError(msg)
+    if not source_runtime_specs.url_base_for(feed_store.SourceType.BCFY_CALLS):
+        msg = "SID Calls URL base is not configured"
+        raise RuntimeError(msg)
+    try:
+        topic_path = router.resolve_topic_path(
+            feed_store.SourceType.BCFY_CALLS,
+            collector_settings,
+        )
+    except ValueError as exc:
+        msg = f"SID Calls segmented topic configuration is invalid: {exc}"
+        raise RuntimeError(msg) from exc
+    if not topic_path:
+        msg = "SID Calls segmented topic is not configured"
+        raise RuntimeError(msg)
+
+
+def _validate_calls_authority_configuration(
+    profile: worker_profiles.WorkerProfile,
+    collector_settings: settings.CollectorSettings,
+) -> None:
+    """Prove one and only one effective Calls claim authority."""
+    mode = collector_settings.bcfy_calls_authority_mode
+    if not isinstance(mode, worker_profiles.BcfyCallsAuthorityMode):
+        msg = "CollectorSettings has an invalid Calls authority mode"
+        raise TypeError(msg)
+    feed_allocation = worker_profiles.allocation_for_domain(
+        profile,
+        grant_control.DomainId.FEED,
+    )
+    sid_allocation = worker_profiles.allocation_for_domain(
+        profile,
+        grant_control.DomainId.SID,
+    )
+    expected_claim_caps = (
+        dict(collector_settings.caps) if feed_allocation is not None else {}
+    )
+    if mode is worker_profiles.BcfyCallsAuthorityMode.SID_LEASE:
+        expected_claim_caps.pop(feed_store.SourceType.BCFY_CALLS, None)
+    if dict(collector_settings.feed_claim_caps) != expected_claim_caps:
+        msg = "Effective Feed claim caps do not match Calls authority mode"
+        raise RuntimeError(msg)
+
+    calls_feed_enabled = (
+        feed_allocation is not None
+        and feed_allocation.claims_enabled
+        and feed_store.SourceType.BCFY_CALLS
+        in collector_settings.feed_claim_caps
+    )
+    sid_enabled = sid_allocation is not None and sid_allocation.claims_enabled
+    if calls_feed_enabled is sid_enabled:
+        msg = "Exactly one Calls Feed or SID Lease authority must be enabled"
+        raise RuntimeError(msg)
+    if mode is worker_profiles.BcfyCallsAuthorityMode.LEGACY_FEED:
+        if not calls_feed_enabled or sid_enabled:
+            msg = "legacy_feed mode does not match derived Calls authority"
+            raise RuntimeError(msg)
+        return
+    if calls_feed_enabled or not sid_enabled:
+        msg = "sid_lease mode does not match derived Calls authority"
         raise RuntimeError(msg)
 
 
@@ -86,7 +157,16 @@ def _validate_selected_domain_configuration(
         if allocation.domain_id is grant_control.DomainId.FEED:
             _validate_feed_domain_configuration(collector_settings)
         elif allocation.domain_id is grant_control.DomainId.SID:
-            _validate_sid_domain_configuration(allocation)
+            _validate_sid_domain_configuration(allocation, collector_settings)
+    _validate_calls_authority_configuration(profile, collector_settings)
+    if (
+        collector_settings.bcfy_calls_authority_mode
+        is worker_profiles.BcfyCallsAuthorityMode.SID_LEASE
+    ):
+        msg = (
+            "SID Calls production activation requires the Phase 6 call executor"
+        )
+        raise RuntimeError(msg)
 
 
 def main() -> None:
@@ -96,8 +176,8 @@ def main() -> None:
     Initializes CollectorRuntime with the correct capture function and
     blocks until graceful shutdown completes.
     """
-    profile = settings.load_worker_profile_from_env()
-    collector_settings = settings.CollectorSettings(worker_profile=profile)
+    collector_settings = settings.CollectorSettings()
+    profile = collector_settings.worker_profile
     _validate_selected_domain_configuration(profile, collector_settings)
     log_helper.setup_logging()
     tracing_utils.setup_tracing(

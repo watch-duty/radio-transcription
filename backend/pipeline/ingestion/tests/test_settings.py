@@ -240,7 +240,9 @@ class TestCollectorSettings(unittest.TestCase):
         self.assertEqual(settings.lease_admission_cycle_budget, 0)
         self.assertEqual(settings.feed_claim_caps, {})
 
-    def test_sid_only_settings_skip_feed_caps_and_topics(self) -> None:
+    def test_sid_only_settings_skip_feed_caps_but_load_calls_topic(
+        self,
+    ) -> None:
         env = _required_env()
         del env["CONTINUOUS_PUBSUB_TOPIC_PATH"]
         env.update(
@@ -250,17 +252,21 @@ class TestCollectorSettings(unittest.TestCase):
                 "MAX_FEEDS_PER_WORKER": "not-an-int",
                 "LEASE_ADMISSION_CYCLE_BUDGET": "not-an-int",
                 "CAP_BCFY_CALLS": "not-an-int",
-                "SEGMENTED_PUBSUB_TOPIC_PATH": "not-inspected",
+                "SEGMENTED_PUBSUB_TOPIC_PATH": "projects/p/topics/segmented",
             }
         )
 
         with patch.dict("os.environ", env, clear=True):
             settings = CollectorSettings()
 
-        self.assertEqual(settings.caps, {})
+        self.assertEqual(settings.caps, settings_module._DEFAULT_CAPS)
+        self.assertIn(SourceType.BCFY_CALLS, settings.caps)
         self.assertEqual(settings.feed_claim_caps, {})
         self.assertEqual(settings.continuous_pubsub_topic_path, "")
-        self.assertIsNone(settings.segmented_pubsub_topic_path)
+        self.assertEqual(
+            settings.segmented_pubsub_topic_path,
+            "projects/p/topics/segmented",
+        )
 
     def test_feed_only_profile_skips_sid_allocation_configuration(self) -> None:
         env = {

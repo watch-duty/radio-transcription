@@ -670,16 +670,16 @@ class CollectorRuntime:
             if allocation.domain_id is grant_control.DomainId.FEED:
                 self._store = FeedStore(
                     self._data_pool,
-                    claim_types=list(settings.caps.keys()),
+                    claim_types=list(settings.feed_claim_caps.keys()),
                 )
                 self._heartbeat_store = FeedStore(
                     self._heartbeat_pool,
-                    claim_types=list(settings.caps.keys()),
+                    claim_types=list(settings.feed_claim_caps.keys()),
                 )
                 feed_control = feed_grant_control.FeedGrantControl(
                     self._store,
                     self._heartbeat_store,
-                    settings.caps,
+                    settings.feed_claim_caps,
                     abandonment,
                     on_quarantined=self._emit_feed_quarantine,
                 )

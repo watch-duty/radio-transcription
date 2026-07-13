@@ -372,6 +372,24 @@ def _make_settings(**overrides) -> mock.MagicMock:
             feed_owned_cap=defaults["max_feeds_per_worker"],
             feed_claims_per_cycle=defaults["lease_admission_cycle_budget"],
         )
+    if "bcfy_calls_authority_mode" not in overrides:
+        sid_allocation = worker_profiles.allocation_for_domain(
+            defaults["worker_profile"],
+            grant_control.DomainId.SID,
+        )
+        defaults["bcfy_calls_authority_mode"] = (
+            worker_profiles.BcfyCallsAuthorityMode.SID_LEASE
+            if sid_allocation is not None and sid_allocation.claims_enabled
+            else worker_profiles.BcfyCallsAuthorityMode.LEGACY_FEED
+        )
+    if "feed_claim_caps" not in overrides:
+        feed_claim_caps = dict(defaults["caps"])
+        if (
+            defaults["bcfy_calls_authority_mode"]
+            is worker_profiles.BcfyCallsAuthorityMode.SID_LEASE
+        ):
+            feed_claim_caps.pop(SourceType.BCFY_CALLS, None)
+        defaults["feed_claim_caps"] = feed_claim_caps
     m = mock.MagicMock()
     m.configure_mock(**defaults)
     return m
@@ -2258,6 +2276,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             {grant_control.DomainId.FEED},
         )
         self.assertIn(SourceType.BCFY_CALLS, rt._store._claim_types)
+        self.assertIn(SourceType.BCFY_CALLS, rt._heartbeat_store._claim_types)
 
     async def test_sid_only_dormant_constructs_without_claims(self) -> None:
         data_store = mock.AsyncMock(
@@ -2367,17 +2386,48 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             rt._capture_resources.http_session,
         )
 
+    async def test_mixed_sid_authority_excludes_only_calls_feed_claims(
+        self,
+    ) -> None:
+        profile = worker_profiles.derive_bcfy_calls_authority(
+            worker_profiles.MIXED_DORMANT_PROFILE,
+            worker_profiles.BcfyCallsAuthorityMode.SID_LEASE,
+        )
+        scheduler = _ControlledProcessScheduler()
+        rt = self._runtime(
+            profile,
+            sid_store_factory=mock.Mock(),
+            sid_provider_factory=mock.Mock(),
+            sid_runner_factory=mock.Mock(return_value=mock.AsyncMock()),
+            scheduler_factory=mock.Mock(return_value=scheduler),
+        )
+
+        await rt._start_feed_work_scheduler()
+        rt._compose_supervisor()
+
+        expected = set(source_runtime_specs.default_caps()) - {
+            SourceType.BCFY_CALLS
+        }
+        self.assertEqual(set(rt._store._claim_types), expected)
+        self.assertEqual(set(rt._heartbeat_store._claim_types), expected)
+        self.assertEqual(
+            set(rt._supervisor.snapshot().counts_by_domain),
+            {grant_control.DomainId.FEED, grant_control.DomainId.SID},
+        )
+        sid_allocation = worker_profiles.allocation_for_domain(
+            profile,
+            grant_control.DomainId.SID,
+        )
+        self.assertIsNotNone(sid_allocation)
+        assert sid_allocation is not None
+        self.assertTrue(sid_allocation.claims_enabled)
+
     async def test_claims_enabled_sid_uses_default_controlled_data_plane(
         self,
     ) -> None:
-        allocation = dataclasses.replace(
-            worker_profiles.SID_DORMANT_PROFILE.allocations[0],
-            claims_enabled=True,
-        )
-        profile = dataclasses.replace(
+        profile = worker_profiles.derive_bcfy_calls_authority(
             worker_profiles.SID_DORMANT_PROFILE,
-            name="sid-controlled-test",
-            allocations=(allocation,),
+            worker_profiles.BcfyCallsAuthorityMode.SID_LEASE,
         )
         scheduler = _ControlledProcessScheduler()
         rt = self._runtime(
@@ -2536,14 +2586,9 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
     async def test_controlled_sid_full_runtime_lifecycle(  # noqa: PLR0915
         self,
     ) -> None:
-        allocation = dataclasses.replace(
-            worker_profiles.SID_DORMANT_PROFILE.allocations[0],
-            claims_enabled=True,
-        )
-        profile = dataclasses.replace(
+        profile = worker_profiles.derive_bcfy_calls_authority(
             worker_profiles.SID_DORMANT_PROFILE,
-            name="sid-controlled-test",
-            allocations=(allocation,),
+            worker_profiles.BcfyCallsAuthorityMode.SID_LEASE,
         )
         grant = ingestion_lease_store.LeaseGrant(
             SourceType.BCFY_CALLS,

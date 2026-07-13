@@ -436,11 +436,19 @@ class CollectorSettings:
             self.worker_profile,
             grant_control.DomainId.FEED,
         )
+        sid_allocation = worker_profiles.allocation_for_domain(
+            self.worker_profile,
+            grant_control.DomainId.SID,
+        )
         if self.caps is _CAPS_UNSET:
             object.__setattr__(
                 self,
                 "caps",
-                _load_caps_from_env() if feed_allocation is not None else {},
+                (
+                    _load_caps_from_env()
+                    if feed_allocation is not None
+                    else dict(_DEFAULT_CAPS)
+                ),
             )
         claim_caps = dict(self.caps) if feed_allocation is not None else {}
         if (
@@ -463,7 +471,7 @@ class CollectorSettings:
             else:
                 object.__setattr__(self, "continuous_pubsub_topic_path", "")
         if self.segmented_pubsub_topic_path is _TOPIC_UNSET:
-            if feed_allocation is not None:
+            if feed_allocation is not None or sid_allocation is not None:
                 object.__setattr__(
                     self,
                     "segmented_pubsub_topic_path",
