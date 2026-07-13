@@ -861,6 +861,136 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
         finally:
             await scheduler.close()
 
+    async def test_no_progress_cancel_during_admission_returns_no_settlement(
+        self,
+    ) -> None:
+        committer = _ControlledCommitter()
+        executor = _GateExecutor()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            executor,
+            boundary_committer=committer,
+            _limits=_limits(
+                capacity=2,
+                workers=1,
+                high_water=1,
+                resume_at=0,
+            ),
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
+        candidate = cursor.prepare_no_progress()
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _call(uuid.UUID(int=1), 0),
+                    _call(uuid.UUID(int=2), 1),
+                ),
+                boundaries=(),
+                candidate=candidate,
+            )
+        )
+        try:
+            await scheduler._shards[0].wait_for_capacity_waiters(1)
+            coverage.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await coverage
+
+            self.assertIs(cursor.outstanding_candidate, candidate)
+            self.assertEqual(committer.final_calls, 0)
+            lane_snapshot = await lane._snapshot()
+            self.assertEqual(lane_snapshot.next_page_sequence, 0)
+            self.assertIsNone(lane_snapshot.page)
+        finally:
+            executor.release.set()
+            await scheduler._wait_for_idle()
+            await scheduler.close()
+
+    async def test_no_progress_cancel_during_final_flush_returns_no_settlement(
+        self,
+    ) -> None:
+        committer = _ControlledCommitter()
+        committer.block_final_number = 1
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
+        candidate = cursor.prepare_no_progress()
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(),
+                boundaries=(),
+                candidate=candidate,
+            )
+        )
+        try:
+            await committer.wait_for_calls(1)
+            coverage.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await coverage
+
+            self.assertIs(cursor.outstanding_candidate, candidate)
+            self.assertEqual(committer.calls, [(grant, (), True)])
+            self.assertEqual((await lane._snapshot()).next_page_sequence, 0)
+        finally:
+            committer.release.set()
+            await lane.close()
+            await scheduler.close()
+
+    async def test_no_progress_cancel_before_seal_returns_no_settlement(
+        self,
+    ) -> None:
+        committer = _ControlledCommitter()
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ImmediateExecutor(),
+            boundary_committer=committer,
+            _limits=_limits(),
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = scheduler.open_lane(grant)
+        cursor = cursor_policy.LeaseCursor(grant, pos=_SOURCE_TIME)
+        candidate = cursor.prepare_no_progress()
+        seal_entered = asyncio.Event()
+        allow_seal = asyncio.Event()
+        cover = lane._cover
+
+        async def gated_cover(
+            offered: cursor_policy.PageCandidate,
+        ) -> cursor_policy.PageSettlement:
+            seal_entered.set()
+            await allow_seal.wait()
+            return await cover(offered)
+
+        lane._cover = gated_cover
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(),
+                boundaries=(),
+                candidate=candidate,
+            )
+        )
+        try:
+            await asyncio.wait_for(seal_entered.wait(), timeout=1)
+            coverage.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await coverage
+
+            self.assertIs(cursor.outstanding_candidate, candidate)
+            self.assertEqual(committer.calls, [(grant, (), True)])
+            lane_snapshot = await lane._snapshot()
+            self.assertEqual(lane_snapshot.next_page_sequence, 0)
+            self.assertIsNone(lane_snapshot.page)
+        finally:
+            allow_seal.set()
+            await scheduler.close()
+
     async def test_equal_position_remains_progress_with_quiet_boundary(
         self,
     ) -> None:
