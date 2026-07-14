@@ -267,8 +267,11 @@ Before any mutation, two reviewers sign one canonical manifest containing:
 
 The account, project, region, full resource URI, UID/generation, and signed
 manifest hash must agree before every mutating command. Never rely on an active
-gcloud default, a short resource name, Terraform state alone, or a name copied
-from a previous incident.
+gcloud default, an **unvalidated** short resource name, Terraform state alone,
+or a name copied from a previous incident. When the GA gcloud surface requires
+a short resource ID, first validate its expected full URI mechanically and
+always pass the signed `--project` and `--region`; only that combination is a
+qualified CLI reference.
 
 ### Bounded descriptions before mutation
 
@@ -612,17 +615,22 @@ CRC32C, and SHA-256 of its committed content. For a pre-schema branch, also
 freeze and hash the complete ordered schema/privilege object manifest. A changed
 generation or digest stops execution.
 
-**Mutation:** Run only a generation-bound controlled Job. Never execute an
-operation by an unqualified Job name. Immediately before execution, describe
-the full source Job URI through the signed bounded reducer and retain its UID,
-generation, projection SHA-256, and timestamp as `JOB_BEFORE`. A representative
-successful invocation shape is:
+**Mutation:** Run only a generation-bound controlled Job. The GA gcloud CLI
+accepts the validated short Job ID for execute/list operations; it is qualified
+only by the exact full-URI equality check and explicit signed project and region
+shown below. Immediately before execution, describe the source Job through the
+signed bounded reducer and retain its full URI, UID, generation, projection
+SHA-256, and timestamp as `JOB_BEFORE`. A representative successful invocation
+shape is:
 
 ```sh
+EXPECTED_JOB_URI="projects/${PROJECT}/locations/${REGION}/jobs/${SID_OPERATION_JOB_ID}"
+test "$SID_OPERATION_JOB_URI" = "$EXPECTED_JOB_URI"
+
 T0_EPOCH="$(date -u +%s)"
 T0_UTC="$(date -u -d "@$T0_EPOCH" +%Y-%m-%dT%H:%M:%SZ)"
 EXECUTION_ID="$(
-  gcloud run jobs execute "$SID_OPERATION_JOB_URI" \
+  gcloud run jobs execute "$SID_OPERATION_JOB_ID" \
     --project="$PROJECT" --region="$REGION" \
     --tasks=1 --task-timeout=300s \
     --args=bcfy-calls-sid-operation,verify \
@@ -648,16 +656,24 @@ the canonical resource identity. `SID_OPERATION_JOB_URI` and
 `SID_OPERATION_JOB_ID` must already be mutually validated against the signed
 project/location/Job manifest before constructing the URI above.
 
-Describe the canonical `EXECUTION_URI`, not the short ID. The bounded Cloud Run
-v2 Execution projection contains the execution's own name/UID/generation, its
-parent `job` URI, immutable copied task template, creation/completion times, and
-terminal conditions. It does **not** contain the source Job's UID/generation.
-In parallel, list the exact Job's bounded identity/time/condition fields and
-pass them to the tested post-T0 discovery reducer for the half-open
-`[T0_UTC, T1_UTC]` window. The reducer must construct full execution URIs,
-require exactly one whose parent `job` equals `SID_OPERATION_JOB_URI`, and
-require it equals `EXECUTION_URI`; zero, multiple, cross-Job, or out-of-window
-results fail closed.
+Google Cloud SDK 565.0.0 exposes GA execution list/describe data in the
+v1/Kubernetes shape: `metadata.*`, copied task-template fields, and `status.*`.
+Invoke describe with the validated `EXECUTION_ID` plus explicit signed project
+and region, then pipe its bounded projection directly to the reducer. The
+description can prove the execution's immutable copied task template, creation
+and completion times, and terminal conditions. It does **not** prove the source
+Job's UID/generation; only `JOB_BEFORE` and `JOB_AFTER` establish that
+continuity.
+
+In parallel, list the validated short Job ID's bounded metadata/status fields
+and pass them to the tested post-T0 discovery reducer for the half-open
+`[T0_UTC, T1_UTC]` window. The `--job` selector is not itself parent proof. For
+each row, the reducer must require the exact `run.googleapis.com/job` label,
+require its value to equal `SID_OPERATION_JOB_ID`, derive the canonical parent
+URI from the signed project, region, and label, and require that URI to equal
+`SID_OPERATION_JOB_URI`. It then constructs the canonical execution URI from
+`metadata.name` and requires exactly one result equal to `EXECUTION_URI`; zero,
+multiple, malformed-label, cross-Job, or out-of-window results fail closed.
 
 The reviewed collection shape has no result limit and lets gcloud exhaust all
 pages in the exact narrow window; its selected projection is piped directly to
@@ -665,11 +681,14 @@ the reducer rather than saved as a provider payload:
 
 ```sh
 gcloud run jobs executions list \
-  --job="$SID_OPERATION_JOB_URI" \
+  --job="$SID_OPERATION_JOB_ID" \
   --project="$PROJECT" --region="$REGION" \
-  --filter="createTime >= '$T0_UTC' AND createTime < '$T1_UTC'" \
-  --format='json(name,uid,generation,job,createTime,completionTime,conditions)' \
+  --filter="metadata.creationTimestamp >= '$T0_UTC' AND metadata.creationTimestamp < '$T1_UTC'" \
+  --format='json(metadata.name,metadata.creationTimestamp,metadata.labels,status.completionTime,status.conditions)' \
 | "$SIGNED_EXECUTION_DISCOVERY_REDUCER" compare \
+    --project="$PROJECT" \
+    --region="$REGION" \
+    --expected-job-id="$SID_OPERATION_JOB_ID" \
     --expected-parent-job-uri="$SID_OPERATION_JOB_URI" \
     --expected-execution-uri="$EXECUTION_URI" \
     --start-inclusive="$T0_UTC" --end-exclusive="$T1_UTC"
@@ -681,15 +700,16 @@ be supplied as signed context, but the reducer must never report that they came
 from an Execution row. Its path and artifact digest are signed alongside the
 004 reducer.
 
-After terminal execution, describe the full source Job URI again as `JOB_AFTER`.
-Its UID, generation, immutable-template projection, and projection hash must
-equal `JOB_BEFORE`. Separately, the execution description must prove that it was
-parented by the exact full Job URI and that its immutable copied task template
-equals `JOB_BEFORE`: one task, zero retries, exact args, exact VPC/service
-account, immutable image, endpoint hash, and numeric secret version. Record the
-execution's own UID/generation and successful terminal condition separately;
-never equate them with the source Job UID/generation. Retain only those bounded
-projections/hashes and the bounded SQL report.
+After terminal execution, describe the source Job again as `JOB_AFTER`. Its
+full URI, UID, generation, immutable-template projection, and projection hash
+must equal `JOB_BEFORE`. Separately, the execution's exact
+`run.googleapis.com/job` label and the reducer-derived parent URI must identify
+the signed source Job, and its description must prove that its immutable copied
+task template equals `JOB_BEFORE`: one task, zero retries, exact args, exact
+VPC/service account, immutable image, endpoint hash, and numeric secret version.
+Record the execution's own identity and successful terminal condition
+separately; never equate execution metadata with the source Job's UID/generation.
+Retain only those bounded projections/hashes and the bounded SQL report.
 
 Every `004_verify.sql` report must be consumed by the signed, checked-in,
 deterministically tested canonical comparator before transition. Its executable
@@ -769,10 +789,12 @@ restored only at the end of `RESTORED_ACTIVE`.
   outcome is unknown. Do not issue another mutating execution. Using `T0_UTC`
   and a signed `T1_UTC`, list bounded executions from the exact Job and use the
   same canonical URI/discovery reducer over `[T0_UTC, T1_UTC]`. Exactly one
-  candidate whose child `job` parent equals the signed full Job URI may be
-  described and followed to terminal state. Zero, multiple, or cross-Job
-  candidates remain unknown and stop the runbook. Job UID/generation continuity
-  is established only by the separate `JOB_BEFORE`/`JOB_AFTER` descriptions.
+  candidate whose exact `run.googleapis.com/job` label equals the validated Job
+  ID and whose reducer-derived parent URI equals the signed full Job URI may be
+  described and followed to terminal state. Zero, multiple, malformed-label,
+  or cross-Job candidates remain unknown and stop the runbook. Job
+  UID/generation continuity is established only by the separate
+  `JOB_BEFORE`/`JOB_AFTER` descriptions.
 - After any unknown mutating outcome, run the read-only `004_verify.sql` surface
   only after the unique execution is terminal or provider cancellation is
   terminal. Compare complete expected state. Never use a blind retry to discover
