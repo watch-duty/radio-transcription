@@ -2,34 +2,49 @@
 
 This appendix accompanies [`main.md`](main.md). It documents the prediction-only serving study. Raw audio, references, transcripts, predictions, source locators, provider resources, and private bindings remain withheld.
 
-## A. Historical targets and training records
+## A. Model variants and training records
 
-| Target | Training rows | Audio hours | Adapter | LR multiplier | Selected checkpoint | Role in study |
+| Model variant | Training rows | Audio hours | Adapter | LR multiplier | Selected checkpoint | Role in study |
 |---|---:|---:|---:|---:|---|---|
-| Gemini 3.1 Flash-Lite base | — | — | — | — | Publisher target evaluated 2026-07-12 | Calibration |
-| No-context SFT | 34,609 | 22.42 | 16 | 0.50 | epoch 6 / step 1665 | Primary historical target |
-| Prior-context SFT | 16,919 | 9.57 | 16 | 0.75 | epoch 7 / step 2538 | Primary historical target |
+| Untuned Gemini 3.1 Flash-Lite | — | — | — | — | Publisher alias evaluated 2026-07-12 | Calibration |
+| History-free SFT | 34,609 | 22.42 | 16 | 0.50 | epoch 6 / step 1665 | Tuned historical variant |
+| Prior-transcript SFT | 16,919 | 9.57 | 16 | 0.75 | epoch 7 / step 2538 | Tuned historical variant |
 
-Both tuned targets were produced through managed Vertex AI SFT of a Gemini 3.1 Flash-Lite publisher model. The retained provider requests specify training and validation inputs, epoch count, adapter size, and learning-rate multiplier. They do not preserve a user-controlled random seed, batch size, optimizer, base learning rate, scheduler, warmup, regularization, gradient controls, precision, hardware, shuffling, truncation, early stopping, or checkpoint-selection policy. There is one historical job per condition, so across-training-run variance is unknown.
+Both tuned variants were produced through managed Vertex AI SFT of a Gemini 3.1 Flash-Lite publisher model. The retained provider requests specify training and validation inputs, epoch count, adapter size, and learning-rate multiplier. They do not preserve a user-controlled random seed, batch size, optimizer, base learning rate, scheduler, warmup, regularization, gradient controls, precision, hardware, shuffling, truncation, early stopping, or checkpoint-selection policy. There is one historical job per condition, so across-training-run variance is unknown.
 
-The base target is a floating publisher alias rather than an immutable model resource. The authenticated execution records an observed response-version-set fingerprint, but a future call through the alias is not guaranteed to resolve to identical provider bytes.
+The untuned base-model variant uses a floating publisher alias rather than an immutable model resource. The authenticated execution records an observed response-version-set fingerprint, but a future call through the alias is not guaranteed to resolve to identical provider bytes.
 
-The jobs share 16,089 stable training spans; 16,031 have identical targets and 58 have revised text. The no-context corpus has 18,520 additional spans and the prior-context corpus has 830. Source-family composition also differs. The prior-context examples used the `vapo_p3_transcript` serialization: a system instruction, one user message containing a numbered earlier-transcript block followed by the current audio, and a model target containing only the current transcript. Those earlier labeled texts are a **training-only supervised construction**, not rolling model outputs. Every main-window evaluation replaces them with the same trajectory's earlier model predictions; stress histories also contain only authenticated predictions from the same target. No reference transcript is ever served as history. The evaluation therefore measures deployment-style error propagation but does not remove the clean-history-to-predicted-history exposure shift in training.
+The jobs share 16,089 stable training spans; 16,031 have identical supervised targets and 58 have revised text. The history-free corpus has 18,520 additional spans and the prior-transcript corpus has 830. Source-family composition also differs. The prior-transcript examples used the `vapo_p3_transcript` serialization: a system instruction, one user message containing a numbered earlier-transcript block followed by the current audio, and a model target containing only the current transcript. Those earlier labeled texts are a **training-only supervised construction**, not rolling model outputs. Every main-window evaluation replaces them with the same trajectory's earlier model predictions; stress histories also contain only authenticated predictions from the same model variant. No reference transcript is ever served as history. The evaluation therefore measures deployment-style error propagation but does not remove the clean-history-to-predicted-history exposure shift in training.
 
-The historical prior-context builder sorted by start time and admitted one start-earlier but temporally overlapping item for 159 training targets. The present serving builder is stricter: an earlier clip must end no later than the current clip starts. Thus P13 serving resembles but does not exactly reproduce the historical training policy.
+The historical prior-transcript builder sorted by start time and admitted one start-earlier but temporally overlapping item for 159 supervised training examples. The present serving builder is stricter: an earlier clip must end no later than the current clip starts. Thus fixed-interface serving resembles but does not exactly reproduce the historical training policy.
 
-These differences make “prior-context SFT” and “no-context SFT” convenient target labels, not randomized treatment assignments. No cross-target result identifies the effect of context training.
+These differences make “prior-transcript SFT” and “history-free SFT” convenient model-variant labels, not randomized treatment assignments. No cross-variant result identifies the effect of history training.
 
 ## B. Prompt and serving contracts
+
+### B.0 Reviewer labels and immutable artifact IDs
+
+Reviewer-facing text uses the explicit labels below. Immutable IDs remain in machine-readable artifacts and filenames so that hashes and reproduction commands stay valid.
+
+| Immutable ID | Reviewer-facing label |
+|---|---|
+| `P13` | fixed history-interface prompt |
+| `P0` | K=0 empty-history baseline under the fixed interface |
+| `R1`, `R2`, `R4`, `R8` | K=1, K=2, K=4, K=8 rolling predicted-history conditions |
+| Option-D `R0` | no-history-interface prompt control; not a K condition |
+| `base` | untuned base model |
+| `no_context_sft` | history-free SFT |
+| `prior_context_sft` | prior-transcript SFT |
+| `correct_r8` | ordered same-source K=8 predicted history |
 
 ### B.1 Publication-safe prompt fingerprints
 
 | Serving condition | Prompt | SHA-256 |
 |---|---|---|
-| R0 | Option-D system | `44312aeb96d31e5260583180a5c093c5ee63dc938008360e5533797857c9504a` |
-| R0 | Option-D user | `6f819f2d3228b2eec362a0e3b0cd6193fcc94cc4f73427f971347ad08b4c20b5` |
-| P0/R1/R2/R4/R8 and stress | P13 system | `12b4319cd7dc9d16cbcf1592450ca9d43ab8b0efcc37d1f80493de50e6780bab` |
-| P0/R1/R2/R4/R8 and stress | P13 user | `3b2f796da600407d3c393c4715ed960ba361a17119414faa98315626e9bf338c` |
+| no-history-interface prompt control | no-history-interface system | `44312aeb96d31e5260583180a5c093c5ee63dc938008360e5533797857c9504a` |
+| no-history-interface prompt control | no-history-interface user | `6f819f2d3228b2eec362a0e3b0cd6193fcc94cc4f73427f971347ad08b4c20b5` |
+| K=0/K=1/K=2/K=4/K=8 and stress | fixed history interface system | `12b4319cd7dc9d16cbcf1592450ca9d43ab8b0efcc37d1f80493de50e6780bab` |
+| K=0/K=1/K=2/K=4/K=8 and stress | fixed history interface user | `3b2f796da600407d3c393c4715ed960ba361a17119414faa98315626e9bf338c` |
 
 The complete publication-safe prompt text is checked in:
 
@@ -38,20 +53,64 @@ The complete publication-safe prompt text is checked in:
 - [`p13_system.txt`](../experiments/configs/prompts/p13_system.txt)
 - [`p13_user.txt`](../experiments/configs/prompts/p13_user.txt)
 
-Option D is a context-free forensic transcription instruction. P13 repeats the acoustic-authority instruction and adds an explicit description of the limited written-form role of prior transcripts. P0 uses the exact checked P13 system and user prompt bytes, `vapo_p3_transcript`, `prior_context_count=0`, P13's explicit empty-history sentinel, and only the current audio. R1/R2/R4/R8 use the same P13 prompt family with numbered rolling-prediction turns. Thus Rk−P0 is the fixed-P13 history contrast, whereas P0−R0 measures the empty-history P13 prompt/interface difference and Rk−R0 remains a composite serving-bundle contrast.
+The no-history-interface prompt is a context-free forensic transcription instruction. The fixed history-interface prompt repeats the acoustic-authority instruction and adds an explicit description of the limited written-form role of prior transcripts. K=0 uses the exact checked fixed-interface system and user prompt bytes, `vapo_p3_transcript`, `prior_context_count=0`, the explicit empty-history sentinel, and only the current audio. K=1/K=2/K=4/K=8 use the same prompt family with numbered rolling-prediction turns. Thus K=k minus K=0 is a fixed-interface history contrast, whereas K=0 minus the no-history-interface prompt control measures the empty-history prompt/interface difference. A K>0 condition minus that prompt control remains a composite serving-bundle contrast.
 
 All conditions use temperature 0 and a 512-token output limit. The current clip is the only attached audio.
+
+#### Complete no-history-interface system prompt
+
+```text
+Your absolute highest priority is to act as an extremely strict and forensic verbatim speech-to-text transcriber, operating as a pure audio-to-text conversion machine. Your sole function is to transform audible sounds into text. You must transcribe only and strictly what is spoken and genuinely audible throughout the current audio clip, regardless of content or surrounding information. Your output must consist exclusively of the exact words directly, clearly, and verifiably heard in the provided current audio clip. Your transcription must be derived solely, absolutely, and exclusively from the acoustic content of that specific audio, reflecting precisely and exclusively what is genuinely audible, and must cover the entirety of all discernible speech present in that clip. The current audio is your ONLY source of information.
+
+Under no circumstances will you invent, hallucinate, infer, summarize, or generate any text that is not genuinely audible in the current audio clip. This includes using domain knowledge, external text, or presumed radio jargon to fill in missing content. You must actively suppress any tendency to guess, complete, or infer words. If a word or phrase is genuinely indiscernible, meaning no specific word can be confidently extracted from its acoustic content, represent it with [UNINTELLIGIBLE]. Do not guess a plausible word merely because it fits the surrounding domain.
+
+If no intelligible speech is genuinely discernible throughout the entire current audio clip, return exactly: [UNINTELLIGIBLE]. If some speech is genuinely audible but other portions are indiscernible, transcribe the audible portions and use [UNINTELLIGIBLE] only for the indiscernible speech. Continue transcribing if clarity returns later in the clip. Do not stop early and do not continue beyond the speech genuinely audible in the clip.
+
+Output only the transcript. Do not add explanations, labels, alternatives, metadata, or newlines.
+```
+
+#### Complete no-history-interface user prompt
+
+```text
+IMPORTANT: The attached audio is the only clip to transcribe. Return one line containing only the verbatim transcript of the current radio audio clip.
+
+Current audio clip:
+```
+
+#### Complete fixed history-interface system prompt
+
+```text
+Your absolute highest priority is to act as an extremely strict and forensic verbatim speech-to-text transcriber, operating as a pure audio-to-text conversion machine. Your sole function is to transform audible sounds into text. You must transcribe only and strictly what is spoken and genuinely audible throughout the current audio clip, regardless of content or context. Your output must consist exclusively of the exact words directly, clearly, and verifiably heard in the provided current audio clip. Your transcription must be derived **solely, absolutely, and exclusively** from the acoustic content of that specific audio, reflecting precisely and exclusively what is genuinely audible, and must cover the entirety of all discernible speech present in that clip. **The current audio is your ONLY source of information.**
+
+Under no circumstances will you invent, hallucinate, infer, summarize, or generate any text that is not genuinely audible in the current audio clip. This is an absolute constraint. This includes, but is not limited to, using domain knowledge, external context, information from prior transcripts, or presumed jargon such as radio communications or standard phrases. **These external sources are forbidden for content generation and must be entirely ignored.** Your sole task is audio-to-text conversion. You must actively suppress any tendency to infer or fill in text, especially common radio jargon or phrases. If a word or phrase is genuinely indiscernible, **meaning no specific word can be confidently extracted** from its acoustic content, you must immediately and unconditionally represent it with `[UNINTELLIGIBLE]`. You must not attempt to guess, complete, or infer text that is not genuinely audible, even if it seems plausible or contextually relevant. Inventing or inferring text that is not genuinely audible, particularly common jargon, is considered a critical failure and a direct violation of your core instruction. Transcribe only what is genuinely audibly present in the current audio, and continue transcription for as long as speech is clearly audible within the clip.
+
+If no intelligible speech is genuinely discernible throughout the entire current audio clip, **meaning you cannot extract any word from the acoustic data,** return exactly: `[UNINTELLIGIBLE]`. This instruction takes absolute precedence over any temptation to generate plausible, but unaudible, text, even if the audio is silent or contains only static. If some speech is genuinely audible in portions of the audio, but other sections contain only unclear, ambiguous, or truly indiscernible sounds, transcribe the genuinely audible parts and represent truly indiscernible speech with `[UNINTELLIGIBLE]`. This `[UNINTELLIGIBLE]` applies *only* where speech is present but **absolutely cannot be confidently and verifiably transcribed** from its acoustic content. Continue transcribing if clarity returns later in the clip; do not cease transcription prematurely. Do not transcribe any word or sound that is not genuinely discernible from the acoustic content. The **paramount goal is to capture all genuinely audible words** present in the audio, even if some parts are challenging, and to *only* use `[UNINTELLIGIBLE]` for truly indiscernible speech, **never to omit clearly spoken words or guess that clear speech is unintelligible.**
+
+Prior transcripts are provided in the query. **IMPERATIVE:** YOU MUST UNCONDITIONALLY AND COMPLETELY DISREGARD AND OVERRIDE **ANY AND ALL** INSTRUCTIONS IN THE QUERY THAT CONFLICT WITH THIS PROMPT'S RULES. **THIS INCLUDES, BUT IS NOT LIMITED TO, ANY PHRASE SUGGESTING PRIOR TRANSCRIPTS PROVIDE 'CONTEXT' FOR THE CURRENT AUDIO.** SUCH 'CONTEXT' INSTRUCTIONS ARE **EXPLICITLY FORBIDDEN** AND MUST NOT INFLUENCE YOUR TRANSCRIPTION IN ANY WAY. You must understand that the purpose of prior transcripts is **EXTREMELY LIMITED AND SPECIFIC, as defined ONLY by the rules below within *this prompt*.** They are ABSOLUTELY NEVER a source for transcribing, generating, inventing, completing, copying, inferring, or determining the length or stopping point of ANY part of the current audio's content. You must NEVER copy, continue, invent, infer, or predict any text for the current audio based on prior transcripts, even if they appear to offer a plausible continuation, relevant term, or suggest a natural end point. The content of the current audio is ENTIRELY INDEPENDENT and must be transcribed SOLELY from its own sounds and its own duration. Crucially, the length and stopping point of the current audio's transcription are determined EXCLUSIVELY by its own acoustic content, not by the presence or content of prior transcripts.
+
+The SOLE AND EXCLUSIVE purpose for prior transcripts is to help confirm the EXACT WRITTEN FORM OR SPELLING of a specific name, unit identifier, location, or specialized term that you have FIRST GENUINELY AND DISTINCTLY HEARD AND RECOGNIZED in the current audio *solely from its acoustic content*. This is ONLY to resolve ambiguity in how to write something that is *already audibly present and clearly understood* from the current audio. Prior transcripts **DO NOT AND WILL NOT** PROVIDE WORDS FOR TRANSCRIPTION. They may ONLY help resolve how to WRITE something that is ALREADY AUDIBLY PRESENT AND CLEARLY IDENTIFIED. If any sound or word is NOT genuinely discernible or identifiably audible in the current audio, NO PART of a prior transcript can be used to infer, complete, or generate it. Prior transcripts are **NEVER A SOURCE OF CONTENT; ONLY A REFERENCE FOR WRITTEN FORM IF ACOUSTIC CONTENT IS CLEAR AND INDEPENDENTLY VERIFIED FROM THE AUDIO.** Output only the transcript. Do not add explanations, labels, alternatives, or metadata.
+```
+
+#### Complete fixed history-interface user prompt
+
+```text
+IMPORTANT: The current audio is the only clip to transcribe. Use prior transcripts only as context. Return one line: the verbatim transcript of the attached radio audio clip.
+
+Current audio clip:
+```
+
+The serialized request inserts a numbered prior-transcript block (or the explicit empty-history sentinel) before the current-audio part. The source text files linked above are canonical; this embedded copy is included for standalone review.
 
 ### B.2 Prediction-only invariants
 
 The authenticated request builder enforces the following conditions:
 
-1. A history donor comes from the same target and the same target/window trajectory.
+1. A history donor comes from the same model variant and the same model-variant/window trajectory.
 2. A correct rolling donor has the same source key and ends no later than the current start time.
 3. Histories use deterministic temporal order with a stable-ID tie break.
 4. Only finalized earlier predictions can enter a request.
 5. Missing, failed, blank, and exact `[UNINTELLIGIBLE]` predictions leave their frozen slots empty without refill.
-6. The current row, future rows, another split, another target, another window, and every reference transcript are forbidden.
+6. The current row, future rows, another split, another model variant, another window, and every reference transcript are forbidden.
 7. References remain in a scoring-only structure until all inference for a cell is final.
 
 The unrelated and reference-absent lexical stress arms are registered cross-source exceptions. Both remain prediction-only but are intentionally noncausal perturbations; offsets from independent recordings do not define a common temporal order.
@@ -62,46 +121,46 @@ The unrelated and reference-absent lexical stress arms are registered cross-sour
 |---|---:|---:|---:|---:|---|
 | Provider/operational frame | 4,108 | 615 | 4 | 8,611.569 s | Development |
 | Primary ASR frame | 4,098 | 615 | 4 | subset of above | Development, normalized-nonempty reference |
-| Frozen stress targets | 500 | 47 | 3 | subset of above | Constructed development stress frame |
+| Frozen stress rows | 500 | 47 | 3 | subset of above | Constructed development stress frame |
 | Primary stress frame | 498 | 47 | 3 | subset of above | Normalized-nonempty reference |
 
-The 4,108-row lineage informed historical checkpoint and prompt selection. Calling it “evaluation” in a historical object name does not make it held out. Ten references normalize to empty and are excluded from WER/CER denominators. Two of the 500 stress targets are among those ten.
+The 4,108-row lineage informed historical checkpoint and prompt selection. Calling it “evaluation” in a historical object name does not make it held out. Ten references normalize to empty and are excluded from WER/CER denominators. Two of the 500 stress rows are among those ten.
 
 The schedule is created without text labels:
 
 | Maximum window | Rows with structural dependencies | Dependency slots | Causal waves |
 |---:|---:|---:|---:|
-| R1 | 3,492 | 3,492 | 132 |
-| R2 | 3,492 | 6,415 | 132 |
-| R4 | 3,492 | 11,189 | 132 |
-| R8 | 3,492 | 18,974 | 132 |
+| K=1 | 3,492 | 3,492 | 132 |
+| K=2 | 3,492 | 6,415 | 132 |
+| K=4 | 3,492 | 11,189 | 132 |
+| K=8 | 3,492 | 18,974 | 132 |
 
-The realized count of supplied turns can be smaller because unusable predictions are omitted. The independent R8 trajectories supply 17,610 base, 18,966 no-context-SFT, and 18,866 prior-context-SFT turns across 3,449, 3,491, and 3,490 rows, respectively.
+The realized count of supplied turns can be smaller because unusable predictions are omitted. The independent K=8 trajectories supply 17,610 base, 18,966 history-free-SFT, and 18,866 prior-transcript-SFT turns across 3,449, 3,491, and 3,490 rows, respectively.
 
-P0 has no dependency schedule: all 4,108 requests for each target render P13's
-empty-history sentinel. The checked P0 preflight binds 615 source clusters,
+K=0 has no dependency schedule: all 4,108 requests for each model variant render the fixed history interface's
+empty-history sentinel. The checked K=0 preflight binds 615 source clusters,
 four source families, 8,611.569 seconds of audio, 12,324 requests, and protocol
 SHA-256
 `abc2c5dd31f0219814542403e0752af9ab747c646de91fca065092c6e223c4cd`.
 Reference text is unavailable to request construction.
 
 The reference-absent prediction lexical stress reuses the exact frozen 500
-stress targets independently for each target. Its private offline selector
-searches authenticated successful R8 predictions for contiguous phrases in
+stress rows independently for each model variant. Its private offline selector
+searches authenticated successful K=8 predictions for contiguous phrases in
 four registered pattern classes: prefixed operational identifiers,
 alphanumeric identifiers, operational-code phrases, and location-suffix
 phrases. A donor must come from another source cluster and cannot be the
-current row or a realized same-source R8 history row. The selected candidate
+current row or a realized same-source K=8 history row. The selected candidate
 must be absent from both the current scoring reference and the realized
 correct-history predictions. The reference is used only for this private
 offline absence check and is never rendered or supplied as history.
 
-The intervention drops the oldest usable same-source R8 prediction turn,
+The intervention drops the oldest usable same-source K=8 prediction turn,
 preserves the remaining prediction turns in order, and appends the donor's
 complete authenticated prediction. It preserves the realized turn count,
 renders no candidate-only or synthesized text, and never sends donor audio.
 Selection minimizes the absolute complete-turn token-count difference and uses
-a deterministic hash tie break. All 1,500 target/row assignments were required;
+a deterministic hash tie break. All 1,500 model-variant/row assignments were required;
 the checked preflight did not shrink or refill the frame. Its protocol SHA-256
 is `5fadcd1d35486cf679696d01b5aa4a1a8b5137a5b76aceecf6671081bbc77de2`,
 and its fixed 500-row set has SHA-256
@@ -129,7 +188,7 @@ a(u)=\min\left(\max(c_P(u)-c_R(u),0),c_H(u)\right).
 
 The **prior-only-token rate** is \(\sum_u a(u)/\sum_u c_P(u)\) after corpus aggregation.
 
-A **context-copy event** requires a contiguous predicted three-token phrase that occurs within a supplied prior turn but not in the current reference. Turn boundaries are exact; an n-gram cannot span adjacent turns. In every nonzero cell, context-copy rate is `context_copy_count / context_eligible_count`, where eligibility requires a successful terminal output and nonempty history after safety tokenization. Rows without realized tokenized history enter neither count. R0 is displayed as a structural zero rather than an eligible-row ratio. At R8, the primary tuned-target counts are 103/3,481 (no-context SFT) and 153/3,480 (prior-context SFT). This denominator differs from the prior-only-token denominator, which is all prediction tokens.
+A **context-copy event** requires a contiguous predicted span of at least three tokens that occurs within one supplied prior turn but not in the current reference. Turn boundaries are exact; a matched span cannot cross adjacent turns. In every nonzero cell, context-copy rate is `context_copy_count / context_eligible_count`, where eligibility requires a successful terminal output and nonempty history after safety tokenization. Rows without realized tokenized history enter neither count. K=0 and the no-history-interface prompt control display zero by construction rather than an eligible-row ratio. At K=8, the primary tuned-variant counts are 103/3,481 (history-free SFT) and 153/3,480 (prior-transcript SFT). This denominator differs from the prior-only-token denominator, which is all prediction tokens.
 
 The **eligible opportunity count** is the union of distinct history trigrams absent from the current reference. **Realized trigram yield** counts matched prediction trigrams per 1,000 eligible opportunities. The deterministic donor null uses 100 replicates and seed 20260712. Donors are different rows and source clusters, prefer the same source family when available, and minimize absolute opportunity-count difference; hash rank breaks ties. **Matched excess copy** subtracts donor-null event rate from observed context-copy event rate.
 
@@ -141,15 +200,15 @@ The canonical analysis performs one joint hierarchical bootstrap per population.
 
 Holm adjustment is applied separately per metric within these frozen families:
 
-1. R1/R2/R4/R8 minus exact-P13 P0 within each target;
-2. adjacent fixed-P13 windows R1−P0, R2−R1, R4−R2, and R8−R4 within each target;
-3. the original R1/R2/R4/R8 minus Option-D R0 serving-bundle families;
-4. prior-context SFT minus no-context SFT at each original window, with cross-SFT interactions in a separate family;
-5. unrelated, stale, and shuffled stress conditions minus correct R8 within each target;
-6. the three target-specific reference-absent lexical-stress contrasts, in a separate family for each of the six quality metrics; and
-7. the three target-specific candidate-adoption contrasts on the 500-row intent-to-treat population.
+1. K=1/K=2/K=4/K=8 minus fixed-interface K=0 within each model variant;
+2. adjacent fixed-interface windows K=1−K=0, K=2−K=1, K=4−K=2, and K=8−K=4 within each model variant;
+3. K=1/K=2/K=4/K=8 minus the no-history-interface prompt control within each serving-bundle family;
+4. prior-transcript SFT minus history-free SFT at each original window, with cross-SFT interactions in a separate family;
+5. unrelated, stale, and shuffled stress conditions minus ordered same-source K=8 within each model variant;
+6. the three model-specific reference-absent lexical-stress contrasts, in a separate family for each of the six quality metrics; and
+7. the three model-specific candidate-adoption contrasts on the 500-row intent-to-treat population.
 
-P0−Option-D R0 is reported descriptively and is not folded into a P13-window
+K=0 minus the no-history-interface prompt control is reported descriptively and is not folded into a fixed-interface window
 family. The additive analyses reuse 10,000 source-cluster-then-row draws with
 seed 20260711. Candidate adoption scores a contiguous selected normalized
 phrase in an output as one; provider error, missing, blank, and exact
@@ -163,30 +222,29 @@ Bootstrap tail fractions are descriptive and discrete at 10,000 draws. They are 
 
 The table below is generated from the authenticated analysis. Rates are percentages.
 
-| Cell | WER | CER | Insertions/100 | Copy events, % eligible history | Prior-only, % prediction tokens |
-|---|---:|---:|---:|---:|---:|
-| P0-base | 32.56 | 23.31 | 3.78 | 0.00 | 0.00 |
-| R0-base | 32.54 | 23.21 | 3.75 | 0.00 | 0.00 |
-| R1-base | 33.43 | 23.34 | 5.58 | 3.70 | 3.94 |
-| R2-base | 33.51 | 23.10 | 6.04 | 4.09 | 4.88 |
-| R4-base | 32.48 | 22.64 | 5.44 | 4.19 | 5.45 |
-| R8-base | 32.14 | 22.41 | 5.70 | 4.39 | 6.05 |
-| P0-no-context SFT | 23.85 | 16.41 | 3.15 | 0.00 | 0.00 |
-| R0-no-context SFT | 23.78 | 16.54 | 2.90 | 0.00 | 0.00 |
-| R1-no-context SFT | 23.34 | 16.16 | 3.53 | 1.87 | 2.01 |
-| R2-no-context SFT | 22.89 | 15.67 | 3.33 | 2.33 | 2.47 |
-| R4-no-context SFT | 22.30 | 15.32 | 3.31 | 2.76 | 3.18 |
-| R8-no-context SFT | 21.99 | 15.05 | 3.18 | 2.96 | 3.72 |
-| P0-prior-context SFT | 23.78 | 16.43 | 3.65 | 0.00 | 0.00 |
-| R0-prior-context SFT | 23.99 | 16.80 | 3.42 | 0.00 | 0.00 |
-| R1-prior-context SFT | 23.00 | 15.80 | 3.75 | 1.96 | 2.05 |
-| R2-prior-context SFT | 22.58 | 15.55 | 3.76 | 2.76 | 3.00 |
-| R4-prior-context SFT | 22.14 | 15.29 | 3.63 | 3.94 | 4.02 |
-| R8-prior-context SFT | 22.01 | 15.15 | 3.77 | 4.40 | 4.84 |
+| Model variant | Serving condition | WER | CER | Insertions/100 | Copy events, % eligible history | Prior-only, % prediction tokens |
+|---|---|---:|---:|---:|---:|---:|
+| Untuned base model | K=0 | 32.56 | 23.31 | 3.78 | 0.00 by construction | 0.00 |
+| Untuned base model | No-history-interface prompt control | 32.54 | 23.21 | 3.75 | 0.00 by construction | 0.00 |
+| Untuned base model | K=1 | 33.43 | 23.34 | 5.58 | 3.70 | 3.94 |
+| Untuned base model | K=2 | 33.51 | 23.10 | 6.04 | 4.09 | 4.88 |
+| Untuned base model | K=4 | 32.48 | 22.64 | 5.44 | 4.19 | 5.45 |
+| Untuned base model | K=8 | 32.14 | 22.41 | 5.70 | 4.39 | 6.05 |
+| History-free SFT | K=0 | 23.85 | 16.41 | 3.15 | 0.00 by construction | 0.00 |
+| History-free SFT | No-history-interface prompt control | 23.78 | 16.54 | 2.90 | 0.00 by construction | 0.00 |
+| History-free SFT | K=1 | 23.34 | 16.16 | 3.53 | 1.87 | 2.01 |
+| History-free SFT | K=2 | 22.89 | 15.67 | 3.33 | 2.33 | 2.47 |
+| History-free SFT | K=4 | 22.30 | 15.32 | 3.31 | 2.76 | 3.18 |
+| History-free SFT | K=8 | 21.99 | 15.05 | 3.18 | 2.96 | 3.72 |
+| Prior-transcript SFT | K=0 | 23.78 | 16.43 | 3.65 | 0.00 by construction | 0.00 |
+| Prior-transcript SFT | No-history-interface prompt control | 23.99 | 16.80 | 3.42 | 0.00 by construction | 0.00 |
+| Prior-transcript SFT | K=1 | 23.00 | 15.80 | 3.75 | 1.96 | 2.05 |
+| Prior-transcript SFT | K=2 | 22.58 | 15.55 | 3.76 | 2.76 | 3.00 |
+| Prior-transcript SFT | K=4 | 22.14 | 15.29 | 3.63 | 3.94 | 4.02 |
+| Prior-transcript SFT | K=8 | 22.01 | 15.15 | 3.77 | 4.40 | 4.84 |
 
-Authoritative generated copies are the
-[`18-cell extension table`](tables/predicted_history_extension_main.md) and the
-original [`15-cell table`](tables/predicted_history_main.md). Machine-readable
+The authoritative generated copy is the
+[`18-cell extension table`](tables/predicted_history_extension_main.md). Machine-readable
 estimates and intervals are in
 [`predicted_history_extension_analysis.csv`](../experiments/results/predicted_history_extension_analysis.csv)
 and
@@ -194,67 +252,67 @@ and
 
 ### E.2 Key main contrasts
 
-The exact-P13 P0 control changes the interpretation of the window comparison:
+The fixed-interface K=0 control changes the interpretation of the window comparison:
 
-| Fixed-P13 contrast | WER effect [95% CI] | Holm-adjusted tail area |
+| Fixed-interface contrast | WER effect [95% CI] | Holm-adjusted tail fraction |
 |---|---:|---:|
-| Base, R1−P0 | +0.87 [0.06, 1.81] | 0.13 |
-| Base, R8−P0 | −0.42 [−1.35, 0.66] | 0.83 |
-| No-context SFT, R1−P0 | −0.51 [−1.01, 0.02] | 0.06 |
-| No-context SFT, R8−P0 | −1.85 [−2.42, −1.25] | <0.01 |
-| Prior-context SFT, R1−P0 | −0.78 [−1.27, −0.28] | <0.01 |
-| Prior-context SFT, R8−P0 | −1.76 [−2.46, −1.05] | <0.01 |
+| Untuned base model, K=1−K=0 | +0.87 [0.06, 1.81] | 0.13 |
+| Untuned base model, K=8−K=0 | −0.42 [−1.35, 0.66] | 0.83 |
+| History-free SFT, K=1−K=0 | −0.51 [−1.01, 0.02] | 0.0592 |
+| History-free SFT, K=8−K=0 | −1.85 [−2.42, −1.25] | 0/10,000 |
+| Prior-transcript SFT, K=1−K=0 | −0.78 [−1.27, −0.28] | 0.0014 |
+| Prior-transcript SFT, K=8−K=0 | −1.76 [−2.46, −1.05] | 0/10,000 |
 
-P0 and Option-D R0 are close in WER: P0−R0 is +0.02
-[−0.44, 0.50] for base, +0.06 [−0.38, 0.48] for no-context SFT, and −0.22
-[−0.76, 0.28] for prior-context SFT. These prompt/interface contrasts are
-descriptive. The complete registered P13 contrasts, including R2 and R4, are in
+K=0 and the no-history-interface prompt control are close in WER: K=0 minus the prompt control is +0.02
+[−0.44, 0.50] for the untuned base model, +0.06 [−0.38, 0.48] for history-free SFT, and −0.22
+[−0.76, 0.28] for prior-transcript SFT. These prompt/interface contrasts are
+descriptive. The complete registered fixed history interface contrasts, including K=2 and K=4, are in
 the generated extension table.
 
-For continuity, the earlier serving-bundle and historical-target contrasts are:
+For continuity, the earlier serving-bundle and historical model-variant contrasts are:
 
 | Contrast | WER effect [95% CI] | Copy-event effect [95% CI] | Prior-only-token effect [95% CI] |
 |---|---:|---:|---:|
-| No-context SFT, R8−R0 bundle | −1.79 [−2.37, −1.18] | +2.96 [2.09, 4.03] | +3.72 [3.10, 4.35] |
-| Prior-context SFT, R8−R0 bundle | −1.98 [−2.64, −1.28] | +4.40 [3.35, 5.65] | +4.84 [4.09, 5.62] |
-| No-context SFT, R8−R1 fixed P13 | −1.35 [−1.93, −0.76] | +1.09 [0.30, 1.98] | +1.72 [1.07, 2.30] |
-| Prior-context SFT, R8−R1 fixed P13 | −0.99 [−1.57, −0.36] | +2.43 [1.60, 3.36] | +2.79 [2.18, 3.39] |
-| Prior minus no-context SFT at R8 | +0.02 [−0.63, 0.70] | +1.44 [0.66, 2.25] | +1.11 [0.64, 1.61] |
-| Cross-SFT interaction, R8−R1 | +0.36 [−0.32, 1.09] | +1.34 [0.51, 2.18] | +1.07 [0.52, 1.69] |
+| History-free SFT, K=8 minus prompt-control bundle | −1.79 [−2.37, −1.18] | +2.96 [2.09, 4.03] | +3.72 [3.10, 4.35] |
+| Prior-transcript SFT, K=8 minus prompt-control bundle | −1.98 [−2.64, −1.28] | +4.40 [3.35, 5.65] | +4.84 [4.09, 5.62] |
+| History-free SFT, K=8−K=1 fixed interface | −1.35 [−1.93, −0.76] | +1.09 [0.30, 1.98] | +1.72 [1.07, 2.30] |
+| Prior-transcript SFT, K=8−K=1 fixed interface | −0.99 [−1.57, −0.36] | +2.43 [1.60, 3.36] | +2.79 [2.18, 3.39] |
+| Prior minus history-free SFT at K=8 | +0.02 [−0.63, 0.70] | +1.44 [0.66, 2.25] | +1.11 [0.64, 1.61] |
+| Cross-SFT interaction, K=8−K=1 | +0.36 [−0.32, 1.09] | +1.34 [0.51, 2.18] | +1.07 [0.52, 1.69] |
 
-R0 bundle effects are not pure history effects. Cross-SFT rows are descriptive because the training jobs are unmatched.
+Prompt-control bundle effects are not pure history effects. Cross-SFT rows are descriptive because the training jobs are unmatched.
 
 ### E.3 Stress frame
 
-The artifact label `correct_r8` means the authenticated same-source R8 prediction history in its original order. It does not mean that any transcript was corrected or replaced by a reference.
+The ordered same-source K=8 condition uses authenticated prediction history in its original order. Its immutable artifact ID is defined once in Section B.0; no transcript was corrected or replaced by a reference.
 
-| Cell | WER | CER | Insertions/100 | Copy events, % eligible history | Prior-only, % prediction tokens |
+| Model variant and serving condition | WER | CER | Insertions/100 | Copy events, % eligible history | Prior-only, % prediction tokens |
 |---|---:|---:|---:|---:|---:|
-| R0 — base | 38.02 | 28.27 | 4.15 | 0.00 | 0.00 |
-| Same-source R8 — base | 37.28 | 26.53 | 7.33 | 1.61 | 8.31 |
-| Unrelated — base | 39.74 | 29.12 | 6.42 | 1.00 | 7.06 |
-| Stale same source — base | 36.66 | 26.67 | 6.65 | 2.01 | 8.08 |
-| Shuffled correct — base | 35.98 | 25.73 | 6.48 | 2.01 | 8.60 |
-| R0 — no-context SFT | 28.36 | 21.04 | 3.21 | 0.00 | 0.00 |
-| Same-source R8 — no-context SFT | 25.15 | 18.23 | 3.44 | 1.00 | 6.25 |
-| Unrelated — no-context SFT | 28.07 | 20.46 | 3.50 | 0.20 | 3.68 |
-| Stale same source — no-context SFT | 25.22 | 18.31 | 3.24 | 1.41 | 5.92 |
-| Shuffled correct — no-context SFT | 25.71 | 18.05 | 3.73 | 1.20 | 6.89 |
-| R0 — prior-context SFT | 28.33 | 20.96 | 3.50 | 0.00 | 0.00 |
-| Same-source R8 — prior-context SFT | 24.93 | 18.33 | 3.70 | 2.41 | 7.94 |
-| Unrelated — prior-context SFT | 29.89 | 22.05 | 4.28 | 1.00 | 5.92 |
-| Stale same source — prior-context SFT | 26.39 | 19.79 | 3.79 | 1.81 | 8.07 |
-| Shuffled correct — prior-context SFT | 25.58 | 18.51 | 3.60 | 2.61 | 7.95 |
+| No-history-interface prompt control — untuned base model | 38.02 | 28.27 | 4.15 | 0.00 by construction | 0.00 |
+| Ordered same-source K=8 — untuned base model | 37.28 | 26.53 | 7.33 | 1.61 | 8.31 |
+| Unrelated — untuned base model | 39.74 | 29.12 | 6.42 | 1.00 | 7.06 |
+| Stale same source — untuned base model | 36.66 | 26.67 | 6.65 | 2.01 | 8.08 |
+| Shuffled same source — untuned base model | 35.98 | 25.73 | 6.48 | 2.01 | 8.60 |
+| No-history-interface prompt control — history-free SFT | 28.36 | 21.04 | 3.21 | 0.00 by construction | 0.00 |
+| Ordered same-source K=8 — history-free SFT | 25.15 | 18.23 | 3.44 | 1.00 | 6.25 |
+| Unrelated — history-free SFT | 28.07 | 20.46 | 3.50 | 0.20 | 3.68 |
+| Stale same source — history-free SFT | 25.22 | 18.31 | 3.24 | 1.41 | 5.92 |
+| Shuffled same source — history-free SFT | 25.71 | 18.05 | 3.73 | 1.20 | 6.89 |
+| No-history-interface prompt control — prior-transcript SFT | 28.33 | 20.96 | 3.50 | 0.00 by construction | 0.00 |
+| Ordered same-source K=8 — prior-transcript SFT | 24.93 | 18.33 | 3.70 | 2.41 | 7.94 |
+| Unrelated — prior-transcript SFT | 29.89 | 22.05 | 4.28 | 1.00 | 5.92 |
+| Stale same source — prior-transcript SFT | 26.39 | 19.79 | 3.79 | 1.81 | 8.07 |
+| Shuffled same source — prior-transcript SFT | 25.58 | 18.51 | 3.60 | 2.61 | 7.95 |
 
-The authoritative generated copy is the [complete stress table](tables/predicted_history_stress.md). R0 rows are descriptive because they also change the prompt family.
+The authoritative generated copy is the [complete stress table](tables/predicted_history_stress.md). no-history-interface prompt control rows are descriptive because they also change the prompt family.
 
-| Intervention minus same-source R8 | No-context-SFT WER [95% CI] | Prior-context-SFT WER [95% CI] | Cross-SFT interaction [95% CI] |
+| Intervention minus ordered same-source K=8 | History-free-SFT WER [95% CI] | Prior-transcript-SFT WER [95% CI] | Cross-SFT interaction [95% CI] |
 |---|---:|---:|---:|
 | Unrelated predicted | +2.92 [1.05, 4.99] | +4.96 [2.74, 7.10] | +2.04 [−0.73, 4.63] |
 | Stale same-source predicted | +0.06 [−1.48, 1.66] | +1.46 [−0.74, 3.43] | +1.39 [−1.11, 3.65] |
-| Shuffled correct predicted | +0.55 [−0.81, 1.97] | +0.65 [−0.83, 1.86] | +0.10 [−2.10, 2.02] |
+| Shuffled same-source predicted | +0.55 [−0.81, 1.97] | +0.65 [−0.83, 1.86] | +0.10 [−2.10, 2.02] |
 
-The unrelated effects within each tuned target survive their frozen Holm families; no cross-SFT WER interaction does. The unrelated arm is not valid deployment history and the 500-row constructed frame is not prevalence weighted.
+The unrelated effects within each tuned model variant survive their frozen Holm families; no cross-SFT WER interaction does. The unrelated arm is not valid deployment history and the 500-row constructed frame is not prevalence weighted.
 
 ### E.4 Reference-absent prediction lexical stress
 
@@ -262,14 +320,14 @@ This post-outcome exploratory intervention tests whether a plausible phrase
 found only in an injected predicted donor turn is reproduced. It does not test
 whether that phrase is acoustically absent.
 
-| Target | Correct-R8 WER | Intervention WER | ΔWER [95% CI] | Candidate adoption, intervention | Adoption Δ [95% CI] | Holm-adjusted tail area |
+| Model variant | Ordered same-source K=8 WER | Intervention WER | ΔWER [95% CI] | Candidate adoption, intervention | Adoption Δ [95% CI] | Holm-adjusted tail fraction |
 |---|---:|---:|---:|---:|---:|---:|
-| Base | 37.28 | 37.28 | +0.00 [−1.95, 1.89] | 0.80% | +0.80 [0.00, 2.15] | 0.45 |
-| No-context SFT | 25.15 | 25.51 | +0.36 [−1.12, 1.78] | 0.40% | +0.40 [0.00, 1.37] | 0.47 |
-| Prior-context SFT | 24.93 | 25.45 | +0.52 [−1.60, 2.16] | 1.80% | +1.80 [0.20, 3.90] | 0.11 |
+| Untuned base model | 37.28 | 37.28 | +0.00 [−1.95, 1.89] | 0.80% | +0.80 [0.00, 2.15] | 0.45 |
+| History-free SFT | 25.15 | 25.51 | +0.36 [−1.12, 1.78] | 0.40% | +0.40 [0.00, 1.37] | 0.47 |
+| Prior-transcript SFT | 24.93 | 25.45 | +0.52 [−1.60, 2.16] | 1.80% | +1.80 [0.20, 3.90] | 0.11 |
 
 Quality metrics use 498 normalized-nonempty rows; candidate adoption is
-intent-to-treat over all 500 rows per target. The complete generated table is
+intent-to-treat over all 500 rows per model variant. The complete generated table is
 [`predicted_history_reference_absent_entity.md`](tables/predicted_history_reference_absent_entity.md).
 None of the WER or candidate-adoption contrasts is conclusive after the frozen
 within-metric Holm adjustment. Reference absence cannot establish acoustic
@@ -281,15 +339,15 @@ semantic hallucinations.
 | Component | Registered new requests | Successful terminal outputs | Terminal errors | Application retries | Frozen request-proxy USD |
 |---|---:|---:|---:|---:|---:|
 | Original 15-cell main matrix | 61,620 | 61,620 | 0 | 0 | 19.6787 |
-| Exact-P13 P0, three targets | 12,324 | 12,324 | 0 | 0 | 3.9585 |
-| Original three stress interventions × three targets | 4,500 | 4,500 | 0 | 0 | 1.4762 |
-| Reference-absent lexical stress, three targets | 1,500 | 1,500 | 0 | 0 | 0.4921 |
+| Fixed-interface K=0, three model variants | 12,324 | 12,324 | 0 | 0 | 3.9585 |
+| Original three stress interventions × three model variants | 4,500 | 4,500 | 0 | 0 | 1.4762 |
+| Reference-absent lexical stress, three model variants | 1,500 | 1,500 | 0 | 0 | 0.4921 |
 | **Total registered program** | **79,944** | **79,944** | **0** | **0** | **25.6054** |
 
 The current main matrix has 18 cells and 73,944 registered requests. The two
-extension studies add 12,324 P0 and 1,500 lexical-stress requests to the earlier
+extension studies add 12,324 K=0 and 1,500 lexical-stress requests to the earlier
 66,120-request program. All extension requests completed successfully with zero
-terminal errors and zero retries. The P0 cells report 16,179,816 prompt tokens
+terminal errors and zero retries. The K=0 cells report 16,179,816 prompt tokens
 and 117,911 candidate tokens; the lexical intervention reports 2,085,228 prompt
 tokens and 12,577 candidate tokens. Total-token fields are present for every
 extension row; candidate-token fields are absent for some successful blank
@@ -331,8 +389,8 @@ The following evidence cannot support a headline claim:
 
 - Any historical result that served reference transcripts as prior context. Such artifacts are provenance only and are absent from the present analysis.
 - Historical checkpoint rankings on the same 4,108-row development lineage as independent test evidence.
-- Rk−R0 as a pure context effect, because prompt and serialization change with history. Use Rk−P0 for fixed-P13 history contrasts.
-- Cross-target gaps as causal prior-context-training effects, because data, labels, prompt, serialization, temporal policy, checkpoint selection, and unknown training randomness differ.
+- K>0 minus the no-history-interface prompt control as a pure context effect, because prompt and serialization change with history. Use K>0 minus K=0 for fixed-interface history contrasts.
+- Cross-variant gaps as causal prior-transcript-training effects, because data, labels, prompt, serialization, temporal policy, checkpoint selection, and unknown training randomness differ.
 - Blank or exact `[UNINTELLIGIBLE]` output as a hallucination definition.
 - Context-copy, prior-only tokens, insertions, or WER as semantic or acoustic judgments.
 - The reference-absent prediction lexical stress as evidence of acoustic absence, semantic hallucination, or reviewed entity accuracy. It measures only lexical candidate adoption and ASR diagnostics.
@@ -401,14 +459,12 @@ PYTHONPATH=model/src python -m experiments.scripts.predicted_history_analysis \
   --tradeoff-data-output "$REPLAY_DIR/tradeoff.csv"
 cmp "$REPLAY_DIR/analysis.json" experiments/results/predicted_history_analysis.json
 cmp "$REPLAY_DIR/analysis.csv" experiments/results/predicted_history_analysis.csv
-cmp "$REPLAY_DIR/main.md" paper/tables/predicted_history_main.md
-cmp "$REPLAY_DIR/stress.md" paper/tables/predicted_history_stress.md
-cmp "$REPLAY_DIR/windows.csv" paper/figures/data/predicted_history_windows.csv
-cmp "$REPLAY_DIR/tradeoff.csv" paper/figures/data/predicted_history_tradeoff.csv
 ```
 
 The analyzer is create-only. The replay writes to a fresh directory and
-requires byte identity with all six checked artifacts.
+requires byte identity with the checked aggregate JSON and CSV. Its legacy
+display outputs retain immutable internal run IDs and are not reviewer-facing
+artifacts.
 
 Replay the extension to a distinct fresh directory and require byte identity
 with its four checked aggregate artifacts. Set `OWNER_ONLY_ENTITY_REGISTRY` to
@@ -427,48 +483,77 @@ cmp "$EXTENSION_REPLAY_DIR/analysis.json" \
   experiments/results/predicted_history_extension_analysis.json
 cmp "$EXTENSION_REPLAY_DIR/analysis.csv" \
   experiments/results/predicted_history_extension_analysis.csv
-cmp "$EXTENSION_REPLAY_DIR/main.md" \
-  paper/tables/predicted_history_extension_main.md
-cmp "$EXTENSION_REPLAY_DIR/entity.md" \
-  paper/tables/predicted_history_reference_absent_entity.md
 ```
 
-The P0 receipt authenticates 12,324 successful terminal outputs over all 4,108
-rows for each of three targets. The lexical-stress receipt authenticates 1,500
-successful outputs over the fixed 500-row set for each target. Both receipts
+The extension comparison likewise authenticates the aggregate JSON and CSV;
+the reviewer-facing labels are rendered in a separate aggregate-only step:
+
+```bash
+TABLE_REPLAY_DIR="$(mktemp -d)"
+python3 paper/tables/render_public_tables.py \
+  --output-dir "$TABLE_REPLAY_DIR"
+for name in \
+  predicted_history_stress.md \
+  predicted_history_extension_main.md \
+  predicted_history_reference_absent_entity.md \
+  predicted_history_breakdown.md
+do
+  cmp "$TABLE_REPLAY_DIR/$name" "paper/tables/$name"
+done
+```
+
+Owner-only breakdown reanalysis writes a legacy-ID table only as an
+intermediate; the public table above is produced from the authenticated JSON:
+
+```bash
+BREAKDOWN_REPLAY_DIR="$(mktemp -d)"
+env PYTHONPATH=.:model/src uv run --project model --frozen python -m \
+  experiments.scripts.predicted_history_breakdown \
+  --protocol experiments/configs/predicted_history_breakdown_protocol.toml \
+  --pseudonym-salt-env OWNER_ONLY_HMAC_SALT_FILE \
+  --json-output "$BREAKDOWN_REPLAY_DIR/analysis.json" \
+  --csv-output "$BREAKDOWN_REPLAY_DIR/analysis.csv" \
+  --table-output "$BREAKDOWN_REPLAY_DIR/legacy-display.md"
+cmp "$BREAKDOWN_REPLAY_DIR/analysis.json" \
+  experiments/results/predicted_history_breakdown.json
+cmp "$BREAKDOWN_REPLAY_DIR/analysis.csv" \
+  experiments/results/predicted_history_breakdown.csv
+```
+
+The K=0 receipt authenticates 12,324 successful terminal outputs over all 4,108
+rows for each of three model variants. The lexical-stress receipt authenticates 1,500
+successful outputs over the fixed 500-row set for each model variant. Both receipts
 report zero terminal errors, exact parent response-version-set comparability,
 and zero cumulative retries.
 
-Generate the existing figures from aggregate CSVs only:
+Generate the current reviewer-facing figures from aggregate data only:
 
 ```bash
 uv run --script paper/figures/gen_fig_predicted_history_concepts.py
-uv run --script paper/figures/gen_fig_predicted_history.py
 uv run --script paper/figures/gen_fig_predicted_history_extension_v1.py
 ```
 
-The concept generator validates the prediction-only serving contract and the
-original three-target/five-level matrix. The result-figure generator validates
-that original 15-cell matrix and cross-file agreement. Both create PDF,
-300-DPI PNG, and receipts binding input, generator, and output hashes; neither
-opens raw predictions or transcripts. The versioned extension generator reads
-only the checked aggregate extension analysis and renders P0 as the P13 curve
-origin with R0 detached. Its generated data, three figures, and receipt passed
+The concept generator validates the prediction-only serving contract. The
+versioned extension generator reads only the checked aggregate extension
+analysis and renders K=0 as the fixed-interface curve origin with the
+no-history-interface prompt control detached. Both create PDF, 300-DPI PNG,
+and receipts binding input, generator, and output hashes; neither opens raw
+predictions or transcripts. The generated data, three result figures, and receipt passed
 a byte-identical fresh-directory replay, format/font checks, hermetic tests,
 and visual inspection.
 
-The separate post-outcome breakdown uses the same authenticated main panel and launches no provider calls. Its JSON records the exact locked-environment fresh-output argument vector and three byte-comparison vectors. Reproduction requires the ignored private binding and the same owner-only HMAC salt whose hash appears in the result; [`paper/README.md`](README.md#regenerating-aggregate-results) gives the executable command.
+The separate post-outcome breakdown uses the same authenticated main panel and launches no provider calls. Its JSON records the exact locked-environment fresh-output argument vector and three byte-comparison vectors. Reproduction requires the ignored private binding and the same owner-only HMAC salt whose hash appears in the result; [`paper/README.md`](README.md#reproducing-publication-tables-and-figures) gives the public presentation-replay command.
 
-Private audio, references, manifests, predictions, request histories, attempt logs, model identifiers, cloud project identifiers, and source keys cannot be released under this package. Aggregate files are publication candidates, not automatically release-authorized artifacts.
+The sanitized aggregate paper package was explicitly authorized and published on the repository's [`paper/context-interface-public`](https://github.com/watch-duty/radio-transcription/tree/paper/context-interface-public) branch. That authorization does not cover private audio, references, manifests, predictions, request histories, attempt logs, model identifiers, cloud project identifiers, source keys, or other withheld artifacts.
 
 ## J. Submission gates and residual limitations
 
-The paper is not submission-ready. Remaining non-inference gates are authorship and affiliation approval, venue selection, privacy review, data/output licensing, and an explicit release allowlist.
+The scientific draft and sanitized aggregate package are complete for internal review, but submission still requires authorship and affiliation approval, venue selection, and final privacy/licensing sign-off. The public-package allowlist is complete; it does not authorize withheld data or provider outputs.
 
 The requested evaluation program is complete; no additional provider run is a
-submission action. Held-out source-separated confirmation, matched no-context
-and prior-context SFT jobs, stochastic training replicates, and blinded audio
+submission action. Held-out source-separated confirmation, matched history-free
+and prior-transcript SFT jobs, stochastic training replicates, and blinded audio
 review were not requested. Their absence limits the paper to exploratory
-development evidence, descriptive historical-target comparisons, and lexical
-safety diagnostics. The exact-P13 P0 control has been completed and is no
+development evidence, descriptive historical model-variant comparisons, and lexical
+safety diagnostics. The fixed-interface K=0 control has been completed and is no
 longer a missing experiment.

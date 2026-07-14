@@ -63,7 +63,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 0,
       "target": "base",
-      "target_label": "Base",
+      "target_label": "Untuned base model",
       "wer": 32.55813953488372,
       "wer_lower": 29.798100581165013,
       "wer_upper": 35.353408814820185
@@ -78,7 +78,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 0,
       "target": "base",
-      "target_label": "Base",
+      "target_label": "Untuned base model",
       "wer": 32.53702987017556,
       "wer_lower": 29.81676075013093,
       "wer_upper": 35.320808861492566
@@ -93,7 +93,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 1,
       "target": "base",
-      "target_label": "Base",
+      "target_label": "Untuned base model",
       "wer": 33.42715406536959,
       "wer_lower": 30.29179199125621,
       "wer_upper": 36.59918688604602
@@ -108,7 +108,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 2,
       "target": "base",
-      "target_label": "Base",
+      "target_label": "Untuned base model",
       "wer": 33.51159272420223,
       "wer_lower": 30.20710170393387,
       "wer_upper": 36.90187103018792
@@ -123,7 +123,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 4,
       "target": "base",
-      "target_label": "Base",
+      "target_label": "Untuned base model",
       "wer": 32.484255708405165,
       "wer_lower": 29.397896079259368,
       "wer_upper": 35.70226103671198
@@ -138,7 +138,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 8,
       "target": "base",
-      "target_label": "Base",
+      "target_label": "Untuned base model",
       "wer": 32.13594624072054,
       "wer_lower": 29.039941895352932,
       "wer_upper": 35.31952622147008
@@ -153,7 +153,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 0,
       "target": "no_context_sft",
-      "target_label": "No-context SFT",
+      "target_label": "History-free SFT",
       "wer": 23.84688456531682,
       "wer_lower": 22.022819487178364,
       "wer_upper": 25.772144662210984
@@ -168,7 +168,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 0,
       "target": "no_context_sft",
-      "target_label": "No-context SFT",
+      "target_label": "History-free SFT",
       "wer": 23.783555571192345,
       "wer_lower": 21.923416476573667,
       "wer_upper": 25.705566882828084
@@ -183,7 +183,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 1,
       "target": "no_context_sft",
-      "target_label": "No-context SFT",
+      "target_label": "History-free SFT",
       "wer": 23.340252612321006,
       "wer_lower": 21.45611423824197,
       "wer_upper": 25.318515242751484
@@ -198,7 +198,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 2,
       "target": "no_context_sft",
-      "target_label": "No-context SFT",
+      "target_label": "History-free SFT",
       "wer": 22.886394821095593,
       "wer_lower": 21.091347705138674,
       "wer_upper": 24.779712631555448
@@ -213,7 +213,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 4,
       "target": "no_context_sft",
-      "target_label": "No-context SFT",
+      "target_label": "History-free SFT",
       "wer": 22.302360764169862,
       "wer_lower": 20.489574797809748,
       "wer_upper": 24.208779847301464
@@ -228,7 +228,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 8,
       "target": "no_context_sft",
-      "target_label": "No-context SFT",
+      "target_label": "History-free SFT",
       "wer": 21.9927523484502,
       "wer_lower": 20.11361819975019,
       "wer_upper": 23.943912370153253
@@ -243,7 +243,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 0,
       "target": "prior_context_sft",
-      "target_label": "Prior-context SFT",
+      "target_label": "Prior-transcript SFT",
       "wer": 23.776519016289626,
       "wer_lower": 22.059065785761295,
       "wer_upper": 25.58417877315246
@@ -258,7 +258,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 0,
       "target": "prior_context_sft",
-      "target_label": "Prior-context SFT",
+      "target_label": "Prior-transcript SFT",
       "wer": 23.994652218273934,
       "wer_lower": 22.18440397875505,
       "wer_upper": 25.90317155655655
@@ -273,7 +273,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 1,
       "target": "prior_context_sft",
-      "target_label": "Prior-context SFT",
+      "target_label": "Prior-transcript SFT",
       "wer": 22.998979699539106,
       "wer_lower": 21.174299513084396,
       "wer_upper": 24.90328154750547
@@ -288,7 +288,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 2,
       "target": "prior_context_sft",
-      "target_label": "Prior-context SFT",
+      "target_label": "Prior-transcript SFT",
       "wer": 22.576786405375927,
       "wer_lower": 20.759696363587608,
       "wer_upper": 24.449210755469238
@@ -303,7 +303,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 4,
       "target": "prior_context_sft",
-      "target_label": "Prior-context SFT",
+      "target_label": "Prior-transcript SFT",
       "wer": 22.14403827885867,
       "wer_lower": 20.28674335574617,
       "wer_upper": 24.034916964965866
@@ -318,7 +318,7 @@
       "population_row_count": 4098,
       "prior_turn_cap": 8,
       "target": "prior_context_sft",
-      "target_label": "Prior-context SFT",
+      "target_label": "Prior-transcript SFT",
       "wer": 22.01386201315836,
       "wer_lower": 20.10679926377111,
       "wer_upper": 23.986891346637755

@@ -77,19 +77,19 @@ _FIGURE_ROLES: typing.Final = {
 }
 _TARGET_STYLES: typing.Final = {
     "base": {
-        "label": "Base",
+        "label": "Untuned base model",
         "color": "#0072B2",
         "marker": "o",
         "linestyle": "-",
     },
     "no_context_sft": {
-        "label": "No-context SFT",
+        "label": "History-free SFT",
         "color": "#E69F00",
         "marker": "s",
         "linestyle": "--",
     },
     "prior_context_sft": {
-        "label": "Prior-context SFT",
+        "label": "Prior-transcript SFT",
         "color": "#009E73",
         "marker": "^",
         "linestyle": "-.",
@@ -97,8 +97,8 @@ _TARGET_STYLES: typing.Final = {
 }
 _TARGET_SUBTITLES: typing.Final = {
     "base": "no supervised adaptation",
-    "no_context_sft": "SFT without context",
-    "prior_context_sft": "SFT with prior transcripts",
+    "no_context_sft": "trained without history blocks",
+    "prior_context_sft": "trained with history blocks",
 }
 _PRIVATE_KEYS: typing.Final = frozenset(
     {
@@ -519,24 +519,23 @@ def _plot_exact_p13(
             zorder=3,
         )
     curve_axis.set_xticks(x_values)
-    curve_axis.set_xticklabels(("P0\n0", "R1\n1", "R2\n2", "R4\n4", "R8\n8"))
-    curve_axis.set_xlabel("Exact-P13 maximum prior predicted turns")
+    curve_axis.set_xticklabels(("K=0", "K=1", "K=2", "K=4", "K=8"))
+    curve_axis.set_xlabel("Maximum prior predicted turns, K")
     curve_axis.set_xlim(-0.25, len(_CURVE_CONDITIONS) - 0.75)
     curve_axis.text(
         0.01,
         0.98,
-        "Exact-P13 interface",
+        "Fixed history interface",
         transform=curve_axis.transAxes,
         ha="left",
         va="top",
         fontsize=7.2,
         color="#546E7A",
     )
-    curve_axis.text(
-        0.99,
-        0.02,
-        "Cross-target levels are descriptive.",
-        transform=curve_axis.transAxes,
+    figure.text(
+        0.79,
+        0.035,
+        "Cross-model levels are descriptive.",
         ha="right",
         va="bottom",
         fontsize=6.6,
@@ -556,7 +555,7 @@ def _plot_exact_p13(
     control_axis.text(
         0.5,
         0.96,
-        "Option-D R0\nprompt control\nnot on curve",
+        "No-history-interface\nprompt control\nnot on curve",
         transform=control_axis.transAxes,
         ha="center",
         va="top",
@@ -579,12 +578,15 @@ def _plot_exact_p13(
         handlelength=2.5,
         columnspacing=1.6,
     )
-    figure.subplots_adjust(left=0.09, right=0.99, bottom=0.2, top=0.81)
+    figure.subplots_adjust(left=0.09, right=0.99, bottom=0.23, top=0.81)
     _save_figure(
         figure,
         pdf_path=pdf_path,
         png_path=png_path,
-        title="Exact-P13 WER curve with detached Option-D prompt control",
+        title=(
+            "Fixed-interface WER curve with detached "
+            "no-history-interface prompt control"
+        ),
     )
 
 
@@ -635,7 +637,7 @@ def _plot_tradeoff(
             zorder=2,
         )
         for index, condition in enumerate(_CURVE_CONDITIONS):
-            label = "P0" if condition == "P0" else condition.removeprefix("R")
+            label = f"K={_PRIOR_TURN_CAPS[condition]}"
             offset_y = -8 if target == "prior_context_sft" else 6
             vertical_alignment = (
                 "top" if target == "prior_context_sft" else "bottom"
@@ -671,9 +673,9 @@ def _plot_tradeoff(
     axis.text(
         1.0,
         -0.2,
-        "Exact-P13 curve; labels are P0 and maximum prior-turn caps "
-        "1, 2, 4, and 8. "
-        "Option-D R0 is excluded; cross-target levels are descriptive.",
+        "Fixed-interface curve. The no-history-interface prompt control is "
+        "excluded; "
+        "cross-model levels are descriptive.",
         transform=axis.transAxes,
         ha="right",
         va="top",
@@ -685,7 +687,7 @@ def _plot_tradeoff(
         figure,
         pdf_path=pdf_path,
         png_path=png_path,
-        title="Exact-P13 WER versus context-copy diagnostic",
+        title="Fixed-interface WER versus context-copy diagnostic",
     )
 
 
@@ -723,7 +725,7 @@ def _plot_matrix(  # noqa: PLR0915
     pdf_path: pathlib.Path,
     png_path: pathlib.Path,
 ) -> None:
-    """Render all 18 cells without treating R0 as exact-P13 at zero."""
+    """Render all 18 cells with the prompt control detached from the K curve."""
     _publication_style()
     figure = Figure(figsize=(_FULL_WIDTH_INCHES, 3.25), facecolor="white")
     FigureCanvasAgg(figure)
@@ -770,7 +772,7 @@ def _plot_matrix(  # noqa: PLR0915
     axis.text(
         label_x + label_width / 2,
         0.953,
-        "Historical target",
+        "Model variant",
         ha="center",
         va="center",
         fontsize=7.5,
@@ -780,7 +782,7 @@ def _plot_matrix(  # noqa: PLR0915
     axis.text(
         main_x + main_width / 2,
         0.953,
-        "Exact-P13 interface · rolling predicted history",
+        "Fixed history interface · rolling predicted history",
         ha="center",
         va="center",
         fontsize=7.5,
@@ -790,7 +792,7 @@ def _plot_matrix(  # noqa: PLR0915
     axis.text(
         control_x + control_width / 2,
         0.953,
-        "Detached control",
+        "Prompt control",
         ha="center",
         va="center",
         fontsize=7.2,
@@ -812,11 +814,13 @@ def _plot_matrix(  # noqa: PLR0915
             linewidth=0.8,
         )
         cap = _PRIOR_TURN_CAPS[condition]
-        subtitle = "no history" if condition == "P0" else f"cap {cap}"
+        subtitle = (
+            "empty history" if condition == "P0" else f"≤{cap} prior turns"
+        )
         axis.text(
             x + width / 2,
             header_y + 0.073,
-            condition,
+            f"K={cap}",
             ha="center",
             va="center",
             fontsize=7.8,
@@ -846,21 +850,22 @@ def _plot_matrix(  # noqa: PLR0915
     )
     axis.text(
         control_x + control_width / 2,
-        header_y + 0.073,
-        "R0 · Option D",
+        header_y + 0.081,
+        "No-history-\ninterface",
         ha="center",
         va="center",
-        fontsize=7.3,
+        fontsize=6.8,
+        linespacing=0.9,
         weight="bold",
         color="#263238",
     )
     axis.text(
         control_x + control_width / 2,
-        header_y + 0.03,
-        "distinct prompt\nand interface",
+        header_y + 0.024,
+        "distinct prompt\nand wrapper",
         ha="center",
         va="center",
-        fontsize=6.0,
+        fontsize=5.7,
         linespacing=0.95,
         color="#B34E00",
     )
@@ -982,8 +987,8 @@ def _plot_matrix(  # noqa: PLR0915
     axis.text(
         label_x,
         0.043,
-        "R0 changes the prompt/interface and is not P13 at zero; "
-        "across-target levels are descriptive.",
+        "The prompt control changes the interface and is not K=0; "
+        "cross-model levels are descriptive.",
         ha="left",
         va="center",
         fontsize=6.0,

@@ -1,61 +1,61 @@
-# Context Is an Interface: Utility and Failure Modes of Prior Transcripts for Emergency-Radio ASR
+# Context Is an Interface: Utility and Failure Modes of Self-Predicted Transcript History for Emergency-Radio ASR
 
 This directory contains the canonical venue-neutral Markdown paper,
-**“Context Is an Interface: Utility and Failure Modes of Prior Transcripts for
+**“Context Is an Interface: Utility and Failure Modes of Self-Predicted Transcript History for
 Emergency-Radio ASR.”**
 
 The paper reports a prediction-only development study of Gemini 3.1 Flash-Lite.
-Every main-matrix nonzero-history request uses only the same target and
+Every main-matrix nonzero-history request uses only the same model variant and
 trajectory's own strictly earlier usable predictions; stress requests use only
-authenticated predictions from the same target. Reference transcripts never
+authenticated predictions from the same model variant. Reference transcripts never
 enter model requests, rolling schedules, or stress histories. They are used for
 scoring and, in the reference-absent lexical stress only, a private offline
 candidate-absence check.
 
-The completed main matrix evaluates three historical targets in 18 cells on
+The completed main matrix evaluates three frozen model variants in 18 cells on
 4,108 clips; 4,098 normalized-nonempty rows form the primary ASR population.
-For each target, P0 is the exact-P13 structural no-history control, R0 is the
-distinct Option-D interface control, and R1/R2/R4/R8 use rolling predicted
-history. A frozen 500-target stress frame adds unrelated, strictly older
+For each model variant, K=0 is the fixed-interface empty-history condition; a
+distinct no-history-interface prompt control is reported separately and is not
+a K condition. K=1/K=2/K=4/K=8 use rolling predicted history. A frozen 500-row stress frame adds unrelated, strictly older
 same-source, shuffled, and reference-absent entity-bearing predicted histories;
 498 normalized-nonempty rows support stress quality metrics.
 
 The result is mixed and negative for the strong learned-contract thesis:
 
-- Relative to exact-P13 P0, R8 improves WER by 1.85 points for no-context SFT
-  (95% reduction interval [1.25, 2.42]) and 1.76 points for prior-context SFT
+- Relative to fixed-interface K=0, K=8 improves WER by 1.85 points for history-free SFT
+  (95% reduction interval [1.25, 2.42]) and 1.76 points for prior-transcript SFT
   ([1.05, 2.46]).
-- No-context SFT and prior-context SFT reach 21.99% and 22.01% WER at R8; the
+- History-free SFT and prior-transcript SFT reach 21.99% and 22.01% WER at K=8; the
   0.02-point gap has a 95% CI of [−0.63, 0.70].
-- Prior-context SFT has higher R8 lexical reference-proxy diagnostics: +1.44
+- Prior-transcript SFT has higher K=8 lexical reference-proxy diagnostics: +1.44
   context-copy points among eligible-history rows and +1.11 prior-only points
   over all prediction tokens.
-- Unrelated predicted context hurts both tuned targets, but the cross-SFT
+- Unrelated predicted context hurts both tuned variants, but the cross-SFT
   interaction is unsupported.
 - In the reference-absent lexical stress, selected candidate phrases appear in
-  0.8%, 0.4%, and 1.8% of base, no-context-SFT, and prior-context-SFT outputs;
+  0.8%, 0.4%, and 1.8% of base, history-free-SFT, and prior-transcript-SFT outputs;
   none of the three Holm-adjusted adoption contrasts is conclusive.
 
 These findings do not establish semantic hallucination, acoustic support, or a
-causal SFT effect. P0 now separates the P13 empty-history interface from
-rolling history, but the SFT jobs remain historically unmatched, the frame is
+causal SFT effect. K=0 now separates the fixed-interface empty-history
+condition from rolling history, but the SFT jobs remain historically unmatched, the frame is
 development data, no held-out confirmation or human audio adjudication exists,
 and the registered acoustic-overlap audit produced no admissible result.
 
 ## Canonical paper files
 
 - [`main.md`](main.md): authoritative paper.
-- [`appendix.md`](appendix.md): target lineage, prompts, prediction-only
+- [`appendix.md`](appendix.md): model lineage, prompts, prediction-only
   invariants, full metrics and contrasts, operational accounting, exclusions,
   reproduction commands, and submission gates.
-- [`references.bib`](references.bib): programmatically verified primary-source
-  bibliography; Markdown citations use these keys.
+- [`references.bib`](references.bib): machine-readable copy of the
+  programmatically verified primary-source bibliography.
 - [`claims_evidence_matrix.csv`](claims_evidence_matrix.csv): claim-level
   publication gate maintained by the broader research package.
 - [`reviewer2.md`](reviewer2.md): publication-safe adversarial self-critique,
   including the post-outcome breakdown and submission gates.
 - [`tables/predicted_history_extension_main.md`](tables/predicted_history_extension_main.md):
-  generated 18-cell table with exact-P13 P0 controls and paired contrasts.
+  generated 18-cell table with fixed-interface K=0 conditions, detached prompt controls, and paired contrasts.
 - [`tables/predicted_history_stress.md`](tables/predicted_history_stress.md):
   generated stress table.
 - [`tables/predicted_history_reference_absent_entity.md`](tables/predicted_history_reference_absent_entity.md):
@@ -70,10 +70,10 @@ and the registered acoustic-overlap audit produced no admissible result.
   concept-figure contract and output hashes.
 - [`figures/fig_predicted_history_extension_exact_p13_v1.pdf`](figures/fig_predicted_history_extension_exact_p13_v1.pdf)
   and [PNG](figures/fig_predicted_history_extension_exact_p13_v1.png): generated
-  exact-P13 P0/R1/R2/R4/R8 curves with Option-D R0 detached.
+  fixed-interface K=0/K=1/K=2/K=4/K=8 curves with no-history-interface prompt control detached.
 - [`figures/fig_predicted_history_extension_matrix_v1.pdf`](figures/fig_predicted_history_extension_matrix_v1.pdf)
   and [PNG](figures/fig_predicted_history_extension_matrix_v1.png): generated
-  18-cell serving matrix with exact-P13 cells and detached Option-D controls.
+  18-cell serving matrix with fixed-interface cells and detached no-history-interface controls.
 - [`figures/fig_predicted_history_extension_tradeoff_v1.pdf`](figures/fig_predicted_history_extension_tradeoff_v1.pdf)
   and [PNG](figures/fig_predicted_history_extension_tradeoff_v1.png): generated
   extension WER/lexical-overlap trade-off.
@@ -85,123 +85,73 @@ and the registered acoustic-overlap audit produced no admissible result.
   and [JSON](figures/data/predicted_history_extension_v1.json): validated
   aggregate figure data.
 
-### Pre-extension prediction-only provenance
+Superseded pre-extension figures and tables remain in internal history only.
+They are excluded from the sanitized reviewer package because their detached
+prompt control can be mistaken for K=0. `main.md` is the canonical paper; no
+LaTeX or PDF paper is authoritative.
 
-The following aggregate artifacts predate exact-P13 P0. They are retained for
-reproduction history, but they are not the current main table or figures and
-must not be used to place Option-D R0 at the origin of the P13 curve:
+## Reproducing publication tables and figures
 
-- [`tables/predicted_history_main.md`](tables/predicted_history_main.md):
-  original 15-cell table;
-- [`figures/fig_predicted_history_windows.pdf`](figures/fig_predicted_history_windows.pdf)
-  and [PNG](figures/fig_predicted_history_windows.png): original window curves;
-- [`figures/fig_predicted_history_tradeoff.pdf`](figures/fig_predicted_history_tradeoff.pdf)
-  and [PNG](figures/fig_predicted_history_tradeoff.png): original trade-off;
-- [`figures/fig_factorial_matrix.pdf`](figures/fig_factorial_matrix.pdf) and
-  [PNG](figures/fig_factorial_matrix.png): original 3×5 serving matrix; and
-- [`figures/fig_predicted_history_receipt.json`](figures/fig_predicted_history_receipt.json):
-  aggregate-input and output-hash receipt for those pre-extension artifacts.
-
-The earlier LaTeX paper, rendered PDFs, and their reference-history tables and
-figures have been moved to the explicitly excluded
-[`archive/`](archive/README.md). They are internal provenance only, are not
-release candidates, and must not be submitted or cited as the current paper.
-No conventionally named LaTeX or PDF paper is authoritative.
-
-## Regenerating aggregate results
-
-Run from the repository root in the locked model environment. The canonical
-analyzer reauthenticates fixed private artifacts before joining scoring-only
-references. It accepts no caller-provided predictions, histories, references,
-models, or result bundle.
+The public aggregate JSON files are the scientific source of truth. The
+reviewer-facing table renderer changes labels only: it reads those aggregates,
+does not open row-level predictions or references, and writes create-only
+outputs to a fresh directory.
 
 ```bash
-REPLAY_DIR="$(mktemp -d)"
-PYTHONPATH=model/src python -m experiments.scripts.predicted_history_analysis \
-  --json-output "$REPLAY_DIR/analysis.json" \
-  --csv-output "$REPLAY_DIR/analysis.csv" \
-  --main-table-output "$REPLAY_DIR/main.md" \
-  --stress-table-output "$REPLAY_DIR/stress.md" \
-  --window-data-output "$REPLAY_DIR/windows.csv" \
-  --tradeoff-data-output "$REPLAY_DIR/tradeoff.csv"
-cmp "$REPLAY_DIR/analysis.json" experiments/results/predicted_history_analysis.json
-cmp "$REPLAY_DIR/analysis.csv" experiments/results/predicted_history_analysis.csv
-cmp "$REPLAY_DIR/main.md" paper/tables/predicted_history_main.md
-cmp "$REPLAY_DIR/stress.md" paper/tables/predicted_history_stress.md
-cmp "$REPLAY_DIR/windows.csv" paper/figures/data/predicted_history_windows.csv
-cmp "$REPLAY_DIR/tradeoff.csv" paper/figures/data/predicted_history_tradeoff.csv
+TABLE_REPLAY_DIR="$(mktemp -d)"
+python3 paper/tables/render_public_tables.py \
+  --output-dir "$TABLE_REPLAY_DIR"
+for name in \
+  predicted_history_stress.md \
+  predicted_history_extension_main.md \
+  predicted_history_reference_absent_entity.md \
+  predicted_history_breakdown.md
+do
+  cmp "$TABLE_REPLAY_DIR/$name" "paper/tables/$name"
+done
 ```
 
-The analyzer is create-only. This command writes to a fresh directory and
-requires all six byte comparisons to succeed; it never targets the canonical
-outputs.
+The original aggregate analyzers retain their immutable run IDs internally so
+that execution-plan and result hashes remain valid. Those IDs are translated
+only at this presentation boundary. Owner-only reanalysis from authenticated
+predictions requires the ignored private binding, assignment registry, and
+pseudonym salt; the exact commands and boundaries are recorded in
+[`appendix.md`](appendix.md#i-artifacts-and-reproduction-commands).
 
-Replay the additive P13-zero and lexical-stress analysis from its authenticated
-owner-only assignment registry into a second fresh directory. Set
-`OWNER_ONLY_ENTITY_REGISTRY` to that access-controlled file before running:
+Replay the figures from publication-safe aggregate inputs into fresh
+directories and compare the bytes:
 
 ```bash
-EXTENSION_REPLAY_DIR="$(mktemp -d)"
-PYTHONPATH=.:model/src uv run --project model --frozen python -m \
-  experiments.scripts.predicted_history_extension_analysis \
-  --private-registry "$OWNER_ONLY_ENTITY_REGISTRY" \
-  --json-output "$EXTENSION_REPLAY_DIR/analysis.json" \
-  --csv-output "$EXTENSION_REPLAY_DIR/analysis.csv" \
-  --main-table-output "$EXTENSION_REPLAY_DIR/main.md" \
-  --entity-table-output "$EXTENSION_REPLAY_DIR/entity.md"
-cmp "$EXTENSION_REPLAY_DIR/analysis.json" \
-  experiments/results/predicted_history_extension_analysis.json
-cmp "$EXTENSION_REPLAY_DIR/analysis.csv" \
-  experiments/results/predicted_history_extension_analysis.csv
-cmp "$EXTENSION_REPLAY_DIR/main.md" \
-  paper/tables/predicted_history_extension_main.md
-cmp "$EXTENSION_REPLAY_DIR/entity.md" \
-  paper/tables/predicted_history_reference_absent_entity.md
+CONCEPT_REPLAY_DIR="$(mktemp -d)"
+EXTENSION_FIGURE_REPLAY_DIR="$(mktemp -d)"
+uv run --script paper/figures/gen_fig_predicted_history_concepts.py \
+  --output-dir "$CONCEPT_REPLAY_DIR"
+uv run --script paper/figures/gen_fig_predicted_history_extension_v1.py \
+  --output-dir "$EXTENSION_FIGURE_REPLAY_DIR"
+cmp "$CONCEPT_REPLAY_DIR/fig_task_contract.pdf" \
+  paper/figures/fig_task_contract.pdf
+cmp "$CONCEPT_REPLAY_DIR/fig_task_contract.png" \
+  paper/figures/fig_task_contract.png
+cmp "$CONCEPT_REPLAY_DIR/fig_predicted_history_concepts_receipt.json" \
+  paper/figures/fig_predicted_history_concepts_receipt.json
+for name in \
+  fig_predicted_history_extension_exact_p13_v1.pdf \
+  fig_predicted_history_extension_exact_p13_v1.png \
+  fig_predicted_history_extension_matrix_v1.pdf \
+  fig_predicted_history_extension_matrix_v1.png \
+  fig_predicted_history_extension_tradeoff_v1.pdf \
+  fig_predicted_history_extension_tradeoff_v1.png \
+  fig_predicted_history_extension_v1_receipt.json
+do
+  cmp "$EXTENSION_FIGURE_REPLAY_DIR/$name" "paper/figures/$name"
+done
 ```
 
-The private registry contains row assignments and candidate phrases and must
-remain owner-only. The analyzer emits aggregate-only, create-only outputs and
-requires all four comparisons to match byte for byte.
-
-Generate figures from the publication-safe aggregate CSVs:
-
-```bash
-uv run --script paper/figures/gen_fig_predicted_history_concepts.py
-uv run --script paper/figures/gen_fig_predicted_history.py
-uv run --script paper/figures/gen_fig_predicted_history_extension_v1.py
-```
-
-The existing generators validate the prediction-only task/matrix contract, the
-original 15 main cells, and cross-file agreement. They write vector PDF,
-300-DPI PNG, and hash receipts without opening raw audio, transcripts, or
-predictions. The versioned extension generator reads only the checked aggregate
-extension analysis and renders P0 as the P13 curve origin with R0 detached.
-Its current generated data, three figures, and receipt passed a byte-identical
-fresh-directory replay, hermetic tests, format/font checks, and visual
-inspection.
-
-The post-outcome breakdown performs no provider inference. Reproduction also
-requires the same owner-only HMAC salt recorded by hash in the checked result:
-
-```bash
-mkdir -p experiments/results/reproductions paper/tables/reproductions
-test ! -e experiments/results/reproductions/predicted_history_breakdown.json
-test ! -e experiments/results/reproductions/predicted_history_breakdown.csv
-test ! -e paper/tables/reproductions/predicted_history_breakdown.md
-env PYTHONPATH=.:model/src uv run --project model --frozen python -m \
-  experiments.scripts.predicted_history_breakdown \
-  --protocol experiments/configs/predicted_history_breakdown_protocol.toml \
-  --pseudonym-salt-env OWNER_ONLY_HMAC_SALT_FILE \
-  --json-output experiments/results/reproductions/predicted_history_breakdown.json \
-  --csv-output experiments/results/reproductions/predicted_history_breakdown.csv \
-  --table-output paper/tables/reproductions/predicted_history_breakdown.md
-cmp experiments/results/predicted_history_breakdown.json \
-  experiments/results/reproductions/predicted_history_breakdown.json
-cmp experiments/results/predicted_history_breakdown.csv \
-  experiments/results/reproductions/predicted_history_breakdown.csv
-cmp paper/tables/predicted_history_breakdown.md \
-  paper/tables/reproductions/predicted_history_breakdown.md
-```
+The figure generators validate the prediction-only task contract, the complete
+18-cell matrix, and cross-file agreement. They write vector PDF, 300-DPI PNG,
+and hash receipts without opening raw audio, transcripts, or predictions. The
+current bytes passed fresh-directory replay, focused tests, format checks, and
+visual inspection.
 
 ## Evidence and operational accounting
 
@@ -233,18 +183,18 @@ bill.
 
 ## Release boundaries and remaining blockers
 
-No audio, reference, transcript, label, raw prediction, source locator, request
-history, cloud resource identifier, signed URL, or private manifest is
-release-authorized by this directory. The repository code license does not
-establish redistribution rights for data, annotations, model outputs, or
-third-party assets. Build any anonymous archive from an explicit governance
-allowlist.
+The sanitized aggregate paper package was explicitly authorized and published
+on [`paper/context-interface-public`](https://github.com/watch-duty/radio-transcription/tree/paper/context-interface-public).
+That authorization excludes audio, references, transcripts, labels, raw
+predictions, source locators, request histories, cloud resource identifiers,
+signed URLs, and private manifests. The repository code license does not
+establish redistribution rights for those withheld artifacts.
 
 The draft's remaining submission gates are:
 
 1. authorship and affiliation approval;
 2. venue selection and current-format review; and
-3. privacy, licensing, and release approval.
+3. final privacy and licensing sign-off for submission.
 
 Held-out confirmation, repeated matched SFT jobs, and human audio adjudication
 were not requested for this package. They remain explicit scientific

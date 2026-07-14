@@ -68,7 +68,7 @@
     "matplotlib_version": "3.11.0",
     "numpy_version": "2.5.1",
     "path": "paper/figures/gen_fig_predicted_history_extension_v1.py",
-    "sha256": "f048098273827425c9eea4e20cf164a83069dd7cef76e6d0861b62d0e1224c78"
+    "sha256": "c7319bd7f1877b4d7153e7f5ca916ba13bac994cfb38cc786bffd8754f4b9a0e"
   },
   "input": {
     "analysis_id": "predicted_history_extension_analysis_v1",
@@ -98,36 +98,36 @@
   },
   "outputs": {
     "data/predicted_history_extension_v1.csv": {
-      "bytes": 3307,
-      "sha256": "8c5018a3d16ddaae1dd1879b6a939c560055710b1310bc6d8afaa7126a814e37"
+      "bytes": 3421,
+      "sha256": "3c21f4e844186ca0295052a2bc9c503e6d08ca4f8071a607b9539ceb94ea2dbf"
     },
     "data/predicted_history_extension_v1.json": {
-      "bytes": 11531,
-      "sha256": "3c1ee9416721752c3531b16802eee7a21e100573f03f850eee36ab9e3ef5665c"
+      "bytes": 11645,
+      "sha256": "57fade1d5410d4c309728094219544b81b6596ca03ef3a59cf8776f08f7ef2db"
     },
     "fig_predicted_history_extension_exact_p13_v1.pdf": {
-      "bytes": 32734,
-      "sha256": "072166a74020002a3f2f0fa89b089475664488c0121318e919003b0e97dac174"
+      "bytes": 33506,
+      "sha256": "11122e13bc14034c89e78e7c2d01a827616515357f92c9c6b434e56758a1d522"
     },
     "fig_predicted_history_extension_exact_p13_v1.png": {
-      "bytes": 102971,
-      "sha256": "6fac6c3bbc2f43d6052ede2b14afd523cf32332db69ea00c9ef065f2e359ac3e"
+      "bytes": 104792,
+      "sha256": "0c358ddbcc8efdfde3f8c256724fc0549fd157afa464acfe284b03831dd837ae"
     },
     "fig_predicted_history_extension_matrix_v1.pdf": {
-      "bytes": 60395,
-      "sha256": "276bdabedccf4360f5738770169f1368a494ff53289d895361723dd634288eef"
+      "bytes": 60991,
+      "sha256": "36feb74407eed86a1a5bc546f602ed88e13da959e54ef8c011a6edda60d50f74"
     },
     "fig_predicted_history_extension_matrix_v1.png": {
-      "bytes": 241150,
-      "sha256": "edf5d1afb484cf71add995ee83b442dfcb5dc2e6e8f98e854403eadda6b43150"
+      "bytes": 253398,
+      "sha256": "1f605eb277f5dd0fdbfdc65565cd4f7cf024b86a4ac925e35c5502a09865efec"
     },
     "fig_predicted_history_extension_tradeoff_v1.pdf": {
-      "bytes": 30455,
-      "sha256": "13cde92aa8222f0417cd2cdccf645ae2f37715ea4d251406d8434153666e8a1f"
+      "bytes": 35243,
+      "sha256": "679aa6825c7fbc9837de3ad335f931fd92ce1047ea3a96f50c4e569fd5d89b25"
     },
     "fig_predicted_history_extension_tradeoff_v1.png": {
-      "bytes": 112336,
-      "sha256": "35a328d660ab8733f64dd8df0e71b9ed49906a3bf3292acb94d62d00d09db976"
+      "bytes": 120985,
+      "sha256": "6937f8d7878752c0c3a958c589d9133227a043826b47c945e50413c16cccc37f"
     }
   },
   "reproduction": {
