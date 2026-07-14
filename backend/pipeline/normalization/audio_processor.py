@@ -10,7 +10,7 @@ import io
 import logging
 import subprocess
 import tempfile
-from collections.abc import Generator
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -42,7 +42,7 @@ class AudioProcessor:
         """No-op setup for compatibility."""
 
     @contextlib.contextmanager
-    def _temp_files(self, *suffixes: str) -> Generator[list[str]]:
+    def _temp_files(self, *suffixes: str) -> Iterator[list[str]]:
         """Context manager to safely create and cleanup temporary files."""
         paths = []
         try:
@@ -119,7 +119,7 @@ class AudioProcessor:
                     "-b:a",
                     M4A_BITRATE,
                     "-movflags",
-                    "frag_keyframe+empty_moov+default_base_moof",
+                    "+faststart",
                     temp_filename,
                 ],
                 input_bytes,
@@ -150,7 +150,7 @@ class AudioProcessor:
                     "-b:a",
                     M4A_BITRATE,
                     "-movflags",
-                    "frag_keyframe+empty_moov+default_base_moof",
+                    "+faststart",
                     m4a_name,
                 ],
                 input_bytes,

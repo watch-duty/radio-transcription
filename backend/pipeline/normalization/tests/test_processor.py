@@ -1,6 +1,7 @@
 """Unit tests for the NormalizationEventProcessor class."""
 
 import base64
+import time
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -141,8 +142,8 @@ class NormalizationEventProcessorTest(unittest.TestCase):
             timeout=GCS_DOWNLOAD_TIMEOUT_SEC
         )
 
-        # Verify we copied FLAC directly (no transcode_derivatives called)
-        mock_processor.transcode_derivatives.assert_not_called()
+        # Verify we copied FLAC directly (no transcode_to_flac called)
+        mock_processor.transcode_to_flac.assert_not_called()
 
         # Verify audio processor was called to transcode FLAC to M4A
         mock_processor.transcode_to_m4a.assert_called_once_with(
@@ -188,14 +189,14 @@ class NormalizationEventProcessorTest(unittest.TestCase):
     def test_process_event_source_m4a_success(
         self, mock_uploader_cls: MagicMock, mock_processor_cls: MagicMock
     ) -> None:
-        """Verifies that if the source is M4A, we transcode via transcode_derivatives to guarantee fMP4."""
+        """Verifies that if the source is M4A, we copy M4A directly and transcode to FLAC."""
         # Setup mocks
         mock_processor = mock_processor_cls.return_value
         mock_uploader = mock_uploader_cls.return_value
 
         # Mock processor output
         mock_processor.transcode_derivatives.return_value = TranscodeResult(
-            flac_bytes=b"fake-flac-data", m4a_bytes=b"fake-fmp4-data"
+            flac_bytes=b"fake-flac-data", m4a_bytes=b"fake-m4a-data"
         )
         mock_processor.is_mono.return_value = False
         mock_processor.downmix_to_mono.return_value = b"fake-mono-flac-data"
@@ -270,12 +271,12 @@ class NormalizationEventProcessorTest(unittest.TestCase):
         # Run process_event
         processor.process_event(cloud_event)
 
-        # Verify we called transcode_derivatives to produce both FLAC and fMP4 M4A
+        # Verify audio processor was called to transcode M4A via derivatives
         mock_processor.transcode_derivatives.assert_called_once_with(
             b"fake-m4a-data"
         )
 
-        # Verify audio processor was called to check and downmix FLAC to mono
+        # Verify audio processor was called to transcode FLAC to mono FLAC
         mock_processor.is_mono.assert_called_once_with(b"fake-flac-data")
         mock_processor.downmix_to_mono.assert_called_once_with(
             b"fake-flac-data"
@@ -289,7 +290,7 @@ class NormalizationEventProcessorTest(unittest.TestCase):
             content_type="audio/flac",
         )
         mock_uploader.upload_bytes.assert_any_call(
-            data=b"fake-fmp4-data",
+            data=b"fake-m4a-data",
             bucket_name=self.canonical_bucket,
             destination_path="playback/feed-2222/1970/01/01/tx-1111.m4a",
             content_type="audio/mp4",
@@ -708,6 +709,53 @@ class NormalizationEventProcessorTest(unittest.TestCase):
         self.mock_record_pipeline_stage.assert_any_call(
             "normalization", "success"
         )
+
+    @patch("backend.pipeline.normalization.processor.waveform.compute_waveform")
+    @patch("backend.pipeline.normalization.audio_processor.AudioProcessor")
+    @patch("backend.pipeline.common.storage.gcs_uploader.GCSAudioUploader")
+    def test_process_event_upload_failure_drains_all_futures(
+        self,
+        mock_uploader_cls: MagicMock,
+        mock_processor_cls: MagicMock,
+        mock_compute_waveform: MagicMock,
+    ) -> None:
+        """Verifies that an exception in one upload waits for all others to finish, then routes to DLQ."""
+        processor, cloud_event = self._wire_flac_speech_event(
+            mock_uploader_cls, mock_processor_cls
+        )
+        mock_uploader = mock_uploader_cls.return_value
+
+        completed_uploads = set()
+
+        def upload_side_effect(
+            data, bucket_name, destination_path, content_type
+        ):
+            if "lossless" in destination_path:
+                msg = "Boom on canonical upload"
+                raise RuntimeError(msg)
+            # Sleep slightly to ensure they run concurrently and we verify wait behavior
+            time.sleep(0.1)
+            completed_uploads.add(destination_path)
+            return f"gs://{bucket_name}/{destination_path}"
+
+        mock_uploader.upload_bytes.side_effect = upload_side_effect
+
+        processor.process_event(cloud_event)
+
+        # The other two uploads (playback and ephemeral) should have completed despite the error in canonical
+        self.assertEqual(len(completed_uploads), 2)
+        self.assertTrue(any("playback" in p for p in completed_uploads))
+        self.assertTrue(any("ephemeral" in p for p in completed_uploads))
+
+        # We should have routed the failure to the DLQ (which implies it caught the error)
+        self.mock_record_pipeline_stage.assert_any_call(
+            "normalization", "error"
+        )
+        # Ensure it published to DLQ
+        publish_calls = self.mock_publisher.return_value.publish.call_args_list
+        dlq_call = publish_calls[0]
+        self.assertEqual(dlq_call.kwargs.get("ordering_key"), "")
+        self.assertIn(b"Boom on canonical upload", dlq_call.kwargs.get("data"))
 
 
 if __name__ == "__main__":
