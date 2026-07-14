@@ -48,6 +48,13 @@ The recurrent denoiser (**UL-UNAS**) RNN is highly sensitive to input perturbati
 * **Mechanism**: We apply a deterministic, mathematically inaudible **`-120dB RMS` ($1\times 10^{-6}$) Gaussian dither** to the audio signal in `detect_speech_segments` just before peak normalization.
 * **Rationale**: This steady, sub-audible noise floor "swamps" any LSB decoder rounding mismatches, forcing the RNN states to remain locked in phase across all platforms and decoders, restoring onset sensitivity for quiet speech without triggering false positives on static-only files.
 
+### 3. Removed: pre-denoiser AGC Compressor (history, for future reference)
+An earlier revision of `preprocess()` conditionally ran a `pedalboard.Compressor` on the bandpassed signal before the UL-UNAS denoiser, intended to lift quiet passages relative to a loud peak within the same chunk. It was removed after investigation showed the gate (`peak < comp_peak_threshold`) was comparing against the *post*-normalization peak, which `_peak_normalize` always rescales to a fixed target (~0.95) — so the branch was provably dead in every production chunk, regardless of how quiet the source audio actually was.
+
+* **It did work once, standalone**: the original prototype (`model/colabs/segmentation/silero_and_ul_unas_wet_dry_VAD_mixture.ipynb`) gates correctly on the *pre*-normalization peak and validated real benefit there, using gentler settings (`threshold_db=-15`, `ratio=3.0`) than what ended up in production (`-30.0`/`6.0`). The gate broke silently during the port to the streaming pipeline.
+* **Why it wasn't simply re-fixed**: correcting the gate to use the pre-normalization peak (with either the production or the original colab's settings) reliably reintroduces a false-positive speech segment on `test_only_static_middlebury.mp3`, which must return zero segments. This isn't a tuning problem — the colab predates the click/burst noise-rejection heuristics now in `_is_speech_segment` (spikiness-ratio check), and compression's job (flattening transient dynamics) directly undermines that heuristic's signal (spiky RMS = click/static, flat RMS = sustained speech). Confirmed across 5 parameter configs spanning the colab's original settings through production's.
+* **If revisiting this**: any reintroduction needs `_is_speech_segment`'s noise/click rejection reworked to classify on a pre-compression signal (or an equivalent fix), validated against the full benchmark suite in this document, before the compressor can be safely re-gated on. Don't just restore the old gate condition or the old parameters — both were tried during this investigation and both reopen the static false-positive.
+
 ---
 
 ## Guidelines for Performance Maintenance
