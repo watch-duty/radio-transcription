@@ -38,6 +38,9 @@ export function AudioControl({
   settingsButton,
   sx,
 }: AudioControlProps) {
+  const controlSize = { xs: 'medium', sm: 'large' } as const;
+  const iconFontSize = { xs: 'medium', sm: 'large' } as const;
+
   return (
     <Box
       sx={{
@@ -60,14 +63,14 @@ export function AudioControl({
           <span>
             <IconButton
               onClick={onFastRewind}
-              size="large"
+              size={controlSize}
               color="primary"
               sx={{ p: 0.5 }}
               aria-label="rewind to previous detected speech"
               disabled={disableControls}
             >
               <MoveToSpeechIcon
-                fontSize="large"
+                fontSize={iconFontSize}
                 sx={{ transform: 'scaleX(-1)' }}
               />
             </IconButton>
@@ -77,13 +80,13 @@ export function AudioControl({
           <span>
             <IconButton
               onClick={onSkipToPrevious}
-              size="large"
+              size={controlSize}
               color="primary"
               sx={{ p: 0.5 }}
               aria-label="rewind to previous segment"
               disabled={disableControls}
             >
-              <SkipPreviousIcon fontSize="large" />
+              <SkipPreviousIcon fontSize={iconFontSize} />
             </IconButton>
           </span>
         </Tooltip>
@@ -91,13 +94,13 @@ export function AudioControl({
           <span>
             <IconButton
               onClick={() => onSkipTime(-5)}
-              size="large"
+              size={controlSize}
               color="primary"
               sx={{ p: 0.5 }}
               aria-label="rewind 5 seconds"
               disabled={disableControls}
             >
-              <Replay5Icon fontSize="large" />
+              <Replay5Icon fontSize={iconFontSize} />
             </IconButton>
           </span>
         </Tooltip>
@@ -105,16 +108,16 @@ export function AudioControl({
           <span>
             <IconButton
               onClick={onTogglePlayPause}
-              size="large"
+              size={controlSize}
               color="primary"
               sx={{ p: 0.5 }}
               aria-label={isAudioPlaying ? 'pause' : 'play'}
               disabled={disableControls}
             >
               {isAudioPlaying ? (
-                <PauseIcon fontSize="large" />
+                <PauseIcon fontSize={iconFontSize} />
               ) : (
-                <PlayArrowIcon fontSize="large" />
+                <PlayArrowIcon fontSize={iconFontSize} />
               )}
             </IconButton>
           </span>
@@ -123,13 +126,13 @@ export function AudioControl({
           <span>
             <IconButton
               onClick={() => onSkipTime(5)}
-              size="large"
+              size={controlSize}
               color="primary"
               sx={{ p: 0.5 }}
               aria-label="advance 5 seconds"
               disabled={disableControls}
             >
-              <Forward5Icon fontSize="large" />
+              <Forward5Icon fontSize={iconFontSize} />
             </IconButton>
           </span>
         </Tooltip>
@@ -137,13 +140,13 @@ export function AudioControl({
           <span>
             <IconButton
               onClick={onSkipToNext}
-              size="large"
+              size={controlSize}
               color="primary"
               sx={{ p: 0.5 }}
               aria-label="advance to next segment"
               disabled={disableControls}
             >
-              <SkipNextIcon fontSize="large" />
+              <SkipNextIcon fontSize={iconFontSize} />
             </IconButton>
           </span>
         </Tooltip>
@@ -151,18 +154,20 @@ export function AudioControl({
           <span>
             <IconButton
               onClick={onFastForward}
-              size="large"
+              size={controlSize}
               color="primary"
               sx={{ p: 0.5 }}
               aria-label="advance to next detected speech"
               disabled={disableControls}
             >
-              <MoveToSpeechIcon fontSize="large" />
+              <MoveToSpeechIcon fontSize={iconFontSize} />
             </IconButton>
           </span>
         </Tooltip>
         {settingsButton && (
-          <Box sx={{ display: 'inline-flex', ml: 1 }}>{settingsButton}</Box>
+          <Box sx={{ display: 'inline-flex', ml: { xs: 0.5, sm: 1 } }}>
+            {settingsButton}
+          </Box>
         )}
       </Box>
     </Box>

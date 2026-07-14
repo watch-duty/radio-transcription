@@ -165,7 +165,10 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
     <Box
       sx={{
         display: 'flex',
+        flexDirection: { xs: 'column', md: 'row' },
         justifyContent: 'space-between',
+        alignItems: { xs: 'stretch', md: 'center' },
+        gap: { xs: 1, md: 0 },
         mb: 0.5,
         // Lift the bar (and its overflowing speaker badges) above the list's
         // sticky headers (zIndex 1) so they aren't clipped behind them.
@@ -173,7 +176,14 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         zIndex: 2,
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 0.75,
+          width: { xs: '100%', md: 'auto' },
+        }}
+      >
         <Button
           variant="contained"
           size="small"
@@ -185,7 +195,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
             height: CONTROL_HEIGHT,
             borderRadius: CONTROL_RADIUS,
             whiteSpace: 'nowrap',
-            flexShrink: 0,
+            flexGrow: { xs: 1, md: 0 },
           }}
           onClick={onClickViewLatest}
         >
@@ -223,7 +233,15 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
         </DraftFilterPopover>
       </Box>
 
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: { xs: 'column', sm: 'row' },
+          alignItems: { xs: 'stretch', sm: 'center' },
+          gap: 1,
+          width: { xs: '100%', md: 'auto' },
+        }}
+      >
         <TextField
           size="small"
           placeholder="Search transcripts…"
@@ -233,7 +251,7 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
             if (e.key === 'Enter') setSearchQuery(searchDraft);
           }}
           sx={{
-            width: SEARCH_WIDTH,
+            width: { xs: '100%', sm: SEARCH_WIDTH },
             '& .MuiOutlinedInput-root': {
               height: CONTROL_HEIGHT,
               borderRadius: CONTROL_RADIUS,
@@ -258,42 +276,55 @@ export const TranscriptActionsBar: React.FC<TranscriptActionsBarProps> = ({
             },
           }}
         />
-        <FormControl size="small" sx={{ minWidth: 120 }}>
-          <Select
-            value={alertFilter}
-            onChange={(e) => setAlertFilter(e.target.value as AlertFilter)}
-            inputProps={{ 'aria-label': 'Transcript filter' }}
-            sx={{
-              height: CONTROL_HEIGHT,
-              borderRadius: CONTROL_RADIUS,
-              fontSize: CONTROL_FONT_SIZE,
-              '& .MuiSelect-select': {
-                py: 0,
-                display: 'flex',
-                alignItems: 'center',
-              },
-            }}
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 1,
+            width: { xs: '100%', sm: 'auto' },
+          }}
+        >
+          <FormControl
+            size="small"
+            sx={{ flexGrow: { xs: 1, sm: 0 }, minWidth: { xs: 0, sm: 120 } }}
           >
-            <MenuItem value="all" sx={{ fontSize: CONTROL_FONT_SIZE }}>
-              All transcripts
-            </MenuItem>
-            <MenuItem value="alerts" sx={{ fontSize: CONTROL_FONT_SIZE }}>
-              Alerts only
-            </MenuItem>
-          </Select>
-        </FormControl>
-        <FormControlLabel
-          control={
-            <Switch
-              checked={redactTranscripts}
-              onChange={(e) => setRedactTranscripts(e.target.checked)}
-              size="small"
-            />
-          }
-          label="Redact transcripts"
-          slotProps={{ typography: { sx: { fontSize: CONTROL_FONT_SIZE } } }}
-          sx={{ ml: 0, mr: 0 }}
-        />
+            <Select
+              value={alertFilter}
+              onChange={(e) => setAlertFilter(e.target.value as AlertFilter)}
+              inputProps={{ 'aria-label': 'Transcript filter' }}
+              sx={{
+                height: CONTROL_HEIGHT,
+                borderRadius: CONTROL_RADIUS,
+                fontSize: CONTROL_FONT_SIZE,
+                '& .MuiSelect-select': {
+                  py: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                },
+              }}
+            >
+              <MenuItem value="all" sx={{ fontSize: CONTROL_FONT_SIZE }}>
+                All transcripts
+              </MenuItem>
+              <MenuItem value="alerts" sx={{ fontSize: CONTROL_FONT_SIZE }}>
+                Alerts only
+              </MenuItem>
+            </Select>
+          </FormControl>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={redactTranscripts}
+                onChange={(e) => setRedactTranscripts(e.target.checked)}
+                size="small"
+              />
+            }
+            label="Redact transcripts"
+            slotProps={{ typography: { sx: { fontSize: CONTROL_FONT_SIZE } } }}
+            sx={{ ml: 0, mr: 0, whiteSpace: 'nowrap' }}
+          />
+        </Box>
       </Box>
     </Box>
   );
