@@ -1,9 +1,12 @@
 import type {
+  AuditTrailValues,
   BackendFeedStatus,
   BackendFeedStatusReason,
   Feed,
   FeedCreate,
+  FeedHistoryEvent,
   FeedUpdate,
+  ListFeedHistoryResponse,
   ListFeedsResponse,
   Tag,
 } from '@transcription/common';
@@ -34,7 +37,12 @@ import { feedMutationActorHeaders } from './actorHeaders.js';
 
 import { AuthenticatedRequest } from '../authentication.js';
 import { FEEDS_STORE_API_URL } from '../config.js';
-import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
+import {
+  HttpError,
+  getServiceClient,
+  handleBackendError,
+  toCamel,
+} from '../utils.js';
 
 interface BaseFeedBackend {
   name: string;
@@ -76,10 +84,45 @@ export class ListFeedsQueryParams {
   name?: string;
 }
 
+export class ListFeedHistoryQueryParams {
+  /**
+   * @isInt
+   */
+  limit: number = 100;
+  nextToken?: string;
+  order?: 'asc' | 'desc';
+}
+
 interface ListFeedsBackendResponse {
   feeds: FeedBackend[];
   next_token?: string;
   total: number;
+}
+
+interface FeedHistoryEventBackend {
+  id: string;
+  feed_id: string;
+  action: string;
+  actor: string;
+  occurred_at: string;
+  feed_revision_num: number;
+  before_values: AuditTrailValues;
+  after_values: AuditTrailValues;
+}
+
+function convertFeedHistoryEventBackend(
+  response: FeedHistoryEventBackend
+): FeedHistoryEvent {
+  return {
+    id: response.id,
+    feedId: response.feed_id,
+    action: response.action,
+    actor: response.actor,
+    occurredAt: Date.parse(response.occurred_at),
+    feedRevision: response.feed_revision_num,
+    beforeValues: toCamel(response.before_values),
+    afterValues: toCamel(response.after_values),
+  };
 }
 
 function getSourceUrl(
@@ -263,6 +306,53 @@ export class FeedsController extends Controller {
       const { status, message } = handleBackendError(
         error,
         `fetching feed ${feedId}`
+      );
+      throw new HttpError(status, message);
+    }
+  }
+
+  @Get('{feedId}/history')
+  @Security('google_id_token')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(404, 'Not Found')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async listFeedHistory(
+    @Request() request: AuthenticatedRequest,
+    @Path() feedId: string,
+    @Queries() query: ListFeedHistoryQueryParams
+  ): Promise<ListFeedHistoryResponse> {
+    if (!request.user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
+
+    try {
+      const queryParams = new URLSearchParams();
+      if (query.limit) queryParams.append('limit', query.limit.toString());
+      if (query.nextToken) queryParams.append('next_token', query.nextToken);
+      if (query.order) queryParams.append('order', query.order);
+
+      const client = await getServiceClient(FEEDS_STORE_API_URL);
+      const response = await client.request<{
+        history_events: FeedHistoryEventBackend[];
+        next_token?: string;
+        total: number;
+      }>({
+        url: `${FEEDS_STORE_API_URL}/${feedId}/history?${queryParams.toString()}`,
+        method: 'GET',
+      });
+
+      const data = response.data;
+      return {
+        historyEvents: data.history_events.map(convertFeedHistoryEventBackend),
+        nextToken: data.next_token,
+        total: data.total,
+      };
+    } catch (error: unknown) {
+      const { status, message } = handleBackendError(
+        error,
+        `fetching history for feed ${feedId}`
       );
       throw new HttpError(status, message);
     }
