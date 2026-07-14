@@ -12,6 +12,8 @@ bootstrap_sql="$privilege_dir/000_ingestion_runtime_bootstrap.sql"
 reconcile_sql="$privilege_dir/999_ingestion_runtime_reconcile.sql"
 contract_sql="$ci_sql_dir/ingestion_runtime_privilege_contract.sql"
 legacy_snapshot_sql="$ci_sql_dir/ingestion_legacy_privilege_snapshot.sql"
+runtime_columns_check_sql="$ci_sql_dir/ingestion_lease_runtime_columns_check.sql"
+runtime_columns_migration_sql="$ingestion_dir/038_ingestion_lease_runtime_columns.sql"
 
 psql_gate() {
   psql -X -v ON_ERROR_STOP=1 "$@"
@@ -35,6 +37,90 @@ assert_server_major() {
     return 1
   fi
 }
+
+drop_fixture_database() {
+  local fixture_database=$1
+  psql_gate -v fixture_database="$fixture_database" <<'SQL'
+DROP DATABASE IF EXISTS :"fixture_database" WITH (FORCE);
+SQL
+}
+
+create_fixture_database() {
+  local fixture_database=$1
+  drop_fixture_database "$fixture_database"
+  psql_gate -v fixture_database="$fixture_database" <<'SQL'
+CREATE DATABASE :"fixture_database";
+SQL
+}
+
+fixture_dsn() {
+  local fixture_database=$1
+  echo "postgresql://${PGUSER}:${PGPASSWORD}@${PGHOST}:${PGPORT}/${fixture_database}"
+}
+
+run_reduced_schema_runtime_fixture() (
+  local fixture_database fixture_url
+  fixture_database="phase7_reduced_${EXPECTED_POSTGRES_MAJOR}_${GITHUB_RUN_ID:-local}_${GITHUB_RUN_ATTEMPT:-1}_$$"
+  fixture_database=${fixture_database//[^a-zA-Z0-9_]/_}
+  trap 'drop_fixture_database "$fixture_database"' EXIT
+  create_fixture_database "$fixture_database"
+
+  PGDATABASE="$fixture_database" psql_gate \
+    -f "$ingestion_dir/001_feed_status.sql"
+  PGDATABASE="$fixture_database" psql_gate \
+    -f "$ingestion_dir/002_source_types.sql"
+  PGDATABASE="$fixture_database" psql_gate \
+    -f "$ingestion_dir/006_seed_source_types.sql"
+  PGDATABASE="$fixture_database" psql_gate \
+    -f "$ingestion_dir/031_ingestion_leases.sql"
+  PGDATABASE="$fixture_database" psql_gate \
+    -f "$ingestion_dir/032_ingestion_lease_guards.sql"
+  PGDATABASE="$fixture_database" psql_gate \
+    -f "$runtime_columns_migration_sql"
+  PGDATABASE="$fixture_database" psql_gate \
+    -f "$runtime_columns_migration_sql"
+  PGDATABASE="$fixture_database" psql_gate \
+    -f "$runtime_columns_check_sql"
+
+  fixture_url=$(fixture_dsn "$fixture_database")
+  echo "::add-mask::$fixture_url"
+  INGESTION_CUTOVER_TEST_DSN="$fixture_url" \
+  INGESTION_CUTOVER_EXTERNAL_POSTGRES_REQUIRED=1 \
+  EXPECTED_POSTGRES_MAJOR="$EXPECTED_POSTGRES_MAJOR" \
+    uv run python -m pytest \
+      integration_tests/storage/test_bcfy_calls_sid_cutover_integration.py \
+      -q -n 0 -k test_reduced_schema_executes_real_runtime_lifecycle
+)
+
+run_cutover_operation_fixture() (
+  local fixture_database fixture_url migration
+  fixture_database="phase7_cutover_${EXPECTED_POSTGRES_MAJOR}_${GITHUB_RUN_ID:-local}_${GITHUB_RUN_ATTEMPT:-1}_$$"
+  fixture_database=${fixture_database//[^a-zA-Z0-9_]/_}
+  trap 'drop_fixture_database "$fixture_database"' EXIT
+  create_fixture_database "$fixture_database"
+
+  for migration in "$ingestion_dir"/*.sql; do
+    case "$migration" in
+      *pg_cron*)
+        continue
+        ;;
+    esac
+    PGDATABASE="$fixture_database" psql_gate -f "$migration"
+  done
+  PGDATABASE="$fixture_database" psql_gate \
+    -f "$runtime_columns_migration_sql"
+  PGDATABASE="$fixture_database" psql_gate \
+    -f "$runtime_columns_check_sql"
+
+  fixture_url=$(fixture_dsn "$fixture_database")
+  echo "::add-mask::$fixture_url"
+  INGESTION_CUTOVER_TEST_DSN="$fixture_url" \
+  INGESTION_CUTOVER_EXTERNAL_POSTGRES_REQUIRED=1 \
+  EXPECTED_POSTGRES_MAJOR="$EXPECTED_POSTGRES_MAJOR" \
+    uv run python -m pytest \
+      integration_tests/storage/test_bcfy_calls_sid_cutover_integration.py \
+      -q -n 0 -k test_controlled_handoff_and_inverse_are_atomic
+)
 
 cleanup_schema_large_object_fixture() {
   local original_status=$?
@@ -114,6 +200,10 @@ apply_schema_gate() (
     echo "Applying $migration..."
     psql_gate -f "$migration"
   done
+  # The fresh path applies 038 once in-order and once more as an explicit
+  # replay.  The catalog check is independent of source-file presence.
+  psql_gate -f "$runtime_columns_migration_sql"
+  psql_gate -f "$runtime_columns_check_sql"
   psql_gate -v legacy_role= -f "$reconcile_sql"
 
   echo "Starting PUBLIC/direct large-object creator drift fixture..."
@@ -184,6 +274,7 @@ SQL
     -c "GRANT SELECT (slug) ON TABLE public.source_types TO app_ingestion_runtime WITH GRANT OPTION" \
     -c "GRANT UPDATE (slug) ON TABLE public.source_types TO PUBLIC"
   psql_gate -v legacy_role= -f "$reconcile_sql"
+  run_reduced_schema_runtime_fixture
   trap - EXIT
 )
 
@@ -1471,6 +1562,8 @@ dedicated_proof_gate() {
     uv run python -m pytest \
       integration_tests/storage/test_feed_grant_heartbeat_integration.py \
       -q -n 0
+
+  run_cutover_operation_fixture
 }
 
 case "${1:-}" in

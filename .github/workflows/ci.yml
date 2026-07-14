@@ -510,7 +510,7 @@ jobs:
             ${{ runner.os }}-uv-
       - name: Install dependencies
         run: uv sync
-      - name: Apply ingestion schema once
+      - name: Prove fresh and reduced Lease schema migration replay
         env:
           EXPECTED_POSTGRES_MAJOR: ${{ matrix.postgres-version }}
           PGHOST: localhost
@@ -519,7 +519,7 @@ jobs:
           PGPASSWORD: postgres
           PGDATABASE: postgres
         run: scripts/ci/ingestion_runtime_privilege_gate.sh apply-schema
-      - name: Run dedicated runtime and serial Lease storage proofs
+      - name: Run runtime, Lease, and SID cutover PostgreSQL proofs
         env:
           EXPECTED_POSTGRES_MAJOR: ${{ matrix.postgres-version }}
           PGHOST: localhost

@@ -114,6 +114,10 @@ resource "google_alloydb_user" "worker" {
 
 locals {
   schema_sql_files = var.apply_schema ? sort(fileset("${path.module}/sql/ingestion", "*.sql")) : []
+  bcfy_calls_sid_operation_files = var.apply_schema ? sort(fileset(
+    "${path.module}/sql/operations/bcfy_calls_sid",
+    "*.sql",
+  )) : []
   privilege_sql_files = var.apply_schema ? [
     "000_ingestion_runtime_bootstrap.sql",
     "100_ingestion_runtime_hardening.sql",
@@ -155,6 +159,25 @@ resource "google_storage_bucket_object" "privilege_sql" {
   name   = "privileges/${each.value}"
   bucket = google_storage_bucket.schema[0].name
   source = "${path.module}/sql/privileges/${each.value}"
+}
+
+# Controlled authority operations are uploaded under a disjoint prefix.  They
+# are deliberately excluded from schema_sql_files/schema_sql_hash and cannot
+# be reached by execute_schema_migration.
+resource "google_storage_bucket_object" "bcfy_calls_sid_operation" {
+  for_each = var.apply_schema ? toset(local.bcfy_calls_sid_operation_files) : toset([])
+
+  name   = "operations/bcfy_calls_sid/${each.value}"
+  bucket = google_storage_bucket.schema[0].name
+  source = "${path.module}/sql/operations/bcfy_calls_sid/${each.value}"
+}
+
+resource "google_storage_bucket_object" "ingestion_lease_runtime_check" {
+  count = var.apply_schema ? 1 : 0
+
+  name   = "ci/ingestion_lease_runtime_columns_check.sql"
+  bucket = google_storage_bucket.schema[0].name
+  source = "${path.module}/sql/ci/ingestion_lease_runtime_columns_check.sql"
 }
 
 # Dedicated service account for the Cloud Run Job, scoped to only the
@@ -281,6 +304,148 @@ resource "google_cloud_run_v2_job" "schema_migration" {
     google_alloydb_user.worker,
     google_secret_manager_secret_iam_member.schema_migrator,
     google_storage_bucket_iam_member.schema_migrator,
+  ]
+}
+
+# Dormant, explicitly invoked surface for the reviewed SID authority handoff.
+# The immutable command accepts only four operation names.  Execution-time
+# argument overrides can select an operation and its reviewed scalar inputs,
+# but can never select an arbitrary path or shell command.
+resource "google_cloud_run_v2_job" "bcfy_calls_sid_operation" {
+  count = var.apply_schema ? 1 : 0
+
+  lifecycle {
+    precondition {
+      condition     = var.password_secret_id != null
+      error_message = "password_secret_id must be provided when apply_schema is true."
+    }
+    precondition {
+      condition     = var.subnetwork_id != null
+      error_message = "subnetwork_id must be provided when apply_schema is true."
+    }
+  }
+
+  name                = "${var.cluster_id}-bcfy-calls-sid-operation"
+  location            = var.region
+  project             = var.project_id
+  deletion_protection = false
+
+  template {
+    task_count = 1
+
+    template {
+      service_account = google_service_account.schema_migrator[0].email
+      timeout         = "300s"
+      max_retries     = 0
+
+      containers {
+        image = "postgres:16-alpine"
+        command = [
+          "/bin/sh",
+          "-c",
+          <<-EOT
+            set -eu
+            export LC_ALL=C
+            operation="$1"
+            run_sql() {
+              psql -X -v ON_ERROR_STOP=1 \
+                -h "$DB_HOST" -p "$DB_PORT" \
+                -U "$DB_USER" -d "$DB_NAME" "$@"
+            }
+            case "$operation" in
+              verify)
+                [ "$#" -eq 1 ] || exit 64
+                operation_file=/sql/operations/bcfy_calls_sid/004_verify.sql
+                run_sql -f "$operation_file"
+                ;;
+              preseed)
+                [ "$#" -eq 1 ] || exit 64
+                operation_file=/sql/operations/bcfy_calls_sid/001_preseed.sql
+                run_sql -f "$operation_file"
+                ;;
+              activate)
+                [ "$#" -eq 4 ] || exit 64
+                operation_file=/sql/operations/bcfy_calls_sid/002_activate.sql
+                run_sql \
+                  -v reviewed_sid_count="$2" \
+                  -v reviewed_manifest_digest="$3" \
+                  -v process_absence_confirmed="$4" \
+                  -f "$operation_file"
+                ;;
+              rollback_children)
+                [ "$#" -eq 2 ] || exit 64
+                operation_file=/sql/operations/bcfy_calls_sid/003_rollback_children.sql
+                run_sql \
+                  -v process_absence_confirmed="$2" \
+                  -f "$operation_file"
+                ;;
+              *)
+                echo "unsupported bcfy_calls SID operation" >&2
+                exit 64
+                ;;
+            esac
+          EOT
+        ]
+        # /bin/sh -c consumes the first argument as $0.  The default is a
+        # read-only verification; operators may override only these arguments.
+        args = ["bcfy-calls-sid-operation", "verify"]
+
+        env {
+          name  = "DB_HOST"
+          value = google_alloydb_instance.primary.ip_address
+        }
+        env {
+          name  = "DB_PORT"
+          value = "5432"
+        }
+        env {
+          name  = "DB_USER"
+          value = "postgres"
+        }
+        env {
+          name  = "DB_NAME"
+          value = var.schema_database_name
+        }
+        env {
+          name = "PGPASSWORD"
+          value_source {
+            secret_key_ref {
+              secret  = var.password_secret_id
+              version = "latest"
+            }
+          }
+        }
+
+        volume_mounts {
+          name       = "sql-files"
+          mount_path = "/sql"
+        }
+      }
+
+      volumes {
+        name = "sql-files"
+        gcs {
+          bucket    = google_storage_bucket.schema[0].name
+          read_only = true
+        }
+      }
+
+      vpc_access {
+        network_interfaces {
+          network    = var.network_id
+          subnetwork = var.subnetwork_id
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    google_alloydb_instance.primary,
+    google_service_account.schema_migrator,
+    google_secret_manager_secret_iam_member.schema_migrator,
+    google_storage_bucket_iam_member.schema_migrator,
+    google_storage_bucket_object.bcfy_calls_sid_operation,
+    google_storage_bucket_object.ingestion_lease_runtime_check,
   ]
 }
 
