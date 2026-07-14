@@ -527,9 +527,7 @@ async def test_membership_snapshot_refresh_and_revision_fail_closed(
         regressed,
         ingestion_lease_store.MembershipInvariantViolation,
     )
-    assert regressed.reason is (
-        ingestion_lease_store.MembershipInvariantReason.REVISION_REGRESSION
-    )
+    assert "revision regressed" in regressed.detail
 
     released = await store.release(grant)
     assert released.disposition is (
@@ -558,6 +556,4 @@ async def test_property_free_membership_load_is_explicitly_invalid(
         result,
         ingestion_lease_store.MembershipInvariantViolation,
     )
-    assert (
-        result.reason is ingestion_lease_store.MembershipInvariantReason.EMPTY
-    )
+    assert "no structurally valid membership rows" in result.detail

@@ -756,6 +756,15 @@ class TestRefreshMembership(unittest.IsolatedAsyncioTestCase):
                 ingestion_lease_store.MembershipInvariantViolation,
             },
         )
+        self.assertEqual(
+            {
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.MembershipInvariantViolation
+                )
+            },
+            {"grant", "detail"},
+        )
         unchanged = ingestion_lease_store.MembershipUnchanged(_grant(), 4)
         self.assertTrue(hasattr(type(unchanged), "__slots__"))
         with self.assertRaises(dataclasses.FrozenInstanceError):
@@ -853,9 +862,9 @@ class TestRefreshMembership(unittest.IsolatedAsyncioTestCase):
             regressed,
             ingestion_lease_store.MembershipInvariantViolation,
         )
-        self.assertIs(
-            regressed.reason,
-            ingestion_lease_store.MembershipInvariantReason.REVISION_REGRESSION,
+        self.assertIn(
+            "revision regressed",
+            regressed.detail,
         )
         connection.fetch.assert_awaited_once_with(
             ingestion_lease_queries.LOAD_BCFY_CALLS_MEMBERSHIP_SQL,
@@ -925,9 +934,9 @@ class TestRefreshMembership(unittest.IsolatedAsyncioTestCase):
             result,
             ingestion_lease_store.MembershipInvariantViolation,
         )
-        self.assertIs(
-            result.reason,
-            ingestion_lease_store.MembershipInvariantReason.DUPLICATE_ROUTING_KEY,
+        self.assertIn(
+            "duplicate canonical routing key",
+            result.detail,
         )
 
     async def test_textually_distinct_leading_zero_keys_remain_distinct(

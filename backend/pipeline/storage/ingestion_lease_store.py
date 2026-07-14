@@ -258,38 +258,16 @@ class MembershipUnchanged:
     membership_revision: int
 
 
-class MembershipInvariantReason(enum.StrEnum):
-    """Closed reasons an authoritative membership load can fail closed.
-
-    Attributes:
-        EMPTY: No membership property row exists for the owned SID.
-        MISSING_IDENTITY: A required immutable identity is absent or invalid.
-        SOURCE_MISMATCH: Feed, property, and Lease sources disagree.
-        NO_ELIGIBLE_MEMBERS: Every structurally valid child is ineligible.
-        REVISION_REGRESSION: Durable revision is below the cached revision.
-        DUPLICATE_ROUTING_KEY: Two children expose one canonical route.
-    """
-
-    EMPTY = "empty"
-    MISSING_IDENTITY = "missing_identity"
-    SOURCE_MISMATCH = "source_mismatch"
-    NO_ELIGIBLE_MEMBERS = "no_eligible_members"
-    REVISION_REGRESSION = "revision_regression"
-    DUPLICATE_ROUTING_KEY = "duplicate_routing_key"
-
-
 @dataclasses.dataclass(frozen=True, slots=True)
 class MembershipInvariantViolation:
     """Fail-closed result for structurally invalid Lease membership.
 
     Attributes:
         grant: Complete Lease authority associated with the failed load.
-        reason: Closed structural or cache invariant classification.
         detail: Bounded diagnostic explanation without row credentials.
     """
 
     grant: LeaseGrant
-    reason: MembershipInvariantReason
     detail: str
 
 
@@ -436,7 +414,6 @@ def _membership_identity_from_row(
     ):
         return MembershipInvariantViolation(
             grant,
-            MembershipInvariantReason.MISSING_IDENTITY,
             "membership row has a missing or inconsistent immutable identity",
         )
 
@@ -448,7 +425,6 @@ def _membership_identity_from_row(
     ):
         return MembershipInvariantViolation(
             grant,
-            MembershipInvariantReason.MISSING_IDENTITY,
             "membership row is missing a joined source identity",
         )
     try:
@@ -457,7 +433,6 @@ def _membership_identity_from_row(
     except ValueError:
         return MembershipInvariantViolation(
             grant,
-            MembershipInvariantReason.SOURCE_MISMATCH,
             "membership row contains an unknown source binding",
         )
     if (
@@ -466,7 +441,6 @@ def _membership_identity_from_row(
     ):
         return MembershipInvariantViolation(
             grant,
-            MembershipInvariantReason.SOURCE_MISMATCH,
             "Feed and property source bindings do not match the Lease",
         )
     return LeaseMemberIdentity(
@@ -847,7 +821,6 @@ class IngestionLeaseStore:
                 ):
                     return MembershipInvariantViolation(
                         grant,
-                        MembershipInvariantReason.REVISION_REGRESSION,
                         "locked membership revision regressed below the "
                         "authoritative cached revision",
                     )
@@ -871,7 +844,6 @@ class IngestionLeaseStore:
         if not rows:
             return MembershipInvariantViolation(
                 grant,
-                MembershipInvariantReason.EMPTY,
                 "owned Lease has no structurally valid membership rows",
             )
 
@@ -884,7 +856,6 @@ class IngestionLeaseStore:
             if identity.source_feed_id in routing_keys:
                 return MembershipInvariantViolation(
                     grant,
-                    MembershipInvariantReason.DUPLICATE_ROUTING_KEY,
                     "membership contains a duplicate canonical routing key",
                 )
             routing_keys.add(identity.source_feed_id)
@@ -898,7 +869,6 @@ class IngestionLeaseStore:
         if not members:
             return MembershipInvariantViolation(
                 grant,
-                MembershipInvariantReason.NO_ELIGIBLE_MEMBERS,
                 "owned Lease has no active or failing member",
             )
         return MembershipSnapshot(
