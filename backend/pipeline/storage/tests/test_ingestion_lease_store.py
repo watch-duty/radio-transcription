@@ -351,6 +351,18 @@ class TestIngestionLeaseStoreHeartbeat(unittest.IsolatedAsyncioTestCase):
                 else:
                     self.assertIsNotNone(result[0].snapshot)
 
+    async def test_exact_nonapplied_heartbeat_fails_closed(self) -> None:
+        pool = connection_util.make_mock_pool(
+            fetch_result=[_lease_row(caller_ordinal=0, applied=False)]
+        )
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "heartbeat did not update an exact active Lease grant",
+        ):
+            await store.renew_heartbeats((_grant(),))
+
 
 class TestSharedGrantRejection(unittest.TestCase):
     """Tests for nullable/current-state rejection semantics."""
@@ -469,6 +481,18 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
             ingestion_lease_store.LeaseOperationDisposition.MISSING,
         )
         self.assertIsNone(result.snapshot)
+
+    async def test_exact_nonapplied_release_fails_closed(self) -> None:
+        pool = connection_util.make_mock_pool(
+            fetchrow_result=_lease_row(applied=False)
+        )
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "release did not update an exact active Lease grant",
+        ):
+            await store.release(_grant())
 
     async def test_database_exception_is_not_retried(self) -> None:
         pool = connection_util.make_mock_pool()

@@ -25,7 +25,14 @@ logger = logging.getLogger(__name__)
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LeaseGrant:
-    """Complete immutable authority for one Lease ownership generation."""
+    """Complete immutable authority for one Lease ownership generation.
+
+    Attributes:
+        source_type: Ingestion source family that owns the Lease namespace.
+        lease_key: Permanent source-local Lease identity, such as a SID.
+        owner_worker_id: Worker authorized for this ownership generation.
+        fencing_token: Monotonic generation that rejects zombie workers.
+    """
 
     source_type: feed_store.SourceType
     lease_key: str
@@ -58,7 +65,20 @@ class LeaseGrant:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LeaseSnapshot:
-    """Mutable Lease state observed separately from grant identity."""
+    """Mutable Lease state observed separately from grant identity.
+
+    Attributes:
+        status: Current durable lifecycle state.
+        last_heartbeat: Most recent accepted owner heartbeat.
+        failure_count: Retained count used by budgeted failure policy.
+        retry_after: Earliest time an ownerless failure may be recovered.
+        status_reason: Structured reason for the current lifecycle state.
+        status_reason_detail: Bounded operator-facing reason detail.
+        status_reason_updated_at: Time the reason was last changed.
+        audit_revision: Monotonic revision of Lease lifecycle evidence.
+        membership_revision: Cache-invalidating child membership revision.
+        updated_at: Time any durable Lease state was last changed.
+    """
 
     status: feed_store.FeedStatus
     last_heartbeat: datetime.datetime | None
@@ -74,14 +94,28 @@ class LeaseSnapshot:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LeaseClaim:
-    """A newly established grant and its mutable state snapshot."""
+    """A newly established grant and its mutable state snapshot.
+
+    Attributes:
+        grant: Complete authority for the newly claimed generation.
+        snapshot: Mutable Lease state returned by the same claim write.
+    """
 
     grant: LeaseGrant
     snapshot: LeaseSnapshot
 
 
 class LeaseOperationDisposition(enum.StrEnum):
-    """Closed outcome vocabulary for exact-grant control operations."""
+    """Closed outcome vocabulary for exact-grant control operations.
+
+    Attributes:
+        APPLIED: The requested durable mutation committed.
+        ACCEPTED_NOOP: A future explicit idempotent policy accepted no write.
+        MISSING: The permanent Lease identity does not exist.
+        OWNER_MISMATCH: Another worker owns the current generation.
+        FENCE_MISMATCH: The supplied ownership generation is stale.
+        STATUS_INELIGIBLE: The Lease is not active for this operation.
+    """
 
     APPLIED = "applied"
     ACCEPTED_NOOP = "accepted_noop"
@@ -93,7 +127,12 @@ class LeaseOperationDisposition(enum.StrEnum):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LeaseOperationResult:
-    """Diagnostic result for one exact-grant Lease mutation."""
+    """Diagnostic result for one exact-grant Lease mutation.
+
+    Attributes:
+        disposition: Closed classification of the mutation attempt.
+        snapshot: Current state, absent only when the Lease is missing.
+    """
 
     disposition: LeaseOperationDisposition
     snapshot: LeaseSnapshot | None
@@ -101,7 +140,13 @@ class LeaseOperationResult:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LeaseHeartbeatResult:
-    """Caller-correlated diagnostic result for heartbeat renewal."""
+    """Caller-correlated diagnostic result for heartbeat renewal.
+
+    Attributes:
+        grant: Original caller grant associated with this result.
+        disposition: Closed classification of the heartbeat attempt.
+        snapshot: Current state, absent only when the Lease is missing.
+    """
 
     grant: LeaseGrant
     disposition: LeaseOperationDisposition
@@ -109,7 +154,15 @@ class LeaseHeartbeatResult:
 
 
 class LeaseReleaseCause(enum.StrEnum):
-    """Structured telemetry causes sharing one neutral release policy."""
+    """Structured telemetry causes sharing one neutral release policy.
+
+    Attributes:
+        NORMAL: Ordinary completed ownership interval.
+        SHUTDOWN: Worker shutdown released the Lease.
+        REBALANCE: Whole-unit rebalancing released the Lease.
+        CANCELLATION: Local task cancellation released the Lease.
+        ABANDONMENT: Explicit local abandonment released the Lease.
+    """
 
     NORMAL = "normal"
     SHUTDOWN = "shutdown"
@@ -119,7 +172,14 @@ class LeaseReleaseCause(enum.StrEnum):
 
 
 class GrantRejectionReason(enum.StrEnum):
-    """Closed reasons an exact active Lease grant can be rejected."""
+    """Closed reasons an exact active Lease grant can be rejected.
+
+    Attributes:
+        MISSING: The permanent Lease identity does not exist.
+        OWNER_MISMATCH: Another worker owns the current generation.
+        FENCE_MISMATCH: The supplied ownership generation is stale.
+        STATUS_INELIGIBLE: The Lease is not active for this operation.
+    """
 
     MISSING = "missing"
     OWNER_MISMATCH = "owner_mismatch"
@@ -129,7 +189,12 @@ class GrantRejectionReason(enum.StrEnum):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class GrantRejected:
-    """Shared exact-grant rejection with current locked state."""
+    """Shared exact-grant rejection with current locked state.
+
+    Attributes:
+        reason: Exact reason the complete grant was rejected.
+        snapshot: Locked current state, absent only for a missing Lease.
+    """
 
     reason: GrantRejectionReason
     snapshot: LeaseSnapshot | None
@@ -250,6 +315,11 @@ class IngestionLeaseStore:
     """Storage facade for complete-grant Lease control operations."""
 
     def __init__(self, pool: asyncpg.Pool) -> None:
+        """Initialize the store over a managed asyncpg pool.
+
+        Args:
+            pool: Database pool used for one-shot Lease operations.
+        """
         self._pool = pool
 
     def _grant_rejection(
@@ -293,7 +363,20 @@ class IngestionLeaseStore:
         owner_worker_id: uuid.UUID,
         limit: int,
     ) -> tuple[LeaseClaim, ...]:
-        """Claim deterministic unclaimed Leases as new generations."""
+        """Claim deterministic unclaimed Leases as new generations.
+
+        Args:
+            source_type: Source namespace to claim from.
+            owner_worker_id: Worker that will own every returned grant.
+            limit: Maximum number of Lease generations to establish.
+
+        Returns:
+            Claims ordered by permanent Lease identity.
+
+        Raises:
+            TypeError: An argument has the wrong runtime type.
+            ValueError: The limit is negative or a returned row is invalid.
+        """
         source_type = _require_source_type(source_type)
         owner_worker_id = _require_owner_worker_id(owner_worker_id)
         limit = _require_limit(limit)
@@ -323,7 +406,21 @@ class IngestionLeaseStore:
         limit: int,
         abandonment_after: datetime.timedelta,
     ) -> tuple[LeaseClaim, ...]:
-        """Claim due failing Leases before stale active Leases."""
+        """Claim due failing Leases before stale active Leases.
+
+        Args:
+            source_type: Source namespace to recover from.
+            owner_worker_id: Worker that will own every returned grant.
+            limit: Maximum number of Lease generations to establish.
+            abandonment_after: Age at which an active heartbeat is stale.
+
+        Returns:
+            Claims ordered by permanent Lease identity after recovery priority.
+
+        Raises:
+            TypeError: An argument has the wrong runtime type.
+            ValueError: A bound is invalid or a returned row is invalid.
+        """
         source_type = _require_source_type(source_type)
         owner_worker_id = _require_owner_worker_id(owner_worker_id)
         limit = _require_limit(limit)
@@ -352,7 +449,19 @@ class IngestionLeaseStore:
         self,
         grants: collections.abc.Sequence[LeaseGrant],
     ) -> tuple[LeaseHeartbeatResult, ...]:
-        """Renew exact active grants and preserve caller result order."""
+        """Renew exact active grants and preserve caller result order.
+
+        Args:
+            grants: Distinct complete grants to renew in one database call.
+
+        Returns:
+            One typed result per input grant in the original caller order.
+
+        Raises:
+            TypeError: An item is not a complete Lease grant.
+            ValueError: The input repeats a permanent Lease identity.
+            RuntimeError: An exact active row unexpectedly was not updated.
+        """
         grants = tuple(grants)
         identities: set[tuple[feed_store.SourceType, str]] = set()
         for candidate in grants:
@@ -408,11 +517,8 @@ class IngestionLeaseStore:
             )
         rejection = self._grant_rejection(grant, row)
         if rejection is None:
-            return LeaseHeartbeatResult(
-                grant,
-                LeaseOperationDisposition.ACCEPTED_NOOP,
-                _snapshot_from_row(row),
-            )
+            msg = "heartbeat did not update an exact active Lease grant"
+            raise RuntimeError(msg)
         return LeaseHeartbeatResult(
             grant,
             _disposition_for_rejection(rejection.reason),
@@ -424,7 +530,19 @@ class IngestionLeaseStore:
         grant: LeaseGrant,
         cause: LeaseReleaseCause = LeaseReleaseCause.NORMAL,
     ) -> LeaseOperationResult:
-        """Neutrally release one exact active grant."""
+        """Neutrally release one exact active grant.
+
+        Args:
+            grant: Complete active ownership generation to release.
+            cause: Telemetry classification; storage policy is unchanged.
+
+        Returns:
+            Applied result or current typed rejection state.
+
+        Raises:
+            TypeError: The grant or cause has the wrong runtime type.
+            RuntimeError: An exact active row unexpectedly was not updated.
+        """
         grant = _require_grant(grant)
         if not isinstance(cause, LeaseReleaseCause):
             msg = "cause must be a LeaseReleaseCause"
@@ -461,10 +579,8 @@ class IngestionLeaseStore:
 
         rejection = self._grant_rejection(grant, row)
         if rejection is None:
-            return LeaseOperationResult(
-                LeaseOperationDisposition.ACCEPTED_NOOP,
-                _snapshot_from_row(row),
-            )
+            msg = "release did not update an exact active Lease grant"
+            raise RuntimeError(msg)
         return LeaseOperationResult(
             _disposition_for_rejection(rejection.reason),
             rejection.snapshot,
