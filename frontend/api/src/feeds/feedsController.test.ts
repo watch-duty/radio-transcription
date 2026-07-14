@@ -799,6 +799,129 @@ describe('FeedsController', () => {
     });
   });
 
+  describe('listFeedHistory', () => {
+    it('should return converted history events on success', async () => {
+      const mockBackendEvent = {
+        id: 'evt_123',
+        feed_id: 'feed_123',
+        action: 'feed.recovered',
+        actor: 'user:google:admin@example.com',
+        occurred_at: '2026-06-26T12:34:56.000Z',
+        feed_revision_num: 2,
+        before_values: { status: 'failing' },
+        after_values: { status: 'active' },
+      };
+
+      mockRequest.mockResolvedValueOnce({
+        data: {
+          history_events: [mockBackendEvent],
+          next_token: 'token_next',
+          total: 1,
+        },
+      });
+
+      const controller = new FeedsController();
+      const query = {
+        limit: 10,
+        nextToken: 'token_abc',
+        order: 'asc' as const,
+      };
+
+      const result = await controller.listFeedHistory(
+        mockAdminRequest,
+        'feed_123',
+        query
+      );
+
+      expect(result).toEqual({
+        historyEvents: [
+          {
+            id: 'evt_123',
+            feedId: 'feed_123',
+            action: 'feed.recovered',
+            actor: 'user:google:admin@example.com',
+            occurredAt: Date.parse('2026-06-26T12:34:56.000Z'),
+            feedRevision: 2,
+            beforeValues: { status: 'failing' },
+            afterValues: { status: 'active' },
+          },
+        ],
+        nextToken: 'token_next',
+        total: 1,
+      });
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: 'http://feeds-api.example.com/feed_123/history?limit=10&next_token=token_abc&order=asc',
+        method: 'GET',
+      });
+    });
+
+    it('should succeed and return history events for a non-admin user', async () => {
+      const mockBackendEvent = {
+        id: 'evt_123',
+        feed_id: 'feed_123',
+        action: 'feed.recovered',
+        actor: 'user:google:admin@example.com',
+        occurred_at: '2026-06-26T12:34:56.000Z',
+        feed_revision_num: 2,
+        before_values: { status: 'failing' },
+        after_values: { status: 'active' },
+      };
+
+      mockRequest.mockResolvedValueOnce({
+        data: {
+          history_events: [mockBackendEvent],
+          next_token: 'token_next',
+          total: 1,
+        },
+      });
+
+      const controller = new FeedsController();
+      const result = await controller.listFeedHistory(
+        mockNonAdminRequest,
+        'feed_123',
+        { limit: 10 }
+      );
+
+      expect(result).toEqual({
+        historyEvents: [
+          {
+            id: 'evt_123',
+            feedId: 'feed_123',
+            action: 'feed.recovered',
+            actor: 'user:google:admin@example.com',
+            occurredAt: Date.parse('2026-06-26T12:34:56.000Z'),
+            feedRevision: 2,
+            beforeValues: { status: 'failing' },
+            afterValues: { status: 'active' },
+          },
+        ],
+        nextToken: 'token_next',
+        total: 1,
+      });
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: 'http://feeds-api.example.com/feed_123/history?limit=10',
+        method: 'GET',
+      });
+    });
+
+    it('should throw HTTP error if backend fails', async () => {
+      const error = new Error('Not Found') as Error & {
+        response?: { status: number };
+      };
+      error.response = { status: 404 };
+      mockRequest.mockRejectedValueOnce(error);
+
+      const controller = new FeedsController();
+      await expect(
+        controller.listFeedHistory(mockAdminRequest, 'feed_123', {
+          limit: 10,
+        })
+      ).rejects.toThrow(/Not Found/);
+    });
+  });
+
   describe('status conversion', () => {
     const testCases = [
       { backend: 'active', expected: 'active' },
