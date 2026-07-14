@@ -8,8 +8,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from integration_tests.api import test_feeds_api
 from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
+from integration_tests.test_utils import DUMMY_JWT
 
 
 def get_audio_segments_api_host() -> str:
@@ -38,7 +38,7 @@ async def create_proxy_client() -> AsyncIterator[httpx.AsyncClient]:
     """Sets up proxy client for frontend-api requests."""
     async with httpx.AsyncClient(
         base_url=f"http://{os.environ.get('FRONTEND_API_HOST', 'localhost:8088')}/api/v1",
-        headers={"Authorization": f"Bearer {test_feeds_api.DUMMY_JWT}"},
+        headers={"Authorization": f"Bearer {DUMMY_JWT}"},
     ) as client:
         yield client
 

@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 import httpx
 import pytest
 
-from integration_tests.api.test_feeds_api import DUMMY_JWT
+from integration_tests.test_utils import DUMMY_JWT
 
 
 @pytest.fixture(name="proxy_client")
