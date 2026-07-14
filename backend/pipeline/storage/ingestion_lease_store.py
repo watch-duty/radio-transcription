@@ -74,8 +74,6 @@ class LeaseSnapshot:
         retry_after: Earliest time an ownerless failure may be recovered.
         status_reason: Structured reason for the current lifecycle state.
         status_reason_detail: Bounded operator-facing reason detail.
-        status_reason_updated_at: Time the reason was last changed.
-        audit_revision: Monotonic revision of Lease lifecycle evidence.
         membership_revision: Cache-invalidating child membership revision.
         updated_at: Time any durable Lease state was last changed.
     """
@@ -86,8 +84,6 @@ class LeaseSnapshot:
     retry_after: datetime.datetime | None
     status_reason: feed_store.FeedStatusReason | None
     status_reason_detail: str | None
-    status_reason_updated_at: datetime.datetime | None
-    audit_revision: int
     membership_revision: int
     updated_at: datetime.datetime
 
@@ -288,8 +284,6 @@ def _snapshot_from_row(row: collections.abc.Mapping) -> LeaseSnapshot:
         retry_after=row["retry_after"],
         status_reason=_status_reason_from_row(row),
         status_reason_detail=row["status_reason_detail"],
-        status_reason_updated_at=row["status_reason_updated_at"],
-        audit_revision=row["audit_revision"],
         membership_revision=row["membership_revision"],
         updated_at=row["updated_at"],
     )

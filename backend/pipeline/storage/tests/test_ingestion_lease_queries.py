@@ -102,8 +102,6 @@ class TestLeaseGrantContract(unittest.TestCase):
                 retry_after=None,
                 status_reason=None,
                 status_reason_detail=None,
-                status_reason_updated_at=None,
-                audit_revision=0,
                 membership_revision=1,
                 updated_at=now,
             ),
@@ -192,15 +190,12 @@ class TestLeaseClaimQueryContract(unittest.TestCase):
             "fencing_token = leases.fencing_token + 1",
             "last_heartbeat = NOW()",
             "retry_after = NULL",
-            "unclaimed_since = NULL",
             "updated_at = NOW()",
         )
         retained = (
             "failure_count =",
             "status_reason =",
             "status_reason_detail =",
-            "status_reason_updated_at =",
-            "audit_revision =",
             "membership_revision =",
         )
 
@@ -217,8 +212,6 @@ class TestLeaseClaimQueryContract(unittest.TestCase):
                 "failure_count",
                 "status_reason",
                 "status_reason_detail",
-                "status_reason_updated_at",
-                "audit_revision",
                 "membership_revision",
             ):
                 self.assertIn(projected, sql)
@@ -281,7 +274,6 @@ class TestLeaseControlQueryContract(unittest.TestCase):
         self.assertIn("status = 'unclaimed'::public.feed_status", sql)
         self.assertIn("worker_id = NULL", sql)
         self.assertIn("last_heartbeat = NULL", sql)
-        self.assertIn("unclaimed_since = NOW()", sql)
         self.assertIn("updated_at = NOW()", sql)
         self.assertNotIn("failure_count =", sql)
         self.assertNotIn("retry_after =", sql)

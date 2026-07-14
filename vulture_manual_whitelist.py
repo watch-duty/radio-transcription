@@ -27,7 +27,6 @@ IngestionLeaseStore.claim_unclaimed
 IngestionLeaseStore.claim_recoverable
 IngestionLeaseStore.renew_heartbeats
 IngestionLeaseStore.release
-LeaseSnapshot.audit_revision
 LeaseSnapshot.membership_revision
 LeaseOperationResult.disposition
 LeaseHeartbeatResult.disposition

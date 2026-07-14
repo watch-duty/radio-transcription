@@ -87,17 +87,11 @@ async def _insert_lease(
     failure_count: int = 0,
     retry_after: datetime.datetime | None = None,
     status_reason: str | None = None,
-    audit_revision: int = 0,
     membership_revision: int = 0,
 ) -> None:
     """Insert one permanent, unique Lease fixture."""
     if status == "active" and last_heartbeat is None:
         last_heartbeat = datetime.datetime.now(datetime.UTC)
-    status_reason_updated_at = (
-        datetime.datetime.now(datetime.UTC)
-        if status_reason is not None
-        else None
-    )
     await pool.execute(
         """
         INSERT INTO public.ingestion_leases (
@@ -109,11 +103,8 @@ async def _insert_lease(
             last_heartbeat,
             failure_count,
             retry_after,
-            unclaimed_since,
             status_reason,
             status_reason_detail,
-            status_reason_updated_at,
-            audit_revision,
             membership_revision
         ) VALUES (
             'bcfy_calls',
@@ -124,12 +115,9 @@ async def _insert_lease(
             $5,
             $6,
             $7,
-            CASE WHEN $2::TEXT = 'unclaimed' THEN NOW() ELSE NULL END,
             $8::TEXT,
             CASE WHEN $8 IS NULL THEN NULL ELSE 'fixture failure' END,
-            $9,
-            $10,
-            $11
+            $9
         )
         """,
         sid,
@@ -140,8 +128,6 @@ async def _insert_lease(
         failure_count,
         retry_after,
         status_reason,
-        status_reason_updated_at,
-        audit_revision,
         membership_revision,
     )
 
@@ -173,8 +159,6 @@ async def _fetch_lease(pool: asyncpg.Pool, sid: str) -> asyncpg.Record:
             retry_after,
             status_reason,
             status_reason_detail,
-            status_reason_updated_at,
-            audit_revision,
             membership_revision,
             updated_at
         FROM public.ingestion_leases
@@ -337,7 +321,6 @@ async def test_neutral_release_and_reclaim_invalidate_old_grant(
         failure_count=3,
         retry_after=retry_after,
         status_reason="source_unreachable",
-        audit_revision=4,
         membership_revision=9,
     )
     store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
@@ -363,7 +346,6 @@ async def test_neutral_release_and_reclaim_invalidate_old_grant(
     assert after_release["failure_count"] == 3
     assert after_release["retry_after"] == retry_after
     assert after_release["status_reason"] == "source_unreachable"
-    assert after_release["audit_revision"] == 4
     assert after_release["membership_revision"] == 9
 
     new_grant = await _claim_exact(store, sid, owner)

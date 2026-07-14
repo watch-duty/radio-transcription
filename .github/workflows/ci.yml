@@ -399,16 +399,6 @@ jobs:
         run: >-
           psql -v ON_ERROR_STOP=1
           -f terraform/modules/alloydb/sql/ci/ingestion_leases_behavior_check.sql
-      - name: Verify Lease runtime columns
-        env:
-          PGHOST: localhost
-          PGPORT: "5432"
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: postgres
-        run: >-
-          psql -v ON_ERROR_STOP=1
-          -f terraform/modules/alloydb/sql/ci/ingestion_lease_runtime_columns_check.sql
       - name: Run HOT-protection guard
         env:
           PGHOST: localhost
@@ -533,16 +523,6 @@ jobs:
               psql -v ON_ERROR_STOP=1 -f "$migration"
             done
           done
-      - name: Verify Lease runtime columns
-        env:
-          PGHOST: localhost
-          PGPORT: "5432"
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: postgres
-        run: >-
-          psql -v ON_ERROR_STOP=1
-          -f terraform/modules/alloydb/sql/ci/ingestion_lease_runtime_columns_check.sql
       - name: Prove fenced Lease lifecycle
         env:
           INGESTION_LEASE_TEST_DSN: postgresql://postgres:postgres@localhost:5432/postgres

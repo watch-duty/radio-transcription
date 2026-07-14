@@ -17,7 +17,6 @@ claimed AS (
         fencing_token = leases.fencing_token + 1,
         last_heartbeat = NOW(),
         retry_after = NULL,
-        unclaimed_since = NULL,
         updated_at = NOW()
     FROM candidates
     WHERE leases.source_type = candidates.source_type
@@ -33,8 +32,6 @@ claimed AS (
         leases.retry_after,
         leases.status_reason,
         leases.status_reason_detail,
-        leases.status_reason_updated_at,
-        leases.audit_revision,
         leases.membership_revision,
         leases.updated_at
 )
@@ -78,7 +75,6 @@ claimed AS (
         fencing_token = leases.fencing_token + 1,
         last_heartbeat = NOW(),
         retry_after = NULL,
-        unclaimed_since = NULL,
         updated_at = NOW()
     FROM candidates
     WHERE leases.source_type = candidates.source_type
@@ -94,8 +90,6 @@ claimed AS (
         leases.retry_after,
         leases.status_reason,
         leases.status_reason_detail,
-        leases.status_reason_updated_at,
-        leases.audit_revision,
         leases.membership_revision,
         leases.updated_at
 )
@@ -144,8 +138,6 @@ current_state AS MATERIALIZED (
         leases.retry_after,
         leases.status_reason,
         leases.status_reason_detail,
-        leases.status_reason_updated_at,
-        leases.audit_revision,
         leases.membership_revision,
         leases.updated_at
     FROM input
@@ -177,8 +169,6 @@ renewed AS (
         leases.retry_after,
         leases.status_reason,
         leases.status_reason_detail,
-        leases.status_reason_updated_at,
-        leases.audit_revision,
         leases.membership_revision,
         leases.updated_at
 )
@@ -221,15 +211,6 @@ SELECT
     END AS status_reason_detail,
     CASE
         WHEN renewed.source_type IS NOT NULL
-            THEN renewed.status_reason_updated_at
-        ELSE current_state.status_reason_updated_at
-    END AS status_reason_updated_at,
-    CASE
-        WHEN renewed.source_type IS NOT NULL THEN renewed.audit_revision
-        ELSE current_state.audit_revision
-    END AS audit_revision,
-    CASE
-        WHEN renewed.source_type IS NOT NULL
             THEN renewed.membership_revision
         ELSE current_state.membership_revision
     END AS membership_revision,
@@ -261,8 +242,6 @@ WITH current_state AS MATERIALIZED (
         retry_after,
         status_reason,
         status_reason_detail,
-        status_reason_updated_at,
-        audit_revision,
         membership_revision,
         updated_at
     FROM public.ingestion_leases
@@ -275,7 +254,6 @@ released AS (
     SET status = 'unclaimed'::public.feed_status,
         worker_id = NULL,
         last_heartbeat = NULL,
-        unclaimed_since = NOW(),
         updated_at = NOW()
     FROM current_state
     WHERE leases.source_type = current_state.source_type
@@ -294,8 +272,6 @@ released AS (
         leases.retry_after,
         leases.status_reason,
         leases.status_reason_detail,
-        leases.status_reason_updated_at,
-        leases.audit_revision,
         leases.membership_revision,
         leases.updated_at
 )
@@ -335,15 +311,6 @@ SELECT
             THEN released.status_reason_detail
         ELSE current_state.status_reason_detail
     END AS status_reason_detail,
-    CASE
-        WHEN released.source_type IS NOT NULL
-            THEN released.status_reason_updated_at
-        ELSE current_state.status_reason_updated_at
-    END AS status_reason_updated_at,
-    CASE
-        WHEN released.source_type IS NOT NULL THEN released.audit_revision
-        ELSE current_state.audit_revision
-    END AS audit_revision,
     CASE
         WHEN released.source_type IS NOT NULL
             THEN released.membership_revision
