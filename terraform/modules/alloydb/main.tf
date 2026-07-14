@@ -101,11 +101,11 @@ resource "google_alloydb_user" "worker" {
 # only — the job runs inside the VPC with Direct VPC egress, eliminating the
 # need for a self-hosted runner or VPN.
 #
-# Flow: SQL files are uploaded to GCS, mounted into a postgres:16-alpine
-# container via GCS FUSE, and executed through one psql process per file. The
-# job is triggered by a null_resource whose trigger hash changes whenever the
-# SQL content changes, ensuring re-application on schema updates. All SQL is
-# idempotent (IF NOT EXISTS / ON CONFLICT) so re-runs are safe.
+# Flow: SQL files are uploaded to GCS, mounted into the caller-pinned immutable
+# PostgreSQL client image via GCS FUSE, and executed through one psql process
+# per file. The job is triggered by a null_resource whose trigger hash changes
+# whenever the SQL content changes, ensuring re-application on schema updates.
+# All SQL is idempotent (IF NOT EXISTS / ON CONFLICT) so re-runs are safe.
 #
 # All resources in this section are conditionally created; setting
 # apply_schema = false (the default) skips them entirely, keeping the module
@@ -208,10 +208,11 @@ resource "google_storage_bucket_iam_member" "schema_migrator" {
   member = "serviceAccount:${google_service_account.schema_migrator[0].email}"
 }
 
-# The migration job itself. Uses postgres:16-alpine for the psql client,
-# connects to AlloyDB over the private VPC via Direct VPC egress, and reads
-# the database password from Secret Manager at runtime (never stored in
-# Terraform state or container env). SQL files are mounted read-only from GCS.
+# The migration job itself. Uses the caller-pinned immutable image for the psql
+# client, connects to AlloyDB over the private VPC via Direct VPC egress, and
+# reads one caller-pinned numeric database-password version from Secret Manager
+# at runtime (never stored in Terraform state or container env). SQL files are
+# mounted read-only from GCS.
 resource "google_cloud_run_v2_job" "schema_migration" {
   count = var.apply_schema ? 1 : 0
 
@@ -223,6 +224,14 @@ resource "google_cloud_run_v2_job" "schema_migration" {
     precondition {
       condition     = var.subnetwork_id != null
       error_message = "subnetwork_id must be provided when apply_schema is true."
+    }
+    precondition {
+      condition     = var.sql_job_image != null
+      error_message = "sql_job_image must be provided when apply_schema is true."
+    }
+    precondition {
+      condition     = var.password_secret_version != null
+      error_message = "password_secret_version must be provided when apply_schema is true."
     }
   }
 
@@ -238,7 +247,7 @@ resource "google_cloud_run_v2_job" "schema_migration" {
       max_retries     = 1
 
       containers {
-        image   = "postgres:16-alpine"
+        image   = var.sql_job_image
         command = ["/bin/sh"]
         args = [
           "-c",
@@ -272,7 +281,7 @@ resource "google_cloud_run_v2_job" "schema_migration" {
           value_source {
             secret_key_ref {
               secret  = var.password_secret_id
-              version = "latest"
+              version = var.password_secret_version
             }
           }
         }
@@ -324,6 +333,14 @@ resource "google_cloud_run_v2_job" "bcfy_calls_sid_operation" {
       condition     = var.subnetwork_id != null
       error_message = "subnetwork_id must be provided when apply_schema is true."
     }
+    precondition {
+      condition     = var.sql_job_image != null
+      error_message = "sql_job_image must be provided when apply_schema is true."
+    }
+    precondition {
+      condition     = var.password_secret_version != null
+      error_message = "password_secret_version must be provided when apply_schema is true."
+    }
   }
 
   name                = "${var.cluster_id}-bcfy-calls-sid-operation"
@@ -340,7 +357,7 @@ resource "google_cloud_run_v2_job" "bcfy_calls_sid_operation" {
       max_retries     = 0
 
       containers {
-        image = "postgres:16-alpine"
+        image = var.sql_job_image
         command = [
           "/bin/sh",
           "-c",
@@ -412,7 +429,7 @@ resource "google_cloud_run_v2_job" "bcfy_calls_sid_operation" {
           value_source {
             secret_key_ref {
               secret  = var.password_secret_id
-              version = "latest"
+              version = var.password_secret_version
             }
           }
         }

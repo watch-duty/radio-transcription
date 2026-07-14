@@ -275,6 +275,39 @@ variable "password_secret_id" {
   default     = null
 }
 
+variable "password_secret_version" {
+  description = "The positive numeric Secret Manager version used by every database SQL job. Required when apply_schema is true; aliases such as latest are rejected."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.password_secret_version == null
+      || can(regex("^[1-9][0-9]*$", var.password_secret_version))
+    )
+    error_message = "password_secret_version must be null or a positive numeric Secret Manager version."
+  }
+}
+
+variable "sql_job_image" {
+  description = "The immutable container image shared by schema migration and controlled database operation jobs. Required when apply_schema is true."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.sql_job_image == null
+      || can(regex(
+        "^[^[:space:]@]+@sha256:[0-9a-f]{64}$",
+        var.sql_job_image,
+      ))
+    )
+    error_message = "sql_job_image must be null or a nonblank image reference with an immutable @sha256 digest."
+  }
+}
+
 variable "subnetwork_id" {
   description = "The self-link of the subnetwork for Cloud Run VPC Direct egress. Required when apply_schema is true."
   type        = string

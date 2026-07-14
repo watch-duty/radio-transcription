@@ -268,6 +268,44 @@ class TestManualOperationJobContract(unittest.TestCase):
         self.assertIn("ON_ERROR_STOP=1", main_tf)
         self.assertIn("read_only = true", main_tf)
 
+    def test_both_sql_jobs_share_fail_closed_artifact_inputs(self) -> None:
+        main_tf = (_ALLOYDB_ROOT / "main.tf").read_text()
+        variables_tf = (_ALLOYDB_ROOT / "variables.tf").read_text()
+        schema_job = _named_block(
+            main_tf,
+            'resource "google_cloud_run_v2_job" "schema_migration" {',
+        )
+        sid_job = _named_block(
+            main_tf,
+            'resource "google_cloud_run_v2_job" "bcfy_calls_sid_operation" {',
+        )
+
+        for job in (schema_job, sid_job):
+            with self.subTest(job=job.splitlines()[0]):
+                self.assertRegex(job, r"image\s*=\s*var\.sql_job_image")
+                self.assertRegex(
+                    job,
+                    r"version\s*=\s*var\.password_secret_version",
+                )
+                self.assertNotIn('version = "latest"', job)
+                self.assertIn("var.sql_job_image != null", job)
+                self.assertIn("var.password_secret_version != null", job)
+
+        image_variable = _named_block(
+            variables_tf,
+            'variable "sql_job_image" {',
+        )
+        secret_version_variable = _named_block(
+            variables_tf,
+            'variable "password_secret_version" {',
+        )
+        self.assertIn(
+            "^[^[:space:]@]+@sha256:[0-9a-f]{64}$",
+            image_variable,
+        )
+        self.assertIn("^[1-9][0-9]*$", secret_version_variable)
+        self.assertNotIn('default     = "latest"', secret_version_variable)
+
 
 class TestActiveAlloyDBEndpointContract(unittest.TestCase):
     """Pins the two public administrative consumers to one selected endpoint."""

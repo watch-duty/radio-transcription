@@ -783,7 +783,9 @@ def test_r3_shared_hardening_is_uploaded_hashed_and_included_once() -> None:
     assert "CREATE TEMP TABLE ingestion_contract_runtime_roles" in contract
 
     cloud_command = terraform[
-        terraform.index('image   = "postgres:16-alpine"') :
+        terraform.index(
+            'resource "google_cloud_run_v2_job" "schema_migration" {'
+        ) :
     ].replace(r"\"", '"')
     assert '-v legacy_role="$DB_LEGACY_ROLE"' in cloud_command
     assert cloud_command.count("-f /sql/privileges/") >= 2
