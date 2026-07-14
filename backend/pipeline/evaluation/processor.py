@@ -92,16 +92,18 @@ class EvaluationEventProcessor:
                     _raise("segment_id is required")
                 if not new_audio.feed_id:
                     _raise("feed_id is required")
-                if not new_audio.transcript:
+                if not new_audio.transcript.strip():
                     logger.info("no transcription, skipping")
                     record_pipeline_stage("evaluation", "skipped")
                     return
                 if not new_audio.source_audio_uris:
                     msg = f"TranscribedAudio missing source_audio_uris for feed_id: {new_audio.feed_id} (segment: {new_audio.segment_id})"
                     _raise(msg)
-            except ValueError:
+            except ValueError as e:
                 logger.exception(
-                    "Validation error processing cloud event %s", cloud_event
+                    "Validation error processing cloud event %s: %s",
+                    cloud_event,
+                    e,
                 )
                 record_pipeline_stage("evaluation", "error")
                 return
@@ -148,7 +150,7 @@ class EvaluationEventProcessor:
                     new_audio.segment_id,
                     e,
                 )
-                record_pipeline_stage("evaluation", "error")
+                record_pipeline_stage("evaluation_annotation", "error")
 
             # 4. Publish to Downstream Topic if flagged or has errors
             if (
