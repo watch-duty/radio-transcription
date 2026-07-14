@@ -210,9 +210,10 @@ resource "google_storage_bucket_iam_member" "schema_migrator" {
 
 # The migration job itself. Uses the caller-pinned immutable image for the psql
 # client, connects to AlloyDB over the private VPC via Direct VPC egress, and
-# reads one caller-pinned numeric database-password version from Secret Manager
-# at runtime (never stored in Terraform state or container env). SQL files are
-# mounted read-only from GCS.
+# reads one caller-pinned numeric database-password version from Secret Manager.
+# The plaintext is absent from Terraform state and the Job template; Cloud Run
+# resolves it into the task's runtime environment, which must never be dumped.
+# SQL files are mounted read-only from GCS.
 resource "google_cloud_run_v2_job" "schema_migration" {
   count = var.apply_schema ? 1 : 0
 
