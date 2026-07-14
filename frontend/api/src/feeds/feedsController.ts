@@ -323,10 +323,6 @@ export class FeedsController extends Controller {
     @Path() feedId: string,
     @Queries() query: ListFeedHistoryQueryParams
   ): Promise<ListFeedHistoryResponse> {
-    if (!request.user?.isAdmin) {
-      throw new HttpError(403, 'Forbidden');
-    }
-
     try {
       const queryParams = new URLSearchParams();
       if (query.limit) queryParams.append('limit', query.limit.toString());

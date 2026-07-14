@@ -480,9 +480,11 @@ describe('FeedTable', () => {
     });
   });
 
-  it('does not render visibility eye icon when allowEdit is false', () => {
+  it('renders visibility eye icon when allowEdit is false', () => {
     renderFeedTable({ feeds: mockFeeds, isLoading: false, allowEdit: false });
-    expect(screen.queryByLabelText(/View audit trail for/i)).toBeNull();
+    expect(
+      screen.getByLabelText('View audit trail for Alpha Radio')
+    ).toBeInTheDocument();
   });
 
   it('renders visibility eye icon and opens history modal on click when allowEdit is true', async () => {
