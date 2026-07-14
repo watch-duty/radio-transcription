@@ -10,6 +10,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import SearchIcon from '@mui/icons-material/Search';
 import TroubleshootIcon from '@mui/icons-material/Troubleshoot';
 import TuneIcon from '@mui/icons-material/Tune';
+import VisibilityIcon from '@mui/icons-material/Visibility';
 import Box from '@mui/material/Box';
 import Card from '@mui/material/Card';
 import Chip from '@mui/material/Chip';
@@ -35,6 +36,7 @@ import { type Feed, SourceType } from '@transcription/common';
 import { toSourceTypeString } from '../../utils/textUtils';
 import { FeedStatusIndicator } from '../common/FeedStatusIndicator';
 import { MultiSelectFilter } from '../common/MultiSelectFilter';
+import { FeedHistoryModal } from './FeedHistoryModal';
 import { FeedTagChip } from './FeedTagChip';
 import { groupTagsByKey } from './tagDisplay';
 
@@ -113,7 +115,7 @@ function VirtuosoTableRow(
   const isSelected = !!(item && context?.editingFeedId === item.id);
   const allowEdit = context?.allowEdit ?? false;
   const gridTemplateColumns = allowEdit
-    ? '1.5fr 1fr 1fr 60px'
+    ? '1.5fr 1fr 1fr 100px'
     : '1.5fr 1fr 1fr 2fr';
 
   return (
@@ -167,6 +169,8 @@ export function FeedTable({
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
+  const [historyFeed, setHistoryFeed] = useState<Feed | null>(null);
+
   const [sortConfig, setSortConfig] = useState<SortConfig>({
     column: 'name',
     direction: 'asc',
@@ -195,7 +199,7 @@ export function FeedTable({
   }, [feeds, sortConfig]);
 
   const gridTemplateColumns = allowEdit
-    ? '1.5fr 1fr 1fr 60px'
+    ? '1.5fr 1fr 1fr 100px'
     : '1.5fr 1fr 1fr 2fr';
 
   const sortConfigColumn = sortConfig.column;
@@ -327,24 +331,43 @@ export function FeedTable({
           }}
         >
           {allowEdit ? (
-            <IconButton
-              size="small"
-              onClick={() => onEditFeed?.(feed)}
-              disabled={isSubmitting || isEditing}
-              sx={{
-                border: '1px solid',
-                borderRadius: 1.5,
-                p: 0.5,
-                '&:hover': {
-                  borderColor: 'primary.main',
-                  bgcolor: 'primary.soft',
-                  color: 'primary.main',
-                },
-              }}
-              aria-label={`Edit ${feed.name}`}
-            >
-              <EditIcon fontSize="small" />
-            </IconButton>
+            <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+              <IconButton
+                size="small"
+                onClick={() => setHistoryFeed(feed)}
+                sx={{
+                  border: '1px solid',
+                  borderRadius: 1.5,
+                  p: 0.5,
+                  '&:hover': {
+                    borderColor: 'primary.main',
+                    bgcolor: 'primary.soft',
+                    color: 'primary.main',
+                  },
+                }}
+                aria-label={`View audit trail for ${feed.name}`}
+              >
+                <VisibilityIcon fontSize="small" />
+              </IconButton>
+              <IconButton
+                size="small"
+                onClick={() => onEditFeed?.(feed)}
+                disabled={isSubmitting || isEditing}
+                sx={{
+                  border: '1px solid',
+                  borderRadius: 1.5,
+                  p: 0.5,
+                  '&:hover': {
+                    borderColor: 'primary.main',
+                    bgcolor: 'primary.soft',
+                    color: 'primary.main',
+                  },
+                }}
+                aria-label={`Edit ${feed.name}`}
+              >
+                <EditIcon fontSize="small" />
+              </IconButton>
+            </Box>
           ) : (
             <Box
               sx={{
@@ -657,6 +680,13 @@ export function FeedTable({
           style={{ flexGrow: 1, minHeight: 0 }}
           fixedHeaderContent={() => tableHeader}
           itemContent={(_index, feed) => renderRowContent(feed)}
+        />
+      )}
+      {historyFeed && (
+        <FeedHistoryModal
+          feed={historyFeed}
+          open={true}
+          onClose={() => setHistoryFeed(null)}
         />
       )}
     </Card>
