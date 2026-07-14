@@ -23,6 +23,8 @@ Constants:
                                     Broadcastify JWT from Secret Manager.
     EVENT_TYPE_BCFY_CALLS_MISSING_CALL: one irreversible per-call gap event.
     EVENT_TYPE_BCFY_CALLS_SID_POLL: one settled logical SID-poll event.
+    EVENT_TYPE_BCFY_CALLS_REPLAY_WINDOW_TRUNCATED: one known replay-window
+                                    truncation interval at CRITICAL severity.
     BCFY_CALLS_MISSING_CALL_SCHEMA_VERSION: stable event schema version.
     METRIC_TYPE_QUARANTINE_EVENTS:  metric type URL for existing quarantine metric
                                     (pinned to match shipped value — migrated from
@@ -38,6 +40,10 @@ __all__ = [
     "BCFY_CALLS_MISSING_CALL_IDENTITY_MAX_LENGTH",
     "BCFY_CALLS_MISSING_CALL_REASON_MAX_LENGTH",
     "BCFY_CALLS_MISSING_CALL_SCHEMA_VERSION",
+    "BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_REQUIRED_FIELDS",
+    "BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_SCHEMA_VERSION",
+    "BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_SECONDS_MAX",
+    "BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_STRING_MAX_LENGTH",
     "BCFY_CALLS_SID_POLL_COUNT_MAX",
     "BCFY_CALLS_SID_POLL_OPTIONAL_FIELDS",
     "BCFY_CALLS_SID_POLL_REQUIRED_FIELDS",
@@ -45,6 +51,7 @@ __all__ = [
     "BCFY_CALLS_SID_POLL_SECONDS_MAX",
     "BCFY_CALLS_SID_POLL_STRING_MAX_LENGTH",
     "EVENT_TYPE_BCFY_CALLS_MISSING_CALL",
+    "EVENT_TYPE_BCFY_CALLS_REPLAY_WINDOW_TRUNCATED",
     "EVENT_TYPE_BCFY_CALLS_SID_POLL",
     "EVENT_TYPE_BCFY_JWT_FETCH_FAILED",
     "EVENT_TYPE_CALL_AUTH_FAILURE",
@@ -67,6 +74,9 @@ EVENT_TYPE_CALL_AUTH_FAILURE: str = "call_auth_failure"
 EVENT_TYPE_BCFY_JWT_FETCH_FAILED: str = "bcfy_jwt_fetch_failed"
 EVENT_TYPE_BCFY_CALLS_MISSING_CALL: str = "bcfy_calls_missing_call"
 EVENT_TYPE_BCFY_CALLS_SID_POLL: str = "bcfy_calls_sid_poll"
+EVENT_TYPE_BCFY_CALLS_REPLAY_WINDOW_TRUNCATED: str = (
+    "bcfy_calls_replay_window_truncated"
+)
 
 # The missing-call event is intentionally bounded because one live page owns
 # all of its pending event data in memory. The exact signed URL is retained;
@@ -133,6 +143,27 @@ BCFY_CALLS_SID_POLL_REQUIRED_FIELDS: tuple[str, ...] = (
     "worker_utilization_denominator",
 )
 BCFY_CALLS_SID_POLL_OPTIONAL_FIELDS: tuple[str, ...] = ()
+
+# Replay-window evidence is intentionally separate from both the ordinary
+# settled-poll event and the per-call missing-audio event. It contains only
+# complete grant identity and the exact time interval known to be unavailable.
+BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_SCHEMA_VERSION: int = 1
+BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_STRING_MAX_LENGTH: int = 512
+BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_SECONDS_MAX: float = 10**12
+BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_REQUIRED_FIELDS: tuple[str, ...] = (
+    "cause",
+    "event_type",
+    "fencing_token",
+    "floor_start",
+    "lost_duration_seconds",
+    "lost_span_end",
+    "lost_span_start",
+    "owner_worker_id",
+    "requested_start",
+    "schema_version",
+    "sid",
+    "source_type",
+)
 
 # ---------------------------------------------------------------------------
 # Cloud Monitoring metric type for the existing quarantine_events metric.

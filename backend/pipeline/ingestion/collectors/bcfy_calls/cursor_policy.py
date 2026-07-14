@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import enum
+import math
 import typing
 
 from backend.pipeline.storage import ingestion_lease_store
@@ -19,12 +21,87 @@ __all__ = [
     "NoProgressPageCandidate",
     "PageCandidate",
     "PageCursorCandidate",
+    "ReplayFloorCause",
+    "ReplayFloorDecision",
+    "ReplayFloorReached",
+    "apply_replay_floor",
     "bootstrap_cursor",
 ]
 
 
 class CursorIntegrityError(ValueError):
     """A Lease Cursor candidate or receipt violates its exact contract."""
+
+
+class ReplayFloorCause(enum.StrEnum):
+    """Closed reason why one known request start met the replay floor."""
+
+    BOOTSTRAP = "bootstrap"
+    RECOVERY = "recovery"
+    REPLAY_OVERRIDE = "replay_override"
+    OVERLOAD = "overload"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ReplayFloorReached:
+    """Exact known interval removed by one five-minute floor decision."""
+
+    cause: ReplayFloorCause
+    requested_start: datetime.datetime
+    floor_start: datetime.datetime
+    lost_span_start: datetime.datetime
+    lost_span_end: datetime.datetime
+    lost_duration_seconds: float
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.cause, ReplayFloorCause):
+            msg = "cause must be a ReplayFloorCause"
+            raise TypeError(msg)
+        requested_start = _require_utc_datetime(
+            self.requested_start,
+            field_name="requested_start",
+        )
+        floor_start = _require_utc_datetime(
+            self.floor_start,
+            field_name="floor_start",
+        )
+        lost_span_start = _require_utc_datetime(
+            self.lost_span_start,
+            field_name="lost_span_start",
+        )
+        lost_span_end = _require_utc_datetime(
+            self.lost_span_end,
+            field_name="lost_span_end",
+        )
+        if requested_start > floor_start:
+            msg = "requested_start must be at or before floor_start"
+            raise ValueError(msg)
+        if lost_span_start != requested_start or lost_span_end != floor_start:
+            msg = (
+                "lost span must exactly cover requested_start through "
+                "floor_start"
+            )
+            raise ValueError(msg)
+        if isinstance(self.lost_duration_seconds, bool) or not isinstance(
+            self.lost_duration_seconds,
+            (int, float),
+        ):
+            msg = "lost_duration_seconds must be a number"
+            raise TypeError(msg)
+        duration = float(self.lost_duration_seconds)
+        expected = (floor_start - requested_start).total_seconds()
+        if not math.isfinite(duration) or duration < 0 or duration != expected:
+            msg = "lost_duration_seconds must exactly match the lost span"
+            raise ValueError(msg)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ReplayFloorDecision:
+    """Pure selected start plus optional exact replay-loss evidence."""
+
+    selected_start: datetime.datetime | None
+    floor_start: datetime.datetime
+    floor_reached: ReplayFloorReached | None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -36,12 +113,14 @@ class BootstrapDecision:
         durable_minimum: Minimum non-null durable Feed cursor observed.
         replay_floor: Oldest replay position allowed for this bootstrap.
         clamped: Whether ``pos`` was raised to ``replay_floor``.
+        floor_reached: Exact known loss evidence at or below the floor.
     """
 
     pos: datetime.datetime | None
     durable_minimum: datetime.datetime | None
     replay_floor: datetime.datetime
     clamped: bool
+    floor_reached: ReplayFloorReached | None
 
 
 class _CandidateSeal:
@@ -229,16 +308,69 @@ def _require_page_sequence(value: object) -> int:
     return value
 
 
+def apply_replay_floor(
+    requested_start: datetime.datetime | None,
+    *,
+    now: datetime.datetime,
+    cause: ReplayFloorCause,
+) -> ReplayFloorDecision:
+    """Select one request start within the unconditional five-minute window.
+
+    A known start exactly equal to the floor is intentionally evidence-bearing:
+    the source window has been reached even though the known lost duration is
+    zero. ``None`` remains an omitted request position and never invents loss.
+    """
+    validated_now = _require_utc_datetime(now, field_name="now")
+    if not isinstance(cause, ReplayFloorCause):
+        msg = "cause must be a ReplayFloorCause"
+        raise TypeError(msg)
+    floor_start = validated_now - datetime.timedelta(minutes=5)
+    if requested_start is None:
+        return ReplayFloorDecision(
+            selected_start=None,
+            floor_start=floor_start,
+            floor_reached=None,
+        )
+
+    validated_start = _require_utc_datetime(
+        requested_start,
+        field_name="requested_start",
+    )
+    if validated_start > floor_start:
+        return ReplayFloorDecision(
+            selected_start=validated_start,
+            floor_start=floor_start,
+            floor_reached=None,
+        )
+
+    lost_duration_seconds = (floor_start - validated_start).total_seconds()
+    evidence = ReplayFloorReached(
+        cause=cause,
+        requested_start=validated_start,
+        floor_start=floor_start,
+        lost_span_start=validated_start,
+        lost_span_end=floor_start,
+        lost_duration_seconds=lost_duration_seconds,
+    )
+    return ReplayFloorDecision(
+        selected_start=floor_start,
+        floor_start=floor_start,
+        floor_reached=evidence,
+    )
+
+
 def bootstrap_cursor(
     cursors: collections.abc.Iterable[datetime.datetime | None],
     *,
     now: datetime.datetime,
+    cause: ReplayFloorCause = ReplayFloorCause.BOOTSTRAP,
 ) -> BootstrapDecision:
     """Select one bounded inclusive replay position from Feed cursors.
 
     Args:
         cursors: Eligible independent durable Feed cursors.
         now: Explicit UTC time used to calculate the replay floor.
+        cause: Closed provenance for any floor evidence.
 
     Returns:
         Immutable bootstrap evidence with the selected replay position.
@@ -248,7 +380,6 @@ def bootstrap_cursor(
         ValueError: ``now`` or a non-null Feed cursor is not UTC-aware.
     """
     validated_now = _require_utc_datetime(now, field_name="now")
-    replay_floor = validated_now - datetime.timedelta(minutes=5)
     durable_minimum: datetime.datetime | None = None
 
     for cursor in cursors:
@@ -262,19 +393,30 @@ def bootstrap_cursor(
             durable_minimum = validated_cursor
 
     if durable_minimum is None:
+        floor_decision = apply_replay_floor(
+            None,
+            now=validated_now,
+            cause=cause,
+        )
         return BootstrapDecision(
             pos=None,
             durable_minimum=None,
-            replay_floor=replay_floor,
+            replay_floor=floor_decision.floor_start,
             clamped=False,
+            floor_reached=None,
         )
 
-    clamped = durable_minimum < replay_floor
+    floor_decision = apply_replay_floor(
+        durable_minimum,
+        now=validated_now,
+        cause=cause,
+    )
     return BootstrapDecision(
-        pos=replay_floor if clamped else durable_minimum,
+        pos=floor_decision.selected_start,
         durable_minimum=durable_minimum,
-        replay_floor=replay_floor,
-        clamped=clamped,
+        replay_floor=floor_decision.floor_start,
+        clamped=durable_minimum < floor_decision.floor_start,
+        floor_reached=floor_decision.floor_reached,
     )
 
 

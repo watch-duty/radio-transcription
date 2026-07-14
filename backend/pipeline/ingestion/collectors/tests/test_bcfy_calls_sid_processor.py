@@ -610,7 +610,11 @@ def _processor(
     poll_emitter: (
         typing.Callable[[telemetry.SidPollEvidence], None] | None
     ) = None,
+    replay_floor_emitter: (
+        typing.Callable[[telemetry.ReplayWindowTruncatedEvent], None] | None
+    ) = None,
     claim_payload: sid_grant_control.SidClaimPayload | None = None,
+    now: typing.Callable[[], datetime.datetime] | None = None,
 ) -> tuple[sid_processor.BcfyCallsSidProcessor, _RecordingLane]:
     selected_lane = lane or _RecordingLane()
     processor = sid_processor.BcfyCallsSidProcessor(
@@ -619,9 +623,12 @@ def _processor(
         store,
         calls_provider or _ScriptedProvider(),
         selected_lane,
-        now=lambda: _NOW,
+        now=now or (lambda: _NOW),
         monotonic=monotonic or (lambda: 1.0),
         poll_emitter=poll_emitter or telemetry.emit_sid_poll,
+        replay_floor_emitter=(
+            replay_floor_emitter or telemetry.emit_replay_window_truncated
+        ),
         wait=wait or _RecordingWait(),
         session_id_factory=(
             session_id_factory or sid_processor._new_session_id
@@ -1221,6 +1228,158 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             grant_control.ClaimMode.RECOVERY,
         )
 
+    async def test_claim_mode_alone_selects_bootstrap_or_recovery_floor_cause(
+        self,
+    ) -> None:
+        old_cursor = _NOW - datetime.timedelta(minutes=20)
+        misleading_primary = dataclasses.replace(
+            _lease_lifecycle_snapshot(),
+            status=feed_store.FeedStatus.FAILING,
+            failure_count=99,
+            status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            retry_after=_NOW + datetime.timedelta(minutes=10),
+        )
+        misleading_recovery = dataclasses.replace(
+            _lease_lifecycle_snapshot(),
+            status=feed_store.FeedStatus.ACTIVE,
+            failure_count=0,
+            status_reason=None,
+            retry_after=None,
+        )
+        cases = (
+            (
+                sid_grant_control.SidClaimPayload(
+                    misleading_primary,
+                    grant_control.ClaimMode.PRIMARY,
+                ),
+                cursor_policy.ReplayFloorCause.BOOTSTRAP,
+            ),
+            (
+                sid_grant_control.SidClaimPayload(
+                    misleading_recovery,
+                    grant_control.ClaimMode.RECOVERY,
+                ),
+                cursor_policy.ReplayFloorCause.RECOVERY,
+            ),
+        )
+
+        for payload, expected_cause in cases:
+            with self.subTest(claim_mode=payload.claim_mode):
+                emitted: list[telemetry.ReplayWindowTruncatedEvent] = []
+                processor, _ = _processor(
+                    _ScriptedMembershipStore(
+                        _snapshot(
+                            4,
+                            _member(
+                                _FEED_A,
+                                "00123-00045",
+                                cursor=old_cursor,
+                            ),
+                        )
+                    ),
+                    claim_payload=payload,
+                    replay_floor_emitter=emitted.append,
+                )
+
+                await processor._refresh_membership()
+                request = processor._select_request_position()
+
+                self.assertEqual(
+                    request.pos,
+                    _NOW - datetime.timedelta(minutes=5),
+                )
+                self.assertEqual(len(emitted), 1)
+                self.assertIs(
+                    emitted[0].floor_reached.cause,
+                    expected_cause,
+                )
+
+    async def test_all_null_bootstrap_omits_pos_without_floor_event(
+        self,
+    ) -> None:
+        emitted: list[telemetry.ReplayWindowTruncatedEvent] = []
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(
+                    4,
+                    _member(_FEED_A, "00123-00045", cursor=None),
+                )
+            ),
+            replay_floor_emitter=emitted.append,
+        )
+
+        await processor._refresh_membership()
+        request = processor._select_request_position()
+
+        self.assertIsNone(request.pos)
+        self.assertEqual(emitted, [])
+
+    async def test_replay_floor_emitter_failure_does_not_change_bootstrap(
+        self,
+    ) -> None:
+        old_cursor = _NOW - datetime.timedelta(minutes=20)
+
+        def fail(_event: telemetry.ReplayWindowTruncatedEvent) -> None:
+            message = "telemetry unavailable"
+            raise RuntimeError(message)
+
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(
+                    4,
+                    _member(
+                        _FEED_A,
+                        "00123-00045",
+                        cursor=old_cursor,
+                    ),
+                )
+            ),
+            replay_floor_emitter=fail,
+        )
+
+        await processor._refresh_membership()
+        request = processor._select_request_position()
+
+        floor = _NOW - datetime.timedelta(minutes=5)
+        self.assertEqual(request.pos, floor)
+        assert processor._lease_cursor is not None
+        self.assertEqual(processor._lease_cursor.pos, floor)
+
+    async def test_bootstrap_rechecks_floor_at_request_boundary(self) -> None:
+        requested = _NOW - datetime.timedelta(minutes=4, seconds=59)
+        observed_times = iter((_NOW, _NOW + datetime.timedelta(seconds=2)))
+        emitted: list[telemetry.ReplayWindowTruncatedEvent] = []
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(
+                    4,
+                    _member(
+                        _FEED_A,
+                        "00123-00045",
+                        cursor=requested,
+                    ),
+                )
+            ),
+            now=lambda: next(observed_times),
+            replay_floor_emitter=emitted.append,
+        )
+
+        await processor._refresh_membership()
+        request = processor._select_request_position()
+
+        request_floor = (
+            _NOW
+            - datetime.timedelta(minutes=5)
+            + (datetime.timedelta(seconds=2))
+        )
+        self.assertEqual(request.pos, request_floor)
+        self.assertEqual(len(emitted), 1)
+        self.assertIs(
+            emitted[0].floor_reached.cause,
+            cursor_policy.ReplayFloorCause.BOOTSTRAP,
+        )
+        self.assertEqual(emitted[0].floor_reached.lost_duration_seconds, 1.0)
+
     async def test_snapshot_initial_and_unchanged_reuse_identity(self) -> None:
         initial = _snapshot(4, _member(_FEED_A, "00123-00045"))
         store = _ScriptedMembershipStore(
@@ -1785,7 +1944,11 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         )
-        processor, _ = _processor(store)
+        emitted: list[telemetry.ReplayWindowTruncatedEvent] = []
+        processor, _ = _processor(
+            store,
+            replay_floor_emitter=emitted.append,
+        )
         await processor._refresh_membership()
         await processor._refresh_membership()
         before_cursor = processor._lease_cursor.pos
@@ -1798,6 +1961,17 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(request.replay_feed_ids, frozenset({_FEED_B, _FEED_C}))
         self.assertEqual(processor._lease_cursor.pos, before_cursor)
+        self.assertEqual(len(emitted), 1)
+        evidence = emitted[0].floor_reached
+        self.assertIs(
+            evidence.cause,
+            cursor_policy.ReplayFloorCause.REPLAY_OVERRIDE,
+        )
+        self.assertEqual(
+            evidence.requested_start,
+            _NOW - datetime.timedelta(minutes=20),
+        )
+        self.assertEqual(evidence.lost_duration_seconds, 900.0)
 
     async def test_replay_valid_override_routes_all_and_consumes_state(
         self,
@@ -2769,6 +2943,52 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(processor._pending_by_url, {})
         self.assertEqual(processor._recent_urls, set())
         self.assertEqual(len(lane.covers), 1)
+
+    async def test_replayable_candidate_aging_uses_overload_floor_once(
+        self,
+    ) -> None:
+        initial = _NOW - datetime.timedelta(seconds=30)
+        observed_now = [_NOW]
+        emitted: list[telemetry.ReplayWindowTruncatedEvent] = []
+        lane = _RecordingLane(_replayable_settled_page)
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(
+                    4,
+                    _member(_FEED_A, "00123-00045", cursor=initial),
+                )
+            ),
+            lane=lane,
+            now=lambda: observed_now[0],
+            replay_floor_emitter=emitted.append,
+        )
+        await processor._refresh_membership()
+        first_request = processor._select_request_position()
+        self.assertEqual(emitted, [])
+
+        await processor._settle_page(
+            _page(last_pos=_NOW.timestamp()),
+            request=first_request,
+        )
+        observed_now[0] = _NOW + datetime.timedelta(minutes=10)
+
+        overload_request = processor._select_request_position()
+
+        self.assertEqual(
+            overload_request.pos,
+            _NOW + datetime.timedelta(minutes=5),
+        )
+        self.assertEqual(len(emitted), 1)
+        evidence = emitted[0].floor_reached
+        self.assertIs(
+            evidence.cause,
+            cursor_policy.ReplayFloorCause.OVERLOAD,
+        )
+        self.assertEqual(evidence.requested_start, initial)
+        self.assertEqual(evidence.lost_duration_seconds, 330.0)
+        assert processor._lease_cursor is not None
+        self.assertEqual(processor._lease_cursor.pos, initial)
+        self.assertEqual(processor._lease_cursor.next_page_sequence, 1)
 
     async def test_real_scheduler_replay_barrier_blocks_t2_and_settles_page(
         self,

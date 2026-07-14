@@ -17,7 +17,11 @@ import uuid
 
 import asyncpg
 
-from backend.pipeline.ingestion import feed_work_scheduler, sid_grant_control
+from backend.pipeline.ingestion import (
+    feed_work_scheduler,
+    grant_control,
+    sid_grant_control,
+)
 from backend.pipeline.ingestion import models as ingestion_models
 from backend.pipeline.ingestion.collectors import aiohttp_requests, control_flow
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
@@ -269,6 +273,10 @@ class _GrantLane(typing.Protocol):
 type _Now = collections.abc.Callable[[], datetime.datetime]
 type _Monotonic = collections.abc.Callable[[], float]
 type _PollEmitter = collections.abc.Callable[[telemetry.SidPollEvidence], None]
+type _ReplayFloorEmitter = collections.abc.Callable[
+    [telemetry.ReplayWindowTruncatedEvent],
+    None,
+]
 type _SessionIdFactory = collections.abc.Callable[[], str]
 type _Wait = collections.abc.Callable[
     [asyncio.Event, float],
@@ -755,6 +763,9 @@ class BcfyCallsSidProcessor:
         now: _Now,
         monotonic: _Monotonic = time.monotonic,
         poll_emitter: _PollEmitter = telemetry.emit_sid_poll,
+        replay_floor_emitter: _ReplayFloorEmitter = (
+            telemetry.emit_replay_window_truncated
+        ),
         wait: _Wait = control_flow.sleep_or_cancel,
         session_id_factory: _SessionIdFactory = _new_session_id,
     ) -> None:
@@ -767,21 +778,17 @@ class BcfyCallsSidProcessor:
         if type(claim_payload) is not sid_grant_control.SidClaimPayload:
             message = "claim_payload must be an exact SidClaimPayload"
             raise TypeError(message)
-        if not callable(now):
-            message = "now must be callable"
-            raise TypeError(message)
-        if not callable(monotonic):
-            message = "monotonic must be callable"
-            raise TypeError(message)
-        if not callable(poll_emitter):
-            message = "poll_emitter must be callable"
-            raise TypeError(message)
-        if not callable(wait):
-            message = "wait must be callable"
-            raise TypeError(message)
-        if not callable(session_id_factory):
-            message = "session_id_factory must be callable"
-            raise TypeError(message)
+        for name, value in (
+            ("now", now),
+            ("monotonic", monotonic),
+            ("poll_emitter", poll_emitter),
+            ("replay_floor_emitter", replay_floor_emitter),
+            ("wait", wait),
+            ("session_id_factory", session_id_factory),
+        ):
+            if not callable(value):
+                message = f"{name} must be callable"
+                raise TypeError(message)
         self._grant = grant
         self._claim_payload = claim_payload
         self._membership_store = membership_store
@@ -790,6 +797,7 @@ class BcfyCallsSidProcessor:
         self._now = now
         self._monotonic = monotonic
         self._poll_emitter = poll_emitter
+        self._replay_floor_emitter = replay_floor_emitter
         self._wait = wait
         self._session_id_factory = session_id_factory
         self._lease_cursor: cursor_policy.LeaseCursor | None = None
@@ -812,6 +820,9 @@ class BcfyCallsSidProcessor:
         ] = {}
         self._active_page_ledger: gap_ledger.MissingCallLedger | None = None
         self._active_poll: _SidPollAccumulator | None = None
+        self._initial_floor_cause: cursor_policy.ReplayFloorCause | None = None
+        self._initial_requested_start: datetime.datetime | None = None
+        self._initial_request_pending = False
         self._consecutive_failures = 0
 
     async def run(  # noqa: PLR0912, PLR0915
@@ -1142,9 +1153,18 @@ class BcfyCallsSidProcessor:
     ) -> None:
         """Bootstrap cursor and member states from one initial snapshot."""
         now = _require_utc_datetime(self._now(), field_name="now")
+        initial_cause = {
+            grant_control.ClaimMode.PRIMARY: (
+                cursor_policy.ReplayFloorCause.BOOTSTRAP
+            ),
+            grant_control.ClaimMode.RECOVERY: (
+                cursor_policy.ReplayFloorCause.RECOVERY
+            ),
+        }[self._claim_payload.claim_mode]
         decision = cursor_policy.bootstrap_cursor(
             (member.last_bookmark_time for member in snapshot.members),
             now=now,
+            cause=initial_cause,
         )
         members_by_source: dict[str, _MemberState] = {}
         members_by_id: dict[uuid.UUID, _MemberState] = {}
@@ -1166,6 +1186,9 @@ class BcfyCallsSidProcessor:
         self._snapshot = snapshot
         self._members_by_source = members_by_source
         self._members_by_id = members_by_id
+        self._initial_floor_cause = initial_cause
+        self._initial_requested_start = decision.durable_minimum
+        self._initial_request_pending = True
 
     async def _apply_changed_snapshot(
         self,
@@ -1290,7 +1313,13 @@ class BcfyCallsSidProcessor:
         )
         position = lease_cursor.pos
         replay_feed_ids: frozenset[uuid.UUID] = frozenset()
+        floor_reached: cursor_policy.ReplayFloorReached | None = None
         if replay_states:
+            # A replay override supersedes an initial request that has not yet
+            # been issued; never emit stale bootstrap/recovery evidence later.
+            self._initial_request_pending = False
+            self._initial_floor_cause = None
+            self._initial_requested_start = None
             replay_cursors = tuple(
                 state.effective_cursor for state in replay_states
             )
@@ -1303,14 +1332,43 @@ class BcfyCallsSidProcessor:
                 "tuple[datetime.datetime, ...]",
                 replay_cursors,
             )
-            replay_floor = _require_utc_datetime(
-                self._now(),
-                field_name="now",
-            ) - datetime.timedelta(minutes=5)
-            position = max(min(typed_cursors), replay_floor)
+            floor_decision = cursor_policy.apply_replay_floor(
+                min(typed_cursors),
+                now=_require_utc_datetime(self._now(), field_name="now"),
+                cause=cursor_policy.ReplayFloorCause.REPLAY_OVERRIDE,
+            )
+            position = floor_decision.selected_start
+            floor_reached = floor_decision.floor_reached
             replay_feed_ids = frozenset(
                 state.feed_id for state in replay_states
             )
+        elif self._initial_request_pending:
+            # Re-evaluate at the actual request boundary so even a cursor that
+            # crosses the floor during refresh is clamped and reported once.
+            initial_cause = self._initial_floor_cause
+            if initial_cause is None:
+                message = "initial request lost immutable floor provenance"
+                raise feed_work_scheduler.CohortIntegrityError(message)
+            floor_decision = cursor_policy.apply_replay_floor(
+                self._initial_requested_start,
+                now=_require_utc_datetime(self._now(), field_name="now"),
+                cause=initial_cause,
+            )
+            position = floor_decision.selected_start
+            floor_reached = floor_decision.floor_reached
+            self._initial_request_pending = False
+            self._initial_floor_cause = None
+            self._initial_requested_start = None
+        else:
+            floor_decision = cursor_policy.apply_replay_floor(
+                position,
+                now=_require_utc_datetime(self._now(), field_name="now"),
+                cause=cursor_policy.ReplayFloorCause.OVERLOAD,
+            )
+            position = floor_decision.selected_start
+            floor_reached = floor_decision.floor_reached
+
+        self._emit_replay_floor_reached(floor_reached)
 
         return _PageRequest(
             pos=position,
@@ -1318,6 +1376,22 @@ class BcfyCallsSidProcessor:
             snapshot=snapshot,
             routes=types.MappingProxyType(dict(self._members_by_source)),
         )
+
+    def _emit_replay_floor_reached(
+        self,
+        evidence: cursor_policy.ReplayFloorReached | None,
+    ) -> None:
+        """Best-effort emission after one immutable cursor decision."""
+        if evidence is None:
+            return
+        try:
+            event = telemetry.ReplayWindowTruncatedEvent(self._grant, evidence)
+            self._replay_floor_emitter(event)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            # Operational evidence cannot mutate request or cursor authority.
+            return
 
     async def _settle_page(  # noqa: PLR0912, PLR0915
         self,

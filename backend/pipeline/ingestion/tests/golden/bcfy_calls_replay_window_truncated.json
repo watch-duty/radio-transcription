@@ -1,0 +1,20 @@
+{
+  "event": "bcfy_calls_replay_window_truncated",
+  "log_severity": "CRITICAL",
+  "schema_version": 1,
+  "expected_keys": [
+    "cause",
+    "event_type",
+    "fencing_token",
+    "floor_start",
+    "lost_duration_seconds",
+    "lost_span_end",
+    "lost_span_start",
+    "owner_worker_id",
+    "requested_start",
+    "schema_version",
+    "sid",
+    "source_type"
+  ],
+  "_note": "D-34: exact known replay-loss interval only. No call, Feed, URL, payload, guessed count, or poll-outcome fields."
+}

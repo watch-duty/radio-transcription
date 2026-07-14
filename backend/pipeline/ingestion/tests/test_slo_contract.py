@@ -8,15 +8,21 @@ an `event_type` string, metric type URL, or logger path WILL fail here first.
 
 from __future__ import annotations
 
+import datetime
 import json
 import pathlib
 import unittest
+import uuid
 
 from backend.pipeline.ingestion import slo_contract
 from backend.pipeline.ingestion.collectors import telemetry
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    cursor_policy,
+)
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
     telemetry as calls_telemetry,
 )
+from backend.pipeline.storage import feed_store, ingestion_lease_store
 
 _GOLDEN_DIR = pathlib.Path(__file__).resolve().parent / "golden"
 
@@ -75,6 +81,16 @@ class TestSloContractLiterals(unittest.TestCase):
             1,
         )
 
+    def test_bcfy_calls_replay_window_truncated_literals(self) -> None:
+        self.assertEqual(
+            slo_contract.EVENT_TYPE_BCFY_CALLS_REPLAY_WINDOW_TRUNCATED,
+            "bcfy_calls_replay_window_truncated",
+        )
+        self.assertEqual(
+            slo_contract.BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_SCHEMA_VERSION,
+            1,
+        )
+
     def test_metric_type_quarantine_events_literal(self) -> None:
         self.assertEqual(
             slo_contract.METRIC_TYPE_QUARANTINE_EVENTS,
@@ -104,6 +120,11 @@ class TestSloContractAll(unittest.TestCase):
             "BCFY_CALLS_MISSING_CALL_ATTEMPT_COUNT_MAX",
             "BCFY_CALLS_MISSING_CALL_IDENTITY_MAX_LENGTH",
             "BCFY_CALLS_MISSING_CALL_REASON_MAX_LENGTH",
+            "EVENT_TYPE_BCFY_CALLS_REPLAY_WINDOW_TRUNCATED",
+            "BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_SCHEMA_VERSION",
+            "BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_REQUIRED_FIELDS",
+            "BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_STRING_MAX_LENGTH",
+            "BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_SECONDS_MAX",
             "EVENT_TYPE_BCFY_CALLS_SID_POLL",
             "BCFY_CALLS_SID_POLL_SCHEMA_VERSION",
             "BCFY_CALLS_SID_POLL_REQUIRED_FIELDS",
@@ -247,6 +268,69 @@ class TestBcfyCallsSidPollGolden(unittest.TestCase):
                 "participating_feed_count": 0,
                 "successful_feed_count": 0,
             },
+        )
+
+
+class TestBcfyCallsReplayWindowTruncatedGolden(unittest.TestCase):
+    """Pin the exact separate replay-window event and CRITICAL severity."""
+
+    def test_replay_window_truncated_golden_matches_helper_payload(
+        self,
+    ) -> None:
+        golden = json.loads(
+            (_GOLDEN_DIR / "bcfy_calls_replay_window_truncated.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        now = datetime.datetime(
+            2026,
+            7,
+            13,
+            12,
+            0,
+            tzinfo=datetime.UTC,
+        )
+        decision = cursor_policy.apply_replay_floor(
+            now - datetime.timedelta(minutes=5),
+            now=now,
+            cause=cursor_policy.ReplayFloorCause.RECOVERY,
+        )
+        assert decision.floor_reached is not None
+        grant = ingestion_lease_store.LeaseGrant(
+            feed_store.SourceType.BCFY_CALLS,
+            "123",
+            uuid.UUID("11111111-2222-3333-4444-555555555555"),
+            7,
+        )
+        payload = calls_telemetry.replay_window_truncated_json_fields(
+            calls_telemetry.ReplayWindowTruncatedEvent(
+                grant,
+                decision.floor_reached,
+            )
+        )
+
+        self.assertEqual(
+            golden["event"],
+            slo_contract.EVENT_TYPE_BCFY_CALLS_REPLAY_WINDOW_TRUNCATED,
+        )
+        self.assertEqual(golden["log_severity"], "CRITICAL")
+        self.assertEqual(
+            golden["schema_version"],
+            slo_contract.BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_SCHEMA_VERSION,
+        )
+        self.assertEqual(set(payload), set(golden["expected_keys"]))
+        self.assertEqual(payload["lost_duration_seconds"], 0.0)
+        self.assertEqual(payload["cause"], "recovery")
+        self.assertTrue(
+            set(payload).isdisjoint(
+                {
+                    "audio_url",
+                    "calls",
+                    "feed_ids",
+                    "outcome",
+                    "response_row_count",
+                }
+            )
         )
 
 

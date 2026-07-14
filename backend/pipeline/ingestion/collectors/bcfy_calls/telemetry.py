@@ -3,22 +3,28 @@
 from __future__ import annotations
 
 import dataclasses
+import datetime
 import enum
 import logging
 import math
 
 from backend.pipeline.ingestion import slo_contract
+from backend.pipeline.ingestion.collectors.bcfy_calls import cursor_policy
+from backend.pipeline.storage import feed_store, ingestion_lease_store
 
 __all__ = [
     "MissingCallEvent",
     "MissingCallStage",
+    "ReplayWindowTruncatedEvent",
     "SidPollEvidence",
     "SidPollLifecycleScope",
     "SidPollOutcome",
     "SidPollResponseLastPosState",
     "emit_missing_call",
+    "emit_replay_window_truncated",
     "emit_sid_poll",
     "missing_call_json_fields",
+    "replay_window_truncated_json_fields",
     "sid_poll_json_fields",
 ]
 
@@ -375,6 +381,102 @@ def emit_sid_poll(event: SidPollEvidence) -> None:
         fields = sid_poll_json_fields(event)
         logger.info(
             "Broadcastify Calls SID poll settled",
+            extra={"json_fields": fields},
+        )
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException:
+        return
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ReplayWindowTruncatedEvent:
+    """Complete grant identity plus one exact known replay-loss interval."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    floor_reached: cursor_policy.ReplayFloorReached
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
+            message = "grant must be a LeaseGrant"
+            raise TypeError(message)
+        if self.grant.source_type is not feed_store.SourceType.BCFY_CALLS:
+            message = "replay-window telemetry requires a bcfy_calls grant"
+            raise ValueError(message)
+        if type(self.floor_reached) is not cursor_policy.ReplayFloorReached:
+            message = "floor_reached must be exact ReplayFloorReached evidence"
+            raise TypeError(message)
+
+
+def _replay_timestamp(value: datetime.datetime) -> str:
+    """Return one validated canonical UTC event timestamp."""
+    if not isinstance(value, datetime.datetime):
+        message = "replay-window timestamp must be a datetime"
+        raise TypeError(message)
+    if value.utcoffset() != datetime.timedelta(0):
+        message = "replay-window timestamp must be UTC-aware"
+        raise ValueError(message)
+    return value.isoformat()
+
+
+def replay_window_truncated_json_fields(
+    event: ReplayWindowTruncatedEvent,
+) -> dict[str, object]:
+    """Build the exact scalar schema-version-one truncation payload."""
+    if type(event) is not ReplayWindowTruncatedEvent:
+        message = "event must be an exact ReplayWindowTruncatedEvent"
+        raise TypeError(message)
+    grant = event.grant
+    evidence = event.floor_reached
+    fields: dict[str, object] = {
+        "cause": evidence.cause.value,
+        "event_type": (
+            slo_contract.EVENT_TYPE_BCFY_CALLS_REPLAY_WINDOW_TRUNCATED
+        ),
+        "fencing_token": grant.fencing_token,
+        "floor_start": _replay_timestamp(evidence.floor_start),
+        "lost_duration_seconds": evidence.lost_duration_seconds,
+        "lost_span_end": _replay_timestamp(evidence.lost_span_end),
+        "lost_span_start": _replay_timestamp(evidence.lost_span_start),
+        "owner_worker_id": str(grant.owner_worker_id),
+        "requested_start": _replay_timestamp(evidence.requested_start),
+        "schema_version": (
+            slo_contract.BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_SCHEMA_VERSION
+        ),
+        "sid": grant.lease_key,
+        "source_type": grant.source_type.value,
+    }
+    if tuple(sorted(fields)) != tuple(
+        sorted(slo_contract.BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_REQUIRED_FIELDS)
+    ):
+        message = "replay-window payload drifted from schema version one"
+        raise ValueError(message)
+    for name in ("sid", "source_type", "owner_worker_id", "cause"):
+        _require_bounded_string(
+            fields[name],
+            name=name,
+            maximum=(
+                slo_contract.BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_STRING_MAX_LENGTH
+            ),
+        )
+    duration = evidence.lost_duration_seconds
+    if (
+        not math.isfinite(duration)
+        or duration < 0
+        or duration
+        > slo_contract.BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_SECONDS_MAX
+    ):
+        message = "lost_duration_seconds is outside the bounded event contract"
+        raise ValueError(message)
+    return fields
+
+
+def emit_replay_window_truncated(event: ReplayWindowTruncatedEvent) -> None:
+    """Emit one best-effort CRITICAL event without changing cursor policy."""
+    try:
+        fields = replay_window_truncated_json_fields(event)
+        logger.critical(
+            "Broadcastify Calls replay window truncated",
             extra={"json_fields": fields},
         )
     except (KeyboardInterrupt, SystemExit):

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import unittest
 import uuid
+from unittest import mock
 
 from backend.pipeline.ingestion import feed_work_scheduler, slo_contract
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    cursor_policy,
     sid_processor,
     telemetry,
 )
@@ -20,6 +23,26 @@ _GRANT = ingestion_lease_store.LeaseGrant(
     _OWNER_ID,
     7,
 )
+_NOW = datetime.datetime(2026, 7, 13, 12, 0, tzinfo=datetime.UTC)
+
+
+def _replay_event(
+    cause: cursor_policy.ReplayFloorCause = (
+        cursor_policy.ReplayFloorCause.OVERLOAD
+    ),
+    *,
+    requested_start: datetime.datetime | None = None,
+) -> telemetry.ReplayWindowTruncatedEvent:
+    decision = cursor_policy.apply_replay_floor(
+        requested_start or (_NOW - datetime.timedelta(minutes=10)),
+        now=_NOW,
+        cause=cause,
+    )
+    assert decision.floor_reached is not None
+    return telemetry.ReplayWindowTruncatedEvent(
+        _GRANT,
+        decision.floor_reached,
+    )
 
 
 def _event(**changes: object) -> telemetry.SidPollEvidence:
@@ -165,6 +188,86 @@ class TestSidPollSchema(unittest.TestCase):
             lifecycle_reason="source_unreachable",
         )
         self.assertEqual(direct_only.item_to_feed_promotion_count, 0)
+
+
+class TestReplayWindowTruncatedTelemetry(unittest.TestCase):
+    """Pin the separate CRITICAL scalar replay-window event."""
+
+    def test_replay_window_truncated_schema_is_exact_and_distinct(self) -> None:
+        payload = telemetry.replay_window_truncated_json_fields(
+            _replay_event(),
+        )
+
+        self.assertEqual(
+            set(payload),
+            set(
+                slo_contract.BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_REQUIRED_FIELDS
+            ),
+        )
+        self.assertEqual(
+            payload["event_type"],
+            "bcfy_calls_replay_window_truncated",
+        )
+        self.assertEqual(payload["schema_version"], 1)
+        self.assertNotEqual(
+            payload["event_type"],
+            slo_contract.EVENT_TYPE_BCFY_CALLS_SID_POLL,
+        )
+        self.assertNotEqual(
+            payload["event_type"],
+            slo_contract.EVENT_TYPE_BCFY_CALLS_MISSING_CALL,
+        )
+        self.assertTrue(
+            all(
+                isinstance(value, (str, int, float))
+                for value in payload.values()
+            )
+        )
+        lowered_keys = {key.lower() for key in payload}
+        for forbidden in (
+            "url",
+            "call",
+            "calls",
+            "row_count",
+            "feed_id",
+            "feed_ids",
+            "raw_payload",
+            "outcome",
+        ):
+            self.assertNotIn(forbidden, lowered_keys)
+
+    def test_floor_equality_payload_preserves_exact_zero_duration(self) -> None:
+        floor = _NOW - datetime.timedelta(minutes=5)
+
+        for cause in cursor_policy.ReplayFloorCause:
+            with self.subTest(cause=cause):
+                payload = telemetry.replay_window_truncated_json_fields(
+                    _replay_event(cause, requested_start=floor)
+                )
+                expected = floor.isoformat()
+                self.assertEqual(payload["cause"], cause.value)
+                self.assertEqual(payload["requested_start"], expected)
+                self.assertEqual(payload["floor_start"], expected)
+                self.assertEqual(payload["lost_span_start"], expected)
+                self.assertEqual(payload["lost_span_end"], expected)
+                self.assertEqual(payload["lost_duration_seconds"], 0.0)
+
+    def test_emitter_uses_critical_and_contains_logger_failure(self) -> None:
+        event = _replay_event()
+        with mock.patch.object(telemetry.logger, "critical") as critical:
+            telemetry.emit_replay_window_truncated(event)
+        critical.assert_called_once()
+        self.assertEqual(
+            critical.call_args.kwargs["extra"]["json_fields"]["cause"],
+            "overload",
+        )
+
+        with mock.patch.object(
+            telemetry.logger,
+            "critical",
+            side_effect=RuntimeError("logging unavailable"),
+        ):
+            telemetry.emit_replay_window_truncated(event)
 
 
 class TestSidPollAccumulator(unittest.TestCase):
