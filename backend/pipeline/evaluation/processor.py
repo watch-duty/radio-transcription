@@ -110,7 +110,7 @@ class EvaluationEventProcessor:
             # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle evaluation failure.
             evaluated_payload = self.evaluation_service.evaluate(new_audio)
             if not evaluated_payload:
-                logger.info(
+                logger.error(
                     "Evaluation returned no payload for feed %s and transmission %s. Skipping.",
                     new_audio.feed_id,
                     new_audio.segment_id,
