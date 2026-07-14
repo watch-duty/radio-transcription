@@ -15,6 +15,7 @@ jobs:
       should_run: ${{ steps.check.outputs.should_run }}
       requires_backend: ${{ steps.filter.outputs.requires_backend }}
       requires_model: ${{ steps.filter.outputs.requires_model }}
+      requires_terraform: ${{ steps.filter.outputs.requires_terraform }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,6 +66,13 @@ jobs:
             echo "requires_model=true" >> $GITHUB_OUTPUT
           else
             echo "requires_model=false" >> $GITHUB_OUTPUT
+          fi
+
+          # 4. Filter C: requires_terraform. If any modified file touches terraform/ or .github/workflows/, we require terraform validation.
+          if echo "$FILES" | grep -qE '^(terraform/|\.github/workflows/)'; then
+            echo "requires_terraform=true" >> $GITHUB_OUTPUT
+          else
+            echo "requires_terraform=false" >> $GITHUB_OUTPUT
           fi
       - name: Validate merge with main (fail fast on conflicts)
         if: steps.check.outputs.should_run == 'true'
@@ -164,7 +172,7 @@ jobs:
 
   terraform-checks:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_terraform == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -174,16 +182,16 @@ jobs:
         uses: jdx/mise-action@v3
       - name: Terraform fmt check
         run: terraform fmt -check -recursive terraform/
-      - name: Terraform validate AlloyDB module
-        working-directory: terraform/modules/alloydb
+      - name: Validate Terraform modules
         run: |
-          terraform init -backend=false
-          terraform validate
-      - name: Terraform validate Container MIG module
-        working-directory: terraform/modules/container_mig
-        run: |
-          terraform init -backend=false
-          terraform validate
+          set -euo pipefail
+          find terraform/ -name "*.tf" -exec dirname {} \; | sort -u | while read -r dir; do
+            echo "=========================================="
+            echo "Validating Terraform module in: $dir"
+            echo "=========================================="
+            cd "$dir"
+            terraform init -backend=false && terraform validate
+          done
 
   run-backend-tests:
     needs: [setup]
