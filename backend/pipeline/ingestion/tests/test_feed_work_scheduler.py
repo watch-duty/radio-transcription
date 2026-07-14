@@ -1071,6 +1071,23 @@ class _CrossShardFailureExecutor:
         return _completed(execution)
 
 
+class _ExecutorIntegrityResult:
+    """Exercise both nonfatal executor-integrity retention branches."""
+
+    def __init__(self, *, raises: bool) -> None:
+        self.raises = raises
+
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
+        del execution
+        if self.raises:
+            message = "executor rejected sealed cohort evidence"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        return typing.cast("_ExecutorOutcome", object())
+
+
 class _TracingCalls:
     """Single-pass source iterator with deterministic pull observation."""
 
@@ -3184,6 +3201,84 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         snapshot = await scheduler._snapshot()
         self.assertFalse(snapshot.closed)
         self.assertEqual(snapshot.held, 1)
+
+    async def _assert_executor_integrity_settles_page(
+        self,
+        *,
+        raises: bool,
+    ) -> None:
+        """Require retained executor-integrity evidence to wake its page."""
+        scheduler_types = _scheduler_types()
+        limits = scheduler_types._SchedulerLimits(
+            shard_count=1,
+            capacity=2,
+            workers_per_shard=1,
+            high_water=1,
+            resume_at=0,
+        )
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _ExecutorIntegrityResult(raises=raises),
+            _limits=limits,
+        )
+        await scheduler.start()
+        grant = _grant()
+        lane = _open_lane(scheduler, grant)
+        feed_id = uuid.UUID(int=170 if raises else 171)
+        observed: list[object] = []
+        coverage = asyncio.create_task(
+            lane.cover_page(
+                calls=(
+                    _submission(
+                        feed_id,
+                        0,
+                        grant=grant,
+                        settlement_observer=observed.append,
+                    ),
+                ),
+                boundaries=(),
+                candidate=cursor_policy.LeaseCursor(
+                    grant,
+                    pos=None,
+                ).prepare(_SOURCE_TIME),
+            )
+        )
+        try:
+            result = await asyncio.wait_for(
+                asyncio.shield(coverage),
+                timeout=1,
+            )
+            self.assertIsInstance(result, feed_work_scheduler.Undrained)
+            self.assertEqual(observed, [])
+            snapshot = await scheduler._snapshot()
+            self.assertEqual(snapshot.held, 1)
+            self.assertEqual(snapshot.shards[0].held, 1)
+            self.assertEqual(snapshot.shards[0].queued_calls, 0)
+            self.assertEqual(snapshot.shards[0].active_calls, 0)
+            self.assertEqual(snapshot.shards[0].active_feeds, {feed_id})
+            self.assertEqual(len(snapshot.shards[0].records), 1)
+            self.assertEqual(snapshot.shards[0].records[0].feed_id, feed_id)
+            self.assertIsNone(snapshot.shards[0].records[0].worker_slot)
+            self.assertFalse(snapshot.fatal)
+            self.assertIsInstance(
+                await lane.close(
+                    feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN
+                ),
+                feed_work_scheduler.Undrained,
+            )
+        finally:
+            if not coverage.done():
+                coverage.cancel()
+                await asyncio.gather(coverage, return_exceptions=True)
+
+    async def test_executor_raised_integrity_settles_page_undrained(
+        self,
+    ) -> None:
+        await self._assert_executor_integrity_settles_page(raises=True)
+
+    async def test_invalid_executor_outcome_settles_page_undrained(
+        self,
+    ) -> None:
+        await self._assert_executor_integrity_settles_page(raises=False)
 
     async def test_close_before_coverage_returns_no_receipt(self) -> None:
         scheduler_types = _scheduler_types()

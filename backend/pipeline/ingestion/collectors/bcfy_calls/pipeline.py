@@ -68,6 +68,11 @@ _PUBSUB_RETRYABLE = (
     google_exceptions.Cancelled,
     pubsub_exceptions.PublishToPausedOrderingKeyException,
 )
+_PUBSUB_DIRECT_FAILURES = (
+    *_PUBSUB_RETRYABLE,
+    google_exceptions.GoogleAPICallError,
+    pubsub_exceptions.MessageTooLargeError,
+)
 
 
 class _CommitAccepted(enum.Enum):
@@ -981,7 +986,7 @@ class BcfyCallsCohortExecutor:
                     state.entry.obligation,
                     state.call.identity,
                 )
-            elif isinstance(publication.failure, _PUBSUB_RETRYABLE):
+            elif isinstance(publication.failure, _PUBSUB_DIRECT_FAILURES):
                 state.publication_reason = (
                     CohortRecordTerminalReason.PUBLICATION_EXHAUSTED
                 )

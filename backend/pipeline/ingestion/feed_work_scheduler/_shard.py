@@ -2054,6 +2054,7 @@ class _Shard:
         cohort: _types._CohortRecord,
         failure: BaseException,
     ) -> None:
+        """Retain executor-integrity evidence and wake its exact page."""
         async with self._lock:
             self._retain_active_locked(
                 slot_id,
@@ -2061,6 +2062,8 @@ class _Shard:
                 integrity_failure=failure,
             )
             self._check_conservation_locked()
+        if self._page_terminal_observer is not None:
+            self._page_terminal_observer(cohort, None, failure)
 
     async def _retain_worker_failure(
         self,
@@ -2069,8 +2072,6 @@ class _Shard:
         failure: BaseException,
     ) -> None:
         """Retain active integrity evidence before publishing shard failure."""
-        if self._page_terminal_observer is not None:
-            self._page_terminal_observer(cohort, None, failure)
         await self._retain_invalid_active(slot_id, cohort, failure)
         await self._mark_fatal(failure)
 

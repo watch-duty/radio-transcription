@@ -12,6 +12,7 @@ from unittest import mock
 
 import pytest
 from google.api_core import exceptions as google_exceptions
+from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 
 from backend.pipeline.ingestion import feed_work_scheduler
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
@@ -572,6 +573,56 @@ async def test_publication_exhaustion_does_not_suppress_later_sibling() -> None:
     )
     assert outcome.facts.records[0].direct_failure is not None
     assert outcome.facts.records[1].full_pipeline_completed
+    assert tuple(ledger.state(entry.obligation) for entry in entries) == (
+        gap_ledger.MissingCallState.EMITTED,
+        gap_ledger.MissingCallState.RESOLVED,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "publication_failure",
+    [
+        google_exceptions.PermissionDenied("publisher permission denied"),
+        google_exceptions.InvalidArgument("invalid publish request"),
+        google_exceptions.NotFound("topic not found"),
+        google_exceptions.FailedPrecondition("topic precondition failed"),
+        pubsub_exceptions.MessageTooLargeError("message too large"),
+    ],
+    ids=(
+        "permission-denied",
+        "invalid-argument",
+        "not-found",
+        "failed-precondition",
+        "message-too-large",
+    ),
+)
+async def test_definitive_publication_failure_continues_later_sibling(
+    publication_failure: Exception,
+) -> None:
+    grant = _grant()
+    member = _member(grant)
+    ledger = gap_ledger.MissingCallLedger(grant, 3)
+    entries = (_entry(member, 1, ledger), _entry(member, 2, ledger))
+    payload = pipeline.ScheduledCohortPayload(member, "session", entries)
+    execution, _known, retained = _execution(grant, payload)
+    operations = _Operations()
+    operations.publish_failures[entries[0].audio_url] = publication_failure
+
+    outcome = await _executor(operations, _Committer()).execute(execution)
+
+    assert isinstance(outcome, feed_work_scheduler.CallCompleted)
+    assert retained == []
+    assert operations.published == [entry.audio_url for entry in entries]
+    first, second = outcome.facts.records
+    assert first.terminal_reason is (
+        feed_work_scheduler.CohortRecordTerminalReason.PUBLICATION_EXHAUSTED
+    )
+    assert first.direct_failure is not None
+    assert first.direct_failure.status_reason is (
+        feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+    )
+    assert second.full_pipeline_completed
     assert tuple(ledger.state(entry.obligation) for entry in entries) == (
         gap_ledger.MissingCallState.EMITTED,
         gap_ledger.MissingCallState.RESOLVED,
