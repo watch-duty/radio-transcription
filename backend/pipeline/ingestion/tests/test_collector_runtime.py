@@ -33,6 +33,12 @@ from backend.pipeline.ingestion.collector_runtime import (
     _PipelineFailure,
 )
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    cursor_policy as bcfy_calls_cursor_policy,
+)
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    pipeline as bcfy_calls_pipeline,
+)
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
     provider as bcfy_calls_provider,
 )
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
@@ -323,6 +329,7 @@ def _make_settings(**overrides) -> mock.MagicMock:
         "rss_watchdog_warmup_sec": 0.0,
         "audio_staging_bucket": "test-bucket",
         "continuous_pubsub_topic_path": "projects/p/topics/t",
+        "segmented_pubsub_topic_path": "projects/p/topics/segmented",
         "db": AlloyDBSettings(
             host="10.0.0.1",
             port=6432,
@@ -2149,10 +2156,10 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         )
         http_session = mock.AsyncMock()
 
-        def scheduler_factory(data_store, actor_id):
+        def scheduler_factory(resources):
             order.append("scheduler_factory")
-            self.assertIs(data_store._pool, data_pool)
-            self.assertEqual(actor_id, rt._runtime_actor_id)
+            self.assertIs(resources.data_store._pool, data_pool)
+            self.assertEqual(resources.actor_id, rt._runtime_actor_id)
             self.assertIs(rt._data_pool, data_pool)
             self.assertIs(rt._heartbeat_pool, heartbeat_pool)
             self.assertIs(rt._http_session, http_session)
@@ -2254,6 +2261,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         sid_provider_factory=None,
         sid_runner_factory=None,
         scheduler_factory=None,
+        feed_failure_threshold: int = 3,
     ) -> CollectorRuntime:
         rt = CollectorRuntime(
             capture_fn=mock.AsyncMock(),
@@ -2268,6 +2276,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
                     is not None
                     else {}
                 ),
+                feed_failure_threshold=feed_failure_threshold,
             ),
             runtime_actor_id=_RUNTIME_ACTOR_ID,
             sid_store_factory=sid_store_factory,
@@ -2311,7 +2320,9 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         self.assertIn(SourceType.BCFY_CALLS, rt._store._claim_types)
         self.assertIn(SourceType.BCFY_CALLS, rt._heartbeat_store._claim_types)
 
-    async def test_sid_only_dormant_constructs_without_claims(self) -> None:
+    async def test_sid_claim_payload_identity_and_claim_mode_are_preserved(
+        self,
+    ) -> None:
         data_store = mock.AsyncMock(
             spec=ingestion_lease_store.IngestionLeaseStore
         )
@@ -2345,7 +2356,10 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             rt._compose_supervisor()
         await rt._supervisor.admit_cycle(_WORKER_ID)
 
-        scheduler_factory.assert_called_once_with(data_store, _RUNTIME_ACTOR_ID)
+        scheduler_factory.assert_called_once()
+        scheduler_resources = scheduler_factory.call_args.args[0]
+        self.assertIs(scheduler_resources.data_store, data_store)
+        self.assertEqual(scheduler_resources.actor_id, _RUNTIME_ACTOR_ID)
         provider_factory.assert_called_once_with(
             rt._capture_resources.http_session,
             source_runtime_specs.url_base_for(SourceType.BCFY_CALLS),
@@ -2363,12 +2377,78 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
         )
-        payload = sid_grant_control.SidClaimPayload(
-            _lease_snapshot(),
-            grant_control.ClaimMode.RECOVERY,
+        retained_failure = dataclasses.replace(
+            _lease_snapshot(status=FeedStatus.FAILING),
+            failure_count=2,
+            status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
         )
-        processor = processor_factory(grant, payload, mock.sentinel.lane)
-        self.assertIs(processor._claim_payload, payload)
+        recovery_looking_primary = dataclasses.replace(
+            _lease_snapshot(status=FeedStatus.FAILING),
+            failure_count=4,
+            retry_after=datetime.datetime(
+                2026,
+                7,
+                11,
+                13,
+                0,
+                tzinfo=datetime.UTC,
+            ),
+            status_reason=FeedStatusReason.SOURCE_RATE_LIMITED,
+        )
+        cases = (
+            (
+                sid_grant_control.SidClaimPayload(
+                    _lease_snapshot(),
+                    grant_control.ClaimMode.RECOVERY,
+                ),
+                bcfy_calls_cursor_policy.ReplayFloorCause.RECOVERY,
+            ),
+            (
+                sid_grant_control.SidClaimPayload(
+                    retained_failure,
+                    grant_control.ClaimMode.RECOVERY,
+                ),
+                bcfy_calls_cursor_policy.ReplayFloorCause.RECOVERY,
+            ),
+            (
+                sid_grant_control.SidClaimPayload(
+                    recovery_looking_primary,
+                    grant_control.ClaimMode.PRIMARY,
+                ),
+                bcfy_calls_cursor_policy.ReplayFloorCause.BOOTSTRAP,
+            ),
+        )
+        for payload, expected_cause in cases:
+            with self.subTest(payload=payload, cause=expected_cause):
+                processor = processor_factory(
+                    grant,
+                    payload,
+                    mock.sentinel.lane,
+                )
+                member = _lease_member(
+                    grant,
+                    _FEED_ID,
+                    group_id="45",
+                    cursor=None,
+                )
+                processor._apply_initial_snapshot(
+                    ingestion_lease_store.MembershipSnapshot(
+                        grant=grant,
+                        membership_revision=1,
+                        members=(member,),
+                        excluded_count=0,
+                    )
+                )
+                self.assertIs(processor._claim_payload, payload)
+                self.assertIs(processor._initial_floor_cause, expected_cause)
+                self.assertIs(
+                    processor._poll_emitter,
+                    collector_runtime.bcfy_calls_telemetry.emit_sid_poll,
+                )
+                self.assertIs(
+                    processor._replay_floor_emitter,
+                    collector_runtime.bcfy_calls_telemetry.emit_replay_window_truncated,
+                )
         self.assertEqual(
             store_factory.call_args_list,
             [mock.call(rt._data_pool), mock.call(rt._heartbeat_pool)],
@@ -2407,10 +2487,10 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             store_factory.call_args_list,
             [mock.call(rt._data_pool), mock.call(rt._heartbeat_pool)],
         )
-        scheduler_factory.assert_called_once_with(
-            data_store,
-            _RUNTIME_ACTOR_ID,
-        )
+        scheduler_factory.assert_called_once()
+        scheduler_resources = scheduler_factory.call_args.args[0]
+        self.assertIs(scheduler_resources.data_store, data_store)
+        self.assertEqual(scheduler_resources.actor_id, _RUNTIME_ACTOR_ID)
         provider_factory.assert_called_once_with(
             rt._capture_resources.http_session,
             source_runtime_specs.url_base_for(SourceType.BCFY_CALLS),
@@ -2516,13 +2596,16 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(store_factory.call_count, 2)
         provider_factory.assert_called_once()
-        scheduler_factory.assert_called_once_with(
+        scheduler_factory.assert_called_once()
+        scheduler_resources = scheduler_factory.call_args.args[0]
+        self.assertIs(
+            scheduler_resources.data_store,
             store_factory.return_value,
-            _RUNTIME_ACTOR_ID,
         )
+        self.assertEqual(scheduler_resources.actor_id, _RUNTIME_ACTOR_ID)
         self.assertIsNone(rt._feed_work_scheduler)
 
-    async def test_default_scheduler_has_real_boundary_and_fail_closed_calls(
+    def test_default_scheduler_composes_real_cohort_and_page_finalizer(
         self,
     ) -> None:
         constructed = object()
@@ -2530,60 +2613,90 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             ingestion_lease_store.IngestionLeaseStore,
             instance=True,
         )
+        settings = _make_settings(feed_failure_threshold=7)
+        policy = ingestion_lease_store.BudgetedFailure(7, 15, 600)
+        resources = collector_runtime._SidSchedulerResources(
+            data_store=data_store,
+            calls_provider=mock.create_autospec(
+                bcfy_calls_provider.CallsProviderClient,
+                instance=True,
+            ),
+            http_session=mock.create_autospec(
+                aiohttp.ClientSession,
+                instance=True,
+            ),
+            gcs_client=mock.Mock(),
+            pubsub_client=mock.Mock(),
+            settings=settings,
+            actor_id=_RUNTIME_ACTOR_ID,
+            budgeted_failure=policy,
+        )
         with mock.patch.object(
             collector_runtime.feed_work_scheduler,
             "FeedWorkScheduler",
             return_value=constructed,
         ) as scheduler_constructor:
             result = collector_runtime._create_sid_feed_work_scheduler(
-                data_store,
-                _RUNTIME_ACTOR_ID,
+                resources,
             )
 
         self.assertIs(result, constructed)
         scheduler_constructor.assert_called_once()
         executor = scheduler_constructor.call_args.args[0]
         committer = scheduler_constructor.call_args.kwargs["boundary_committer"]
+        finalizer = scheduler_constructor.call_args.kwargs["page_finalizer"]
         self.assertIsInstance(
-            executor, collector_runtime._UnconnectedCallExecutor
+            executor,
+            bcfy_calls_pipeline.BcfyCallsCohortExecutor,
         )
         self.assertIsInstance(
             committer,
             bcfy_calls_runtime_adapters.FencedBoundaryCommitter,
         )
+        self.assertIsInstance(
+            finalizer,
+            bcfy_calls_runtime_adapters.FencedPageFinalizer,
+        )
         self.assertIs(committer._store, data_store)
-        grant = ingestion_lease_store.LeaseGrant(
-            SourceType.BCFY_CALLS,
-            "123",
-            _WORKER_ID,
-            1,
-        )
-
-        with self.assertRaisesRegex(
-            feed_work_scheduler.SchedulerIntegrityError,
-            "call executor is unconnected",
-        ):
-            await executor.execute(execution=cast("Any", object()))
-
-        snapshot = _lease_snapshot()
-        data_store.commit_child_mutations.return_value = _committed_child_batch(
-            snapshot,
-            ingestion_lease_store.ChildMutationBatch(
-                mutations=(),
-                lease_effect=ingestion_lease_store.NoLeaseEffect(),
-            ),
-        )
-        boundary_result = await committer.commit(
-            grant,
-            (),
-            final_logical=True,
-        )
-
+        self.assertIs(executor._committer, committer)
+        self.assertIs(finalizer._store, data_store)
+        self.assertIs(finalizer.budgeted_failure, policy)
         self.assertEqual(
-            boundary_result,
-            feed_work_scheduler.BoundaryBatchCommitted(()),
+            executor._topic_path, settings.segmented_pubsub_topic_path
         )
-        data_store.commit_child_mutations.assert_awaited_once()
+        source = Path(collector_runtime.__file__).read_text()
+        self.assertNotIn("BudgetedFailure()", source)
+
+    async def test_runtime_composes_one_explicit_threshold_7_budgeted_policy(
+        self,
+    ) -> None:
+        profile = worker_profiles.SID_DORMANT_PROFILE
+        scheduler = _ControlledProcessScheduler()
+        scheduler_factory = mock.Mock(return_value=scheduler)
+        rt = self._runtime(
+            profile,
+            scheduler_factory=scheduler_factory,
+            feed_failure_threshold=7,
+        )
+        constructor = ingestion_lease_store.BudgetedFailure
+
+        with mock.patch.object(
+            collector_runtime.ingestion_lease_store,
+            "BudgetedFailure",
+            side_effect=constructor,
+        ) as budgeted_failure_constructor:
+            await rt._start_feed_work_scheduler()
+
+        budgeted_failure_constructor.assert_called_once_with(
+            failure_threshold=7,
+            backoff_base_sec=15,
+            backoff_max_sec=600,
+        )
+        resources = scheduler_factory.call_args.args[0]
+        self.assertEqual(
+            resources.budgeted_failure,
+            ingestion_lease_store.BudgetedFailure(7, 15, 600),
+        )
 
     async def test_quarantine_observer_adds_static_runtime_context(
         self,
@@ -2710,14 +2823,14 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
 
         data_store.commit_child_mutations.side_effect = commit_child_mutations
 
-        def scheduler_factory(data_store_arg, actor_id):
-            self.assertIs(data_store_arg, data_store)
+        def scheduler_factory(resources):
+            self.assertIs(resources.data_store, data_store)
             return feed_work_scheduler.FeedWorkScheduler(
                 call_executor,
                 boundary_committer=(
                     bcfy_calls_runtime_adapters.FencedBoundaryCommitter(
-                        data_store_arg,
-                        actor_id=actor_id,
+                        resources.data_store,
+                        actor_id=resources.actor_id,
                     )
                 ),
             )

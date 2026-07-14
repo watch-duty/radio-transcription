@@ -58,6 +58,9 @@ from backend.pipeline.ingestion.collectors.bcfy_calls import (
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     sid_runner as bcfy_calls_sid_runner,
 )
+from backend.pipeline.ingestion.collectors.bcfy_calls import (
+    telemetry as bcfy_calls_telemetry,
+)
 from backend.pipeline.ingestion.failure_classifiers import pubsub
 from backend.pipeline.ingestion.health_server import HealthState
 from backend.pipeline.ingestion.models import (
@@ -315,31 +318,49 @@ def _sid_fencing_token(grant: ingestion_lease_store.LeaseGrant) -> int:
     return grant.fencing_token
 
 
-class _UnconnectedCallExecutor:
-    """Fail closed until Phase 6 wires the durable SID call pipeline."""
+@dataclasses.dataclass(frozen=True, slots=True)
+class _SidSchedulerResources:
+    """Complete process-owned resources for the one Calls scheduler."""
 
-    async def execute(
-        self,
-        execution: feed_work_scheduler.CallExecution,
-    ) -> typing.Never:
-        del execution
-        message = "Phase 5 call executor is unconnected"
-        raise feed_work_scheduler.SchedulerIntegrityError(message)
+    data_store: ingestion_lease_store.IngestionLeaseStore
+    calls_provider: bcfy_calls_provider.CallsProviderClient
+    http_session: aiohttp.ClientSession
+    gcs_client: gcs_client.GcsClient
+    pubsub_client: pubsub_client.PubSubClient
+    settings: CollectorSettings
+    actor_id: str
+    budgeted_failure: ingestion_lease_store.BudgetedFailure
 
 
 def _create_sid_feed_work_scheduler(
-    data_store: ingestion_lease_store.IngestionLeaseStore,
-    actor_id: str,
+    resources: _SidSchedulerResources,
 ) -> feed_work_scheduler.FeedWorkScheduler:
-    """Create the sole SID scheduler with fenced quiet progress only."""
-    return feed_work_scheduler.FeedWorkScheduler(
-        _UnconnectedCallExecutor(),
-        boundary_committer=(
-            bcfy_calls_runtime_adapters.FencedBoundaryCommitter(
-                data_store,
-                actor_id=actor_id,
-            )
+    """Create the sole SID scheduler with the complete Calls pipeline."""
+    boundary_committer = bcfy_calls_runtime_adapters.FencedBoundaryCommitter(
+        resources.data_store,
+        actor_id=resources.actor_id,
+    )
+    executor = bcfy_calls_pipeline.BcfyCallsCohortExecutor(
+        http_session=resources.http_session,
+        calls_provider=resources.calls_provider,
+        gcs_client=resources.gcs_client,
+        pubsub_client=resources.pubsub_client,
+        committer=boundary_committer,
+        settings=resources.settings,
+        topic_path=resolve_topic_path(
+            SourceType.BCFY_CALLS, resources.settings
         ),
+    )
+    page_finalizer = bcfy_calls_runtime_adapters.FencedPageFinalizer(
+        resources.data_store,
+        actor_id=resources.actor_id,
+        budgeted_failure=resources.budgeted_failure,
+        boundary_settled_utc=lambda: datetime.datetime.now(datetime.UTC),
+    )
+    return feed_work_scheduler.FeedWorkScheduler(
+        executor,
+        boundary_committer=boundary_committer,
+        page_finalizer=page_finalizer,
     )
 
 
@@ -390,7 +411,7 @@ type _SidRunnerFactory = Callable[
     ],
 ]
 type _SchedulerFactory = Callable[
-    [ingestion_lease_store.IngestionLeaseStore, str],
+    [_SidSchedulerResources],
     object,
 ]
 
@@ -631,9 +652,22 @@ class CollectorRuntime:
         ):
             message = "SID provider factory returned an invalid provider"
             raise TypeError(message)
+        budgeted_failure = ingestion_lease_store.BudgetedFailure(
+            failure_threshold=self._collector_settings.feed_failure_threshold,
+            backoff_base_sec=feed_lifecycle.DEFAULT_BACKOFF_BASE_SEC,
+            backoff_max_sec=feed_lifecycle.DEFAULT_BACKOFF_MAX_SEC,
+        )
         candidate = self._scheduler_factory(
-            self._sid_data_store,
-            self._runtime_actor_id,
+            _SidSchedulerResources(
+                data_store=self._sid_data_store,
+                calls_provider=self._sid_calls_provider,
+                http_session=self._http_session,
+                gcs_client=self._gcs_client,
+                pubsub_client=self._pubsub_client,
+                settings=self._collector_settings,
+                actor_id=self._runtime_actor_id,
+                budgeted_failure=budgeted_failure,
+            )
         )
         if not _is_feed_work_scheduler(candidate):
             message = "scheduler factory returned an invalid scheduler"
@@ -723,6 +757,10 @@ class CollectorRuntime:
                         _calls_provider,
                         lane,
                         now=lambda: datetime.datetime.now(datetime.UTC),
+                        poll_emitter=bcfy_calls_telemetry.emit_sid_poll,
+                        replay_floor_emitter=(
+                            bcfy_calls_telemetry.emit_replay_window_truncated
+                        ),
                     )
 
                 sid_runner: grant_control.GrantRunner[
