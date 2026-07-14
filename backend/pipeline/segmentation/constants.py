@@ -23,6 +23,15 @@ MAX_WINDMILL_BUNDLE_DURATION_SEC: Final = 60.0
 # instantaneous heap unrolls from flooding memory with thousands of in-flight GCS futures.
 MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 300
 
+# Number of chunks to prefetch ahead in the sliding window to bound background task queue
+# length and prevent connection pool exhaustion and task duplicates when bundles are clamped.
+PREFETCH_WINDOW_SIZE: Final = 20
+
+# Maximum waiting tasks allowed in the shared thread pool queue before we bypass prefetching
+# to apply global backpressure and prevent pool starvation across multiple active feeds.
+MAX_PREFETCH_QUEUE_DEPTH: Final = 15
+
+
 # Resilient Runner V2 Gate: Minimum timer advancement (in seconds) to satisfy Dataflow Streaming
 # Engine forward-progression invariants. In Apache Beam, scheduling a self-chaining recursive timer
 # at un-advanced Event-Time (`timestamp + 0`) risks triggering un-progressed circular watermark

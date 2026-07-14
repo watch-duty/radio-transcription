@@ -48,6 +48,7 @@ from backend.pipeline.segmentation.datatypes import (
     StitchAudioConfig,
     TimeRange,
 )
+from backend.pipeline.segmentation.transforms import stitcher_engine
 from backend.pipeline.segmentation.transforms.stateful import (
     SHARED_RESOURCE_HANDLE,
     OrderedStitchAudioFn,
@@ -1777,6 +1778,204 @@ class OrderedStitchAudioTest(unittest.TestCase):
             # If not exceeded (e.g. 50 seconds elapsed)
             mock_mono.return_value = 150.0
             self.assertFalse(fn._is_bundle_budget_exhausted())
+
+    @patch("backend.pipeline.segmentation.transforms.stateful.time.monotonic")
+    def test_prefetch_sliding_window_and_cancellation(
+        self, mock_mono: MagicMock
+    ) -> None:
+        """Verifies sliding window prefetching behavior and cancellation of unused tasks."""
+        order_config = OrderRestorerConfig(
+            out_of_order_timeout_ms=5000, chunk_duration_ms=1000
+        )
+        stitch_config = get_test_stitch_config()
+
+        fn = OrderedStitchAudioFn(
+            order_config=order_config, stitch_config=stitch_config
+        )
+        # Mock engine, processor, executor
+        fn.engine = MagicMock()
+        fn.engine.executor = MagicMock()
+
+        # We will mock the prefetch helper methods on engine
+        mock_futures = {}
+
+        def mock_submit_single_prefetch(uri, logger):
+            f = MagicMock()
+            mock_futures[uri] = f
+            return f
+
+        fn.engine.submit_single_prefetch.side_effect = (
+            mock_submit_single_prefetch
+        )
+
+        def mock_prefetch_audio_futures(chunks, logger):
+            res = {}
+            for c in chunks:
+                f = mock_submit_single_prefetch(c.gcs_uri, logger)
+                if f is not None:
+                    res[c.gcs_uri] = f
+            return res
+
+        fn.engine.prefetch_audio_futures.side_effect = (
+            mock_prefetch_audio_futures
+        )
+
+        # Mock process_ordering_chunk to simulate processing
+        def mock_process_ordering_chunk(chunk, **kwargs):
+            res = MagicMock()
+            res.outputs = []
+            res.next_context = ActiveStitchingState(
+                session_id="session",
+                feed_metadata=FeedMetadata(feed_name="feed"),
+                out_of_order_buffer=[],
+                order_timer_active=True,
+            )
+            res.next_expected_ts = chunk.timestamp_ms + 1000
+            res.next_last_start_ms = None
+            return res
+
+        fn.engine.process_ordering_chunk.side_effect = (
+            mock_process_ordering_chunk
+        )
+
+        # Let's create a list of 5 chunks
+        chunks = [
+            BufferedChunk(
+                timestamp_ms=100000 + i * 1000, gcs_uri=f"gs://bucket/c{i}.flac"
+            )
+            for i in range(5)
+        ]
+
+        # Let's set PREFETCH_WINDOW_SIZE to 2 dynamically for this test
+        with patch(
+            "backend.pipeline.segmentation.constants.PREFETCH_WINDOW_SIZE", 2
+        ):
+            # Mock state cells
+            class MockValueState:
+                def __init__(self, initial=None) -> None:
+                    self.val = initial
+
+                def read(self):
+                    return self.val
+
+                def write(self, val):
+                    self.val = val
+
+                def clear(self):
+                    self.val = None
+
+            class MockBagState:
+                def __init__(self) -> None:
+                    self.items = []
+
+                def read(self):
+                    return self.items
+
+                def add(self, val):
+                    self.items.append(val)
+
+                def clear(self):
+                    self.items = []
+
+            transmission_context_state = MockValueState(
+                ActiveStitchingState(
+                    session_id="session",
+                    feed_metadata=FeedMetadata(feed_name="feed"),
+                    out_of_order_buffer=[],
+                    order_timer_active=True,
+                    expected_next_chunk_start_ms=100000,
+                )
+            )
+            last_start_ms_state = MockValueState(None)
+            out_of_order_buffer_state = MockBagState()
+            deferred_drain_timer = MagicMock()
+            timer_manager = MagicMock()
+
+            # Mock _is_bundle_budget_exhausted behavior:
+            # We want budget to be exhausted *after* processing the first 2 chunks (i.e. i=1 processed, i=2 is checked).
+            # So budget is not exhausted at start_bundle (monotonic = 100.0)
+            fn.start_bundle()
+            fn.bundle_start_time_monotonic = 100.0
+
+            # time.monotonic() is called inside _is_bundle_budget_exhausted()
+            # Loop index i=0: i>0 is False, so budget check bypassed.
+            # Loop index i=1: i>0 is True. _is_bundle_budget_exhausted is called.
+            # Let's return 101.0 (elapsed 1s < 60s), so NOT exhausted.
+            # Loop index i=2: i>0 is True. _is_bundle_budget_exhausted is called.
+            # Let's return 200.0 (elapsed 100s > 60s), so EXHAUSTED!
+            # The loop breaks. Remaining chunks (2, 3, 4) are added back to out_of_order_buffer_state.
+            # Unused futures for remaining chunks (2, 3, 4) should be cancelled!
+
+            mock_mono.side_effect = [
+                101.0,  # inside _is_bundle_budget_exhausted for i=1
+                200.0,  # inside _is_bundle_budget_exhausted for i=2
+            ]
+
+            fn._execute_bundle_chunks(
+                elements_to_emit=chunks,
+                feed_id="feed",
+                curr_context=transmission_context_state.read(),
+                last_start_ms=None,
+                timer_manager=timer_manager,
+                previous_expected_ts=100000,
+                is_backfill=False,
+                out_of_order_buffer_state=out_of_order_buffer_state,
+                deferred_drain_timer=deferred_drain_timer,
+                timestamp=Timestamp(100),
+                transmission_context_state=transmission_context_state,
+                last_start_ms_state=last_start_ms_state,
+            )
+
+            # Let's verify prefetch was called on chunks 0 and 1 initially (since window size is 2)
+            # Then chunk 2 (at i=0) and chunk 3 (at i=1)
+            # Chunk 4 should NOT have been prefetched since we broke at i=2 (before prefetching i=2+2=4).
+            self.assertIn("gs://bucket/c0.flac", mock_futures)
+            self.assertIn("gs://bucket/c1.flac", mock_futures)
+            self.assertIn("gs://bucket/c2.flac", mock_futures)
+            self.assertIn("gs://bucket/c3.flac", mock_futures)
+            self.assertNotIn("gs://bucket/c4.flac", mock_futures)
+
+            # verify cancel was called on futures for chunks 2 and 3 because they were not processed
+            mock_futures["gs://bucket/c2.flac"].cancel.assert_called_once()
+            mock_futures["gs://bucket/c3.flac"].cancel.assert_called_once()
+
+            # verify cancel was NOT called on futures for chunks 0 and 1 because they were processed
+            mock_futures["gs://bucket/c0.flac"].cancel.assert_not_called()
+            mock_futures["gs://bucket/c1.flac"].cancel.assert_not_called()
+
+    def test_prefetch_global_backpressure(self) -> None:
+        """Verifies submit_single_prefetch bypasses prefetching when thread pool queue depth is high."""
+        # Instantiate StitcherEngine with mocked config/dependencies
+
+        engine = stitcher_engine.StitcherEngine(
+            stitch_config=get_test_stitch_config(),
+            order_config=OrderRestorerConfig(),
+        )
+        engine.executor = MagicMock()
+
+        # Mock _work_queue on executor
+        mock_work_queue = MagicMock()
+        engine.executor._work_queue = mock_work_queue
+
+        # Case 1: Queue depth is below threshold (e.g. 5 < 15)
+        mock_work_queue.qsize.return_value = 5
+        mock_future = MagicMock()
+        engine.executor.submit.return_value = mock_future
+
+        logger = MagicMock()
+        res = engine.submit_single_prefetch("gs://bucket/audio.flac", logger)
+
+        self.assertEqual(res, mock_future)
+        engine.executor.submit.assert_called_once()
+
+        # Case 2: Queue depth is at/above threshold (e.g. 15 >= 15)
+        engine.executor.submit.reset_mock()
+        mock_work_queue.qsize.return_value = 15
+
+        res = engine.submit_single_prefetch("gs://bucket/audio2.flac", logger)
+
+        self.assertIsNone(res)
+        engine.executor.submit.assert_not_called()
 
     @patch(
         "backend.pipeline.segmentation.audio.processor.SegmentationAudioProcessor"
