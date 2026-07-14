@@ -64,7 +64,7 @@ async def list_audio_segments(
     end_time: datetime.datetime | None = None,
     order: SortOrder = SortOrder.DESC,
     *,
-    is_alert: bool | None = None,
+    is_alert: Annotated[bool | None, Query(default=None)] = None,
     text_query: Annotated[
         str | None,
         Query(
