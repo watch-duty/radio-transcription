@@ -285,8 +285,7 @@ async def test_exact_heartbeat_rejects_stale_fence_without_writing(
         owner_worker_id=owner,
         fencing_token=19,
         last_heartbeat=(
-            datetime.datetime.now(datetime.UTC)
-            - datetime.timedelta(minutes=2)
+            datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=2)
         ),
     )
     store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
@@ -333,8 +332,7 @@ async def test_neutral_release_and_reclaim_invalidate_old_grant(
         owner_worker_id=owner,
         fencing_token=41,
         last_heartbeat=(
-            datetime.datetime.now(datetime.UTC)
-            - datetime.timedelta(minutes=1)
+            datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=1)
         ),
         failure_count=3,
         retry_after=retry_after,
