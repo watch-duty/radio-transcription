@@ -1,7 +1,7 @@
 # AlloyDB point-in-time recovery with an external authority fence
 
-**Runbook version:** 1.1  
-**Status:** **REVIEWED — NOT EXERCISED; LIVE USE BLOCKED BY GATE 0**  
+**Runbook version:** 1.1
+**Status:** **REVIEWED — NOT EXERCISED; LIVE USE BLOCKED BY GATE 0**
 **Scope:** out-of-place restoration of the production AlloyDB timeline and a
 coherent switch of every checked-in database consumer
 
@@ -60,13 +60,13 @@ marked `BLOCKED` cannot be completed by an improvised `gcloud` command.
 | # | Endpoint consumer | Checked-in execution surface | Present control | Gate 0 result |
 |---:|---|---|---|---|
 | 1 | `audio_segments_api` | Cloud Run v2 service | no no-database maintenance revision, complete invoker fence, or drain proof | **BLOCKED** |
-| 2 | `bcfy_calls_sid_operation` | manually invoked Cloud Run v2 Job | no durable execution-disable sentinel; secret reference is `latest` | **BLOCKED** |
+| 2 | `bcfy_calls_sid_operation` | manually invoked Cloud Run v2 Job | numeric Secret Manager version is pinned; no durable execution-disable sentinel | **BLOCKED** |
 | 3 | `collector_mig` | regional MIG, two worker slots per VM | process stop is available through `ingestion_maintenance_mode` and the exact absence procedure, but the template embeds `ALLOYDB_PASSWORD` as a raw Terraform/user-data value rather than a numeric immutable secret binding | **INCOMPLETE — BLOCKED** |
 | 4 | `echo_ingestion` | Eventarc trigger to a min-one Cloud Run v2 service | Eventarc has delete but no pause; no checked-in reversible trigger/service fence or drain proof | **BLOCKED** |
 | 5 | `feed_store` | Cloud Run v2 service | no no-database maintenance revision, complete invoker fence, or drain proof | **BLOCKED** |
 | 6 | `oldest_feed_publisher` | Cloud Scheduler to Cloud Run v2 service | Scheduler can be paused, but the service remains invocable and may have an in-flight request | **INCOMPLETE — BLOCKED** |
 | 7 | `rules_management` | Cloud Run v2 service | no no-database maintenance revision, complete invoker fence, or drain proof | **BLOCKED** |
-| 8 | `schema_migration` | Terraform-triggered and manually invocable Cloud Run v2 Job | no durable execution-disable sentinel; secret reference is `latest`; Terraform can invoke it | **BLOCKED** |
+| 8 | `schema_migration` | Terraform-triggered and manually invocable Cloud Run v2 Job | numeric Secret Manager version is pinned; no durable execution-disable sentinel; Terraform can invoke it | **BLOCKED** |
 
 Cloud Run `min_instance_count=0` is not a stop control: a request can create an
 instance. Removing one known invoker is not a complete fence: another principal,
@@ -124,8 +124,8 @@ A future reviewed deployment change must add one coherent
 - makes both Cloud Run Jobs non-executable by default, suppresses Terraform
   auto-execution, cancels and proves absent every nonterminal execution, and
   permits only one reviewed, generation-bound controlled execution;
-- pins numeric Secret Manager versions for the recovery window instead of
-  resolving `latest`;
+- preserves the Jobs' numeric Secret Manager pins and adds equivalent numeric
+  bindings to every recovery consumer for the complete recovery window;
 - adds a separately reviewed internal-automation fence that disables and drains
   the exact source `pg_cron` Jobs, holds a restored primary with
   `alloydb.enable_pg_cron=off` (or an equivalently proved inert setting), and
@@ -866,8 +866,9 @@ re-fence the already-enabled restored groups before evaluating fallback.
 and old fleet still externally fenced; exact internal Jobs active only on
 restored; final 004 comparator success.
 
-**Evidence:** Startup/fence rows, bootstrap/soak raw-log object IDs and hashes,
-reducer results, all-eight topology proof, control-restoration report, and signed
+**Evidence:** Startup/fence rows, bootstrap/soak reducer-safe projected-event
+population object IDs and hashes, reducer results, all-eight topology proof,
+control-restoration report, and signed
 acceptance decision, plus both internal ledgers and final cron/004 proofs.
 
 **Stop condition:** Any old process, stale endpoint, non-monotonic fence,
