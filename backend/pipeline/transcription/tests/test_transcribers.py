@@ -7,7 +7,9 @@ import requests
 from google.api_core.retry_async import AsyncRetry
 from google.genai import types
 
-from backend.pipeline.common import constants
+from backend.pipeline.common.exceptions import (
+    PartialTranscriptionError,
+)
 from backend.pipeline.transcription.enums import TranscriberType
 from backend.pipeline.transcription.transcribers.chirp import (
     CHIRP_UNINTELLIGIBLE_MARKER,
@@ -658,7 +660,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(transcript, "[UNINTELLIGIBLE]")
 
     async def test_gemini_transcriber_recitation_fallback(self) -> None:
-        """Verifies that RECITATION finish reason maps to [UNINTELLIGIBLE] fallback."""
+        """Verifies that RECITATION finish reason raises GeminiTranscriptionError."""
         with patch(
             "backend.pipeline.transcription.transcribers.gemini.genai.Client"
         ) as mock_client_cls:
@@ -668,13 +670,13 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             mock_response = MagicMock()
             mock_candidate = MagicMock()
 
-            # Mock finish_reason as an object with a .name attribute
-            mock_finish_reason = MagicMock()
-            mock_finish_reason.name = "RECITATION"
-            mock_candidate.finish_reason = mock_finish_reason
+            # Mock finish_reason as the actual enum
+            mock_candidate.finish_reason = types.FinishReason.RECITATION
 
             mock_candidate.content.parts = []
             mock_response.candidates = [mock_candidate]
+            mock_response.response_id = "test-id"
+            mock_response.sdk_http_response = None
 
             mock_client_instance.aio.models.generate_content = AsyncMock(
                 return_value=mock_response
@@ -687,12 +689,15 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             transcriber.setup()
 
-            transcript = await transcriber.transcribe(
-                audio_data=b"\x00" * 100,
-                duration_ms=1000,
+            with self.assertRaises(GeminiTranscriptionError) as context:
+                await transcriber.transcribe(
+                    audio_data=b"\x00" * 100,
+                    duration_ms=1000,
+                )
+            self.assertIn(
+                "Gemini response blocked by safety filters. Finish Reason: RECITATION",
+                str(context.exception),
             )
-
-            self.assertEqual(transcript, constants.UNINTELLIGIBLE_MARKER)
 
     async def test_gemini_transcriber_empty_response_stop(self) -> None:
         """Verifies that STOP finish reason with no content returns None and logs at INFO level."""
@@ -728,7 +733,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                     duration_ms=1000,
                 )
 
-            self.assertIsNone(transcript)
+            self.assertEqual(transcript, "")
             # Verify it logged at INFO level
             info_logs = [
                 record
@@ -740,7 +745,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(info_logs), 1)
 
     async def test_gemini_transcriber_empty_response_other_reason(self) -> None:
-        """Verifies that other finish reasons (e.g. MAX_TOKENS) with no content raise GeminiTranscriptionError."""
+        """Verifies that other finish reasons (e.g. MAX_TOKENS) with no content raise the correct exception."""
         with patch(
             "backend.pipeline.transcription.transcribers.gemini.genai.Client"
         ) as mock_client_cls:
@@ -764,15 +769,13 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             transcriber.setup()
 
-            with self.assertRaises(GeminiTranscriptionError) as context:
+            with self.assertRaises(PartialTranscriptionError) as context:
                 await transcriber.transcribe(
                     audio_data=b"\x00" * 100,
                     duration_ms=1000,
                 )
-            self.assertIn(
-                "Gemini response candidate had no content or parts",
-                str(context.exception),
-            )
+            self.assertEqual(context.exception.reason, "MAX_TOKENS")
+            self.assertEqual(context.exception.partial_text, "")
 
     async def test_gemini_transcriber_no_candidates(self) -> None:
         """Verifies that empty candidates response raises GeminiTransientTranscriptionError."""
@@ -857,9 +860,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
 
             mock_response = MagicMock()
             mock_candidate = MagicMock()
-            mock_finish_reason = MagicMock()
-            mock_finish_reason.name = "SAFETY"
-            mock_candidate.finish_reason = mock_finish_reason
+            mock_candidate.finish_reason = types.FinishReason.SAFETY
             mock_candidate.content = None
             mock_candidate.finish_message = "blocked by safety settings"
             mock_candidate.safety_ratings = []
@@ -884,7 +885,8 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                     duration_ms=1000,
                 )
             self.assertIn(
-                "finished with invalid reason: SAFETY", str(context.exception)
+                "Gemini response blocked by safety filters",
+                str(context.exception),
             )
 
     async def test_gemini_transcriber_transient_empty_response(self) -> None:
@@ -923,6 +925,57 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 )
             self.assertIn(
                 "Incomplete response from Gemini (finish_reason: None).",
+                str(context.exception),
+            )
+
+    async def test_gemini_transcriber_finish_reason_none_safety_block(
+        self,
+    ) -> None:
+        """Verifies that finish_reason=None with blocked ratings raises a permanent GeminiTranscriptionError."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = None
+            mock_candidate.content = None
+
+            # Mock safety rating with a blocked category
+            mock_rating = MagicMock()
+            mock_rating.blocked = True
+            mock_rating.category.name = "HARM_CATEGORY_HATE_SPEECH"
+            mock_rating.probability.name = "HIGH"
+            mock_candidate.safety_ratings = [mock_rating]
+
+            mock_response.candidates = [mock_candidate]
+            mock_response.response_id = "test-id"
+            mock_response.sdk_http_response = None
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            with self.assertRaises(GeminiTranscriptionError) as context:
+                await transcriber.transcribe(
+                    audio_data=b"\x00" * 100,
+                    duration_ms=1000,
+                )
+            self.assertIn(
+                "Gemini response blocked by safety filters.",
+                str(context.exception),
+            )
+            self.assertIn(
+                "HARM_CATEGORY_HATE_SPEECH=HIGH",
                 str(context.exception),
             )
 
