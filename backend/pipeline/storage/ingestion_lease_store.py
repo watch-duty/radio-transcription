@@ -106,7 +106,6 @@ class LeaseOperationDisposition(enum.StrEnum):
 
     Attributes:
         APPLIED: The requested durable mutation committed.
-        ACCEPTED_NOOP: A future explicit idempotent policy accepted no write.
         MISSING: The permanent Lease identity does not exist.
         OWNER_MISMATCH: Another worker owns the current generation.
         FENCE_MISMATCH: The supplied ownership generation is stale.
@@ -114,7 +113,6 @@ class LeaseOperationDisposition(enum.StrEnum):
     """
 
     APPLIED = "applied"
-    ACCEPTED_NOOP = "accepted_noop"
     MISSING = "missing"
     OWNER_MISMATCH = "owner_mismatch"
     FENCE_MISMATCH = "fence_mismatch"
