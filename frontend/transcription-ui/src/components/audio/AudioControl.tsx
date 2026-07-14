@@ -10,7 +10,8 @@ import Box from '@mui/material/Box';
 import Icon, { type IconProps } from '@mui/material/Icon';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
-import type { SxProps, Theme } from '@mui/material/styles';
+import { type SxProps, type Theme, useTheme } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
 
 export interface AudioControlProps {
   isAudioPlaying: boolean;
@@ -38,8 +39,11 @@ export function AudioControl({
   settingsButton,
   sx,
 }: AudioControlProps) {
-  const controlSize = { xs: 'medium', sm: 'large' } as const;
-  const iconFontSize = { xs: 'medium', sm: 'large' } as const;
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+
+  const controlSize = isMobile ? 'medium' : 'large';
+  const iconFontSize = isMobile ? 'medium' : 'large';
 
   return (
     <Box
