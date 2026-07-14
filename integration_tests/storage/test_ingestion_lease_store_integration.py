@@ -132,6 +132,82 @@ async def _insert_lease(
     )
 
 
+async def _insert_member(
+    pool: asyncpg.Pool,
+    sid: str,
+    group_id: str,
+    *,
+    status: str = "active",
+) -> uuid.UUID:
+    """Insert one Feed and maintained Calls membership tuple.
+
+    Args:
+        pool: Database pool used to insert the fixture rows.
+        sid: Textual Broadcastify Calls system identifier.
+        group_id: Textual Broadcastify Calls talkgroup identifier.
+        status: Initial Feed lifecycle status.
+
+    Returns:
+        The generated Feed identifier.
+    """
+    feed_id = uuid.uuid4()
+    source_feed_id = f"{sid}-{group_id}"
+    failing = status == "failing"
+    now = datetime.datetime.now(datetime.UTC)
+    async with pool.acquire() as connection:
+        async with connection.transaction(isolation="read_committed"):
+            await connection.execute(
+                """
+                INSERT INTO public.feeds (
+                    id,
+                    name,
+                    source_type,
+                    status,
+                    failure_count,
+                    retry_after,
+                    status_reason,
+                    status_reason_detail,
+                    status_reason_updated_at
+                ) VALUES (
+                    $1,
+                    $2,
+                    'bcfy_calls',
+                    $3::public.feed_status,
+                    $4,
+                    $5,
+                    $6::TEXT,
+                    $7,
+                    $8
+                )
+                """,
+                feed_id,
+                f"Lease integration {uuid.uuid4().hex}",
+                status,
+                1 if failing else 0,
+                now + datetime.timedelta(minutes=1) if failing else None,
+                "source_unreachable" if failing else None,
+                "fixture failure" if failing else None,
+                now if failing else None,
+            )
+            await connection.execute(
+                """
+                INSERT INTO public.feed_properties (
+                    feed_id,
+                    source_feed_id,
+                    source_type,
+                    bcfy_calls_sid,
+                    bcfy_calls_group_id,
+                    bcfy_calls_is_trunked
+                ) VALUES ($1, $2, 'bcfy_calls', $3, $4, TRUE)
+                """,
+                feed_id,
+                source_feed_id,
+                sid,
+                group_id,
+            )
+    return feed_id
+
+
 async def _claim_exact(
     store: ingestion_lease_store.IngestionLeaseStore,
     sid: str,
@@ -364,3 +440,130 @@ async def test_neutral_release_and_reclaim_invalidate_old_grant(
     assert durable["status"] == "active"
     assert durable["worker_id"] == owner
     assert durable["fencing_token"] == 42
+
+
+async def test_membership_snapshot_refresh_and_revision_fail_closed(
+    ingestion_lease_pool: asyncpg.Pool,
+) -> None:
+    sid = f"00{_unique_digits()}"
+    await _insert_lease(
+        ingestion_lease_pool,
+        sid,
+        membership_revision=1,
+    )
+    store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
+    grant = await _claim_exact(store, sid, uuid.uuid4())
+    expected_ids = {
+        "00045": await _insert_member(
+            ingestion_lease_pool,
+            sid,
+            "00045",
+        ),
+        "00046": await _insert_member(
+            ingestion_lease_pool,
+            sid,
+            "00046",
+            status="failing",
+        ),
+        "00047": await _insert_member(
+            ingestion_lease_pool,
+            sid,
+            "00047",
+            status="deactivated",
+        ),
+    }
+
+    snapshot = await store.load_membership(grant)
+
+    assert isinstance(snapshot, ingestion_lease_store.MembershipSnapshot)
+    assert snapshot.grant == grant
+    assert snapshot.membership_revision == 1
+    assert [member.identity.group_id for member in snapshot.members] == [
+        "00045",
+        "00046",
+    ]
+    assert [member.identity.feed_id for member in snapshot.members] == [
+        expected_ids["00045"],
+        expected_ids["00046"],
+    ]
+    assert all(member.identity.sid == sid for member in snapshot.members)
+
+    async with ingestion_lease_pool.acquire() as blocker:
+        transaction = blocker.transaction(isolation="read_committed")
+        await transaction.start()
+        try:
+            await blocker.execute(
+                "LOCK TABLE public.feed_properties IN ACCESS EXCLUSIVE MODE"
+            )
+            unchanged = await asyncio.wait_for(
+                store.refresh_membership(grant, known_revision=1),
+                timeout=_TIMEOUT_SECONDS,
+            )
+        finally:
+            await transaction.rollback()
+
+    assert unchanged == ingestion_lease_store.MembershipUnchanged(grant, 1)
+
+    async with ingestion_lease_pool.acquire() as connection:
+        async with connection.transaction(isolation="read_committed"):
+            await connection.execute(
+                """
+                UPDATE public.ingestion_leases
+                SET membership_revision = 2,
+                    updated_at = NOW()
+                WHERE source_type = 'bcfy_calls' AND lease_key = $1
+                """,
+                sid,
+            )
+            await connection.execute(
+                """
+                UPDATE public.feeds
+                SET status = 'active'::public.feed_status
+                WHERE id = $1
+                """,
+                expected_ids["00047"],
+            )
+    changed = await store.refresh_membership(grant, known_revision=1)
+    assert isinstance(changed, ingestion_lease_store.MembershipSnapshot)
+    assert changed.membership_revision == 2
+    assert [member.identity.group_id for member in changed.members] == [
+        "00045",
+        "00046",
+        "00047",
+    ]
+
+    regressed = await store.refresh_membership(grant, known_revision=3)
+    assert isinstance(
+        regressed,
+        ingestion_lease_store.MembershipInvariantViolation,
+    )
+    assert "revision regressed" in regressed.detail
+
+    released = await store.release(grant)
+    assert released.disposition is (
+        ingestion_lease_store.LeaseOperationDisposition.APPLIED
+    )
+    successor = await _claim_exact(store, sid, uuid.uuid4())
+    assert successor.fencing_token > grant.fencing_token
+    stale = await store.refresh_membership(grant, known_revision=2)
+    assert isinstance(stale, ingestion_lease_store.GrantRejected)
+    assert stale.reason is (
+        ingestion_lease_store.GrantRejectionReason.OWNER_MISMATCH
+    )
+
+
+async def test_property_free_membership_load_is_explicitly_invalid(
+    ingestion_lease_pool: asyncpg.Pool,
+) -> None:
+    sid = _unique_digits()
+    await _insert_lease(ingestion_lease_pool, sid)
+    store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
+    grant = await _claim_exact(store, sid, uuid.uuid4())
+
+    result = await store.load_membership(grant)
+
+    assert isinstance(
+        result,
+        ingestion_lease_store.MembershipInvariantViolation,
+    )
+    assert "no structurally valid membership rows" in result.detail

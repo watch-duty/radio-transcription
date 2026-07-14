@@ -213,3 +213,48 @@ LEFT JOIN released
   ON released.source_type = current_state.source_type
  AND released.lease_key = current_state.lease_key
 """
+
+
+LOCK_LEASE_SQL = """\
+SELECT
+    source_type,
+    lease_key,
+    status::text AS status,
+    worker_id,
+    fencing_token,
+    last_heartbeat,
+    failure_count,
+    retry_after,
+    status_reason,
+    status_reason_detail,
+    membership_revision,
+    updated_at
+FROM public.ingestion_leases
+WHERE source_type = $1
+  AND lease_key = $2
+FOR NO KEY UPDATE
+"""
+
+
+LOAD_BCFY_CALLS_MEMBERSHIP_SQL = """\
+SELECT
+    fp.feed_id,
+    fp.source_type AS property_source_type,
+    feeds.source_type AS feed_source_type,
+    fp.source_feed_id,
+    fp.bcfy_calls_sid AS sid,
+    fp.bcfy_calls_group_id AS group_id,
+    feeds.status::text AS status,
+    feeds.last_bookmark_time,
+    feeds.failure_count,
+    feeds.retry_after,
+    feeds.status_reason,
+    feeds.status_reason_detail
+FROM public.feed_properties AS fp
+LEFT JOIN public.feeds AS feeds
+  ON feeds.id = fp.feed_id
+WHERE fp.source_type = 'bcfy_calls'
+  AND fp.bcfy_calls_is_trunked IS TRUE
+  AND fp.bcfy_calls_sid = $1
+ORDER BY fp.bcfy_calls_group_id, fp.feed_id
+"""

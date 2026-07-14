@@ -188,6 +188,97 @@ class GrantRejected:
             raise ValueError(msg)
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class LeaseMemberIdentity:
+    """Immutable Feed/source/SID/group binding from membership loading.
+
+    Attributes:
+        feed_id: Permanent Feed UUID.
+        source_type: Source family shared by the Feed and property row.
+        source_feed_id: Canonical provider routing identity.
+        sid: Textual Broadcastify system identity, including leading zeroes.
+        group_id: Textual talkgroup identity, including leading zeroes.
+    """
+
+    feed_id: uuid.UUID
+    source_type: feed_store.SourceType
+    source_feed_id: str
+    sid: str
+    group_id: str
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class LeaseMember:
+    """Eligible child Feed state attached to an immutable identity.
+
+    Attributes:
+        identity: Immutable routing identity loaded with this state.
+        status: Current Feed lifecycle state.
+        last_bookmark_time: Durable Feed progress cursor.
+        failure_count: Retained Feed failure count.
+        retry_after: Earliest time a failing Feed may retry.
+        status_reason: Canonical Feed lifecycle reason.
+        status_reason_detail: Bounded operator-facing reason detail.
+    """
+
+    identity: LeaseMemberIdentity
+    status: feed_store.FeedStatus
+    last_bookmark_time: datetime.datetime | None
+    failure_count: int
+    retry_after: datetime.datetime | None
+    status_reason: feed_store.FeedStatusReason | None
+    status_reason_detail: str | None
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class MembershipSnapshot:
+    """Authoritative eligible membership for one exact active grant.
+
+    Attributes:
+        grant: Complete Lease authority validated before the child read.
+        membership_revision: Cache-invalidating parent revision.
+        members: Eligible active or failing children in routing order.
+    """
+
+    grant: LeaseGrant
+    membership_revision: int
+    members: tuple[LeaseMember, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class MembershipUnchanged:
+    """Proof that one exact grant still has the caller's known revision.
+
+    Attributes:
+        grant: Complete Lease authority validated beneath the row lock.
+        membership_revision: Revision equal to the caller's known value.
+    """
+
+    grant: LeaseGrant
+    membership_revision: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class MembershipInvariantViolation:
+    """Fail-closed result for structurally invalid Lease membership.
+
+    Attributes:
+        grant: Complete Lease authority associated with the failed load.
+        detail: Bounded diagnostic explanation without row credentials.
+    """
+
+    grant: LeaseGrant
+    detail: str
+
+
+type MembershipRefreshResult = (
+    MembershipSnapshot
+    | MembershipUnchanged
+    | GrantRejected
+    | MembershipInvariantViolation
+)
+
+
 def _require_source_type(value: object) -> feed_store.SourceType:
     if not isinstance(value, feed_store.SourceType):
         msg = "source_type must be a SourceType"
@@ -226,6 +317,18 @@ def _require_grant(value: object) -> LeaseGrant:
     if not isinstance(value, LeaseGrant):
         msg = "grant must be a LeaseGrant"
         raise TypeError(msg)
+    return value
+
+
+def _require_known_membership_revision(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        msg = "known_revision must be an integer or None"
+        raise TypeError(msg)
+    if value < 0:
+        msg = "known_revision must be nonnegative"
+        raise ValueError(msg)
     return value
 
 
@@ -284,6 +387,106 @@ def _disposition_for_rejection(
     reason: GrantRejectionReason,
 ) -> LeaseOperationDisposition:
     return LeaseOperationDisposition(reason.value)
+
+
+def _membership_identity_from_row(
+    grant: LeaseGrant,
+    row: collections.abc.Mapping,
+) -> LeaseMemberIdentity | MembershipInvariantViolation:
+    """Validate and materialize one immutable membership identity.
+
+    Args:
+        grant: Exact parent Lease grant validated for the membership read.
+        row: Joined Feed and feed-property row to validate.
+
+    Returns:
+        The immutable child identity, or a closed invariant violation when the
+        joined row cannot belong to the validated Lease.
+    """
+    feed_id = row["feed_id"]
+    source_feed_id = row["source_feed_id"]
+    sid = row["sid"]
+    group_id = row["group_id"]
+    if (
+        not isinstance(feed_id, uuid.UUID)
+        or not isinstance(source_feed_id, str)
+        or not source_feed_id
+        or not isinstance(sid, str)
+        or not sid
+        or not sid.isascii()
+        or not sid.isdigit()
+        or not isinstance(group_id, str)
+        or not group_id
+        or not group_id.isascii()
+        or not group_id.isdigit()
+        or source_feed_id != f"{sid}-{group_id}"
+        or sid != grant.lease_key
+    ):
+        return MembershipInvariantViolation(
+            grant,
+            "membership row has a missing or inconsistent immutable identity",
+        )
+
+    property_source_raw = row["property_source_type"]
+    feed_source_raw = row["feed_source_type"]
+    if not isinstance(property_source_raw, str) or not isinstance(
+        feed_source_raw,
+        str,
+    ):
+        return MembershipInvariantViolation(
+            grant,
+            "membership row is missing a joined source identity",
+        )
+    try:
+        property_source = feed_store.SourceType(property_source_raw)
+        feed_source = feed_store.SourceType(feed_source_raw)
+    except ValueError:
+        return MembershipInvariantViolation(
+            grant,
+            "membership row contains an unknown source binding",
+        )
+    if (
+        property_source is not grant.source_type
+        or feed_source is not property_source
+    ):
+        return MembershipInvariantViolation(
+            grant,
+            "Feed and property source bindings do not match the Lease",
+        )
+    return LeaseMemberIdentity(
+        feed_id=feed_id,
+        source_type=property_source,
+        source_feed_id=source_feed_id,
+        sid=sid,
+        group_id=group_id,
+    )
+
+
+def _member_from_row(
+    identity: LeaseMemberIdentity,
+    row: collections.abc.Mapping,
+) -> LeaseMember:
+    """Materialize one Lease member from a validated joined row.
+
+    Args:
+        identity: Previously validated immutable child identity.
+        row: Joined Feed and feed-property row containing lifecycle state.
+
+    Returns:
+        The complete member state associated with ``identity``.
+
+    Raises:
+        ValueError: If the row contains an unknown lifecycle value.
+    """
+    return LeaseMember(
+        identity=identity,
+        status=_status_from_row(row),
+        last_bookmark_time=row["last_bookmark_time"],
+        failure_count=row["failure_count"],
+        retry_after=row["retry_after"],
+        status_reason=_status_reason_from_row(row),
+        status_reason_detail=row["status_reason_detail"],
+    )
 
 
 class IngestionLeaseStore:
@@ -561,4 +764,153 @@ class IngestionLeaseStore:
         return LeaseOperationResult(
             _disposition_for_rejection(rejection.reason),
             rejection.snapshot,
+        )
+
+    async def load_membership(
+        self,
+        grant: LeaseGrant,
+    ) -> GrantRejected | MembershipSnapshot | MembershipInvariantViolation:
+        """Load one fail-closed authoritative Calls membership snapshot.
+
+        Controlled administrative SQL owns immutable identity maintenance and
+        revision increments. The revision returned here invalidates caches; it
+        never participates in grant or lifecycle authorization.
+
+        Args:
+            grant: Complete immutable Lease ownership generation.
+
+        Returns:
+            A complete snapshot, exact-grant rejection, or structural
+            invariant violation.
+
+        Raises:
+            TypeError: If the grant has the wrong runtime type.
+            ValueError: If the source is unsupported or a row is invalid.
+        """
+        result = await self.refresh_membership(grant, known_revision=None)
+        if isinstance(result, MembershipUnchanged):
+            msg = "full membership load returned an unchanged result"
+            raise TypeError(msg)
+        return result
+
+    async def refresh_membership(
+        self,
+        grant: LeaseGrant,
+        *,
+        known_revision: int | None,
+    ) -> MembershipRefreshResult:
+        """Conditionally load membership beneath one locked exact grant.
+
+        Args:
+            grant: Complete immutable Lease ownership generation.
+            known_revision: Last authoritative revision, or None initially.
+
+        Returns:
+            A complete snapshot, unchanged proof, grant rejection, or
+            structural invariant violation.
+
+        Raises:
+            TypeError: If the grant or known revision has the wrong type.
+            ValueError: If the source or known revision is invalid.
+        """
+        grant = _require_grant(grant)
+        known_revision = _require_known_membership_revision(known_revision)
+        if grant.source_type is not feed_store.SourceType.BCFY_CALLS:
+            msg = "membership loading supports only bcfy_calls Leases"
+            raise ValueError(msg)
+
+        async with self._pool.acquire() as connection:
+            async with connection.transaction(isolation="read_committed"):
+                lease_row = await connection.fetchrow(
+                    ingestion_lease_queries.LOCK_LEASE_SQL,
+                    grant.source_type.value,
+                    grant.lease_key,
+                )
+                rejection = self._grant_rejection(grant, lease_row)
+                if rejection is not None:
+                    return rejection
+                if lease_row is None:
+                    msg = "accepted Lease grant lacks a locked row"
+                    raise RuntimeError(msg)
+
+                current_revision = lease_row["membership_revision"]
+                if current_revision == known_revision:
+                    return MembershipUnchanged(grant, current_revision)
+                if (
+                    known_revision is not None
+                    and current_revision < known_revision
+                ):
+                    return MembershipInvariantViolation(
+                        grant,
+                        "locked membership revision regressed below the "
+                        "authoritative cached revision",
+                    )
+
+                rows = await connection.fetch(
+                    ingestion_lease_queries.LOAD_BCFY_CALLS_MEMBERSHIP_SQL,
+                    grant.lease_key,
+                )
+                return self._membership_result(
+                    grant,
+                    current_revision,
+                    rows,
+                )
+
+    def _membership_result(
+        self,
+        grant: LeaseGrant,
+        membership_revision: int,
+        rows: collections.abc.Sequence[collections.abc.Mapping],
+    ) -> MembershipSnapshot | MembershipInvariantViolation:
+        """Validate joined rows and build an authoritative membership result.
+
+        Args:
+            grant: Exact parent Lease grant validated beneath its row lock.
+            membership_revision: Revision read from the locked parent Lease.
+            rows: Joined Feed and feed-property rows for the Lease SID.
+
+        Returns:
+            A complete eligible snapshot, or the first closed invariant
+            violation found while validating the authoritative row set.
+        """
+        if not rows:
+            return MembershipInvariantViolation(
+                grant,
+                "owned Lease has no structurally valid membership rows",
+            )
+
+        members: list[LeaseMember] = []
+        routing_keys: set[str] = set()
+        for row in rows:
+            identity = _membership_identity_from_row(grant, row)
+            if isinstance(identity, MembershipInvariantViolation):
+                return identity
+            if identity.source_feed_id in routing_keys:
+                return MembershipInvariantViolation(
+                    grant,
+                    "membership contains a duplicate canonical routing key",
+                )
+            routing_keys.add(identity.source_feed_id)
+            try:
+                member = _member_from_row(identity, row)
+            except ValueError:
+                return MembershipInvariantViolation(
+                    grant,
+                    "membership row contains an unknown lifecycle value",
+                )
+            if member.status in (
+                feed_store.FeedStatus.ACTIVE,
+                feed_store.FeedStatus.FAILING,
+            ):
+                members.append(member)
+
+        if not members:
+            return MembershipInvariantViolation(
+                grant,
+                "owned Lease has no active or failing member",
+            )
+        return MembershipSnapshot(
+            grant=grant,
+            membership_revision=membership_revision,
+            members=tuple(members),
         )
