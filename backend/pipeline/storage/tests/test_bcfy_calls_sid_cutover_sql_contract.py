@@ -142,6 +142,8 @@ class TestSidCutoverOperationPlacement(unittest.TestCase):
         self.assertIn("max", sql)
         self.assertIn("fencing_token", sql)
         self.assertIn("9223372036854775807", sql)
+        self.assertIn("last_heartbeat is null", sql)
+        self.assertIn("last_heartbeat >= now() - interval '60 seconds'", sql)
         self.assertIn("'unclaimed'::public.feed_status", sql)
         self.assertRegex(
             sql,

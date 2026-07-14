@@ -449,16 +449,50 @@ async def _prove_activation_rejections(
         """
     )
 
-    before_bad_digest_leases = await _lease_rows(pool)
-    before_bad_digest_children = await _child_rows(pool)
     activation_variables = {
         "process_absence_confirmed": "CONFIRMED",
-        "reviewed_manifest_digest": "0" * 64,
+        "reviewed_manifest_digest": digest,
         "reviewed_sid_count": "19",
     }
+
+    fresh_owner_feed_id = uuid.UUID(int=6)
+    await pool.execute(
+        """
+        UPDATE public.feeds
+        SET status = 'active'::public.feed_status,
+            worker_id = $2,
+            last_heartbeat = NOW()
+        WHERE id = $1
+        """,
+        fresh_owner_feed_id,
+        uuid.UUID(int=1000),
+    )
+    before_fresh_owner_leases = await _lease_rows(pool)
+    before_fresh_owner_children = await _child_rows(pool)
     await _run_operation(
         "002_activate.sql",
         variables=activation_variables,
+        succeeds=False,
+    )
+    assert await _lease_rows(pool) == before_fresh_owner_leases
+    assert await _child_rows(pool) == before_fresh_owner_children
+    await pool.execute(
+        """
+        UPDATE public.feeds
+        SET status = 'unclaimed'::public.feed_status,
+            worker_id = NULL
+        WHERE id = $1
+        """,
+        fresh_owner_feed_id,
+    )
+
+    before_bad_digest_leases = await _lease_rows(pool)
+    before_bad_digest_children = await _child_rows(pool)
+    bad_digest_variables = dict(activation_variables)
+    bad_digest_variables["reviewed_manifest_digest"] = "0" * 64
+    await _run_operation(
+        "002_activate.sql",
+        variables=bad_digest_variables,
         succeeds=False,
     )
     assert await _lease_rows(pool) == before_bad_digest_leases
@@ -470,7 +504,6 @@ async def _prove_activation_rejections(
         overflow_feed_id,
         9223372036854775807,
     )
-    activation_variables["reviewed_manifest_digest"] = digest
     before_overflow_leases = await _lease_rows(pool)
     before_overflow_children = await _child_rows(pool)
     await _run_operation(

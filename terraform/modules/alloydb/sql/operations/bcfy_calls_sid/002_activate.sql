@@ -236,10 +236,14 @@ BEGIN
       INTO invalid_count
       FROM phase7_structural_membership
      WHERE worker_id IS NOT NULL
-       AND status <> 'active';
+       AND (
+           status <> 'active'
+           OR last_heartbeat IS NULL
+           OR last_heartbeat >= NOW() - INTERVAL '60 seconds'
+       );
     IF invalid_count <> 0 THEN
         RAISE EXCEPTION
-            'activation found % non-active children with ownership',
+            'activation found % children with non-stale ownership',
             invalid_count;
     END IF;
 
