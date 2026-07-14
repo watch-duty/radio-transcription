@@ -655,11 +655,11 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
             with self.subTest(case_index=case_index):
                 pool = connection_util.make_mock_pool(transaction=True)
                 connection = pool.acquired_connection
-                connection.fetchrow.return_value = _lease_row()
+                connection.fetchrow.return_value = _lease_row(lease_key="00123")
                 connection.fetch.return_value = list(rows)
                 store = ingestion_lease_store.IngestionLeaseStore(pool)
 
-                result = await store.load_membership(_grant())
+                result = await store.load_membership(_grant("00123"))
 
                 self.assertIsInstance(
                     result,
@@ -683,16 +683,42 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
             with self.subTest(case_index=case_index):
                 pool = connection_util.make_mock_pool(transaction=True)
                 connection = pool.acquired_connection
-                connection.fetchrow.return_value = _lease_row()
+                connection.fetchrow.return_value = _lease_row(lease_key="00123")
                 connection.fetch.return_value = [row]
                 store = ingestion_lease_store.IngestionLeaseStore(pool)
 
-                result = await store.load_membership(_grant())
+                result = await store.load_membership(_grant("00123"))
 
                 self.assertIsInstance(
                     result,
                     ingestion_lease_store.MembershipInvariantViolation,
                 )
+
+    async def test_unknown_member_lifecycle_values_fail_closed(self) -> None:
+        rows = (
+            _member_row(status="future_status"),
+            _member_row(status_reason="future_reason"),
+        )
+
+        for case_index, row in enumerate(rows):
+            with self.subTest(case_index=case_index):
+                pool = connection_util.make_mock_pool(transaction=True)
+                connection = pool.acquired_connection
+                connection.fetchrow.return_value = _lease_row(lease_key="00123")
+                connection.fetch.return_value = [row]
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+                result = await store.load_membership(_grant("00123"))
+
+                self.assertIsInstance(
+                    result,
+                    ingestion_lease_store.MembershipInvariantViolation,
+                )
+                assert isinstance(
+                    result,
+                    ingestion_lease_store.MembershipInvariantViolation,
+                )
+                self.assertIn("unknown lifecycle value", result.detail)
 
     async def test_revision_changes_snapshot_but_not_grant_identity(
         self,

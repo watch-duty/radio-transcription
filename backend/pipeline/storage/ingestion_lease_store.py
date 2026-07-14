@@ -859,7 +859,13 @@ class IngestionLeaseStore:
                     "membership contains a duplicate canonical routing key",
                 )
             routing_keys.add(identity.source_feed_id)
-            member = _member_from_row(identity, row)
+            try:
+                member = _member_from_row(identity, row)
+            except ValueError:
+                return MembershipInvariantViolation(
+                    grant,
+                    "membership row contains an unknown lifecycle value",
+                )
             if member.status in (
                 feed_store.FeedStatus.ACTIVE,
                 feed_store.FeedStatus.FAILING,
