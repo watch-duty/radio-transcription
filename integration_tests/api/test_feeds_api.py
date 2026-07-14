@@ -99,7 +99,9 @@ async def test_get_feed_not_found_proxy(
     """Test GET /feeds/{non_existent_id} via frontend proxy returns 404."""
     non_existent_id = str(uuid.uuid4())
     resp = await proxy_client.get(f"/feeds/{non_existent_id}", timeout=10.0)
-    assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+    assert resp.status_code == 404, (
+        f"Expected 404, got {resp.status_code}: {resp.text}"
+    )
 
 
 @pytest.mark.asyncio
@@ -141,7 +143,9 @@ async def test_update_feed_proxy(
         "tags": [{"key": "updated", "value": "true"}],
     }
 
-    resp = await proxy_client.put(f"/feeds/{feed_id}", json=payload, timeout=10.0)
+    resp = await proxy_client.put(
+        f"/feeds/{feed_id}", json=payload, timeout=10.0
+    )
     assert resp.status_code == 200, f"Update feed failed: {resp.text}"
     data = resp.json()
     assert data["id"] == feed_id
@@ -179,14 +183,22 @@ async def test_list_feed_history_proxy(
         "name": f"Updated Name {uuid.uuid4()}",
         "tags": [],
     }
-    update_resp = await proxy_client.put(f"/feeds/{feed_id}", json=update_payload, timeout=10.0)
+    update_resp = await proxy_client.put(
+        f"/feeds/{feed_id}", json=update_payload, timeout=10.0
+    )
     assert update_resp.status_code == 200
 
     feed_get = await backend_client.get(f"/feeds/{feed_id}", timeout=10.0)
-    assert feed_get.status_code == 200, f"Backend get feed failed: {feed_get.text}"
+    assert feed_get.status_code == 200, (
+        f"Backend get feed failed: {feed_get.text}"
+    )
 
-    backend_history = await backend_client.get(f"/feeds/{feed_id}/history", timeout=10.0)
-    assert backend_history.status_code == 200, f"Backend history failed: {backend_history.text}"
+    backend_history = await backend_client.get(
+        f"/feeds/{feed_id}/history", timeout=10.0
+    )
+    assert backend_history.status_code == 200, (
+        f"Backend history failed: {backend_history.text}"
+    )
 
     resp = await proxy_client.get(
         f"/feeds/{feed_id}/history", params={"limit": 10}, timeout=10.0
@@ -215,8 +227,12 @@ async def test_deactivate_feed_proxy(
     assert create_resp.status_code == 201
     feed_id = create_resp.json()["id"]
 
-    deact_resp = await proxy_client.post(f"/feeds/{feed_id}/deactivate", timeout=10.0)
-    assert deact_resp.status_code == 204, f"Deactivate failed: {deact_resp.text}"
+    deact_resp = await proxy_client.post(
+        f"/feeds/{feed_id}/deactivate", timeout=10.0
+    )
+    assert deact_resp.status_code == 204, (
+        f"Deactivate failed: {deact_resp.text}"
+    )
 
     # Verify status changed to inactive (frontend representation of deactivated)
     get_resp = await proxy_client.get(f"/feeds/{feed_id}", timeout=10.0)
@@ -265,7 +281,9 @@ async def test_list_feeds_with_query_params_proxy(
         },
         timeout=10.0,
     )
-    assert resp.status_code == 200, f"List feeds query params failed: {resp.text}"
+    assert resp.status_code == 200, (
+        f"List feeds query params failed: {resp.text}"
+    )
     data = resp.json()
     assert "feeds" in data
     feed_ids = [f["id"] for f in data["feeds"]]

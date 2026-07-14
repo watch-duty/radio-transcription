@@ -20,9 +20,7 @@ def generate_dummy_jwt(payload: dict) -> str:
     def b64url(data: bytes) -> str:
         return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
 
-    header_segment = b64url(
-        json.dumps(header, separators=",:").encode("utf-8")
-    )
+    header_segment = b64url(json.dumps(header, separators=",:").encode("utf-8"))
     payload_segment = b64url(
         json.dumps(payload, separators=",:").encode("utf-8")
     )

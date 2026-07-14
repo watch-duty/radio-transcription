@@ -79,7 +79,9 @@ async def test_list_rules_proxy(
     }
 
     create_resp = await proxy_client.post("/rules", json=payload, timeout=10.0)
-    assert create_resp.status_code in [200, 201], f"Create rule failed: {create_resp.text}"
+    assert create_resp.status_code in [200, 201], (
+        f"Create rule failed: {create_resp.text}"
+    )
     rule_id = create_resp.json()["ruleId"]
 
     # List all rules
@@ -126,7 +128,9 @@ async def test_get_rule_proxy(
     }
 
     create_resp = await proxy_client.post("/rules", json=payload, timeout=10.0)
-    assert create_resp.status_code in [200, 201], f"Create rule failed: {create_resp.text}"
+    assert create_resp.status_code in [200, 201], (
+        f"Create rule failed: {create_resp.text}"
+    )
     rule_id = create_resp.json()["ruleId"]
 
     get_resp = await proxy_client.get(f"/rules/{rule_id}", timeout=10.0)
@@ -148,7 +152,9 @@ async def test_get_rule_not_found_proxy(
     """Test GET /rules/{non_existent_id} via frontend proxy returns 404."""
     non_existent_id = str(uuid.uuid4())
     resp = await proxy_client.get(f"/rules/{non_existent_id}", timeout=10.0)
-    assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+    assert resp.status_code == 404, (
+        f"Expected 404, got {resp.status_code}: {resp.text}"
+    )
 
 
 @pytest.mark.asyncio
@@ -174,7 +180,9 @@ async def test_update_rule_proxy(
     }
 
     create_resp = await proxy_client.post("/rules", json=payload, timeout=10.0)
-    assert create_resp.status_code in [200, 201], f"Create rule failed: {create_resp.text}"
+    assert create_resp.status_code in [200, 201], (
+        f"Create rule failed: {create_resp.text}"
+    )
     rule_id = create_resp.json()["ruleId"]
 
     updated_name = f"Updated Rule Name {uuid.uuid4()}"
@@ -187,7 +195,9 @@ async def test_update_rule_proxy(
     update_resp = await proxy_client.put(
         f"/rules/{rule_id}", json=update_payload, timeout=10.0
     )
-    assert update_resp.status_code == 200, f"Update rule failed: {update_resp.text}"
+    assert update_resp.status_code == 200, (
+        f"Update rule failed: {update_resp.text}"
+    )
     data = update_resp.json()
 
     assert data["ruleId"] == rule_id
@@ -222,7 +232,9 @@ async def test_delete_rule_proxy(
     }
 
     create_resp = await proxy_client.post("/rules", json=payload, timeout=10.0)
-    assert create_resp.status_code in [200, 201], f"Create rule failed: {create_resp.text}"
+    assert create_resp.status_code in [200, 201], (
+        f"Create rule failed: {create_resp.text}"
+    )
     rule_id = create_resp.json()["ruleId"]
 
     del_resp = await proxy_client.delete(f"/rules/{rule_id}", timeout=10.0)
