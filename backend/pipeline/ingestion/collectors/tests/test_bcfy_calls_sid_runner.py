@@ -14,6 +14,7 @@ import uuid
 from backend.pipeline.ingestion import (
     feed_work_scheduler,
     grant_control,
+    sid_grant_control,
 )
 from backend.pipeline.ingestion.collectors.bcfy_calls import sid_processor
 from backend.pipeline.storage import feed_store, ingestion_lease_store
@@ -63,18 +64,21 @@ def _grant(
     )
 
 
-def _snapshot() -> ingestion_lease_store.LeaseSnapshot:
-    return ingestion_lease_store.LeaseSnapshot(
-        status=feed_store.FeedStatus.ACTIVE,
-        last_heartbeat=_NOW,
-        failure_count=0,
-        retry_after=None,
-        status_reason=None,
-        status_reason_detail=None,
-        status_reason_updated_at=None,
-        audit_revision=1,
-        membership_revision=1,
-        updated_at=_NOW,
+def _snapshot() -> sid_grant_control.SidClaimPayload:
+    return sid_grant_control.SidClaimPayload(
+        ingestion_lease_store.LeaseSnapshot(
+            status=feed_store.FeedStatus.ACTIVE,
+            last_heartbeat=_NOW,
+            failure_count=0,
+            retry_after=None,
+            status_reason=None,
+            status_reason_detail=None,
+            status_reason_updated_at=None,
+            audit_revision=1,
+            membership_revision=1,
+            updated_at=_NOW,
+        ),
+        grant_control.ClaimMode.PRIMARY,
     )
 
 
@@ -265,7 +269,7 @@ class _ControlledProcessorFactory:
         self.calls: list[
             tuple[
                 ingestion_lease_store.LeaseGrant,
-                ingestion_lease_store.LeaseSnapshot,
+                sid_grant_control.SidClaimPayload,
                 _ControlledLane,
             ]
         ] = []
@@ -274,7 +278,7 @@ class _ControlledProcessorFactory:
     def __call__(
         self,
         grant: ingestion_lease_store.LeaseGrant,
-        payload: ingestion_lease_store.LeaseSnapshot,
+        payload: sid_grant_control.SidClaimPayload,
         lane: _ControlledLane,
     ) -> _ControlledProcessor:
         if lane not in lane.scheduler.opened:
@@ -328,6 +332,26 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
         for lane in scheduler.opened:
             self.assertEqual(lane.active_closers, 0)
 
+    async def test_crossed_payload_type_fails_before_lane_open(self) -> None:
+        sid_runner = _sid_runner_module()
+        scheduler = _ControlledScheduler()
+        runner, factory = _runner(sid_runner, scheduler)
+        context, _stop, _loss = _context()
+        wrong_payload = _snapshot().snapshot
+
+        with self.assertRaises(TypeError):
+            await runner.run(
+                _grant(),
+                typing.cast(
+                    "sid_grant_control.SidClaimPayload",
+                    wrong_payload,
+                ),
+                context,
+            )
+
+        self.assertEqual(scheduler.opened, [])
+        self.assertEqual(factory.calls, [])
+
     async def test_concurrent_runs_open_distinct_invocation_local_lanes(
         self,
     ) -> None:
@@ -338,12 +362,14 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
         second_context, second_stop, second_loss = _context()
         first_grant = _grant("150", fencing_token=1)
         second_grant = _grant("151", fencing_token=2)
+        first_payload = _snapshot()
+        second_payload = _snapshot()
 
         first = asyncio.create_task(
-            runner.run(first_grant, _snapshot(), first_context)
+            runner.run(first_grant, first_payload, first_context)
         )
         second = asyncio.create_task(
-            runner.run(second_grant, _snapshot(), second_context)
+            runner.run(second_grant, second_payload, second_context)
         )
         await asyncio.wait_for(scheduler.two_lanes_opened.wait(), timeout=1)
 
@@ -360,6 +386,8 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(hasattr(runner, "current_lane"))
         self.assertFalse(hasattr(runner, "_current_lane"))
         self.assertEqual(len(factory.calls), 2)
+        self.assertIs(factory.calls[0][1], first_payload)
+        self.assertIs(factory.calls[1][1], second_payload)
         self.assertEqual(
             [call[2] for call in factory.calls],
             scheduler.opened,

@@ -15,6 +15,7 @@ from unittest import mock
 from backend.pipeline.ingestion import (
     grant_control,
     grant_supervisor,
+    sid_grant_control,
     worker_profiles,
 )
 from backend.pipeline.storage import feed_store, ingestion_lease_store
@@ -80,6 +81,12 @@ def _lease_snapshot() -> ingestion_lease_store.LeaseSnapshot:
     )
 
 
+def _sid_payload(
+    mode: grant_control.ClaimMode = grant_control.ClaimMode.PRIMARY,
+) -> sid_grant_control.SidClaimPayload:
+    return sid_grant_control.SidClaimPayload(_lease_snapshot(), mode)
+
+
 def _valid_leased_feed(
     value: object,
 ) -> typing.TypeGuard[feed_store.LeasedFeed]:
@@ -126,10 +133,10 @@ def _valid_leased_feed(
     )
 
 
-def _valid_lease_snapshot(
+def _valid_sid_payload(
     value: object,
-) -> typing.TypeGuard[ingestion_lease_store.LeaseSnapshot]:
-    return isinstance(value, ingestion_lease_store.LeaseSnapshot)
+) -> typing.TypeGuard[sid_grant_control.SidClaimPayload]:
+    return type(value) is sid_grant_control.SidClaimPayload
 
 
 def _terminal_for(
@@ -385,22 +392,22 @@ def _feed_registration(
 def _sid_registration(
     control: _ControlledControl[
         ingestion_lease_store.LeaseGrant,
-        ingestion_lease_store.LeaseSnapshot,
+        sid_grant_control.SidClaimPayload,
     ],
     runner: _ControlledRunner[
         ingestion_lease_store.LeaseGrant,
-        ingestion_lease_store.LeaseSnapshot,
+        sid_grant_control.SidClaimPayload,
     ],
     allocation: worker_profiles.DomainAllocation,
 ) -> grant_supervisor.RegisteredDomain[
     ingestion_lease_store.LeaseGrant,
-    ingestion_lease_store.LeaseSnapshot,
+    sid_grant_control.SidClaimPayload,
 ]:
     return grant_supervisor.RegisteredDomain(
         domain_id=grant_control.DomainId.SID,
         authority_kind=worker_profiles.AuthorityKind.SID_LEASE,
         grant_type=ingestion_lease_store.LeaseGrant,
-        payload_validator=_valid_lease_snapshot,
+        payload_validator=_valid_sid_payload,
         authority_of=lambda grant: grant_supervisor.SidAuthority(
             grant.source_type.value,
             grant.lease_key,
@@ -437,11 +444,11 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         _ControlledRunner[feed_store.FeedGrant, feed_store.LeasedFeed],
         _ControlledControl[
             ingestion_lease_store.LeaseGrant,
-            ingestion_lease_store.LeaseSnapshot,
+            sid_grant_control.SidClaimPayload,
         ],
         _ControlledRunner[
             ingestion_lease_store.LeaseGrant,
-            ingestion_lease_store.LeaseSnapshot,
+            sid_grant_control.SidClaimPayload,
         ],
     ]:
         feed_control = _ControlledControl[
@@ -454,11 +461,11 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         ]()
         sid_control = _ControlledControl[
             ingestion_lease_store.LeaseGrant,
-            ingestion_lease_store.LeaseSnapshot,
+            sid_grant_control.SidClaimPayload,
         ]()
         sid_runner = _ControlledRunner[
             ingestion_lease_store.LeaseGrant,
-            ingestion_lease_store.LeaseSnapshot,
+            sid_grant_control.SidClaimPayload,
         ]()
         allocations = {
             allocation.domain_id: allocation
@@ -533,7 +540,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             _claim(feed_grant, _leased_feed(feed_id, fencing_token=7)),
         )
         sid_control.results[grant_control.ClaimMode.PRIMARY] = (
-            _claim(sid_grant, _lease_snapshot()),
+            _claim(sid_grant, _sid_payload()),
         )
 
         try:
@@ -558,6 +565,49 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                 typing.cast("_ControlledRunner[object, object]", feed_runner),
                 typing.cast("_ControlledRunner[object, object]", sid_runner),
             )
+
+    async def test_sid_opaque_payload_identity_survives_run_and_finalize(
+        self,
+    ) -> None:
+        profile = _profile(
+            process_cap=1,
+            sid_cap=1,
+            sid_budget=1,
+            domains=(grant_control.DomainId.SID,),
+        )
+        (
+            supervisor,
+            _feed_control,
+            _feed_runner,
+            sid_control,
+            sid_runner,
+        ) = self._mixed(profile)
+        grant = ingestion_lease_store.LeaseGrant(
+            feed_store.SourceType.BCFY_CALLS,
+            "opaque-payload",
+            _OWNER_ID,
+            1,
+        )
+        payload = _sid_payload(grant_control.ClaimMode.RECOVERY)
+        sid_control.results[grant_control.ClaimMode.PRIMARY] = (
+            _claim(grant, payload),
+        )
+
+        await supervisor.admit_cycle(_OWNER_ID)
+        await asyncio.wait_for(sid_runner.started.wait(), timeout=1)
+        self.assertIs(sid_runner.calls[0][1], payload)
+        sid_runner.finish.set()
+        managed = next(iter(supervisor._registry.values()))
+        assert managed.root_task is not None
+        await managed.root_task
+        await supervisor._settle_terminal_tasks()
+
+        self.assertEqual(len(sid_control.finalize_payloads), 1)
+        self.assertIs(sid_control.finalize_payloads[0], payload)
+        self.assertIs(
+            payload.claim_mode,
+            grant_control.ClaimMode.RECOVERY,
+        )
 
     async def test_all_sid_failure_sources_have_one_generic_parent_writer(
         self,
@@ -586,7 +636,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                     _OWNER_ID,
                     index,
                 )
-                payload = _lease_snapshot()
+                payload = _sid_payload()
                 outcome = grant_control.RunFailed(status_reason, reason)
                 sid_control.results[grant_control.ClaimMode.PRIMARY] = (
                     _claim(grant, payload),
@@ -710,7 +760,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                     _OWNER_ID,
                     1,
                 ),
-                _lease_snapshot(),
+                _sid_payload(),
             ),
         )
         try:
@@ -1486,7 +1536,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             _claim(feed_grant, _leased_feed(feed_id)),
         )
         sid_control.results[grant_control.ClaimMode.PRIMARY] = (
-            _claim(sid_grant, _lease_snapshot()),
+            _claim(sid_grant, _sid_payload()),
         )
         sid_runner.wait_for_signal = "stop"
         sid_runner.block_child_cleanup = True
@@ -1897,7 +1947,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             1,
         )
         sid_control.results[grant_control.ClaimMode.PRIMARY] = (
-            _claim(grant, _lease_snapshot()),
+            _claim(grant, _sid_payload()),
         )
         sid_runner.wait_for_signal = "stop"
         sid_runner.block_child_cleanup = True
@@ -2004,7 +2054,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             1,
         )
         sid_control.results[grant_control.ClaimMode.PRIMARY] = (
-            _claim(grant, _lease_snapshot()),
+            _claim(grant, _sid_payload()),
         )
         sid_runner.wait_for_signal = "stop"
         sid_runner.block_child_cleanup = True
@@ -2328,7 +2378,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         sid_control.results[grant_control.ClaimMode.PRIMARY] = (
             grant_control.ClaimedGrant(
                 grant=sid_grant,
-                payload=_lease_snapshot(),
+                payload=_sid_payload(),
                 lifecycle=grant_control.LifecycleEvidence(durable_failing=True),
             ),
         )

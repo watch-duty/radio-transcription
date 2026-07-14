@@ -13,7 +13,12 @@ import unittest
 import uuid
 from unittest import mock
 
-from backend.pipeline.ingestion import feed_work_scheduler, models
+from backend.pipeline.ingestion import (
+    feed_work_scheduler,
+    grant_control,
+    models,
+    sid_grant_control,
+)
 from backend.pipeline.ingestion.collectors import aiohttp_requests
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     boundary_verdict,
@@ -55,6 +60,15 @@ def _lease_lifecycle_snapshot() -> ingestion_lease_store.LeaseSnapshot:
         audit_revision=1,
         membership_revision=4,
         updated_at=_NOW,
+    )
+
+
+def _claim_payload(
+    mode: grant_control.ClaimMode = grant_control.ClaimMode.PRIMARY,
+) -> sid_grant_control.SidClaimPayload:
+    return sid_grant_control.SidClaimPayload(
+        _lease_lifecycle_snapshot(),
+        mode,
     )
 
 
@@ -596,10 +610,12 @@ def _processor(
     poll_emitter: (
         typing.Callable[[telemetry.SidPollEvidence], None] | None
     ) = None,
+    claim_payload: sid_grant_control.SidClaimPayload | None = None,
 ) -> tuple[sid_processor.BcfyCallsSidProcessor, _RecordingLane]:
     selected_lane = lane or _RecordingLane()
     processor = sid_processor.BcfyCallsSidProcessor(
         _GRANT,
+        claim_payload or _claim_payload(),
         store,
         calls_provider or _ScriptedProvider(),
         selected_lane,
@@ -1185,6 +1201,25 @@ def _replayable_settled_page(
 
 class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
     """Exact routing, snapshot, and URL-state contracts."""
+
+    async def test_claim_mode_payload_identity_survives_membership_refresh(
+        self,
+    ) -> None:
+        payload = _claim_payload(grant_control.ClaimMode.RECOVERY)
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_A, "00123-00045"))
+            ),
+            claim_payload=payload,
+        )
+
+        await processor._refresh_membership()
+
+        self.assertIs(processor._claim_payload, payload)
+        self.assertIs(
+            processor._claim_payload.claim_mode,
+            grant_control.ClaimMode.RECOVERY,
+        )
 
     async def test_snapshot_initial_and_unchanged_reuse_identity(self) -> None:
         initial = _snapshot(4, _member(_FEED_A, "00123-00045"))
@@ -2757,6 +2792,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         )
         processor = sid_processor.BcfyCallsSidProcessor(
             _GRANT,
+            _claim_payload(),
             membership_store,
             _ScriptedProvider(),
             lane,
@@ -2866,6 +2902,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         )
         processor = sid_processor.BcfyCallsSidProcessor(
             _GRANT,
+            _claim_payload(),
             membership_store,
             _ScriptedProvider(),
             lane,
@@ -2966,6 +3003,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         )
         processor = sid_processor.BcfyCallsSidProcessor(
             _GRANT,
+            _claim_payload(),
             _ScriptedMembershipStore(_snapshot(4, member)),
             _ScriptedProvider(),
             lane,

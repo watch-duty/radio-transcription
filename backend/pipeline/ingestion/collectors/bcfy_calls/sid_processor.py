@@ -17,7 +17,7 @@ import uuid
 
 import asyncpg
 
-from backend.pipeline.ingestion import feed_work_scheduler
+from backend.pipeline.ingestion import feed_work_scheduler, sid_grant_control
 from backend.pipeline.ingestion import models as ingestion_models
 from backend.pipeline.ingestion.collectors import aiohttp_requests, control_flow
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
@@ -747,6 +747,7 @@ class BcfyCallsSidProcessor:
     def __init__(
         self,
         grant: ingestion_lease_store.LeaseGrant,
+        claim_payload: sid_grant_control.SidClaimPayload,
         membership_store: _MembershipStore,
         calls_provider: _CallsProvider,
         lane: _GrantLane,
@@ -763,6 +764,9 @@ class BcfyCallsSidProcessor:
         if grant.source_type is not feed_store.SourceType.BCFY_CALLS:
             message = "SID processor supports only bcfy_calls grants"
             raise ValueError(message)
+        if type(claim_payload) is not sid_grant_control.SidClaimPayload:
+            message = "claim_payload must be an exact SidClaimPayload"
+            raise TypeError(message)
         if not callable(now):
             message = "now must be callable"
             raise TypeError(message)
@@ -779,6 +783,7 @@ class BcfyCallsSidProcessor:
             message = "session_id_factory must be callable"
             raise TypeError(message)
         self._grant = grant
+        self._claim_payload = claim_payload
         self._membership_store = membership_store
         self._provider = calls_provider
         self._lane = lane

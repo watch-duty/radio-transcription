@@ -855,6 +855,22 @@ class TestLeasedFeedPayloadValidator(unittest.TestCase):
         self.assertNotIn("isinstance(value, LeasedFeed)", source)
 
 
+class TestSidClaimPayloadValidator(unittest.TestCase):
+    """The SID runtime accepts only the exact source provenance type."""
+
+    def test_sid_claim_payload_type_is_exact(self) -> None:
+        payload = sid_grant_control.SidClaimPayload(
+            _lease_snapshot(),
+            grant_control.ClaimMode.RECOVERY,
+        )
+
+        self.assertTrue(collector_runtime._is_sid_claim_payload(payload))
+        self.assertFalse(
+            collector_runtime._is_sid_claim_payload(payload.snapshot)
+        )
+        self.assertFalse(collector_runtime._is_sid_claim_payload(None))
+
+
 class TestLeasedFeedPayloadSupervisorBoundary(unittest.IsolatedAsyncioTestCase):
     """Malformed Feed claims fail before runner or registry admission."""
 
@@ -2340,6 +2356,19 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         runner_constructor.assert_called_once()
         self.assertIs(runner_constructor.call_args.args[0], scheduler)
         self.assertTrue(callable(runner_constructor.call_args.args[1]))
+        processor_factory = runner_constructor.call_args.args[1]
+        grant = ingestion_lease_store.LeaseGrant(
+            SourceType.BCFY_CALLS,
+            "payload-identity",
+            _WORKER_ID,
+            1,
+        )
+        payload = sid_grant_control.SidClaimPayload(
+            _lease_snapshot(),
+            grant_control.ClaimMode.RECOVERY,
+        )
+        processor = processor_factory(grant, payload, mock.sentinel.lane)
+        self.assertIs(processor._claim_payload, payload)
         self.assertEqual(
             store_factory.call_args_list,
             [mock.call(rt._data_pool), mock.call(rt._heartbeat_pool)],
@@ -3718,7 +3747,11 @@ class TestSharedFailureTerminalDecision(unittest.IsolatedAsyncioTestCase):
 
         result = await control.finalize(
             grant,
-            _lease_snapshot(),
+            control._issue_claim_payload(
+                grant,
+                _lease_snapshot(),
+                grant_control.ClaimMode.RECOVERY,
+            ),
             sid_decision,
         )
 

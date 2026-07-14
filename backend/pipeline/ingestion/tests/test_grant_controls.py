@@ -7,6 +7,7 @@ import dataclasses
 import datetime
 import inspect
 import pathlib
+import typing
 import unittest
 import uuid
 from unittest import mock
@@ -777,6 +778,19 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             _ABANDONMENT,
         )
 
+    def _sid_payload(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        *,
+        snapshot: ingestion_lease_store.LeaseSnapshot | None = None,
+        mode: grant_control.ClaimMode = grant_control.ClaimMode.PRIMARY,
+    ) -> sid_grant_control.SidClaimPayload:
+        return self.control._issue_claim_payload(
+            grant,
+            snapshot or _lease_snapshot(),
+            mode,
+        )
+
     async def test_primary_and_recovery_preserve_claim_order_and_snapshots(
         self,
     ) -> None:
@@ -815,8 +829,16 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             [item.grant for item in primary],
             [first.grant, second.grant],
         )
-        self.assertIs(primary[0].payload, first.snapshot)
-        self.assertIs(primary[1].payload, second.snapshot)
+        self.assertIs(primary[0].payload.snapshot, first.snapshot)
+        self.assertIs(primary[1].payload.snapshot, second.snapshot)
+        self.assertIs(
+            primary[0].payload.claim_mode,
+            grant_control.ClaimMode.PRIMARY,
+        )
+        self.assertIs(
+            recovery[0].payload.claim_mode,
+            grant_control.ClaimMode.RECOVERY,
+        )
         self.assertFalse(primary[0].lifecycle.durable_failing)
         self.assertTrue(primary[1].lifecycle.durable_failing)
         self.assertEqual(
@@ -825,6 +847,107 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         )
         self.data_store.load_membership.assert_not_awaited()
         self.data_store.commit_child_mutations.assert_not_awaited()
+
+    async def test_sid_claim_payload_provenance_ignores_mutable_lifecycle(
+        self,
+    ) -> None:
+        stale_active = _lease_claim("stale-active")
+        retained_failure = _lease_claim(
+            "retained-failure",
+            failure_count=3,
+            status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        )
+        primary_failed = _lease_claim(
+            "primary-failed",
+            failure_count=2,
+            status_reason=feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
+        )
+        self.data_store.claim_recoverable.return_value = (
+            stale_active,
+            retained_failure,
+        )
+        self.data_store.claim_unclaimed.return_value = (primary_failed,)
+
+        recovered = await self.control.claim(
+            grant_control.ClaimMode.RECOVERY,
+            _OWNER_ID,
+            2,
+        )
+        primary = await self.control.claim(
+            grant_control.ClaimMode.PRIMARY,
+            _OWNER_ID,
+            1,
+        )
+
+        self.assertTrue(
+            all(
+                claim.payload.claim_mode is grant_control.ClaimMode.RECOVERY
+                for claim in recovered
+            )
+        )
+        self.assertIs(
+            primary[0].payload.claim_mode,
+            grant_control.ClaimMode.PRIMARY,
+        )
+        self.assertFalse(recovered[0].lifecycle.durable_failing)
+        self.assertTrue(recovered[1].lifecycle.durable_failing)
+        self.assertTrue(primary[0].lifecycle.durable_failing)
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            primary[0].payload.claim_mode = grant_control.ClaimMode.RECOVERY  # type: ignore[misc]
+
+    async def test_sid_claim_payload_rejects_forged_and_crossed_before_io(
+        self,
+    ) -> None:
+        grant = _lease_grant("exact", fencing_token=9)
+        crossed_grant = _lease_grant("crossed", fencing_token=10)
+        payload = self._sid_payload(
+            grant,
+            mode=grant_control.ClaimMode.RECOVERY,
+        )
+        forged = sid_grant_control.SidClaimPayload(
+            payload.snapshot,
+            payload.claim_mode,
+        )
+        copied = dataclasses.replace(payload)
+        terminal = grant_control.NeutralRelease(
+            grant_control.TerminalCause.NORMAL
+        )
+
+        for candidate_grant, candidate_payload in (
+            (grant, forged),
+            (grant, copied),
+            (crossed_grant, payload),
+        ):
+            with self.subTest(
+                grant=candidate_grant,
+                payload=candidate_payload,
+            ):
+                with self.assertRaises(
+                    grant_control.GrantControlIntegrityError
+                ):
+                    await self.control.finalize(
+                        candidate_grant,
+                        candidate_payload,
+                        terminal,
+                    )
+
+        with self.assertRaises(TypeError):
+            await self.control.finalize(
+                grant,
+                typing.cast("sid_grant_control.SidClaimPayload", None),
+                terminal,
+            )
+        with self.assertRaises(TypeError):
+            await self.control.finalize(
+                grant,
+                typing.cast(
+                    "sid_grant_control.SidClaimPayload",
+                    payload.snapshot,
+                ),
+                terminal,
+            )
+        self.data_store.release.assert_not_awaited()
+        self.data_store.finalize_failure.assert_not_awaited()
 
     async def test_heartbeat_maps_every_disposition_in_caller_order(
         self,
@@ -960,7 +1083,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
 
                 result = await self.control.finalize(
                     grant,
-                    _payload_for_grant(grant),
+                    self._sid_payload(grant),
                     grant_control.NeutralRelease(cause),
                 )
 
@@ -1006,14 +1129,14 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         ):
             budgeted = await self.control.finalize(
                 grant,
-                _payload_for_grant(grant),
+                self._sid_payload(grant),
                 _budgeted_decision(),
             )
             budgeted_call = self.data_store.finalize_failure.await_args
             self.data_store.finalize_failure.reset_mock()
             non_budgeted = await self.control.finalize(
                 grant,
-                _payload_for_grant(grant),
+                self._sid_payload(grant),
                 _non_budgeted_decision(),
             )
             non_budgeted_call = self.data_store.finalize_failure.await_args
@@ -1084,7 +1207,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
                 ):
                     await self.control.finalize(
                         grant,
-                        _payload_for_grant(grant),
+                        self._sid_payload(grant),
                         _non_budgeted_decision(),
                     )
 
@@ -1133,7 +1256,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
 
                 result = await self.control.finalize(
                     grant,
-                    _payload_for_grant(grant),
+                    self._sid_payload(grant),
                     grant_control.NeutralRelease(
                         grant_control.TerminalCause.NORMAL
                     ),
@@ -1154,7 +1277,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(grant_control.GrantControlIntegrityError):
             await self.control.finalize(
                 grant,
-                _payload_for_grant(grant),
+                self._sid_payload(grant),
                 grant_control.NeutralRelease(
                     grant_control.TerminalCause.NORMAL
                 ),
@@ -1169,7 +1292,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "outcome unknown"):
             await self.control.finalize(
                 grant,
-                _payload_for_grant(grant),
+                self._sid_payload(grant),
                 _budgeted_decision(),
             )
 

@@ -10,6 +10,7 @@ import typing
 from backend.pipeline.ingestion import (
     feed_work_scheduler,
     grant_control,
+    sid_grant_control,
 )
 from backend.pipeline.ingestion.collectors.bcfy_calls import sid_processor
 
@@ -62,7 +63,7 @@ class SidProcessorFactory(typing.Protocol):
     def __call__(
         self,
         grant: ingestion_lease_store.LeaseGrant,
-        payload: ingestion_lease_store.LeaseSnapshot,
+        payload: sid_grant_control.SidClaimPayload,
         lane: feed_work_scheduler.GrantLane,
     ) -> _SidProcessor:
         """Return one invocation-local processor for the exact grant."""
@@ -106,10 +107,13 @@ class BcfyCallsSidRunner:
     async def run(  # noqa: PLR0915
         self,
         grant: ingestion_lease_store.LeaseGrant,
-        payload: ingestion_lease_store.LeaseSnapshot,
+        payload: sid_grant_control.SidClaimPayload,
         context: grant_control.RunContext,
     ) -> grant_control.RunOutcome:
         """Supervise one processor and acknowledge only a settled exact lane."""
+        if type(payload) is not sid_grant_control.SidClaimPayload:
+            message = "payload must be an exact SidClaimPayload"
+            raise TypeError(message)
         try:
             lane = self._scheduler.open_lane(
                 grant,

@@ -292,10 +292,10 @@ def _feed_fencing_token(grant: FeedGrant) -> int:
     return grant.fencing_token
 
 
-def _is_lease_snapshot_payload(
+def _is_sid_claim_payload(
     value: object,
-) -> typing.TypeGuard[ingestion_lease_store.LeaseSnapshot]:
-    return isinstance(value, ingestion_lease_store.LeaseSnapshot)
+) -> typing.TypeGuard[sid_grant_control.SidClaimPayload]:
+    return type(value) is sid_grant_control.SidClaimPayload
 
 
 def _sid_authority(
@@ -386,7 +386,7 @@ type _SidRunnerFactory = Callable[
     [_SidRunnerResources],
     grant_control.GrantRunner[
         ingestion_lease_store.LeaseGrant,
-        ingestion_lease_store.LeaseSnapshot,
+        sid_grant_control.SidClaimPayload,
     ],
 ]
 type _SchedulerFactory = Callable[
@@ -710,15 +710,15 @@ class CollectorRuntime:
 
                 def processor_factory(
                     grant: ingestion_lease_store.LeaseGrant,
-                    payload: ingestion_lease_store.LeaseSnapshot,
+                    payload: sid_grant_control.SidClaimPayload,
                     lane: feed_work_scheduler.GrantLane,
                     *,
                     _data_store: ingestion_lease_store.IngestionLeaseStore = data_store,
                     _calls_provider: bcfy_calls_provider.CallsProviderClient = calls_provider,
                 ) -> bcfy_calls_sid_processor.BcfyCallsSidProcessor:
-                    del payload
                     return bcfy_calls_sid_processor.BcfyCallsSidProcessor(
                         grant,
+                        payload,
                         _data_store,
                         _calls_provider,
                         lane,
@@ -727,7 +727,7 @@ class CollectorRuntime:
 
                 sid_runner: grant_control.GrantRunner[
                     ingestion_lease_store.LeaseGrant,
-                    ingestion_lease_store.LeaseSnapshot,
+                    sid_grant_control.SidClaimPayload,
                 ] = bcfy_calls_sid_runner.BcfyCallsSidRunner(
                     scheduler,
                     processor_factory,
@@ -754,7 +754,7 @@ class CollectorRuntime:
                     domain_id=grant_control.DomainId.SID,
                     authority_kind=(worker_profiles.AuthorityKind.SID_LEASE),
                     grant_type=ingestion_lease_store.LeaseGrant,
-                    payload_validator=_is_lease_snapshot_payload,
+                    payload_validator=_is_sid_claim_payload,
                     authority_of=_sid_authority,
                     owner_of=_sid_owner,
                     fencing_token_of=_sid_fencing_token,
