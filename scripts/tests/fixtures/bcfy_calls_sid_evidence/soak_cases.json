@@ -1,0 +1,284 @@
+{
+  "reducer": "soak.jq",
+  "cases": [
+    {
+      "name": "cadence_90_ratio_boundaries_and_last_pos_equality",
+      "scenario": "all_ratio_boundaries",
+      "poll_count": 2700,
+      "expect": "pass",
+      "expected_polls_per_minute": 90,
+      "expected_attempt_ratio": 1.25,
+      "expected_row_ratio": 1.25
+    },
+    {
+      "name": "cadence_120_inclusive",
+      "scenario": "baseline",
+      "poll_count": 3600,
+      "expect": "pass",
+      "expected_polls_per_minute": 120
+    },
+    {
+      "name": "cadence_immediately_below_90",
+      "scenario": "baseline",
+      "poll_count": 2699,
+      "expect": "reject",
+      "error": "logical poll cadence is outside"
+    },
+    {
+      "name": "cadence_immediately_above_120",
+      "scenario": "baseline",
+      "poll_count": 3601,
+      "expect": "reject",
+      "error": "logical poll cadence is outside"
+    },
+    {
+      "name": "attempt_ratio_immediately_above_1_25",
+      "scenario": "attempt_ratio_above",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "HTTP attempts exceed 1.25"
+    },
+    {
+      "name": "row_ratio_immediately_above_1_25",
+      "scenario": "row_ratio_above",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "response rows exceed 1.25"
+    },
+    {
+      "name": "zero_rows_over_zero_per_response_distinct_passes",
+      "scenario": "zero_over_zero",
+      "poll_count": 2700,
+      "expect": "pass",
+      "expected_zero_over_zero": true
+    },
+    {
+      "name": "positive_rows_over_zero_per_response_distinct_fails",
+      "scenario": "positive_over_zero",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "response rows exceed 1.25"
+    },
+    {
+      "name": "last_pos_advance",
+      "scenario": "baseline",
+      "poll_count": 2700,
+      "expect": "pass"
+    },
+    {
+      "name": "last_pos_regression",
+      "scenario": "last_pos_regression",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "response_last_pos regressed",
+      "expect_drill_down": true
+    },
+    {
+      "name": "isolated_pressure_rejections_cursor_lag_and_reacquisition",
+      "scenario": "isolated_hazards",
+      "poll_count": 2700,
+      "expect": "pass",
+      "expected_hazards": [
+        "cursor_lag",
+        "fence_rejection",
+        "invalid_last_pos",
+        "lease_reacquisition",
+        "membership_rejection",
+        "pressure"
+      ]
+    },
+    {
+      "name": "sustained_pressure_by_consecutive_count",
+      "scenario": "sustained_pressure",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "sustained SID hazard",
+      "expect_drill_down": true
+    },
+    {
+      "name": "sustained_pressure_by_elapsed_seconds",
+      "scenario": "sustained_pressure",
+      "poll_count": 2700,
+      "sustained_consecutive_polls": 99,
+      "expect": "reject",
+      "error": "sustained SID hazard"
+    },
+    {
+      "name": "sustained_cursor_lag",
+      "scenario": "sustained_cursor_lag",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "sustained SID hazard"
+    },
+    {
+      "name": "sustained_membership_rejection",
+      "scenario": "sustained_membership_rejection",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "sustained SID hazard"
+    },
+    {
+      "name": "repeated_lease_reacquisition",
+      "scenario": "repeated_reacquisition",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "sustained SID hazard",
+      "expect_drill_down": true
+    },
+    {
+      "name": "replay_window_truncation",
+      "scenario": "replay_truncation",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "replay-window truncation evidence is present",
+      "expect_drill_down": true
+    },
+    {
+      "name": "missing_success_including_window_edges",
+      "scenario": "missing_success",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "including window edges",
+      "expect_drill_down": true
+    },
+    {
+      "name": "soak_start_not_strictly_after_bootstrap",
+      "scenario": "baseline",
+      "poll_count": 2700,
+      "bootstrap_end_equals_soak_start": true,
+      "expect": "reject",
+      "error": "strictly later than BOOTSTRAP_END"
+    },
+    {
+      "name": "soak_window_not_exactly_30_minutes",
+      "scenario": "baseline",
+      "poll_count": 2700,
+      "short_window": true,
+      "expect": "reject",
+      "error": "exactly 30 minutes"
+    },
+    {
+      "name": "missing_success_threshold_not_configured",
+      "scenario": "baseline",
+      "poll_count": 2700,
+      "missing_success_threshold_seconds": null,
+      "expect": "reject",
+      "error": "MISSING_SUCCESS_THRESHOLD_SECONDS"
+    },
+    {
+      "name": "cursor_lag_threshold_not_configured",
+      "scenario": "baseline",
+      "poll_count": 2700,
+      "cursor_lag_threshold_seconds": null,
+      "expect": "reject",
+      "error": "CURSOR_LAG_THRESHOLD_SECONDS"
+    },
+    {
+      "name": "sustained_count_not_configured",
+      "scenario": "baseline",
+      "poll_count": 2700,
+      "sustained_consecutive_polls": null,
+      "expect": "reject",
+      "error": "SUSTAINED_CONSECUTIVE_POLLS"
+    },
+    {
+      "name": "sustained_seconds_not_configured",
+      "scenario": "baseline",
+      "poll_count": 2700,
+      "sustained_seconds": null,
+      "expect": "reject",
+      "error": "SUSTAINED_SECONDS"
+    },
+    {
+      "name": "missing_expected_sid",
+      "scenario": "missing_sid",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "settled-poll SID set does not exactly match"
+    },
+    {
+      "name": "unexpected_sid",
+      "scenario": "unexpected_sid",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "input contains an unexpected SID"
+    },
+    {
+      "name": "duplicate_event_identity",
+      "scenario": "duplicate_identity",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "duplicate (sid,timestamp,insertId)"
+    },
+    {
+      "name": "malformed_reduced_distinct_scalar",
+      "scenario": "malformed_denominator",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "distinct-URL denominator is absent or malformed"
+    },
+    {
+      "name": "valid_last_pos_regresses_request_pos",
+      "scenario": "valid_request_regression",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "valid poll response_last_pos regresses request_pos"
+    },
+    {
+      "name": "missing_cursor_lag_key",
+      "scenario": "missing_lag_key",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "cursor-lag evidence keys are missing"
+    },
+    {
+      "name": "incomplete_collection_marker",
+      "scenario": "incomplete_collection",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "collection completion marker is missing"
+    },
+    {
+      "name": "missing_intermediate_page_token",
+      "scenario": "missing_page_token",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "page-token chain is incomplete"
+    },
+    {
+      "name": "repeated_cyclic_page_token",
+      "scenario": "repeated_page_token",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "page-token chain repeats or cycles"
+    },
+    {
+      "name": "result_exactly_at_limit_even_if_complete",
+      "scenario": "result_at_limit",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "returned_count reached the configured result limit"
+    },
+    {
+      "name": "missing_instance_scope",
+      "scenario": "missing_instance_scope",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "missing its numeric instance scope"
+    },
+    {
+      "name": "frozen_filter_scope_mismatch",
+      "scenario": "filter_scope_mismatch",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "exact frozen instance-ID scope"
+    },
+    {
+      "name": "out_of_window_entry",
+      "scenario": "out_of_window",
+      "poll_count": 2700,
+      "expect": "reject",
+      "error": "outside the exact half-open soak window"
+    }
+  ]
+}

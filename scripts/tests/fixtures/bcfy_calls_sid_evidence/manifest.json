@@ -1,0 +1,45 @@
+{
+  "fixture_contract_version": 1,
+  "sanitized": true,
+  "description": "Synthetic scalar-only Cloud Logging evidence; no production identities or provider payloads.",
+  "expected_sids": [
+    "81001",
+    "81002",
+    "81003",
+    "81004",
+    "81005",
+    "81006",
+    "81007",
+    "81008",
+    "81009",
+    "81010",
+    "81011",
+    "81012",
+    "81013",
+    "81014",
+    "81015",
+    "81016",
+    "81017",
+    "81018",
+    "81019"
+  ],
+  "owned_files": [
+    "bootstrap_cases.json",
+    "soak_cases.json"
+  ],
+  "defaults": {
+    "bootstrap_window_start": "2026-07-14T00:00:00Z",
+    "bootstrap_window_end": "2026-07-14T00:05:00Z",
+    "bootstrap_end": "2026-07-14T00:00:28Z",
+    "soak_start": "2026-07-14T00:10:00Z",
+    "soak_end": "2026-07-14T00:40:00Z",
+    "missing_success_threshold_seconds": 30,
+    "cursor_lag_threshold_seconds": 30,
+    "sustained_consecutive_polls": 6,
+    "sustained_seconds": 60,
+    "frozen_instance_ids": [
+      "fixture-instance-001",
+      "fixture-instance-002"
+    ]
+  }
+}

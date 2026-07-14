@@ -1,0 +1,85 @@
+{
+  "reducer": "bootstrap.jq",
+  "cases": [
+    {
+      "name": "exact_19_out_of_order_with_timestamp_tie",
+      "scenario": "baseline",
+      "expect": "pass",
+      "expected_bootstrap_end": "2026-07-14T00:00:28Z",
+      "expected_first_sid": "81001",
+      "expected_first_insert_id": "qualifying-81001-a"
+    },
+    {
+      "name": "missing_expected_sid",
+      "scenario": "missing_sid",
+      "expect": "reject",
+      "error": "raw poll SID set does not exactly match"
+    },
+    {
+      "name": "unexpected_sid",
+      "scenario": "unexpected_sid",
+      "expect": "reject",
+      "error": "raw poll SID set does not exactly match"
+    },
+    {
+      "name": "duplicate_event_identity",
+      "scenario": "duplicate_identity",
+      "expect": "reject",
+      "error": "duplicate (sid,timestamp,insertId)"
+    },
+    {
+      "name": "malformed_reduced_distinct_scalar",
+      "scenario": "malformed_denominator",
+      "expect": "reject",
+      "error": "distinct-URL denominator is absent or malformed"
+    },
+    {
+      "name": "incomplete_collection_marker",
+      "scenario": "incomplete_collection",
+      "expect": "reject",
+      "error": "collection completion marker is missing"
+    },
+    {
+      "name": "missing_intermediate_page_token",
+      "scenario": "missing_page_token",
+      "expect": "reject",
+      "error": "page-token chain is incomplete"
+    },
+    {
+      "name": "missing_final_page_completion",
+      "scenario": "missing_final_page_completion",
+      "expect": "reject",
+      "error": "page metadata is malformed"
+    },
+    {
+      "name": "repeated_cyclic_page_token",
+      "scenario": "repeated_page_token",
+      "expect": "reject",
+      "error": "page-token chain repeats or cycles"
+    },
+    {
+      "name": "result_exactly_at_limit_even_if_complete",
+      "scenario": "result_at_limit",
+      "expect": "reject",
+      "error": "returned_count reached the configured result limit"
+    },
+    {
+      "name": "missing_instance_scope",
+      "scenario": "missing_instance_scope",
+      "expect": "reject",
+      "error": "missing its numeric instance scope"
+    },
+    {
+      "name": "frozen_filter_scope_mismatch",
+      "scenario": "filter_scope_mismatch",
+      "expect": "reject",
+      "error": "exact frozen instance-ID scope"
+    },
+    {
+      "name": "out_of_window_entry",
+      "scenario": "out_of_window",
+      "expect": "reject",
+      "error": "outside the captured half-open window"
+    }
+  ]
+}
