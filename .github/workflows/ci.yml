@@ -184,6 +184,7 @@ jobs:
         run: |
           terraform init -backend=false
           terraform validate
+          terraform test
 
   run-backend-tests:
     needs: [setup]

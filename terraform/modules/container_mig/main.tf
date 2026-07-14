@@ -163,6 +163,14 @@ resource "google_compute_region_instance_group_manager" "this" {
     instance_template = google_compute_instance_template.this.self_link_unique
   }
 
+  # Keep normal repair as the default while allowing callers to represent a
+  # fail-stopped maintenance boundary. Application autohealing remains an
+  # independent opt-in below because both repair paths must be disabled during
+  # an exclusive authority transition.
+  instance_lifecycle_policy {
+    default_action_on_failure = var.default_action_on_vm_failure
+  }
+
   # Autohealing. initial_delay_sec = 300 (5 min) covers VM boot (~30s) +
   # cloud-init (~60s) + docker pull (~2-3 min on cold cache) + container
   # start + first heartbeat + first feed lease. A VM failing /healthz during

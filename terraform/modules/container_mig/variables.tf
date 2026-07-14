@@ -104,6 +104,17 @@ variable "enable_autohealing" {
   default     = false
 }
 
+variable "default_action_on_vm_failure" {
+  description = "Action the MIG takes when a VM fails. REPAIR preserves normal automatic repair; DO_NOTHING provides a fail-stopped maintenance boundary."
+  type        = string
+  default     = "REPAIR"
+
+  validation {
+    condition     = contains(["REPAIR", "DO_NOTHING"], var.default_action_on_vm_failure)
+    error_message = "default_action_on_vm_failure must be REPAIR or DO_NOTHING."
+  }
+}
+
 variable "tmpfs_mounts" {
   description = "Optional list of tmpfs mounts to pass to the docker container as --tmpfs flags."
   type        = list(string)
