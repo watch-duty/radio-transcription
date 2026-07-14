@@ -150,7 +150,7 @@ class EvaluationEventProcessor:
                     new_audio.segment_id,
                     e,
                 )
-                record_pipeline_stage("evaluation_annotation", "error")
+                record_pipeline_stage("evaluation", "evaluation_error")
 
             # 4. Publish to Downstream Topic if flagged or has errors
             if (
