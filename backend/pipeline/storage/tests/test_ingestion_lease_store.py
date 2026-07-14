@@ -18,6 +18,7 @@ from backend.pipeline.storage.tests import connection_util
 
 _OWNER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _OTHER_OWNER_ID = uuid.UUID("22222222-3333-4444-5555-666666666666")
+_NOW = datetime.datetime(2026, 7, 10, 12, 0, tzinfo=datetime.UTC)
 
 
 def _grant(
@@ -43,6 +44,7 @@ def _lease_row(**overrides: object) -> dict[str, object]:
         "fencing_token": 7,
         "failure_count": 2,
         "status_reason": "source_unreachable",
+        "membership_revision": 4,
         "applied": False,
     }
     row.update(overrides)
@@ -794,7 +796,7 @@ class TestRefreshMembership(unittest.IsolatedAsyncioTestCase):
         unchanged = ingestion_lease_store.MembershipUnchanged(_grant(), 4)
         self.assertTrue(hasattr(type(unchanged), "__slots__"))
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            unchanged.membership_revision = 5  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+            typing.cast("typing.Any", unchanged).membership_revision = 5
 
     async def test_initial_refresh_loads_one_complete_snapshot(self) -> None:
         pool = connection_util.make_mock_pool(transaction=True)
@@ -908,7 +910,7 @@ class TestRefreshMembership(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises((TypeError, ValueError)):
                     await store.refresh_membership(
                         _grant(),
-                        known_revision=known_revision,  # ty: ignore[invalid-argument-type]
+                        known_revision=typing.cast("int", known_revision),
                     )
 
                 pool.acquire.assert_not_called()
@@ -1037,7 +1039,7 @@ class TestRefreshMembership(unittest.IsolatedAsyncioTestCase):
             ("00123-00046",),
         )
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            first.members = ()  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+            typing.cast("typing.Any", first).members = ()
 
 
 if __name__ == "__main__":

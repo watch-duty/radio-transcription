@@ -393,6 +393,16 @@ def _membership_identity_from_row(
     grant: LeaseGrant,
     row: collections.abc.Mapping,
 ) -> LeaseMemberIdentity | MembershipInvariantViolation:
+    """Validate and materialize one immutable membership identity.
+
+    Args:
+        grant: Exact parent Lease grant validated for the membership read.
+        row: Joined Feed and feed-property row to validate.
+
+    Returns:
+        The immutable child identity, or a closed invariant violation when the
+        joined row cannot belong to the validated Lease.
+    """
     feed_id = row["feed_id"]
     source_feed_id = row["source_feed_id"]
     sid = row["sid"]
@@ -456,6 +466,18 @@ def _member_from_row(
     identity: LeaseMemberIdentity,
     row: collections.abc.Mapping,
 ) -> LeaseMember:
+    """Materialize one Lease member from a validated joined row.
+
+    Args:
+        identity: Previously validated immutable child identity.
+        row: Joined Feed and feed-property row containing lifecycle state.
+
+    Returns:
+        The complete member state associated with ``identity``.
+
+    Raises:
+        ValueError: If the row contains an unknown lifecycle value.
+    """
     return LeaseMember(
         identity=identity,
         status=_status_from_row(row),
@@ -811,8 +833,7 @@ class IngestionLeaseStore:
                     msg = "accepted Lease grant lacks a locked row"
                     raise RuntimeError(msg)
 
-                snapshot = _snapshot_from_row(lease_row)
-                current_revision = snapshot.membership_revision
+                current_revision = lease_row["membership_revision"]
                 if current_revision == known_revision:
                     return MembershipUnchanged(grant, current_revision)
                 if (
@@ -841,6 +862,17 @@ class IngestionLeaseStore:
         membership_revision: int,
         rows: collections.abc.Sequence[collections.abc.Mapping],
     ) -> MembershipSnapshot | MembershipInvariantViolation:
+        """Validate joined rows and build an authoritative membership result.
+
+        Args:
+            grant: Exact parent Lease grant validated beneath its row lock.
+            membership_revision: Revision read from the locked parent Lease.
+            rows: Joined Feed and feed-property rows for the Lease SID.
+
+        Returns:
+            A complete eligible snapshot, or the first closed invariant
+            violation found while validating the authoritative row set.
+        """
         if not rows:
             return MembershipInvariantViolation(
                 grant,

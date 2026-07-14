@@ -139,7 +139,17 @@ async def _insert_member(
     *,
     status: str = "active",
 ) -> uuid.UUID:
-    """Insert one Feed and maintained Calls membership tuple."""
+    """Insert one Feed and maintained Calls membership tuple.
+
+    Args:
+        pool: Database pool used to insert the fixture rows.
+        sid: Textual Broadcastify Calls system identifier.
+        group_id: Textual Broadcastify Calls talkgroup identifier.
+        status: Initial Feed lifecycle status.
+
+    Returns:
+        The generated Feed identifier.
+    """
     feed_id = uuid.uuid4()
     source_feed_id = f"{sid}-{group_id}"
     failing = status == "failing"
@@ -498,20 +508,20 @@ async def test_membership_snapshot_refresh_and_revision_fail_closed(
         async with connection.transaction(isolation="read_committed"):
             await connection.execute(
                 """
-                UPDATE public.feeds
-                SET status = 'active'::public.feed_status
-                WHERE id = $1
-                """,
-                expected_ids["00047"],
-            )
-            await connection.execute(
-                """
                 UPDATE public.ingestion_leases
                 SET membership_revision = 2,
                     updated_at = NOW()
                 WHERE source_type = 'bcfy_calls' AND lease_key = $1
                 """,
                 sid,
+            )
+            await connection.execute(
+                """
+                UPDATE public.feeds
+                SET status = 'active'::public.feed_status
+                WHERE id = $1
+                """,
+                expected_ids["00047"],
             )
     changed = await store.refresh_membership(grant, known_revision=1)
     assert isinstance(changed, ingestion_lease_store.MembershipSnapshot)
