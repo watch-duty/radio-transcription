@@ -442,6 +442,231 @@ async def test_neutral_release_and_reclaim_invalidate_old_grant(
     assert durable["fencing_token"] == 42
 
 
+async def test_budgeted_failure_releases_owner_and_preserves_authority(
+    ingestion_lease_pool: asyncpg.Pool,
+) -> None:
+    sid = _unique_digits()
+    owner = uuid.uuid4()
+    await _insert_lease(
+        ingestion_lease_pool,
+        sid,
+        status="active",
+        owner_worker_id=owner,
+        fencing_token=31,
+        failure_count=2,
+        membership_revision=9,
+    )
+    before = await _fetch_lease(ingestion_lease_pool, sid)
+    database_before = await ingestion_lease_pool.fetchval("SELECT NOW()")
+    store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
+    grant = ingestion_lease_store.LeaseGrant(
+        _SOURCE_TYPE,
+        sid,
+        owner,
+        31,
+    )
+
+    result = await store.finalize_failure(
+        grant,
+        ingestion_lease_store.BudgetedFailure(
+            failure_threshold=5,
+            backoff_base_sec=2,
+            backoff_max_sec=30,
+        ),
+        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        actor_id="integration_test",
+        reason="provider timeout",
+    )
+
+    database_after = await ingestion_lease_pool.fetchval("SELECT NOW()")
+    durable = await _fetch_lease(ingestion_lease_pool, sid)
+    assert result == ingestion_lease_store.LeaseFailureResult(
+        ingestion_lease_store.LeaseOperationDisposition.APPLIED,
+        ingestion_lease_store.LeaseFailureEffect.FAILURE_RECORDED,
+    )
+    assert durable["status"] == "failing"
+    assert durable["worker_id"] is None
+    assert durable["last_heartbeat"] is None
+    assert durable["fencing_token"] == 31
+    assert durable["failure_count"] == 3
+    assert durable["membership_revision"] == 9
+    assert durable["status_reason"] == "source_unreachable"
+    assert durable["status_reason_detail"] == "provider timeout"
+    assert durable["updated_at"] >= before["updated_at"]
+    assert (
+        database_before + datetime.timedelta(seconds=8)
+        <= durable["retry_after"]
+    )
+    assert durable["retry_after"] <= database_after + datetime.timedelta(
+        seconds=18
+    )
+
+
+async def test_budgeted_failure_quarantines_at_threshold(
+    ingestion_lease_pool: asyncpg.Pool,
+) -> None:
+    sid = _unique_digits()
+    owner = uuid.uuid4()
+    await _insert_lease(
+        ingestion_lease_pool,
+        sid,
+        status="active",
+        owner_worker_id=owner,
+        fencing_token=12,
+        failure_count=4,
+        membership_revision=3,
+    )
+    store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
+    grant = ingestion_lease_store.LeaseGrant(_SOURCE_TYPE, sid, owner, 12)
+
+    result = await store.finalize_failure(
+        grant,
+        ingestion_lease_store.BudgetedFailure(failure_threshold=5),
+        feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+        actor_id="integration_test",
+    )
+
+    durable = await _fetch_lease(ingestion_lease_pool, sid)
+    assert result.effect is ingestion_lease_store.LeaseFailureEffect.QUARANTINED
+    assert durable["status"] == "quarantined"
+    assert durable["worker_id"] is None
+    assert durable["last_heartbeat"] is None
+    assert durable["failure_count"] == 5
+    assert durable["retry_after"] is None
+    assert durable["fencing_token"] == 12
+    assert durable["membership_revision"] == 3
+
+
+async def test_non_budgeted_failure_resets_budget_and_never_quarantines(
+    ingestion_lease_pool: asyncpg.Pool,
+) -> None:
+    sid = _unique_digits()
+    owner = uuid.uuid4()
+    retry_after = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
+        minutes=5
+    )
+    await _insert_lease(
+        ingestion_lease_pool,
+        sid,
+        status="active",
+        owner_worker_id=owner,
+        fencing_token=18,
+        failure_count=99,
+        membership_revision=8,
+    )
+    store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
+    grant = ingestion_lease_store.LeaseGrant(_SOURCE_TYPE, sid, owner, 18)
+
+    result = await store.finalize_failure(
+        grant,
+        ingestion_lease_store.NonBudgetedFailure(retry_after),
+        feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        actor_id="integration_test",
+        reason="storage unavailable",
+    )
+
+    durable = await _fetch_lease(ingestion_lease_pool, sid)
+    assert result.effect is (
+        ingestion_lease_store.LeaseFailureEffect.FAILURE_RECORDED
+    )
+    assert durable["status"] == "failing"
+    assert durable["worker_id"] is None
+    assert durable["last_heartbeat"] is None
+    assert durable["failure_count"] == 0
+    assert durable["retry_after"] == retry_after
+    assert durable["status_reason"] == "system_pipeline_error"
+    assert durable["status_reason_detail"] == "storage unavailable"
+    assert durable["fencing_token"] == 18
+    assert durable["membership_revision"] == 8
+
+
+async def test_stale_failure_grant_is_rejected_without_writing(
+    ingestion_lease_pool: asyncpg.Pool,
+) -> None:
+    sid = _unique_digits()
+    owner = uuid.uuid4()
+    await _insert_lease(
+        ingestion_lease_pool,
+        sid,
+        status="active",
+        owner_worker_id=owner,
+        fencing_token=21,
+        failure_count=2,
+        membership_revision=6,
+    )
+    before = await _fetch_lease(ingestion_lease_pool, sid)
+    store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
+    stale = ingestion_lease_store.LeaseGrant(_SOURCE_TYPE, sid, owner, 20)
+
+    result = await store.finalize_failure(
+        stale,
+        ingestion_lease_store.BudgetedFailure(),
+        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        actor_id="integration_test",
+    )
+
+    after = await _fetch_lease(ingestion_lease_pool, sid)
+    assert result == ingestion_lease_store.LeaseFailureResult(
+        ingestion_lease_store.LeaseOperationDisposition.FENCE_MISMATCH,
+        ingestion_lease_store.LeaseFailureEffect.NONE,
+    )
+    assert dict(after) == dict(before)
+
+
+async def test_concurrent_failure_and_release_only_one_applies(
+    ingestion_lease_pool: asyncpg.Pool,
+) -> None:
+    sid = _unique_digits()
+    owner = uuid.uuid4()
+    await _insert_lease(
+        ingestion_lease_pool,
+        sid,
+        status="active",
+        owner_worker_id=owner,
+        fencing_token=40,
+    )
+    store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
+    grant = ingestion_lease_store.LeaseGrant(_SOURCE_TYPE, sid, owner, 40)
+    barrier = asyncio.Barrier(3)
+
+    async def _fail() -> ingestion_lease_store.LeaseFailureResult:
+        await barrier.wait()
+        return await store.finalize_failure(
+            grant,
+            ingestion_lease_store.BudgetedFailure(),
+            feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            actor_id="integration_test",
+        )
+
+    async def _release() -> ingestion_lease_store.LeaseOperationResult:
+        await barrier.wait()
+        return await store.release(grant)
+
+    failure_task = asyncio.create_task(_fail())
+    release_task = asyncio.create_task(_release())
+    try:
+        await barrier.wait()
+        failure, release = await asyncio.wait_for(
+            asyncio.gather(failure_task, release_task),
+            timeout=_TIMEOUT_SECONDS,
+        )
+    finally:
+        await _cancel_tasks(failure_task, release_task)
+
+    assert {
+        failure.disposition,
+        release.disposition,
+    } == {
+        ingestion_lease_store.LeaseOperationDisposition.APPLIED,
+        ingestion_lease_store.LeaseOperationDisposition.STATUS_INELIGIBLE,
+    }
+    durable = await _fetch_lease(ingestion_lease_pool, sid)
+    assert durable["status"] in {"failing", "unclaimed"}
+    assert durable["worker_id"] is None
+    assert durable["last_heartbeat"] is None
+    assert durable["fencing_token"] == 40
+
+
 async def test_membership_snapshot_refresh_and_revision_fail_closed(
     ingestion_lease_pool: asyncpg.Pool,
 ) -> None:

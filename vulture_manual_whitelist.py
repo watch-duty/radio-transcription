@@ -13,8 +13,8 @@ _.get_value
 
 # These PRs intentionally introduce the Lease lifecycle and membership storage
 # boundaries before the generic runtime starts calling them. Vulture excludes
-# the focused tests, so keep only the dormant public methods, snapshot fields,
-# and release telemetry causes allowlisted until the runtime wiring lands.
+# the focused tests, so keep only dormant public methods, returned result fields,
+# and lifecycle telemetry causes allowlisted until the runtime wiring lands.
 from backend.pipeline.storage.ingestion_lease_store import (
     IngestionLeaseStore,
     LeaseHeartbeatResult,
@@ -25,6 +25,7 @@ IngestionLeaseStore.claim_unclaimed
 IngestionLeaseStore.claim_recoverable
 IngestionLeaseStore.renew_heartbeats
 IngestionLeaseStore.release
+IngestionLeaseStore.finalize_failure
 IngestionLeaseStore.load_membership
 LeaseOperationResult.disposition
 LeaseHeartbeatResult.disposition

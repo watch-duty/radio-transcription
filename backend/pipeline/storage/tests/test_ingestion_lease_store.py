@@ -46,6 +46,7 @@ def _lease_row(**overrides: object) -> dict[str, object]:
         "status_reason": "source_unreachable",
         "membership_revision": 4,
         "applied": False,
+        "final_status": None,
     }
     row.update(overrides)
     return row
@@ -168,6 +169,87 @@ class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
                 _grant(),
                 cause="shutdown",  # ty: ignore[invalid-argument-type]
             )
+
+        pool.fetchrow.assert_not_awaited()
+
+    def test_budgeted_failure_rejects_invalid_parameters(self) -> None:
+        cases = (
+            {"failure_threshold": 0},
+            {"failure_threshold": True},
+            {"backoff_base_sec": 0},
+            {"backoff_max_sec": 0},
+            {"backoff_base_sec": 20, "backoff_max_sec": 10},
+        )
+
+        for case_index, kwargs in enumerate(cases):
+            with self.subTest(case_index=case_index):
+                with self.assertRaises((TypeError, ValueError)):
+                    ingestion_lease_store.BudgetedFailure(**kwargs)
+
+    def test_non_budgeted_failure_requires_utc_aware_retry(self) -> None:
+        cases = (
+            datetime.datetime(2026, 7, 10),
+            datetime.datetime(
+                2026,
+                7,
+                10,
+                tzinfo=datetime.timezone(datetime.timedelta(hours=1)),
+            ),
+            "tomorrow",
+        )
+
+        for case_index, retry_after in enumerate(cases):
+            with self.subTest(case_index=case_index):
+                with self.assertRaises((TypeError, ValueError)):
+                    ingestion_lease_store.NonBudgetedFailure(
+                        retry_after,  # ty: ignore[invalid-argument-type]
+                    )
+
+    async def test_finalize_failure_validates_before_pool_checkout(
+        self,
+    ) -> None:
+        pool = connection_util.make_mock_pool()
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+        action = ingestion_lease_store.BudgetedFailure()
+        status_reason = feed_store.FeedStatusReason.SOURCE_UNREACHABLE
+        invalid_call_factories = (
+            lambda: store.finalize_failure(
+                "grant",  # ty: ignore[invalid-argument-type]
+                action,
+                status_reason,
+                actor_id="collector",
+            ),
+            lambda: store.finalize_failure(
+                _grant(),
+                object(),  # ty: ignore[invalid-argument-type]
+                status_reason,
+                actor_id="collector",
+            ),
+            lambda: store.finalize_failure(
+                _grant(),
+                action,
+                "source_unreachable",  # ty: ignore[invalid-argument-type]
+                actor_id="collector",
+            ),
+            lambda: store.finalize_failure(
+                _grant(),
+                action,
+                status_reason,
+                actor_id="has space",
+            ),
+            lambda: store.finalize_failure(
+                _grant(),
+                action,
+                status_reason,
+                actor_id="collector",
+                reason=123,  # ty: ignore[invalid-argument-type]
+            ),
+        )
+
+        for case_index, make_call in enumerate(invalid_call_factories):
+            with self.subTest(case_index=case_index):
+                with self.assertRaises((TypeError, ValueError)):
+                    await make_call()
 
         pool.fetchrow.assert_not_awaited()
 
@@ -514,6 +596,199 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaisesRegex(RuntimeError, "release failed"):
             await store.release(_grant())
+
+        pool.fetchrow.assert_awaited_once()
+
+
+class TestFinalizeLeaseFailure(unittest.IsolatedAsyncioTestCase):
+    """Tests for one-shot exact-grant failure finalization."""
+
+    async def test_budgeted_failure_records_narrow_effect_and_parameters(
+        self,
+    ) -> None:
+        pool = connection_util.make_mock_pool(
+            fetchrow_result=_lease_row(
+                applied=True,
+                final_status="failing",
+            )
+        )
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.finalize_failure(
+            _grant(),
+            ingestion_lease_store.BudgetedFailure(),
+            feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            actor_id="service_account:gcp:collector",
+            reason="provider timeout",
+        )
+
+        self.assertEqual(
+            result,
+            ingestion_lease_store.LeaseFailureResult(
+                ingestion_lease_store.LeaseOperationDisposition.APPLIED,
+                ingestion_lease_store.LeaseFailureEffect.FAILURE_RECORDED,
+            ),
+        )
+        pool.fetchrow.assert_awaited_once_with(
+            ingestion_lease_queries.FINALIZE_BUDGETED_FAILURE_SQL,
+            "bcfy_calls",
+            "123",
+            _OWNER_ID,
+            7,
+            5,
+            15,
+            600,
+            "source_unreachable",
+            "provider timeout",
+        )
+
+    async def test_budgeted_failure_reports_quarantine(self) -> None:
+        pool = connection_util.make_mock_pool(
+            fetchrow_result=_lease_row(
+                applied=True,
+                final_status="quarantined",
+            )
+        )
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.finalize_failure(
+            _grant(),
+            ingestion_lease_store.BudgetedFailure(),
+            feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            actor_id="collector",
+        )
+
+        self.assertIs(
+            result.effect,
+            ingestion_lease_store.LeaseFailureEffect.QUARANTINED,
+        )
+
+    async def test_non_budgeted_failure_uses_caller_retry_and_resets_budget(
+        self,
+    ) -> None:
+        retry_after = _NOW + datetime.timedelta(minutes=8)
+        pool = connection_util.make_mock_pool(
+            fetchrow_result=_lease_row(
+                applied=True,
+                final_status="failing",
+            )
+        )
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.finalize_failure(
+            _grant(),
+            ingestion_lease_store.NonBudgetedFailure(retry_after),
+            feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+            actor_id="collector",
+        )
+
+        self.assertIs(
+            result.effect,
+            ingestion_lease_store.LeaseFailureEffect.FAILURE_RECORDED,
+        )
+        pool.fetchrow.assert_awaited_once_with(
+            ingestion_lease_queries.FINALIZE_NON_BUDGETED_FAILURE_SQL,
+            "bcfy_calls",
+            "123",
+            _OWNER_ID,
+            7,
+            retry_after,
+            "system_pipeline_error",
+            None,
+        )
+
+    async def test_failure_detail_is_bounded_before_database_call(self) -> None:
+        pool = connection_util.make_mock_pool(
+            fetchrow_result=_lease_row(
+                applied=True,
+                final_status="failing",
+            )
+        )
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        await store.finalize_failure(
+            _grant(),
+            ingestion_lease_store.BudgetedFailure(),
+            feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            actor_id="collector",
+            reason="x" * 3000,
+        )
+
+        detail = pool.fetchrow.await_args.args[-1]
+        self.assertEqual(len(detail), 2048)
+        self.assertTrue(detail.endswith("[truncated]"))
+
+    async def test_rejections_are_typed_without_lifecycle_effect(self) -> None:
+        cases = (
+            (None, ingestion_lease_store.LeaseOperationDisposition.MISSING),
+            (
+                _lease_row(worker_id=_OTHER_OWNER_ID),
+                ingestion_lease_store.LeaseOperationDisposition.OWNER_MISMATCH,
+            ),
+            (
+                _lease_row(fencing_token=8),
+                ingestion_lease_store.LeaseOperationDisposition.FENCE_MISMATCH,
+            ),
+            (
+                _lease_row(status="failing", worker_id=None),
+                ingestion_lease_store.LeaseOperationDisposition.STATUS_INELIGIBLE,
+            ),
+        )
+
+        for case_index, (row, disposition) in enumerate(cases):
+            with self.subTest(case_index=case_index):
+                pool = connection_util.make_mock_pool(fetchrow_result=row)
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+                result = await store.finalize_failure(
+                    _grant(),
+                    ingestion_lease_store.BudgetedFailure(),
+                    feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                    actor_id="collector",
+                )
+
+                self.assertIs(result.disposition, disposition)
+                self.assertIs(
+                    result.effect,
+                    ingestion_lease_store.LeaseFailureEffect.NONE,
+                )
+
+    async def test_exact_nonapplied_or_mismatched_applied_result_fails_closed(
+        self,
+    ) -> None:
+        cases = (
+            _lease_row(),
+            _lease_row(
+                applied=True,
+                final_status="failing",
+                worker_id=_OTHER_OWNER_ID,
+            ),
+            _lease_row(applied=True, final_status="active"),
+        )
+
+        for case_index, row in enumerate(cases):
+            with self.subTest(case_index=case_index):
+                pool = connection_util.make_mock_pool(fetchrow_result=row)
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+                with self.assertRaises((RuntimeError, ValueError)):
+                    await store.finalize_failure(
+                        _grant(),
+                        ingestion_lease_store.BudgetedFailure(),
+                        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                        actor_id="collector",
+                    )
+
+    async def test_database_exception_is_not_retried(self) -> None:
+        pool = connection_util.make_mock_pool()
+        pool.fetchrow.side_effect = RuntimeError("outcome unknown")
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        with self.assertRaisesRegex(RuntimeError, "outcome unknown"):
+            await store.finalize_failure(
+                _grant(),
+                ingestion_lease_store.BudgetedFailure(),
+                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                actor_id="collector",
+            )
 
         pool.fetchrow.assert_awaited_once()
 

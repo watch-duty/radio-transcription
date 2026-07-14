@@ -328,11 +328,128 @@ class TestLeaseControlQueryContract(unittest.TestCase):
                 "claim_recoverable",
                 "renew_heartbeats",
                 "release",
+                "finalize_failure",
             )
         }
 
         for annotation in annotations.values():
             self.assertIsNot(annotation, inspect.Signature.empty)
+
+
+class TestLeaseFailureContract(unittest.TestCase):
+    """Tests for caller-selected exact-grant failure finalization."""
+
+    def test_failure_values_are_closed_frozen_and_narrow(self) -> None:
+        action = ingestion_lease_store.BudgetedFailure()
+
+        self.assertEqual(action.failure_threshold, 5)
+        self.assertEqual(action.backoff_base_sec, 15)
+        self.assertEqual(action.backoff_max_sec, 600)
+        self.assertTrue(hasattr(type(action), "__slots__"))
+        self.assertEqual(
+            [
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.LeaseFailureResult
+                )
+            ],
+            ["disposition", "effect"],
+        )
+        self.assertEqual(
+            {
+                effect.value
+                for effect in ingestion_lease_store.LeaseFailureEffect
+            },
+            {"none", "failure_recorded", "quarantined"},
+        )
+
+    def test_failure_queries_require_one_exact_active_grant(self) -> None:
+        for query in (
+            ingestion_lease_queries.FINALIZE_BUDGETED_FAILURE_SQL,
+            ingestion_lease_queries.FINALIZE_NON_BUDGETED_FAILURE_SQL,
+        ):
+            sql = _normalized_sql(query)
+            self.assertIn("FOR NO KEY UPDATE", sql)
+            self.assertIn("current_state.worker_id = $3", sql)
+            self.assertIn("current_state.fencing_token = $4", sql)
+            self.assertIn(
+                "current_state.status = 'active'::public.feed_status",
+                sql,
+            )
+            self.assertIn("worker_id = NULL", sql)
+            self.assertIn("last_heartbeat = NULL", sql)
+            self.assertIn("status_reason =", sql)
+            self.assertIn("status_reason_detail =", sql)
+            self.assertIn("updated_at = NOW()", sql)
+            self.assertNotIn("public.feeds", sql)
+            self.assertNotIn("feed_properties", sql)
+
+            set_clause = sql.split("SET", 1)[1].split("FROM current_state", 1)[
+                0
+            ]
+            self.assertNotIn("fencing_token =", set_clause)
+            self.assertNotIn("membership_revision =", set_clause)
+            result_select = sql.rsplit("SELECT", 1)[1]
+            self.assertIn("updated.status::text AS final_status", result_select)
+            self.assertIn(
+                "updated.source_type IS NOT NULL AS applied", result_select
+            )
+            for excluded_result in (
+                "last_heartbeat",
+                "failure_count",
+                "retry_after",
+                "status_reason",
+                "status_reason_detail",
+                "membership_revision",
+                "updated_at",
+            ):
+                self.assertNotIn(excluded_result, result_select)
+
+    def test_budgeted_failure_uses_retained_count_backoff_and_threshold(
+        self,
+    ) -> None:
+        sql = _normalized_sql(
+            ingestion_lease_queries.FINALIZE_BUDGETED_FAILURE_SQL
+        )
+
+        self.assertIn("failure_count = leases.failure_count + 1", sql)
+        self.assertIn("leases.failure_count + 1 >= $5", sql)
+        self.assertIn("'quarantined'::public.feed_status", sql)
+        self.assertIn("'failing'::public.feed_status", sql)
+        self.assertIn("LEAST( $7 * INTERVAL '1 second'", sql)
+        self.assertIn("$6 * INTERVAL '1 second' * POWER(2", sql)
+        self.assertIn("RANDOM() * INTERVAL '10 seconds'", sql)
+
+    def test_non_budgeted_failure_resets_count_and_cannot_quarantine(
+        self,
+    ) -> None:
+        sql = _normalized_sql(
+            ingestion_lease_queries.FINALIZE_NON_BUDGETED_FAILURE_SQL
+        )
+
+        self.assertIn("status = 'failing'::public.feed_status", sql)
+        self.assertIn("failure_count = 0", sql)
+        self.assertIn("retry_after = $5", sql)
+        self.assertNotIn("quarantined", sql)
+        self.assertNotIn("failure_count + 1", sql)
+        self.assertNotIn("RANDOM()", sql)
+
+    def test_store_owns_no_failure_reason_policy_map(self) -> None:
+        production_text = "\n".join(
+            pathlib.Path(path).read_text()
+            for path in (
+                "backend/pipeline/storage/ingestion_lease_store.py",
+                "backend/pipeline/storage/ingestion_lease_queries.py",
+            )
+        )
+
+        self.assertNotIn(
+            "backend.pipeline.ingestion.failure_policy", production_text
+        )
+        self.assertNotIn("SYSTEM_CONFIGURATION_INVALID", production_text)
+        self.assertNotIn(
+            "SYSTEM_RUNTIME_CONFIGURATION_INVALID", production_text
+        )
 
 
 class TestGrantRejectionContract(unittest.TestCase):
@@ -421,6 +538,8 @@ class TestMembershipSnapshotContract(unittest.TestCase):
             ingestion_lease_queries.CLAIM_RECOVERABLE_LEASES_SQL,
             ingestion_lease_queries.RENEW_LEASE_HEARTBEATS_SQL,
             ingestion_lease_queries.RELEASE_LEASE_SQL,
+            ingestion_lease_queries.FINALIZE_BUDGETED_FAILURE_SQL,
+            ingestion_lease_queries.FINALIZE_NON_BUDGETED_FAILURE_SQL,
         )
 
         for query in lifecycle_queries:
