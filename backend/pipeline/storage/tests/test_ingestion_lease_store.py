@@ -519,6 +519,16 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
 class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
     """Tests for fail-closed authoritative membership snapshots."""
 
+    def test_snapshot_contract_omits_excluded_count(self) -> None:
+        fields = {
+            field.name
+            for field in dataclasses.fields(
+                ingestion_lease_store.MembershipSnapshot
+            )
+        }
+
+        self.assertNotIn("excluded_count", fields)
+
     async def test_rejects_unsupported_source_before_checkout(self) -> None:
         pool = connection_util.make_mock_pool(transaction=True)
         store = ingestion_lease_store.IngestionLeaseStore(pool)
@@ -566,7 +576,6 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
         assert isinstance(result, ingestion_lease_store.MembershipSnapshot)
         self.assertEqual(result.membership_revision, 4)
         self.assertEqual(len(result.members), 2)
-        self.assertEqual(result.excluded_count, 1)
         self.assertEqual(result.members[0].identity.sid, "00123")
         self.assertEqual(result.members[0].identity.group_id, "00045")
         self.assertEqual(

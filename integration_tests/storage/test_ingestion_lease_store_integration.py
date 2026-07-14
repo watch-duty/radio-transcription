@@ -468,7 +468,6 @@ async def test_membership_snapshot_refresh_and_revision_fail_closed(
     assert isinstance(snapshot, ingestion_lease_store.MembershipSnapshot)
     assert snapshot.grant == grant
     assert snapshot.membership_revision == 1
-    assert snapshot.excluded_count == 1
     assert [member.identity.group_id for member in snapshot.members] == [
         "00045",
         "00046",
@@ -517,7 +516,6 @@ async def test_membership_snapshot_refresh_and_revision_fail_closed(
     changed = await store.refresh_membership(grant, known_revision=1)
     assert isinstance(changed, ingestion_lease_store.MembershipSnapshot)
     assert changed.membership_revision == 2
-    assert changed.excluded_count == 0
     assert [member.identity.group_id for member in changed.members] == [
         "00045",
         "00046",

@@ -238,13 +238,11 @@ class MembershipSnapshot:
         grant: Complete Lease authority validated before the child read.
         membership_revision: Cache-invalidating parent revision.
         members: Eligible active or failing children in routing order.
-        excluded_count: Structurally valid children excluded by lifecycle.
     """
 
     grant: LeaseGrant
     membership_revision: int
     members: tuple[LeaseMember, ...]
-    excluded_count: int
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -879,7 +877,6 @@ class IngestionLeaseStore:
 
         members: list[LeaseMember] = []
         routing_keys: set[str] = set()
-        excluded_count = 0
         for row in rows:
             identity = _membership_identity_from_row(grant, row)
             if isinstance(identity, MembershipInvariantViolation):
@@ -897,8 +894,6 @@ class IngestionLeaseStore:
                 feed_store.FeedStatus.FAILING,
             ):
                 members.append(member)
-            else:
-                excluded_count += 1
 
         if not members:
             return MembershipInvariantViolation(
@@ -910,5 +905,4 @@ class IngestionLeaseStore:
             grant=grant,
             membership_revision=membership_revision,
             members=tuple(members),
-            excluded_count=excluded_count,
         )
