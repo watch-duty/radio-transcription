@@ -45,21 +45,15 @@ Generative ASR can emit fluent content unsupported by audio, especially under no
 
 ## 3. Predicted history as a serving interface
 
-Let \(x_t\) be the current audio, \(y_t\) its scoring reference, and \(\hat y_t^{(k)}\) the prediction from a trajectory with maximum history window \(k\). For a fixed model variant and window, the rolling history is
+Let `x_t` be the current audio, `y_t` its scoring reference, and `ŷ_t^(k)` the prediction from a trajectory with maximum history window `k`. For a fixed model variant and window, the rolling history is
 
-\[
-h_t^{(k)} = \operatorname{tail}_k\!\left(\hat y_i^{(k)} : s_i=s_t,\ e_i\le b_t,\ i<t,\ \hat y_i^{(k)}\ \text{usable}\right),
-\]
+`h_t^(k) = tail_k({ŷ_i^(k) : s_i = s_t, e_i <= b_t, i < t, and ŷ_i^(k) is usable})`.
 
-where \(s\) is a source key, \(e_i\) is the earlier clip's end, and \(b_t\) is the current clip's start. Stable identifiers break timestamp ties. “Usable” excludes missing output, provider failure, blank text, and exact `[UNINTELLIGIBLE]`. An unusable frozen slot is omitted without looking for a replacement. The model then produces
+where `s` is a source key, `e_i` is the earlier clip's end, and `b_t` is the current clip's start. Stable identifiers break timestamp ties. “Usable” excludes missing output, provider failure, blank text, and exact `[UNINTELLIGIBLE]`. An unusable frozen slot is omitted without looking for a replacement. The model then produces `ŷ_t^(k) ~ p_θ(. | x_t, h_t^(k))`.
 
-\[
-\hat y_t^{(k)} \sim p_\theta(\cdot\mid x_t,h_t^{(k)}).
-\]
+The schedule depends only on split, source, timing, duration, and audio identity. Reference text is held in a scoring-only structure and joined only after an entire cell is final. Thus `y_i` never appears in `h_t^(k)`. Each model-variant/window combination is an independent rolling trajectory, so a prediction from one model variant or window cannot affect another.
 
-The schedule depends only on split, source, timing, duration, and audio identity. Reference text is held in a scoring-only structure and joined only after an entire cell is final. Thus \(y_i\) never appears in \(h_t^{(k)}\). Each model-variant/window combination is an independent rolling trajectory, so a prediction from one model variant or window cannot affect another.
-
-The desired interface gives audio *content authority*. Predicted history may assist the spelling of an acoustically supported name, identifier, location, or technical term, but it should not supply words, determine transcript length, or trigger continuation. This rule is semantic. A token-level comparison with \(y_t\) cannot determine whether a repeated word was genuinely audible.
+The desired interface gives audio *content authority*. Predicted history may assist the spelling of an acoustically supported name, identifier, location, or technical term, but it should not supply words, determine transcript length, or trigger continuation. This rule is semantic. A token-level comparison with `y_t` cannot determine whether a repeated word was genuinely audible.
 
 ![Desired prediction-only serving contract—not an enforced or demonstrated property. The current audio is intended to control content and span; same-model rolling predictions may assist written form. The current reference is joined only after inference and cannot enter the loop.](figures/fig_task_contract.png)
 
@@ -83,7 +77,7 @@ The study authenticates source-object generation, byte size, content digest, row
 
 ### 4.2 Main window matrix
 
-We evaluate the untuned base model, history-free SFT, and prior-transcript SFT under a fixed history-interface prompt at maximum windows \(K\in\{0,1,2,4,8\}\), producing 15 primary cells. K=0 renders the same prompt and wrapper with an explicit empty-history block, zero prior turns, and only the current audio. K=1/2/4/8 use the same interface with each trajectory's own earlier predictions. Three additional cells use a frozen no-history-interface forensic prompt and current audio only; they are detached prompt controls, not points on the K-window curve. The resulting 18-cell matrix contains 73,944 registered requests. Temperature is 0 and the output limit is 512 tokens.
+We evaluate the untuned base model, history-free SFT, and prior-transcript SFT under a fixed history-interface prompt at maximum windows `K in {0, 1, 2, 4, 8}`, producing 15 primary cells. K=0 renders the same prompt and wrapper with an explicit empty-history block, zero prior turns, and only the current audio. K=1/2/4/8 use the same interface with each trajectory's own earlier predictions. Three additional cells use a frozen no-history-interface forensic prompt and current audio only; they are detached prompt controls, not points on the K-window curve. The resulting 18-cell matrix contains 73,944 registered requests. Temperature is 0 and the output limit is 512 tokens.
 
 This distinction creates an important estimand boundary:
 

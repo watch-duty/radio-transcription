@@ -172,7 +172,7 @@ The preflight authenticates the frame by object generation, size, checksum, loca
 
 ### D.1 Standard ASR metrics
 
-Corpus WER is \((S+D+I)/N\), where \(N\) is the normalized reference-word count. CER applies the canonical character normalizer. Insertions per 100 reference words are \(100I/N\). Provider failures would be scored as empty hypotheses while remaining operational errors; none occurred in the registered terminal census.
+Corpus WER is `(S + D + I) / N`, where `N` is the normalized reference-word count. CER applies the canonical character normalizer. Insertions per 100 reference words are `100I / N`. Provider failures would be scored as empty hypotheses while remaining operational errors; none occurred in the registered terminal census.
 
 Keyword occurrence recall is the fraction of frozen keyword occurrences recovered in predictions. It does not penalize false positives and is not “keyword accuracy.” Reviewed entity labels are unavailable, so the paper reports no unit-ID, location, or operational-code exact match.
 
@@ -180,13 +180,11 @@ Abstention is raw blank output or exactly `[UNINTELLIGIBLE]` after trimming surr
 
 ### D.2 Lexical reference-proxy diagnostics
 
-Let \(P\), \(R\), and \(H\) be multisets of safety-normalized prediction, reference, and supplied-history tokens. For token \(u\), the prior-attributable count is
+Let `P`, `R`, and `H` be multisets of safety-normalized prediction, reference, and supplied-history tokens. For token `u`, the prior-attributable count is
 
-\[
-a(u)=\min\left(\max(c_P(u)-c_R(u),0),c_H(u)\right).
-\]
+`a(u) = min(max(c_P(u) - c_R(u), 0), c_H(u))`.
 
-The **prior-only-token rate** is \(\sum_u a(u)/\sum_u c_P(u)\) after corpus aggregation.
+The **prior-only-token rate** is `sum_u a(u) / sum_u c_P(u)` after corpus aggregation.
 
 A **context-copy event** requires a contiguous predicted span of at least three tokens that occurs within one supplied prior turn but not in the current reference. Turn boundaries are exact; a matched span cannot cross adjacent turns. In every nonzero cell, context-copy rate is `context_copy_count / context_eligible_count`, where eligibility requires a successful terminal output and nonempty history after safety tokenization. Rows without realized tokenized history enter neither count. K=0 and the no-history-interface prompt control display zero by construction rather than an eligible-row ratio. At K=8, the primary tuned-variant counts are 103/3,481 (history-free SFT) and 153/3,480 (prior-transcript SFT). This denominator differs from the prior-only-token denominator, which is all prediction tokens.
 
