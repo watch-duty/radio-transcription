@@ -34,6 +34,7 @@ from backend.pipeline.schema_types.normalized_audio_pb2 import (
 from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
+from backend.pipeline.transcription.enums import TranscriptionStatus
 from backend.pipeline.transcription.processor import (
     CHIRP_UNINTELLIGIBLE_MARKER,
     TranscriptionEventProcessor,
@@ -151,10 +152,10 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             "transcription", "start"
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "attempts"
+            "transcription_status", TranscriptionStatus.ATTEMPTS
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "success"
+            "transcription_status", TranscriptionStatus.SUCCESS
         )
         self.mock_record_pipeline_stage.assert_any_call(
             "transcription", "success"
@@ -246,7 +247,7 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             "transcription", "success"
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "partial"
+            "transcription_status", TranscriptionStatus.PARTIAL
         )
 
     async def test_process_event_empty_transcription(self) -> None:
@@ -323,10 +324,10 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             "transcription", "start"
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "attempts"
+            "transcription_status", TranscriptionStatus.ATTEMPTS
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "empty"
+            "transcription_status", TranscriptionStatus.EMPTY
         )
         self.mock_record_pipeline_stage.assert_any_call(
             "transcription", "success"
@@ -405,10 +406,10 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             "transcription", "start"
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "attempts"
+            "transcription_status", TranscriptionStatus.ATTEMPTS
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "unintelligible"
+            "transcription_status", TranscriptionStatus.UNINTELLIGIBLE
         )
         self.mock_record_pipeline_stage.assert_any_call(
             "transcription", "success"
@@ -469,13 +470,13 @@ class TranscriptionEventProcessorTest(unittest.IsolatedAsyncioTestCase):
             "transcription", "start"
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "attempts"
+            "transcription_status", TranscriptionStatus.ATTEMPTS
         )
         self.mock_record_pipeline_stage.assert_any_call(
             "transcription", "error"
         )
         self.mock_record_pipeline_stage.assert_any_call(
-            "transcription_status", "error"
+            "transcription_status", TranscriptionStatus.PERMANENT_ERROR
         )
 
         # Egress publishing must never be called (event silently dropped)

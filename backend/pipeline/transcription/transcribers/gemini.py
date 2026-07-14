@@ -7,14 +7,26 @@ import pydantic
 from google import genai
 from google.genai import types
 
-from backend.pipeline.common import constants, exceptions, log_helper, utils
+from backend.pipeline.common import exceptions, log_helper, utils
 from backend.pipeline.transcription.transcribers import base, prompts
 
 DEFAULT_GEMINI_LOCATION = "us"
 DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
+# STOP indicates a complete, successful response.
+# MAX_TOKENS is treated as a partial success (partial text returned, no retry).
 _VALID_FINISH_REASONS = {
     types.FinishReason.STOP.name,
     types.FinishReason.MAX_TOKENS.name,
+}
+
+# These finish reasons result in a hard failure (no transcript, no retry)
+# and are categorized as "safety_blocked".
+_BLOCKED_FINISH_REASONS = {
+    types.FinishReason.SAFETY,
+    types.FinishReason.RECITATION,
+    types.FinishReason.BLOCKLIST,
+    types.FinishReason.PROHIBITED_CONTENT,
+    types.FinishReason.SPII,
 }
 
 _DEFAULT_TEMPERATURE = 0.0
@@ -47,6 +59,12 @@ logger = log_helper.get_task_logger(
 
 class GeminiTranscriptionError(ValueError):
     """Raised when Gemini transcription fails or is blocked."""
+
+    def __init__(
+        self, message: str, finish_reason: types.FinishReason | None = None
+    ) -> None:
+        super().__init__(message)
+        self.finish_reason = finish_reason
 
 
 class GeminiTransientTranscriptionError(GeminiTranscriptionError):
@@ -254,7 +272,7 @@ class GeminiTranscriber(base.Transcriber):
 
         blocked_ratings = self._get_blocked_ratings(candidate)
         if (
-            reason_str == types.FinishReason.SAFETY.name
+            candidate.finish_reason in _BLOCKED_FINISH_REASONS
             or blocked_ratings != "None"
         ):
             logger.warning(
@@ -268,7 +286,9 @@ class GeminiTranscriber(base.Transcriber):
                 f"Gemini response blocked by safety filters. "
                 f"Finish Reason: {reason_str}, Blocked Ratings: {blocked_ratings}. (Response ID: {response_id})"
             )
-            raise GeminiTranscriptionError(msg)
+            raise GeminiTranscriptionError(
+                msg, finish_reason=candidate.finish_reason
+            )
 
         if reason_str is None:
             logger.warning(
@@ -280,13 +300,6 @@ class GeminiTranscriber(base.Transcriber):
             )
             msg = f"Incomplete response from Gemini (finish_reason: None). (Response ID: {response_id})"
             raise GeminiTransientTranscriptionError(msg)
-
-        if reason_str == types.FinishReason.RECITATION.name:
-            logger.info(
-                "Treating RECITATION block as %s fallback.",
-                constants.UNINTELLIGIBLE_MARKER,
-            )
-            return constants.UNINTELLIGIBLE_MARKER
 
         if reason_str not in _VALID_FINISH_REASONS:
             finish_msg = candidate.finish_message or "No finish message"

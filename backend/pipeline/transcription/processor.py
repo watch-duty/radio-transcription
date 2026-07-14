@@ -35,8 +35,10 @@ from backend.pipeline.schema_types.normalized_audio_pb2 import (
 from backend.pipeline.schema_types.transcribed_audio_pb2 import (
     TranscribedAudio,
 )
+from backend.pipeline.transcription.enums import TranscriptionStatus
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.pipeline.transcription.transcribers.gemini import (
+    GeminiTranscriptionError,
     GeminiTransientTranscriptionError,
 )
 from backend.services.audio_segments import models as audio_segments_models
@@ -132,14 +134,9 @@ class TranscriptionEventProcessor:
             )
         except Exception as e:
             record_pipeline_stage("transcription", "error")
-            err_msg = str(e).lower()
-            if "safety" in err_msg or "blocked" in err_msg:
-                record_pipeline_stage("transcription_status", "safety_blocked")
-            elif is_transient_exception(e):
-                record_pipeline_stage("transcription_status", "transient_error")
-            else:
-                record_pipeline_stage("transcription_status", "error")
-            if is_transient_exception(e):
+            status = _status_for_exception(e)
+            record_pipeline_stage("transcription_status", status)
+            if status == TranscriptionStatus.TRANSIENT_ERROR:
                 logger.warning(
                     "Transient failure processing transcription claim for transmission %s (feed %s): %s. "
                     "Retrying...",
@@ -178,7 +175,9 @@ class TranscriptionEventProcessor:
         """Invokes the active transcriber, handles empty transcripts, and returns the text."""
         duration_ms = self._get_duration_ms(claim)
 
-        record_pipeline_stage("transcription_status", "attempts")
+        record_pipeline_stage(
+            "transcription_status", TranscriptionStatus.ATTEMPTS
+        )
         tracer = get_tracer(__name__)
         with tracer.start_as_current_span("transcribe_audio") as span:
             span.set_attribute("segment_id", claim.segment_id)
@@ -197,7 +196,9 @@ class TranscriptionEventProcessor:
                     e.reason,
                 )
                 errors.append(f"Partial transcription ({e.reason})")
-                record_pipeline_stage("transcription_status", "partial")
+                record_pipeline_stage(
+                    "transcription_status", TranscriptionStatus.PARTIAL
+                )
                 return e.partial_text.strip() if e.partial_text else ""
 
         transcript = transcript.strip() if transcript else ""
@@ -208,14 +209,20 @@ class TranscriptionEventProcessor:
         if not transcript:
             # We intentionally do NOT append to `errors` here. Appending an error causes
             # the UI to display "[Transcription failed]", which implies a backend crash.
-            record_pipeline_stage("transcription_status", "empty")
+            record_pipeline_stage(
+                "transcription_status", TranscriptionStatus.EMPTY
+            )
             return ""
 
         if transcript == CHIRP_UNINTELLIGIBLE_MARKER:
-            record_pipeline_stage("transcription_status", "unintelligible")
+            record_pipeline_stage(
+                "transcription_status", TranscriptionStatus.UNINTELLIGIBLE
+            )
             return transcript
 
-        record_pipeline_stage("transcription_status", "success")
+        record_pipeline_stage(
+            "transcription_status", TranscriptionStatus.SUCCESS
+        )
         return transcript
 
     def _get_duration_ms(self, claim: NormalizedAudio) -> int:
@@ -336,6 +343,18 @@ def _is_grpc_transient(e: grpc.Call) -> bool:
         )
     except (AttributeError, TypeError, ValueError):
         return False
+
+
+def _status_for_exception(e: Exception) -> str:
+    """Determine the transcription status category for a given exception."""
+    if is_transient_exception(e):
+        return TranscriptionStatus.TRANSIENT_ERROR
+
+    match e:
+        case GeminiTranscriptionError():
+            return TranscriptionStatus.POLICY_BLOCKED
+        case _:
+            return TranscriptionStatus.PERMANENT_ERROR
 
 
 def _is_http_transient(e: requests.exceptions.HTTPError) -> bool:
