@@ -408,11 +408,12 @@ export function FeedTable({
             <Box
               sx={{
                 display: 'flex',
-                flexDirection: 'column',
-                gap: 0.5,
-                alignItems: { xs: 'flex-end', sm: 'flex-start' },
+                flexDirection: { xs: 'row', sm: 'column' },
+                gap: { xs: 1.5, sm: 0.5 },
+                alignItems: { xs: 'center', sm: 'flex-start' },
                 width: '100%',
                 overflow: 'hidden',
+                justifyContent: { xs: 'flex-end', sm: 'flex-start' },
               }}
             >
               {feed.sourceUrl ? (
@@ -421,16 +422,30 @@ export function FeedTable({
                   noWrap
                   sx={{ maxWidth: '100%', textOverflow: 'ellipsis' }}
                 >
-                  <b>Source:</b>{' '}
-                  <Link
-                    href={feed.sourceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    underline="hover"
-                    sx={{ color: 'primary.main' }}
-                  >
-                    {feed.sourceUrl}
-                  </Link>
+                  {isMobile ? (
+                    <Link
+                      href={feed.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      underline="hover"
+                      sx={{ color: 'primary.main', fontWeight: 600 }}
+                    >
+                      Source
+                    </Link>
+                  ) : (
+                    <>
+                      <b>Source:</b>{' '}
+                      <Link
+                        href={feed.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        underline="hover"
+                        sx={{ color: 'primary.main' }}
+                      >
+                        {feed.sourceUrl}
+                      </Link>
+                    </>
+                  )}
                 </Typography>
               ) : null}
               {feed.archiveUrl ? (
@@ -439,16 +454,30 @@ export function FeedTable({
                   noWrap
                   sx={{ maxWidth: '100%', textOverflow: 'ellipsis' }}
                 >
-                  <b>Archive:</b>{' '}
-                  <Link
-                    href={feed.archiveUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    underline="hover"
-                    sx={{ color: 'primary.main' }}
-                  >
-                    {feed.archiveUrl}
-                  </Link>
+                  {isMobile ? (
+                    <Link
+                      href={feed.archiveUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      underline="hover"
+                      sx={{ color: 'primary.main', fontWeight: 600 }}
+                    >
+                      Archive
+                    </Link>
+                  ) : (
+                    <>
+                      <b>Archive:</b>{' '}
+                      <Link
+                        href={feed.archiveUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        underline="hover"
+                        sx={{ color: 'primary.main' }}
+                      >
+                        {feed.archiveUrl}
+                      </Link>
+                    </>
+                  )}
                 </Typography>
               ) : null}
               {!feed.sourceUrl && !feed.archiveUrl ? (
