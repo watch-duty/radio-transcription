@@ -214,24 +214,20 @@ class LeaseMember:
     Attributes:
         identity: Immutable routing identity loaded with this state.
         status: Current Feed lifecycle state.
-        last_processed_filename: Most recently persisted audio object path.
         last_bookmark_time: Durable Feed progress cursor.
         failure_count: Retained Feed failure count.
         retry_after: Earliest time a failing Feed may retry.
         status_reason: Canonical Feed lifecycle reason.
         status_reason_detail: Bounded operator-facing reason detail.
-        audit_revision: Current Feed audit sequence.
     """
 
     identity: LeaseMemberIdentity
     status: feed_store.FeedStatus
-    last_processed_filename: str | None
     last_bookmark_time: datetime.datetime | None
     failure_count: int
     retry_after: datetime.datetime | None
     status_reason: feed_store.FeedStatusReason | None
     status_reason_detail: str | None
-    audit_revision: int
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -491,13 +487,11 @@ def _member_from_row(
     return LeaseMember(
         identity=identity,
         status=_status_from_row(row),
-        last_processed_filename=row["last_processed_filename"],
         last_bookmark_time=row["last_bookmark_time"],
         failure_count=row["failure_count"],
         retry_after=row["retry_after"],
         status_reason=_status_reason_from_row(row),
         status_reason_detail=row["status_reason_detail"],
-        audit_revision=row["audit_revision"],
     )
 
 

@@ -26,7 +26,6 @@ IngestionLeaseStore.claim_recoverable
 IngestionLeaseStore.renew_heartbeats
 IngestionLeaseStore.release
 IngestionLeaseStore.load_membership
-audit_revision
 LeaseOperationResult.disposition
 LeaseHeartbeatResult.disposition
 LeaseReleaseCause.SHUTDOWN

@@ -388,6 +388,15 @@ class TestMembershipSnapshotContract(unittest.TestCase):
         self.assertNotIn("owner_worker_id", fields)
         self.assertNotIn("fencing_token", fields)
 
+    def test_member_state_omits_unused_output_and_audit_fields(self) -> None:
+        fields = {
+            field.name
+            for field in dataclasses.fields(ingestion_lease_store.LeaseMember)
+        }
+
+        self.assertNotIn("last_processed_filename", fields)
+        self.assertNotIn("audit_revision", fields)
+
     def test_membership_uses_maintained_index_identity_and_order(self) -> None:
         sql = _normalized_sql(
             ingestion_lease_queries.LOAD_BCFY_CALLS_MEMBERSHIP_SQL
@@ -399,6 +408,8 @@ class TestMembershipSnapshotContract(unittest.TestCase):
         self.assertIn("fp.source_type = 'bcfy_calls'", sql)
         self.assertIn("fp.bcfy_calls_is_trunked IS TRUE", sql)
         self.assertIn("ORDER BY fp.bcfy_calls_group_id, fp.feed_id", sql)
+        self.assertNotIn("last_processed_filename", sql)
+        self.assertNotIn("audit_revision", sql)
         self.assertNotIn("split_part", sql.lower())
         self.assertNotRegex(
             sql.lower(), r"bcfy_calls_(sid|group_id)::(int|bigint)"
