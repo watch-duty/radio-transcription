@@ -53,19 +53,17 @@ When calling the Gemini API to generate content, the response contains `candidat
 
 | Finish Reason | Description | Classification / Action | Retryable? |
 | :--- | :--- | :--- | :--- |
-| `STOP` | The model successfully reached a natural end point or met a stop sequence. | Success. | **No** |
-| `MAX_TOKENS` | The model stopped because it hit the configured token limit budget. | Success (output truncated). | **No** (requires increasing token limit) |
-| `SAFETY` | Generation was aborted due to safety filters. | Policy Block. | **No** (permanent block) |
-| `RECITATION` | Generation stopped because the output matched copyrighted content. | Policy Block. | **No** (permanent block) |
-| `BLOCKLIST` | Output matched a configured blocklist word/phrase. | Policy Block. | **No** (permanent block) |
-| `OTHER` | Unspecified model execution error mid-generation. | Transient Glitch. | **Yes** |
-| `UNSPECIFIED` / `None` | Generation was not completed (e.g. prompt block, API crashed). | Transient/Permanent depending on presence of prompt feedback. | **Yes** (if no block reason is given) |
+| `STOP` | The model successfully reached a natural end point or met a stop sequence. | Success (`TranscriptionStatus.SUCCESS` or `EMPTY`). | **No** |
+| `MAX_TOKENS` | The model stopped because it hit the configured token limit budget. | Partial Success (`TranscriptionStatus.PARTIAL`). | **No** |
+| `SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII` | Generation was aborted due to safety, copyright, or content policy violations. | Policy Block (`TranscriptionStatus.POLICY_BLOCKED`). | **No** (permanent block) |
+| `OTHER`, `LANGUAGE`, etc. | Unspecified or invalid model execution error. | Permanent Error (`TranscriptionStatus.PERMANENT_ERROR`). | **No** |
+| `UNSPECIFIED` / `None` | Generation was not completed (e.g. prompt block, API crashed). | Transient (`TRANSIENT_ERROR`) or Policy Block if `safety_ratings` indicate block. | **Yes** (if no block reason is given) |
 
 ### Transcriber Edge-Case Handling
 
 #### 1. Empty Content with `STOP` Finish Reason
 If the model returns a candidate containing **no content or parts**, but the finish reason is `STOP`, it indicates the model successfully finished execution but generated nothing (e.g., the audio was silence or had no speech). 
-* **Action:** This is treated as a successful execution. We return `None` (which defaults to an unintelligible marker) and **do not retry**.
+* **Action:** This is treated as a successful execution. We return an empty string (`""`), which the processor logs as `TranscriptionStatus.EMPTY` without writing a failure to the database, and **we do not retry**.
 
 #### 2. Empty Content with `None` (or No) Finish Reason
 If the model returns a candidate with no content and a missing/null `finish_reason` (or other non-policy reasons like `OTHER`):

@@ -133,14 +133,6 @@ class EvaluationService:
 
             logger.info("Processing transmission ID: %s", segment_id)
 
-            if not new_audio.transcript.strip():
-                logger.info(
-                    "No transcript for ID: %s. Skipping evaluation.",
-                    segment_id,
-                )
-                record_pipeline_stage("evaluation", "skipped")
-                return None
-
             # 2. Call the evaluator
             evaluation_result = self.text_evaluator.evaluate(
                 new_audio.transcript, new_audio.feed_id
