@@ -132,7 +132,7 @@ class TranscriptionEventProcessor:
         except Exception as e:
             record_pipeline_stage("transcription", "error")
             record_pipeline_stage("transcription_status", "error")
-            if _is_transient_exception(e):
+            if is_transient_exception(e):
                 logger.warning(
                     "Transient failure processing transcription claim for transmission %s (feed %s): %s. "
                     "Retrying...",
@@ -331,7 +331,7 @@ def _is_http_transient(e: requests.exceptions.HTTPError) -> bool:
     return e.response.status_code == 429 or e.response.status_code >= 500
 
 
-def _is_transient_exception(e: Exception) -> bool:
+def is_transient_exception(e: Exception) -> bool:
     """Determines if an exception is transient and should be retried."""
     match e:
         case GeminiTransientTranscriptionError():
@@ -340,7 +340,7 @@ def _is_transient_exception(e: Exception) -> bool:
         case exceptions.RetryError():
             cause = e.cause or e.__cause__
             result = (
-                _is_transient_exception(cause)
+                is_transient_exception(cause)
                 if isinstance(cause, Exception)
                 else True
             )
