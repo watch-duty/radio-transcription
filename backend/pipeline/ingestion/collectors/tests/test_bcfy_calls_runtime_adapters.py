@@ -909,6 +909,65 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
             (ingestion_lease_store.SourceObservation(member, None),),
         )
 
+    async def test_no_progress_rejected_pending_skip_prefers_retirement(
+        self,
+    ) -> None:
+        grant = _grant()
+        member = _member(grant, uuid.UUID(int=305), group_id="305")
+        identity = _record_identity(
+            grant,
+            member,
+            0,
+            cohort_timestamp=None,
+        )
+        facts = _terminal_facts(
+            _terminal_record(
+                identity,
+                feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP,
+                closure_state=(
+                    feed_work_scheduler.CohortRecordClosureState.FINAL_CLOSURE_PENDING
+                ),
+            ),
+            disposition=(
+                feed_work_scheduler.CohortTerminalDisposition.FINAL_CLOSURE_PENDING
+            ),
+        )
+        context = _page_context(
+            grant,
+            facts=(facts,),
+            no_progress=True,
+        )
+        store = _store_with_result(
+            _batch_committed(
+                _child_result(
+                    member.feed_id,
+                    ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE,
+                    cursor_effect=ingestion_lease_store.CursorEffect.ABSENT,
+                )
+            )
+        )
+        finalizer = runtime_adapters.FencedPageFinalizer(
+            store,
+            actor_id=_ACTOR_ID,
+            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            boundary_settled_utc=lambda: _NOW,
+        )
+
+        result = await finalizer.finalize_page(context)
+
+        assert isinstance(result, feed_work_scheduler.FinalPageNoProgress)
+        self.assertEqual(result.member_retirements, (member,))
+        self.assertEqual(
+            result.final_closure_resolutions,
+            (
+                feed_work_scheduler.FinalRecordClosureResolution(
+                    identity,
+                    feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE,
+                    feed_work_scheduler.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT,
+                ),
+            ),
+        )
+
     async def test_mutated_closure_cap_is_rejected_as_forged(self) -> None:
         grant = _grant()
         member = _member(grant, uuid.UUID(int=404), group_id="404")

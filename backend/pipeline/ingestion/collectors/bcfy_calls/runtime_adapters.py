@@ -848,6 +848,7 @@ def _final_closure_resolutions(
         ...,
     ],
 ) -> tuple[feed_work_scheduler.FinalRecordClosureResolution, ...] | None:
+    """Resolve pending records with the most specific accepted authority."""
     closure = feed_work_scheduler.CohortRecordClosureState
     basis_kind = feed_work_scheduler.FinalRecordReleaseBasis
     caps_by_feed = {cap.feed_id: cap for cap in caps}
@@ -869,6 +870,9 @@ def _final_closure_resolutions(
             if identity.feed_id in caps_by_feed:
                 closure_state = closure.DURABLY_CLOSED
                 basis = basis_kind.DURABLE_SOURCE_CLOSURE
+            elif id(identity.member) in retired_members:
+                closure_state = closure.REPLAY_SAFE_RELEASE
+                basis = basis_kind.ACCEPTED_MEMBER_RETIREMENT
             elif type(context.candidate) is (
                 cursor_policy.NoProgressPageCandidate
             ):
@@ -877,9 +881,6 @@ def _final_closure_resolutions(
             elif identity.feed_id in unresolved:
                 closure_state = closure.REPLAY_SAFE_RELEASE
                 basis = basis_kind.ACCEPTED_REPLAYABLE_FEED
-            elif id(identity.member) in retired_members:
-                closure_state = closure.REPLAY_SAFE_RELEASE
-                basis = basis_kind.ACCEPTED_MEMBER_RETIREMENT
             else:
                 return None
             resolutions.append(

@@ -739,6 +739,7 @@ class MissingCallLedger:
                 and type(settlement)
                 in {
                     cursor_policy._CoveredPage,  # noqa: SLF001
+                    cursor_policy._NoProgressPageSettled,  # noqa: SLF001
                     cursor_policy._ReplayablePageSettled,  # noqa: SLF001
                 }
             )

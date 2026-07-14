@@ -666,20 +666,20 @@ def test_wrong_release_basis_and_crossed_resolution_leave_page_open() -> None:
             )
         )
 
-    retirement_on_no_progress = feed_work_scheduler.FinalRecordClosureResolution(
+    retirement_without_release = feed_work_scheduler.FinalRecordClosureResolution(
         identity,
         feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE,
         feed_work_scheduler.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT,
     )
     with pytest.raises(
         gap_ledger.MissingCallIntegrityError,
-        match="wrong accepted basis",
+        match="lacks its exact physical release",
     ):
         ledger.close_page(
             _settled_page(
                 grant,
                 member,
-                retirement_on_no_progress,
+                retirement_without_release,
                 no_progress=True,
             )
         )

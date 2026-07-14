@@ -275,6 +275,57 @@ class _SuccessfulExecutor:
         return _resolve_successful_execution(execution)
 
 
+class _FinalPendingSkipExecutor:
+    """Return an exact missing-ts skip awaiting final page resolution."""
+
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> feed_work_scheduler.CallFinalClosurePending:
+        failure = feed_work_scheduler.CohortItemFailureFact(
+            feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            "missing source audio",
+        )
+        records = []
+        for call in execution.calls:
+            payload = typing.cast(
+                "cohort_pipeline.ScheduledCohortPayload",
+                call.payload,
+            )
+            entry = next(
+                item
+                for item in payload.entries
+                if item.source_order == call.identity.source_order
+            )
+            ledger = sid_processor.gap_ledger._owner_for(entry.obligation)
+            ledger.mark_terminal_skip(
+                entry.obligation,
+                call.identity,
+                failure,
+                1,
+            )
+            records.append(
+                feed_work_scheduler.CohortRecordTerminalFact(
+                    identity=call.identity,
+                    participated=True,
+                    closure_state=(
+                        feed_work_scheduler.CohortRecordClosureState.FINAL_CLOSURE_PENDING
+                    ),
+                    full_pipeline_completed=False,
+                    terminal_reason=(
+                        feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP
+                    ),
+                    item_failure=failure,
+                )
+            )
+        return feed_work_scheduler.CallFinalClosurePending(
+            feed_work_scheduler.CohortTerminalFacts(
+                tuple(records),
+                feed_work_scheduler.CohortTerminalDisposition.FINAL_CLOSURE_PENDING,
+            )
+        )
+
+
 class _ProcessorReplayBarrierExecutor:
     """Hold t1, complete its sibling, and fail if same-Feed t2 executes.
 
@@ -2851,6 +2902,79 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(prepared.cohorts, ())
             self.assertEqual(processor._pending_by_url, {})
+            self.assertEqual((await scheduler._snapshot()).held, 0)
+        finally:
+            await scheduler.close()
+
+    async def test_no_progress_pending_skip_member_rejection_drains_page(
+        self,
+    ) -> None:
+        member = _member(_FEED_A, "00123-00045")
+        store = mock.create_autospec(
+            ingestion_lease_store.IngestionLeaseStore,
+            instance=True,
+        )
+        store.commit_child_mutations = mock.AsyncMock(
+            return_value=_batch_committed(
+                ingestion_lease_store.ChildMutationResult(
+                    feed_id=_FEED_A,
+                    disposition=(
+                        ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE
+                    ),
+                    cursor_effect=ingestion_lease_store.CursorEffect.ABSENT,
+                    lifecycle_effect=ingestion_lease_store.LifecycleEffect.NONE,
+                )
+            )
+        )
+        finalizer = runtime_adapters.FencedPageFinalizer(
+            store,
+            actor_id="service_account:gcp:sid-processor-tests",
+            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            boundary_settled_utc=lambda: _NOW,
+        )
+        scheduler = feed_work_scheduler.FeedWorkScheduler(
+            _FinalPendingSkipExecutor(),
+            page_finalizer=finalizer,
+        )
+        await scheduler.start()
+        lane = scheduler.open_lane(
+            _GRANT,
+            stop_requested=asyncio.Event(),
+            grant_lost=asyncio.Event(),
+        )
+        processor = sid_processor.BcfyCallsSidProcessor(
+            _GRANT,
+            _ScriptedMembershipStore(_snapshot(4, member)),
+            _ScriptedProvider(),
+            lane,
+            now=lambda: _NOW,
+        )
+        await processor._refresh_membership()
+        try:
+            with mock.patch.object(
+                sid_processor.gap_ledger.telemetry,
+                "emit_missing_call",
+            ) as emit_missing_call:
+                await processor._settle_page(
+                    _page(
+                        _raw_call(
+                            "00123-00045",
+                            "https://audio/no-progress-skip",
+                            ...,
+                        ),
+                        last_pos=None,
+                    ),
+                    request=processor._select_request_position(),
+                )
+
+            emit_missing_call.assert_not_called()
+            self.assertTrue(await lane.is_feed_retired(_FEED_A))
+            self.assertEqual(processor._members_by_id, {})
+            self.assertEqual(processor._pending_by_url, {})
+            self.assertIsNone(processor._active_page_ledger)
+            assert processor._lease_cursor is not None
+            self.assertEqual(processor._lease_cursor.pos, _NOW)
+            self.assertEqual(processor._lease_cursor.next_page_sequence, 1)
             self.assertEqual((await scheduler._snapshot()).held, 0)
         finally:
             await scheduler.close()

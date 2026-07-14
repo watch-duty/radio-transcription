@@ -536,6 +536,44 @@ class _SchedulerSnapshot:
     fatal: bool
 
 
+def _require_member_retirements(
+    context: _types.PageFinalizationContext,
+    result: _types._AcceptedFinalPage,
+    *,
+    boundary_rejected_members: tuple[
+        ingestion_lease_store.LeaseMemberIdentity,
+        ...,
+    ],
+) -> tuple[ingestion_lease_store.LeaseMemberIdentity, ...]:
+    """Correlate accepted retirement evidence to current-page members."""
+    current_members = [
+        boundary.member for boundary in context.candidate_boundaries
+    ]
+    for facts in context.cohort_terminal_facts:
+        current_members.extend(
+            record.identity.member for record in facts.records
+        )
+    current_members.extend(context.locally_retired_members)
+    retirements = result.member_retirements
+    if any(
+        not any(member is current for current in current_members)
+        for member in retirements
+    ):
+        message = "member retirement is not exact current-page evidence"
+        raise _types.CohortIntegrityError(message)
+    required = (
+        *boundary_rejected_members,
+        *context.locally_retired_members,
+    )
+    if any(
+        not any(member is retirement for retirement in retirements)
+        for member in required
+    ):
+        message = "accepted result omitted exact member retirement"
+        raise _types.CohortIntegrityError(message)
+    return retirements
+
+
 class _DefaultPageFinalizer:
     """Compatibility finalizer until the source adapter is injected."""
 
@@ -559,17 +597,19 @@ class _DefaultPageFinalizer:
         )
         resolutions = []
         for identity in pending:
-            if type(context.candidate) is cursor_policy.NoProgressPageCandidate:
-                basis = _types.FinalRecordReleaseBasis.ACCEPTED_NO_PROGRESS
-            elif identity.feed_id in context.unresolved_replay_feed_ids:
-                basis = _types.FinalRecordReleaseBasis.ACCEPTED_REPLAYABLE_FEED
-            elif any(
+            if any(
                 identity.member is member
                 for member in context.locally_retired_members
             ):
                 basis = (
                     _types.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT
                 )
+            elif type(context.candidate) is (
+                cursor_policy.NoProgressPageCandidate
+            ):
+                basis = _types.FinalRecordReleaseBasis.ACCEPTED_NO_PROGRESS
+            elif identity.feed_id in context.unresolved_replay_feed_ids:
+                basis = _types.FinalRecordReleaseBasis.ACCEPTED_REPLAYABLE_FEED
             else:
                 return _types.FinalPageOutcomeUnknown(
                     context.grant,
@@ -2568,7 +2608,7 @@ class GrantLane:
             context,
             correlated,
         )
-        member_retirements = self._require_member_retirements(
+        member_retirements = _require_member_retirements(
             context,
             correlated,
             boundary_rejected_members=rejected_members,
@@ -2705,44 +2745,6 @@ class GrantLane:
                 continue
             message = "final replay-safe resolution lacks exact acceptance"
             raise _types.CohortIntegrityError(message)
-
-    @staticmethod
-    def _require_member_retirements(
-        context: _types.PageFinalizationContext,
-        result: _types._AcceptedFinalPage,
-        *,
-        boundary_rejected_members: tuple[
-            ingestion_lease_store.LeaseMemberIdentity,
-            ...,
-        ],
-    ) -> tuple[ingestion_lease_store.LeaseMemberIdentity, ...]:
-        """Correlate accepted retirement evidence to current-page members."""
-        current_members = [
-            boundary.member for boundary in context.candidate_boundaries
-        ]
-        for facts in context.cohort_terminal_facts:
-            current_members.extend(
-                record.identity.member for record in facts.records
-            )
-        current_members.extend(context.locally_retired_members)
-        retirements = result.member_retirements
-        if any(
-            not any(member is current for current in current_members)
-            for member in retirements
-        ):
-            message = "member retirement is not exact current-page evidence"
-            raise _types.CohortIntegrityError(message)
-        required = (
-            *boundary_rejected_members,
-            *context.locally_retired_members,
-        )
-        if any(
-            not any(member is retirement for retirement in retirements)
-            for member in required
-        ):
-            message = "accepted result omitted exact member retirement"
-            raise _types.CohortIntegrityError(message)
-        return retirements
 
     async def _cover(
         self,

@@ -4229,6 +4229,73 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
 
 
 class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
+    async def test_default_finalizer_prefers_exact_member_retirement(
+        self,
+    ) -> None:
+        grant = _grant()
+        feed_id = uuid.UUID(int=89)
+        member = _member(grant, feed_id)
+        candidate = cursor_policy.LeaseCursor(
+            grant,
+            pos=_SOURCE_TIME,
+        ).prepare_no_progress()
+        identity = feed_work_scheduler.CohortRecordIdentity(
+            grant=grant,
+            member=member,
+            page_sequence=candidate.page_sequence,
+            feed_id=feed_id,
+            cohort_timestamp=None,
+            source_order=0,
+            local_sequence=0,
+        )
+        failure = feed_work_scheduler.CohortItemFailureFact(
+            feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+            "terminal item skip",
+        )
+        facts = feed_work_scheduler.CohortTerminalFacts(
+            records=(
+                feed_work_scheduler.CohortRecordTerminalFact(
+                    identity=identity,
+                    participated=True,
+                    closure_state=(
+                        feed_work_scheduler.CohortRecordClosureState.FINAL_CLOSURE_PENDING
+                    ),
+                    full_pipeline_completed=False,
+                    terminal_reason=(
+                        feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP
+                    ),
+                    item_failure=failure,
+                ),
+            ),
+            disposition=(
+                feed_work_scheduler.CohortTerminalDisposition.FINAL_CLOSURE_PENDING
+            ),
+        )
+        context = feed_work_scheduler.PageFinalizationContext(
+            grant=grant,
+            page_sequence=candidate.page_sequence,
+            candidate=candidate,
+            cohort_terminal_facts=(facts,),
+            unresolved_replay_feed_ids=(),
+            locally_retired_members=(member,),
+            replay_blocked_feed_ids=(),
+            candidate_boundaries=(),
+        )
+        scheduler_module = importlib.import_module(
+            "backend.pipeline.ingestion.feed_work_scheduler._scheduler"
+        )
+
+        result = await scheduler_module._DefaultPageFinalizer().finalize_page(
+            context
+        )
+
+        self.assertIs(type(result), feed_work_scheduler.FinalPageNoProgress)
+        self.assertEqual(result.member_retirements, (member,))
+        self.assertEqual(
+            result.final_closure_resolutions[0].release_basis,
+            feed_work_scheduler.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT,
+        )
+
     async def test_terminal_barrier_waits_for_exact_record_conservation(
         self,
     ) -> None:
