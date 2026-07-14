@@ -57,7 +57,7 @@ class TestLeaseGrantContract(unittest.TestCase):
         )
 
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            grant.fencing_token = 8  # type: ignore[misc]
+            grant.fencing_token = 8  # type: ignore[misc]  # ty: ignore[invalid-assignment]
 
         for value_type in (
             ingestion_lease_store.LeaseGrant,
@@ -81,7 +81,9 @@ class TestLeaseGrantContract(unittest.TestCase):
                 self.subTest(case_index=case_index),
                 self.assertRaises((TypeError, ValueError)),
             ):
-                ingestion_lease_store.LeaseGrant(*case)
+                ingestion_lease_store.LeaseGrant(
+                    *case,  # ty: ignore[invalid-argument-type]
+                )
 
     def test_grant_equality_excludes_mutable_snapshot_state(self) -> None:
         grant = ingestion_lease_store.LeaseGrant(
@@ -341,7 +343,7 @@ class TestGrantRejectionContract(unittest.TestCase):
 
         self.assertTrue(hasattr(type(rejection), "__slots__"))
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            rejection.snapshot = None  # type: ignore[misc]
+            rejection.snapshot = None  # type: ignore[misc]  # ty: ignore[invalid-assignment]
 
 
 if __name__ == "__main__":

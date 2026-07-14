@@ -63,10 +63,14 @@ class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
         store = ingestion_lease_store.IngestionLeaseStore(pool)
 
         invalid_calls = (
-            store.claim_unclaimed("bcfy_calls", _OWNER_ID, 1),
+            store.claim_unclaimed(
+                "bcfy_calls",  # ty: ignore[invalid-argument-type]
+                _OWNER_ID,
+                1,
+            ),
             store.claim_unclaimed(
                 feed_store.SourceType.BCFY_CALLS,
-                "worker",
+                "worker",  # ty: ignore[invalid-argument-type]
                 1,
             ),
             store.claim_unclaimed(
@@ -117,7 +121,7 @@ class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
                         feed_store.SourceType.BCFY_CALLS,
                         _OWNER_ID,
                         1,
-                        abandonment_after,
+                        abandonment_after,  # ty: ignore[invalid-argument-type]
                     )
 
         pool.fetch.assert_not_awaited()
@@ -145,7 +149,10 @@ class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
         store = ingestion_lease_store.IngestionLeaseStore(pool)
 
         with self.assertRaises(TypeError):
-            await store.release(_grant(), cause="shutdown")
+            await store.release(
+                _grant(),
+                cause="shutdown",  # ty: ignore[invalid-argument-type]
+            )
 
         pool.fetchrow.assert_not_awaited()
 
@@ -385,7 +392,7 @@ class TestSharedGrantRejection(unittest.TestCase):
                 self.assertIsNotNone(result)
                 assert result is not None
                 self.assertIs(result.reason, reason)
-                self.assertIsInstance(
+                assert isinstance(
                     result.snapshot,
                     ingestion_lease_store.LeaseSnapshot,
                 )
@@ -418,6 +425,7 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
                 result.disposition,
                 ingestion_lease_store.LeaseOperationDisposition.APPLIED,
             )
+            assert result.snapshot is not None
             self.assertIsNone(result.snapshot.last_heartbeat)
             observed_args.append(pool.fetchrow.await_args.args)
 
@@ -446,6 +454,7 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
             result.disposition,
             ingestion_lease_store.LeaseOperationDisposition.STATUS_INELIGIBLE,
         )
+        assert result.snapshot is not None
         self.assertEqual(result.snapshot.status, feed_store.FeedStatus.FAILING)
         self.assertEqual(result.snapshot.failure_count, 2)
 

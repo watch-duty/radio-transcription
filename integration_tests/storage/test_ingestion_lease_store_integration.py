@@ -1,0 +1,385 @@
+"""Real-PostgreSQL proofs for the fenced ingestion Lease lifecycle.
+
+The generic runtime is not wired to this storage surface yet. These tests run
+the dormant API against every supported PostgreSQL major so SQL syntax,
+locking, fencing, and lifecycle behavior are proven independently of mocks.
+Lease identities are permanent tombstones, so every test uses a unique key.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import datetime
+import os
+import typing
+import uuid
+
+import asyncpg
+import pytest
+import pytest_asyncio
+
+from backend.pipeline.storage import feed_store, ingestion_lease_store
+
+if typing.TYPE_CHECKING:
+    import collections.abc
+
+pytestmark = pytest.mark.asyncio(loop_scope="module")
+
+_SUPPORTED_POSTGRES_MAJORS = frozenset({"15", "16", "17"})
+_TIMEOUT_SECONDS = 10.0
+_SOURCE_TYPE = feed_store.SourceType.BCFY_CALLS
+
+
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def ingestion_lease_pool() -> collections.abc.AsyncIterator[asyncpg.Pool]:
+    """Connect to the explicitly supplied external PostgreSQL service."""
+    dsn = os.environ.get("INGESTION_LEASE_TEST_DSN")
+    required = (
+        os.environ.get("INGESTION_LEASE_EXTERNAL_POSTGRES_REQUIRED") == "1"
+    )
+    if not dsn:
+        if required:
+            pytest.fail(
+                "INGESTION_LEASE_TEST_DSN is required for this PostgreSQL gate"
+            )
+        pytest.skip("external PostgreSQL DSN is not configured")
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        pytest.fail("the ingestion Lease PostgreSQL module must run serially")
+
+    pool = await asyncpg.create_pool(
+        dsn=dsn,
+        min_size=4,
+        max_size=10,
+        statement_cache_size=0,
+    )
+    try:
+        expected_major = os.environ.get("EXPECTED_POSTGRES_MAJOR")
+        if expected_major is not None:
+            if expected_major not in _SUPPORTED_POSTGRES_MAJORS:
+                pytest.fail(
+                    f"EXPECTED_POSTGRES_MAJOR {expected_major!r} is not "
+                    "supported; expected one of "
+                    f"{sorted(_SUPPORTED_POSTGRES_MAJORS)!r}"
+                )
+            version_num = await pool.fetchval("SHOW server_version_num")
+            actual_major = int(version_num) // 10000
+            assert actual_major == int(expected_major), (
+                "external PostgreSQL server major does not match the matrix"
+            )
+        yield pool
+    finally:
+        await pool.close()
+
+
+def _unique_digits() -> str:
+    """Return a unique numeric-text external identity."""
+    return str(uuid.uuid4().int)
+
+
+async def _insert_lease(
+    pool: asyncpg.Pool,
+    sid: str,
+    *,
+    status: str = "unclaimed",
+    owner_worker_id: uuid.UUID | None = None,
+    fencing_token: int = 0,
+    last_heartbeat: datetime.datetime | None = None,
+    failure_count: int = 0,
+    retry_after: datetime.datetime | None = None,
+    status_reason: str | None = None,
+    audit_revision: int = 0,
+    membership_revision: int = 0,
+) -> None:
+    """Insert one permanent, unique Lease fixture."""
+    if status == "active" and last_heartbeat is None:
+        last_heartbeat = datetime.datetime.now(datetime.UTC)
+    status_reason_updated_at = (
+        datetime.datetime.now(datetime.UTC)
+        if status_reason is not None
+        else None
+    )
+    await pool.execute(
+        """
+        INSERT INTO public.ingestion_leases (
+            source_type,
+            lease_key,
+            status,
+            worker_id,
+            fencing_token,
+            last_heartbeat,
+            failure_count,
+            retry_after,
+            unclaimed_since,
+            status_reason,
+            status_reason_detail,
+            status_reason_updated_at,
+            audit_revision,
+            membership_revision
+        ) VALUES (
+            'bcfy_calls',
+            $1,
+            $2::public.feed_status,
+            $3,
+            $4,
+            $5,
+            $6,
+            $7,
+            CASE WHEN $2::TEXT = 'unclaimed' THEN NOW() ELSE NULL END,
+            $8::TEXT,
+            CASE WHEN $8 IS NULL THEN NULL ELSE 'fixture failure' END,
+            $9,
+            $10,
+            $11
+        )
+        """,
+        sid,
+        status,
+        owner_worker_id,
+        fencing_token,
+        last_heartbeat,
+        failure_count,
+        retry_after,
+        status_reason,
+        status_reason_updated_at,
+        audit_revision,
+        membership_revision,
+    )
+
+
+async def _claim_exact(
+    store: ingestion_lease_store.IngestionLeaseStore,
+    sid: str,
+    owner_worker_id: uuid.UUID,
+) -> ingestion_lease_store.LeaseGrant:
+    claims = await store.claim_unclaimed(
+        _SOURCE_TYPE,
+        owner_worker_id,
+        1000,
+    )
+    matching = [claim.grant for claim in claims if claim.grant.lease_key == sid]
+    assert len(matching) == 1
+    return matching[0]
+
+
+async def _fetch_lease(pool: asyncpg.Pool, sid: str) -> asyncpg.Record:
+    row = await pool.fetchrow(
+        """
+        SELECT
+            status::text AS status,
+            worker_id,
+            fencing_token,
+            last_heartbeat,
+            failure_count,
+            retry_after,
+            status_reason,
+            status_reason_detail,
+            status_reason_updated_at,
+            audit_revision,
+            membership_revision,
+            updated_at
+        FROM public.ingestion_leases
+        WHERE source_type = 'bcfy_calls' AND lease_key = $1
+        """,
+        sid,
+    )
+    assert row is not None
+    return row
+
+
+async def _cancel_tasks(*tasks: asyncio.Task[object] | None) -> None:
+    pending = [task for task in tasks if task is not None and not task.done()]
+    for task in pending:
+        task.cancel()
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+async def test_competing_primary_claims_increment_fence_once(
+    ingestion_lease_pool: asyncpg.Pool,
+) -> None:
+    sid = _unique_digits()
+    await _insert_lease(ingestion_lease_pool, sid, fencing_token=41)
+    store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
+    barrier = asyncio.Barrier(3)
+
+    async def _race(
+        owner: uuid.UUID,
+    ) -> tuple[ingestion_lease_store.LeaseClaim, ...]:
+        await barrier.wait()
+        return await store.claim_unclaimed(_SOURCE_TYPE, owner, 1)
+
+    first = asyncio.create_task(_race(uuid.uuid4()))
+    second = asyncio.create_task(_race(uuid.uuid4()))
+    try:
+        await barrier.wait()
+        results = await asyncio.wait_for(
+            asyncio.gather(first, second),
+            timeout=_TIMEOUT_SECONDS,
+        )
+    finally:
+        await _cancel_tasks(first, second)
+
+    claims = [claim for result in results for claim in result]
+    assert len(claims) == 1
+    assert claims[0].grant.lease_key == sid
+    assert claims[0].grant.fencing_token == 42
+    durable = await _fetch_lease(ingestion_lease_pool, sid)
+    assert durable["status"] == "active"
+    assert durable["fencing_token"] == 42
+    assert durable["worker_id"] == claims[0].grant.owner_worker_id
+
+
+async def test_recovery_prioritizes_due_failure_then_stale_active(
+    ingestion_lease_pool: asyncpg.Pool,
+) -> None:
+    now = datetime.datetime.now(datetime.UTC)
+    due_sid = _unique_digits()
+    stale_sid = _unique_digits()
+    await _insert_lease(
+        ingestion_lease_pool,
+        due_sid,
+        status="failing",
+        fencing_token=7,
+        failure_count=3,
+        retry_after=now - datetime.timedelta(seconds=1),
+    )
+    await _insert_lease(
+        ingestion_lease_pool,
+        stale_sid,
+        status="active",
+        owner_worker_id=uuid.uuid4(),
+        fencing_token=11,
+        last_heartbeat=now - datetime.timedelta(minutes=2),
+    )
+    store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
+
+    due_first = await store.claim_recoverable(
+        _SOURCE_TYPE,
+        uuid.uuid4(),
+        1,
+        datetime.timedelta(seconds=30),
+    )
+    assert [claim.grant.lease_key for claim in due_first] == [due_sid]
+    assert due_first[0].grant.fencing_token == 8
+    assert due_first[0].snapshot.failure_count == 3
+
+    stale_second = await store.claim_recoverable(
+        _SOURCE_TYPE,
+        uuid.uuid4(),
+        1,
+        datetime.timedelta(seconds=30),
+    )
+    assert [claim.grant.lease_key for claim in stale_second] == [stale_sid]
+    assert stale_second[0].grant.fencing_token == 12
+
+
+async def test_exact_heartbeat_rejects_stale_fence_without_writing(
+    ingestion_lease_pool: asyncpg.Pool,
+) -> None:
+    sid = _unique_digits()
+    owner = uuid.uuid4()
+    await _insert_lease(
+        ingestion_lease_pool,
+        sid,
+        status="active",
+        owner_worker_id=owner,
+        fencing_token=19,
+        last_heartbeat=(
+            datetime.datetime.now(datetime.UTC)
+            - datetime.timedelta(minutes=2)
+        ),
+    )
+    store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
+    grant = ingestion_lease_store.LeaseGrant(
+        source_type=_SOURCE_TYPE,
+        lease_key=sid,
+        owner_worker_id=owner,
+        fencing_token=19,
+    )
+
+    renewed = await store.renew_heartbeats((grant,))
+    assert renewed[0].disposition is (
+        ingestion_lease_store.LeaseOperationDisposition.APPLIED
+    )
+    after_renewal = await _fetch_lease(ingestion_lease_pool, sid)
+
+    stale = ingestion_lease_store.LeaseGrant(
+        source_type=_SOURCE_TYPE,
+        lease_key=sid,
+        owner_worker_id=owner,
+        fencing_token=18,
+    )
+    rejected = await store.renew_heartbeats((stale,))
+    assert rejected[0].disposition is (
+        ingestion_lease_store.LeaseOperationDisposition.FENCE_MISMATCH
+    )
+    after_rejection = await _fetch_lease(ingestion_lease_pool, sid)
+    assert after_rejection["last_heartbeat"] == after_renewal["last_heartbeat"]
+    assert after_rejection["updated_at"] == after_renewal["updated_at"]
+
+
+async def test_neutral_release_and_reclaim_invalidate_old_grant(
+    ingestion_lease_pool: asyncpg.Pool,
+) -> None:
+    sid = _unique_digits()
+    owner = uuid.uuid4()
+    retry_after = datetime.datetime.now(datetime.UTC) + datetime.timedelta(
+        minutes=5
+    )
+    await _insert_lease(
+        ingestion_lease_pool,
+        sid,
+        status="active",
+        owner_worker_id=owner,
+        fencing_token=41,
+        last_heartbeat=(
+            datetime.datetime.now(datetime.UTC)
+            - datetime.timedelta(minutes=1)
+        ),
+        failure_count=3,
+        retry_after=retry_after,
+        status_reason="source_unreachable",
+        audit_revision=4,
+        membership_revision=9,
+    )
+    store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
+    old_grant = ingestion_lease_store.LeaseGrant(
+        source_type=_SOURCE_TYPE,
+        lease_key=sid,
+        owner_worker_id=owner,
+        fencing_token=41,
+    )
+
+    released = await store.release(
+        old_grant,
+        ingestion_lease_store.LeaseReleaseCause.SHUTDOWN,
+    )
+    assert released.disposition is (
+        ingestion_lease_store.LeaseOperationDisposition.APPLIED
+    )
+    after_release = await _fetch_lease(ingestion_lease_pool, sid)
+    assert after_release["status"] == "unclaimed"
+    assert after_release["worker_id"] is None
+    assert after_release["last_heartbeat"] is None
+    assert after_release["fencing_token"] == 41
+    assert after_release["failure_count"] == 3
+    assert after_release["retry_after"] == retry_after
+    assert after_release["status_reason"] == "source_unreachable"
+    assert after_release["audit_revision"] == 4
+    assert after_release["membership_revision"] == 9
+
+    new_grant = await _claim_exact(store, sid, owner)
+    assert new_grant.fencing_token == 42
+
+    stale_heartbeat = await store.renew_heartbeats((old_grant,))
+    assert stale_heartbeat[0].disposition is (
+        ingestion_lease_store.LeaseOperationDisposition.FENCE_MISMATCH
+    )
+    stale_release = await store.release(old_grant)
+    assert stale_release.disposition is (
+        ingestion_lease_store.LeaseOperationDisposition.FENCE_MISMATCH
+    )
+    durable = await _fetch_lease(ingestion_lease_pool, sid)
+    assert durable["status"] == "active"
+    assert durable["worker_id"] == owner
+    assert durable["fencing_token"] == 42
