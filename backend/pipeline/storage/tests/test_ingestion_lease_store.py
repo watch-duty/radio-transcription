@@ -16,7 +16,6 @@ from backend.pipeline.storage.tests import connection_util
 
 _OWNER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _OTHER_OWNER_ID = uuid.UUID("22222222-3333-4444-5555-666666666666")
-_NOW = datetime.datetime(2026, 7, 10, 12, 0, tzinfo=datetime.UTC)
 
 
 def _grant(
@@ -40,13 +39,8 @@ def _lease_row(**overrides: object) -> dict[str, object]:
         "status": "active",
         "worker_id": _OWNER_ID,
         "fencing_token": 7,
-        "last_heartbeat": _NOW,
         "failure_count": 2,
-        "retry_after": None,
         "status_reason": "source_unreachable",
-        "status_reason_detail": "provider timeout",
-        "membership_revision": 4,
-        "updated_at": _NOW,
         "applied": False,
     }
     row.update(overrides)
@@ -174,7 +168,11 @@ class TestIngestionLeaseStoreClaims(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].grant, _grant(fencing_token=8))
-        self.assertEqual(result[0].snapshot.membership_revision, 4)
+        self.assertEqual(result[0].snapshot.failure_count, 0)
+        self.assertIs(
+            result[0].snapshot.status_reason,
+            feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        )
         pool.fetch.assert_awaited_once_with(
             ingestion_lease_queries.CLAIM_UNCLAIMED_LEASES_SQL,
             "bcfy_calls",
@@ -341,13 +339,6 @@ class TestIngestionLeaseStoreHeartbeat(unittest.IsolatedAsyncioTestCase):
                 result = await store.renew_heartbeats((_grant(),))
 
                 self.assertIs(result[0].disposition, expected)
-                if (
-                    expected
-                    is ingestion_lease_store.LeaseOperationDisposition.MISSING
-                ):
-                    self.assertIsNone(result[0].snapshot)
-                else:
-                    self.assertIsNotNone(result[0].snapshot)
 
     async def test_exact_nonapplied_heartbeat_fails_closed(self) -> None:
         pool = connection_util.make_mock_pool(
@@ -423,7 +414,6 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
                 fetchrow_result=_lease_row(
                     status="unclaimed",
                     worker_id=None,
-                    last_heartbeat=None,
                     applied=True,
                 )
             )
@@ -436,7 +426,10 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
                 ingestion_lease_store.LeaseOperationDisposition.APPLIED,
             )
             assert result.snapshot is not None
-            self.assertIsNone(result.snapshot.last_heartbeat)
+            self.assertIs(
+                result.snapshot.status, feed_store.FeedStatus.UNCLAIMED
+            )
+            self.assertEqual(result.snapshot.failure_count, 2)
             observed_args.append(pool.fetchrow.await_args.args)
 
         self.assertTrue(all(args == observed_args[0] for args in observed_args))
@@ -450,7 +443,6 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
             fetchrow_result=_lease_row(
                 status="failing",
                 worker_id=None,
-                last_heartbeat=None,
             )
         )
         store = ingestion_lease_store.IngestionLeaseStore(pool)

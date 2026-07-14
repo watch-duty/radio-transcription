@@ -65,27 +65,17 @@ class LeaseGrant:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LeaseSnapshot:
-    """Mutable Lease state observed separately from grant identity.
+    """Failure-policy state observed separately from grant identity.
 
     Attributes:
         status: Current durable lifecycle state.
-        last_heartbeat: Most recent accepted owner heartbeat.
         failure_count: Retained count used by budgeted failure policy.
-        retry_after: Earliest time an ownerless failure may be recovered.
         status_reason: Structured reason for the current lifecycle state.
-        status_reason_detail: Bounded operator-facing reason detail.
-        membership_revision: Cache-invalidating child membership revision.
-        updated_at: Time any durable Lease state was last changed.
     """
 
     status: feed_store.FeedStatus
-    last_heartbeat: datetime.datetime | None
     failure_count: int
-    retry_after: datetime.datetime | None
     status_reason: feed_store.FeedStatusReason | None
-    status_reason_detail: str | None
-    membership_revision: int
-    updated_at: datetime.datetime
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -134,17 +124,15 @@ class LeaseOperationResult:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LeaseHeartbeatResult:
-    """Caller-correlated diagnostic result for heartbeat renewal.
+    """Caller-correlated outcome for heartbeat renewal.
 
     Attributes:
         grant: Original caller grant associated with this result.
         disposition: Closed classification of the heartbeat attempt.
-        snapshot: Current state, absent only when the Lease is missing.
     """
 
     grant: LeaseGrant
     disposition: LeaseOperationDisposition
-    snapshot: LeaseSnapshot | None
 
 
 class LeaseReleaseCause(enum.StrEnum):
@@ -277,13 +265,8 @@ def _status_reason_from_row(
 def _snapshot_from_row(row: collections.abc.Mapping) -> LeaseSnapshot:
     return LeaseSnapshot(
         status=_status_from_row(row),
-        last_heartbeat=row["last_heartbeat"],
         failure_count=row["failure_count"],
-        retry_after=row["retry_after"],
         status_reason=_status_reason_from_row(row),
-        status_reason_detail=row["status_reason_detail"],
-        membership_revision=row["membership_revision"],
-        updated_at=row["updated_at"],
     )
 
 
@@ -320,9 +303,21 @@ class IngestionLeaseStore:
         row: collections.abc.Mapping | None,
     ) -> GrantRejected | None:
         """Classify a locked Lease row against a complete active grant."""
+        reason = self._grant_rejection_reason(grant, row)
+        if reason is None:
+            return None
+        snapshot = None if row is None else _snapshot_from_row(row)
+        return GrantRejected(reason, snapshot)
+
+    def _grant_rejection_reason(
+        self,
+        grant: LeaseGrant,
+        row: collections.abc.Mapping | None,
+    ) -> GrantRejectionReason | None:
+        """Classify a locked Lease row without constructing a snapshot."""
         _require_grant(grant)
         if row is None:
-            return GrantRejected(GrantRejectionReason.MISSING, None)
+            return GrantRejectionReason.MISSING
 
         source_type = _source_type_from_row(row)
         if source_type is not grant.source_type or row["lease_key"] != (
@@ -331,22 +326,12 @@ class IngestionLeaseStore:
             msg = "locked Lease identity did not match the requested identity"
             raise ValueError(msg)
 
-        snapshot = _snapshot_from_row(row)
-        if snapshot.status is not feed_store.FeedStatus.ACTIVE:
-            return GrantRejected(
-                GrantRejectionReason.STATUS_INELIGIBLE,
-                snapshot,
-            )
+        if _status_from_row(row) is not feed_store.FeedStatus.ACTIVE:
+            return GrantRejectionReason.STATUS_INELIGIBLE
         if row["worker_id"] != grant.owner_worker_id:
-            return GrantRejected(
-                GrantRejectionReason.OWNER_MISMATCH,
-                snapshot,
-            )
+            return GrantRejectionReason.OWNER_MISMATCH
         if row["fencing_token"] != grant.fencing_token:
-            return GrantRejected(
-                GrantRejectionReason.FENCE_MISMATCH,
-                snapshot,
-            )
+            return GrantRejectionReason.FENCE_MISMATCH
         return None
 
     async def claim_unclaimed(
@@ -499,22 +484,22 @@ class IngestionLeaseStore:
             return LeaseHeartbeatResult(
                 grant,
                 LeaseOperationDisposition.MISSING,
-                None,
             )
+        rejection_reason = self._grant_rejection_reason(grant, row)
         if row["applied"]:
+            if rejection_reason is not None:
+                msg = "heartbeat updated a mismatched Lease grant"
+                raise RuntimeError(msg)
             return LeaseHeartbeatResult(
                 grant,
                 LeaseOperationDisposition.APPLIED,
-                _snapshot_from_row(row),
             )
-        rejection = self._grant_rejection(grant, row)
-        if rejection is None:
+        if rejection_reason is None:
             msg = "heartbeat did not update an exact active Lease grant"
             raise RuntimeError(msg)
         return LeaseHeartbeatResult(
             grant,
-            _disposition_for_rejection(rejection.reason),
-            rejection.snapshot,
+            _disposition_for_rejection(rejection_reason),
         )
 
     async def release(

@@ -346,6 +346,7 @@ async def test_neutral_release_and_reclaim_invalidate_old_grant(
     assert after_release["failure_count"] == 3
     assert after_release["retry_after"] == retry_after
     assert after_release["status_reason"] == "source_unreachable"
+    assert after_release["status_reason_detail"] == "fixture failure"
     assert after_release["membership_revision"] == 9
 
     new_grant = await _claim_exact(store, sid, owner)

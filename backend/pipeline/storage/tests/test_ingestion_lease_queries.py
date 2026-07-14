@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import datetime
 import inspect
 import pathlib
 import unittest
@@ -67,6 +66,21 @@ class TestLeaseGrantContract(unittest.TestCase):
             self.assertTrue(dataclasses.is_dataclass(value_type))
             self.assertTrue(hasattr(value_type, "__slots__"))
 
+    def test_snapshot_contains_only_failure_policy_state(self) -> None:
+        fields = dataclasses.fields(ingestion_lease_store.LeaseSnapshot)
+        heartbeat_fields = dataclasses.fields(
+            ingestion_lease_store.LeaseHeartbeatResult
+        )
+
+        self.assertEqual(
+            [field.name for field in fields],
+            ["status", "failure_count", "status_reason"],
+        )
+        self.assertEqual(
+            [field.name for field in heartbeat_fields],
+            ["grant", "disposition"],
+        )
+
     def test_grant_rejects_incomplete_or_malformed_identity(self) -> None:
         cases = (
             ("bcfy_calls", "123", self.owner_id, 1),
@@ -92,25 +106,18 @@ class TestLeaseGrantContract(unittest.TestCase):
             self.owner_id,
             4,
         )
-        now = datetime.datetime(2026, 7, 10, tzinfo=datetime.UTC)
         first = ingestion_lease_store.LeaseClaim(
             grant,
             ingestion_lease_store.LeaseSnapshot(
                 status=feed_store.FeedStatus.ACTIVE,
-                last_heartbeat=now,
                 failure_count=0,
-                retry_after=None,
                 status_reason=None,
-                status_reason_detail=None,
-                membership_revision=1,
-                updated_at=now,
             ),
         )
         second = dataclasses.replace(
             first,
             snapshot=dataclasses.replace(
                 first.snapshot,
-                membership_revision=2,
                 failure_count=3,
             ),
         )
@@ -208,13 +215,16 @@ class TestLeaseClaimQueryContract(unittest.TestCase):
                 self.assertIn(fragment, sql)
             for fragment in retained:
                 self.assertNotIn(fragment, sql)
-            for projected in (
-                "failure_count",
-                "status_reason",
+            for projected in ("failure_count", "status_reason"):
+                self.assertIn(projected, sql)
+            for omitted in (
+                "last_heartbeat",
+                "retry_after",
                 "status_reason_detail",
                 "membership_revision",
+                "updated_at",
             ):
-                self.assertIn(projected, sql)
+                self.assertNotIn(f"leases.{omitted}", sql)
 
     def test_claims_project_no_child_owner_or_durable_cursor(self) -> None:
         for query in (
@@ -237,7 +247,8 @@ class TestLeaseControlQueryContract(unittest.TestCase):
             ingestion_lease_queries.RENEW_LEASE_HEARTBEATS_SQL
         )
 
-        self.assertIn("WITH ORDINALITY", sql)
+        self.assertNotIn("WITH ORDINALITY", sql)
+        self.assertNotIn("lock_ordinal", sql)
         self.assertIn("ORDER BY leases.source_type, leases.lease_key", sql)
         self.assertIn("FOR NO KEY UPDATE OF leases", sql)
         self.assertIn(
@@ -257,9 +268,16 @@ class TestLeaseControlQueryContract(unittest.TestCase):
         self.assertIn("updated_at = NOW()", sql)
         set_clause = sql.split("SET", 1)[1].split("FROM current_state", 1)[0]
         self.assertNotIn("fencing_token =", set_clause)
-        self.assertNotIn("failure_count =", sql)
-        self.assertNotIn("status_reason =", sql)
-        self.assertNotIn("retry_after =", sql)
+        for omitted in (
+            "failure_count",
+            "last_heartbeat,",
+            "membership_revision",
+            "retry_after",
+            "status_reason",
+            "status_reason_detail",
+            "updated_at,",
+        ):
+            self.assertNotIn(omitted, sql)
 
     def test_release_is_one_neutral_exact_grant_transition(self) -> None:
         sql = _normalized_sql(ingestion_lease_queries.RELEASE_LEASE_SQL)
@@ -276,8 +294,15 @@ class TestLeaseControlQueryContract(unittest.TestCase):
         self.assertIn("last_heartbeat = NULL", sql)
         self.assertIn("updated_at = NOW()", sql)
         self.assertNotIn("failure_count =", sql)
-        self.assertNotIn("retry_after =", sql)
         self.assertNotIn("status_reason =", sql)
+        for omitted in (
+            "last_heartbeat,",
+            "membership_revision",
+            "retry_after",
+            "status_reason_detail",
+            "updated_at,",
+        ):
+            self.assertNotIn(omitted, sql)
 
     def test_no_worker_only_bulk_release_or_internal_retry_surface(
         self,

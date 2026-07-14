@@ -20,13 +20,11 @@ from backend.pipeline.storage.ingestion_lease_store import (
     LeaseHeartbeatResult,
     LeaseOperationResult,
     LeaseReleaseCause,
-    LeaseSnapshot,
 )
 IngestionLeaseStore.claim_unclaimed
 IngestionLeaseStore.claim_recoverable
 IngestionLeaseStore.renew_heartbeats
 IngestionLeaseStore.release
-LeaseSnapshot.membership_revision
 LeaseOperationResult.disposition
 LeaseHeartbeatResult.disposition
 LeaseReleaseCause.SHUTDOWN
