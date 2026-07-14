@@ -2130,7 +2130,10 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(snapshot.fatal)
         self.assertFalse(snapshot.admission_open)
         self.assertEqual(snapshot.held, 1)
-        self.assertEqual(snapshot.active_calls, 1)
+        self.assertEqual(snapshot.active_calls, 0)
+        self.assertEqual(snapshot.active_feeds, frozenset({_FEED_IDS[0]}))
+        self.assertEqual(len(snapshot.records), 1)
+        self.assertIsNone(snapshot.records[0].worker_slot)
         self.assertTrue(snapshot.workers[0].task_done)
 
     async def test_unexpected_worker_failure_is_persistent_and_unreplaced(
@@ -2155,7 +2158,10 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(snapshot.fatal)
         self.assertFalse(snapshot.admission_open)
         self.assertEqual(snapshot.held, 1)
-        self.assertEqual(snapshot.active_calls, 1)
+        self.assertEqual(snapshot.active_calls, 0)
+        self.assertEqual(snapshot.active_feeds, frozenset({_FEED_IDS[0]}))
+        self.assertEqual(len(snapshot.records), 1)
+        self.assertIsNone(snapshot.records[0].worker_slot)
         self.assertTrue(snapshot.workers[0].task_done)
         with self.assertRaises(shard_module._ShardFatalError):
             await _admit_work(
