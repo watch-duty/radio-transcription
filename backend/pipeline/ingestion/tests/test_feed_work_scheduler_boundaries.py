@@ -5,23 +5,55 @@ from __future__ import annotations
 import asyncio
 import collections
 import datetime
-import importlib
 import typing
 import unittest
 import uuid
 
 from backend.pipeline.ingestion import feed_work_scheduler
 from backend.pipeline.ingestion.collectors.bcfy_calls import cursor_policy
+from backend.pipeline.ingestion.feed_work_scheduler import (
+    _types as scheduler_types_module,
+)
 from backend.pipeline.storage import feed_store, ingestion_lease_store
 
 _OWNER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _SOURCE_TIME = datetime.datetime(2026, 7, 12, 12, 0, tzinfo=datetime.UTC)
 
 
-def _types() -> typing.Any:
-    return importlib.import_module(
-        "backend.pipeline.ingestion.feed_work_scheduler._types"
-    )
+def _require_not_none[T](value: T | None) -> T:
+    if value is None:
+        message = "test expected a non-None value"
+        raise TypeError(message)
+    return value
+
+
+def _require_settled(
+    result: feed_work_scheduler.SettledPage | feed_work_scheduler.Undrained,
+) -> feed_work_scheduler.SettledPage:
+    if not isinstance(result, feed_work_scheduler.SettledPage):
+        message = "test expected a settled page"
+        raise TypeError(message)
+    return result
+
+
+def _covered_settlement(
+    result: feed_work_scheduler.SettledPage | feed_work_scheduler.Undrained,
+) -> cursor_policy._CoveredPage:
+    settlement = _require_settled(result).lease_settlement
+    if not isinstance(settlement, cursor_policy._CoveredPage):
+        message = "test expected a covered settlement"
+        raise TypeError(message)
+    return settlement
+
+
+def _no_progress_settlement(
+    result: feed_work_scheduler.SettledPage | feed_work_scheduler.Undrained,
+) -> cursor_policy._NoProgressPageSettled:
+    settlement = _require_settled(result).lease_settlement
+    if not isinstance(settlement, cursor_policy._NoProgressPageSettled):
+        message = "test expected a no-progress settlement"
+        raise TypeError(message)
+    return settlement
 
 
 def _limits(
@@ -31,8 +63,8 @@ def _limits(
     workers: int = 1,
     high_water: int = 8,
     resume_at: int = 4,
-) -> object:
-    return _types()._SchedulerLimits(
+) -> scheduler_types_module._SchedulerLimits:
+    return scheduler_types_module._SchedulerLimits(
         shard_count=shard_count,
         capacity=capacity,
         workers_per_shard=workers,
@@ -70,7 +102,7 @@ def _call(
     source_order: int,
     *,
     grant: ingestion_lease_store.LeaseGrant | None = None,
-) -> object:
+) -> feed_work_scheduler.CohortSubmission:
     exact_grant = _grant() if grant is None else grant
     member = _member(feed_id, grant=exact_grant)
     timestamp = _SOURCE_TIME + datetime.timedelta(seconds=source_order)
@@ -109,8 +141,8 @@ def _boundary(
     seconds: int,
     *,
     grant: ingestion_lease_store.LeaseGrant | None = None,
-) -> object:
-    return _types().BoundaryWork(
+) -> feed_work_scheduler.BoundaryWork:
+    return feed_work_scheduler.BoundaryWork(
         member=_member(feed_id, grant=grant),
         target=_SOURCE_TIME + datetime.timedelta(seconds=seconds),
     )
@@ -171,19 +203,19 @@ def _outcome_unknown(
 
 
 class _ImmediateExecutor:
-    async def execute(self, record: object) -> object:
-        execution = typing.cast(
-            "feed_work_scheduler.CohortExecution",
-            record,
-        )
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> feed_work_scheduler.CallCompleted:
         return _completed(execution)
 
 
 class _OutcomeUnknownExecutor:
-    async def execute(self, record: object) -> object:
-        return _outcome_unknown(
-            typing.cast("feed_work_scheduler.CohortExecution", record)
-        )
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> feed_work_scheduler.CallOutcomeUnknown:
+        return _outcome_unknown(execution)
 
 
 class _GateExecutor:
@@ -192,11 +224,10 @@ class _GateExecutor:
         self.release = asyncio.Event()
         self.calls = 0
 
-    async def execute(self, record: object) -> object:
-        execution = typing.cast(
-            "feed_work_scheduler.CohortExecution",
-            record,
-        )
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> feed_work_scheduler.CallCompleted:
         self.calls += 1
         self.entered.set()
         await self.release.wait()
@@ -207,30 +238,41 @@ class _ControlledCommitter:
     """Closed fake with optional gates and caller-correlated outcomes."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[object, tuple[object, ...], bool]] = []
+        self.calls: list[
+            tuple[
+                ingestion_lease_store.LeaseGrant,
+                tuple[feed_work_scheduler.BoundaryWork, ...],
+                bool,
+            ]
+        ] = []
         self.changed = asyncio.Event()
         self.block_nonempty = False
         self.block_final_number: int | None = None
         self.release = asyncio.Event()
         self.final_calls = 0
-        self.dispositions: dict[uuid.UUID, object] = {}
-        self.override_result: object | None = None
+        self.dispositions: dict[
+            uuid.UUID,
+            feed_work_scheduler.BoundaryDisposition,
+        ] = {}
+        self.override_result: (
+            scheduler_types_module.BoundaryCommitResult | None
+        ) = None
         self.inspect: typing.Callable[[], None] | None = None
-        self.rejected_grants: set[object] = set()
-        self.scripted_dispositions: collections.deque[object] = (
-            collections.deque()
-        )
-        self.scripted_batch_results: collections.deque[object] = (
-            collections.deque()
-        )
+        self.rejected_grants: set[ingestion_lease_store.LeaseGrant] = set()
+        self.scripted_dispositions: collections.deque[
+            feed_work_scheduler.BoundaryDisposition
+        ] = collections.deque()
+        self.scripted_batch_results: collections.deque[
+            scheduler_types_module.BoundaryCommitResult
+        ] = collections.deque()
 
     async def commit(
         self,
-        grant: object,
-        boundaries: tuple[object, ...],
+        grant: ingestion_lease_store.LeaseGrant,
+        boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
         *,
         final_logical: bool,
-    ) -> object:
+    ) -> scheduler_types_module.BoundaryCommitResult:
         if self.inspect is not None:
             self.inspect()
         self.calls.append((grant, boundaries, final_logical))
@@ -247,7 +289,7 @@ class _ControlledCommitter:
             await self.release.wait()
         if self.override_result is not None:
             return self.override_result
-        scheduler_types = _types()
+        scheduler_types = scheduler_types_module
         if grant in self.rejected_grants:
             return scheduler_types.BoundaryGrantRejected()
         if self.scripted_batch_results:
@@ -296,19 +338,27 @@ class _TimedCommitter:
     """Gate each actual attempt so tests own its exact elapsed time."""
 
     def __init__(self) -> None:
-        self.calls: list[tuple[object, tuple[object, ...], bool]] = []
+        self.calls: list[
+            tuple[
+                ingestion_lease_store.LeaseGrant,
+                tuple[feed_work_scheduler.BoundaryWork, ...],
+                bool,
+            ]
+        ] = []
         self.changed = asyncio.Event()
         self.releases: dict[int, asyncio.Event] = {}
-        self.results: collections.deque[object] = collections.deque()
+        self.results: collections.deque[
+            scheduler_types_module.BoundaryCommitResult
+        ] = collections.deque()
         self.member_rejected_feeds: set[uuid.UUID] = set()
 
     async def commit(
         self,
-        grant: object,
-        boundaries: tuple[object, ...],
+        grant: ingestion_lease_store.LeaseGrant,
+        boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
         *,
         final_logical: bool,
-    ) -> object:
+    ) -> scheduler_types_module.BoundaryCommitResult:
         call_index = len(self.calls)
         self.calls.append((grant, boundaries, final_logical))
         release = self.releases.setdefault(call_index, asyncio.Event())
@@ -316,7 +366,7 @@ class _TimedCommitter:
         await release.wait()
         if self.results:
             return self.results.popleft()
-        scheduler_types = _types()
+        scheduler_types = scheduler_types_module
         return scheduler_types.BoundaryBatchCommitted(
             tuple(
                 scheduler_types.BoundaryResult(
@@ -343,14 +393,17 @@ class _TimedCommitter:
 
 
 class _TracingBoundaries:
-    def __init__(self, boundaries: typing.Iterable[object]) -> None:
+    def __init__(
+        self,
+        boundaries: typing.Iterable[feed_work_scheduler.BoundaryWork],
+    ) -> None:
         self._boundaries = iter(boundaries)
         self.pulled: list[uuid.UUID] = []
 
     def __iter__(self) -> _TracingBoundaries:
         return self
 
-    def __next__(self) -> object:
+    def __next__(self) -> feed_work_scheduler.BoundaryWork:
         boundary = next(self._boundaries)
         self.pulled.append(boundary.feed_id)
         return boundary
@@ -468,7 +521,7 @@ class TestBoundaryEvidence(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(observed[0].early_flush_attempt_count, 1)
             self.assertEqual(observed[0].total_flush_latency_seconds, 2.0)
             self.assertEqual((await scheduler._snapshot()).held, 1)
-            self.assertIsNone(lane._page.evidence_observer)
+            self.assertIsNone(_require_not_none(lane._page).evidence_observer)
         finally:
             committer.release(0)
             await scheduler.close()
@@ -505,12 +558,12 @@ class TestBoundaryEvidence(unittest.IsolatedAsyncioTestCase):
             for _unused in range(100):
                 if (
                     lane._page is not None
-                    and lane._page.uncertainty is not None
+                    and _require_not_none(lane._page).uncertainty is not None
                 ):
                     break
                 await asyncio.sleep(0)
             self.assertIsNotNone(lane._page)
-            self.assertIsNotNone(lane._page.uncertainty)
+            self.assertIsNotNone(_require_not_none(lane._page).uncertainty)
 
             coverage.cancel()
             await asyncio.sleep(0)
@@ -525,7 +578,7 @@ class TestBoundaryEvidence(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(observed[0].total_flush_latency_seconds, 2.0)
             self.assertEqual((await scheduler._snapshot()).held, 1)
             self.assertIsNotNone((await lane._snapshot()).page)
-            self.assertIsNone(lane._page.evidence_observer)
+            self.assertIsNone(_require_not_none(lane._page).evidence_observer)
         finally:
             committer.release(0)
             await scheduler.close()
@@ -554,8 +607,11 @@ class TestBoundaryEvidence(unittest.IsolatedAsyncioTestCase):
             await release_ready_check.wait()
             return await has_ready_boundary()
 
-        lane._boundary_coordinator._has_ready_boundary = (
-            gated_has_ready_boundary
+        ready_method = "_has_ready_boundary"
+        setattr(
+            lane._boundary_coordinator,
+            ready_method,
+            gated_has_ready_boundary,
         )
         coverage = asyncio.create_task(
             lane.cover_page(
@@ -582,7 +638,7 @@ class TestBoundaryEvidence(unittest.IsolatedAsyncioTestCase):
                     break
                 await asyncio.sleep(0)
             self.assertTrue(coverage.done())
-            evidence = coverage.result().scheduler_evidence
+            evidence = _require_settled(coverage.result()).scheduler_evidence
 
             self.assertEqual(len(committer.calls), 1)
             self.assertEqual(evidence.early_flush_attempt_count, 0)
@@ -628,7 +684,7 @@ class TestBoundaryEvidence(unittest.IsolatedAsyncioTestCase):
         async with coordinator._generation_changed:
             coordinator._evidence_cutoff = True
         record = await shard.admit_boundary(
-            _types()._BoundaryInput(
+            scheduler_types_module._BoundaryInput(
                 _boundary(uuid.UUID(int=1), 2, grant=grant),
                 grant,
                 0,
@@ -677,7 +733,7 @@ class TestBoundaryEvidence(unittest.IsolatedAsyncioTestCase):
         coordinator = lane._boundary_coordinator
         shard = scheduler._shards[0]
         await shard.admit_boundary(
-            _types()._BoundaryInput(
+            scheduler_types_module._BoundaryInput(
                 _boundary(uuid.UUID(int=1), 1, grant=grant),
                 grant,
                 0,
@@ -814,7 +870,7 @@ class TestBoundaryEvidence(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(committer.calls[1][2])
             clock.advance(3.0)
             committer.release(1)
-            evidence = (
+            evidence = _require_settled(
                 await asyncio.wait_for(coverage, timeout=1)
             ).scheduler_evidence
 
@@ -841,7 +897,7 @@ class TestBoundaryEvidence(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         clock = _ControlledClock()
         committer = _TimedCommitter()
-        committer.results.append(_types().BoundaryBatchRetryable())
+        committer.results.append(feed_work_scheduler.BoundaryBatchRetryable())
         observed: list[feed_work_scheduler.SchedulerPageEvidence] = []
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             _ImmediateExecutor(),
@@ -888,7 +944,7 @@ class TestBoundaryEvidence(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         clock = _ControlledClock()
         committer = _TimedCommitter()
-        committer.results.append(_types().BoundaryGrantRejected())
+        committer.results.append(feed_work_scheduler.BoundaryGrantRejected())
         observed: list[feed_work_scheduler.SchedulerPageEvidence] = []
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             _ImmediateExecutor(),
@@ -1095,7 +1151,7 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
             coverage.cancel()
 
             self.assertEqual(
-                cursor.accept(receipt.lease_settlement),
+                cursor.accept(_covered_settlement(receipt)),
                 _SOURCE_TIME,
             )
             self.assertIsNone((await lane._snapshot()).page)
@@ -1145,7 +1201,7 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(executor.entered.wait(), timeout=1)
         executor.release.set()
         first = await asyncio.wait_for(first_coverage, timeout=1)
-        cursor.accept(first.lease_settlement)
+        cursor.accept(_covered_settlement(first))
 
         second_candidate = cursor.prepare(
             _SOURCE_TIME + datetime.timedelta(seconds=1)
@@ -1225,7 +1281,7 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
 
             committer.release.set()
             first = await asyncio.wait_for(first_coverage, timeout=1)
-            cursor.accept(first.lease_settlement)
+            cursor.accept(_covered_settlement(first))
             second = await asyncio.wait_for(
                 lane.cover_page(
                     calls=(),
@@ -1236,7 +1292,7 @@ class TestBoundaryPageFinalization(unittest.IsolatedAsyncioTestCase):
                 ),
                 timeout=1,
             )
-            cursor.accept(second.lease_settlement)
+            cursor.accept(_covered_settlement(second))
             committed_targets = [
                 boundary.target
                 for _exact_grant, batch, _final in committer.calls
@@ -1306,7 +1362,7 @@ class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
             candidate=successor_cursor.prepare(_SOURCE_TIME),
         )
         self.assertEqual(
-            successor_cursor.accept(receipt.lease_settlement),
+            successor_cursor.accept(_covered_settlement(receipt)),
             _SOURCE_TIME,
         )
         await asyncio.wait_for(scheduler._wait_for_idle(), timeout=1)
@@ -1318,7 +1374,7 @@ class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         committer = _ControlledCommitter()
-        scheduler_types = _types()
+        scheduler_types = scheduler_types_module
         removed_feed = uuid.UUID(int=1)
         sibling_feed = uuid.UUID(int=2)
         committer.dispositions[removed_feed] = (
@@ -1345,7 +1401,7 @@ class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
                 ),
                 candidate=cursor.prepare(_SOURCE_TIME),
             )
-            cursor.accept(receipt.lease_settlement)
+            cursor.accept(_covered_settlement(receipt))
             self.assertEqual((await scheduler._snapshot()).held, 0)
 
             later = await lane.cover_page(
@@ -1358,7 +1414,7 @@ class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
                     _SOURCE_TIME + datetime.timedelta(seconds=1)
                 ),
             )
-            cursor.accept(later.lease_settlement)
+            cursor.accept(_covered_settlement(later))
             committed_feeds = set()
             for _grant_value, batch, _final in committer.calls:
                 for boundary in batch:
@@ -1374,7 +1430,7 @@ class TestBoundaryOutcomes(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         committer = _ControlledCommitter()
-        scheduler_types = _types()
+        scheduler_types = scheduler_types_module
         offered = _boundary(uuid.UUID(int=1), 10)
         crossed = _boundary(uuid.UUID(int=2), 10)
         committer.override_result = scheduler_types.BoundaryBatchCommitted(
@@ -1443,7 +1499,7 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
             settlement = await asyncio.wait_for(coverage, timeout=1)
 
             self.assertNotIsInstance(
-                settlement.lease_settlement,
+                _require_settled(settlement).lease_settlement,
                 cursor_policy._CoveredPage,
             )
             self.assertEqual(committer.calls, [(grant, (), True)])
@@ -1451,7 +1507,7 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await scheduler._snapshot()).held, 0)
             original_pos = cursor.pos
             self.assertIsNone(
-                cursor.accept_no_progress(settlement.lease_settlement)
+                cursor.accept_no_progress(_no_progress_settlement(settlement))
             )
             self.assertIs(cursor.pos, original_pos)
             self.assertEqual(cursor.next_page_sequence, 1)
@@ -1499,7 +1555,7 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
     async def test_empty_final_batch_retryable_aborts_then_explicit_retry(
         self,
     ) -> None:
-        scheduler_types = _types()
+        scheduler_types = scheduler_types_module
         committer = _ControlledCommitter()
         committer.scripted_batch_results.append(
             scheduler_types.BoundaryBatchRetryable()
@@ -1532,7 +1588,7 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
                 boundaries=(),
                 candidate=candidate,
             )
-            cursor.accept_no_progress(settlement.lease_settlement)
+            cursor.accept_no_progress(_no_progress_settlement(settlement))
 
             self.assertEqual(committer.calls, [(grant, (), True)] * 2)
             self.assertEqual(committer.final_calls, 2)
@@ -1656,13 +1712,17 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
 
         async def gated_cover(
             offered: cursor_policy.PageCandidate,
-            result: object,
-        ) -> cursor_policy.PageSettlement:
+            result: scheduler_types_module._AcceptedFinalPage,
+        ) -> tuple[
+            cursor_policy.PageSettlement,
+            feed_work_scheduler.SchedulerPageEvidence,
+        ]:
             seal_entered.set()
             await allow_seal.wait()
             return await cover(offered, result)
 
-        lane._cover = gated_cover
+        cover_method = "_cover"
+        setattr(lane, cover_method, gated_cover)
         coverage = asyncio.create_task(
             lane.cover_page(
                 calls=(),
@@ -1676,7 +1736,7 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
             allow_seal.set()
             settled = await asyncio.wait_for(coverage, timeout=1)
 
-            cursor.accept_no_progress(settled.lease_settlement)
+            cursor.accept_no_progress(_no_progress_settlement(settled))
             self.assertIsNone(cursor.outstanding_candidate)
             self.assertEqual(committer.calls, [(grant, (), True)])
             lane_snapshot = await lane._snapshot()
@@ -1708,11 +1768,11 @@ class TestNoProgressPages(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertIsInstance(
-                receipt.lease_settlement,
+                _require_settled(receipt).lease_settlement,
                 cursor_policy._CoveredPage,
             )
             self.assertEqual(
-                cursor.accept(receipt.lease_settlement),
+                cursor.accept(_covered_settlement(receipt)),
                 _SOURCE_TIME,
             )
             self.assertEqual(committer.final_calls, 1)
@@ -1749,11 +1809,14 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
         relief_requested = asyncio.Event()
         request_relief = lane._boundary_coordinator.request_relief
 
-        async def observe_relief() -> object:
+        async def observe_relief() -> (
+            scheduler_types_module._BoundaryPressureResult
+        ):
             relief_requested.set()
             return await request_relief()
 
-        lane._boundary_coordinator.request_relief = observe_relief
+        relief_method = "request_relief"
+        setattr(lane._boundary_coordinator, relief_method, observe_relief)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
         feed_ids = tuple(uuid.UUID(int=(index + 1) * 8) for index in range(501))
         boundaries = _TracingBoundaries(
@@ -1782,7 +1845,7 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
             committer.release.set()
             receipt = await asyncio.wait_for(coverage, timeout=2)
             self.assertEqual(
-                cursor.accept(receipt.lease_settlement),
+                cursor.accept(_covered_settlement(receipt)),
                 _SOURCE_TIME,
             )
             self.assertEqual(boundaries.pulled, list(feed_ids))
@@ -1828,7 +1891,7 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(
-            cursor.accept(receipt.lease_settlement),
+            cursor.accept(_covered_settlement(receipt)),
             _SOURCE_TIME,
         )
         self.assertEqual(committer.calls, [(grant, (), True)])
@@ -1838,7 +1901,7 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
     async def test_retryable_pressure_attempt_aborts_then_replay_succeeds(
         self,
     ) -> None:
-        scheduler_types = _types()
+        scheduler_types = scheduler_types_module
         committer = _ControlledCommitter()
         committer.block_nonempty = True
         committer.scripted_dispositions.append(
@@ -1860,11 +1923,14 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
         relief_requested = asyncio.Event()
         request_relief = lane._boundary_coordinator.request_relief
 
-        async def observe_relief() -> object:
+        async def observe_relief() -> (
+            scheduler_types_module._BoundaryPressureResult
+        ):
             relief_requested.set()
             return await request_relief()
 
-        lane._boundary_coordinator.request_relief = observe_relief
+        relief_method = "request_relief"
+        setattr(lane._boundary_coordinator, relief_method, observe_relief)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
         candidate = cursor.prepare(_SOURCE_TIME)
         feed_ids = tuple(uuid.UUID(int=index + 1) for index in range(401))
@@ -1911,7 +1977,7 @@ class TestBoundaryLiveness(unittest.IsolatedAsyncioTestCase):
                 timeout=2,
             )
             self.assertEqual(
-                cursor.accept(replay.lease_settlement),
+                cursor.accept(_covered_settlement(replay)),
                 _SOURCE_TIME,
             )
             await asyncio.wait_for(scheduler._wait_for_idle(), timeout=1)

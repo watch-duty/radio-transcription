@@ -530,9 +530,7 @@ class _BoundaryCoordinator:
                 if evidence_sink is not None and self._evidence_sink_is_open(
                     evidence_sink
                 ):
-                    self._notify_observer(
-                        evidence_sink.observe_fence_rejection
-                    )
+                    self._notify_observer(evidence_sink.observe_fence_rejection)
                 elif deferred_evidence is not None:
                     deferred_evidence.fence_rejected = True
                 await self._discard_selected(selected)

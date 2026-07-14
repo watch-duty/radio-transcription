@@ -94,6 +94,19 @@ _TERMINAL_EXECUTOR_OUTCOMES = (
 )
 
 
+class _PageNeutralizationObserver(typing.Protocol):
+    """Observe fact-free release while preserving keyword-only evidence."""
+
+    def __call__(
+        self,
+        records: tuple[_types._CallRecord, ...],
+        *,
+        replay_blocked: bool,
+        retired_member: ingestion_lease_store.LeaseMemberIdentity | None,
+    ) -> None:
+        """Observe one exact neutralized record tuple."""
+
+
 class _Shard:
     """One lock-protected held-token state machine with fixed workers."""
 
@@ -148,15 +161,7 @@ class _Shard:
             None,
         ]
         | None = None,
-        page_neutralization_observer: typing.Callable[
-            [
-                tuple[_types._CallRecord, ...],
-                bool,
-                ingestion_lease_store.LeaseMemberIdentity | None,
-            ],
-            None,
-        ]
-        | None = None,
+        page_neutralization_observer: _PageNeutralizationObserver | None = None,
     ) -> None:
         """Create one authoritative shard with injected coordination seams.
 

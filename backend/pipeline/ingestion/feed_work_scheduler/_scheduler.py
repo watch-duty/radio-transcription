@@ -2776,11 +2776,26 @@ class GrantLane:
                 message = "page terminal conservation is incomplete"
                 raise RuntimeError(message)
             if type(result) is _types.FinalPageCovered:
-                settlement = cursor_policy._issue_covered_page(candidate)
+                settlement = cursor_policy._issue_covered_page(
+                    typing.cast(
+                        "cursor_policy.PageCursorCandidate",
+                        candidate,
+                    )
+                )
             elif type(result) is _types.FinalPageNoProgress:
-                settlement = cursor_policy._issue_no_progress_page(candidate)
+                settlement = cursor_policy._issue_no_progress_page(
+                    typing.cast(
+                        "cursor_policy.NoProgressPageCandidate",
+                        candidate,
+                    )
+                )
             elif type(result) is _types.FinalPageReplayable:
-                settlement = cursor_policy._issue_replayable_page(candidate)
+                settlement = cursor_policy._issue_replayable_page(
+                    typing.cast(
+                        "cursor_policy.PageCursorCandidate",
+                        candidate,
+                    )
+                )
             else:
                 message = "result is not an accepted final disposition"
                 raise cursor_policy.CursorIntegrityError(message)

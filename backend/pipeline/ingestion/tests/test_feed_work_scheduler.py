@@ -18,11 +18,90 @@ _OWNER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _OTHER_OWNER_ID = uuid.UUID("22222222-3333-4444-5555-666666666666")
 _SOURCE_TIME = datetime.datetime(2026, 7, 12, 12, 0, tzinfo=datetime.UTC)
 
+type _ExecutorOutcome = (
+    feed_work_scheduler.CallCompleted
+    | feed_work_scheduler.CallFinalClosurePending
+    | feed_work_scheduler.CallReplayableDirectFailure
+    | feed_work_scheduler.CallRetryable
+    | feed_work_scheduler.CallStopped
+    | feed_work_scheduler.CallAuthorityLost
+    | feed_work_scheduler.CallMembershipRejected
+    | feed_work_scheduler.CallIntegrityFailure
+    | feed_work_scheduler.CallOutcomeUnknown
+)
+type _FinalPageResult = (
+    feed_work_scheduler.FinalPageCovered
+    | feed_work_scheduler.FinalPageNoProgress
+    | feed_work_scheduler.FinalPageReplayable
+    | feed_work_scheduler.FinalPageRetryable
+    | feed_work_scheduler.FinalPageGrantRejected
+    | feed_work_scheduler.FinalPageOutcomeUnknown
+)
+
+
+def _require_not_none[T](value: T | None) -> T:
+    if value is None:
+        message = "test expected a non-None value"
+        raise TypeError(message)
+    return value
+
+
+def _require_settled(
+    result: feed_work_scheduler.SettledPage | feed_work_scheduler.Undrained,
+) -> feed_work_scheduler.SettledPage:
+    if not isinstance(result, feed_work_scheduler.SettledPage):
+        message = "test expected a settled page"
+        raise TypeError(message)
+    return result
+
+
+def _covered_settlement(
+    result: feed_work_scheduler.SettledPage | feed_work_scheduler.Undrained,
+) -> cursor_policy._CoveredPage:
+    settlement = _require_settled(result).lease_settlement
+    if not isinstance(settlement, cursor_policy._CoveredPage):
+        message = "test expected a covered settlement"
+        raise TypeError(message)
+    return settlement
+
+
+def _replayable_settlement(
+    result: feed_work_scheduler.SettledPage | feed_work_scheduler.Undrained,
+) -> cursor_policy._ReplayablePageSettled:
+    settlement = _require_settled(result).lease_settlement
+    if not isinstance(settlement, cursor_policy._ReplayablePageSettled):
+        message = "test expected a replayable settlement"
+        raise TypeError(message)
+    return settlement
+
+
+def _no_progress_settlement(
+    result: feed_work_scheduler.SettledPage | feed_work_scheduler.Undrained,
+) -> cursor_policy._NoProgressPageSettled:
+    settlement = _require_settled(result).lease_settlement
+    if not isinstance(settlement, cursor_policy._NoProgressPageSettled):
+        message = "test expected a no-progress settlement"
+        raise TypeError(message)
+    return settlement
+
 
 def _scheduler_types() -> typing.Any:
     return importlib.import_module(
         "backend.pipeline.ingestion.feed_work_scheduler._types"
     )
+
+
+def _source_order(payload: object) -> int:
+    if not isinstance(payload, dict):
+        message = "test payload must be a dict"
+        raise TypeError(message)
+    source_order = typing.cast("dict[object, object]", payload).get(
+        "source_order"
+    )
+    if not isinstance(source_order, int):
+        message = "test payload source_order must be an int"
+        raise TypeError(message)
+    return source_order
 
 
 def _grant(
@@ -336,12 +415,15 @@ class _ImmediateExecutor:
     def __init__(self) -> None:
         self.sequences: list[int] = []
 
-    async def execute(self, execution: object) -> object:
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
         if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
         self.sequences.extend(
-            call.payload["source_order"] for call in execution.calls
+            _source_order(call.payload) for call in execution.calls
         )
         return _completed(execution)
 
@@ -356,7 +438,10 @@ class _GateExecutor:
         self._released = 0
         self._release_all = False
 
-    async def execute(self, execution: object) -> object:
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
         if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
@@ -417,7 +502,10 @@ class _DelayedCancellationExecutor:
         self.entered_count = 0
         self.cancellation_count = 0
 
-    async def execute(self, execution: object) -> object:
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
         if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
@@ -440,6 +528,8 @@ class _DelayedCancellationExecutor:
             if self.swallow:
                 return _completed(execution)
             raise
+        message = "an unset Event unexpectedly completed"
+        raise AssertionError(message)
 
     async def wait_for_counts(self, entered: int, cancelled: int) -> None:
         while (
@@ -461,7 +551,7 @@ class _GatedOutcomeExecutor:
         self,
         outcome_factory: typing.Callable[
             [feed_work_scheduler.CohortExecution],
-            object,
+            _ExecutorOutcome,
         ],
     ) -> None:
         self.outcome_factory = outcome_factory
@@ -470,7 +560,10 @@ class _GatedOutcomeExecutor:
         self.calls = 0
         self.executions: list[feed_work_scheduler.CohortExecution] = []
 
-    async def execute(self, execution: object) -> object:
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
         if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
@@ -491,11 +584,14 @@ class _ReplayBarrierExecutor:
         self.failure_entered = asyncio.Event()
         self.release_failure = asyncio.Event()
 
-    async def execute(self, execution: object) -> object:
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
         if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
-        orders = tuple(call.payload["source_order"] for call in execution.calls)
+        orders = tuple(_source_order(call.payload) for call in execution.calls)
         self.started.append(orders)
         self.changed.set()
         first = execution.calls[0]
@@ -520,18 +616,21 @@ class _PageAbortExecutor:
         self,
         abort_factory: typing.Callable[
             [feed_work_scheduler.CohortExecution],
-            object,
+            _ExecutorOutcome,
         ],
     ) -> None:
         self.abort_factory = abort_factory
         self.release_abort = asyncio.Event()
         self.abort_entered = asyncio.Event()
 
-    async def execute(self, execution: object) -> object:
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
         if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
-        source_order = execution.calls[0].payload["source_order"]
+        source_order = _source_order(execution.calls[0].payload)
         if source_order == 0:
             return _final_closure_pending(execution)
         self.abort_entered.set()
@@ -549,7 +648,10 @@ class _CancellationCapabilityExecutor:
         self.caught: asyncio.CancelledError | None = None
         self.reraised_same_object = False
 
-    async def execute(self, execution: object) -> object:
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
         if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
@@ -576,6 +678,8 @@ class _CancellationCapabilityExecutor:
             except asyncio.CancelledError as propagated:
                 self.reraised_same_object = propagated is exc
                 raise
+        message = "an unset Event unexpectedly completed"
+        raise AssertionError(message)
 
 
 class _HoldFirstThenCompleteExecutor:
@@ -586,7 +690,10 @@ class _HoldFirstThenCompleteExecutor:
         self.release_first = asyncio.Event()
         self.calls = 0
 
-    async def execute(self, execution: object) -> object:
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
         if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
@@ -605,11 +712,14 @@ class _UnknownPageAbortExecutor:
         self.abort_entered = asyncio.Event()
         self.release_abort = asyncio.Event()
 
-    async def execute(self, execution: object) -> object:
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
         if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
-        source_order = execution.calls[0].payload["source_order"]
+        source_order = _source_order(execution.calls[0].payload)
         if source_order == 0:
             return _final_closure_pending(execution)
         if source_order == 1:
@@ -627,11 +737,14 @@ class _AbortBeforeUnknownExecutor:
         self.unknown_entered = asyncio.Event()
         self.release_unknown = asyncio.Event()
 
-    async def execute(self, execution: object) -> object:
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
         if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
-        source_order = execution.calls[0].payload["source_order"]
+        source_order = _source_order(execution.calls[0].payload)
         if source_order == 0:
             return _final_closure_pending(execution)
         if source_order == 1:
@@ -650,11 +763,14 @@ class _FinalPendingWithGatedSiblingExecutor:
         self.sibling_entered = asyncio.Event()
         self.release_sibling = asyncio.Event()
 
-    async def execute(self, execution: object) -> object:
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
         if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
-        source_order = execution.calls[0].payload["source_order"]
+        source_order = _source_order(execution.calls[0].payload)
         if source_order == 0:
             self.pending_returned.set()
             return _final_closure_pending(execution)
@@ -666,7 +782,10 @@ class _FinalPendingWithGatedSiblingExecutor:
 class _CrossedTerminalFactsExecutor:
     """Return structurally legal facts for the wrong exact identity."""
 
-    async def execute(self, execution: object) -> object:
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
         if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
@@ -831,11 +950,25 @@ class _ControlledPageFinalizer:
     async def finalize_page(
         self,
         context: feed_work_scheduler.PageFinalizationContext,
-    ) -> object:
+    ) -> _FinalPageResult:
         self.contexts.append(context)
         self.entered.set()
         await self.release.wait()
-        return self.result_factory(context)
+        result = self.result_factory(context)
+        if not isinstance(
+            result,
+            (
+                feed_work_scheduler.FinalPageCovered,
+                feed_work_scheduler.FinalPageNoProgress,
+                feed_work_scheduler.FinalPageReplayable,
+                feed_work_scheduler.FinalPageRetryable,
+                feed_work_scheduler.FinalPageGrantRejected,
+                feed_work_scheduler.FinalPageOutcomeUnknown,
+            ),
+        ):
+            message = "test finalizer returned an invalid result"
+            raise TypeError(message)
+        return result
 
 
 class _NoCommitThenReplayableFinalizer:
@@ -849,7 +982,7 @@ class _NoCommitThenReplayableFinalizer:
     async def finalize_page(
         self,
         context: feed_work_scheduler.PageFinalizationContext,
-    ) -> object:
+    ) -> _FinalPageResult:
         self.contexts.append(context)
         if len(self.contexts) == 1:
             return feed_work_scheduler.FinalPageRetryable(
@@ -878,13 +1011,19 @@ class _PerOrderOutcomeExecutor:
         self,
         factories: dict[
             int,
-            typing.Callable[[feed_work_scheduler.CohortExecution], object],
+            typing.Callable[
+                [feed_work_scheduler.CohortExecution],
+                _ExecutorOutcome,
+            ],
         ],
     ) -> None:
         self.factories = factories
         self.executed: list[int] = []
 
-    async def execute(self, execution: object) -> object:
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
         if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
@@ -895,13 +1034,14 @@ class _PerOrderOutcomeExecutor:
 
 class _CapturingExecutor:
     def __init__(self) -> None:
-        self.executions: list[object] = []
+        self.executions: list[feed_work_scheduler.CohortExecution] = []
 
-    async def execute(self, execution: object) -> object:
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
         self.executions.append(execution)
-        return _completed(
-            typing.cast("feed_work_scheduler.CohortExecution", execution)
-        )
+        return _completed(execution)
 
 
 class _CrossShardFailureExecutor:
@@ -914,7 +1054,10 @@ class _CrossShardFailureExecutor:
         self.release_failure = asyncio.Event()
         self.release_healthy = asyncio.Event()
 
-    async def execute(self, execution: object) -> object:
+    async def execute(
+        self,
+        execution: feed_work_scheduler.CohortExecution,
+    ) -> _ExecutorOutcome:
         if not isinstance(execution, feed_work_scheduler.CohortExecution):
             message = "executor received a private scheduler record"
             raise TypeError(message)
@@ -931,7 +1074,10 @@ class _CrossShardFailureExecutor:
 class _TracingCalls:
     """Single-pass source iterator with deterministic pull observation."""
 
-    def __init__(self, values: typing.Iterable[object]) -> None:
+    def __init__(
+        self,
+        values: typing.Iterable[feed_work_scheduler.CohortSubmission],
+    ) -> None:
         self._iterator = iter(values)
         self.pulled: list[int] = []
         self.changed = asyncio.Event()
@@ -939,7 +1085,7 @@ class _TracingCalls:
     def __iter__(self) -> _TracingCalls:
         return self
 
-    def __next__(self) -> object:
+    def __next__(self) -> feed_work_scheduler.CohortSubmission:
         value = next(self._iterator)
         source_order = typing.cast(
             "dict[str, object]",
@@ -995,8 +1141,9 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         self.assertNotIn("payload", repr(evidence).casefold())
         self.assertNotIn("url", repr(evidence).casefold())
+        admitted_count_field = "admitted_record_count"
         with self.assertRaises((dataclasses.FrozenInstanceError, TypeError)):
-            evidence.admitted_record_count = 4  # type: ignore[misc]
+            setattr(evidence, admitted_count_field, 4)
 
         invalid = (
             {"admitted_record_count": True},
@@ -1060,7 +1207,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
 
             self.assertIsInstance(settled, feed_work_scheduler.SettledPage)
             self.assertEqual(observed, [])
-            evidence = settled.scheduler_evidence
+            evidence = _require_settled(settled).scheduler_evidence
             self.assertEqual(evidence.admitted_record_count, 0)
             self.assertEqual(evidence.admitted_cohort_count, 0)
             self.assertEqual(evidence.total_queue_wait_seconds, 0.0)
@@ -1140,7 +1287,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             await executor.wait_for_started(2)
             executor.release_all()
             settled = await asyncio.wait_for(coverage, timeout=1)
-            evidence = settled.scheduler_evidence
+            evidence = _require_settled(settled).scheduler_evidence
 
             self.assertEqual(evidence.admitted_record_count, 4)
             self.assertEqual(evidence.admitted_cohort_count, 2)
@@ -1214,7 +1361,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                     pos=None,
                 ).prepare(_SOURCE_TIME),
             )
-            evidence = settled.scheduler_evidence
+            evidence = _require_settled(settled).scheduler_evidence
 
             self.assertEqual(evidence.maximum_held_count, 0)
             self.assertEqual(evidence.maximum_queue_depth, 0)
@@ -1275,7 +1422,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             await executor.release_completions(1)
             await executor.wait_for_started(2)
             executor.release_all()
-            evidence = (
+            evidence = _require_settled(
                 await asyncio.wait_for(coverage, timeout=1)
             ).scheduler_evidence
 
@@ -1499,11 +1646,10 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 candidate=candidate,
             )
 
-            self.assertEqual(
-                settled.scheduler_evidence.admitted_record_count, 1
-            )
-            self.assertEqual(settled.scheduler_evidence.maximum_held_count, 1)
-            self.assertEqual(settled.scheduler_evidence.maximum_queue_depth, 1)
+            evidence = _require_settled(settled).scheduler_evidence
+            self.assertEqual(evidence.admitted_record_count, 1)
+            self.assertEqual(evidence.maximum_held_count, 1)
+            self.assertEqual(evidence.maximum_queue_depth, 1)
         finally:
             executor.release_first.set()
             await asyncio.gather(first, return_exceptions=True)
@@ -1631,8 +1777,9 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         self.assertTrue(dataclasses.is_dataclass(execution))
         self.assertFalse(hasattr(execution, "__dict__"))
+        timestamp_field = "source_timestamp"
         with self.assertRaises((dataclasses.FrozenInstanceError, TypeError)):
-            execution.source_timestamp = _SOURCE_TIME  # type: ignore[misc]
+            setattr(execution, timestamp_field, _SOURCE_TIME)
 
     async def test_executor_receives_public_execution_with_none_timestamp(
         self,
@@ -2047,7 +2194,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
 
             self.assertEqual(calls.pulled, [0, 1, 2])
             self.assertEqual(
-                cursor.accept(receipt.lease_settlement),
+                cursor.accept(_covered_settlement(receipt)),
                 _SOURCE_TIME,
             )
             lane_snapshot = await lane._snapshot()
@@ -2093,7 +2240,10 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             ):
                 await lane.cover_page(
                     calls=calls,
-                    boundaries=(object(),),
+                    boundaries=typing.cast(
+                        "tuple[feed_work_scheduler.BoundaryWork, ...]",
+                        (object(),),
+                    ),
                     candidate=candidate,
                 )
             self.assertEqual(calls.pulled, [0])
@@ -2142,7 +2292,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             receipt = await asyncio.wait_for(coverage, timeout=1)
             self.assertEqual(calls.pulled, list(range(402)))
             self.assertEqual(
-                cursor.accept(receipt.lease_settlement),
+                cursor.accept(_covered_settlement(receipt)),
                 _SOURCE_TIME,
             )
         finally:
@@ -2232,7 +2382,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         allow_abort = asyncio.Event()
         abort_page = lane._abort_page
 
-        async def gated_abort(page_sequence: int) -> None:
+        async def gated_abort(page_sequence: typing.Any) -> None:
             abort_entered.set()
             await allow_abort.wait()
             await abort_page(page_sequence)
@@ -2546,7 +2696,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             )
         )
         await asyncio.wait_for(executor.entered.wait(), timeout=1)
-        old_worker = scheduler._shards[0]._workers[0].task
+        old_worker = _require_not_none(scheduler._shards[0]._workers[0].task)
         drain = asyncio.create_task(
             lane.close(feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN)
         )
@@ -2572,7 +2722,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(loss_result, expected)
         snapshot = await scheduler._snapshot()
         self.assertEqual(snapshot.held, 0)
-        replacement = scheduler._shards[0]._workers[0].task
+        replacement = _require_not_none(scheduler._shards[0]._workers[0].task)
         self.assertIsNot(replacement, old_worker)
         self.assertTrue(old_worker.done())
         self.assertFalse(replacement.done())
@@ -2723,7 +2873,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(calls.pulled, [0, 1, 2, 3, 4])
             self.assertEqual(
-                cursor.accept(receipt.lease_settlement),
+                cursor.accept(_covered_settlement(receipt)),
                 _SOURCE_TIME,
             )
             snapshot = await scheduler._snapshot()
@@ -2738,7 +2888,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 candidate=next_candidate,
             )
             self.assertEqual(
-                cursor.accept(removed_only.lease_settlement),
+                cursor.accept(_covered_settlement(removed_only)),
                 _SOURCE_TIME + datetime.timedelta(seconds=1),
             )
             self.assertEqual((await scheduler._snapshot()).held, 0)
@@ -2755,7 +2905,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 candidate=successor_cursor.prepare(_SOURCE_TIME),
             )
             self.assertEqual(
-                successor_cursor.accept(successor_receipt.lease_settlement),
+                successor_cursor.accept(_covered_settlement(successor_receipt)),
                 _SOURCE_TIME,
             )
             await scheduler._wait_for_idle()
@@ -2789,7 +2939,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(executor.entered.wait(), timeout=1)
         executor.release.set()
         first = await asyncio.wait_for(first_coverage, timeout=1)
-        cursor.accept(first.lease_settlement)
+        cursor.accept(_covered_settlement(first))
 
         second = await lane.cover_page(
             calls=(
@@ -2801,7 +2951,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 _SOURCE_TIME + datetime.timedelta(seconds=1)
             ),
         )
-        cursor.accept(second.lease_settlement)
+        cursor.accept(_covered_settlement(second))
         await scheduler._wait_for_idle()
         self.assertEqual(executor.calls, 2)
         self.assertFalse((await scheduler._snapshot()).fatal)
@@ -2870,7 +3020,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             )
         )
         await asyncio.wait_for(executor.entered.wait(), timeout=1)
-        worker = scheduler._shards[0]._workers[0].task
+        worker = _require_not_none(scheduler._shards[0]._workers[0].task)
         cancel_entered = asyncio.Event()
         allow_cancel = asyncio.Event()
         cancel_exact = scheduler._cancel_exact
@@ -2882,7 +3032,8 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             await allow_cancel.wait()
             await cancel_exact(exact_grant)
 
-        scheduler._cancel_exact = gated_cancel_exact
+        cancel_method = "_cancel_exact"
+        setattr(scheduler, cancel_method, gated_cancel_exact)
         close = asyncio.create_task(
             lane.close(feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS)
         )
@@ -2974,7 +3125,9 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             scheduler.raise_if_failed()
         self.assertIsInstance(raised.exception.__cause__, RuntimeError)
 
-        healthy_worker = scheduler._shards[1]._workers[0].task
+        healthy_worker = _require_not_none(
+            scheduler._shards[1]._workers[0].task
+        )
         executor.release_healthy.set()
         await asyncio.wait_for(healthy_worker, timeout=1)
         _, pending = await asyncio.wait(
@@ -3569,7 +3722,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
                 },
             )
             self.assertEqual((await scheduler._snapshot()).held, 0)
-            evidence = settled.scheduler_evidence
+            evidence = _require_settled(settled).scheduler_evidence
             self.assertEqual(evidence.admitted_record_count, 3)
             self.assertEqual(evidence.admitted_cohort_count, 3)
             self.assertEqual(evidence.terminal_record_count, 3)
@@ -4291,6 +4444,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIs(type(result), feed_work_scheduler.FinalPageNoProgress)
+        assert isinstance(result, feed_work_scheduler.FinalPageNoProgress)
         self.assertEqual(result.member_retirements, (member,))
         self.assertEqual(
             result.final_closure_resolutions[0].release_basis,
@@ -4326,7 +4480,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
         )
         try:
             await asyncio.wait_for(executor.entered.wait(), timeout=1)
-            barrier = (await lane._snapshot()).page
+            barrier = _require_not_none((await lane._snapshot()).page)
             self.assertIsNotNone(barrier)
             self.assertEqual(barrier.pulled_records, 2)
             self.assertEqual(barrier.registered_records, 2)
@@ -4347,7 +4501,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
             finalizer.release.set()
             receipt = await asyncio.wait_for(coverage, timeout=1)
             self.assertEqual(
-                cursor.accept(receipt.lease_settlement),
+                cursor.accept(_covered_settlement(receipt)),
                 _SOURCE_TIME,
             )
             self.assertEqual((await scheduler._snapshot()).held, 0)
@@ -4388,7 +4542,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
         )
         try:
             await asyncio.wait_for(finalizer.entered.wait(), timeout=1)
-            barrier = (await lane._snapshot()).page
+            barrier = _require_not_none((await lane._snapshot()).page)
             self.assertIsNotNone(barrier)
             self.assertEqual(barrier.pulled_records, 2)
             self.assertEqual(barrier.registered_records, 1)
@@ -4406,12 +4560,9 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
                 retired_submission.member,
             )
             finalizer.release.set()
+            receipt = await asyncio.wait_for(coverage, timeout=1)
             self.assertEqual(
-                cursor.accept(
-                    (
-                        await asyncio.wait_for(coverage, timeout=1)
-                    ).lease_settlement
-                ),
+                cursor.accept(_covered_settlement(receipt)),
                 _SOURCE_TIME,
             )
         finally:
@@ -4481,12 +4632,13 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await scheduler._snapshot()).held, 1)
             finalizer.release.set()
             receipt = await asyncio.wait_for(coverage, timeout=1)
+            settled_receipt = _require_settled(receipt)
             self.assertEqual(
-                cursor.accept(receipt.lease_settlement),
+                cursor.accept(_covered_settlement(receipt)),
                 _SOURCE_TIME,
             )
-            self.assertIs(receipt.source_evidence, source_evidence)
-            self.assertEqual(len(receipt.final_closure_resolutions), 1)
+            self.assertIs(settled_receipt.source_evidence, source_evidence)
+            self.assertEqual(len(settled_receipt.final_closure_resolutions), 1)
             self.assertEqual(
                 observed,
                 [feed_work_scheduler.CallSettlement.COMPLETED],
@@ -4577,7 +4729,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(observed[0], [])
             finalizer.release.set()
             receipt = await asyncio.wait_for(coverage, timeout=1)
-            cursor.accept_replayable(receipt.lease_settlement)
+            cursor.accept_replayable(_replayable_settlement(receipt))
             self.assertEqual(
                 observed,
                 {
@@ -4761,7 +4913,8 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
                 message = "injected cross-shard ownership mismatch"
                 raise feed_work_scheduler.CohortIntegrityError(message)
 
-            rejecting_shard.validate_final_pending = reject_validation
+            validation_method = "validate_final_pending"
+            setattr(rejecting_shard, validation_method, reject_validation)
             finalizer.release.set()
             self.assertIsInstance(
                 await asyncio.wait_for(coverage, timeout=1),
@@ -4870,7 +5023,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
             finalizer.release.set()
             settled = await asyncio.wait_for(coverage, timeout=1)
             self.assertEqual(
-                cursor.accept(settled.lease_settlement),
+                cursor.accept(_covered_settlement(settled)),
                 _SOURCE_TIME,
             )
             self.assertEqual(
@@ -4970,7 +5123,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
             finalizer.release.set()
             settled = await asyncio.wait_for(coverage, timeout=1)
             self.assertEqual(
-                cursor.accept(settled.lease_settlement),
+                cursor.accept(_covered_settlement(settled)),
                 _SOURCE_TIME,
             )
             self.assertEqual(
@@ -5118,7 +5271,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
             finalizer.release.set()
             settled = await asyncio.wait_for(coverage, timeout=1)
             self.assertEqual(
-                cursor.accept(settled.lease_settlement),
+                cursor.accept(_covered_settlement(settled)),
                 _SOURCE_TIME,
             )
             self.assertEqual(len(finalizer.contexts), 1)
@@ -5199,7 +5352,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
             )
             finalizer.release.set()
             settled = await asyncio.wait_for(coverage, timeout=1)
-            cursor.accept_no_progress(settled.lease_settlement)
+            cursor.accept_no_progress(_no_progress_settlement(settled))
             self.assertEqual(
                 observed,
                 {
@@ -5271,7 +5424,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
 
         finalizer.release_retry.set()
         settled = await asyncio.wait_for(coverage, timeout=1)
-        cursor.accept_replayable(settled.lease_settlement)
+        cursor.accept_replayable(_replayable_settlement(settled))
         self.assertEqual(
             observed,
             [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
@@ -5342,7 +5495,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
             candidate=cursor.prepare(_SOURCE_TIME),
         )
         self.assertEqual(
-            cursor.accept(settled.lease_settlement),
+            cursor.accept(_covered_settlement(settled)),
             _SOURCE_TIME,
         )
         self.assertEqual(
@@ -5350,10 +5503,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
             [feed_work_scheduler.CallSettlement.REPLAY_BLOCKED],
         )
         self.assertEqual(len(executor.executions), 1)
-        execution = typing.cast(
-            "feed_work_scheduler.CohortExecution",
-            executor.executions[0],
-        )
+        execution = executor.executions[0]
         self.assertEqual(execution.calls[0].feed_id, sibling_feed)
         self.assertFalse(await shard.is_replay_blocked(grant, 0, replay_feed))
         self.assertTrue(await shard.is_replay_blocked(grant, 1, replay_feed))
@@ -5559,7 +5709,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(settled, feed_work_scheduler.SettledPage)
             assert isinstance(settled, feed_work_scheduler.SettledPage)
             self.assertEqual(
-                cursor.accept(settled.lease_settlement),
+                cursor.accept(_covered_settlement(settled)),
                 _SOURCE_TIME,
             )
             self.assertEqual(

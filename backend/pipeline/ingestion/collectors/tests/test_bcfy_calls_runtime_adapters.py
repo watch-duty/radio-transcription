@@ -26,6 +26,28 @@ _OWNER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _NOW = datetime.datetime(2026, 7, 12, 12, 0, tzinfo=datetime.UTC)
 
 
+class _MockIngestionLeaseStore(ingestion_lease_store.IngestionLeaseStore):
+    """Autospecced store whose awaited methods retain mock assertions."""
+
+    commit_child_mutations: mock.AsyncMock
+    load_membership: mock.AsyncMock
+    refresh_membership: mock.AsyncMock
+
+
+def _page_evidence(
+    result: (
+        feed_work_scheduler.FinalPageCovered
+        | feed_work_scheduler.FinalPageNoProgress
+        | feed_work_scheduler.FinalPageReplayable
+    ),
+) -> runtime_adapters.PageFinalizationEvidence:
+    evidence = result.source_evidence
+    if not isinstance(evidence, runtime_adapters.PageFinalizationEvidence):
+        message = "test expected page-finalization evidence"
+        raise TypeError(message)
+    return evidence
+
+
 def _grant(
     lease_key: str = "150",
     *,
@@ -246,13 +268,13 @@ def _page_context(
 
 def _store_with_result(
     result: object,
-) -> ingestion_lease_store.IngestionLeaseStore:
+) -> _MockIngestionLeaseStore:
     store = mock.create_autospec(
         ingestion_lease_store.IngestionLeaseStore,
         instance=True,
     )
     store.commit_child_mutations = mock.AsyncMock(return_value=result)
-    return typing.cast("ingestion_lease_store.IngestionLeaseStore", store)
+    return typing.cast("_MockIngestionLeaseStore", store)
 
 
 class _NoStartStore:
@@ -555,10 +577,13 @@ class TestFencedBoundaryCommitter(unittest.IsolatedAsyncioTestCase):
                     _child_result(boundaries[0].feed_id),
                     _child_result(boundaries[1].feed_id),
                 ),
-                children=[  # type: ignore[arg-type]
-                    _child_result(boundaries[0].feed_id),
-                    _child_result(boundaries[1].feed_id),
-                ],
+                children=typing.cast(
+                    "tuple[ingestion_lease_store.ChildMutationResult, ...]",
+                    [
+                        _child_result(boundaries[0].feed_id),
+                        _child_result(boundaries[1].feed_id),
+                    ],
+                ),
             ),
             _batch_committed(_child_result(boundaries[0].feed_id)),
             _batch_committed(
@@ -568,7 +593,10 @@ class TestFencedBoundaryCommitter(unittest.IsolatedAsyncioTestCase):
             _batch_committed(
                 ingestion_lease_store.ChildMutationResult(
                     feed_id=boundaries[0].feed_id,
-                    disposition=object(),  # type: ignore[arg-type]
+                    disposition=typing.cast(
+                        "ingestion_lease_store.ChildDisposition",
+                        object(),
+                    ),
                     cursor_effect=ingestion_lease_store.CursorEffect.ADVANCED,
                     lifecycle_effect=ingestion_lease_store.LifecycleEffect.NONE,
                 ),
@@ -578,7 +606,10 @@ class TestFencedBoundaryCommitter(unittest.IsolatedAsyncioTestCase):
                 ingestion_lease_store.ChildMutationResult(
                     feed_id=boundaries[0].feed_id,
                     disposition=ingestion_lease_store.ChildDisposition.APPLIED,
-                    cursor_effect=object(),  # type: ignore[arg-type]
+                    cursor_effect=typing.cast(
+                        "ingestion_lease_store.CursorEffect",
+                        object(),
+                    ),
                     lifecycle_effect=ingestion_lease_store.LifecycleEffect.NONE,
                 ),
                 _child_result(boundaries[1].feed_id),
@@ -605,8 +636,11 @@ class TestFencedBoundaryCommitter(unittest.IsolatedAsyncioTestCase):
             ),
         )
 
-        for result in malformed:
-            with self.subTest(result=result):
+        for case_index, result in enumerate(malformed):
+            with self.subTest(
+                case_index=case_index,
+                result_type=type(result).__name__,
+            ):
                 store = _store_with_result(result)
                 committer = runtime_adapters.FencedBoundaryCommitter(
                     store,
@@ -643,20 +677,26 @@ class TestFencedBoundaryCommitter(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(TypeError):
             await committer.commit(
                 _grant(),
-                [],  # type: ignore[arg-type]
+                typing.cast(
+                    "tuple[feed_work_scheduler.BoundaryWork, ...]",
+                    [],
+                ),
                 final_logical=True,
             )
         with self.assertRaises(TypeError):
             await committer.commit(
                 _grant(),
-                (object(),),  # type: ignore[arg-type]
+                typing.cast(
+                    "tuple[feed_work_scheduler.BoundaryWork, ...]",
+                    (object(),),
+                ),
                 final_logical=True,
             )
         with self.assertRaises(TypeError):
             await committer.commit(
                 _grant(),
                 (),
-                final_logical=1,  # type: ignore[arg-type]
+                final_logical=typing.cast("bool", 1),
             )
 
         store.commit_child_mutations.assert_not_awaited()
@@ -677,7 +717,10 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
             runtime_adapters.FencedPageFinalizer(
                 store,
                 actor_id=_ACTOR_ID,
-                budgeted_failure=object(),  # type: ignore[arg-type]
+                budgeted_failure=typing.cast(
+                    "ingestion_lease_store.BudgetedFailure",
+                    object(),
+                ),
                 boundary_settled_utc=lambda: _NOW,
             )
 
@@ -803,7 +846,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         )
-        evidence = result.source_evidence
+        evidence = _page_evidence(result)
         self.assertIs(
             type(evidence),
             runtime_adapters.PageFinalizationEvidence,
@@ -861,7 +904,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         )
         assert isinstance(result, feed_work_scheduler.FinalPageNoProgress)
         self.assertEqual(result.boundary_results, ())
-        self.assertEqual(result.source_evidence.closure_caps, ())
+        self.assertEqual(_page_evidence(result).closure_caps, ())
 
     async def test_no_progress_rejected_observation_reports_exact_retirement(
         self,
@@ -1000,7 +1043,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         )
         result = await finalizer.finalize_page(context)
         assert isinstance(result, feed_work_scheduler.FinalPageCovered)
-        cap = result.source_evidence.closure_caps[0]
+        cap = _page_evidence(result).closure_caps[0]
         object.__setattr__(cap, "feed_id", uuid.UUID(int=405))
 
         with self.assertRaises(runtime_adapters.BoundaryAdapterIntegrityError):
@@ -1120,13 +1163,13 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         )
         assert isinstance(result, feed_work_scheduler.FinalPageCovered)
         self.assertEqual(
-            result.source_evidence.item_to_feed_promotion_count,
+            _page_evidence(result).item_to_feed_promotion_count,
             0,
         )
         self.assertEqual(
             tuple(
                 runtime_adapters.feed_closure_cap_feed_id(cap)
-                for cap in result.source_evidence.closure_caps
+                for cap in _page_evidence(result).closure_caps
             ),
             tuple(
                 sorted(
@@ -1185,8 +1228,8 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
             start=1,
         ):
             with self.subTest(
-                cursor_effect=cursor_effect,
-                disposition=disposition,
+                cursor_effect=cursor_effect.value,
+                disposition=disposition.value,
             ):
                 grant = _grant(fencing_token=index)
                 member = _member(
@@ -1232,7 +1275,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
                 result = await finalizer.finalize_page(context)
 
                 assert isinstance(result, feed_work_scheduler.FinalPageCovered)
-                caps = result.source_evidence.closure_caps
+                caps = _page_evidence(result).closure_caps
                 self.assertEqual(bool(caps), expected_cap)
                 if caps:
                     self.assertTrue(
@@ -1333,7 +1376,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
             (ingestion_lease_store.ClosedCohortProgress,) * 2,
         )
         assert isinstance(result, feed_work_scheduler.FinalPageCovered)
-        evidence = result.source_evidence
+        evidence = _page_evidence(result)
         self.assertIs(
             evidence.verdict.selected_scope,
             boundary_verdict.NewlyChargedScope.LEASE_ONLY,
@@ -1470,7 +1513,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             tuple(
                 runtime_adapters.feed_closure_cap_feed_id(cap)
-                for cap in replay_result.source_evidence.closure_caps
+                for cap in _page_evidence(replay_result).closure_caps
             ),
             (sibling.feed_id,),
         )
@@ -1549,7 +1592,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             tuple(
                 runtime_adapters.feed_closure_cap_feed_id(cap)
-                for cap in result.source_evidence.closure_caps
+                for cap in _page_evidence(result).closure_caps
             ),
             (sibling.feed_id,),
         )
@@ -1596,7 +1639,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
 
         assert isinstance(result, feed_work_scheduler.FinalPageCovered)
         self.assertEqual(
-            result.source_evidence.quarantined_feed_ids,
+            _page_evidence(result).quarantined_feed_ids,
             (failed.feed_id,),
         )
 
@@ -1736,7 +1779,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
                 ),
             ),
         )
-        self.assertEqual(result.source_evidence.closure_caps, ())
+        self.assertEqual(_page_evidence(result).closure_caps, ())
         self.assertEqual(
             result.final_closure_resolutions,
             (
@@ -1775,8 +1818,11 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
             ),
             _batch_committed(_child_result(uuid.UUID(int=1302))),
         )
-        for committed in malformed:
-            with self.subTest(children=committed.children):
+        for case_index, committed in enumerate(malformed):
+            with self.subTest(
+                case_index=case_index,
+                child_count=len(committed.children),
+            ):
                 store = _store_with_result(committed)
                 finalizer = runtime_adapters.FencedPageFinalizer(
                     store,
@@ -1858,7 +1904,7 @@ class TestPhysicalCohortCommitter(unittest.IsolatedAsyncioTestCase):
             for final_logical in (False, True):
                 with self.subTest(
                     path=path,
-                    cursor=cursor,
+                    has_cursor=cursor is not None,
                     final_logical=final_logical,
                 ):
                     commit = runtime_adapters.PhysicalCohortCommit(
@@ -1963,13 +2009,17 @@ class TestPhysicalCohortCommitter(unittest.IsolatedAsyncioTestCase):
         member = _member(grant, uuid.UUID(int=93), group_id="93")
         commit = runtime_adapters.PhysicalCohortCommit(member, None, _NOW)
 
+        cursor_field = "cursor"
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            commit.cursor = None  # type: ignore[misc]
+            setattr(commit, cursor_field, None)
 
         with self.assertRaises(TypeError):
             runtime_adapters.PhysicalCohortResult(
                 commit,
-                "committed",  # type: ignore[arg-type]
+                typing.cast(
+                    "feed_work_scheduler.BoundaryDisposition",
+                    "committed",
+                ),
             )
         with self.assertRaises(ValueError):
             runtime_adapters.PhysicalCohortResult(

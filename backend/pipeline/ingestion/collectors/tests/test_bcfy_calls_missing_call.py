@@ -147,7 +147,7 @@ def _verdict(
 def _closure_cap(
     grant: ingestion_lease_store.LeaseGrant,
     member: ingestion_lease_store.LeaseMember,
-) -> object:
+) -> runtime_adapters._FeedClosureCap:
     result = ingestion_lease_store.ChildMutationResult(
         feed_id=member.identity.feed_id,
         disposition=ingestion_lease_store.ChildDisposition.APPLIED,
@@ -182,7 +182,7 @@ def _settled_page(
     member: ingestion_lease_store.LeaseMember,
     resolution: feed_work_scheduler.FinalRecordClosureResolution,
     *,
-    cap: object | None = None,
+    cap: runtime_adapters._FeedClosureCap | None = None,
     no_progress: bool = False,
     replayable: bool = False,
     record_count: int = 1,

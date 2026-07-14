@@ -892,8 +892,13 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(recovered[0].lifecycle.durable_failing)
         self.assertTrue(recovered[1].lifecycle.durable_failing)
         self.assertTrue(primary[0].lifecycle.durable_failing)
+        claim_mode_field = "claim_mode"
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            primary[0].payload.claim_mode = grant_control.ClaimMode.RECOVERY  # type: ignore[misc]
+            setattr(
+                primary[0].payload,
+                claim_mode_field,
+                grant_control.ClaimMode.RECOVERY,
+            )
 
     async def test_sid_claim_payload_rejects_forged_and_crossed_before_io(
         self,

@@ -17,6 +17,10 @@ from backend.pipeline.storage import feed_store, ingestion_lease_store
 if typing.TYPE_CHECKING:
     import types
 
+    from backend.pipeline.ingestion.feed_work_scheduler import (
+        _types as scheduler_types_module,
+    )
+
 
 _OWNER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _OTHER_OWNER_ID = uuid.UUID("22222222-3333-4444-5555-666666666666")
@@ -1339,7 +1343,10 @@ def _completed_record(record: object) -> object:
     )
 
 
-async def _admit_work(shard: object, work: object) -> object:
+async def _admit_work(
+    shard: object,
+    work: object,
+) -> scheduler_types_module._CohortRecord:
     return await _admit_works(shard, (work,))
 
 
@@ -1348,7 +1355,7 @@ async def _admit_works(
     works: tuple[object, ...],
     *,
     admission_hook: typing.Callable[[tuple[object, ...]], None] | None = None,
-) -> object:
+) -> scheduler_types_module._CohortRecord:
     scheduler_types = _scheduler_types()
     exact_works = typing.cast("tuple[typing.Any, ...]", works)
     exact_work = exact_works[0]
@@ -1383,7 +1390,9 @@ async def _admit_works(
     )
 
 
-def _actual_model_projection(snapshot: object) -> _ModelSnapshot:
+def _actual_model_projection(
+    snapshot: scheduler_types_module._ShardSnapshot,
+) -> _ModelSnapshot:
     return _ModelSnapshot(
         held=snapshot.held,
         queued_calls=snapshot.queued_calls,
@@ -1538,7 +1547,7 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
                 executor = _ImmediateExecutor()
                 shard = shard_module._Shard(0, executor, limits=limits)
                 model = _ReferenceModel()
-                records: dict[int, object] = {}
+                records: dict[int, scheduler_types_module._CohortRecord] = {}
                 source_order = 0
                 for step in range(80):
                     command = generator.randrange(5)
@@ -1854,8 +1863,8 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
                     _ImmediateExecutor(),
                     limits=limits,
                 )
-                known: dict[int, object] = {}
-                active: dict[int, object] = {}
+                known: dict[int, scheduler_types_module._CohortRecord] = {}
+                active: dict[int, scheduler_types_module._CohortRecord] = {}
                 next_source_order = 0
                 for step in range(120):
                     command = generator.randrange(4)
@@ -1878,9 +1887,7 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
                         next_source_order += count
                     elif command == 1:
                         free = tuple(
-                            slot
-                            for slot in range(2)
-                            if slot not in active
+                            slot for slot in range(2) if slot not in active
                         )
                         if free:
                             slot = generator.choice(free)
@@ -1960,9 +1967,7 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
                     ),
                 ),
             )
-            records = tuple(
-                [await _admit_work(shard, work) for work in works]
-            )
+            records = tuple([await _admit_work(shard, work) for work in works])
             await executor.wait_for_started(2)
 
             self.assertEqual(set(executor.started[:2]), {0, 2})

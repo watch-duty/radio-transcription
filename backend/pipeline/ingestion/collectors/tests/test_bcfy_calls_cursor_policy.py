@@ -329,10 +329,13 @@ class TestReplayFloor(unittest.TestCase):
         ):
             cursor_policy.apply_replay_floor(naive, now=_NOW, cause=cause)
         with self.assertRaisesRegex(TypeError, "ReplayFloorCause"):
-            cursor_policy.apply_replay_floor(  # type: ignore[arg-type]
+            cursor_policy.apply_replay_floor(
                 _NOW,
                 now=_NOW,
-                cause="recovery",
+                cause=typing.cast(
+                    "cursor_policy.ReplayFloorCause",
+                    "recovery",
+                ),
             )
 
 

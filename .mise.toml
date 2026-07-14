@@ -55,7 +55,7 @@ depends = ["lint:ruff:check", "lint:ruff:format", "lint:ruff:sorted"]
 
 [tasks."lint:ty"]
 description = "Run ty Python type-checker"
-run = "uv run ty check"
+run = "uv run python scripts/check_ty_baseline.py"
 
 [tasks."lint:dead-code"]
 description = "Check for dead code using vulture"

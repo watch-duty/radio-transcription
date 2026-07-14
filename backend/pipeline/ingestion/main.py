@@ -159,14 +159,6 @@ def _validate_selected_domain_configuration(
         elif allocation.domain_id is grant_control.DomainId.SID:
             _validate_sid_domain_configuration(allocation, collector_settings)
     _validate_calls_authority_configuration(profile, collector_settings)
-    if (
-        collector_settings.bcfy_calls_authority_mode
-        is worker_profiles.BcfyCallsAuthorityMode.SID_LEASE
-    ):
-        msg = (
-            "SID Calls production activation requires the Phase 6 call executor"
-        )
-        raise RuntimeError(msg)
 
 
 def main() -> None:

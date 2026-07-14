@@ -680,10 +680,9 @@ def _final_child_cursor(
 ) -> datetime.datetime | None:
     if type(mutation) is ingestion_lease_store.FeedFailureTransition:
         return mutation.completion_cursor
-    if type(mutation) in {
-        ingestion_lease_store.SourceObservation,
-        ingestion_lease_store.ClosedCohortProgress,
-    }:
+    if type(mutation) is ingestion_lease_store.SourceObservation:
+        return mutation.cursor
+    if type(mutation) is ingestion_lease_store.ClosedCohortProgress:
         return mutation.cursor
     message = "final child mutation has an unsupported cursor owner"
     raise BoundaryAdapterIntegrityError(message)
@@ -930,12 +929,22 @@ def _final_outcome_unknown(
     )
 
 
+type _FinalPageResult = (
+    feed_work_scheduler.FinalPageCovered
+    | feed_work_scheduler.FinalPageNoProgress
+    | feed_work_scheduler.FinalPageReplayable
+    | feed_work_scheduler.FinalPageRetryable
+    | feed_work_scheduler.FinalPageGrantRejected
+    | feed_work_scheduler.FinalPageOutcomeUnknown
+)
+
+
 async def _commit_final_batch_once(
     store: ingestion_lease_store.IngestionLeaseStore,
     actor_id: str,
     context: feed_work_scheduler.PageFinalizationContext,
     batch: ingestion_lease_store.ChildMutationBatch,
-) -> ingestion_lease_store.BatchCommitted | feed_work_scheduler.FinalPageResult:
+) -> ingestion_lease_store.BatchCommitted | _FinalPageResult:
     """Start once and classify only definitive pre-start versus uncertainty."""
     try:
         attempt = store.commit_child_mutations(
@@ -1029,7 +1038,7 @@ class FencedPageFinalizer:
     async def finalize_page(
         self,
         context: feed_work_scheduler.PageFinalizationContext,
-    ) -> feed_work_scheduler.FinalPageResult:
+    ) -> _FinalPageResult:
         """Attempt one exact final child transaction without resubmission."""
         if type(context) is not feed_work_scheduler.PageFinalizationContext:
             message = "context must be exact PageFinalizationContext"
@@ -1060,7 +1069,7 @@ class FencedPageFinalizer:
             batch,
         )
         if type(committed) is not ingestion_lease_store.BatchCommitted:
-            return typing.cast("feed_work_scheduler.FinalPageResult", committed)
+            return typing.cast("_FinalPageResult", committed)
         try:
             return self._accepted_result(context, plan, committed)
         except (TypeError, ValueError, BoundaryAdapterIntegrityError):
@@ -1071,7 +1080,7 @@ class FencedPageFinalizer:
         context: feed_work_scheduler.PageFinalizationContext,
         plan: boundary_verdict.FinalMutationPlan,
         committed: ingestion_lease_store.BatchCommitted,
-    ) -> feed_work_scheduler.FinalPageResult:
+    ) -> _FinalPageResult:
         _require_final_lease_result(plan, committed.lease_effect)
         if type(committed.children) is not tuple or len(
             committed.children

@@ -217,7 +217,10 @@ class TestBcfyCallsMissingCallGolden(unittest.TestCase):
             payload["schema_version"],
             slo_contract.BCFY_CALLS_MISSING_CALL_SCHEMA_VERSION,
         )
-        self.assertIn("signature=secret", payload["audio_url"])
+        audio_url = payload["audio_url"]
+        self.assertIsInstance(audio_url, str)
+        assert isinstance(audio_url, str)
+        self.assertIn("signature=secret", audio_url)
 
 
 class TestBcfyCallsSidPollGolden(unittest.TestCase):

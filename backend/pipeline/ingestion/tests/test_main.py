@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 import inspect
+import json
+import subprocess
 import types
 import typing
 import unittest
 from unittest import mock
+
+import pytest
+
+if typing.TYPE_CHECKING:
+    import pathlib
 
 from backend.pipeline.ingestion import (
     main,
@@ -13,6 +20,7 @@ from backend.pipeline.ingestion import (
     worker_profiles,
 )
 from backend.pipeline.storage import feed_store
+from scripts import check_ty_baseline as ty_baseline_checker
 
 
 def _settings_value(
@@ -323,14 +331,10 @@ class TestMain(unittest.TestCase):
                 return_value="projects/p/topics/segmented",
             ) as resolve_topic_path,
         ):
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "Phase 6 call executor",
-            ):
-                main._validate_selected_domain_configuration(
-                    profile,
-                    collector_settings,
-                )
+            main._validate_selected_domain_configuration(
+                profile,
+                collector_settings,
+            )
 
         supported_source_types.assert_not_called()
         resolve_topic_path.assert_called_once_with(
@@ -406,7 +410,7 @@ class TestMain(unittest.TestCase):
                         collector_settings,
                     )
 
-    def test_sid_production_gate_precedes_telemetry_and_runtime(self) -> None:
+    def test_sid_production_entrypoint_selects_composed_runtime(self) -> None:
         env = {
             "WORKER_PROFILE": "mixed-dormant",
             "BCFY_CALLS_AUTHORITY_MODE": "sid_lease",
@@ -418,6 +422,7 @@ class TestMain(unittest.TestCase):
             "ALLOYDB_DB": "radio_db",
         }
 
+        runtime_instance = mock.Mock()
         with (
             mock.patch.dict("os.environ", env, clear=True),
             mock.patch.object(main.log_helper, "setup_logging") as logging,
@@ -425,17 +430,36 @@ class TestMain(unittest.TestCase):
             mock.patch.object(
                 main.collector_runtime,
                 "CollectorRuntime",
+                return_value=runtime_instance,
             ) as runtime,
         ):
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "SID Calls production activation requires the Phase 6 call executor",
-            ):
-                main.main()
+            main.main()
 
-        logging.assert_not_called()
-        tracing.assert_not_called()
-        runtime.assert_not_called()
+        logging.assert_called_once_with()
+        tracing.assert_called_once_with(
+            service_name="ingestion-service",
+            is_ingestion=True,
+        )
+        runtime.assert_called_once()
+        runtime_args = runtime.call_args.args
+        self.assertIs(runtime_args[0], main.router.route_capturer)
+        collector_settings = runtime_args[1]
+        self.assertIs(
+            collector_settings.bcfy_calls_authority_mode,
+            worker_profiles.BcfyCallsAuthorityMode.SID_LEASE,
+        )
+        sid_allocation = worker_profiles.allocation_for_domain(
+            collector_settings.worker_profile,
+            main.grant_control.DomainId.SID,
+        )
+        self.assertIsNotNone(sid_allocation)
+        assert sid_allocation is not None
+        self.assertTrue(sid_allocation.claims_enabled)
+        self.assertNotIn(
+            feed_store.SourceType.BCFY_CALLS,
+            collector_settings.feed_claim_caps,
+        )
+        runtime_instance.run.assert_called_once_with()
 
     def test_invalid_authority_mode_precedes_telemetry_and_runtime(
         self,
@@ -662,6 +686,231 @@ class TestMain(unittest.TestCase):
 
         self.assertEqual(source.count("settings.CollectorSettings("), 1)
         self.assertNotIn("load_worker_profile_from_env", source)
+
+
+def _ty_diagnostic(
+    *,
+    path: str = "backend/example.py",
+    check_name: str = "invalid-type",
+    description: str = "invalid-type: reviewed diagnostic",
+) -> dict[str, object]:
+    return {
+        "location": {"path": path},
+        "check_name": check_name,
+        "description": description,
+    }
+
+
+def _ty_baseline_document(*, count: int = 332) -> dict[str, object]:
+    return {
+        "baseline_commit": "55df18dd",
+        "ty_version": "0.0.42",
+        "diagnostic_count": 332,
+        "diagnostics": [
+            {
+                "path": "backend/example.py",
+                "check_name": "invalid-type",
+                "description": "invalid-type: reviewed diagnostic",
+                "count": count,
+            }
+        ],
+    }
+
+
+def _write_ty_baseline(
+    tmp_path: pathlib.Path,
+    document: object,
+) -> pathlib.Path:
+    path = tmp_path / "ty_baseline.json"
+    if isinstance(document, str):
+        path.write_text(document, encoding="utf-8")
+    else:
+        path.write_text(json.dumps(document), encoding="utf-8")
+    return path
+
+
+def _stub_ty_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    diagnostics: object,
+    version: str = "ty 0.0.42",
+    check_returncode: int = 0,
+) -> None:
+    def run(
+        command: tuple[str, ...],
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        if command == ("uv", "run", "ty", "--version"):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                stdout=f"{version}\n",
+                stderr="",
+            )
+        if command == (
+            "uv",
+            "run",
+            "ty",
+            "check",
+            "--output-format",
+            "gitlab",
+            "--exit-zero",
+        ):
+            stdout = (
+                diagnostics
+                if isinstance(diagnostics, str)
+                else json.dumps(diagnostics)
+            )
+            return subprocess.CompletedProcess(
+                command,
+                check_returncode,
+                stdout=stdout,
+                stderr="ty failed" if check_returncode else "",
+            )
+        raise AssertionError(command)
+
+    monkeypatch.setattr(ty_baseline_checker.subprocess, "run", run)
+
+
+@pytest.mark.parametrize(
+    "current_count",
+    [332, 331],
+    ids=["identical", "reduction"],
+)
+def test_ty_baseline_ratchet_accepts_reviewed_multisets(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    current_count: int,
+) -> None:
+    baseline_path = _write_ty_baseline(tmp_path, _ty_baseline_document())
+    _stub_ty_subprocess(
+        monkeypatch,
+        diagnostics=[_ty_diagnostic()] * current_count,
+    )
+
+    assert ty_baseline_checker.check_ty_baseline(baseline_path) == (
+        current_count,
+        332,
+    )
+
+
+@pytest.mark.parametrize(
+    "diagnostics",
+    [
+        [_ty_diagnostic()] * 333,
+        [
+            *([_ty_diagnostic()] * 332),
+            _ty_diagnostic(
+                path="backend/new.py",
+                description="invalid-type: new diagnostic",
+            ),
+        ],
+    ],
+    ids=["increased-multiplicity", "new-diagnostic"],
+)
+def test_ty_baseline_ratchet_rejects_regressions(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    diagnostics: list[dict[str, object]],
+) -> None:
+    baseline_path = _write_ty_baseline(tmp_path, _ty_baseline_document())
+    _stub_ty_subprocess(monkeypatch, diagnostics=diagnostics)
+
+    with pytest.raises(
+        ty_baseline_checker.BaselineCheckError,
+        match="new or increased",
+    ):
+        ty_baseline_checker.check_ty_baseline(baseline_path)
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        {
+            key: value
+            for key, value in _ty_baseline_document().items()
+            if key != "baseline_commit"
+        },
+        "{malformed",
+        _ty_baseline_document(count=331),
+    ],
+    ids=["missing-field", "malformed-json", "count-inconsistent"],
+)
+def test_ty_baseline_ratchet_rejects_invalid_baseline(
+    tmp_path: pathlib.Path,
+    document: object,
+) -> None:
+    baseline_path = _write_ty_baseline(tmp_path, document)
+
+    with pytest.raises(ty_baseline_checker.BaselineCheckError):
+        ty_baseline_checker.check_ty_baseline(baseline_path)
+
+
+def test_ty_baseline_ratchet_rejects_version_mismatch(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    baseline_path = _write_ty_baseline(tmp_path, _ty_baseline_document())
+    _stub_ty_subprocess(
+        monkeypatch,
+        diagnostics=[],
+        version="ty 0.0.43",
+    )
+
+    with pytest.raises(
+        ty_baseline_checker.BaselineCheckError,
+        match="version must be exactly",
+    ):
+        ty_baseline_checker.check_ty_baseline(baseline_path)
+
+
+@pytest.mark.parametrize(
+    "diagnostics",
+    ["{malformed", {"diagnostics": []}],
+    ids=["malformed-json", "non-list"],
+)
+def test_ty_baseline_ratchet_rejects_invalid_current_diagnostics(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    diagnostics: object,
+) -> None:
+    baseline_path = _write_ty_baseline(tmp_path, _ty_baseline_document())
+    _stub_ty_subprocess(monkeypatch, diagnostics=diagnostics)
+
+    with pytest.raises(ty_baseline_checker.BaselineCheckError):
+        ty_baseline_checker.check_ty_baseline(baseline_path)
+
+
+@pytest.mark.parametrize(
+    "failure_mode",
+    ["nonzero", "os-error"],
+    ids=["nonzero-exit", "execution-error"],
+)
+def test_ty_baseline_ratchet_rejects_subprocess_failure(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_mode: str,
+) -> None:
+    baseline_path = _write_ty_baseline(tmp_path, _ty_baseline_document())
+    if failure_mode == "nonzero":
+        _stub_ty_subprocess(
+            monkeypatch,
+            diagnostics=[],
+            check_returncode=2,
+        )
+    else:
+
+        def fail_run(*_args: object, **_kwargs: object) -> typing.NoReturn:
+            raise OSError
+
+        monkeypatch.setattr(
+            ty_baseline_checker.subprocess,
+            "run",
+            fail_run,
+        )
+
+    with pytest.raises(ty_baseline_checker.BaselineCheckError):
+        ty_baseline_checker.check_ty_baseline(baseline_path)
 
 
 if __name__ == "__main__":

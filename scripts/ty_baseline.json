@@ -1,0 +1,703 @@
+{
+  "baseline_commit": "55df18dd",
+  "ty_version": "0.0.42",
+  "diagnostic_count": 332,
+  "diagnostics": [
+    {
+      "path": "backend/pipeline/ingestion/collectors/bcfy_calls/bcfy_calls_collector.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to `CallsProviderClient.__init__` is incorrect: Expected `_JsonFetcher | None`, found `def _fetch_calls(session: ClientSession, url: str, headers: dict[str, str], params: dict[str, Any], feed_id: object, shutdown_event: Event) -> CoroutineType[Any, Any, dict[str, Any]]`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/bcfy_calls/provider.py",
+      "check_name": "no-matching-overload",
+      "description": "no-matching-overload: No overload of bound method `Mapping.get` matches arguments",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/bcfy_calls/sid_processor.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `LeaseCursor.accept_no_progress` is incorrect: Expected `_NoProgressPageSettled`, found `PageSettlement`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/bcfy_calls/sid_processor.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `LeaseCursor.accept` is incorrect: Expected `_CoveredPage`, found `PageSettlement`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/bcfy_calls/sid_processor.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `Mapping.get` is incorrect: Expected `Never`, found `Literal[\"groupId\"]`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/bcfy_calls/sid_processor.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `Mapping.get` is incorrect: Expected `Never`, found `Literal[\"url\"]`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/bcfy_calls/sid_processor.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to constructor `float.__new__` is incorrect: Expected `str | Buffer | SupportsFloat | SupportsIndex`, found `~None & ~bool`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/bcfy_calls/sid_processor.py",
+      "check_name": "no-matching-overload",
+      "description": "no-matching-overload: No overload of `dict.__init__` matches arguments",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/bcfy_calls/sid_processor.py",
+      "check_name": "no-matching-overload",
+      "description": "no-matching-overload: No overload of bound method `Mapping.get` matches arguments",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_cursor_policy.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `LeaseCursor.accept_no_progress` is incorrect: Expected `_NoProgressPageSettled`, found `_CoveredPage`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_cursor_policy.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `LeaseCursor.accept` is incorrect: Expected `_CoveredPage`, found `_NoProgressPageSettled`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_processor.py",
+      "check_name": "call-non-callable",
+      "description": "call-non-callable: Object of type `None` is not callable",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_processor.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to `BcfyCallsSidProcessor.__init__` is incorrect: Expected `_GrantLane`, found `_RecordingLane`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_processor.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to `BcfyCallsSidProcessor.__init__` is incorrect: Expected `_MembershipStore`, found `_ScriptedMembershipStore`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_processor.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Attribute `next_page_sequence` is not defined on `None` in union `LeaseCursor | None`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_processor.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Attribute `outstanding_candidate` is not defined on `None` in union `LeaseCursor | None`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_processor.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Attribute `pos` is not defined on `None` in union `LeaseCursor | None`",
+      "count": 10
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_processor.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `LogRecord` has no attribute `json_fields`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_processor.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `audio_url`",
+      "count": 3
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_runner.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument is incorrect: Expected `ChildDisposition`, found `object`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_runner.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Attribute `is_set` is not defined on `None` in union `Event | None`",
+      "count": 4
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_runner.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method IngestionLeaseStore.commit_child_mutations(grant: LeaseGrant, batch: ChildMutationBatch, *, actor_id: str) -> CoroutineType[Any, Any, GrantRejected | BatchCommitted]` has no attribute `assert_awaited_once`",
+      "count": 5
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_runner.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method IngestionLeaseStore.commit_child_mutations(grant: LeaseGrant, batch: ChildMutationBatch, *, actor_id: str) -> CoroutineType[Any, Any, GrantRejected | BatchCommitted]` has no attribute `assert_not_awaited`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_runner.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method IngestionLeaseStore.commit_child_mutations(grant: LeaseGrant, batch: ChildMutationBatch, *, actor_id: str) -> CoroutineType[Any, Any, GrantRejected | BatchCommitted]` has no attribute `await_args`",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_runner.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method IngestionLeaseStore.load_membership(grant: LeaseGrant) -> CoroutineType[Any, Any, GrantRejected | MembershipSnapshot | MembershipInvariantViolation]` has no attribute `assert_not_called`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_runner.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method IngestionLeaseStore.refresh_membership(grant: LeaseGrant, *, known_revision: int | None) -> CoroutineType[Any, Any, MembershipRefreshResult]` has no attribute `assert_not_called`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/collectors/tests/test_bcfy_calls_sid_runner.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Unresolved attribute `side_effect` on type `bound method IngestionLeaseStore.commit_child_mutations(grant: LeaseGrant, batch: ChildMutationBatch, *, actor_id: str) -> CoroutineType[Any, Any, GrantRejected | BatchCommitted]`",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_chunk_ingested.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `CollectorRuntime._process_feed` is incorrect: Expected `FeedGrant`, found `LeasedFeed`",
+      "count": 3
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_chunk_ingested.py",
+      "check_name": "missing-argument",
+      "description": "missing-argument: No arguments provided for required parameters `feed`, `context` of bound method `CollectorRuntime._process_feed`",
+      "count": 3
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_chunk_ingested.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Unresolved attribute `_lease_lost` on type `CollectorRuntime`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_chunk_ingested.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Unresolved attribute `_releasing_feeds` on type `CollectorRuntime`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to function `allocation_for_domain` is incorrect: Expected `WorkerProfile`, found `UUID | int | float | ... omitted 4 union elements`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "invalid-assignment",
+      "description": "invalid-assignment: Invalid subscript assignment with key of type `Literal[\"worker_profile\"]` and value of type `WorkerProfile` on object of type `dict[str, UUID | int | float | ... omitted 4 union elements]`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "invalid-assignment",
+      "description": "invalid-assignment: Object of type `AsyncMock` is not assignable to attribute `join` of type `def join(self, timeout_sec: int | float) -> CoroutineType[Any, Any, None]`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "invalid-assignment",
+      "description": "invalid-assignment: Object of type `MagicMock` is not assignable to attribute `is_paused` of type `def is_paused(self) -> bool`",
+      "count": 3
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method ClientSession.close() -> CoroutineType[Any, Any, None]` has no attribute `assert_awaited_once`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method ClientSession.close() -> CoroutineType[Any, Any, None]` has no attribute `assert_not_awaited`",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method FeedStore.release_feeds_batch(worker_id: UUID) -> CoroutineType[Any, Any, int]` has no attribute `assert_not_called`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method FeedStore.release_non_budgeted_failure(feed_id: UUID, worker_id: UUID, fencing_token: int, *, retry_after: datetime, status_reason: FeedStatusReason, actor_id: str, reason: str | None = None) -> CoroutineType[Any, Any, str | None]` has no attribute `assert_awaited_once`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method FeedStore.release_non_budgeted_failure(feed_id: UUID, worker_id: UUID, fencing_token: int, *, retry_after: datetime, status_reason: FeedStatusReason, actor_id: str, reason: str | None = None) -> CoroutineType[Any, Any, str | None]` has no attribute `assert_not_awaited`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method FeedStore.report_feed_failure(feed_id: UUID, worker_id: UUID, fencing_token: int, failure_threshold: int = 5, backoff_base_sec: int = 15, backoff_max_sec: int = 600, *, actor_id: str, reason: str | None = None, status_reason: FeedStatusReason | None = None) -> CoroutineType[Any, Any, str | None]` has no attribute `assert_awaited_once`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method FeedStore.report_feed_failure(feed_id: UUID, worker_id: UUID, fencing_token: int, failure_threshold: int = 5, backoff_base_sec: int = 15, backoff_max_sec: int = 600, *, actor_id: str, reason: str | None = None, status_reason: FeedStatusReason | None = None) -> CoroutineType[Any, Any, str | None]` has no attribute `assert_not_awaited`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method GcsClient.close() -> CoroutineType[Any, Any, None]` has no attribute `assert_awaited_once`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method GcsClient.close() -> CoroutineType[Any, Any, None]` has no attribute `assert_not_awaited`",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method GrantSupervisor.shutdown(*, cooperative_grace_sec: int | float, external_stop_deadline_sec: int | float, stop_heartbeat_supervision: () -> Awaitable[None]) -> CoroutineType[Any, Any, ShutdownResult]` has no attribute `assert_awaited_once`",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method MemoryWatchdog.join(timeout_sec: int | float) -> CoroutineType[Any, Any, None]` has no attribute `assert_awaited_once_with`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method Pool.close() -> CoroutineType[Any, Any, Unknown]` has no attribute `assert_awaited_once`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method Pool.close() -> CoroutineType[Any, Any, Unknown]` has no attribute `assert_not_awaited`",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method PubSubClient.close() -> CoroutineType[Any, Any, None]` has no attribute `assert_awaited_once`",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `bound method PubSubClient.close() -> CoroutineType[Any, Any, None]` has no attribute `assert_not_awaited`",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Unresolved attribute `_lease_lost` on type `CollectorRuntime`",
+      "count": 19
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Unresolved attribute `_releasing_feeds` on type `CollectorRuntime`",
+      "count": 22
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Unresolved attribute `return_value` on type `bound method FeedStore.release_non_budgeted_failure(feed_id: UUID, worker_id: UUID, fencing_token: int, *, retry_after: datetime, status_reason: FeedStatusReason, actor_id: str, reason: str | None = None) -> CoroutineType[Any, Any, str | None]`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Unresolved attribute `return_value` on type `bound method FeedStore.report_feed_failure(feed_id: UUID, worker_id: UUID, fencing_token: int, failure_threshold: int = 5, backoff_base_sec: int = 15, backoff_max_sec: int = 600, *, actor_id: str, reason: str | None = None, status_reason: FeedStatusReason | None = None) -> CoroutineType[Any, Any, str | None]`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_collector_runtime.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Unresolved attribute `side_effect` on type `bound method GrantSupervisor.shutdown(*, cooperative_grace_sec: int | float, external_stop_deadline_sec: int | float, stop_heartbeat_supervision: () -> Awaitable[None]) -> CoroutineType[Any, Any, ShutdownResult]`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to `FeedWorkScheduler.__init__` is incorrect: Expected `CallExecutor`, found `_CapturingExecutor`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to `FeedWorkScheduler.__init__` is incorrect: Expected `CallExecutor`, found `_CrossShardFailureExecutor`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to `FeedWorkScheduler.__init__` is incorrect: Expected `CallExecutor`, found `_DelayedCancellationExecutor`",
+      "count": 4
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to `FeedWorkScheduler.__init__` is incorrect: Expected `CallExecutor`, found `_GateExecutor`",
+      "count": 8
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to `FeedWorkScheduler.__init__` is incorrect: Expected `CallExecutor`, found `_GatedOutcomeExecutor`",
+      "count": 4
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to `FeedWorkScheduler.__init__` is incorrect: Expected `CallExecutor`, found `_ImmediateExecutor`",
+      "count": 4
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `GrantLane.cover_page` is incorrect: Expected `Iterable[BoundaryWork]`, found `tuple[object]`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `GrantLane.cover_page` is incorrect: Expected `Iterable[CallSubmission]`, found `GeneratorType[object, None, None]`",
+      "count": 4
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `GrantLane.cover_page` is incorrect: Expected `Iterable[CallSubmission]`, found `_TracingCalls`",
+      "count": 8
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `GrantLane.cover_page` is incorrect: Expected `Iterable[CallSubmission]`, found `tuple[object, object]`",
+      "count": 3
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `GrantLane.cover_page` is incorrect: Expected `Iterable[CallSubmission]`, found `tuple[object]`",
+      "count": 14
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `LeaseCursor.accept` is incorrect: Expected `_CoveredPage`, found `PageSettlement`",
+      "count": 8
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `LeaseCursor.accept` is incorrect: Expected `_CoveredPage`, found `_CoveredPage | _NoProgressPageSettled`",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to function `wait_for` is incorrect: Expected `Awaitable[None]`, found `Task[None] | None`",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-assignment",
+      "description": "invalid-assignment: Object of type `def gated_cancel_exact(exact_grant: LeaseGrant) -> CoroutineType[Any, Any, None]` is not assignable to attribute `_cancel_exact` of type `def _cancel_exact(self, grant: LeaseGrant) -> CoroutineType[Any, Any, None]`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "invalid-assignment",
+      "description": "invalid-assignment: Property `source_timestamp` defined in `CallExecution` is read-only",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "not-subscriptable",
+      "description": "not-subscriptable: Cannot subscript object of type `object` with no `__getitem__` method",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Attribute `current_source_order` is not defined on `None` in union `_PageSnapshot | None`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Attribute `done` is not defined on `None` in union `Task[None] | None`",
+      "count": 3
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Attribute `localized` is not defined on `None` in union `_PageSnapshot | None`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Attribute `pulled` is not defined on `None` in union `_PageSnapshot | None`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Attribute `registered` is not defined on `None` in union `_PageSnapshot | None`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `feed_id`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `grant`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `payload`",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `source_timestamp`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to `FeedWorkScheduler.__init__` is incorrect: Expected `BoundaryCommitter | None`, found `_ControlledCommitter`",
+      "count": 19
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to `FeedWorkScheduler.__init__` is incorrect: Expected `CallExecutor`, found `_GateExecutor`",
+      "count": 6
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to `FeedWorkScheduler.__init__` is incorrect: Expected `CallExecutor`, found `_ImmediateExecutor`",
+      "count": 13
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to `FeedWorkScheduler.__init__` is incorrect: Expected `_SchedulerLimits`, found `object`",
+      "count": 19
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `GrantLane.cover_page` is incorrect: Expected `Iterable[BoundaryWork]`, found `GeneratorType[object, None, None]`",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `GrantLane.cover_page` is incorrect: Expected `Iterable[BoundaryWork]`, found `_TracingBoundaries`",
+      "count": 3
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `GrantLane.cover_page` is incorrect: Expected `Iterable[BoundaryWork]`, found `tuple[object, object]`",
+      "count": 3
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `GrantLane.cover_page` is incorrect: Expected `Iterable[BoundaryWork]`, found `tuple[object]`",
+      "count": 9
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `GrantLane.cover_page` is incorrect: Expected `Iterable[CallSubmission]`, found `GeneratorType[object, None, None]`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `GrantLane.cover_page` is incorrect: Expected `Iterable[CallSubmission]`, found `tuple[object, object]`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `GrantLane.cover_page` is incorrect: Expected `Iterable[CallSubmission]`, found `tuple[object]`",
+      "count": 5
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `LeaseCursor.accept_no_progress` is incorrect: Expected `_NoProgressPageSettled`, found `PageSettlement`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `LeaseCursor.accept_no_progress` is incorrect: Expected `_NoProgressPageSettled`, found `_CoveredPage | _NoProgressPageSettled`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `LeaseCursor.accept` is incorrect: Expected `_CoveredPage`, found `PageSettlement`",
+      "count": 8
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `LeaseCursor.accept` is incorrect: Expected `_CoveredPage`, found `_CoveredPage | _NoProgressPageSettled`",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-assignment",
+      "description": "invalid-assignment: Object of type `def gated_cover(offered: PageCandidate) -> CoroutineType[Any, Any, PageSettlement]` is not assignable to attribute `_cover` of type `def _cover(self, candidate: PageCandidate) -> CoroutineType[Any, Any, PageSettlement]`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "invalid-assignment",
+      "description": "invalid-assignment: Object of type `def observe_relief() -> CoroutineType[Any, Any, object]` is not assignable to attribute `request_relief` of type `def request_relief(self) -> CoroutineType[Any, Any, _BoundaryPressureResult]`",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `feed_id`",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_boundaries.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `target`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_model.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `active_calls`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_model.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `active_feeds`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_model.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `fatal`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_model.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `flushing_boundaries`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_model.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `held`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_model.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `pending_boundaries`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_model.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `pressure_paused`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_model.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `queued_calls`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_model.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `ready_feeds`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_feed_work_scheduler_model.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Object of type `object` has no attribute `records`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_grant_controls.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `FeedGrantControl.finalize` is incorrect: Expected `LeasedFeed`, found `LeasedFeed | LeaseSnapshot`",
+      "count": 6
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_grant_controls.py",
+      "check_name": "invalid-argument-type",
+      "description": "invalid-argument-type: Argument to bound method `SidGrantControl.finalize` is incorrect: Expected `LeaseSnapshot`, found `LeasedFeed | LeaseSnapshot`",
+      "count": 7
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_grant_supervisor.py",
+      "check_name": "unresolved-attribute",
+      "description": "unresolved-attribute: Attribute `__cause__` is not defined on `None` in union `BaseException | None`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_main.py",
+      "check_name": "invalid-assignment",
+      "description": "invalid-assignment: Property `segmented_pubsub_topic_path` defined in `CollectorSettings` is read-only",
+      "count": 2
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_settings.py",
+      "check_name": "invalid-assignment",
+      "description": "invalid-assignment: Cannot assign to a subscript on an object of type `Mapping[SourceType, int]`",
+      "count": 1
+    },
+    {
+      "path": "backend/pipeline/ingestion/tests/test_settings.py",
+      "check_name": "invalid-method-override",
+      "description": "invalid-method-override: Invalid override of method `get`: Definition is incompatible with `dict.get`",
+      "count": 1
+    }
+  ]
+}

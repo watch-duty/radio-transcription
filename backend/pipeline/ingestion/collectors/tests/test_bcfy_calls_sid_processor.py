@@ -146,7 +146,7 @@ class _ScriptedMembershipStore:
         grant: ingestion_lease_store.LeaseGrant,
         *,
         known_revision: int | None,
-    ) -> object:
+    ) -> ingestion_lease_store.MembershipRefreshResult:
         if self.trace is not None:
             self.trace.append("refresh")
         self.calls.append((grant, known_revision))
@@ -155,6 +155,17 @@ class _ScriptedMembershipStore:
             result = await result.wait()
         if isinstance(result, BaseException):
             raise result
+        if not isinstance(
+            result,
+            (
+                ingestion_lease_store.MembershipSnapshot,
+                ingestion_lease_store.MembershipUnchanged,
+                ingestion_lease_store.GrantRejected,
+                ingestion_lease_store.MembershipInvariantViolation,
+            ),
+        ):
+            message = "scripted membership result has an invalid type"
+            raise TypeError(message)
         return result
 
 
@@ -236,7 +247,7 @@ class _UnexpectedExecutor:
     async def execute(
         self,
         execution: feed_work_scheduler.CohortExecution,
-    ) -> object:
+    ) -> feed_work_scheduler.CallCompleted:
         del execution
         message = "rejected cohort unexpectedly executed"
         raise AssertionError(message)
@@ -365,7 +376,10 @@ class _ProcessorReplayBarrierExecutor:
     async def execute(
         self,
         execution: feed_work_scheduler.CohortExecution,
-    ) -> object:
+    ) -> (
+        feed_work_scheduler.CallCompleted
+        | feed_work_scheduler.CallReplayableDirectFailure
+    ):
         orders = tuple(call.identity.source_order for call in execution.calls)
         self.started.append(orders)
         feed_id = execution.calls[0].identity.feed_id
@@ -469,7 +483,7 @@ class _RecordingLane:
             tuple[
                 tuple[feed_work_scheduler.CohortSubmission, ...],
                 tuple[feed_work_scheduler.BoundaryWork, ...],
-                object,
+                cursor_policy.PageCandidate,
             ]
         ] = []
 
@@ -494,12 +508,12 @@ class _RecordingLane:
         *,
         calls: typing.Iterable[feed_work_scheduler.CohortSubmission],
         boundaries: typing.Iterable[feed_work_scheduler.BoundaryWork],
-        candidate: object,
+        candidate: cursor_policy.PageCandidate,
         evidence_observer: (
             typing.Callable[[feed_work_scheduler.SchedulerPageEvidence], None]
             | None
         ) = None,
-    ) -> object:
+    ) -> feed_work_scheduler.SettledPage | feed_work_scheduler.Undrained:
         if self.trace is not None:
             self.trace.append("cover")
         call_values = tuple(calls)
@@ -510,7 +524,11 @@ class _RecordingLane:
             if isinstance(action, _AsyncGate):
                 action = await action.wait()
             if callable(action):
-                action = action(call_values, boundary_values, candidate)
+                cover_action = typing.cast(
+                    "typing.Callable[[tuple[feed_work_scheduler.CohortSubmission, ...], tuple[feed_work_scheduler.BoundaryWork, ...], cursor_policy.PageCandidate], object]",
+                    action,
+                )
+                action = cover_action(call_values, boundary_values, candidate)
                 if inspect.isawaitable(action):
                     action = await action
             if isinstance(action, BaseException):
@@ -813,7 +831,7 @@ def _scheduler_evidence(
 def _closure_cap(
     candidate: cursor_policy.PageCursorCandidate,
     boundary: feed_work_scheduler.BoundaryWork,
-) -> object:
+) -> runtime_adapters._FeedClosureCap:
     result = ingestion_lease_store.ChildMutationResult(
         feed_id=boundary.feed_id,
         disposition=ingestion_lease_store.ChildDisposition.APPLIED,
@@ -845,7 +863,7 @@ def _closure_cap(
 def _settled_page(
     cohorts: tuple[feed_work_scheduler.CohortSubmission, ...],
     boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
-    candidate: object,
+    candidate: cursor_policy.PageCandidate,
 ) -> feed_work_scheduler.SettledPage:
     if type(candidate) not in {
         cursor_policy.PageCursorCandidate,
@@ -853,7 +871,7 @@ def _settled_page(
     }:
         message = "unexpected candidate"
         raise AssertionError(message)
-    typed_candidate = typing.cast("cursor_policy.PageCandidate", candidate)
+    typed_candidate = candidate
     identities = []
     terminal_facts = []
     local_sequence = 0
@@ -962,9 +980,13 @@ def _settled_page(
         quarantined_feed_ids=(),
         item_to_feed_promotion_count=verdict.item_to_feed_promotion_count,
     )
-    if type(typed_candidate) is cursor_policy.PageCursorCandidate:
+    if isinstance(typed_candidate, cursor_policy.PageCursorCandidate):
         lease_settlement = cursor_policy._issue_covered_page(typed_candidate)
     else:
+        assert isinstance(
+            typed_candidate,
+            cursor_policy.NoProgressPageCandidate,
+        )
         lease_settlement = cursor_policy._issue_no_progress_page(
             typed_candidate
         )
@@ -983,7 +1005,7 @@ def _settled_page(
 def _quarantined_settled_page(
     cohorts: tuple[feed_work_scheduler.CohortSubmission, ...],
     boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
-    candidate: object,
+    candidate: cursor_policy.PageCandidate,
 ) -> feed_work_scheduler.SettledPage:
     settled = _settled_page(cohorts, boundaries, candidate)
     evidence = typing.cast(
@@ -1002,7 +1024,7 @@ def _quarantined_settled_page(
 def _promoted_settled_page(
     cohorts: tuple[feed_work_scheduler.CohortSubmission, ...],
     boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
-    candidate: object,
+    candidate: cursor_policy.PageCandidate,
 ) -> feed_work_scheduler.SettledPage:
     settled = _settled_page(cohorts, boundaries, candidate)
     assert isinstance(candidate, cursor_policy.PageCursorCandidate)
@@ -1097,7 +1119,7 @@ def _promoted_settled_page(
 def _replayable_settled_page(
     cohorts: tuple[feed_work_scheduler.CohortSubmission, ...],
     boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
-    candidate: object,
+    candidate: cursor_policy.PageCandidate,
 ) -> feed_work_scheduler.SettledPage:
     del boundaries
     if type(candidate) is not cursor_policy.PageCursorCandidate:
@@ -3158,7 +3180,9 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             assert processor._lease_cursor is not None
             self.assertEqual(processor._lease_cursor.pos, _NOW)
             self.assertEqual(processor._lease_cursor.next_page_sequence, 1)
-            batch = store.commit_child_mutations.await_args.args[1]
+            commit_call = store.commit_child_mutations.await_args
+            assert commit_call is not None
+            batch = commit_call.args[1]
             self.assertEqual(
                 batch.mutations,
                 (

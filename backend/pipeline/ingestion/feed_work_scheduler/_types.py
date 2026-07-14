@@ -951,7 +951,7 @@ def _require_uuid_tuple(value: object, name: str) -> tuple[uuid.UUID, ...]:
     if value != tuple(sorted(value, key=lambda item: item.int)):
         message = f"{name} must be in deterministic UUID order"
         raise CohortIntegrityError(message)
-    return value
+    return typing.cast("tuple[uuid.UUID, ...]", value)
 
 
 def _require_member_retirement_tuple(
@@ -1204,7 +1204,11 @@ def _require_final_result_identity(
     }:
         message = "candidate must be an exact PageCandidate"
         raise TypeError(message)
-    if candidate.grant != grant or candidate.page_sequence != exact_sequence:
+    exact_candidate = typing.cast("cursor_policy.PageCandidate", candidate)
+    if (
+        exact_candidate.grant != grant
+        or exact_candidate.page_sequence != exact_sequence
+    ):
         message = "final result crossed candidate identity"
         raise CohortIntegrityError(message)
 

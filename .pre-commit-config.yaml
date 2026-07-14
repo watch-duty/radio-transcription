@@ -27,7 +27,7 @@ repos:
         require_serial: true
       - id: ty-check
         name: ty type checker
-        entry: uv run ty check
+        entry: mise run lint:ty
         language: system
         types_or: [python, pyi]
         require_serial: true

@@ -68,7 +68,22 @@ _PUBSUB_RETRYABLE = (
     google_exceptions.Cancelled,
     pubsub_exceptions.PublishToPausedOrderingKeyException,
 )
-_COMMIT_ACCEPTED = object()
+
+
+class _CommitAccepted(enum.Enum):
+    """Private exact marker for one accepted physical cohort commit."""
+
+    VALUE = enum.auto()
+
+
+_COMMIT_ACCEPTED = _CommitAccepted.VALUE
+type _CommitClassification = (
+    _CommitAccepted
+    | feed_work_scheduler.CallMembershipRejected
+    | feed_work_scheduler.CallAuthorityLost
+    | feed_work_scheduler.CallRetryable
+    | feed_work_scheduler.CallIntegrityFailure
+)
 
 
 def _freeze_provider_value(value: object) -> object:
@@ -329,7 +344,7 @@ async def _no_control_gate(
 def _mime_staging_parameters(
     mime_type: AudioMimeType | None,
 ) -> tuple[str, str]:
-    mime_map = {
+    mime_map: dict[AudioMimeType, tuple[str, str]] = {
         AudioMimeType.MPEG: ("mp3", "audio/mpeg"),
         AudioMimeType.AAC: ("aac", "audio/aac"),
         AudioMimeType.WAV: ("wav", "audio/x-wav"),
@@ -337,6 +352,8 @@ def _mime_staging_parameters(
         AudioMimeType.MP4: ("m4a", "audio/mp4"),
         AudioMimeType.OGG: ("ogg", "audio/ogg"),
     }
+    if mime_type is None:
+        return ("flac", "audio/flac")
     return mime_map.get(mime_type, ("flac", "audio/flac"))
 
 
@@ -578,6 +595,17 @@ type _PublishOperation = Callable[
 ]
 type _CreateChunkOperation = Callable[..., Awaitable[object]]
 type _ControlGateOperation = Callable[[ControlGate, int], Awaitable[None]]
+type _CohortExecutionResult = (
+    feed_work_scheduler.CallCompleted
+    | feed_work_scheduler.CallFinalClosurePending
+    | feed_work_scheduler.CallReplayableDirectFailure
+    | feed_work_scheduler.CallRetryable
+    | feed_work_scheduler.CallStopped
+    | feed_work_scheduler.CallAuthorityLost
+    | feed_work_scheduler.CallMembershipRejected
+    | feed_work_scheduler.CallIntegrityFailure
+    | feed_work_scheduler.CallOutcomeUnknown
+)
 
 
 class BcfyCallsCohortExecutor:
@@ -630,7 +658,7 @@ class BcfyCallsCohortExecutor:
     async def execute(  # noqa: PLR0911, PLR0912, PLR0915
         self,
         execution: feed_work_scheduler.CohortExecution,
-    ) -> object:
+    ) -> _CohortExecutionResult:
         """Run the complete physical state machine for one exact cohort."""
         payload, states = self._validate_execution(execution)
         signal_outcome = self._precommit_signal_outcome(execution, states)
@@ -1119,7 +1147,11 @@ class BcfyCallsCohortExecutor:
         self,
         execution: feed_work_scheduler.CohortExecution,
         states: list[_RecordState],
-    ) -> object | None:
+    ) -> (
+        feed_work_scheduler.CallAuthorityLost
+        | feed_work_scheduler.CallStopped
+        | None
+    ):
         if execution.signals.grant_lost.is_set():
             return feed_work_scheduler.CallAuthorityLost(
                 self._replay_facts(
@@ -1142,7 +1174,11 @@ class BcfyCallsCohortExecutor:
         self,
         execution: feed_work_scheduler.CohortExecution,
         states: list[_RecordState],
-    ) -> object | None:
+    ) -> (
+        feed_work_scheduler.CallAuthorityLost
+        | feed_work_scheduler.CallStopped
+        | None
+    ):
         if not self._has_unpublished(states):
             return None
         if execution.signals.grant_lost.is_set():
@@ -1234,7 +1270,7 @@ class BcfyCallsCohortExecutor:
         commit: runtime_adapters.PhysicalCohortCommit,
         result: object,
         states: list[_RecordState],
-    ) -> object:
+    ) -> _CommitClassification:
         if type(result) is runtime_adapters.PhysicalCohortResult:
             if result.commit is not commit:
                 return self._integrity_value(

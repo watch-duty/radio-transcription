@@ -34,7 +34,10 @@ from backend.pipeline.ingestion.retry import (
 from backend.pipeline.storage import feed_store, ingestion_lease_store
 
 if typing.TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
+
+    from backend.pipeline.ingestion.collectors.bcfy_calls import provider
+    from backend.pipeline.ingestion.settings import CollectorSettings
 
 _NOW = datetime.datetime(2026, 7, 13, 12, 0, tzinfo=datetime.UTC)
 _FEED_ID = uuid.UUID("00000000-0000-0000-0000-000000000801")
@@ -75,15 +78,18 @@ def _member(
     )
 
 
-def _settings() -> types.SimpleNamespace:
-    return types.SimpleNamespace(
-        audio_staging_bucket="audio-stage",
-        gcs_upload_max_retries=0,
-        gcs_upload_retry_base_delay_sec=0.0,
-        gcs_upload_retry_max_delay_sec=0.0,
-        pubsub_publish_max_retries=0,
-        pubsub_publish_retry_base_delay_sec=0.0,
-        pubsub_publish_retry_max_delay_sec=0.0,
+def _settings() -> CollectorSettings:
+    return typing.cast(
+        "CollectorSettings",
+        types.SimpleNamespace(
+            audio_staging_bucket="audio-stage",
+            gcs_upload_max_retries=0,
+            gcs_upload_retry_base_delay_sec=0.0,
+            gcs_upload_retry_max_delay_sec=0.0,
+            pubsub_publish_max_retries=0,
+            pubsub_publish_retry_base_delay_sec=0.0,
+            pubsub_publish_retry_max_delay_sec=0.0,
+        ),
     )
 
 
@@ -128,7 +134,7 @@ def _execution(
     grant_lost: asyncio.Event | None = None,
 ) -> tuple[
     feed_work_scheduler.CohortExecution,
-    list[object],
+    list[_types._ExecutorOutcome],
     list[feed_work_scheduler.OutcomeUnknownRetentionRequest],
 ]:
     identities = tuple(
@@ -144,8 +150,28 @@ def _execution(
         for index, entry in enumerate(payload.entries)
     )
     payload.admission_hook(identities)
-    known: list[object] = []
+    known: list[_types._ExecutorOutcome] = []
     retained: list[feed_work_scheduler.OutcomeUnknownRetentionRequest] = []
+
+    def observe_known(outcome: object) -> None:
+        if not isinstance(
+            outcome,
+            (
+                feed_work_scheduler.CallCompleted,
+                feed_work_scheduler.CallFinalClosurePending,
+                feed_work_scheduler.CallReplayableDirectFailure,
+                feed_work_scheduler.CallRetryable,
+                feed_work_scheduler.CallStopped,
+                feed_work_scheduler.CallAuthorityLost,
+                feed_work_scheduler.CallMembershipRejected,
+                feed_work_scheduler.CallIntegrityFailure,
+                feed_work_scheduler.CallOutcomeUnknown,
+            ),
+        ):
+            message = "test received an invalid cancellation outcome"
+            raise TypeError(message)
+        known.append(outcome)
+
     calls = tuple(
         feed_work_scheduler.CallExecution(identity, payload)
         for identity in identities
@@ -159,7 +185,7 @@ def _execution(
                 grant_lost or asyncio.Event(),
             ),
             _types._issue_retention_handle(identities, retained.append),
-            _types._issue_cancellation_handoff(identities, known.append),
+            _types._issue_cancellation_handoff(identities, observe_known),
         ),
         known,
         retained,
@@ -168,7 +194,7 @@ def _execution(
 
 def _observe_terminal_outcome(
     payload: pipeline.ScheduledCohortPayload,
-    outcome: object,
+    outcome: _types._ExecutorOutcome,
 ) -> None:
     facts = outcome.facts
     for entry, fact in zip(payload.entries, facts.records, strict=True):
@@ -182,13 +208,7 @@ def _observe_terminal_outcome(
 
 
 class _Committer:
-    def __init__(
-        self,
-        result: object
-        | Callable[[runtime_adapters.PhysicalCohortCommit], object]
-        | None = None,
-    ) -> None:
-        self.result = result
+    def __init__(self) -> None:
         self.commits: list[runtime_adapters.PhysicalCohortCommit] = []
 
     async def commit_cohort(
@@ -197,22 +217,14 @@ class _Committer:
         commit: runtime_adapters.PhysicalCohortCommit,
         *,
         final_logical: bool,
-    ) -> object:
+    ) -> runtime_adapters.PhysicalCohortCommitResult:
         del grant
         assert final_logical is False
         self.commits.append(commit)
-        if callable(self.result):
-            value = self.result(commit)
-        elif self.result is None:
-            value = runtime_adapters.PhysicalCohortResult(
-                commit,
-                feed_work_scheduler.BoundaryDisposition.COMMITTED,
-            )
-        else:
-            value = self.result
-        if isinstance(value, BaseException):
-            raise value
-        return value
+        return runtime_adapters.PhysicalCohortResult(
+            commit,
+            feed_work_scheduler.BoundaryDisposition.COMMITTED,
+        )
 
 
 class _Operations:
@@ -241,10 +253,14 @@ class _Operations:
                     "item_download_failed",
                 )
             )
-        timestamp = datetime.datetime.fromtimestamp(
-            float(raw_call.get("ts", _NOW.timestamp())),
-            datetime.UTC,
-        )
+        raw_timestamp = raw_call.get("ts", _NOW.timestamp())
+        if isinstance(raw_timestamp, bool) or not isinstance(
+            raw_timestamp,
+            (int, float),
+        ):
+            message = "test call timestamp must be numeric"
+            raise TypeError(message)
+        timestamp = datetime.datetime.fromtimestamp(raw_timestamp, datetime.UTC)
         return bcfy_calls_collector._CallChunkResult(
             chunk=CapturedChunk(
                 audio_bytes=audio_url.encode(),
@@ -299,9 +315,10 @@ def _executor(
     operations: _Operations,
     committer: _Committer,
     *,
-    control_gate: Callable[..., object] | None = None,
+    control_gate: Callable[[pipeline.ControlGate, int], Awaitable[None]]
+    | None = None,
     calls_provider: object | None = None,
-    create_chunk_operation: Callable[..., object] | None = None,
+    create_chunk_operation: Callable[..., Awaitable[object]] | None = None,
 ) -> pipeline.BcfyCallsCohortExecutor:
     async def no_gate(
         _gate: pipeline.ControlGate,
@@ -311,8 +328,9 @@ def _executor(
 
     return pipeline.BcfyCallsCohortExecutor(
         http_session=mock.Mock(),
-        calls_provider=(
-            mock.Mock() if calls_provider is None else calls_provider
+        calls_provider=typing.cast(
+            "provider.CallsProviderClient",
+            mock.Mock() if calls_provider is None else calls_provider,
         ),
         gcs_client=mock.Mock(),
         pubsub_client=mock.Mock(),
@@ -604,7 +622,10 @@ async def test_gcs_exhaustion_is_replayable_before_commit() -> None:
     execution, _known, _retained = _execution(grant, payload)
     operations = _Operations()
 
-    async def failed_stage(*_args: object, **_kwargs: object) -> object:
+    async def failed_stage(
+        *_args: object,
+        **_kwargs: object,
+    ) -> pipeline.StagedChunk:
         message = "upload failed"
         raise OSError(message)
 
@@ -665,7 +686,7 @@ async def test_precommit_signal_interrupt_is_neutral(
     async def interrupted_stage(
         *_args: object,
         **_kwargs: object,
-    ) -> object:
+    ) -> pipeline.StagedChunk:
         if signal_kind == "stop":
             stop.set()
             raise asyncio.CancelledError
@@ -995,8 +1016,8 @@ async def test_publication_cancellation_settles_or_retains(
     async def publish(
         *_args: object,
         **_kwargs: object,
-    ) -> CommittedAwaitableSettlement[object]:
-        async def child() -> object:
+    ) -> CommittedAwaitableSettlement[pipeline.PublishedChunk]:
+        async def child() -> pipeline.PublishedChunk:
             started.set()
             await release.wait()
             if publication_kind == "exhausted":
@@ -1006,7 +1027,7 @@ async def test_publication_cancellation_settles_or_retains(
                 message = "may have published"
                 raise ValueError(message)
             if publication_kind == "malformed":
-                return object()
+                return typing.cast("pipeline.PublishedChunk", object())
             return pipeline.PublishedChunk("message", 1)
 
         return await settle_committed_awaitable(child())
