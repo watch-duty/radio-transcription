@@ -363,5 +363,77 @@ class TestGrantRejectionContract(unittest.TestCase):
             rejection.snapshot = None  # type: ignore[misc]  # ty: ignore[invalid-assignment]
 
 
+class TestMembershipSnapshotContract(unittest.TestCase):
+    """Tests for authoritative immutable membership snapshot SQL."""
+
+    def test_member_identity_has_no_revision_or_lease_projection(self) -> None:
+        fields = {
+            field.name
+            for field in dataclasses.fields(
+                ingestion_lease_store.LeaseMemberIdentity
+            )
+        }
+
+        self.assertEqual(
+            fields,
+            {
+                "feed_id",
+                "source_type",
+                "source_feed_id",
+                "sid",
+                "group_id",
+            },
+        )
+        self.assertNotIn("membership_revision", fields)
+        self.assertNotIn("owner_worker_id", fields)
+        self.assertNotIn("fencing_token", fields)
+
+    def test_membership_uses_maintained_index_identity_and_order(self) -> None:
+        sql = _normalized_sql(
+            ingestion_lease_queries.LOAD_BCFY_CALLS_MEMBERSHIP_SQL
+        )
+
+        self.assertIn("fp.bcfy_calls_sid", sql)
+        self.assertIn("fp.bcfy_calls_group_id", sql)
+        self.assertIn("fp.source_feed_id", sql)
+        self.assertIn("fp.source_type = 'bcfy_calls'", sql)
+        self.assertIn("fp.bcfy_calls_is_trunked IS TRUE", sql)
+        self.assertIn("ORDER BY fp.bcfy_calls_group_id, fp.feed_id", sql)
+        self.assertNotIn("split_part", sql.lower())
+        self.assertNotRegex(
+            sql.lower(), r"bcfy_calls_(sid|group_id)::(int|bigint)"
+        )
+
+    def test_revision_is_snapshot_state_not_a_lifecycle_fence(self) -> None:
+        lifecycle_queries = (
+            ingestion_lease_queries.CLAIM_UNCLAIMED_LEASES_SQL,
+            ingestion_lease_queries.CLAIM_RECOVERABLE_LEASES_SQL,
+            ingestion_lease_queries.RENEW_LEASE_HEARTBEATS_SQL,
+            ingestion_lease_queries.RELEASE_LEASE_SQL,
+        )
+
+        for query in lifecycle_queries:
+            sql = _normalized_sql(query)
+            self.assertNotIn("membership_revision = $", sql)
+            self.assertNotIn("membership_revision = input", sql)
+            self.assertNotIn("membership_revision = current", sql)
+
+    def test_membership_queries_are_storage_only_and_inert(self) -> None:
+        query_text = pathlib.Path(
+            "backend/pipeline/storage/ingestion_lease_queries.py"
+        ).read_text()
+
+        for token in (
+            "CREATE TABLE",
+            "ALTER TABLE",
+            "CREATE TRIGGER",
+            "INSERT INTO ingestion_leases",
+            "pg_advisory",
+            "LISTEN ",
+            "SET LOCAL",
+        ):
+            self.assertNotIn(token, query_text)
+
+
 if __name__ == "__main__":
     unittest.main()

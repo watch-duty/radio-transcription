@@ -11,10 +11,10 @@ from backend.pipeline.common.storage.mock_cache_provider import MockCacheProvide
 MockCacheProvider
 _.get_value
 
-# This PR intentionally introduces the Lease lifecycle storage boundary before
-# the generic runtime starts calling it. Vulture excludes the focused tests,
-# so keep only the dormant public methods and release telemetry causes added by
-# this change allowlisted until the runtime wiring lands.
+# These PRs intentionally introduce the Lease lifecycle and membership storage
+# boundaries before the generic runtime starts calling them. Vulture excludes
+# the focused tests, so keep only the dormant public methods, snapshot fields,
+# and release telemetry causes allowlisted until the runtime wiring lands.
 from backend.pipeline.storage.ingestion_lease_store import (
     IngestionLeaseStore,
     LeaseHeartbeatResult,
@@ -25,6 +25,8 @@ IngestionLeaseStore.claim_unclaimed
 IngestionLeaseStore.claim_recoverable
 IngestionLeaseStore.renew_heartbeats
 IngestionLeaseStore.release
+IngestionLeaseStore.load_membership
+audit_revision
 LeaseOperationResult.disposition
 LeaseHeartbeatResult.disposition
 LeaseReleaseCause.SHUTDOWN
