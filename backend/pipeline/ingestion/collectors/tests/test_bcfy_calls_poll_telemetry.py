@@ -11,6 +11,7 @@ from unittest import mock
 from backend.pipeline.ingestion import feed_work_scheduler, slo_contract
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     cursor_policy,
+    provider,
     sid_processor,
     telemetry,
 )
@@ -58,6 +59,7 @@ def _event(**changes: object) -> telemetry.SidPollEvidence:
         "http_attempt_count": 0,
         "response_row_count": None,
         "response_byte_count": None,
+        "response_distinct_audio_url_count": None,
         "request_pos": None,
         "response_last_pos": None,
         "response_last_pos_state": (
@@ -107,7 +109,10 @@ class TestSidPollSchema(unittest.TestCase):
 
         self.assertEqual(
             set(payload),
-            set(slo_contract.BCFY_CALLS_SID_POLL_REQUIRED_FIELDS),
+            set(
+                slo_contract.BCFY_CALLS_SID_POLL_REQUIRED_FIELDS
+                + slo_contract.BCFY_CALLS_SID_POLL_OPTIONAL_FIELDS
+            ),
         )
         self.assertEqual(payload["schema_version"], 1)
         self.assertEqual(payload["event_type"], "bcfy_calls_sid_poll")
@@ -144,8 +149,21 @@ class TestSidPollSchema(unittest.TestCase):
         )
         self.assertEqual(
             slo_contract.BCFY_CALLS_SID_POLL_OPTIONAL_FIELDS,
-            (),
+            ("response_distinct_audio_url_count",),
         )
+
+    def test_unknown_schema_key_is_rejected(self) -> None:
+        event = _event()
+        fields = telemetry.dataclasses.asdict(event)
+        fields["unexpected_scalar"] = 1
+
+        with mock.patch.object(
+            telemetry.dataclasses,
+            "asdict",
+            return_value=fields,
+        ):
+            with self.assertRaisesRegex(ValueError, "payload drifted"):
+                telemetry.sid_poll_json_fields(event)
 
     def test_provider_observation_null_contract_is_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "response evidence"):
@@ -163,12 +181,25 @@ class TestSidPollSchema(unittest.TestCase):
             http_attempt_count=3,
             response_row_count=2,
             response_byte_count=128,
+            response_distinct_audio_url_count=2,
             response_last_pos=1_783_908_001,
             response_last_pos_state=(
                 telemetry.SidPollResponseLastPosState.VALID
             ),
         )
         self.assertEqual(observed.http_attempt_count, 3)
+        self.assertEqual(observed.response_distinct_audio_url_count, 2)
+
+        with self.assertRaisesRegex(ValueError, "distinct provider"):
+            _event(
+                provider_observed=True,
+                response_row_count=1,
+                response_byte_count=128,
+                response_distinct_audio_url_count=2,
+                response_last_pos_state=(
+                    telemetry.SidPollResponseLastPosState.MISSING
+                ),
+            )
 
     def test_queue_pressure_and_verdict_invariants_are_closed(self) -> None:
         with self.assertRaisesRegex(ValueError, "pressure flag"):
@@ -319,6 +350,42 @@ class TestSidPollAccumulator(unittest.TestCase):
                 emitter=emitted.append,
             )
 
+    def test_provider_denominator_is_copied_before_routing(self) -> None:
+        accumulator = sid_processor._SidPollAccumulator(_GRANT, 10.0)
+        accumulator.observe_provider(
+            provider.CallsPageEnvelope(
+                payload={"calls": [{"url": "not-emitted"}]},
+                calls=({"url": "not-emitted"},),
+                last_pos=None,
+                http_attempt_count=1,
+                response_byte_count=64,
+                response_row_count=1,
+                response_distinct_audio_url_count=1,
+            )
+        )
+        accumulator.observe_response_boundary(
+            telemetry.SidPollResponseLastPosState.MISSING,
+            None,
+        )
+        accumulator.observe_routing(
+            matched_call_count=0,
+            deduplicated_call_count=0,
+        )
+
+        event = accumulator.close(
+            telemetry.SidPollOutcome.SUCCESS,
+            finished_monotonic=11.0,
+            emitter=lambda _event: None,
+        )
+        payload = telemetry.sid_poll_json_fields(event)
+
+        self.assertEqual(event.response_distinct_audio_url_count, 1)
+        self.assertEqual(event.matched_call_count, 0)
+        self.assertEqual(event.deduplicated_call_count, 0)
+        self.assertTrue(
+            all("not-emitted" not in str(value) for value in payload.values())
+        )
+
     def test_emitter_failure_is_contained_after_once_only_close(self) -> None:
         accumulator = sid_processor._SidPollAccumulator(_GRANT, 10.0)
 
@@ -346,6 +413,7 @@ class TestSidPollAccumulator(unittest.TestCase):
         self.assertFalse(event.provider_observed)
         self.assertEqual(event.http_attempt_count, 0)
         self.assertIsNone(event.response_row_count)
+        self.assertIsNone(event.response_distinct_audio_url_count)
 
 
 class TestProcessorCancellationHandoff(unittest.TestCase):

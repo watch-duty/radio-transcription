@@ -38,6 +38,7 @@
     "replay_blocked_record_count",
     "request_pos",
     "response_byte_count",
+    "response_distinct_audio_url_count",
     "response_last_pos",
     "response_last_pos_state",
     "response_row_count",
@@ -50,11 +51,14 @@
     "total_queue_wait_seconds",
     "worker_utilization_denominator"
   ],
-  "optional_keys": [],
+  "optional_keys": [
+    "response_distinct_audio_url_count"
+  ],
   "unobserved_provider": {
     "http_attempt_count": 0,
     "provider_observed": false,
     "response_byte_count": null,
+    "response_distinct_audio_url_count": null,
     "response_last_pos": null,
     "response_last_pos_state": "not_observed",
     "response_row_count": null

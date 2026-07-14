@@ -83,6 +83,7 @@ class CallsPageEnvelope:
     http_attempt_count: int
     response_byte_count: int
     response_row_count: int
+    response_distinct_audio_url_count: int | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -100,6 +101,17 @@ class CallsPageEnvelope:
                 raise ValueError(msg)
         if self.response_row_count != len(self.calls):
             msg = "response_row_count must equal the validated calls count"
+            raise ValueError(msg)
+        distinct_count = self.response_distinct_audio_url_count
+        if distinct_count is not None and (
+            isinstance(distinct_count, bool)
+            or not isinstance(distinct_count, int)
+            or not 0 <= distinct_count <= self.response_row_count
+        ):
+            msg = (
+                "response_distinct_audio_url_count must be a nonnegative "
+                "integer no greater than response_row_count"
+            )
             raise ValueError(msg)
 
 
@@ -521,6 +533,13 @@ def _calls_page_envelope(
     if not isinstance(calls, list):
         msg = "validated calls field changed type"
         raise TypeError(msg)
+    distinct_audio_urls: set[str] = set()
+    for call in calls:
+        if not isinstance(call, collections.abc.Mapping):
+            continue
+        audio_url = call.get("url")
+        if isinstance(audio_url, str) and audio_url:
+            distinct_audio_urls.add(audio_url)
     return CallsPageEnvelope(
         payload=validated,
         calls=tuple(calls),
@@ -528,6 +547,7 @@ def _calls_page_envelope(
         http_attempt_count=http_attempt_count,
         response_byte_count=response_byte_count,
         response_row_count=len(calls),
+        response_distinct_audio_url_count=len(distinct_audio_urls),
     )
 
 

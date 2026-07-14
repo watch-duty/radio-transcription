@@ -2039,6 +2039,10 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(startup_payload["max_feeds_per_worker"], 250)
         self.assertEqual(startup_payload["profile"], "legacy")
         self.assertEqual(
+            startup_payload["bcfy_calls_authority_mode"],
+            "legacy_feed",
+        )
+        self.assertEqual(
             startup_payload["profile_digest"],
             worker_profiles.profile_digest(
                 rt._collector_settings.worker_profile
@@ -2046,6 +2050,21 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(startup_payload["selected_domains"], ["feed"])
         self.assertIsInstance(startup_payload["process_id"], int)
+        startup_events = [
+            call.kwargs["extra"]["json_fields"]
+            for call in mock_logger.info.call_args_list
+            if "extra" in call.kwargs
+            and call.kwargs["extra"]["json_fields"]["event_type"].startswith(
+                "startup_pacing"
+            )
+        ]
+        self.assertTrue(startup_events)
+        self.assertTrue(
+            all(
+                event["bcfy_calls_authority_mode"] == "legacy_feed"
+                for event in startup_events
+            )
+        )
 
     @mock.patch(
         "backend.pipeline.ingestion.collector_runtime.FeedStore",
@@ -2060,7 +2079,16 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
         mock_feed_store: mock.MagicMock,
     ) -> None:
         """Shutdown during startup pacing returns before pool creation."""
-        rt = _make_runtime(startup_stagger_max_sec=0.0)
+        authority_mode = worker_profiles.BcfyCallsAuthorityMode.SID_LEASE
+        sid_profile = worker_profiles.derive_bcfy_calls_authority(
+            worker_profiles.MIXED_DORMANT_PROFILE,
+            authority_mode,
+        )
+        rt = _make_runtime(
+            startup_stagger_max_sec=0.0,
+            worker_profile=sid_profile,
+            bcfy_calls_authority_mode=authority_mode,
+        )
 
         with (
             mock.patch.object(
@@ -2092,6 +2120,18 @@ class TestMainPoolCreation(unittest.IsolatedAsyncioTestCase):
             if "extra" in call.kwargs
         ]
         self.assertIn("startup_pacing_interrupted", event_types)
+        startup_events = [
+            call.kwargs["extra"]["json_fields"]
+            for call in mock_logger.info.call_args_list
+            if "extra" in call.kwargs
+        ]
+        self.assertTrue(startup_events)
+        self.assertTrue(
+            all(
+                event["bcfy_calls_authority_mode"] == "sid_lease"
+                for event in startup_events
+            )
+        )
 
     @mock.patch(
         "backend.pipeline.ingestion.collector_runtime.FeedStore",
@@ -2798,6 +2838,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
                 http_attempt_count=0,
                 response_byte_count=0,
                 response_row_count=0,
+                response_distinct_audio_url_count=0,
             )
         )
         order: list[str] = []

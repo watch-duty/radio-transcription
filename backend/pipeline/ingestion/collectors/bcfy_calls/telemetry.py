@@ -120,6 +120,7 @@ class SidPollEvidence:
     http_attempt_count: int
     response_row_count: int | None
     response_byte_count: int | None
+    response_distinct_audio_url_count: int | None
     request_pos: int | None
     response_last_pos: int | None
     response_last_pos_state: SidPollResponseLastPosState
@@ -207,6 +208,10 @@ class SidPollEvidence:
             ("membership_revision", self.membership_revision),
             ("response_row_count", self.response_row_count),
             ("response_byte_count", self.response_byte_count),
+            (
+                "response_distinct_audio_url_count",
+                self.response_distinct_audio_url_count,
+            ),
             ("request_pos", self.request_pos),
             ("response_last_pos", self.response_last_pos),
         ):
@@ -264,6 +269,7 @@ class SidPollEvidence:
         response_values = (
             self.response_row_count,
             self.response_byte_count,
+            self.response_distinct_audio_url_count,
         )
         if not self.provider_observed:
             if any(value is not None for value in response_values) or (
@@ -276,6 +282,13 @@ class SidPollEvidence:
             return
         if any(value is None for value in response_values):
             message = "observed provider response lacks scalar evidence"
+            raise ValueError(message)
+        if (
+            self.response_distinct_audio_url_count is not None
+            and self.response_row_count is not None
+            and self.response_distinct_audio_url_count > self.response_row_count
+        ):
+            message = "distinct provider audio URLs exceed response rows"
             raise ValueError(message)
         if (
             self.response_last_pos_state
@@ -367,9 +380,11 @@ def sid_poll_json_fields(event: SidPollEvidence) -> dict[str, object]:
     fields["outcome"] = event.outcome.value
     fields["response_last_pos_state"] = event.response_last_pos_state.value
     fields["lifecycle_scope"] = event.lifecycle_scope.value
-    if tuple(sorted(fields)) != tuple(
-        sorted(slo_contract.BCFY_CALLS_SID_POLL_REQUIRED_FIELDS)
-    ):
+    supported_fields = (
+        slo_contract.BCFY_CALLS_SID_POLL_REQUIRED_FIELDS
+        + slo_contract.BCFY_CALLS_SID_POLL_OPTIONAL_FIELDS
+    )
+    if tuple(sorted(fields)) != tuple(sorted(supported_fields)):
         message = "SID poll payload drifted from schema version one"
         raise ValueError(message)
     return fields

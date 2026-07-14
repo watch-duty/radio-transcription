@@ -326,6 +326,7 @@ class _SidPollAccumulator:
     http_attempt_count: int = 0
     response_row_count: int | None = None
     response_byte_count: int | None = None
+    response_distinct_audio_url_count: int | None = None
     response_last_pos: int | None = None
     response_last_pos_state: telemetry.SidPollResponseLastPosState = (
         telemetry.SidPollResponseLastPosState.NOT_OBSERVED
@@ -420,6 +421,9 @@ class _SidPollAccumulator:
         self.http_attempt_count = page.http_attempt_count
         self.response_row_count = page.response_row_count
         self.response_byte_count = page.response_byte_count
+        self.response_distinct_audio_url_count = (
+            page.response_distinct_audio_url_count
+        )
 
     def observe_response_boundary(
         self,
@@ -575,6 +579,9 @@ class _SidPollAccumulator:
             http_attempt_count=self.http_attempt_count,
             response_row_count=self.response_row_count,
             response_byte_count=self.response_byte_count,
+            response_distinct_audio_url_count=(
+                self.response_distinct_audio_url_count
+            ),
             request_pos=self.request_pos,
             response_last_pos=self.response_last_pos,
             response_last_pos_state=self.response_last_pos_state,

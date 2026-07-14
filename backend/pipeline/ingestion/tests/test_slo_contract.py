@@ -243,7 +243,10 @@ class TestBcfyCallsSidPollGolden(unittest.TestCase):
         )
         self.assertEqual(
             golden["expected_keys"],
-            sorted(slo_contract.BCFY_CALLS_SID_POLL_REQUIRED_FIELDS),
+            sorted(
+                slo_contract.BCFY_CALLS_SID_POLL_REQUIRED_FIELDS
+                + slo_contract.BCFY_CALLS_SID_POLL_OPTIONAL_FIELDS
+            ),
         )
         self.assertEqual(
             golden["optional_keys"],
@@ -255,6 +258,7 @@ class TestBcfyCallsSidPollGolden(unittest.TestCase):
                 "http_attempt_count": 0,
                 "provider_observed": False,
                 "response_byte_count": None,
+                "response_distinct_audio_url_count": None,
                 "response_last_pos": None,
                 "response_last_pos_state": "not_observed",
                 "response_row_count": None,

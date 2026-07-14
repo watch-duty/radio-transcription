@@ -402,6 +402,8 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sid_page.http_attempt_count, 1)
         self.assertEqual(group_page.response_row_count, 0)
         self.assertEqual(sid_page.response_row_count, 0)
+        self.assertEqual(group_page.response_distinct_audio_url_count, 0)
+        self.assertEqual(sid_page.response_distinct_audio_url_count, 0)
         self.assertEqual(
             group_page.response_byte_count,
             len(json.dumps({"calls": [], "lastPos": "group-pos"}).encode()),
@@ -448,9 +450,19 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
     async def test_envelope_is_frozen_and_preserves_raw_items(self) -> None:
         signed_url = "https://audio.example/call?token=sensitive"
         malformed_item = {"url": signed_url, "not": "validated here"}
+        second_url = "https://audio.example/other?token=sensitive"
+        calls: list[object] = [
+            malformed_item,
+            {"url": signed_url},
+            {"url": second_url},
+            {"url": ""},
+            {"url": 123},
+            {"not_url": "missing"},
+            "raw sibling",
+        ]
         self.session.get.return_value = self._response(
             {
-                "calls": [malformed_item, "raw sibling"],
+                "calls": calls,
                 "lastPos": "1700000010.5",
             }
         )
@@ -462,10 +474,12 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
             shutdown_event=self.shutdown,
         )
 
-        self.assertEqual(page.calls, (malformed_item, "raw sibling"))
+        self.assertEqual(page.calls, tuple(calls))
         self.assertEqual(page.last_pos, "1700000010.5")
-        self.assertEqual(page.response_row_count, 2)
+        self.assertEqual(page.response_row_count, 7)
+        self.assertEqual(page.response_distinct_audio_url_count, 2)
         self.assertNotIn(signed_url, repr(page))
+        self.assertNotIn(second_url, repr(page))
         self.assertNotIn("raw sibling", repr(page))
         self.assertTrue(hasattr(type(page), "__slots__"))
         with self.assertRaises(dataclasses.FrozenInstanceError):
@@ -508,6 +522,18 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
                 response_byte_count=0,
                 response_row_count=1,
             )
+        for distinct_count in (-1, True, 2):
+            with self.subTest(distinct_count=distinct_count):
+                with self.assertRaises(ValueError):
+                    provider.CallsPageEnvelope(
+                        payload={"calls": [{}]},
+                        calls=({},),
+                        last_pos=None,
+                        http_attempt_count=0,
+                        response_byte_count=0,
+                        response_row_count=1,
+                        response_distinct_audio_url_count=distinct_count,
+                    )
 
     async def test_missing_calls_is_empty_and_non_list_fails(self) -> None:
         self.session.get.side_effect = [
@@ -524,6 +550,7 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(missing.calls, ())
         self.assertEqual(missing.last_pos, 123)
+        self.assertEqual(missing.response_distinct_audio_url_count, 0)
         for case_index in range(2):
             with self.subTest(case_index=case_index):
                 with self.assertRaises(FeedFailure) as context:
@@ -568,6 +595,7 @@ class TestCallsProviderClient(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(page.http_attempt_count, 0)
         self.assertEqual(page.response_byte_count, 0)
         self.assertEqual(page.response_row_count, 1)
+        self.assertEqual(page.response_distinct_audio_url_count, 1)
         self.assertEqual(observed, [])
         self.assertNotIn(signed_url, repr(page))
         json_fetcher.assert_awaited_once()

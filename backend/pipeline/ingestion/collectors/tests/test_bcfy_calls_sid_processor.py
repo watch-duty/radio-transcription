@@ -673,6 +673,13 @@ def _page(
     payload: dict[str, object] = {"calls": list(calls)}
     if last_pos is not None:
         payload["lastPos"] = last_pos
+    distinct_urls = {
+        call.get("url")
+        for call in calls
+        if isinstance(call, collections.abc.Mapping)
+        and isinstance(call.get("url"), str)
+        and call.get("url")
+    }
     return provider.CallsPageEnvelope(
         payload=payload,
         calls=calls,
@@ -680,6 +687,7 @@ def _page(
         http_attempt_count=1,
         response_byte_count=0,
         response_row_count=len(calls),
+        response_distinct_audio_url_count=len(distinct_urls),
     )
 
 
@@ -3493,6 +3501,7 @@ class TestSidPollTelemetryWiring(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(event.provider_observed)
         self.assertEqual(event.http_attempt_count, 1)
         self.assertEqual(event.response_row_count, 0)
+        self.assertEqual(event.response_distinct_audio_url_count, 0)
         self.assertEqual(
             event.response_last_pos_state,
             telemetry.SidPollResponseLastPosState.VALID,
@@ -3524,6 +3533,7 @@ class TestSidPollTelemetryWiring(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event.http_attempt_count, 0)
         self.assertIsNone(event.response_row_count)
         self.assertIsNone(event.response_byte_count)
+        self.assertIsNone(event.response_distinct_audio_url_count)
         self.assertIsNone(event.response_last_pos)
         self.assertEqual(calls_provider.calls, [])
 
@@ -3554,6 +3564,7 @@ class TestSidPollTelemetryWiring(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(events[0].provider_observed)
         self.assertEqual(events[0].http_attempt_count, 0)
+        self.assertIsNone(events[0].response_distinct_audio_url_count)
         self.assertEqual(calls_provider.calls, [])
 
     async def test_sid_poll_provider_typed_failure_keeps_actual_attempt(
@@ -3583,6 +3594,7 @@ class TestSidPollTelemetryWiring(unittest.IsolatedAsyncioTestCase):
         )
         self.assertFalse(events[0].provider_observed)
         self.assertEqual(events[0].http_attempt_count, 1)
+        self.assertIsNone(events[0].response_distinct_audio_url_count)
 
     async def test_sid_poll_blocked_settlement_emits_nothing_early(
         self,
@@ -3614,6 +3626,7 @@ class TestSidPollTelemetryWiring(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].admitted_record_count, 1)
         self.assertEqual(events[0].matched_call_count, 1)
+        self.assertEqual(events[0].response_distinct_audio_url_count, 1)
 
     async def test_sid_poll_prestarted_stop_and_between_poll_stop_add_none(
         self,

@@ -142,7 +142,9 @@ BCFY_CALLS_SID_POLL_REQUIRED_FIELDS: tuple[str, ...] = (
     "total_queue_wait_seconds",
     "worker_utilization_denominator",
 )
-BCFY_CALLS_SID_POLL_OPTIONAL_FIELDS: tuple[str, ...] = ()
+BCFY_CALLS_SID_POLL_OPTIONAL_FIELDS: tuple[str, ...] = (
+    "response_distinct_audio_url_count",
+)
 
 # Replay-window evidence is intentionally separate from both the ordinary
 # settled-poll event and the per-call missing-audio event. It contains only

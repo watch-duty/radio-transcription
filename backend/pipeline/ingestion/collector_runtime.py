@@ -861,6 +861,9 @@ class CollectorRuntime:
             "max_feeds_per_worker": settings.max_feeds_per_worker,
             "profile": settings.worker_profile.name,
             "profile_digest": self._profile_digest,
+            "bcfy_calls_authority_mode": (
+                settings.bcfy_calls_authority_mode.value
+            ),
             "selected_domains": [
                 allocation.domain_id.value
                 for allocation in settings.worker_profile.allocations
