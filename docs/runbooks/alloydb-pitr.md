@@ -619,7 +619,8 @@ generation, projection SHA-256, and timestamp as `JOB_BEFORE`. A representative
 successful invocation shape is:
 
 ```sh
-T0_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+T0_EPOCH="$(date -u +%s)"
+T0_UTC="$(date -u -d "@$T0_EPOCH" +%Y-%m-%dT%H:%M:%SZ)"
 EXECUTION_ID="$(
   gcloud run jobs execute "$SID_OPERATION_JOB_URI" \
     --project="$PROJECT" --region="$REGION" \
@@ -633,7 +634,13 @@ esac
 EXECUTION_URI="${SID_OPERATION_JOB_URI}/executions/${EXECUTION_ID}"
 test "$EXECUTION_URI" = \
   "projects/${PROJECT}/locations/${REGION}/jobs/${SID_OPERATION_JOB_ID}/executions/${EXECUTION_ID}"
-T1_UTC="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+POST_EXECUTION_EPOCH="$(date -u +%s)"
+test "$POST_EXECUTION_EPOCH" -ge "$T0_EPOCH"
+# The exclusive bound is a strict successor even when `date` has only
+# second resolution and the execution starts/finishes within T0's second.
+T1_EPOCH="$((POST_EXECUTION_EPOCH + 1))"
+T1_UTC="$(date -u -d "@$T1_EPOCH" +%Y-%m-%dT%H:%M:%SZ)"
+test "$T1_EPOCH" -gt "$POST_EXECUTION_EPOCH"
 ```
 
 `value(metadata.name)` is only the returned execution ID; it is not accepted as
@@ -641,13 +648,16 @@ the canonical resource identity. `SID_OPERATION_JOB_URI` and
 `SID_OPERATION_JOB_ID` must already be mutually validated against the signed
 project/location/Job manifest before constructing the URI above.
 
-Describe the canonical `EXECUTION_URI`, not the short ID. In parallel, list the
-exact Job's executions with bounded fields (name, Job label/generation, creation
-time, completion time, and terminal condition) and pass them to the tested
-post-T0 discovery reducer for the half-open `[T0_UTC, T1_UTC]` window. The
-reducer must construct full URIs, require exactly one execution for the signed
-Job UID/generation, and require it equals `EXECUTION_URI`; zero, multiple,
-cross-Job, or out-of-window results fail closed.
+Describe the canonical `EXECUTION_URI`, not the short ID. The bounded Cloud Run
+v2 Execution projection contains the execution's own name/UID/generation, its
+parent `job` URI, immutable copied task template, creation/completion times, and
+terminal conditions. It does **not** contain the source Job's UID/generation.
+In parallel, list the exact Job's bounded identity/time/condition fields and
+pass them to the tested post-T0 discovery reducer for the half-open
+`[T0_UTC, T1_UTC]` window. The reducer must construct full execution URIs,
+require exactly one whose parent `job` equals `SID_OPERATION_JOB_URI`, and
+require it equals `EXECUTION_URI`; zero, multiple, cross-Job, or out-of-window
+results fail closed.
 
 The reviewed collection shape has no result limit and lets gcloud exhaust all
 pages in the exact narrow window; its selected projection is piped directly to
@@ -657,27 +667,29 @@ the reducer rather than saved as a provider payload:
 gcloud run jobs executions list \
   --job="$SID_OPERATION_JOB_URI" \
   --project="$PROJECT" --region="$REGION" \
-  --filter="metadata.creationTimestamp >= '$T0_UTC' AND metadata.creationTimestamp < '$T1_UTC'" \
-  --format='json(metadata.name,metadata.creationTimestamp,metadata.labels,status.completionTime,status.conditions)' \
+  --filter="createTime >= '$T0_UTC' AND createTime < '$T1_UTC'" \
+  --format='json(name,uid,generation,job,createTime,completionTime,conditions)' \
 | "$SIGNED_EXECUTION_DISCOVERY_REDUCER" compare \
-    --job-uri="$SID_OPERATION_JOB_URI" \
-    --job-uid="$JOB_BEFORE_UID" \
-    --job-generation="$JOB_BEFORE_GENERATION" \
+    --expected-parent-job-uri="$SID_OPERATION_JOB_URI" \
     --expected-execution-uri="$EXECUTION_URI" \
     --start-inclusive="$T0_UTC" --end-exclusive="$T1_UTC"
 ```
 
-The reducer exits nonzero on empty, duplicate, malformed, cross-Job, generation-
-ambiguous, truncated, or window-escaping input. Its path and artifact digest are
-signed alongside the 004 reducer.
+The reducer exits nonzero on empty, duplicate, malformed, cross-Job, parent-
+ambiguous, truncated, or window-escaping input. `JOB_BEFORE` UID/generation may
+be supplied as signed context, but the reducer must never report that they came
+from an Execution row. Its path and artifact digest are signed alongside the
+004 reducer.
 
 After terminal execution, describe the full source Job URI again as `JOB_AFTER`.
 Its UID, generation, immutable-template projection, and projection hash must
 equal `JOB_BEFORE`. Separately, the execution description must prove that it was
-created from that Job/generation, used one task, zero retries, exact args, exact
-VPC/service account, immutable image, endpoint hash, numeric secret version, and
-successful terminal condition. Retain only those bounded projections/hashes and
-the bounded SQL report.
+parented by the exact full Job URI and that its immutable copied task template
+equals `JOB_BEFORE`: one task, zero retries, exact args, exact VPC/service
+account, immutable image, endpoint hash, and numeric secret version. Record the
+execution's own UID/generation and successful terminal condition separately;
+never equate them with the source Job UID/generation. Retain only those bounded
+projections/hashes and the bounded SQL report.
 
 Every `004_verify.sql` report must be consumed by the signed, checked-in,
 deterministically tested canonical comparator before transition. Its executable
@@ -757,9 +769,10 @@ restored only at the end of `RESTORED_ACTIVE`.
   outcome is unknown. Do not issue another mutating execution. Using `T0_UTC`
   and a signed `T1_UTC`, list bounded executions from the exact Job and use the
   same canonical URI/discovery reducer over `[T0_UTC, T1_UTC]`. Exactly one
-  source-Job UID/generation candidate may be described and followed to terminal
-  state. Zero, multiple, or cross-Job candidates remain unknown and stop the
-  runbook.
+  candidate whose child `job` parent equals the signed full Job URI may be
+  described and followed to terminal state. Zero, multiple, or cross-Job
+  candidates remain unknown and stop the runbook. Job UID/generation continuity
+  is established only by the separate `JOB_BEFORE`/`JOB_AFTER` descriptions.
 - After any unknown mutating outcome, run the read-only `004_verify.sql` surface
   only after the unique execution is terminal or provider cancellation is
   terminal. Compare complete expected state. Never use a blind retry to discover
