@@ -14,12 +14,14 @@ import uuid
 from unittest import mock
 
 from backend.pipeline.ingestion import feed_work_scheduler, models
+from backend.pipeline.ingestion.collectors import aiohttp_requests
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     boundary_verdict,
     cursor_policy,
     provider,
     runtime_adapters,
     sid_processor,
+    telemetry,
 )
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     pipeline as cohort_pipeline,
@@ -163,10 +165,13 @@ class _ScriptedProvider:
         *,
         subject_id: object,
         shutdown_event: asyncio.Event,
+        attempt_observer: (aiohttp_requests.HttpAttemptObserver | None) = None,
     ) -> provider.CallsPageEnvelope:
         if self.trace is not None:
             self.trace.append("fetch")
         self.calls.append((sid, pos, subject_id, shutdown_event))
+        if attempt_observer is not None:
+            attempt_observer(aiohttp_requests.HttpAttemptKind.JSON, 1)
         result = self.pages.popleft()
         if isinstance(result, _AsyncGate):
             result = await result.wait()
@@ -470,12 +475,16 @@ class _RecordingLane:
     async def is_feed_retired(self, feed_id: uuid.UUID) -> bool:
         return feed_id in self.retired
 
-    async def cover_page(
+    async def cover_page(  # noqa: PLR0912
         self,
         *,
         calls: typing.Iterable[feed_work_scheduler.CohortSubmission],
         boundaries: typing.Iterable[feed_work_scheduler.BoundaryWork],
         candidate: object,
+        evidence_observer: (
+            typing.Callable[[feed_work_scheduler.SchedulerPageEvidence], None]
+            | None
+        ) = None,
     ) -> object:
         if self.trace is not None:
             self.trace.append("cover")
@@ -505,11 +514,18 @@ class _RecordingLane:
                     feed_work_scheduler.Undrained,
                 ),
             ):
+                if evidence_observer is not None and isinstance(
+                    action, feed_work_scheduler.SettledPage
+                ):
+                    evidence_observer(action.scheduler_evidence)
                 return action
             if action is not None:
                 message = "unknown scripted cover action"
                 raise AssertionError(message)
-        return _settled_page(call_values, boundary_values, candidate)
+        settled = _settled_page(call_values, boundary_values, candidate)
+        if evidence_observer is not None:
+            evidence_observer(settled.scheduler_evidence)
+        return settled
 
 
 class _RecordingWait:
@@ -576,6 +592,10 @@ def _processor(
     calls_provider: _ScriptedProvider | None = None,
     wait: _RecordingWait | None = None,
     session_id_factory: typing.Callable[[], str] | None = None,
+    monotonic: typing.Callable[[], float] | None = None,
+    poll_emitter: (
+        typing.Callable[[telemetry.SidPollEvidence], None] | None
+    ) = None,
 ) -> tuple[sid_processor.BcfyCallsSidProcessor, _RecordingLane]:
     selected_lane = lane or _RecordingLane()
     processor = sid_processor.BcfyCallsSidProcessor(
@@ -584,6 +604,8 @@ def _processor(
         calls_provider or _ScriptedProvider(),
         selected_lane,
         now=lambda: _NOW,
+        monotonic=monotonic or (lambda: 1.0),
+        poll_emitter=poll_emitter or telemetry.emit_sid_poll,
         wait=wait or _RecordingWait(),
         session_id_factory=(
             session_id_factory or sid_processor._new_session_id
@@ -614,7 +636,7 @@ def _page(
         payload=payload,
         calls=calls,
         last_pos=last_pos,
-        http_attempt_count=0,
+        http_attempt_count=1,
         response_byte_count=0,
         response_row_count=len(calls),
     )
@@ -3164,6 +3186,186 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             "gcs",
         ):
             self.assertNotIn(forbidden, module_source)
+
+
+class TestSidPollTelemetryWiring(unittest.IsolatedAsyncioTestCase):
+    """Exercise one emitted event at each logical-poll owner boundary."""
+
+    async def test_sid_poll_success_uses_actual_owner_evidence(self) -> None:
+        events: list[telemetry.SidPollEvidence] = []
+        stop_requested = asyncio.Event()
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_A, "00123-00045"))
+            ),
+            calls_provider=_ScriptedProvider(_page(last_pos=_NOW.timestamp())),
+            wait=_StoppingWait(stop_after=1),
+            poll_emitter=events.append,
+        )
+
+        await processor.run(stop_requested)
+
+        self.assertEqual(len(events), 1)
+        event = events[0]
+        self.assertIs(event.outcome, telemetry.SidPollOutcome.SUCCESS)
+        self.assertTrue(event.provider_observed)
+        self.assertEqual(event.http_attempt_count, 1)
+        self.assertEqual(event.response_row_count, 0)
+        self.assertEqual(
+            event.response_last_pos_state,
+            telemetry.SidPollResponseLastPosState.VALID,
+        )
+        self.assertEqual(event.membership_revision, 4)
+        self.assertEqual(event.oldest_queue_age_seconds, 0.0)
+
+    async def test_sid_poll_membership_uncertainty_emits_before_provider(
+        self,
+    ) -> None:
+        events: list[telemetry.SidPollEvidence] = []
+        calls_provider = _ScriptedProvider()
+        processor, _ = _processor(
+            _ScriptedMembershipStore(TimeoutError("membership timed out")),
+            calls_provider=calls_provider,
+            wait=_StoppingWait(stop_after=1),
+            poll_emitter=events.append,
+        )
+
+        await processor.run(asyncio.Event())
+
+        self.assertEqual(len(events), 1)
+        event = events[0]
+        self.assertIs(
+            event.outcome,
+            telemetry.SidPollOutcome.MEMBERSHIP_UNCERTAIN,
+        )
+        self.assertFalse(event.provider_observed)
+        self.assertEqual(event.http_attempt_count, 0)
+        self.assertIsNone(event.response_row_count)
+        self.assertIsNone(event.response_byte_count)
+        self.assertIsNone(event.response_last_pos)
+        self.assertEqual(calls_provider.calls, [])
+
+    async def test_sid_poll_membership_invalid_emits_once_without_provider(
+        self,
+    ) -> None:
+        events: list[telemetry.SidPollEvidence] = []
+        calls_provider = _ScriptedProvider()
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                ingestion_lease_store.MembershipInvariantViolation(
+                    _GRANT,
+                    ingestion_lease_store.MembershipInvariantReason.DUPLICATE_ROUTING_KEY,
+                    "duplicate group route",
+                )
+            ),
+            calls_provider=calls_provider,
+            poll_emitter=events.append,
+        )
+
+        with self.assertRaises(sid_processor.SidProcessorFailure):
+            await processor.run(asyncio.Event())
+
+        self.assertEqual(len(events), 1)
+        self.assertIs(
+            events[0].outcome,
+            telemetry.SidPollOutcome.MEMBERSHIP_INVALID,
+        )
+        self.assertFalse(events[0].provider_observed)
+        self.assertEqual(events[0].http_attempt_count, 0)
+        self.assertEqual(calls_provider.calls, [])
+
+    async def test_sid_poll_provider_typed_failure_keeps_actual_attempt(
+        self,
+    ) -> None:
+        events: list[telemetry.SidPollEvidence] = []
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_A, "00123-00045"))
+            ),
+            calls_provider=_ScriptedProvider(
+                models.FeedFailure(
+                    feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+                    "invalid provider envelope",
+                )
+            ),
+            poll_emitter=events.append,
+        )
+
+        with self.assertRaises(sid_processor.SidProcessorFailure):
+            await processor.run(asyncio.Event())
+
+        self.assertEqual(len(events), 1)
+        self.assertIs(
+            events[0].outcome,
+            telemetry.SidPollOutcome.PROVIDER_FAILED,
+        )
+        self.assertFalse(events[0].provider_observed)
+        self.assertEqual(events[0].http_attempt_count, 1)
+
+    async def test_sid_poll_blocked_settlement_emits_nothing_early(
+        self,
+    ) -> None:
+        events: list[telemetry.SidPollEvidence] = []
+        gate = _AsyncGate(None)
+        lane = _RecordingLane(gate)
+        processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_A, "00123-00045"))
+            ),
+            lane=lane,
+            calls_provider=_ScriptedProvider(
+                _page(
+                    _raw_call("00123-00045", "https://audio/one"),
+                    last_pos=_NOW.timestamp(),
+                )
+            ),
+            wait=_StoppingWait(stop_after=1),
+            poll_emitter=events.append,
+        )
+        task = asyncio.create_task(processor.run(asyncio.Event()))
+
+        await gate.entered.wait()
+        self.assertEqual(events, [])
+        gate.release.set()
+        await task
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].admitted_record_count, 1)
+        self.assertEqual(events[0].matched_call_count, 1)
+
+    async def test_sid_poll_prestarted_stop_and_between_poll_stop_add_none(
+        self,
+    ) -> None:
+        prestarted_events: list[telemetry.SidPollEvidence] = []
+        already_stopped = asyncio.Event()
+        already_stopped.set()
+        processor, _ = _processor(
+            _ScriptedMembershipStore(),
+            poll_emitter=prestarted_events.append,
+        )
+
+        await processor.run(already_stopped)
+
+        self.assertEqual(prestarted_events, [])
+
+        between_events: list[telemetry.SidPollEvidence] = []
+        wait = _BlockingWait()
+        between_processor, _ = _processor(
+            _ScriptedMembershipStore(
+                _snapshot(4, _member(_FEED_A, "00123-00045"))
+            ),
+            calls_provider=_ScriptedProvider(_page(last_pos=_NOW.timestamp())),
+            wait=wait,
+            poll_emitter=between_events.append,
+        )
+        stop_requested = asyncio.Event()
+        task = asyncio.create_task(between_processor.run(stop_requested))
+        await wait.entered.wait()
+        self.assertEqual(len(between_events), 1)
+        stop_requested.set()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertEqual(len(between_events), 1)
 
 
 if __name__ == "__main__":

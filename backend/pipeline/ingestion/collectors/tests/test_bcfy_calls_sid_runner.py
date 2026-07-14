@@ -110,9 +110,16 @@ class _ControlledLane:
         self,
         scheduler: _ControlledScheduler,
         grant: ingestion_lease_store.LeaseGrant,
+        stop_requested: asyncio.Event,
+        grant_lost: asyncio.Event,
     ) -> None:
         self.scheduler = scheduler
         self.grant = grant
+        self.signals = feed_work_scheduler.LaneSignalView(
+            grant,
+            stop_requested,
+            grant_lost,
+        )
         self.close_reasons: list[feed_work_scheduler.LaneCloseReason] = []
         self.close_entered = asyncio.Event()
         self.release_close = asyncio.Event()
@@ -188,7 +195,12 @@ class _ControlledScheduler:
         stop_requested: asyncio.Event,
         grant_lost: asyncio.Event,
     ) -> _ControlledLane:
-        lane = _ControlledLane(self, grant)
+        lane = _ControlledLane(
+            self,
+            grant,
+            stop_requested,
+            grant_lost,
+        )
         self.opened.append(lane)
         self.opened_signals.append((stop_requested, grant_lost))
         self.lane_opened.set()
@@ -216,10 +228,22 @@ class _ControlledProcessor:
         self.started = asyncio.Event()
         self.release = asyncio.Event()
         self.work_stop: asyncio.Event | None = None
+        self.signals: feed_work_scheduler.LaneSignalView | None = None
+        self.cancellation_handoff: (
+            sid_processor.ProcessorCancellationHandoff | None
+        ) = None
         self.cancelled = False
         self.settled = asyncio.Event()
 
-    async def run(self, work_stop: asyncio.Event) -> None:
+    async def run(
+        self,
+        work_stop: asyncio.Event,
+        *,
+        signals: feed_work_scheduler.LaneSignalView,
+        cancellation_handoff: sid_processor.ProcessorCancellationHandoff,
+    ) -> None:
+        self.signals = signals
+        self.cancellation_handoff = cancellation_handoff
         self.work_stop = work_stop
         self.started.set()
         try:
@@ -764,11 +788,43 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(task.done())
         lane.release_close.set()
 
-        with self.assertRaises(asyncio.CancelledError):
+        with self.assertRaises(asyncio.CancelledError) as caught:
             await task
+        handoff = processor.cancellation_handoff
+        self.assertIsNotNone(handoff)
+        assert handoff is not None
+        self.assertIs(handoff.cancelled_error, caught.exception)
+        self.assertIs(
+            handoff.cause,
+            sid_processor.RunnerCancellationCause.RAW_RUNNER_CANCELLATION,
+        )
         self.assertGreaterEqual(stop.cancelled_waiters, 1)
         self.assertGreaterEqual(loss.cancelled_waiters, 1)
         self.assert_waiters_settled(scheduler, stop, loss)
+
+    def test_raw_runner_cancellation_cause_requires_exact_lane_loss(
+        self,
+    ) -> None:
+        sid_runner = _sid_runner_module()
+        runner, _ = _runner(
+            sid_runner,
+            _ControlledScheduler(),
+            _ControlledProcessor(),
+        )
+        grant = _grant()
+        stop = asyncio.Event()
+        loss = asyncio.Event()
+        signals = feed_work_scheduler.LaneSignalView(grant, stop, loss)
+
+        self.assertIs(
+            runner._runner_cancellation_cause(signals),
+            sid_processor.RunnerCancellationCause.RAW_RUNNER_CANCELLATION,
+        )
+        loss.set()
+        self.assertIs(
+            runner._runner_cancellation_cause(signals),
+            sid_processor.RunnerCancellationCause.EXACT_GRANT_LOSS,
+        )
 
     def test_runner_surface_owns_only_controlled_lane_lifecycle(self) -> None:
         sid_runner = _sid_runner_module()

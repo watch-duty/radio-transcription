@@ -3180,6 +3180,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             )
 
             signals = execution.signals
+            self.assertIs(lane.signals, signals)
             self.assertIs(signals.grant, grant)
             self.assertFalse(hasattr(signals.stop_requested, "set"))
             self.assertFalse(hasattr(signals.stop_requested, "clear"))

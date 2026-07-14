@@ -19,9 +19,14 @@ if typing.TYPE_CHECKING:
 
 __all__ = [
     "BcfyCallsSidRunner",
+    "ProcessorCancellationHandoff",
+    "RunnerCancellationCause",
     "SidProcessorFactory",
     "SidRunnerIntegrityError",
 ]
+
+ProcessorCancellationHandoff = sid_processor.ProcessorCancellationHandoff
+RunnerCancellationCause = sid_processor.RunnerCancellationCause
 
 
 class SidRunnerIntegrityError(grant_control.GrantControlIntegrityError):
@@ -40,7 +45,13 @@ class _TerminalSignal(enum.IntEnum):
 class _SidProcessor(typing.Protocol):
     """Invocation-local processor task owned by the shallow runner."""
 
-    async def run(self, stop_requested: asyncio.Event) -> None:
+    async def run(
+        self,
+        stop_requested: asyncio.Event,
+        *,
+        signals: feed_work_scheduler.LaneSignalView,
+        cancellation_handoff: ProcessorCancellationHandoff,
+    ) -> None:
         """Run source work until stopped or a typed outcome is raised."""
         ...
 
@@ -92,7 +103,7 @@ class BcfyCallsSidRunner:
         self._scheduler = scheduler
         self._processor_factory = processor_factory
 
-    async def run(
+    async def run(  # noqa: PLR0915
         self,
         grant: ingestion_lease_store.LeaseGrant,
         payload: ingestion_lease_store.LeaseSnapshot,
@@ -110,6 +121,7 @@ class BcfyCallsSidRunner:
             raise SidRunnerIntegrityError(message) from exc
 
         work_stop = asyncio.Event()
+        cancellation_handoff = ProcessorCancellationHandoff(grant)
         processor_task: asyncio.Task[None] | None = None
         signal_waiters: tuple[asyncio.Task[bool], ...] = ()
         close_tasks: list[asyncio.Task[object]] = []
@@ -118,7 +130,11 @@ class BcfyCallsSidRunner:
                 self._processor_factory(grant, payload, lane)
             )
             processor_task = asyncio.create_task(
-                processor.run(work_stop),
+                processor.run(
+                    work_stop,
+                    signals=lane.signals,
+                    cancellation_handoff=cancellation_handoff,
+                ),
                 name="bcfy-calls-sid-processor",
             )
             stop_wait = asyncio.create_task(
@@ -156,7 +172,11 @@ class BcfyCallsSidRunner:
             self._validate_close_result(grant, close_signal, result)
 
             return self._closed_outcome(selection, close_signal)
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as first_cancelled:
+            cancellation_handoff._record(  # noqa: SLF001
+                self._runner_cancellation_cause(lane.signals),
+                first_cancelled,
+            )
             reason = self._cancellation_reason(context)
             cleanup = asyncio.create_task(
                 self._cleanup_cancelled_run(
@@ -359,6 +379,15 @@ class BcfyCallsSidRunner:
         if context.grant_lost.is_set():
             return feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS
         return feed_work_scheduler.LaneCloseReason.SCHEDULER_SHUTDOWN
+
+    @staticmethod
+    def _runner_cancellation_cause(
+        signals: feed_work_scheduler.LaneSignalView,
+    ) -> RunnerCancellationCause:
+        """Classify exact loss only from this lane's immutable signal."""
+        if signals.grant_lost.is_set():
+            return RunnerCancellationCause.EXACT_GRANT_LOSS
+        return RunnerCancellationCause.RAW_RUNNER_CANCELLATION
 
     @staticmethod
     async def _stop_and_settle_processor(

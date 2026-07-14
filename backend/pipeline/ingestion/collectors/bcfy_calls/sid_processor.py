@@ -10,6 +10,7 @@ import datetime
 import enum
 import logging
 import math
+import time
 import types
 import typing
 import uuid
@@ -18,13 +19,14 @@ import asyncpg
 
 from backend.pipeline.ingestion import feed_work_scheduler
 from backend.pipeline.ingestion import models as ingestion_models
-from backend.pipeline.ingestion.collectors import control_flow
+from backend.pipeline.ingestion.collectors import aiohttp_requests, control_flow
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     boundary_verdict,
     cursor_policy,
     gap_ledger,
     provider,
     runtime_adapters,
+    telemetry,
 )
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     pipeline as cohort_pipeline,
@@ -57,6 +59,66 @@ class MemberRouteState(enum.StrEnum):
     ADOPTING = "adopting"
     REPLAY_PENDING = "replay_pending"
     RETIRED = "retired"
+
+
+class RunnerCancellationCause(enum.StrEnum):
+    """Closed cause selected by the sole raw-runner cancellation writer."""
+
+    RAW_RUNNER_CANCELLATION = "raw_runner_cancellation"
+    EXACT_GRANT_LOSS = "exact_grant_loss"
+
+
+@dataclasses.dataclass(slots=True)
+class ProcessorCancellationHandoff:
+    """Invocation-local once-only cancellation evidence for a processor."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    _cause: RunnerCancellationCause | None = dataclasses.field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _cancelled_error: asyncio.CancelledError | None = dataclasses.field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
+            message = "grant must be a LeaseGrant"
+            raise TypeError(message)
+
+    @property
+    def cause(self) -> RunnerCancellationCause | None:
+        """Return the runner-selected cause without mutation authority."""
+        return self._cause
+
+    @property
+    def cancelled_error(self) -> asyncio.CancelledError | None:
+        """Return the first exact raw-runner cancellation object."""
+        return self._cancelled_error
+
+    def _record(
+        self,
+        cause: RunnerCancellationCause,
+        cancelled_error: asyncio.CancelledError,
+    ) -> None:
+        """Record the first value; only the source runner invokes this."""
+        if not isinstance(cause, RunnerCancellationCause):
+            message = "cause must be a RunnerCancellationCause"
+            raise TypeError(message)
+        if not isinstance(cancelled_error, asyncio.CancelledError):
+            message = "cancelled_error must be a CancelledError"
+            raise TypeError(message)
+        if self._cause is None:
+            self._cause = cause
+            self._cancelled_error = cancelled_error
+            return
+        if self._cause is cause and self._cancelled_error is cancelled_error:
+            return
+        message = "processor cancellation handoff was crossed or replaced"
+        raise feed_work_scheduler.CohortIntegrityError(message)
 
 
 @dataclasses.dataclass(slots=True)
@@ -159,6 +221,7 @@ class _CallsProvider(typing.Protocol):
         *,
         subject_id: object,
         shutdown_event: typing.Any,
+        attempt_observer: (aiohttp_requests.HttpAttemptObserver | None) = None,
     ) -> provider.CallsPageEnvelope:
         """Fetch one validated top-level SID page."""
         ...
@@ -191,12 +254,21 @@ class _GrantLane(typing.Protocol):
         calls: collections.abc.Iterable[feed_work_scheduler.CohortSubmission],
         boundaries: collections.abc.Iterable[feed_work_scheduler.BoundaryWork],
         candidate: cursor_policy.PageCandidate,
+        evidence_observer: (
+            collections.abc.Callable[
+                [feed_work_scheduler.SchedulerPageEvidence],
+                None,
+            ]
+            | None
+        ) = None,
     ) -> feed_work_scheduler.SettledPage | feed_work_scheduler.Undrained:
         """Settle one bounded progress or no-progress page."""
         ...
 
 
 type _Now = collections.abc.Callable[[], datetime.datetime]
+type _Monotonic = collections.abc.Callable[[], float]
+type _PollEmitter = collections.abc.Callable[[telemetry.SidPollEvidence], None]
 type _SessionIdFactory = collections.abc.Callable[[], str]
 type _Wait = collections.abc.Callable[
     [asyncio.Event, float],
@@ -226,6 +298,408 @@ class _PageRequest:
     routes: collections.abc.Mapping[str, _MemberState]
 
 
+@dataclasses.dataclass(slots=True)
+class _SidPollAccumulator:
+    """Mutable owner-sourced scalars for one started logical poll.
+
+    Attributes:
+        grant: Complete immutable Lease generation described by this poll.
+        started_monotonic: Owner clock sample defining logical-poll start.
+    """
+
+    grant: ingestion_lease_store.LeaseGrant
+    started_monotonic: float
+    membership_revision: int | None = None
+    request_pos: int | None = None
+    lease_cursor_lag_seconds: float | None = None
+    maximum_feed_cursor_lag_seconds: float | None = None
+    null_feed_cursor_count: int = 0
+    provider_observed: bool = False
+    http_attempt_count: int = 0
+    response_row_count: int | None = None
+    response_byte_count: int | None = None
+    response_last_pos: int | None = None
+    response_last_pos_state: telemetry.SidPollResponseLastPosState = (
+        telemetry.SidPollResponseLastPosState.NOT_OBSERVED
+    )
+    matched_call_count: int = 0
+    deduplicated_call_count: int = 0
+    scheduler_evidence: feed_work_scheduler.SchedulerPageEvidence | None = None
+    participating_feed_count: int = 0
+    successful_feed_count: int = 0
+    failed_feed_count: int = 0
+    item_to_feed_promotion_count: int = 0
+    lifecycle_scope: telemetry.SidPollLifecycleScope = (
+        telemetry.SidPollLifecycleScope.NONE
+    )
+    lifecycle_reason: str | None = None
+    _closed: bool = dataclasses.field(default=False, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
+            message = "grant must be a LeaseGrant"
+            raise TypeError(message)
+        if (
+            isinstance(self.started_monotonic, bool)
+            or not isinstance(self.started_monotonic, (int, float))
+            or not math.isfinite(self.started_monotonic)
+        ):
+            message = "started_monotonic must be finite"
+            raise ValueError(message)
+
+    @property
+    def closed(self) -> bool:
+        """Return whether this exact accumulator has emitted or attempted."""
+        return self._closed
+
+    def observe_membership(
+        self,
+        snapshot: ingestion_lease_store.MembershipSnapshot,
+        *,
+        lease_pos: datetime.datetime | None,
+        observed_at: datetime.datetime,
+    ) -> None:
+        """Capture revision and bounded Cursor lag from one exact snapshot."""
+        if not isinstance(snapshot, ingestion_lease_store.MembershipSnapshot):
+            message = "snapshot must be a MembershipSnapshot"
+            raise TypeError(message)
+        if snapshot.grant != self.grant:
+            message = "poll membership crossed complete grant"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        self.membership_revision = snapshot.membership_revision
+        self.lease_cursor_lag_seconds = _cursor_lag_seconds(
+            lease_pos,
+            observed_at,
+        )
+        cursor_lags = []
+        null_count = 0
+        for member in snapshot.members:
+            lag = _cursor_lag_seconds(
+                member.last_bookmark_time,
+                observed_at,
+            )
+            if lag is None:
+                null_count += 1
+            else:
+                cursor_lags.append(lag)
+        self.maximum_feed_cursor_lag_seconds = (
+            max(cursor_lags) if cursor_lags else None
+        )
+        self.null_feed_cursor_count = null_count
+
+    def observe_request(self, pos: datetime.datetime | None) -> None:
+        """Capture the exact provider wire position without inventing one."""
+        self.request_pos = None if pos is None else int(pos.timestamp())
+
+    def observe_http_attempt(
+        self,
+        kind: aiohttp_requests.HttpAttemptKind,
+        ordinal: int,
+    ) -> None:
+        """Capture actual JSON attempt ordinals from the transport owner."""
+        if kind is not aiohttp_requests.HttpAttemptKind.JSON:
+            return
+        if isinstance(ordinal, bool) or not isinstance(ordinal, int):
+            return
+        self.http_attempt_count = max(self.http_attempt_count, ordinal)
+
+    def observe_provider(self, page: provider.CallsPageEnvelope) -> None:
+        """Capture immutable accepted-response evidence from the provider."""
+        if not isinstance(page, provider.CallsPageEnvelope):
+            message = "page must be a CallsPageEnvelope"
+            raise TypeError(message)
+        self.provider_observed = True
+        self.http_attempt_count = page.http_attempt_count
+        self.response_row_count = page.response_row_count
+        self.response_byte_count = page.response_byte_count
+
+    def observe_response_boundary(
+        self,
+        state: telemetry.SidPollResponseLastPosState,
+        value: datetime.datetime | None,
+    ) -> None:
+        """Capture one normalized boundary state, never its malformed input."""
+        if not isinstance(state, telemetry.SidPollResponseLastPosState):
+            message = "state must be a SidPollResponseLastPosState"
+            raise TypeError(message)
+        self.response_last_pos_state = state
+        self.response_last_pos = (
+            int(value.timestamp())
+            if state is telemetry.SidPollResponseLastPosState.VALID
+            and value is not None
+            else None
+        )
+
+    def observe_routing(
+        self,
+        *,
+        matched_call_count: int,
+        deduplicated_call_count: int,
+    ) -> None:
+        """Capture processor-owned routing and exact-URL deduplication."""
+        self.matched_call_count = matched_call_count
+        self.deduplicated_call_count = deduplicated_call_count
+
+    def observe_scheduler(
+        self,
+        evidence: feed_work_scheduler.SchedulerPageEvidence,
+    ) -> None:
+        """Capture the exact page-local scheduler evidence once."""
+        if type(evidence) is not feed_work_scheduler.SchedulerPageEvidence:
+            message = "evidence must be exact SchedulerPageEvidence"
+            raise TypeError(message)
+        if self.scheduler_evidence is not None and (
+            self.scheduler_evidence is not evidence
+            and self.scheduler_evidence != evidence
+        ):
+            message = "poll received crossed scheduler evidence"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        self.scheduler_evidence = evidence
+
+    def observe_source_evidence(
+        self,
+        evidence: runtime_adapters.PageFinalizationEvidence,
+    ) -> None:
+        """Copy only finalizer-owned counts, scope, and canonical reason."""
+        if type(evidence) is not runtime_adapters.PageFinalizationEvidence:
+            message = "evidence must be exact PageFinalizationEvidence"
+            raise TypeError(message)
+        verdict = evidence.verdict
+        self.participating_feed_count = verdict.participating_feed_count
+        self.successful_feed_count = verdict.successful_feed_count
+        self.failed_feed_count = verdict.failed_feed_count
+        self.item_to_feed_promotion_count = (
+            evidence.item_to_feed_promotion_count
+        )
+        if verdict.failed_feed_count == 0:
+            return
+        if (
+            verdict.selected_scope
+            is boundary_verdict.NewlyChargedScope.LEASE_ONLY
+        ):
+            failure = verdict.lease_failure
+            if failure is None:
+                message = "Lease-only verdict lacks exact failure evidence"
+                raise feed_work_scheduler.CohortIntegrityError(message)
+            self.lifecycle_scope = telemetry.SidPollLifecycleScope.LEASE_ONLY
+            self.lifecycle_reason = failure.status_reason.value
+            return
+        self.lifecycle_scope = telemetry.SidPollLifecycleScope.FAILED_FEEDS
+        reasons = {
+            failure.failure.status_reason for failure in verdict.failed_feeds
+        }
+        selected_reason = (
+            next(iter(reasons))
+            if len(reasons) == 1
+            else feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR
+        )
+        self.lifecycle_reason = selected_reason.value
+
+    def close(
+        self,
+        outcome: telemetry.SidPollOutcome,
+        *,
+        finished_monotonic: float,
+        emitter: _PollEmitter,
+    ) -> telemetry.SidPollEvidence:
+        """Freeze and emit this exact poll once.
+
+        Raises:
+            CohortIntegrityError: The accumulator was already closed.
+            TypeError: The outcome or emitter is outside the closed contract.
+            ValueError: The owner monotonic clock moved backwards.
+        """
+        if self._closed:
+            message = "SID poll accumulator already closed"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        self._closed = True
+        if not isinstance(outcome, telemetry.SidPollOutcome):
+            message = "outcome must be a SidPollOutcome"
+            raise TypeError(message)
+        if not callable(emitter):
+            message = "emitter must be callable"
+            raise TypeError(message)
+        if (
+            isinstance(finished_monotonic, bool)
+            or not isinstance(finished_monotonic, (int, float))
+            or not math.isfinite(finished_monotonic)
+            or finished_monotonic < self.started_monotonic
+        ):
+            message = "finished_monotonic must not precede poll start"
+            raise ValueError(message)
+        event = self._event(
+            outcome,
+            duration_seconds=(finished_monotonic - self.started_monotonic),
+        )
+        try:
+            emitter(event)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            return event
+        return event
+
+    def _event(
+        self,
+        outcome: telemetry.SidPollOutcome,
+        *,
+        duration_seconds: float,
+    ) -> telemetry.SidPollEvidence:
+        scheduler = self.scheduler_evidence
+        scheduler_fields = _scheduler_event_fields(scheduler)
+        lifecycle_scope = self.lifecycle_scope
+        lifecycle_reason = self.lifecycle_reason
+        if outcome in {
+            telemetry.SidPollOutcome.STOPPED,
+            telemetry.SidPollOutcome.AUTHORITY_LOST,
+        }:
+            lifecycle_scope = telemetry.SidPollLifecycleScope.NONE
+            lifecycle_reason = None
+        return telemetry.SidPollEvidence(
+            sid=self.grant.lease_key,
+            source_type=self.grant.source_type.value,
+            owner_worker_id=str(self.grant.owner_worker_id),
+            fencing_token=self.grant.fencing_token,
+            membership_revision=self.membership_revision,
+            outcome=outcome,
+            duration_seconds=duration_seconds,
+            provider_observed=self.provider_observed,
+            http_attempt_count=self.http_attempt_count,
+            response_row_count=self.response_row_count,
+            response_byte_count=self.response_byte_count,
+            request_pos=self.request_pos,
+            response_last_pos=self.response_last_pos,
+            response_last_pos_state=self.response_last_pos_state,
+            matched_call_count=self.matched_call_count,
+            deduplicated_call_count=self.deduplicated_call_count,
+            admitted_record_count=scheduler_fields.admitted_record_count,
+            admitted_cohort_count=scheduler_fields.admitted_cohort_count,
+            lease_cursor_lag_seconds=self.lease_cursor_lag_seconds,
+            maximum_feed_cursor_lag_seconds=(
+                self.maximum_feed_cursor_lag_seconds
+            ),
+            null_feed_cursor_count=self.null_feed_cursor_count,
+            participating_feed_count=self.participating_feed_count,
+            successful_feed_count=self.successful_feed_count,
+            failed_feed_count=self.failed_feed_count,
+            item_to_feed_promotion_count=(self.item_to_feed_promotion_count),
+            lifecycle_scope=lifecycle_scope,
+            lifecycle_reason=lifecycle_reason,
+            total_queue_wait_seconds=(
+                scheduler_fields.total_queue_wait_seconds
+            ),
+            maximum_queue_wait_seconds=(
+                scheduler_fields.maximum_queue_wait_seconds
+            ),
+            oldest_queue_age_seconds=(
+                scheduler_fields.oldest_queue_age_seconds
+            ),
+            pressure_encountered=scheduler_fields.pressure_encountered,
+            pressure_wait_count=scheduler_fields.pressure_wait_count,
+            pressure_wait_seconds=scheduler_fields.pressure_wait_seconds,
+            maximum_held_count=scheduler_fields.maximum_held_count,
+            maximum_queue_depth=scheduler_fields.maximum_queue_depth,
+            maximum_worker_utilization_numerator=(
+                scheduler_fields.maximum_worker_utilization_numerator
+            ),
+            worker_utilization_denominator=(
+                scheduler_fields.worker_utilization_denominator
+            ),
+            early_flush_attempt_count=(
+                scheduler_fields.early_flush_attempt_count
+            ),
+            final_flush_attempt_count=(
+                scheduler_fields.final_flush_attempt_count
+            ),
+            total_flush_latency_seconds=(
+                scheduler_fields.total_flush_latency_seconds
+            ),
+            maximum_flush_latency_seconds=(
+                scheduler_fields.maximum_flush_latency_seconds
+            ),
+            fence_rejection_count=scheduler_fields.fence_rejection_count,
+            membership_rejection_count=(
+                scheduler_fields.member_rejection_count
+            ),
+            terminal_record_count=scheduler_fields.terminal_record_count,
+            replay_blocked_record_count=(
+                scheduler_fields.replay_blocked_record_count
+            ),
+        )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PollSchedulerFields:
+    """Exact scalar projection of optional scheduler page evidence."""
+
+    admitted_record_count: int = 0
+    admitted_cohort_count: int = 0
+    terminal_record_count: int = 0
+    replay_blocked_record_count: int = 0
+    total_queue_wait_seconds: float = 0.0
+    maximum_queue_wait_seconds: float = 0.0
+    oldest_queue_age_seconds: float = 0.0
+    pressure_encountered: bool = False
+    pressure_wait_count: int = 0
+    pressure_wait_seconds: float = 0.0
+    maximum_held_count: int = 0
+    maximum_queue_depth: int = 0
+    maximum_worker_utilization_numerator: int = 0
+    worker_utilization_denominator: int = 0
+    early_flush_attempt_count: int = 0
+    final_flush_attempt_count: int = 0
+    total_flush_latency_seconds: float = 0.0
+    maximum_flush_latency_seconds: float = 0.0
+    fence_rejection_count: int = 0
+    member_rejection_count: int = 0
+
+
+def _scheduler_event_fields(
+    evidence: feed_work_scheduler.SchedulerPageEvidence | None,
+) -> _PollSchedulerFields:
+    """Copy scheduler-owner scalars without reconstructing from snapshots."""
+    if evidence is None:
+        return _PollSchedulerFields()
+    return _PollSchedulerFields(
+        admitted_record_count=evidence.admitted_record_count,
+        admitted_cohort_count=evidence.admitted_cohort_count,
+        terminal_record_count=evidence.terminal_record_count,
+        replay_blocked_record_count=evidence.replay_blocked_record_count,
+        total_queue_wait_seconds=evidence.total_queue_wait_seconds,
+        maximum_queue_wait_seconds=evidence.maximum_queue_wait_seconds,
+        oldest_queue_age_seconds=evidence.oldest_queue_age_seconds,
+        pressure_encountered=evidence.pressure_encountered,
+        pressure_wait_count=evidence.pressure_wait_count,
+        pressure_wait_seconds=evidence.pressure_wait_seconds,
+        maximum_held_count=evidence.maximum_held_count,
+        maximum_queue_depth=evidence.maximum_queue_depth,
+        maximum_worker_utilization_numerator=(
+            evidence.maximum_worker_utilization_numerator
+        ),
+        worker_utilization_denominator=(
+            evidence.worker_utilization_denominator
+        ),
+        early_flush_attempt_count=evidence.early_flush_attempt_count,
+        final_flush_attempt_count=evidence.final_flush_attempt_count,
+        total_flush_latency_seconds=evidence.total_flush_latency_seconds,
+        maximum_flush_latency_seconds=evidence.maximum_flush_latency_seconds,
+        fence_rejection_count=evidence.fence_rejection_count,
+        member_rejection_count=evidence.member_rejection_count,
+    )
+
+
+def _cursor_lag_seconds(
+    cursor: datetime.datetime | None,
+    observed_at: datetime.datetime,
+) -> float | None:
+    """Return a nonnegative lag from one UTC owner observation."""
+    observed = _require_utc_datetime(observed_at, field_name="observed_at")
+    if cursor is None:
+        return None
+    value = _require_utc_datetime(cursor, field_name="cursor")
+    return max(0.0, (observed - value).total_seconds())
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class _PreparedPageWork:
     """One page ledger plus its exact immutable cohort stream."""
@@ -234,6 +708,8 @@ class _PreparedPageWork:
     cohorts: tuple[feed_work_scheduler.CohortSubmission, ...]
     entries: tuple[cohort_pipeline.ScheduledCohortEntry, ...]
     entry_feed_ids: tuple[uuid.UUID, ...]
+    matched_call_count: int
+    deduplicated_call_count: int
 
 
 def _page_obligations_are_released(prepared: _PreparedPageWork) -> bool:
@@ -276,6 +752,8 @@ class BcfyCallsSidProcessor:
         lane: _GrantLane,
         *,
         now: _Now,
+        monotonic: _Monotonic = time.monotonic,
+        poll_emitter: _PollEmitter = telemetry.emit_sid_poll,
         wait: _Wait = control_flow.sleep_or_cancel,
         session_id_factory: _SessionIdFactory = _new_session_id,
     ) -> None:
@@ -288,6 +766,12 @@ class BcfyCallsSidProcessor:
         if not callable(now):
             message = "now must be callable"
             raise TypeError(message)
+        if not callable(monotonic):
+            message = "monotonic must be callable"
+            raise TypeError(message)
+        if not callable(poll_emitter):
+            message = "poll_emitter must be callable"
+            raise TypeError(message)
         if not callable(wait):
             message = "wait must be callable"
             raise TypeError(message)
@@ -299,6 +783,8 @@ class BcfyCallsSidProcessor:
         self._provider = calls_provider
         self._lane = lane
         self._now = now
+        self._monotonic = monotonic
+        self._poll_emitter = poll_emitter
         self._wait = wait
         self._session_id_factory = session_id_factory
         self._lease_cursor: cursor_policy.LeaseCursor | None = None
@@ -320,60 +806,254 @@ class BcfyCallsSidProcessor:
             ingestion_lease_store.LeaseMemberIdentity,
         ] = {}
         self._active_page_ledger: gap_ledger.MissingCallLedger | None = None
+        self._active_poll: _SidPollAccumulator | None = None
         self._consecutive_failures = 0
 
-    async def run(self, stop_requested: asyncio.Event) -> None:
-        """Run immediate completion-paced logical SID polls until stopped."""
+    async def run(  # noqa: PLR0912, PLR0915
+        self,
+        stop_requested: asyncio.Event,
+        *,
+        signals: feed_work_scheduler.LaneSignalView | None = None,
+        cancellation_handoff: ProcessorCancellationHandoff | None = None,
+    ) -> None:
+        """Run completion-paced logical polls with exact terminal controls."""
         if not isinstance(stop_requested, asyncio.Event):
             message = "stop_requested must be an asyncio.Event"
             raise TypeError(message)
+        if signals is None:
+            signals = feed_work_scheduler.LaneSignalView(
+                self._grant,
+                stop_requested,
+                asyncio.Event(),
+            )
+        if type(signals) is not feed_work_scheduler.LaneSignalView:
+            message = "signals must be an exact LaneSignalView"
+            raise TypeError(message)
+        if signals.grant != self._grant:
+            message = "lane signals crossed processor grant"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        if cancellation_handoff is None:
+            cancellation_handoff = ProcessorCancellationHandoff(self._grant)
+        if type(cancellation_handoff) is not ProcessorCancellationHandoff:
+            message = "cancellation_handoff has an unknown type"
+            raise TypeError(message)
+        if cancellation_handoff.grant != self._grant:
+            message = "cancellation handoff crossed processor grant"
+            raise feed_work_scheduler.CohortIntegrityError(message)
         try:
-            while not stop_requested.is_set():
+            while not self._terminal_requested(stop_requested, signals):
+                poll = self._begin_poll()
+                retry_failure: (
+                    tuple[feed_store.FeedStatusReason, str] | None
+                ) = None
                 try:
-                    await self._refresh_membership()
-                except _MembershipRefreshUncertain:
+                    try:
+                        snapshot = await self._refresh_membership()
+                    except _MembershipRefreshUncertain:
+                        self._finish_poll(
+                            poll,
+                            telemetry.SidPollOutcome.MEMBERSHIP_UNCERTAIN,
+                        )
+                        retry_failure = (
+                            feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
+                            "bcfy_calls_sid_membership_refresh_failed",
+                        )
+                    else:
+                        lease_cursor = self._lease_cursor
+                        if lease_cursor is None:
+                            message = "membership refresh lost Lease Cursor"
+                            raise RuntimeError(message)
+                        poll.observe_membership(
+                            snapshot,
+                            lease_pos=lease_cursor.pos,
+                            observed_at=_require_utc_datetime(
+                                self._now(),
+                                field_name="now",
+                            ),
+                        )
+                        if self._terminal_requested(stop_requested, signals):
+                            self._finish_poll(
+                                poll,
+                                self._terminal_poll_outcome(
+                                    signals,
+                                    cancellation_handoff,
+                                ),
+                            )
+                            return
+                        if not self._members_by_id:
+                            self._finish_poll(
+                                poll,
+                                telemetry.SidPollOutcome.SUCCESS,
+                            )
+                        else:
+                            request = self._select_request_position()
+                            poll.observe_request(request.pos)
+                            if self._terminal_requested(
+                                stop_requested,
+                                signals,
+                            ):
+                                self._finish_poll(
+                                    poll,
+                                    self._terminal_poll_outcome(
+                                        signals,
+                                        cancellation_handoff,
+                                    ),
+                                )
+                                return
+                            try:
+                                page = await self._provider.fetch_sid_page(
+                                    self._grant.lease_key,
+                                    request.pos,
+                                    subject_id=self._grant.lease_key,
+                                    shutdown_event=stop_requested,
+                                    attempt_observer=(
+                                        poll.observe_http_attempt
+                                    ),
+                                )
+                            except ingestion_models.FeedFailure as exc:
+                                self._finish_poll(
+                                    poll,
+                                    telemetry.SidPollOutcome.PROVIDER_FAILED,
+                                )
+                                if (
+                                    exc.status_reason
+                                    not in _TRANSIENT_PROVIDER_FAILURES
+                                ):
+                                    raise SidProcessorFailure(
+                                        exc.status_reason,
+                                        exc.reason,
+                                    ) from exc
+                                retry_failure = (
+                                    exc.status_reason,
+                                    exc.reason,
+                                )
+                            else:
+                                poll.observe_provider(page)
+                                await self._settle_page(
+                                    page,
+                                    request=request,
+                                    poll=poll,
+                                )
+                                self._consecutive_failures = 0
+                                self._finish_poll(
+                                    poll,
+                                    telemetry.SidPollOutcome.SUCCESS,
+                                )
+                except asyncio.CancelledError:
+                    if not poll.closed:
+                        self._finish_poll(
+                            poll,
+                            self._terminal_poll_outcome(
+                                signals,
+                                cancellation_handoff,
+                            ),
+                        )
+                    raise
+                except SidProcessorAuthorityLost:
+                    if not poll.closed:
+                        self._finish_poll(
+                            poll,
+                            telemetry.SidPollOutcome.AUTHORITY_LOST,
+                        )
+                    raise
+                except SidProcessorPlannedDrain:
+                    if not poll.closed:
+                        self._finish_poll(
+                            poll,
+                            telemetry.SidPollOutcome.STOPPED,
+                        )
+                    raise
+                except SidProcessorFailure as exc:
+                    if not poll.closed:
+                        outcome = telemetry.SidPollOutcome.PAGE_FAILED
+                        if exc.reason == "bcfy_calls_sid_membership_invalid":
+                            outcome = (
+                                telemetry.SidPollOutcome.MEMBERSHIP_INVALID
+                            )
+                        self._finish_poll(poll, outcome)
+                    raise
+                except BaseException:
+                    if not poll.closed:
+                        self._finish_poll(
+                            poll,
+                            telemetry.SidPollOutcome.PAGE_FAILED,
+                        )
+                    raise
+                finally:
+                    if poll.closed and self._active_poll is poll:
+                        self._active_poll = None
+
+                if self._terminal_requested(stop_requested, signals):
+                    return
+                if retry_failure is not None:
+                    status_reason, reason = retry_failure
                     await self._record_logical_failure(
                         stop_requested,
-                        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-                        "bcfy_calls_sid_membership_refresh_failed",
+                        status_reason,
+                        reason,
                     )
                     continue
-
-                if stop_requested.is_set():
-                    return
-                if not self._members_by_id:
-                    await self._wait(stop_requested, _POLL_INTERVAL_SEC)
-                    continue
-                request = self._select_request_position()
-                if stop_requested.is_set():
-                    return
-                try:
-                    page = await self._provider.fetch_sid_page(
-                        self._grant.lease_key,
-                        request.pos,
-                        subject_id=self._grant.lease_key,
-                        shutdown_event=stop_requested,
-                    )
-                except ingestion_models.FeedFailure as exc:
-                    if exc.status_reason not in _TRANSIENT_PROVIDER_FAILURES:
-                        raise SidProcessorFailure(
-                            exc.status_reason,
-                            exc.reason,
-                        ) from exc
-                    await self._record_logical_failure(
-                        stop_requested,
-                        exc.status_reason,
-                        exc.reason,
-                    )
-                    continue
-
-                await self._settle_page(page, request=request)
-                self._consecutive_failures = 0
-                if stop_requested.is_set():
-                    return
                 await self._wait(stop_requested, _POLL_INTERVAL_SEC)
         finally:
             self.close()
+
+    def _begin_poll(self) -> _SidPollAccumulator:
+        """Create the sole accumulator immediately before membership work."""
+        if self._active_poll is not None:
+            message = "processor already owns a started logical poll"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        poll = _SidPollAccumulator(
+            self._grant,
+            self._monotonic(),
+        )
+        self._active_poll = poll
+        return poll
+
+    def _finish_poll(
+        self,
+        poll: _SidPollAccumulator,
+        outcome: telemetry.SidPollOutcome,
+    ) -> None:
+        """Close one owner accumulator without changing source behavior."""
+        if self._active_poll is not poll:
+            return
+        try:
+            poll.close(
+                outcome,
+                finished_monotonic=self._monotonic(),
+                emitter=self._poll_emitter,
+            )
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            # Telemetry validation/emission remains behavior-neutral.
+            return
+        finally:
+            self._active_poll = None
+
+    @staticmethod
+    def _terminal_requested(
+        work_stop: asyncio.Event,
+        signals: feed_work_scheduler.LaneSignalView,
+    ) -> bool:
+        """Return one monotonic pre-accumulator or in-poll terminal signal."""
+        return (
+            work_stop.is_set()
+            or signals.stop_requested.is_set()
+            or signals.grant_lost.is_set()
+        )
+
+    @staticmethod
+    def _terminal_poll_outcome(
+        signals: feed_work_scheduler.LaneSignalView,
+        handoff: ProcessorCancellationHandoff,
+    ) -> telemetry.SidPollOutcome:
+        """Select authority loss only from exact lane/runner evidence."""
+        if signals.grant_lost.is_set() or (
+            handoff.cause is RunnerCancellationCause.EXACT_GRANT_LOSS
+        ):
+            return telemetry.SidPollOutcome.AUTHORITY_LOST
+        return telemetry.SidPollOutcome.STOPPED
 
     async def _record_logical_failure(
         self,
@@ -634,11 +1314,12 @@ class BcfyCallsSidProcessor:
             routes=types.MappingProxyType(dict(self._members_by_source)),
         )
 
-    async def _settle_page(
+    async def _settle_page(  # noqa: PLR0912, PLR0915
         self,
         page: provider.CallsPageEnvelope,
         *,
         request: _PageRequest,
+        poll: _SidPollAccumulator | None = None,
     ) -> None:
         """Settle one HTTP-success page as progress or no-progress."""
         lease_cursor = self._lease_cursor
@@ -651,8 +1332,16 @@ class BcfyCallsSidProcessor:
         if not isinstance(request, _PageRequest):
             message = "request must be a frozen page request"
             raise TypeError(message)
+        if poll is None:
+            # Preserve the narrow private test/diagnostic seam used to settle
+            # an already-fetched page outside the logical polling loop. Such
+            # calls collect owner evidence locally but never emit a poll.
+            poll = _SidPollAccumulator(self._grant, self._monotonic())
+        elif self._active_poll is not poll:
+            message = "page settlement crossed its poll accumulator"
+            raise feed_work_scheduler.CohortIntegrityError(message)
 
-        last_pos = _last_pos_to_datetime(page.last_pos)
+        last_pos, last_pos_state = _last_pos_to_datetime(page.last_pos)
         if (
             last_pos is not None
             and lease_cursor.pos is not None
@@ -660,6 +1349,8 @@ class BcfyCallsSidProcessor:
         ):
             _log_invalid_last_pos()
             last_pos = None
+            last_pos_state = telemetry.SidPollResponseLastPosState.REGRESSIVE
+        poll.observe_response_boundary(last_pos_state, last_pos)
         if last_pos is None:
             candidate = lease_cursor.prepare_no_progress()
             boundaries: tuple[feed_work_scheduler.BoundaryWork, ...] = ()
@@ -679,6 +1370,10 @@ class BcfyCallsSidProcessor:
             replay_feed_ids=request.replay_feed_ids,
             frozen_routes=request.routes,
         )
+        poll.observe_routing(
+            matched_call_count=prepared.matched_call_count,
+            deduplicated_call_count=prepared.deduplicated_call_count,
+        )
         if self._active_page_ledger is not None:
             message = "processor already retains an unsettled page ledger"
             raise feed_work_scheduler.CohortIntegrityError(message)
@@ -688,6 +1383,7 @@ class BcfyCallsSidProcessor:
                 calls=prepared.cohorts,
                 boundaries=boundaries,
                 candidate=candidate,
+                evidence_observer=poll.observe_scheduler,
             )
         except BaseException:
             if _page_obligations_are_released(prepared):
@@ -705,6 +1401,14 @@ class BcfyCallsSidProcessor:
         ):
             message = "settled page crossed exact processor candidate"
             raise feed_work_scheduler.CohortIntegrityError(message)
+        poll.observe_scheduler(settled.scheduler_evidence)
+        source_evidence = settled.source_evidence
+        if type(source_evidence) is not (
+            runtime_adapters.PageFinalizationEvidence
+        ):
+            message = "settled page lacks exact Calls source evidence"
+            raise feed_work_scheduler.CohortIntegrityError(message)
+        poll.observe_source_evidence(source_evidence)
         await self._consume_source_evidence(
             settled,
             prepared=prepared,
@@ -789,6 +1493,7 @@ class BcfyCallsSidProcessor:
             list[_ValidatedCall],
         ] = {}
         seen_urls: set[str] = set()
+        deduplicated_call_count = 0
         for item in validated:
             state = item.state
             eligible = state.route_state is MemberRouteState.NORMAL
@@ -807,6 +1512,7 @@ class BcfyCallsSidProcessor:
                 or item.audio_url in self._pending_by_url
                 or item.audio_url in self._recent_urls
             ):
+                deduplicated_call_count += 1
                 continue
             seen_urls.add(item.audio_url)
             singleton = (
@@ -880,6 +1586,8 @@ class BcfyCallsSidProcessor:
             cohorts=tuple(cohorts),
             entries=tuple(page_entries),
             entry_feed_ids=tuple(entry_feed_ids),
+            matched_call_count=len(validated),
+            deduplicated_call_count=deduplicated_call_count,
         )
 
     def _validate_call(  # noqa: PLR0911
@@ -1235,30 +1943,42 @@ class BcfyCallsSidProcessor:
         self._retired_feed_ids.clear()
         self._snapshot = None
         self._lease_cursor = None
+        self._active_poll = None
 
 
 _MISSING = object()
 
 
-def _last_pos_to_datetime(value: object | None) -> datetime.datetime | None:
-    """Parse current Calls progress compatibility without inventing time."""
-    if value is None or isinstance(value, bool):
+def _last_pos_to_datetime(
+    value: object | None,
+) -> tuple[
+    datetime.datetime | None,
+    telemetry.SidPollResponseLastPosState,
+]:
+    """Parse Calls progress plus one closed normalized telemetry state."""
+    if value is None:
         _log_invalid_last_pos()
-        return None
+        return None, telemetry.SidPollResponseLastPosState.MISSING
+    if isinstance(value, bool):
+        _log_invalid_last_pos()
+        return None, telemetry.SidPollResponseLastPosState.INVALID
     try:
         numeric_value = float(value)
     except (TypeError, ValueError):
         _log_invalid_last_pos()
-        return None
+        return None, telemetry.SidPollResponseLastPosState.INVALID
     if not math.isfinite(numeric_value):
         _log_invalid_last_pos()
-        return None
+        return None, telemetry.SidPollResponseLastPosState.INVALID
     try:
         timestamp = int(numeric_value)
-        return datetime.datetime.fromtimestamp(timestamp, datetime.UTC)
+        return (
+            datetime.datetime.fromtimestamp(timestamp, datetime.UTC),
+            telemetry.SidPollResponseLastPosState.VALID,
+        )
     except (OSError, OverflowError, ValueError):
         _log_invalid_last_pos()
-        return None
+        return None, telemetry.SidPollResponseLastPosState.INVALID
 
 
 def _log_invalid_last_pos() -> None:

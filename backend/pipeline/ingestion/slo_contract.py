@@ -22,6 +22,7 @@ Constants:
                                     bcfy_calls collector cannot fetch the shared
                                     Broadcastify JWT from Secret Manager.
     EVENT_TYPE_BCFY_CALLS_MISSING_CALL: one irreversible per-call gap event.
+    EVENT_TYPE_BCFY_CALLS_SID_POLL: one settled logical SID-poll event.
     BCFY_CALLS_MISSING_CALL_SCHEMA_VERSION: stable event schema version.
     METRIC_TYPE_QUARANTINE_EVENTS:  metric type URL for existing quarantine metric
                                     (pinned to match shipped value — migrated from
@@ -37,7 +38,14 @@ __all__ = [
     "BCFY_CALLS_MISSING_CALL_IDENTITY_MAX_LENGTH",
     "BCFY_CALLS_MISSING_CALL_REASON_MAX_LENGTH",
     "BCFY_CALLS_MISSING_CALL_SCHEMA_VERSION",
+    "BCFY_CALLS_SID_POLL_COUNT_MAX",
+    "BCFY_CALLS_SID_POLL_OPTIONAL_FIELDS",
+    "BCFY_CALLS_SID_POLL_REQUIRED_FIELDS",
+    "BCFY_CALLS_SID_POLL_SCHEMA_VERSION",
+    "BCFY_CALLS_SID_POLL_SECONDS_MAX",
+    "BCFY_CALLS_SID_POLL_STRING_MAX_LENGTH",
     "EVENT_TYPE_BCFY_CALLS_MISSING_CALL",
+    "EVENT_TYPE_BCFY_CALLS_SID_POLL",
     "EVENT_TYPE_BCFY_JWT_FETCH_FAILED",
     "EVENT_TYPE_CALL_AUTH_FAILURE",
     "EVENT_TYPE_CALL_DOWNLOAD_FAILED",
@@ -58,6 +66,7 @@ EVENT_TYPE_FEED_QUARANTINED: str = "feed_quarantined"
 EVENT_TYPE_CALL_AUTH_FAILURE: str = "call_auth_failure"
 EVENT_TYPE_BCFY_JWT_FETCH_FAILED: str = "bcfy_jwt_fetch_failed"
 EVENT_TYPE_BCFY_CALLS_MISSING_CALL: str = "bcfy_calls_missing_call"
+EVENT_TYPE_BCFY_CALLS_SID_POLL: str = "bcfy_calls_sid_poll"
 
 # The missing-call event is intentionally bounded because one live page owns
 # all of its pending event data in memory. The exact signed URL is retained;
@@ -67,6 +76,63 @@ BCFY_CALLS_MISSING_CALL_AUDIO_URL_MAX_LENGTH: int = 8192
 BCFY_CALLS_MISSING_CALL_IDENTITY_MAX_LENGTH: int = 512
 BCFY_CALLS_MISSING_CALL_REASON_MAX_LENGTH: int = 2048
 BCFY_CALLS_MISSING_CALL_ATTEMPT_COUNT_MAX: int = 1000
+
+# The v1 SID-poll contract is one bounded scalar object. Optional additions
+# may extend schema v1, but required fields cannot be removed or redefined.
+BCFY_CALLS_SID_POLL_SCHEMA_VERSION: int = 1
+BCFY_CALLS_SID_POLL_STRING_MAX_LENGTH: int = 512
+BCFY_CALLS_SID_POLL_COUNT_MAX: int = 2**63 - 1
+BCFY_CALLS_SID_POLL_SECONDS_MAX: float = 10**12
+BCFY_CALLS_SID_POLL_REQUIRED_FIELDS: tuple[str, ...] = (
+    "admitted_cohort_count",
+    "admitted_record_count",
+    "deduplicated_call_count",
+    "duration_seconds",
+    "early_flush_attempt_count",
+    "event_type",
+    "failed_feed_count",
+    "fence_rejection_count",
+    "fencing_token",
+    "final_flush_attempt_count",
+    "http_attempt_count",
+    "item_to_feed_promotion_count",
+    "lease_cursor_lag_seconds",
+    "lifecycle_reason",
+    "lifecycle_scope",
+    "matched_call_count",
+    "maximum_feed_cursor_lag_seconds",
+    "maximum_flush_latency_seconds",
+    "maximum_held_count",
+    "maximum_queue_depth",
+    "maximum_queue_wait_seconds",
+    "maximum_worker_utilization_numerator",
+    "membership_rejection_count",
+    "membership_revision",
+    "null_feed_cursor_count",
+    "oldest_queue_age_seconds",
+    "outcome",
+    "owner_worker_id",
+    "participating_feed_count",
+    "pressure_encountered",
+    "pressure_wait_count",
+    "pressure_wait_seconds",
+    "provider_observed",
+    "replay_blocked_record_count",
+    "request_pos",
+    "response_byte_count",
+    "response_last_pos",
+    "response_last_pos_state",
+    "response_row_count",
+    "schema_version",
+    "sid",
+    "source_type",
+    "successful_feed_count",
+    "terminal_record_count",
+    "total_flush_latency_seconds",
+    "total_queue_wait_seconds",
+    "worker_utilization_denominator",
+)
+BCFY_CALLS_SID_POLL_OPTIONAL_FIELDS: tuple[str, ...] = ()
 
 # ---------------------------------------------------------------------------
 # Cloud Monitoring metric type for the existing quarantine_events metric.

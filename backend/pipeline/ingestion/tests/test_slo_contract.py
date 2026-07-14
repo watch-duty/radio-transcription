@@ -65,6 +65,16 @@ class TestSloContractLiterals(unittest.TestCase):
             1,
         )
 
+    def test_bcfy_calls_sid_poll_literals(self) -> None:
+        self.assertEqual(
+            slo_contract.EVENT_TYPE_BCFY_CALLS_SID_POLL,
+            "bcfy_calls_sid_poll",
+        )
+        self.assertEqual(
+            slo_contract.BCFY_CALLS_SID_POLL_SCHEMA_VERSION,
+            1,
+        )
+
     def test_metric_type_quarantine_events_literal(self) -> None:
         self.assertEqual(
             slo_contract.METRIC_TYPE_QUARANTINE_EVENTS,
@@ -94,6 +104,13 @@ class TestSloContractAll(unittest.TestCase):
             "BCFY_CALLS_MISSING_CALL_ATTEMPT_COUNT_MAX",
             "BCFY_CALLS_MISSING_CALL_IDENTITY_MAX_LENGTH",
             "BCFY_CALLS_MISSING_CALL_REASON_MAX_LENGTH",
+            "EVENT_TYPE_BCFY_CALLS_SID_POLL",
+            "BCFY_CALLS_SID_POLL_SCHEMA_VERSION",
+            "BCFY_CALLS_SID_POLL_REQUIRED_FIELDS",
+            "BCFY_CALLS_SID_POLL_OPTIONAL_FIELDS",
+            "BCFY_CALLS_SID_POLL_STRING_MAX_LENGTH",
+            "BCFY_CALLS_SID_POLL_COUNT_MAX",
+            "BCFY_CALLS_SID_POLL_SECONDS_MAX",
             "METRIC_TYPE_QUARANTINE_EVENTS",
             "INGESTION_LOGGER_PATH",
         }
@@ -180,6 +197,57 @@ class TestBcfyCallsMissingCallGolden(unittest.TestCase):
             slo_contract.BCFY_CALLS_MISSING_CALL_SCHEMA_VERSION,
         )
         self.assertIn("signature=secret", payload["audio_url"])
+
+
+class TestBcfyCallsSidPollGolden(unittest.TestCase):
+    """Pin the exact required schema-v1 SID poll payload contract."""
+
+    def test_golden_matches_required_fields_and_closed_defaults(self) -> None:
+        golden = json.loads(
+            (_GOLDEN_DIR / "bcfy_calls_sid_poll.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertEqual(
+            golden["event"],
+            slo_contract.EVENT_TYPE_BCFY_CALLS_SID_POLL,
+        )
+        self.assertEqual(
+            golden["schema_version"],
+            slo_contract.BCFY_CALLS_SID_POLL_SCHEMA_VERSION,
+        )
+        self.assertEqual(
+            golden["expected_keys"],
+            sorted(slo_contract.BCFY_CALLS_SID_POLL_REQUIRED_FIELDS),
+        )
+        self.assertEqual(
+            golden["optional_keys"],
+            list(slo_contract.BCFY_CALLS_SID_POLL_OPTIONAL_FIELDS),
+        )
+        self.assertEqual(
+            golden["unobserved_provider"],
+            {
+                "http_attempt_count": 0,
+                "provider_observed": False,
+                "response_byte_count": None,
+                "response_last_pos": None,
+                "response_last_pos_state": "not_observed",
+                "response_row_count": None,
+            },
+        )
+        self.assertEqual(
+            golden["no_scheduler_or_finalizer"],
+            {
+                "admitted_cohort_count": 0,
+                "admitted_record_count": 0,
+                "failed_feed_count": 0,
+                "item_to_feed_promotion_count": 0,
+                "oldest_queue_age_seconds": 0.0,
+                "participating_feed_count": 0,
+                "successful_feed_count": 0,
+            },
+        )
 
 
 if __name__ == "__main__":

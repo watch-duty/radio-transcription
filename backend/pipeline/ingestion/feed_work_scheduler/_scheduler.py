@@ -1368,6 +1368,11 @@ class GrantLane:
         """Return the complete immutable grant bound to this lane."""
         return self._grant
 
+    @property
+    def signals(self) -> _types.LaneSignalView:
+        """Return the object-identical scheduler-owned read-only signals."""
+        return self._signals
+
     def _boundary_evidence_sink(
         self,
         selected: _boundaries._SelectedBoundaryBatch,
