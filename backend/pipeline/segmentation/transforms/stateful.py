@@ -1055,14 +1055,23 @@ class OrderedStitchAudioFn(beam.DoFn):
             else active_session_id,
             "transcription-stitcher",
         )
-        prefetched_futures = self.engine.prefetch_audio_futures(
-            elements_to_emit, task_logger
+        # Prefetch only up to PREFETCH_WINDOW_SIZE chunks initially
+        initial_prefetch_chunks = elements_to_emit[
+            : trans_constants.PREFETCH_WINDOW_SIZE
+        ]
+        prefetched_futures = (
+            self.engine.prefetch_audio_futures(
+                initial_prefetch_chunks, task_logger
+            )
+            or {}
         )
         original_expected_ts = previous_expected_ts
         for i, chunk in enumerate(elements_to_emit):
             if i > 0 and self._is_bundle_budget_exhausted():
                 for remaining_chunk in elements_to_emit[i:]:
                     out_of_order_buffer_state.add(remaining_chunk)
+                    if remaining_chunk.gcs_uri in prefetched_futures:
+                        prefetched_futures[remaining_chunk.gcs_uri].cancel()
                 if deferred_drain_timer is not None and timestamp is not None:
                     deferred_drain_timer.set(
                         timestamp
@@ -1098,6 +1107,17 @@ class OrderedStitchAudioFn(beam.DoFn):
                     out_of_order_buffer_state,
                 )
                 break
+
+            # Enqueue next chunk ahead in sliding window
+            prefetch_idx = i + trans_constants.PREFETCH_WINDOW_SIZE
+            if prefetch_idx < len(elements_to_emit):
+                next_chunk = elements_to_emit[prefetch_idx]
+                if next_chunk.gcs_uri not in prefetched_futures:
+                    future = self.engine.submit_single_prefetch(
+                        next_chunk.gcs_uri, task_logger
+                    )
+                    if future is not None:
+                        prefetched_futures[next_chunk.gcs_uri] = future
 
             if isinstance(curr_context, datatypes.IdleFeedState):
                 curr_context = datatypes.ActiveStitchingState(
