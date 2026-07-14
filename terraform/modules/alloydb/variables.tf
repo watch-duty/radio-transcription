@@ -82,6 +82,31 @@ variable "instance_id" {
   default     = "primary"
 }
 
+variable "active_primary_instance_ip" {
+  description = "Optional canonical RFC1918 IPv4 address of an out-of-place restored primary selected for database operation jobs. Null keeps the Terraform-managed source primary active."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition = (
+      var.active_primary_instance_ip == null
+      || try(
+        var.active_primary_instance_ip == trimspace(var.active_primary_instance_ip)
+        && cidrnetmask("${var.active_primary_instance_ip}/32") == "255.255.255.255"
+        && cidrhost("${var.active_primary_instance_ip}/32", 0) == var.active_primary_instance_ip
+        && (
+          startswith(var.active_primary_instance_ip, "10.")
+          || can(regex("^172\\.(1[6-9]|2[0-9]|3[01])\\.", var.active_primary_instance_ip))
+          || startswith(var.active_primary_instance_ip, "192.168.")
+        ),
+        false,
+      )
+    )
+    error_message = "active_primary_instance_ip must be null or a canonical RFC1918 IPv4 address."
+  }
+}
+
 variable "machine_cpu_count" {
   description = "The number of vCPUs for the primary instance."
   type        = number

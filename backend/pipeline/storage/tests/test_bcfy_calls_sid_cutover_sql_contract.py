@@ -18,6 +18,70 @@ _RUNTIME_CHECK = _ALLOYDB_ROOT / (
 )
 
 
+def _named_block(text: str, marker: str) -> str:
+    """Return one HCL block selected by its exact opening marker.
+
+    Args:
+        text: Complete HCL source text.
+        marker: Exact opening text for the requested block.
+
+    Returns:
+        The complete balanced HCL block.
+
+    Raises:
+        AssertionError: If the marker is absent or the block is unbalanced.
+    """
+    start = text.find(marker)
+    assert start >= 0, f"missing {marker}"
+    depth = 0
+    for index in range(start, len(text)):
+        if text[index] == "{":
+            depth += 1
+        elif text[index] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    raise AssertionError  # pragma: no cover - malformed fixture diagnostic
+
+
+def _assert_active_endpoint_fanout(main_tf: str, outputs_tf: str) -> None:
+    """Pin the source fallback and both administrative endpoint consumers.
+
+    Args:
+        main_tf: AlloyDB module implementation text.
+        outputs_tf: AlloyDB module output declarations.
+
+    Raises:
+        AssertionError: If either job bypasses the selected endpoint or source
+            and active output identities are conflated.
+    """
+    assert main_tf.count("google_alloydb_instance.primary.ip_address") == 1
+    assert main_tf.count("value = local.active_primary_instance_ip") == 2
+
+    schema_job = _named_block(
+        main_tf,
+        'resource "google_cloud_run_v2_job" "schema_migration" {',
+    )
+    sid_job = _named_block(
+        main_tf,
+        'resource "google_cloud_run_v2_job" "bcfy_calls_sid_operation" {',
+    )
+    for job in (schema_job, sid_job):
+        assert 'name  = "DB_HOST"' in job
+        assert "value = local.active_primary_instance_ip" in job
+
+    source_output = _named_block(
+        outputs_tf,
+        'output "primary_instance_ip" {',
+    )
+    active_output = _named_block(
+        outputs_tf,
+        'output "active_primary_instance_ip" {',
+    )
+    assert "google_alloydb_instance.primary.ip_address" in source_output
+    assert "local.active_primary_instance_ip" in active_output
+
+
 def _sql_without_comments(sql: str) -> str:
     """Return normalized SQL with line comments removed."""
     uncommented = "\n".join(
@@ -203,6 +267,40 @@ class TestManualOperationJobContract(unittest.TestCase):
         )
         self.assertIn("ON_ERROR_STOP=1", main_tf)
         self.assertIn("read_only = true", main_tf)
+
+
+class TestActiveAlloyDBEndpointContract(unittest.TestCase):
+    """Pins the two public administrative consumers to one selected endpoint."""
+
+    def test_both_jobs_follow_active_endpoint_and_source_remains_distinct(
+        self,
+    ) -> None:
+        main_tf = (_ALLOYDB_ROOT / "main.tf").read_text()
+        outputs_tf = (_ALLOYDB_ROOT / "outputs.tf").read_text()
+
+        _assert_active_endpoint_fanout(main_tf, outputs_tf)
+        self.assertIn(
+            "active_primary_instance_ip = coalesce(",
+            main_tf,
+        )
+        schema_executor = _named_block(
+            main_tf,
+            'resource "null_resource" "execute_schema_migration" {',
+        )
+        self.assertNotIn("active_primary_instance_ip", schema_executor)
+
+    def test_deliberate_job_bypass_fails_the_search_contract(self) -> None:
+        main_tf = (_ALLOYDB_ROOT / "main.tf").read_text()
+        outputs_tf = (_ALLOYDB_ROOT / "outputs.tf").read_text()
+        bypass = main_tf.replace(
+            "value = local.active_primary_instance_ip",
+            "value = google_alloydb_instance.primary.ip_address",
+            1,
+        )
+        self.assertNotEqual(bypass, main_tf)
+
+        with self.assertRaises(AssertionError):
+            _assert_active_endpoint_fanout(bypass, outputs_tf)
 
 
 if __name__ == "__main__":

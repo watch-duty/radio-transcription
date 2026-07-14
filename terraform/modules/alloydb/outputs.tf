@@ -19,8 +19,13 @@ output "primary_instance_name" {
 }
 
 output "primary_instance_ip" {
-  description = "The private IP address of the primary instance (connect on port 5432 for direct, 6432 for pooled)."
+  description = "The private IP address of the Terraform-managed source primary (connect on port 5432 for direct, 6432 for pooled)."
   value       = google_alloydb_instance.primary.ip_address
+}
+
+output "active_primary_instance_ip" {
+  description = "The selected active primary private IP used by schema migration and controlled operation jobs; defaults to the managed source primary."
+  value       = local.active_primary_instance_ip
 }
 
 output "connection_pooling_port" {

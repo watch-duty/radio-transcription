@@ -113,7 +113,8 @@ resource "google_alloydb_user" "worker" {
 # -----------------------------------------------------------------------------
 
 locals {
-  schema_sql_files = var.apply_schema ? sort(fileset("${path.module}/sql/ingestion", "*.sql")) : []
+  active_primary_instance_ip = coalesce(var.active_primary_instance_ip, google_alloydb_instance.primary.ip_address)
+  schema_sql_files           = var.apply_schema ? sort(fileset("${path.module}/sql/ingestion", "*.sql")) : []
   bcfy_calls_sid_operation_files = var.apply_schema ? sort(fileset(
     "${path.module}/sql/operations/bcfy_calls_sid",
     "*.sql",
@@ -246,7 +247,7 @@ resource "google_cloud_run_v2_job" "schema_migration" {
 
         env {
           name  = "DB_HOST"
-          value = google_alloydb_instance.primary.ip_address
+          value = local.active_primary_instance_ip
         }
         # Direct port (5432), not the managed pooler (6432). DDL statements
         # must bypass PgBouncer transaction-mode pooling.
@@ -392,7 +393,7 @@ resource "google_cloud_run_v2_job" "bcfy_calls_sid_operation" {
 
         env {
           name  = "DB_HOST"
-          value = google_alloydb_instance.primary.ip_address
+          value = local.active_primary_instance_ip
         }
         env {
           name  = "DB_PORT"
