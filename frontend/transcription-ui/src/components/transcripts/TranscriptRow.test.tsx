@@ -644,4 +644,49 @@ describe('TranscriptRow', () => {
     const copyButton = screen.getByLabelText('copy transcript');
     expect((copyButton as HTMLButtonElement).disabled).toBe(true);
   });
+
+  it('renders partial transcription with text and warning icon, and copy button enabled', () => {
+    const mockPartialTranscript: AudioSegment = {
+      ...mockAudioSegment,
+      annotations: [
+        {
+          type: AnnotationType.TRANSCRIPT,
+          createdAt: '2026-04-15T16:00:00Z',
+          data: {
+            text: 'This is a partial transcript text',
+            errors: ['Partial transcription (max_tokens)'],
+          },
+        },
+      ],
+    };
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={mockPartialTranscript}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    // Should render the text itself, NOT [Transcription failed]
+    expect(screen.getByText('This is a partial transcript text')).toBeTruthy();
+    expect(screen.queryByText('[Transcription failed]')).toBeNull();
+
+    // Should render Warning icon
+    expect(screen.getByTestId('WarningAmberIcon')).toBeTruthy();
+
+    // Copy button should be enabled
+    const copyButton = screen.getByLabelText('copy transcript');
+    expect((copyButton as HTMLButtonElement).disabled).toBe(false);
+  });
 });

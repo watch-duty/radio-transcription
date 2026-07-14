@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import { saveAs } from 'file-saver';
 
@@ -80,7 +80,10 @@ export function TranscriptRow({
   );
 
   const hasErrors = transcriptAnnotation
-    ? transcriptAnnotation.errors.length > 0
+    ? transcriptAnnotation.errors.length > 0 && !transcriptAnnotation.text
+    : false;
+  const hasErrorsWithText = transcriptAnnotation
+    ? transcriptAnnotation.errors.length > 0 && !!transcriptAnnotation.text
     : false;
   const isWaiting = !isSilence && !isOutage && !transcriptAnnotation;
   const isMissingTextButSpeech =
@@ -90,6 +93,25 @@ export function TranscriptRow({
     !hasErrors;
   const isPlaceholder =
     isSilence || isWaiting || hasErrors || isOutage || isMissingTextButSpeech;
+
+  const degradationReasons = useMemo(() => {
+    const reasons: string[] = [];
+    if (audioSegment.missingPriorContext || audioSegment.missingPostContext) {
+      const contexts = [
+        audioSegment.missingPriorContext && 'prior',
+        audioSegment.missingPostContext && 'post',
+      ]
+        .filter(Boolean)
+        .join(' and ');
+      reasons.push(`missing ${contexts} audio context`);
+    }
+    if (hasErrorsWithText && transcriptAnnotation) {
+      reasons.push(
+        ...transcriptAnnotation.errors.map((err) => err.toLowerCase())
+      );
+    }
+    return reasons;
+  }, [audioSegment, hasErrorsWithText, transcriptAnnotation]);
 
   function renderTranscriptionText(
     transcriptAnnotation: TranscriptAnnotationData | null
@@ -106,7 +128,7 @@ export function TranscriptRow({
       return '[Waiting on transcript]';
     }
 
-    if (transcriptAnnotation.errors.length > 0) {
+    if (transcriptAnnotation.errors.length > 0 && !transcriptAnnotation.text) {
       return '[Transcription failed]';
     }
 
@@ -116,6 +138,7 @@ export function TranscriptRow({
 
     return transcriptAnnotation.text;
   }
+
 
   const evaluationAnnotation = findEvaluationAnnotationData(
     audioSegment.annotations
@@ -367,28 +390,22 @@ export function TranscriptRow({
               />
             )}
           </Typography>
-          {!isSilence &&
-            !isOutage &&
-            (audioSegment.missingPriorContext ||
-              audioSegment.missingPostContext) && (
-              <Tooltip
-                title={`Transcription may be degraded: missing ${[
-                  audioSegment.missingPriorContext && 'prior',
-                  audioSegment.missingPostContext && 'post',
-                ]
-                  .filter(Boolean)
-                  .join(' and ')} audio context.`}
-              >
-                <WarningAmberIcon
-                  color="warning"
-                  fontSize="small"
-                  sx={{
-                    flexShrink: 0,
-                    mt: 0.25, // Align slightly down to match text baseline
-                  }}
-                />
-              </Tooltip>
-            )}
+          {!isSilence && !isOutage && degradationReasons.length > 0 && (
+            <Tooltip
+              title={`Transcription may be degraded: ${degradationReasons.join(
+                ', '
+              )}.`}
+            >
+              <WarningAmberIcon
+                color="warning"
+                fontSize="small"
+                sx={{
+                  flexShrink: 0,
+                  mt: 0.25, // Align slightly down to match text baseline
+                }}
+              />
+            </Tooltip>
+          )}
         </Box>
         <Box
           sx={{
@@ -415,10 +432,7 @@ export function TranscriptRow({
                     }
                   }}
                   sx={{ cursor: 'copy' }}
-                  disabled={
-                    !transcriptAnnotation ||
-                    transcriptAnnotation.errors.length > 0
-                  }
+                  disabled={!transcriptAnnotation || hasErrors}
                 >
                   <ContentCopyIcon fontSize="small" />
                 </IconButton>
