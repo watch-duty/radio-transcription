@@ -33,10 +33,15 @@ locals {
   env_file_content = join("\n", [
     for k, v in var.container_env : "    ${k}=${v}"
   ])
+
+  cos_image_self_link = var.cos_image_self_link != null ? var.cos_image_self_link : data.google_compute_image.cos[0].self_link
+  available_zones     = var.available_zones != null ? var.available_zones : data.google_compute_zones.available[0].names
+  zone_count          = length(local.available_zones)
 }
 
 # Fetch the latest stable Container-Optimized OS image
 data "google_compute_image" "cos" {
+  count   = var.cos_image_self_link == null ? 1 : 0
   family  = "cos-stable"
   project = "cos-cloud"
 }
@@ -47,6 +52,7 @@ data "google_compute_image" "cos" {
 # more or fewer zones (e.g. us-central1 has 4, us-east5 has 3) without a
 # per-region hardcoded value.
 data "google_compute_zones" "available" {
+  count   = var.available_zones == null ? 1 : 0
   project = var.project_id
   region  = var.region
 }
@@ -64,7 +70,7 @@ resource "google_compute_instance_template" "this" {
   machine_type = var.machine_type
 
   disk {
-    source_image = data.google_compute_image.cos.self_link
+    source_image = local.cos_image_self_link
     disk_size_gb = var.boot_disk_size_gb
     auto_delete  = true
     boot         = true
@@ -235,7 +241,7 @@ resource "google_compute_region_instance_group_manager" "this" {
   update_policy {
     type                         = length(var.instance_selections) > 0 ? "OPPORTUNISTIC" : "PROACTIVE"
     minimal_action               = "REPLACE"
-    max_surge_fixed              = length(data.google_compute_zones.available.names)
+    max_surge_fixed              = local.zone_count
     max_unavailable_fixed        = 0
     replacement_method           = "SUBSTITUTE"
     instance_redistribution_type = var.distribution_policy_target_shape == "EVEN" ? "PROACTIVE" : "NONE"
