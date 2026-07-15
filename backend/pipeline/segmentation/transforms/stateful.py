@@ -804,7 +804,8 @@ class OrderedStitchAudioFn(beam.DoFn):
             buffer_elements.append(new_chunk)
 
         oldest_chunk_ts_sec = (
-            min(c.timestamp_ms for c in buffer_elements) / 1000.0
+            min(c.timestamp_ms for c in buffer_elements)
+            / common_constants.MS_PER_SECOND
         )
         next_deadline = max(
             timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
@@ -1106,7 +1107,9 @@ class OrderedStitchAudioFn(beam.DoFn):
                     if remaining_chunk.gcs_uri in prefetched_futures:
                         prefetched_futures[remaining_chunk.gcs_uri].cancel()
                 if deferred_drain_timer is not None and timestamp is not None:
-                    oldest_chunk_ts_sec = chunk.timestamp_ms / 1000.0
+                    oldest_chunk_ts_sec = (
+                        chunk.timestamp_ms / common_constants.MS_PER_SECOND
+                    )
                     next_deadline = max(
                         timestamp
                         + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
@@ -1450,7 +1453,8 @@ class OrderedStitchAudioFn(beam.DoFn):
                 # of the oldest unprocessed chunk currently waiting in the buffer.
                 # If there's a gap (e.g. downtime), this leaps the entire gap in exactly 1 step!
                 oldest_chunk_ts_sec = (
-                    new_buffer_elements[0].timestamp_ms / 1000.0
+                    new_buffer_elements[0].timestamp_ms
+                    / common_constants.MS_PER_SECOND
                 )
                 next_deadline = max(
                     timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
