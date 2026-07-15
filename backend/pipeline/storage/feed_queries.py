@@ -222,7 +222,6 @@ renewed AS (
           current_state.last_heartbeat IS NULL
           OR current_state.last_heartbeat < NOW() - INTERVAL '15 seconds'
       )
-    RETURNING feeds.id
 )
 -- A fresh exact grant is accepted without exposing whether a write occurred.
 SELECT
