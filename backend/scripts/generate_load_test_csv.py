@@ -71,8 +71,6 @@ def load_authentic_templates() -> dict[str, list[dict[str, Any]]]:
         st = item["source_type"]
         if st in categorized:
             categorized[st].append(item)
-        elif st == "bcfy_calls":
-            categorized["bcfy_feeds"].append(item)
 
     return categorized
 

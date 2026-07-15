@@ -847,7 +847,7 @@
   },
   {
     "name": "Spokane Dispatch",
-    "source_feed_id": "https://audioplay.textmefires.info/audioplay/folder_play?dir=/RECORDINGS/WA-SPOKANE-DISP",
+    "source_feed_id": "RECORDINGS/WA-SPOKANE-DISP",
     "source_type": "fire_notifications",
     "tags": "[]"
   },
