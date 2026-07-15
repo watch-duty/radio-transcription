@@ -185,6 +185,7 @@ jobs:
       - name: Validate Terraform modules
         run: |
           set -euo pipefail
+          # Build map of tf modules, omitting any .terraform cache dirs
           mapfile -t MODULE_DIRS < <(find terraform/ -name "*.tf" -not -path "*/.*" -exec dirname {} \; | sort -u)
           for dir in "${MODULE_DIRS[@]}"; do
             echo "=========================================="
