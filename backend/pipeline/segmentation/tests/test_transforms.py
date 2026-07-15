@@ -1052,8 +1052,8 @@ class OrderedStitchAudioTest(unittest.TestCase):
             self.assertEqual(fn.processed_in_bundle, 2)
             self.assertIsNotNone(deferred_drain_timer.deadline)
 
-            # The last element was processed at timestamp 104, so the timer was set to 104 + 1ms
-            self.assertEqual(deferred_drain_timer.deadline, Timestamp(104.001))
+            # The oldest deferred element in the buffer is chunk 2 (timestamp 102), so the timer is set to 102.0
+            self.assertEqual(deferred_drain_timer.deadline, Timestamp(102.0))
 
             # 2. Simulate the timer firing to drain the backlog.
             # We run a loop to fire the timer recursively as long as it gets rescheduled.
@@ -1412,9 +1412,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
             # Enforce that Chunk 1 and 2 were processed, Chunk 3 was deferred.
             self.assertEqual(fn.processed_in_bundle, 2)
             self.assertIsNotNone(deferred_drain_timer.deadline)
-            # The clamp happened during Chunk 3 (timestamp 110), so the timer was set to 110.001
+            # The clamp happened during Chunk 3 (timestamp 110), so the timer was set to 110.0
             # proving that the timer has already leaped over the 9-second gap to 110!
-            self.assertEqual(deferred_drain_timer.deadline, Timestamp(110.001))
+            self.assertEqual(deferred_drain_timer.deadline, Timestamp(110.0))
 
             # 2. Now simulate the gap timeout flushing by resetting the expected next timestamp
             # to 110,000 in the state context, so that when the timer fires, the sequence buffer

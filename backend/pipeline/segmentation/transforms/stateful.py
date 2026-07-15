@@ -807,11 +807,7 @@ class OrderedStitchAudioFn(beam.DoFn):
             min(c.timestamp_ms for c in buffer_elements)
             / common_constants.MS_PER_SECOND
         )
-        next_deadline = max(
-            timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
-            Timestamp(seconds=oldest_chunk_ts_sec),
-        )
-        deferred_drain_timer.set(next_deadline)
+        deferred_drain_timer.set(Timestamp(seconds=oldest_chunk_ts_sec))
 
     @override
     def process(
