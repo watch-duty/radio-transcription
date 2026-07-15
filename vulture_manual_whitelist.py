@@ -34,6 +34,11 @@ LeaseReleaseCause.REBALANCE
 LeaseReleaseCause.CANCELLATION
 LeaseReleaseCause.ABANDONMENT
 
+# The exact Feed-grant heartbeat storage boundary lands before the generic
+# Feed/SID runtime adapter calls it. Vulture excludes the focused tests.
+from backend.pipeline.storage.feed_store import FeedStore
+FeedStore.renew_grant_heartbeats
+
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation
 # and schema reflection, which Vulture cannot trace through direct Python
 # references.
