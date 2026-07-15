@@ -762,8 +762,58 @@ class OrderedStitchAudioFn(beam.DoFn):
             >= trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
         )
 
+    def _handle_budget_exhausted(
+        self,
+        metadata: datatypes.ChunkMetadata,
+        timestamp: Timestamp,
+        curr_context: datatypes.ActiveStitchingState | datatypes.IdleFeedState,
+        transmission_context_state: ReadModifyWriteRuntimeState,
+        last_start_ms_state: ReadModifyWriteRuntimeState,
+        out_of_order_buffer_state: BagRuntimeState,
+        deferred_drain_timer: RuntimeTimer,
+        *,
+        state_changed: bool,
+    ) -> None:
+        """Handles bundle budget exhaustion by buffering the chunk and setting the deferred drain timer."""
+        current_ts_ms = (
+            metadata.timestamp_ms
+            if metadata.timestamp_ms is not None
+            else int(float(timestamp) * common_constants.MS_PER_SECOND)
+        )
+        new_chunk = datatypes.BufferedChunk(
+            timestamp_ms=current_ts_ms,
+            gcs_uri=metadata.gcs_uri,
+            traceparent=metadata.traceparent,
+            baggage=metadata.baggage,
+        )
+        out_of_order_buffer_state.add(new_chunk)
+        if not curr_context.order_timer_active:
+            curr_context = replace(curr_context, order_timer_active=True)
+            state_changed = True
+
+        if state_changed:
+            _write_transmission_context(
+                transmission_context_state,
+                curr_context,
+                last_start_ms_state,
+                out_of_order_buffer_state,
+            )
+
+        buffer_elements = list(out_of_order_buffer_state.read())
+        if new_chunk not in buffer_elements:
+            buffer_elements.append(new_chunk)
+
+        oldest_chunk_ts_sec = (
+            min(c.timestamp_ms for c in buffer_elements) / 1000.0
+        )
+        next_deadline = max(
+            timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
+            Timestamp(seconds=oldest_chunk_ts_sec),
+        )
+        deferred_drain_timer.set(next_deadline)
+
     @override
-    def process(  # noqa: PLR0915
+    def process(
         self,
         element: tuple[str, datatypes.ChunkMetadata],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
@@ -826,42 +876,16 @@ class OrderedStitchAudioFn(beam.DoFn):
 
         # Windmill lease guard
         if self._is_bundle_budget_exhausted():
-            current_ts_ms = (
-                metadata.timestamp_ms
-                if metadata.timestamp_ms is not None
-                else int(float(timestamp) * common_constants.MS_PER_SECOND)
+            self._handle_budget_exhausted(
+                metadata=metadata,
+                timestamp=timestamp,
+                curr_context=curr_context,
+                transmission_context_state=transmission_context_state,
+                last_start_ms_state=last_start_ms_state,
+                out_of_order_buffer_state=out_of_order_buffer_state,
+                deferred_drain_timer=deferred_drain_timer,
+                state_changed=state_changed,
             )
-            new_chunk = datatypes.BufferedChunk(
-                timestamp_ms=current_ts_ms,
-                gcs_uri=metadata.gcs_uri,
-                traceparent=metadata.traceparent,
-                baggage=metadata.baggage,
-            )
-            out_of_order_buffer_state.add(new_chunk)
-            if not curr_context.order_timer_active:
-                curr_context = replace(curr_context, order_timer_active=True)
-                state_changed = True
-
-            if state_changed:
-                _write_transmission_context(
-                    transmission_context_state,
-                    curr_context,
-                    last_start_ms_state,
-                    out_of_order_buffer_state,
-                )
-
-            buffer_elements = list(out_of_order_buffer_state.read())
-            if new_chunk not in buffer_elements:
-                buffer_elements.append(new_chunk)
-
-            oldest_chunk_ts_sec = (
-                min(c.timestamp_ms for c in buffer_elements) / 1000.0
-            )
-            next_deadline = max(
-                timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
-                Timestamp(seconds=oldest_chunk_ts_sec),
-            )
-            deferred_drain_timer.set(next_deadline)
             return
 
         results: list[
