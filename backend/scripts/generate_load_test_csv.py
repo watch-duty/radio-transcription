@@ -95,16 +95,13 @@ def generate_csv(output_path: Path, total: int, prefix: str) -> int:
         template_counts: dict[str, int] = {}
         for i in range(target_count):
             tpl = templates[i % len(templates)]
-            base_id = tpl["source_feed_id"]
-            template_counts[base_id] = template_counts.get(base_id, 0) + 1
-            instance_num = template_counts[base_id]
+            source_feed_id = tpl["source_feed_id"]
+            template_counts[source_feed_id] = (
+                template_counts.get(source_feed_id, 0) + 1
+            )
+            instance_num = template_counts[source_feed_id]
 
-            if instance_num == 1:
-                source_feed_id = base_id
-                name = f"{prefix}{tpl['name']}"
-            else:
-                source_feed_id = f"{base_id}-lt-{instance_num:04d}"
-                name = f"{prefix}{tpl['name']} #{instance_num}"
+            name = f"{prefix}{tpl['name']}-{source_type}-#{instance_num}"
 
             rows.append(
                 FeedSpec(

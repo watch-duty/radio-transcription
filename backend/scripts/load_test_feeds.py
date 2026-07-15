@@ -10,6 +10,7 @@ import argparse
 import csv
 import json
 import sys
+import time
 from typing import Any, NamedTuple
 
 import requests
@@ -271,7 +272,8 @@ def cmd_activate(args: argparse.Namespace) -> int:
         new_entries_slice = csv_by_type[st][start_idx:end_idx]
 
         created_for_st = 0
-        for entry in new_entries_slice:
+        total_entries = len(new_entries_slice)
+        for idx, entry in enumerate(new_entries_slice, 1):
             try:
                 client.create_feed(
                     name=entry.display_name,
@@ -287,6 +289,13 @@ def cmd_activate(args: argparse.Namespace) -> int:
                     file=sys.stderr,
                 )
 
+            if idx % 500 == 0 and idx < total_entries:
+                print(
+                    f"[{st}] Created batch {idx // 500}"
+                    f" ({idx}/{total_entries}). Waiting 5s..."
+                )
+                time.sleep(5)
+
         print(
             f"[{st}] Registered {created_for_st} new feed(s)"
             f" (specs [{start_idx}:{end_idx}])."
@@ -297,7 +306,7 @@ def cmd_activate(args: argparse.Namespace) -> int:
 
 
 def cmd_deactivate(args: argparse.Namespace) -> int:
-    """Deactivate all feeds matching prefix."""
+    """Deactivate all feeds matching prefix in batches of 500 with 5s delay."""
     client = FeedsApiClient(args.server, args.token)
     feeds = client.list_feeds(args.prefix)
 
@@ -307,13 +316,14 @@ def cmd_deactivate(args: argparse.Namespace) -> int:
         if f.get("status") != "inactive" and f.get("substatus") != "deactivated"
     ]
 
+    total_active = len(active_feeds)
     print(
-        f"Found {len(active_feeds)} active/unclaimed feed(s) out of"
+        f"Found {total_active} active/unclaimed feed(s) out of"
         f" {len(feeds)} total."
     )
 
     deactivated = 0
-    for feed in active_feeds:
+    for idx, feed in enumerate(active_feeds, 1):
         feed_id = feed["id"]
         try:
             client.deactivate_feed(feed_id)
@@ -324,22 +334,63 @@ def cmd_deactivate(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
 
+        if idx % 500 == 0 and idx < total_active:
+            print(
+                f"Deactivated batch {idx // 500} ({idx}/{total_active})."
+                " Waiting 5s..."
+            )
+            time.sleep(5)
+
     print(f"Deactivated {deactivated} feed(s).")
     return 0
 
 
 def cmd_delete(args: argparse.Namespace) -> int:
-    """Hard delete all feeds matching prefix via FE Proxy API."""
+    """Hard delete all feeds matching prefix via FE Proxy API in batches."""
     client = FeedsApiClient(args.server, args.token)
     feeds = client.list_feeds(args.prefix)
+    total_feeds = len(feeds)
 
     print(
-        f"Found {len(feeds)} feed(s) matching prefix {args.prefix!r}"
+        f"Found {total_feeds} feed(s) matching prefix {args.prefix!r}"
         " for deletion."
     )
 
+    if not feeds:
+        print("No feeds found to delete.")
+        return 0
+
+    # Pass 1: Deactivate all matching feeds in batches of 500
+    print(f"Deactivating {total_feeds} feed(s)...")
+    deactivated = 0
+    for idx, feed in enumerate(feeds, 1):
+        feed_id = feed["id"]
+        try:
+            client.deactivate_feed(feed_id)
+            deactivated += 1
+        except Exception as err:
+            print(
+                f"Warning: Deactivating feed {feed_id} failed: {err}",
+                file=sys.stderr,
+            )
+
+        if idx % 500 == 0 and idx < total_feeds:
+            print(
+                f"Deactivated batch {idx // 500} ({idx}/{total_feeds})."
+                " Waiting 5s..."
+            )
+            time.sleep(5)
+
+    print(
+        f"Deactivated {deactivated}/{total_feeds} feed(s)."
+        " Waiting 10 seconds..."
+    )
+    time.sleep(10)
+
+    # Pass 2: Delete all matching feeds in batches of 500
+    print(f"Deleting {total_feeds} feed(s)...")
     deleted = 0
-    for feed in feeds:
+    for idx, feed in enumerate(feeds, 1):
         feed_id = feed["id"]
         try:
             client.delete_feed(feed_id)
@@ -350,7 +401,14 @@ def cmd_delete(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
 
-    print(f"Deleted {deleted} feed(s).")
+        if idx % 500 == 0 and idx < total_feeds:
+            print(
+                f"Deleted batch {idx // 500} ({idx}/{total_feeds})."
+                " Waiting 5s..."
+            )
+            time.sleep(5)
+
+    print(f"Completed deletion: deleted {deleted}/{total_feeds} feed(s).")
     return 0
 
 
