@@ -10,7 +10,6 @@ import asyncpg
 import pytest
 
 from backend.pipeline.common.exceptions import (
-    FeedAlreadyExistsError,
     FeedNameAlreadyExistsError,
     FeedStateConflictError,
 )
@@ -1748,29 +1747,26 @@ async def test_create_feed_succeeds(
     assert "last_heartbeat" not in after_values
 
 
-async def test_create_feed_already_exists(
+async def test_create_feed_allows_duplicate_source_feed_id(
     db_pool: asyncpg.Pool, store: FeedStore
 ) -> None:
-    """create_feed raises FeedAlreadyExistsError when feed already exists."""
-    await store.create_feed(
-        name="New Integration Feed",
+    """create_feed permits multiple feeds to share the same source_type and source_feed_id."""
+    feed1 = await store.create_feed(
+        name="Feed Instance 1",
         source_type="bcfy_feeds",
-        source_feed_id="src_123",
+        source_feed_id="shared_src_999",
+        actor_id=_TEST_ACTOR_ID,
+    )
+    feed2 = await store.create_feed(
+        name="Feed Instance 2",
+        source_type="bcfy_feeds",
+        source_feed_id="shared_src_999",
         actor_id=_TEST_ACTOR_ID,
     )
 
-    with pytest.raises(FeedAlreadyExistsError) as cm:
-        await store.create_feed(
-            name="Another Feed Name",
-            source_type="bcfy_feeds",
-            source_feed_id="src_123",
-            actor_id=_TEST_ACTOR_ID,
-        )
-
-    assert (
-        "Feed with source type 'bcfy_feeds' and source feed ID 'src_123' already exists"
-        in str(cm.value)
-    )
+    assert feed1["id"] != feed2["id"]
+    assert feed1["source_feed_id"] == "shared_src_999"
+    assert feed2["source_feed_id"] == "shared_src_999"
 
 
 async def test_update_feed_succeeds(

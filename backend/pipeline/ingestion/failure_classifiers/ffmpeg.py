@@ -86,7 +86,15 @@ def classify_ffmpeg_failure(
     if not timed_out and exit_code in (None, 0):
         return None
 
-    for stderr_status in _iter_http_statuses_from_ffmpeg_stderr(stderr_text):
+    stderr_statuses = _iter_http_statuses_from_ffmpeg_stderr(stderr_text)
+    if probe_http_status is not None and probe_http_status not in (401, 403):
+        # If the probe request successfully authenticated (e.g. got 200 or 404),
+        # then any 401/403 in the stderr tail was a transient false positive
+        # (e.g. from a temporary auth backend outage on Broadcastify's end).
+        # We filter it out so we do not quarantine the feed.
+        stderr_statuses = [s for s in stderr_statuses if s not in (401, 403)]
+
+    for stderr_status in reversed(stderr_statuses):
         status_reason = http_status.classify_http_status(
             stderr_status,
             policy=http_policy,

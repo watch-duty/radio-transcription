@@ -255,7 +255,13 @@ async def _build_stream_capture_failure(
             "ffmpeg failed without classifiable terminal evidence",
         )
 
-    if not _is_raw_ffmpeg_failure(info):
+    # We run the probe for raw socket failures, and also for authentication
+    # failures (401/403) to verify whether the authentication failure is
+    # persistent or transient.
+    is_auth_failure = (
+        info.status_reason is FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
+    )
+    if not _is_raw_ffmpeg_failure(info) and not is_auth_failure:
         return _feed_failure_from_ffmpeg_info(info, classification_text)
 
     probe = await _probe_stream_once(resources, url, auth_header)
@@ -265,6 +271,19 @@ async def _build_stream_capture_failure(
         and probe.failure is not None
     ):
         return probe.failure
+
+    if (
+        probe is not None
+        and probe.outcome is _StreamProbeOutcome.STREAM_AVAILABLE
+        and is_auth_failure
+    ):
+        # If the probe successfully connected and found the stream available, then
+        # the 401/403 error was transient. Report as SOURCE_UNREACHABLE to retry.
+        return collector_failure(
+            FeedStatusReason.SOURCE_UNREACHABLE,
+            "ffmpeg failed with authentication error despite stream being available "
+            f"on probe; stderr: {stderr_snippet}",
+        )
 
     return _feed_failure_from_ffmpeg_info(info, stderr_snippet)
 

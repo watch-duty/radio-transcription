@@ -5,6 +5,7 @@ import type {
   RuleCreate,
   RuleUpdate,
   ScopeLevel,
+  Tag,
 } from '@transcription/common';
 import {
   Body,
@@ -70,6 +71,7 @@ interface RuleResponse {
   is_active: boolean;
   scope: ScopeResponse;
   conditions: RuleConditionsResponse;
+  tags?: Tag[];
   metadata: RuleMetadataResponse;
 }
 
@@ -79,6 +81,7 @@ interface RuleCreateBackend {
   is_active?: boolean;
   scope: ScopeResponse;
   conditions: RuleConditionsResponse;
+  tags?: Tag[];
 }
 
 type RuleUpdateBackend = Partial<RuleCreateBackend>;
@@ -118,6 +121,7 @@ function convertRuleResponse(response: RuleResponse): Rule {
       targetFeeds: response.scope.target_feeds,
     },
     conditions: convertConditions(response.conditions),
+    tags: response.tags,
     metadata: {
       createdBy: response.metadata.created_by,
       createdAt: response.metadata.created_at,
@@ -162,6 +166,7 @@ function convertRuleCreate(create: RuleCreate): RuleCreateBackend {
       target_feeds: create.scope.targetFeeds,
     },
     conditions: conditions,
+    tags: create.tags,
   };
 }
 
@@ -204,6 +209,7 @@ function convertRuleUpdate(update: RuleUpdate): RuleUpdateBackend {
     }
     result.conditions = conditions;
   }
+  if (update.tags !== undefined) result.tags = update.tags;
   return result;
 }
 

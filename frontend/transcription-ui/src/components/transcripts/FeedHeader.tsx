@@ -94,7 +94,8 @@ const FeedHeader: React.FC<FeedHeaderProps> = ({
             sx={{
               display: 'flex',
               alignItems: 'center',
-              gap: 2,
+              flexWrap: 'wrap',
+              gap: { xs: 1, sm: 2 },
             }}
           >
             <Tooltip title="Copy feed deep link">

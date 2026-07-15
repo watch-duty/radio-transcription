@@ -108,15 +108,23 @@ VirtuosoTable.displayName = 'VirtuosoTable';
 function VirtuosoTableRow(
   props: ComponentProps<typeof TableRow> & {
     item?: Feed;
-    context?: { editingFeedId?: string; allowEdit?: boolean };
+    context?: {
+      editingFeedId?: string;
+      allowEdit?: boolean;
+      isMobile?: boolean;
+    };
   }
 ) {
   const { item, context, ...rest } = props;
   const isSelected = !!(item && context?.editingFeedId === item.id);
   const allowEdit = context?.allowEdit ?? false;
-  const gridTemplateColumns = allowEdit
-    ? '1.5fr 1fr 1fr 100px'
-    : '1.5fr 1fr 1fr 2fr';
+  const isMobile = context?.isMobile ?? false;
+
+  const gridTemplateColumns = isMobile
+    ? '1fr auto'
+    : allowEdit
+      ? '1.5fr 1fr 1fr 100px'
+      : '1.5fr 1fr 1fr 2fr';
 
   return (
     <TableRow
@@ -127,6 +135,14 @@ function VirtuosoTableRow(
       sx={{
         display: 'grid',
         gridTemplateColumns,
+        gridTemplateRows: isMobile ? 'auto auto auto' : 'unset',
+        gridTemplateAreas: isMobile
+          ? `
+            "name-source status"
+            "type        links-actions"
+            "tags        tags"
+          `
+          : 'unset',
         width: '100%',
         alignItems: 'center',
         borderBottom: '1px solid',
@@ -261,6 +277,7 @@ export function FeedTable({
           component="div"
           role="cell"
           sx={{
+            gridArea: { xs: 'name-source', sm: 'unset' },
             py: 1,
             display: 'flex',
             flexDirection: 'column',
@@ -294,7 +311,12 @@ export function FeedTable({
         <TableCell
           component="div"
           role="cell"
-          sx={{ borderBottom: 'none', minWidth: 0 }}
+          sx={{
+            gridArea: { xs: 'type', sm: 'unset' },
+            borderBottom: 'none',
+            minWidth: 0,
+            py: { xs: 0.5, sm: undefined },
+          }}
         >
           <Chip
             label={toSourceTypeString(feed.sourceType)}
@@ -306,7 +328,15 @@ export function FeedTable({
         <TableCell
           component="div"
           role="cell"
-          sx={{ borderBottom: 'none', minWidth: 0 }}
+          sx={{
+            gridArea: { xs: 'status', sm: 'unset' },
+            borderBottom: 'none',
+            minWidth: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: { xs: 'flex-end', sm: 'flex-start' },
+            py: { xs: 0.5, sm: undefined },
+          }}
         >
           <FeedStatusIndicator
             status={feed.status}
@@ -323,14 +353,19 @@ export function FeedTable({
           component="div"
           role="cell"
           sx={{
+            gridArea: { xs: 'links-actions', sm: 'unset' },
             borderBottom: 'none',
             display: 'flex',
             alignItems: 'center',
             minWidth: 0,
             width: '100%',
+            py: { xs: 0.5, sm: undefined },
             gap: 1,
             ...(allowEdit && {
-              justifyContent: 'flex-end',
+              justifyContent: {
+                xs: 'flex-end',
+                sm: allowEdit ? 'flex-end' : 'flex-start',
+              },
             }),
           }}
         >
@@ -357,11 +392,12 @@ export function FeedTable({
             <Box
               sx={{
                 display: 'flex',
-                flexDirection: 'column',
-                gap: 0.5,
-                alignItems: 'flex-start',
+                flexDirection: { xs: 'row', sm: 'column' },
+                gap: { xs: 1.5, sm: 0.5 },
+                alignItems: { xs: 'center', sm: 'flex-start' },
                 flexGrow: 1,
                 overflow: 'hidden',
+                justifyContent: { xs: 'flex-end', sm: 'flex-start' },
               }}
             >
               {feed.sourceUrl ? (
@@ -370,16 +406,30 @@ export function FeedTable({
                   noWrap
                   sx={{ maxWidth: '100%', textOverflow: 'ellipsis' }}
                 >
-                  <b>Source:</b>{' '}
-                  <Link
-                    href={feed.sourceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    underline="hover"
-                    sx={{ color: 'primary.main' }}
-                  >
-                    {feed.sourceUrl}
-                  </Link>
+                  {isMobile ? (
+                    <Link
+                      href={feed.sourceUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      underline="hover"
+                      sx={{ color: 'primary.main', fontWeight: 600 }}
+                    >
+                      Source
+                    </Link>
+                  ) : (
+                    <>
+                      <b>Source:</b>{' '}
+                      <Link
+                        href={feed.sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        underline="hover"
+                        sx={{ color: 'primary.main' }}
+                      >
+                        {feed.sourceUrl}
+                      </Link>
+                    </>
+                  )}
                 </Typography>
               ) : null}
               {feed.archiveUrl ? (
@@ -388,16 +438,30 @@ export function FeedTable({
                   noWrap
                   sx={{ maxWidth: '100%', textOverflow: 'ellipsis' }}
                 >
-                  <b>Archive:</b>{' '}
-                  <Link
-                    href={feed.archiveUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    underline="hover"
-                    sx={{ color: 'primary.main' }}
-                  >
-                    {feed.archiveUrl}
-                  </Link>
+                  {isMobile ? (
+                    <Link
+                      href={feed.archiveUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      underline="hover"
+                      sx={{ color: 'primary.main', fontWeight: 600 }}
+                    >
+                      Archive
+                    </Link>
+                  ) : (
+                    <>
+                      <b>Archive:</b>{' '}
+                      <Link
+                        href={feed.archiveUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        underline="hover"
+                        sx={{ color: 'primary.main' }}
+                      >
+                        {feed.archiveUrl}
+                      </Link>
+                    </>
+                  )}
                 </Typography>
               ) : null}
               {!feed.sourceUrl && !feed.archiveUrl ? (
@@ -433,9 +497,11 @@ export function FeedTable({
             component="div"
             role="cell"
             sx={{
-              gridColumn: '1 / -1',
+              gridArea: { xs: 'tags', sm: 'unset' },
+              gridColumn: { xs: 'unset', sm: '1 / -1' },
               borderBottom: 'none',
               pt: 0,
+              pb: { xs: 1.5, sm: undefined },
               display: 'flex',
               flexWrap: 'wrap',
               gap: 0.75,
@@ -659,15 +725,12 @@ export function FeedTable({
           sx={{ flexGrow: 1, overflowY: 'visible' }}
         >
           <Table component="div" sx={{ display: 'block', width: '100%' }}>
-            <TableHead component="div" sx={{ display: 'block' }}>
-              {tableHeader}
-            </TableHead>
             <TableBody component="div" sx={{ display: 'block' }}>
               {sortFeeds.map((feed) => (
                 <VirtuosoTableRow
                   key={feed.id}
                   item={feed}
-                  context={{ editingFeedId, allowEdit }}
+                  context={{ editingFeedId, allowEdit, isMobile: true }}
                 >
                   {renderRowContent(feed)}
                 </VirtuosoTableRow>
@@ -678,7 +741,7 @@ export function FeedTable({
       ) : (
         <TableVirtuoso
           data={sortFeeds}
-          context={{ editingFeedId, allowEdit }}
+          context={{ editingFeedId, allowEdit, isMobile: false }}
           computeItemKey={(_index, feed) => feed.id}
           components={VIRTUOSO_COMPONENTS}
           style={{ flexGrow: 1, minHeight: 0 }}
