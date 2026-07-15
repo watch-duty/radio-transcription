@@ -1,7 +1,6 @@
 import type {
   LogicalOperator,
   Rule,
-  RuleConditions,
   RuleCreate,
   RuleUpdate,
   ScopeLevel,
@@ -27,7 +26,12 @@ import {
 
 import { AuthenticatedRequest } from '../authentication.js';
 import { RULES_API_URL } from '../config.js';
-import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
+import {
+  HttpError,
+  getServiceClient,
+  handleBackendError,
+  toCamel,
+} from '../utils.js';
 
 interface ScopeResponse {
   level: ScopeLevel;
@@ -86,48 +90,8 @@ interface RuleCreateBackend {
 
 type RuleUpdateBackend = Partial<RuleCreateBackend>;
 
-function convertConditions(conditions: RuleConditionsResponse): RuleConditions {
-  switch (conditions.evaluation_type) {
-    case 'KEYWORD_MATCH':
-      return {
-        evaluationType: conditions.evaluation_type,
-        operator: conditions.operator,
-        keywords: conditions.keywords,
-        caseSensitive: conditions.case_sensitive,
-      };
-    case 'REGEX_MATCH':
-      return {
-        evaluationType: conditions.evaluation_type,
-        expression: conditions.expression,
-        flags: conditions.flags,
-      };
-    case 'RULE_GROUP':
-      return {
-        evaluationType: conditions.evaluation_type,
-        operator: conditions.operator,
-        childRuleIds: conditions.child_rule_ids,
-      };
-  }
-}
-
 function convertRuleResponse(response: RuleResponse): Rule {
-  return {
-    ruleId: response.rule_id,
-    ruleName: response.rule_name,
-    description: response.description,
-    isActive: response.is_active,
-    scope: {
-      level: response.scope.level,
-      targetFeeds: response.scope.target_feeds,
-    },
-    conditions: convertConditions(response.conditions),
-    tags: response.tags,
-    metadata: {
-      createdBy: response.metadata.created_by,
-      createdAt: response.metadata.created_at,
-      updatedAt: response.metadata.updated_at,
-    },
-  };
+  return toCamel<Rule>(response);
 }
 
 function convertRuleCreate(create: RuleCreate): RuleCreateBackend {
