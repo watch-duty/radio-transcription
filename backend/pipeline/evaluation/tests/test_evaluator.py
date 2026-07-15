@@ -178,7 +178,7 @@ class TestKeywordAnnotations(unittest.TestCase):
     def test_any_operator_emits_all_keyword_spans(self) -> None:
         rule = _keyword_rule("r1", ["fire", "evacuate"])
         text = "Fire on the ridge, evacuate now"
-        result = self.evaluator._evaluate_ruleset([rule], text, "feed-1")
+        result = self.evaluator.evaluate_ruleset([rule], text, "feed-1")
         self.assertTrue(result["is_flagged"])
         text_match = result["rule_annotations"]["r1"].text_match
         assert text_match is not None
@@ -194,19 +194,19 @@ class TestKeywordAnnotations(unittest.TestCase):
             "r1", ["fire", "evacuate"], operator=models.LogicalOperator.ALL
         )
 
-        partial = self.evaluator._evaluate_ruleset(
+        partial = self.evaluator.evaluate_ruleset(
             [rule], "Fire on the ridge", "feed-1"
         )
         self.assertEqual(partial["rule_annotations"], {})
 
-        full = self.evaluator._evaluate_ruleset(
+        full = self.evaluator.evaluate_ruleset(
             [rule], "Fire on the ridge, evacuate now", "feed-1"
         )
         self.assertEqual(len(full["rule_annotations"]), 1)
 
     def test_case_sensitive_keyword_does_not_match_lowercase(self) -> None:
         rule = _keyword_rule("r1", ["Fire"], case_sensitive=True)
-        result = self.evaluator._evaluate_ruleset(
+        result = self.evaluator.evaluate_ruleset(
             [rule], "fire on the ridge", "feed-1"
         )
         self.assertEqual(result["rule_annotations"], {})
@@ -214,7 +214,7 @@ class TestKeywordAnnotations(unittest.TestCase):
     def test_multiple_rules_produce_one_annotation_each(self) -> None:
         r1 = _keyword_rule("r1", ["fire"])
         r2 = _keyword_rule("r2", ["evacuate"])
-        result = self.evaluator._evaluate_ruleset(
+        result = self.evaluator.evaluate_ruleset(
             [r1, r2], "Fire, please evacuate", "feed-1"
         )
         self.assertEqual(list(result["rule_annotations"].keys()), ["r1", "r2"])
@@ -222,7 +222,7 @@ class TestKeywordAnnotations(unittest.TestCase):
 
     def test_empty_text_returns_empty_annotations(self) -> None:
         rule = _keyword_rule("r1", ["fire"])
-        result = self.evaluator._evaluate_ruleset([rule], "", "feed-1")
+        result = self.evaluator.evaluate_ruleset([rule], "", "feed-1")
         self.assertEqual(result["rule_annotations"], {})
 
 
@@ -234,7 +234,7 @@ class TestRegexAnnotations(unittest.TestCase):
 
     def test_regex_emits_a_span_per_match(self) -> None:
         rule = _regex_rule("r1", r"\d+")
-        result = self.evaluator._evaluate_ruleset(
+        result = self.evaluator.evaluate_ruleset(
             [rule], "unit 12 to unit 34", "feed-1"
         )
         self.assertTrue(result["is_flagged"])
@@ -248,7 +248,7 @@ class TestRegexAnnotations(unittest.TestCase):
 
     def test_regex_case_insensitive_flag_preserves_casing(self) -> None:
         rule = _regex_rule("r1", r"fire", flags="i")
-        result = self.evaluator._evaluate_ruleset(
+        result = self.evaluator.evaluate_ruleset(
             [rule], "FIRE on the ridge", "feed-1"
         )
         text_match = result["rule_annotations"]["r1"].text_match
@@ -258,7 +258,7 @@ class TestRegexAnnotations(unittest.TestCase):
 
     def test_regex_no_match_produces_no_annotation(self) -> None:
         rule = _regex_rule("r1", r"\d+")
-        result = self.evaluator._evaluate_ruleset(
+        result = self.evaluator.evaluate_ruleset(
             [rule], "no numbers here", "feed-1"
         )
         self.assertEqual(result["rule_annotations"], {})
