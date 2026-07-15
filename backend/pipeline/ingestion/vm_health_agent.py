@@ -214,6 +214,7 @@ class VMHealthDecision:
     probe_stale: bool
     last_probe_completed_ago_sec: float | None
     probe_stale_after_sec: float | None
+    has_passed_startup: bool
 
 
 @dataclass
@@ -224,6 +225,8 @@ class VMHealthState:
     worker_results: tuple[WorkerProbeResult, ...] = field(
         default_factory=tuple,
     )
+
+    has_passed_startup: bool = False
 
     def update(
         self,
@@ -243,6 +246,13 @@ class VMHealthState:
                 self.all_workers_unhealthy_since = now
         else:
             self.all_workers_unhealthy_since = None
+
+        if not self.has_passed_startup:
+            any_worker_healthy = bool(self.worker_results) and any(
+                result.healthy for result in self.worker_results
+            )
+            if any_worker_healthy:
+                self.has_passed_startup = True
 
         return self.current_decision(
             now=now,
@@ -285,9 +295,16 @@ class VMHealthState:
         else:
             elapsed = 0.0
 
-        vm_healthy = not probe_stale and (
-            not all_workers_unhealthy or elapsed < hysteresis_sec
-        )
+        if not self.has_passed_startup:
+            # During startup, the VM is only healthy if the probe is not stale
+            # and workers are healthy. (MIG rolling updates block on this).
+            vm_healthy = not probe_stale and not all_workers_unhealthy
+        else:
+            # Once we pass startup, transient failures are absorbed by the
+            # hysteresis grace window before reporting unhealthy.
+            vm_healthy = not probe_stale and (
+                not all_workers_unhealthy or elapsed < hysteresis_sec
+            )
         return VMHealthDecision(
             vm_healthy=vm_healthy,
             http_status=200 if vm_healthy else 503,
@@ -298,6 +315,7 @@ class VMHealthState:
             probe_stale=probe_stale,
             last_probe_completed_ago_sec=last_probe_completed_ago_sec,
             probe_stale_after_sec=probe_stale_after_sec,
+            has_passed_startup=self.has_passed_startup,
         )
 
 
@@ -436,6 +454,7 @@ async def _healthz(request: web.Request) -> web.Response:
     return web.json_response(
         {
             "status": "healthy" if decision.vm_healthy else "unhealthy",
+            "has_passed_startup": decision.has_passed_startup,
             "workers": [asdict(worker) for worker in decision.workers],
             "all_workers_unhealthy_for_sec": (
                 decision.all_workers_unhealthy_for_sec

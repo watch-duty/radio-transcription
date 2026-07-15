@@ -359,6 +359,9 @@ class VMHealthStateTests(unittest.TestCase):
 
     def test_one_worker_unhealthy_grace_and_600_second_expiry(self) -> None:
         state = vm_health_agent.VMHealthState()
+        # Pass startup first
+        state.update((self.healthy,), now=50.0, hysteresis_sec=600.0)
+
         grace_start = state.update(
             (self.unhealthy,),
             now=100.0,
@@ -378,6 +381,9 @@ class VMHealthStateTests(unittest.TestCase):
 
     def test_all_workers_unhealthy_grace_and_600_second_expiry(self) -> None:
         state = vm_health_agent.VMHealthState()
+        # Pass startup first
+        state.update((self.healthy,), now=50.0, hysteresis_sec=600.0)
+
         grace_start = state.update(
             (self.unhealthy, self.unhealthy, self.unhealthy),
             now=100.0,
@@ -410,6 +416,9 @@ class VMHealthStateTests(unittest.TestCase):
         self,
     ) -> None:
         state = vm_health_agent.VMHealthState()
+        # Pass startup first
+        state.update((self.healthy,), now=50.0, hysteresis_sec=600.0)
+
         state.update(
             (self.unhealthy, self.unhealthy, self.unhealthy),
             now=100.0,
@@ -431,6 +440,39 @@ class VMHealthStateTests(unittest.TestCase):
         self.assertTrue(restarted.vm_healthy)
         self.assertEqual(restarted.all_workers_unhealthy_for_sec, 0.0)
         self.assertEqual(restarted.all_workers_unhealthy_since, 700.0)
+
+    def test_startup_unhealthy_reports_unhealthy(self) -> None:
+        state = vm_health_agent.VMHealthState()
+        # Workers are unhealthy on startup
+        decision = state.update(
+            (self.unhealthy, self.unhealthy),
+            now=100.0,
+            hysteresis_sec=600.0,
+        )
+        # Should report unhealthy immediately (no grace period)
+        self.assertFalse(decision.vm_healthy)
+        self.assertEqual(decision.http_status, 503)
+        self.assertFalse(state.has_passed_startup)
+
+    def test_startup_becomes_healthy_reports_healthy(self) -> None:
+        state = vm_health_agent.VMHealthState()
+        # Start unhealthy
+        decision1 = state.update(
+            (self.unhealthy, self.unhealthy),
+            now=100.0,
+            hysteresis_sec=600.0,
+        )
+        self.assertFalse(decision1.vm_healthy)
+        self.assertFalse(state.has_passed_startup)
+
+        # One worker becomes healthy
+        decision2 = state.update(
+            (self.unhealthy, self.healthy),
+            now=105.0,
+            hysteresis_sec=600.0,
+        )
+        self.assertTrue(decision2.vm_healthy)
+        self.assertTrue(state.has_passed_startup)
 
     def test_stale_probe_cycle_fails_closed_after_last_healthy_probe(
         self,
@@ -518,6 +560,7 @@ class VMHealthHandlerTests(AioHTTPTestCase):
 
         self.assertEqual(status, 200)
         self.assertEqual(body["status"], "healthy")
+        self.assertTrue(body["has_passed_startup"])
         self.assertEqual(body["all_workers_unhealthy_for_sec"], 0.0)
         self.assertEqual(body["hysteresis_sec"], 600.0)
         self.assertFalse(body["probe_stale"])
@@ -533,6 +576,7 @@ class VMHealthHandlerTests(AioHTTPTestCase):
             set(body.keys()),
             {
                 "status",
+                "has_passed_startup",
                 "workers",
                 "all_workers_unhealthy_for_sec",
                 "hysteresis_sec",
