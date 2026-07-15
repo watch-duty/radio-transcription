@@ -17,6 +17,7 @@ from backend.pipeline.common.rules.models import (
     RuleUpdate,
     Scope,
     ScopeLevel,
+    Tag,
 )
 from backend.pipeline.storage.rules_store import RulesStore
 
@@ -28,7 +29,9 @@ async def store(db_pool: asyncpg.Pool) -> RulesStore:
     return RulesStore(db_pool)
 
 
-def _create_sample_rule_in(name: str = "Test Rule") -> RuleCreate:
+def _create_sample_rule_in(
+    name: str = "Test Rule", tags: list[Tag] | None = None
+) -> RuleCreate:
     return RuleCreate(
         rule_name=name,
         description="A test rule",
@@ -39,6 +42,7 @@ def _create_sample_rule_in(name: str = "Test Rule") -> RuleCreate:
             keywords=["fire", "smoke"],
             operator=LogicalOperator.ANY,
         ),
+        tags=tags or [],
         metadata=RuleMetadata(created_by="test-user@example.com"),
     )
 
@@ -62,6 +66,9 @@ async def test_create_and_get_rule(store: RulesStore) -> None:
     assert fetched.scope.target_feeds == ["feed-1"]
     assert isinstance(fetched.conditions, KeywordConditions)
     assert fetched.conditions.keywords == ["fire", "smoke"]
+    # Rules created without tags round-trip as an empty list
+    assert created.tags == []
+    assert fetched.tags == []
 
 
 async def test_list_rules(store: RulesStore) -> None:
@@ -114,6 +121,30 @@ async def test_update_rule(store: RulesStore) -> None:
     assert updated.conditions.keywords == ["water"]
 
     # Scope should remain unchanged (COALESCE logic)
+    assert updated.scope.target_feeds == ["feed-1"]
+
+
+async def test_rule_tags_round_trip(store: RulesStore) -> None:
+    """Verify tags persist on create, survive fetch, and can be updated."""
+    created = await store.create_rule(
+        _create_sample_rule_in(
+            "Tagged Rule", tags=[Tag(key="geo_event_type", value="flooding")]
+        )
+    )
+    assert created.tags == [Tag(key="geo_event_type", value="flooding")]
+
+    fetched = await store.get_rule(created.rule_id)
+    assert fetched is not None
+    assert fetched.tags == [Tag(key="geo_event_type", value="flooding")]
+
+    updated = await store.update_rule(
+        created.rule_id,
+        RuleUpdate(tags=[Tag(key="geo_event_type", value="wildfire")]),
+    )
+    assert updated is not None
+    assert updated.tags == [Tag(key="geo_event_type", value="wildfire")]
+    # Other fields remain unchanged by a tags-only update
+    assert updated.rule_name == "Tagged Rule"
     assert updated.scope.target_feeds == ["feed-1"]
 
 
