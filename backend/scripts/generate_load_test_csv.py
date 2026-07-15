@@ -14,11 +14,22 @@ import sys
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from backend.scripts.bcfy_catalog import load_broadcastify_all_feeds_csv
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 TEMPLATES_JSON_PATH = (
     SCRIPT_DIR / "test_data" / "production_feed_templates.json"
 )
 DEFAULT_OUTPUT_PATH = SCRIPT_DIR / "test_data" / "load_test_feeds_15k.csv"
+
+
+def sanitize_source_feed_id(source_type: str, source_feed_id: str) -> str:
+    """Sanitize source_feed_id to ensure Pydantic regex compliance."""
+    if source_type == "fire_notifications" and "dir=" in source_feed_id:
+        param = source_feed_id.split("dir=", 1)[1]
+        param = param.split("&", 1)[0]
+        return param.lstrip("/")
+    return source_feed_id.strip()
 
 
 class FeedSpec(NamedTuple):
@@ -50,27 +61,38 @@ def calculate_mix_counts(total: int) -> dict[str, int]:
 
 
 def load_authentic_templates() -> dict[str, list[dict[str, Any]]]:
-    """Load authentic production templates from JSON resource file."""
-    if not TEMPLATES_JSON_PATH.exists():
-        msg = (
-            f"Missing template file: {TEMPLATES_JSON_PATH}. "
-            "Please run backend/scripts/extract_templates.py first."
-        )
-        raise FileNotFoundError(msg)
-
-    with TEMPLATES_JSON_PATH.open("r", encoding="utf-8") as f:
-        data: list[dict[str, Any]] = json.load(f)
-
+    """Load authentic templates and unique Broadcastify live feeds catalog."""
     categorized: dict[str, list[dict[str, Any]]] = {
         "fire_notifications": [],
         "echo": [],
         "bcfy_feeds": [],
     }
 
-    for item in data:
-        st = item["source_type"]
-        if st in categorized:
-            categorized[st].append(item)
+    # Load 5,458 unique Broadcastify live feeds from catalog CSV
+    bcfy_specs = load_broadcastify_all_feeds_csv()
+    for spec in bcfy_specs:
+        categorized["bcfy_feeds"].append(
+            {
+                "name": spec.name,
+                "source_type": spec.source_type,
+                "source_feed_id": spec.source_feed_id,
+                "tags": spec.tags,
+            }
+        )
+
+    # Load fire_notifications and echo templates from JSON resource file
+    if TEMPLATES_JSON_PATH.exists():
+        with TEMPLATES_JSON_PATH.open("r", encoding="utf-8") as f:
+            data: list[dict[str, Any]] = json.load(f)
+
+        for item in data:
+            st = item["source_type"]
+            if st in ("fire_notifications", "echo"):
+                sanitized_item = dict(item)
+                sanitized_item["source_feed_id"] = sanitize_source_feed_id(
+                    st, item["source_feed_id"]
+                )
+                categorized[st].append(sanitized_item)
 
     return categorized
 
