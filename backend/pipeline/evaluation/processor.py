@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from google.protobuf import json_format
 
+from backend.pipeline.common.log_helper import record_pipeline_stage
 from backend.pipeline.common.tracing_utils import (
     inject_otel_context,
     parse_pubsub_cloudevent,
@@ -86,15 +87,26 @@ class EvaluationEventProcessor:
             def _raise(msg: str) -> None:
                 raise ValueError(msg)
 
-            if not new_audio.segment_id:
-                _raise("segment_id is required")
-            if not new_audio.feed_id:
-                _raise("feed_id is required")
-            if not new_audio.transcript:
-                _raise("transcript is required")
-            if not new_audio.source_audio_uris:
-                msg = f"TranscribedAudio missing source_audio_uris for feed_id: {new_audio.feed_id} (segment: {new_audio.segment_id})"
-                _raise(msg)
+            try:
+                if not new_audio.segment_id:
+                    _raise("segment_id is required")
+                if not new_audio.feed_id:
+                    _raise("feed_id is required")
+                if not new_audio.transcript.strip():
+                    logger.info("no transcription, skipping")
+                    record_pipeline_stage("evaluation", "skipped")
+                    return
+                if not new_audio.source_audio_uris:
+                    msg = f"TranscribedAudio missing source_audio_uris for feed_id: {new_audio.feed_id} (segment: {new_audio.segment_id})"
+                    _raise(msg)
+            except ValueError as e:
+                logger.exception(
+                    "Validation error processing cloud event %s: %s",
+                    cloud_event,
+                    e,
+                )
+                record_pipeline_stage("evaluation", "error")
+                return
 
             # 2. Evaluate
             # TODO (https://linear.app/watchduty/issue/GOO-245/): Handle evaluation failure.
@@ -138,6 +150,7 @@ class EvaluationEventProcessor:
                     new_audio.segment_id,
                     e,
                 )
+                record_pipeline_stage("evaluation", "evaluation_error")
 
             # 4. Publish to Downstream Topic if flagged or has errors
             if (

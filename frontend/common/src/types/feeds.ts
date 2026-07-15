@@ -70,3 +70,35 @@ export interface ListFeedsResponse {
   nextToken?: string;
   total: number;
 }
+
+export interface AuditTrailValues { 
+  id?: string;
+  name?: string;
+  sourceType?: SourceType;
+  status?: BackendFeedStatus;
+  failureCount?: number;
+  retryAfter?: string;
+  statusReason?: BackendFeedStatusReason | null;
+  statusReasonUpdatedAt?: string;
+  statusReasonDetail?: string | null;
+  createdAt?: string;
+  sourceFeedId?: string;
+  tags?: Tag[];
+}
+
+export interface FeedHistoryEvent {
+  id: string;
+  feedId: string;
+  action: string;
+  actor: string;
+  occurredAt: number;
+  feedRevision: number;
+  beforeValues: AuditTrailValues;
+  afterValues: AuditTrailValues;
+}
+
+export interface ListFeedHistoryResponse {
+  historyEvents: FeedHistoryEvent[];
+  nextToken?: string;
+  total: number;
+}

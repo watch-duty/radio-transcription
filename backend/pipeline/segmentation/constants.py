@@ -23,6 +23,15 @@ MAX_WINDMILL_BUNDLE_DURATION_SEC: Final = 60.0
 # instantaneous heap unrolls from flooding memory with thousands of in-flight GCS futures.
 MAX_CHUNKS_PER_WINDMILL_BUNDLE: Final = 300
 
+# Number of chunks to prefetch ahead in the sliding window to bound background task queue
+# length and prevent connection pool exhaustion and task duplicates when bundles are clamped.
+PREFETCH_WINDOW_SIZE: Final = 20
+
+# Maximum waiting tasks allowed in the shared thread pool queue before we bypass prefetching
+# to apply global backpressure and prevent pool starvation across multiple active feeds.
+MAX_PREFETCH_QUEUE_DEPTH: Final = 15
+
+
 # Resilient Runner V2 Gate: Minimum timer advancement (in seconds) to satisfy Dataflow Streaming
 # Engine forward-progression invariants. In Apache Beam, scheduling a self-chaining recursive timer
 # at un-advanced Event-Time (`timestamp + 0`) risks triggering un-progressed circular watermark
@@ -60,10 +69,10 @@ VAD_DEFAULT_BLEND_RATIO: Final = 0.80
 VAD_DEFAULT_BOOST_FREQ_HZ: Final = 2500.0
 VAD_DEFAULT_BOOST_GAIN_DB: Final = 10.0
 VAD_DEFAULT_PEAK_FILTER_Q: Final = 1.0
-VAD_DEFAULT_THRESHOLD_ONSET: Final = 0.25
+VAD_DEFAULT_THRESHOLD_ONSET: Final = 0.20
 # Raised to 0.20 to close trailing silent segments faster
 VAD_DEFAULT_THRESHOLD_OFFSET: Final = 0.20
-VAD_DEFAULT_MIN_SPEECH_DURATION_MS: Final = 200
+VAD_DEFAULT_MIN_SPEECH_DURATION_MS: Final = 150
 # Extended to 750ms to prevent whisper/dispatcher dropouts from prematurely splitting dispatches
 VAD_DEFAULT_MIN_SILENCE_DURATION_MS: Final = 750
 VAD_DEFAULT_PAD_SEC: Final = 0.3
@@ -88,11 +97,6 @@ VAD_DEFAULT_WARMUP_SEC: Final = 3.5
 #    biasing it toward silence.
 VAD_DEFAULT_FALLBACK_PRIMING_SEC: Final = 1.0
 VAD_DEFAULT_DITHER_RMS: Final = 1e-6
-VAD_DEFAULT_COMP_THRESHOLD_DB: Final = -30.0
-VAD_DEFAULT_COMP_RATIO: Final = 6.0
-VAD_DEFAULT_COMP_ATTACK_MS: Final = 2.0
-VAD_DEFAULT_COMP_RELEASE_MS: Final = 150.0
-VAD_DEFAULT_COMP_PEAK_THRESHOLD: Final = 0.55
 VAD_NORMALIZATION_TARGET_PEAK: Final = 0.95
 VAD_NORMALIZATION_MIN_PEAK: Final = 0.01
 VAD_DEFAULT_SPIKINESS_RATIO_THRESHOLD: Final = 15.0

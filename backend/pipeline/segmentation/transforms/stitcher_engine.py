@@ -121,26 +121,33 @@ class StitcherEngine:
         """Initializes the processor ONNXRuntime inference sessions and Numba compilation."""
         self.processor.setup()
 
-    def prefetch_audio_futures(
+    def submit_single_prefetch(
         self,
-        chunks: list[datatypes.BufferedChunk],
+        uri: str,
         task_logger: Any,
-    ) -> AudioFutureMap | None:
-        """Submits GCS download and decoding tasks to the shared background thread pool for all chunks in the bundle.
-
-        Args:
-            chunks: List of buffered audio chunks to be processed in the current bundle.
-            task_logger: Contextual logger instance for recording task execution details.
-
-        Returns:
-            A mapping of GCS URI to future AudioSignal results, or None if pre-fetching is bypassed.
-        """
-        if not self.executor or len(chunks) <= 1:
+    ) -> Any | None:
+        """Submits a single GCS download and decoding task to the background thread pool."""
+        if not self.executor:
             return None
+
+        # Apply global backpressure: if the shared executor's pending queue size is
+        # above our threshold, bypass prefetching to avoid pool starvation.
+        try:
+            qsize = self.executor._work_queue.qsize()  # noqa: SLF001
+
+            if qsize >= trans_constants.MAX_PREFETCH_QUEUE_DEPTH:
+                task_logger.debug(
+                    f"[Prefetch] Shared executor queue size is {qsize} (threshold: "
+                    f"{trans_constants.MAX_PREFETCH_QUEUE_DEPTH}), bypassing prefetch for {uri}"
+                )
+                return None
+        except (AttributeError, TypeError):
+            # Fallback if executor does not have _work_queue or qsize is not supported
+            pass
 
         parent_context = otel_context.get_current()
 
-        def _fetch_one(uri: str) -> AudioSignal:
+        def _fetch_one() -> AudioSignal:
             token = otel_context.attach(parent_context)
             try:
                 task_logger.debug(
@@ -160,12 +167,31 @@ class StitcherEngine:
             finally:
                 otel_context.detach(token)
 
+        return self.executor.submit(_fetch_one)
+
+    def prefetch_audio_futures(
+        self,
+        chunks: list[datatypes.BufferedChunk],
+        task_logger: Any,
+    ) -> AudioFutureMap | None:
+        """Submits GCS download and decoding tasks to the shared background thread pool for all chunks in the bundle.
+
+        Args:
+            chunks: List of buffered audio chunks to be processed in the current bundle.
+            task_logger: Contextual logger instance for recording task execution details.
+
+        Returns:
+            A mapping of GCS URI to future AudioSignal results, or None if pre-fetching is bypassed.
+        """
+        if not self.executor or len(chunks) <= 1:
+            return None
+
         futures: AudioFutureMap = {}
         for chunk in chunks:
             if chunk.gcs_uri not in futures:
-                futures[chunk.gcs_uri] = self.executor.submit(
-                    _fetch_one, chunk.gcs_uri
-                )
+                future = self.submit_single_prefetch(chunk.gcs_uri, task_logger)
+                if future is not None:
+                    futures[chunk.gcs_uri] = future
         return futures
 
     def process_ordering_chunk(
