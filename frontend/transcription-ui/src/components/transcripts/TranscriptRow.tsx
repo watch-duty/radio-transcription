@@ -38,6 +38,7 @@ interface TranscriptRowProps {
   redactTranscripts?: boolean;
   onRowClick: (segmentId: string) => void;
   isTopAudioSegmentRow?: boolean;
+  isMobile?: boolean;
 }
 
 export function TranscriptRow({
@@ -55,6 +56,7 @@ export function TranscriptRow({
   redactTranscripts = false,
   onRowClick,
   isTopAudioSegmentRow = false,
+  isMobile = false,
 }: TranscriptRowProps) {
   const theme = useTheme();
   const { isAdmin } = useAuth();
@@ -168,104 +170,157 @@ export function TranscriptRow({
         id={`transcript-${audioSegment.id}`}
         divider={index < totalAudioSegments - 1}
         sx={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 2,
+          display: { xs: 'grid', sm: 'flex' },
+          gridTemplateColumns: { xs: '1fr auto', sm: 'unset' },
+          gridTemplateRows: { xs: 'auto auto', sm: 'unset' },
+          gridTemplateAreas: {
+            xs: `
+              "meta    actions"
+              "text    actions"
+            `,
+            sm: 'unset',
+          },
+          alignItems: { xs: 'stretch', sm: 'center' },
+          gap: { xs: 1.5, sm: 2 },
           bgcolor: isHighlighted ? 'action.selected' : 'inherit',
           scrollMarginTop: theme.spacing(5),
           cursor: 'pointer',
           borderLeft: `5px solid ${getBorderColor()}`,
-          pt: isSilence || isOutage ? '0px !important' : undefined,
-          pb: isSilence || isOutage ? '0px !important' : undefined,
+          pt:
+            isSilence || isOutage
+              ? '0px !important'
+              : { xs: 1.5, sm: undefined },
+          pb:
+            isSilence || isOutage
+              ? '0px !important'
+              : { xs: 1.5, sm: undefined },
+          px: { xs: 1.5, sm: 2 },
           '&:hover': {
             bgcolor: isHighlighted ? 'action.selected' : 'action.hover',
           },
         }}
         onClick={() => onRowClick(audioSegment.id)}
       >
+        {/* Meta Box (Play, Alert, Time/Duration) */}
         <Box
           sx={{
-            width: theme.spacing(3),
+            gridArea: { xs: 'meta', sm: 'unset' },
             display: 'flex',
-            justifyContent: 'center',
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: { xs: 1, sm: 2 },
             flexShrink: 0,
+            width: { xs: '100%', sm: 'auto' },
           }}
         >
-          <AlertTooltip
-            evaluationDecisions={
-              isSilence ? [] : (evaluationAnnotation?.decisions ?? [])
-            }
-            ruleIdToNameMap={ruleIdToNameMap}
-            rulesLoading={rulesLoading}
-          />
-        </Box>
-        <Box
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'flex-end',
-            width: 90,
-            flexShrink: 0,
-          }}
-        >
-          {!isSilence && (
-            <Typography variant="caption" color="text.secondary">
-              {currentDate.toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                timeZoneName: 'short',
-                hour12: false,
-              })}
-            </Typography>
-          )}
-          {/* For ongoing silence at the live edge, display elapsed time without seconds
-              to keep the running duration informative without causing second-by-second visual jitter during polling. */}
-          <Typography
-            variant="caption"
-            color="text.secondary"
+          {/* Play Control (First on mobile, third on desktop) */}
+          <Box
             sx={{
-              opacity: 0.8,
-              fontStyle: isSilence || isOutage ? 'italic' : 'normal',
+              order: { xs: 1, sm: 3 },
+              width: theme.spacing(5),
+              height: theme.spacing(5),
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
             }}
           >
-            {formatDuration(
-              (new Date(audioSegment.endTimestamp).getTime() -
-                new Date(audioSegment.startTimestamp).getTime()) /
-                1000,
-              !isOngoingSilence
+            {!isOutage && (
+              <TranscriptPlayControl
+                audioUri={audioSegment.playbackAudioUri ?? ''}
+                segmentId={audioSegment.id}
+                onToggleAudio={onToggleAudio}
+                isAudioPlaying={isAudioPlaying}
+                currentlyPlayingSegmentId={
+                  isCurrentlyPlaying
+                    ? audioSegment.id
+                    : currentlyPlayingSegmentId
+                }
+                hideButton={isMobile ? false : !isHovered}
+              />
             )}
-          </Typography>
-        </Box>
-        <Box
-          sx={{
-            width: theme.spacing(5),
-            height: theme.spacing(5),
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            flexShrink: 0,
-          }}
-        >
-          {!isOutage && (
-            <TranscriptPlayControl
-              audioUri={audioSegment.playbackAudioUri ?? ''}
-              segmentId={audioSegment.id}
-              onToggleAudio={onToggleAudio}
-              isAudioPlaying={isAudioPlaying}
-              currentlyPlayingSegmentId={
-                isCurrentlyPlaying ? audioSegment.id : currentlyPlayingSegmentId
+          </Box>
+
+          {/* Alert Tooltip (Second on mobile, first on desktop) */}
+          <Box
+            sx={{
+              order: { xs: 2, sm: 1 },
+              width: {
+                xs:
+                  (evaluationAnnotation?.decisions?.length ?? 0) > 0
+                    ? theme.spacing(3)
+                    : 0,
+                sm: theme.spacing(3),
+              },
+              display:
+                (evaluationAnnotation?.decisions?.length ?? 0) > 0
+                  ? 'flex'
+                  : { xs: 'none', sm: 'flex' },
+              justifyContent: 'center',
+              flexShrink: 0,
+            }}
+          >
+            <AlertTooltip
+              evaluationDecisions={
+                isSilence ? [] : (evaluationAnnotation?.decisions ?? [])
               }
-              hideButton={!isHovered}
+              ruleIdToNameMap={ruleIdToNameMap}
+              rulesLoading={rulesLoading}
             />
-          )}
+          </Box>
+
+          {/* Time & Duration Box (Third on mobile, second on desktop) */}
+          <Box
+            sx={{
+              order: { xs: 3, sm: 2 },
+              display: 'flex',
+              flexDirection: { xs: 'row', sm: 'column' },
+              alignItems: { xs: 'center', sm: 'flex-end' },
+              gap: { xs: 1, sm: 0 },
+              width: { xs: 'auto', sm: 90 },
+              flexShrink: 0,
+            }}
+          >
+            {!isSilence && (
+              <Typography variant="caption" color="text.secondary">
+                {currentDate.toLocaleTimeString([], {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                  timeZoneName: 'short',
+                  hour12: false,
+                })}
+              </Typography>
+            )}
+            {/* For ongoing silence at the live edge, display elapsed time without seconds
+                to keep the running duration informative without causing second-by-second visual jitter during polling. */}
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{
+                opacity: 0.8,
+                fontStyle: isSilence || isOutage ? 'italic' : 'normal',
+              }}
+            >
+              {formatDuration(
+                (new Date(audioSegment.endTimestamp).getTime() -
+                  new Date(audioSegment.startTimestamp).getTime()) /
+                  1000,
+                !isOngoingSilence
+              )}
+            </Typography>
+          </Box>
         </Box>
+
+        {/* Text Box */}
         <Box
           sx={{
+            gridArea: { xs: 'text', sm: 'unset' },
             flexGrow: 1,
             display: 'flex',
             alignItems: 'flex-start',
             gap: 1,
+            mt: { xs: 0.5, sm: 0 },
           }}
         >
           <Typography
@@ -321,7 +376,17 @@ export function TranscriptRow({
               </Tooltip>
             )}
         </Box>
-        <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
+        <Box
+          sx={{
+            gridArea: { xs: 'actions', sm: 'unset' },
+            display: 'flex',
+            flexDirection: { xs: 'column', sm: 'row' },
+            gap: 1,
+            flexShrink: 0,
+            alignSelf: { xs: 'start', sm: 'center' },
+            mt: { xs: 0.5, sm: 0 },
+          }}
+        >
           {!isSilence && !isOutage && (
             <Tooltip title="Copy transcript">
               <span>

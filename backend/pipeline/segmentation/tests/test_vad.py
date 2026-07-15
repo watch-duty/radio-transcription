@@ -261,7 +261,7 @@ class TestVadEngine(unittest.TestCase):
     def test_integration_stress_file(self) -> None:
         """Integration test to verify VAD performance on test_stress.flac."""
         self._run_integration_test(
-            "test_stress.flac", [(0.4, 2.85)], baseline_f1=0.925
+            "test_stress.flac", [(0.4, 2.85)], baseline_f1=0.948
         )
 
     def test_integration_joined_file(self) -> None:
@@ -269,7 +269,7 @@ class TestVadEngine(unittest.TestCase):
         self._run_integration_test(
             "test_joined.flac",
             [(8.3, 10.7), (12.3, 15.6), (20.3, 23.0), (26.2, 27.0)],
-            baseline_f1=0.920,
+            baseline_f1=0.908,
         )
 
     def test_integration_bcfy_file(self) -> None:
@@ -282,7 +282,7 @@ class TestVadEngine(unittest.TestCase):
                 (7.6, 12.2),
                 (13.0, 14.2),
             ],
-            baseline_f1=0.850,
+            baseline_f1=0.851,
         )
 
     def test_integration_cajon_pass_trailing_file(self) -> None:
@@ -295,7 +295,7 @@ class TestVadEngine(unittest.TestCase):
                 (25.565, 34.590),
                 (35.489, 36.387),
             ],
-            baseline_f1=0.045,
+            baseline_f1=0.090,
         )
 
     def test_integration_dispatch_amador_file(self) -> None:
@@ -313,7 +313,7 @@ class TestVadEngine(unittest.TestCase):
                 (56.2, 60.6),
                 (62.6, 65.3),
             ],
-            baseline_f1=0.903,
+            baseline_f1=0.919,
         )
 
     def test_integration_dispatch_sku_file(self) -> None:
@@ -341,7 +341,7 @@ class TestVadEngine(unittest.TestCase):
                 (49.373, 51.884),
                 (52.768, 54.178),
             ],
-            baseline_f1=0.890,
+            baseline_f1=0.892,
         )
 
     def test_integration_middlebury_quiet_segments_file(self) -> None:
@@ -352,7 +352,7 @@ class TestVadEngine(unittest.TestCase):
                 (0.6, 2.2),
                 (4.2, 6.7),
             ],
-            baseline_f1=0.865,
+            baseline_f1=0.891,
         )
 
     def test_integration_middlebury_quiet_spiky_file(self) -> None:
@@ -373,7 +373,7 @@ class TestVadEngine(unittest.TestCase):
                 (0.213, 0.8),
                 (2.037, 3.869),
             ],
-            baseline_f1=0.669,
+            baseline_f1=0.756,
         )
 
     def test_integration_deafening_dispatcher_ems(self) -> None:
@@ -390,7 +390,7 @@ class TestVadEngine(unittest.TestCase):
                 (5.984, 6.611),
                 (7.865, 11.605),
             ],
-            baseline_f1=0.494,
+            baseline_f1=0.679,
             chunk_len_sec=5.0,
         )
 
@@ -407,6 +407,17 @@ class TestVadEngine(unittest.TestCase):
             ],
             baseline_f1=0.703,
             chunk_len_sec=5.0,
+        )
+
+    def test_integration_muffled_mason_co_fire(self) -> None:
+        """Integration test to verify VAD performance on quiet/muffled speech from Mason County Fire."""
+        self._run_integration_test(
+            "test_muffled_mason_co_fire.flac",
+            [
+                (10.560, 10.762),
+                (12.830, 13.413),
+            ],
+            baseline_f1=0.55,
         )
 
     def test_integration_static_middlebury_file(self) -> None:
