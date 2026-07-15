@@ -40,6 +40,34 @@ LeaseReleaseCause.ABANDONMENT
 from backend.pipeline.storage.feed_store import FeedStore
 FeedStore.renew_grant_heartbeats
 
+# The typed Feed/SID control contracts and immutable worker profiles land as a
+# reviewable foundation before CollectorRuntime composition. Vulture excludes
+# their focused tests and cannot see Protocol member use through structural
+# typing. Remove these entries as the supervisor and startup wiring land.
+from backend.pipeline.ingestion import (
+    feed_grant_control,
+    grant_control,
+    sid_grant_control,
+    worker_profiles,
+)
+feed_grant_control.FeedGrantControl
+feed_grant_control.FeedGrantControl.heartbeat
+feed_grant_control.FeedGrantControl.finalize
+sid_grant_control.SidGrantControl
+sid_grant_control.SidGrantControl.heartbeat
+sid_grant_control.SidGrantControl.finalize
+grant_control.ClaimMode.RECOVERY
+grant_control.RunContext.stop_requested
+grant_control.RunContext.grant_lost
+grant_control.RunContext.set_retrying
+grant_control.GrantControl
+grant_control.GrantControl.heartbeat
+grant_control.GrantControl.finalize
+grant_control.GrantRunner
+worker_profiles.derive_bcfy_calls_authority
+worker_profiles.resolve_worker_profile
+worker_profiles.profile_digest
+
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation
 # and schema reflection, which Vulture cannot trace through direct Python
 # references.
