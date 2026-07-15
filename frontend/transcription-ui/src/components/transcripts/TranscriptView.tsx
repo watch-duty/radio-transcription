@@ -41,7 +41,6 @@ import { AudioControl } from '../audio/AudioControl';
 import AudioDisplay from '../audio/AudioDisplay';
 import { deriveTimelineState } from '../audio/deriveTimelineState';
 import FeedSearchView from '../feeds/FeedSearchView';
-import AudioSettingsButton from './AudioSettingsButton';
 import FeedHeader from './FeedHeader';
 import TranscriptActionsBar from './TranscriptActionsBar';
 import TranscriptDisplay from './TranscriptDisplay';
@@ -724,18 +723,13 @@ export function TranscriptView({
           onFastRewind={skipToPreviousSpeech}
           onSkipTime={skipTime}
           disableControls={rawAudioSegments.length === 0}
-          settingsButton={
-            <AudioSettingsButton
-              volumeDb={volumeDb}
-              setVolumeDb={setVolumeDb}
-              pan={pan}
-              setPan={setPan}
-              speed={speed}
-              setSpeed={setSpeed}
-              onReset={reset}
-              disableControls={rawAudioSegments.length === 0}
-            />
-          }
+          volumeDb={volumeDb}
+          setVolumeDb={setVolumeDb}
+          pan={pan}
+          setPan={setPan}
+          speed={speed}
+          setSpeed={setSpeed}
+          onReset={reset}
         />
       </Box>
 
