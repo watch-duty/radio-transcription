@@ -482,7 +482,7 @@ async def test_budgeted_failure_releases_owner_and_preserves_authority(
     durable = await _fetch_lease(ingestion_lease_pool, sid)
     assert result == ingestion_lease_store.LeaseFailureResult(
         ingestion_lease_store.LeaseOperationDisposition.APPLIED,
-        ingestion_lease_store.LeaseFailureEffect.FAILURE_RECORDED,
+        feed_store.FeedStatus.FAILING,
     )
     assert durable["status"] == "failing"
     assert durable["worker_id"] is None
@@ -527,7 +527,7 @@ async def test_budgeted_failure_quarantines_at_threshold(
     )
 
     durable = await _fetch_lease(ingestion_lease_pool, sid)
-    assert result.effect is ingestion_lease_store.LeaseFailureEffect.QUARANTINED
+    assert result.final_status is feed_store.FeedStatus.QUARANTINED
     assert durable["status"] == "quarantined"
     assert durable["worker_id"] is None
     assert durable["last_heartbeat"] is None
@@ -566,9 +566,7 @@ async def test_non_budgeted_failure_resets_budget_and_never_quarantines(
     )
 
     durable = await _fetch_lease(ingestion_lease_pool, sid)
-    assert result.effect is (
-        ingestion_lease_store.LeaseFailureEffect.FAILURE_RECORDED
-    )
+    assert result.final_status is feed_store.FeedStatus.FAILING
     assert durable["status"] == "failing"
     assert durable["worker_id"] is None
     assert durable["last_heartbeat"] is None
@@ -608,7 +606,7 @@ async def test_stale_failure_grant_is_rejected_without_writing(
     after = await _fetch_lease(ingestion_lease_pool, sid)
     assert result == ingestion_lease_store.LeaseFailureResult(
         ingestion_lease_store.LeaseOperationDisposition.FENCE_MISMATCH,
-        ingestion_lease_store.LeaseFailureEffect.NONE,
+        None,
     )
     assert dict(after) == dict(before)
 

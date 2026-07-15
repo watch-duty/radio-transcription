@@ -242,41 +242,33 @@ class NonBudgetedFailure:
 type LeaseFailureAction = BudgetedFailure | NonBudgetedFailure
 
 
-class LeaseFailureEffect(enum.StrEnum):
-    """Durable lifecycle effect of one finalized Lease failure.
-
-    Attributes:
-        NONE: The exact grant was rejected without a durable mutation.
-        FAILURE_RECORDED: The Lease entered retryable failing state.
-        QUARANTINED: A budgeted failure reached its configured threshold.
-    """
-
-    NONE = "none"
-    FAILURE_RECORDED = "failure_recorded"
-    QUARANTINED = "quarantined"
-
-
 @dataclasses.dataclass(frozen=True, slots=True)
 class LeaseFailureResult:
     """Narrow outcome of one exact-grant failure finalization.
 
     Attributes:
         disposition: Closed classification of the mutation attempt.
-        effect: Durable failure effect, or none when the grant was rejected.
+        final_status: Failing or quarantined after an applied mutation; absent
+            when the exact grant was rejected.
     """
 
     disposition: LeaseOperationDisposition
-    effect: LeaseFailureEffect
+    final_status: feed_store.FeedStatus | None
 
     def __post_init__(self) -> None:
-        if (
-            self.disposition is LeaseOperationDisposition.APPLIED
-            and self.effect is LeaseFailureEffect.NONE
-        ) or (
-            self.disposition is not LeaseOperationDisposition.APPLIED
-            and self.effect is not LeaseFailureEffect.NONE
-        ):
-            msg = "only an applied failure may report a lifecycle effect"
+        applied = self.disposition is LeaseOperationDisposition.APPLIED
+        valid_final_status = isinstance(
+            self.final_status,
+            feed_store.FeedStatus,
+        ) and self.final_status in (
+            feed_store.FeedStatus.FAILING,
+            feed_store.FeedStatus.QUARANTINED,
+        )
+        if applied != valid_final_status:
+            msg = (
+                "only an applied failure may return failing or quarantined "
+                "status"
+            )
             raise ValueError(msg)
 
 
@@ -956,6 +948,10 @@ class IngestionLeaseStore:
         row = await self._pool.fetchrow(query, *parameters)
         result = self._failure_result(grant, row)
         if result.disposition is LeaseOperationDisposition.APPLIED:
+            final_status = result.final_status
+            if final_status is None:
+                msg = "applied Lease failure is missing its final status"
+                raise RuntimeError(msg)
             logger.warning(
                 "Ingestion Lease failure finalized",
                 extra={
@@ -966,7 +962,7 @@ class IngestionLeaseStore:
                     "actor_id": actor_id,
                     "status_reason": status_reason.value,
                     "failure_action": type(action).__name__,
-                    "failure_effect": result.effect.value,
+                    "final_status": final_status.value,
                 },
             )
         return result
@@ -976,11 +972,23 @@ class IngestionLeaseStore:
         grant: LeaseGrant,
         row: collections.abc.Mapping | None,
     ) -> LeaseFailureResult:
-        """Validate and convert one locked failure-finalization result."""
+        """Validate and convert one locked failure-finalization result.
+
+        Args:
+            grant: Complete authority used for the mutation attempt.
+            row: Locked query result, or ``None`` when the Lease is missing.
+
+        Returns:
+            Exact-grant disposition and applied final status, if any.
+
+        Raises:
+            ValueError: Locked identity or returned status is unknown.
+            RuntimeError: The query returned an internally inconsistent result.
+        """
         if row is None:
             return LeaseFailureResult(
                 LeaseOperationDisposition.MISSING,
-                LeaseFailureEffect.NONE,
+                None,
             )
 
         rejection_reason = self._grant_rejection_reason(grant, row)
@@ -993,7 +1001,7 @@ class IngestionLeaseStore:
                 raise RuntimeError(msg)
             return LeaseFailureResult(
                 _disposition_for_rejection(rejection_reason),
-                LeaseFailureEffect.NONE,
+                None,
             )
 
         if rejection_reason is not None:
@@ -1004,18 +1012,17 @@ class IngestionLeaseStore:
         except ValueError as error:
             msg = f"Unknown finalized Lease status {row['final_status']!r}"
             raise ValueError(msg) from error
-        if final_status is feed_store.FeedStatus.FAILING:
-            effect = LeaseFailureEffect.FAILURE_RECORDED
-        elif final_status is feed_store.FeedStatus.QUARANTINED:
-            effect = LeaseFailureEffect.QUARANTINED
-        else:
+        if final_status not in (
+            feed_store.FeedStatus.FAILING,
+            feed_store.FeedStatus.QUARANTINED,
+        ):
             msg = (
                 f"Failure finalized to ineligible status {final_status.value!r}"
             )
             raise RuntimeError(msg)
         return LeaseFailureResult(
             LeaseOperationDisposition.APPLIED,
-            effect,
+            final_status,
         )
 
     async def load_membership(

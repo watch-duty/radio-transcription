@@ -603,7 +603,7 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
 class TestFinalizeLeaseFailure(unittest.IsolatedAsyncioTestCase):
     """Tests for one-shot exact-grant failure finalization."""
 
-    async def test_budgeted_failure_records_narrow_effect_and_parameters(
+    async def test_budgeted_failure_records_final_status_and_parameters(
         self,
     ) -> None:
         pool = connection_util.make_mock_pool(
@@ -626,7 +626,7 @@ class TestFinalizeLeaseFailure(unittest.IsolatedAsyncioTestCase):
             result,
             ingestion_lease_store.LeaseFailureResult(
                 ingestion_lease_store.LeaseOperationDisposition.APPLIED,
-                ingestion_lease_store.LeaseFailureEffect.FAILURE_RECORDED,
+                feed_store.FeedStatus.FAILING,
             ),
         )
         pool.fetchrow.assert_awaited_once_with(
@@ -659,8 +659,8 @@ class TestFinalizeLeaseFailure(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIs(
-            result.effect,
-            ingestion_lease_store.LeaseFailureEffect.QUARANTINED,
+            result.final_status,
+            feed_store.FeedStatus.QUARANTINED,
         )
 
     async def test_non_budgeted_failure_uses_caller_retry_and_resets_budget(
@@ -683,8 +683,8 @@ class TestFinalizeLeaseFailure(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertIs(
-            result.effect,
-            ingestion_lease_store.LeaseFailureEffect.FAILURE_RECORDED,
+            result.final_status,
+            feed_store.FeedStatus.FAILING,
         )
         pool.fetchrow.assert_awaited_once_with(
             ingestion_lease_queries.FINALIZE_NON_BUDGETED_FAILURE_SQL,
@@ -718,7 +718,7 @@ class TestFinalizeLeaseFailure(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(detail), 2048)
         self.assertTrue(detail.endswith("[truncated]"))
 
-    async def test_rejections_are_typed_without_lifecycle_effect(self) -> None:
+    async def test_rejections_are_typed_without_final_status(self) -> None:
         cases = (
             (None, ingestion_lease_store.LeaseOperationDisposition.MISSING),
             (
@@ -747,10 +747,28 @@ class TestFinalizeLeaseFailure(unittest.IsolatedAsyncioTestCase):
                 )
 
                 self.assertIs(result.disposition, disposition)
-                self.assertIs(
-                    result.effect,
-                    ingestion_lease_store.LeaseFailureEffect.NONE,
-                )
+                self.assertIsNone(result.final_status)
+
+    async def test_applied_failure_log_uses_final_status(self) -> None:
+        pool = connection_util.make_mock_pool(
+            fetchrow_result=_lease_row(
+                applied=True,
+                final_status="failing",
+            )
+        )
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        with mock.patch.object(ingestion_lease_store.logger, "warning") as log:
+            await store.finalize_failure(
+                _grant(),
+                ingestion_lease_store.BudgetedFailure(),
+                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                actor_id="collector",
+            )
+
+        fields = log.call_args.kwargs["extra"]
+        self.assertEqual(fields["final_status"], "failing")
+        self.assertNotIn("failure_effect", fields)
 
     async def test_exact_nonapplied_or_mismatched_applied_result_fails_closed(
         self,

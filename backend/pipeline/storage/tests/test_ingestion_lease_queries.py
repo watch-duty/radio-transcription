@@ -353,15 +353,53 @@ class TestLeaseFailureContract(unittest.TestCase):
                     ingestion_lease_store.LeaseFailureResult
                 )
             ],
-            ["disposition", "effect"],
+            ["disposition", "final_status"],
         )
-        self.assertEqual(
-            {
-                effect.value
-                for effect in ingestion_lease_store.LeaseFailureEffect
-            },
-            {"none", "failure_recorded", "quarantined"},
+        self.assertFalse(hasattr(ingestion_lease_store, "LeaseFailureEffect"))
+
+    def test_failure_result_enforces_disposition_status_invariant(self) -> None:
+        valid_results = (
+            ingestion_lease_store.LeaseFailureResult(
+                ingestion_lease_store.LeaseOperationDisposition.APPLIED,
+                feed_store.FeedStatus.FAILING,
+            ),
+            ingestion_lease_store.LeaseFailureResult(
+                ingestion_lease_store.LeaseOperationDisposition.APPLIED,
+                feed_store.FeedStatus.QUARANTINED,
+            ),
+            ingestion_lease_store.LeaseFailureResult(
+                ingestion_lease_store.LeaseOperationDisposition.FENCE_MISMATCH,
+                None,
+            ),
         )
+
+        self.assertEqual(len(valid_results), 3)
+        invalid_results = (
+            (
+                ingestion_lease_store.LeaseOperationDisposition.APPLIED,
+                None,
+            ),
+            (
+                ingestion_lease_store.LeaseOperationDisposition.FENCE_MISMATCH,
+                feed_store.FeedStatus.FAILING,
+            ),
+            (
+                ingestion_lease_store.LeaseOperationDisposition.APPLIED,
+                feed_store.FeedStatus.ACTIVE,
+            ),
+        )
+        for case_index, (disposition, final_status) in enumerate(
+            invalid_results
+        ):
+            with self.subTest(case_index=case_index):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "only an applied failure",
+                ):
+                    ingestion_lease_store.LeaseFailureResult(
+                        disposition,
+                        final_status,
+                    )
 
     def test_failure_queries_require_one_exact_active_grant(self) -> None:
         for query in (
