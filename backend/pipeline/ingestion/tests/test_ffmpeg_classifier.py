@@ -103,6 +103,35 @@ class TestFfmpegClassifier(unittest.TestCase):
         )
         self.assertEqual(classification.http_status, 503)
 
+    def test_stderr_prioritizes_last_terminal_status(self) -> None:
+        policy = http_status.HTTPStatusPolicy(
+            exact={
+                401: feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+                404: feed_store.FeedStatusReason.SOURCE_OFFLINE,
+            },
+        )
+        classification = _require_classification(
+            ffmpeg.classify_ffmpeg_failure(
+                exit_code=1,
+                stderr_text=(
+                    "Server returned 401 Unauthorized\n"
+                    "retrying stream with auth\n"
+                    "Server returned 404 Not Found"
+                ),
+                http_policy=policy,
+            )
+        )
+
+        self.assertIs(
+            classification.status_reason,
+            feed_store.FeedStatusReason.SOURCE_OFFLINE,
+        )
+        self.assertIs(
+            classification.kind,
+            ffmpeg.FfmpegFailureKind.HTTP_STATUS,
+        )
+        self.assertEqual(classification.http_status, 404)
+
     def test_probe_status_maps_without_stderr_status(self) -> None:
         policy = http_status.HTTPStatusPolicy(
             exact={404: feed_store.FeedStatusReason.SOURCE_OFFLINE},
