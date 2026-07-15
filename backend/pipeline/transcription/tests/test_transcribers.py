@@ -993,7 +993,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
 
             mock_client_cls.assert_called_once()
             _, kwargs = mock_client_cls.call_args
-            self.assertTrue(kwargs.get("vertexai"))
+            self.assertTrue(kwargs.get("enterprise"))
             self.assertEqual(kwargs.get("project"), "test-project")
             self.assertEqual(kwargs.get("location"), "us-test")
 
