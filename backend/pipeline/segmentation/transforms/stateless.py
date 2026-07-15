@@ -117,6 +117,9 @@ class ParseAndKeyFn(beam.DoFn):
         self.segmentation_error = Metrics.counter(
             self.__class__, "segmentation_error"
         )
+        self.data_freshness_ms = Metrics.distribution(
+            self.__class__, "data_freshness_ms"
+        )
 
     @override
     def setup(self) -> None:
@@ -186,6 +189,9 @@ class ParseAndKeyFn(beam.DoFn):
                     and chunk_proto.start_timestamp.seconds > 0
                     else None
                 )
+                if start_ms is not None:
+                    freshness_ms = int(time.time() * 1000) - start_ms
+                    self.data_freshness_ms.update(freshness_ms)
                 metadata = ChunkMetadata(
                     gcs_uri=chunk_proto.gcs_uri,
                     session_id=chunk_proto.session_id,
