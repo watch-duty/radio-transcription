@@ -121,17 +121,11 @@ async def _insert_lease(
     failure_count: int = 0,
     retry_after: datetime.datetime | None = None,
     status_reason: str | None = None,
-    audit_revision: int = 0,
     membership_revision: int = 0,
 ) -> None:
     """Insert one permanent, unique Lease fixture."""
     if status == "active" and last_heartbeat is None:
         last_heartbeat = datetime.datetime.now(datetime.UTC)
-    status_reason_updated_at = (
-        datetime.datetime.now(datetime.UTC)
-        if status_reason is not None
-        else None
-    )
     await pool.execute(
         """
         INSERT INTO public.ingestion_leases (
@@ -143,11 +137,8 @@ async def _insert_lease(
             last_heartbeat,
             failure_count,
             retry_after,
-            unclaimed_since,
             status_reason,
             status_reason_detail,
-            status_reason_updated_at,
-            audit_revision,
             membership_revision
         ) VALUES (
             'bcfy_calls',
@@ -158,12 +149,9 @@ async def _insert_lease(
             $5,
             $6,
             $7,
-            CASE WHEN $2 = 'unclaimed' THEN NOW() ELSE NULL END,
             $8::TEXT,
             CASE WHEN $8 IS NULL THEN NULL ELSE 'fixture failure' END,
-            $9,
-            $10,
-            $11
+            $9
         )
         """,
         sid,
@@ -174,8 +162,6 @@ async def _insert_lease(
         failure_count,
         retry_after,
         status_reason,
-        status_reason_updated_at,
-        audit_revision,
         membership_revision,
     )
 
@@ -390,11 +376,8 @@ async def _fetch_lease(pool: asyncpg.Pool, sid: str) -> asyncpg.Record:
             last_heartbeat,
             failure_count,
             retry_after,
-            unclaimed_since,
             status_reason,
             status_reason_detail,
-            status_reason_updated_at,
-            audit_revision,
             membership_revision,
             created_at,
             updated_at
@@ -1728,7 +1711,6 @@ async def test_boundary_retry_does_not_double_charge(  # noqa: PLR0915
             events_after_first[0]["before_failure_count"]
             == initial_feed_failure_count
         )
-        assert lease_after_first["audit_revision"] == 0
         assert second.children[0].disposition is (
             ingestion_lease_store.ChildDisposition.ACCEPTED_NOOP
         )
@@ -1870,7 +1852,6 @@ async def test_cancellation_while_blocked_rolls_back_without_notification(  # no
         failure_count=2,
         retry_after=retry_after,
         status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE.value,
-        audit_revision=4,
     )
     store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
     grant = await _claim_exact(store, sid, uuid.uuid4())
@@ -1887,7 +1868,6 @@ async def test_cancellation_while_blocked_rolls_back_without_notification(  # no
     feed_before = dict(await _fetch_feed(ingestion_lease_pool, member.feed_id))
     audit_before = await _audit_rows(ingestion_lease_pool, member.feed_id)
     assert lease_before["failure_count"] == 2
-    assert lease_before["audit_revision"] == 4
     assert feed_before["status"] == "failing"
     assert feed_before["failure_count"] == 2
     assert feed_before["audit_revision"] == 3

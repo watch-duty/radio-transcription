@@ -511,7 +511,7 @@ jobs:
             ${{ runner.os }}-uv-
       - name: Install dependencies
         run: uv sync
-      - name: Prove fresh and reduced Lease schema migration replay
+      - name: Prove fresh and reduced Lease schemas
         env:
           EXPECTED_POSTGRES_MAJOR: ${{ matrix.postgres-version }}
           PGHOST: localhost

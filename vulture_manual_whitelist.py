@@ -16,6 +16,7 @@ _.get_value
 # dormant public API and its planned release telemetry causes allowlisted.
 from backend.pipeline.storage.ingestion_lease_store import (
     IngestionLeaseStore,
+    LeaseMember,
     LeaseReleaseCause,
 )
 IngestionLeaseStore.claim_unclaimed
@@ -25,14 +26,18 @@ IngestionLeaseStore.release
 IngestionLeaseStore.finalize_failure
 IngestionLeaseStore.load_membership
 IngestionLeaseStore.commit_child_mutations
+LeaseMember.audit_revision
 LeaseReleaseCause.SHUTDOWN
 LeaseReleaseCause.REBALANCE
 LeaseReleaseCause.CANCELLATION
 LeaseReleaseCause.ABANDONMENT
 
+# Feed.status_reason_updated_at is part of the existing feed response shape and
+# is populated dynamically from database rows, which Vulture cannot trace.
 # The exact Feed-grant heartbeat storage boundary lands before the generic
 # Feed/SID runtime adapter calls it. Vulture excludes the focused tests.
-from backend.pipeline.storage.feed_store import FeedStore
+from backend.pipeline.storage.feed_store import Feed, FeedStore
+Feed.status_reason_updated_at
 FeedStore.renew_grant_heartbeats
 
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation

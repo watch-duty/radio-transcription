@@ -652,7 +652,6 @@ async def _privilege_fixture_guard(
                             worker_id = NULL,
                             last_heartbeat = NULL,
                             retry_after = NULL,
-                            unclaimed_since = NULL,
                             updated_at = NOW()
                         WHERE source_type = 'bcfy_calls' AND lease_key = $1
                         """,
@@ -668,7 +667,6 @@ async def _privilege_fixture_guard(
                             worker_id,
                             last_heartbeat,
                             retry_after,
-                            unclaimed_since,
                             fencing_token
                         FROM public.ingestion_leases
                         WHERE source_type = 'bcfy_calls' AND lease_key = $1
@@ -680,7 +678,6 @@ async def _privilege_fixture_guard(
                         "bcfy_calls",
                         fixtures.sid,
                         "deactivated",
-                        None,
                         None,
                         None,
                         None,
@@ -792,13 +789,11 @@ async def privilege_fixtures(
                 INSERT INTO public.ingestion_leases (
                     source_type,
                     lease_key,
-                    status,
-                    unclaimed_since
+                    status
                 ) VALUES (
                     'bcfy_calls',
                     $1,
-                    'unclaimed'::public.feed_status,
-                    NOW()
+                    'unclaimed'::public.feed_status
                 )
                 """,
                 sid,

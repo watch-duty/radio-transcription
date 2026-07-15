@@ -49,8 +49,6 @@ def _lease_row(**overrides: object) -> dict[str, object]:
         "retry_after": None,
         "status_reason": "source_unreachable",
         "status_reason_detail": "provider timeout",
-        "status_reason_updated_at": _NOW,
-        "audit_revision": 3,
         "membership_revision": 4,
         "updated_at": _NOW,
         "applied": False,
@@ -3064,8 +3062,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             retry_after=None,
             status_reason=None,
             status_reason_detail=None,
-            status_reason_updated_at=None,
-            audit_revision=4,
         )
         pool = connection_util.make_mock_pool(transaction=True)
         connection = pool.acquired_connection
@@ -3200,8 +3196,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             retry_after=None,
             status_reason=None,
             status_reason_detail=None,
-            status_reason_updated_at=None,
-            audit_revision=4,
         )
         pool = connection_util.make_mock_pool(transaction=True)
         connection = pool.acquired_connection
@@ -3244,7 +3238,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             retry_after=None,
             status_reason=None,
             status_reason_detail=None,
-            status_reason_updated_at=None,
         )
         pool = connection_util.make_mock_pool(transaction=True)
         connection = pool.acquired_connection
@@ -3301,8 +3294,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             failure_count=0,
             status_reason=None,
             status_reason_detail=None,
-            status_reason_updated_at=None,
-            audit_revision=4,
         )
         pool = connection_util.make_mock_pool(transaction=True)
         connection = pool.acquired_connection

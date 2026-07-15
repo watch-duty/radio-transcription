@@ -91,8 +91,6 @@ def _lease_snapshot(
         retry_after=None,
         status_reason=status_reason,
         status_reason_detail=None,
-        status_reason_updated_at=None,
-        audit_revision=4,
         membership_revision=3,
         updated_at=_NOW,
     )

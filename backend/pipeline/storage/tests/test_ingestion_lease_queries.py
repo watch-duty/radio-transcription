@@ -103,8 +103,6 @@ class TestLeaseGrantContract(unittest.TestCase):
                 retry_after=None,
                 status_reason=None,
                 status_reason_detail=None,
-                status_reason_updated_at=None,
-                audit_revision=0,
                 membership_revision=1,
                 updated_at=now,
             ),
@@ -193,15 +191,12 @@ class TestLeaseClaimQueryContract(unittest.TestCase):
             "fencing_token = leases.fencing_token + 1",
             "last_heartbeat = NOW()",
             "retry_after = NULL",
-            "unclaimed_since = NULL",
             "updated_at = NOW()",
         )
         retained = (
             "failure_count =",
             "status_reason =",
             "status_reason_detail =",
-            "status_reason_updated_at =",
-            "audit_revision =",
             "membership_revision =",
         )
 
@@ -218,11 +213,15 @@ class TestLeaseClaimQueryContract(unittest.TestCase):
                 "failure_count",
                 "status_reason",
                 "status_reason_detail",
-                "status_reason_updated_at",
-                "audit_revision",
                 "membership_revision",
             ):
                 self.assertIn(projected, sql)
+            for absent in (
+                "unclaimed_since",
+                "status_reason_updated_at",
+                "audit_revision",
+            ):
+                self.assertNotIn(absent, sql)
 
     def test_claims_project_no_child_owner_or_durable_cursor(self) -> None:
         for query in (
@@ -283,7 +282,6 @@ class TestLeaseControlQueryContract(unittest.TestCase):
         self.assertIn("status = 'unclaimed'::public.feed_status", sql)
         self.assertIn("worker_id = NULL", sql)
         self.assertIn("last_heartbeat = NULL", sql)
-        self.assertIn("unclaimed_since = NOW()", sql)
         self.assertIn("updated_at = NOW()", sql)
         self.assertNotIn("failure_count =", sql)
         self.assertNotIn("retry_after =", sql)
@@ -405,11 +403,8 @@ class TestLeaseFailureContract(unittest.TestCase):
             )
             self.assertIn("worker_id = NULL", sql)
             self.assertIn("last_heartbeat = NULL", sql)
-            self.assertIn("unclaimed_since = NOW()", sql)
             self.assertIn("status_reason =", sql)
             self.assertIn("status_reason_detail =", sql)
-            self.assertIn("status_reason_updated_at = NOW()", sql)
-            self.assertIn("audit_revision = leases.audit_revision + 1", sql)
             self.assertIn("updated_at = NOW()", sql)
             self.assertNotIn("public.feeds", sql)
             self.assertNotIn("feed_properties", sql)
@@ -804,8 +799,6 @@ class TestChildMutationQueryContract(unittest.TestCase):
         self.assertIn("retry_after = NULL", set_clause)
         self.assertIn("status_reason = NULL", set_clause)
         self.assertIn("status_reason_detail = NULL", set_clause)
-        self.assertIn("status_reason_updated_at = NULL", set_clause)
-        self.assertIn("audit_revision = leases.audit_revision + 1", set_clause)
         self.assertNotIn("worker_id =", set_clause)
         self.assertNotIn("fencing_token =", set_clause)
         self.assertNotIn("last_heartbeat =", set_clause)

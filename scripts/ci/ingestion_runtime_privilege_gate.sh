@@ -12,8 +12,6 @@ bootstrap_sql="$privilege_dir/000_ingestion_runtime_bootstrap.sql"
 reconcile_sql="$privilege_dir/999_ingestion_runtime_reconcile.sql"
 contract_sql="$ci_sql_dir/ingestion_runtime_privilege_contract.sql"
 legacy_snapshot_sql="$ci_sql_dir/ingestion_legacy_privilege_snapshot.sql"
-runtime_columns_check_sql="$ci_sql_dir/ingestion_lease_runtime_columns_check.sql"
-runtime_columns_migration_sql="$ingestion_dir/039_ingestion_lease_runtime_columns.sql"
 
 psql_gate() {
   psql -X -v ON_ERROR_STOP=1 "$@"
@@ -75,12 +73,6 @@ run_reduced_schema_runtime_fixture() (
     -f "$ingestion_dir/031_ingestion_leases.sql"
   PGDATABASE="$fixture_database" psql_gate \
     -f "$ingestion_dir/032_ingestion_lease_guards.sql"
-  PGDATABASE="$fixture_database" psql_gate \
-    -f "$runtime_columns_migration_sql"
-  PGDATABASE="$fixture_database" psql_gate \
-    -f "$runtime_columns_migration_sql"
-  PGDATABASE="$fixture_database" psql_gate \
-    -f "$runtime_columns_check_sql"
 
   fixture_url=$(fixture_dsn "$fixture_database")
   echo "::add-mask::$fixture_url"
@@ -107,11 +99,6 @@ run_cutover_operation_fixture() (
     esac
     PGDATABASE="$fixture_database" psql_gate -f "$migration"
   done
-  PGDATABASE="$fixture_database" psql_gate \
-    -f "$runtime_columns_migration_sql"
-  PGDATABASE="$fixture_database" psql_gate \
-    -f "$runtime_columns_check_sql"
-
   fixture_url=$(fixture_dsn "$fixture_database")
   echo "::add-mask::$fixture_url"
   INGESTION_CUTOVER_TEST_DSN="$fixture_url" \
@@ -200,10 +187,6 @@ apply_schema_gate() (
     echo "Applying $migration..."
     psql_gate -f "$migration"
   done
-  # The fresh path applies 038 once in-order and once more as an explicit
-  # replay.  The catalog check is independent of source-file presence.
-  psql_gate -f "$runtime_columns_migration_sql"
-  psql_gate -f "$runtime_columns_check_sql"
   psql_gate -v legacy_role= -f "$reconcile_sql"
 
   echo "Starting PUBLIC/direct large-object creator drift fixture..."

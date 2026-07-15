@@ -111,7 +111,6 @@ SELECT
         'worker_id',
         'fencing_token',
         'last_heartbeat',
-        'unclaimed_since',
         'membership_revision',
         'updated_at'
     ]::TEXT[] AS durable_state
@@ -289,7 +288,6 @@ activated AS (
     SET status = 'unclaimed'::public.feed_status,
         worker_id = NULL,
         last_heartbeat = NULL,
-        unclaimed_since = NOW(),
         fencing_token = GREATEST(
             leases.fencing_token,
             child_fences.maximum_child_fence + 1
@@ -342,7 +340,6 @@ BEGIN
                'worker_id',
                'fencing_token',
                'last_heartbeat',
-               'unclaimed_since',
                'membership_revision',
                'updated_at'
            ]::TEXT[] IS DISTINCT FROM before_state.durable_state;

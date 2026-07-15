@@ -1,9 +1,5 @@
 \set ON_ERROR_STOP on
 
--- Catalog validation is read-only and raises before any authority report when
--- the generic runtime cannot execute against the applied table.
-\ir ../../ci/ingestion_lease_runtime_columns_check.sql
-
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '30s';

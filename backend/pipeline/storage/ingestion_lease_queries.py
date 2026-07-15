@@ -20,7 +20,6 @@ claimed AS (
         fencing_token = leases.fencing_token + 1,
         last_heartbeat = NOW(),
         retry_after = NULL,
-        unclaimed_since = NULL,
         updated_at = NOW()
     FROM candidates
     WHERE leases.source_type = candidates.source_type
@@ -36,8 +35,6 @@ claimed AS (
         leases.retry_after,
         leases.status_reason,
         leases.status_reason_detail,
-        leases.status_reason_updated_at,
-        leases.audit_revision,
         leases.membership_revision,
         leases.updated_at
 )
@@ -81,7 +78,6 @@ claimed AS (
         fencing_token = leases.fencing_token + 1,
         last_heartbeat = NOW(),
         retry_after = NULL,
-        unclaimed_since = NULL,
         updated_at = NOW()
     FROM candidates
     WHERE leases.source_type = candidates.source_type
@@ -97,8 +93,6 @@ claimed AS (
         leases.retry_after,
         leases.status_reason,
         leases.status_reason_detail,
-        leases.status_reason_updated_at,
-        leases.audit_revision,
         leases.membership_revision,
         leases.updated_at
 )
@@ -193,8 +187,6 @@ WITH current_state AS MATERIALIZED (
         retry_after,
         status_reason,
         status_reason_detail,
-        status_reason_updated_at,
-        audit_revision,
         membership_revision,
         updated_at
     FROM public.ingestion_leases
@@ -207,7 +199,6 @@ released AS (
     SET status = 'unclaimed'::public.feed_status,
         worker_id = NULL,
         last_heartbeat = NULL,
-        unclaimed_since = NOW(),
         updated_at = NOW()
     FROM current_state
     WHERE leases.source_type = current_state.source_type
@@ -226,8 +217,6 @@ released AS (
         leases.retry_after,
         leases.status_reason,
         leases.status_reason_detail,
-        leases.status_reason_updated_at,
-        leases.audit_revision,
         leases.membership_revision,
         leases.updated_at
 )
@@ -267,15 +256,6 @@ SELECT
             THEN released.status_reason_detail
         ELSE current_state.status_reason_detail
     END AS status_reason_detail,
-    CASE
-        WHEN released.source_type IS NOT NULL
-            THEN released.status_reason_updated_at
-        ELSE current_state.status_reason_updated_at
-    END AS status_reason_updated_at,
-    CASE
-        WHEN released.source_type IS NOT NULL THEN released.audit_revision
-        ELSE current_state.audit_revision
-    END AS audit_revision,
     CASE
         WHEN released.source_type IS NOT NULL
             THEN released.membership_revision
@@ -340,11 +320,8 @@ updated AS (
                 END
                 + (RANDOM() * INTERVAL '10 seconds')
         END,
-        unclaimed_since = NOW(),
         status_reason = $8,
         status_reason_detail = $9,
-        status_reason_updated_at = NOW(),
-        audit_revision = leases.audit_revision + 1,
         updated_at = NOW()
     FROM current_state
     WHERE leases.source_type = current_state.source_type
@@ -392,11 +369,8 @@ updated AS (
         last_heartbeat = NULL,
         failure_count = 0,
         retry_after = $5,
-        unclaimed_since = NOW(),
         status_reason = $6,
         status_reason_detail = $7,
-        status_reason_updated_at = NOW(),
-        audit_revision = leases.audit_revision + 1,
         updated_at = NOW()
     FROM current_state
     WHERE leases.source_type = current_state.source_type
@@ -436,8 +410,6 @@ SELECT
     retry_after,
     status_reason,
     status_reason_detail,
-    status_reason_updated_at,
-    audit_revision,
     membership_revision,
     updated_at
 FROM public.ingestion_leases
@@ -891,8 +863,6 @@ SET failure_count = 0,
     retry_after = NULL,
     status_reason = NULL,
     status_reason_detail = NULL,
-    status_reason_updated_at = NULL,
-    audit_revision = leases.audit_revision + 1,
     updated_at = NOW()
 WHERE source_type = $1
   AND lease_key = $2
@@ -904,7 +874,6 @@ WHERE source_type = $1
       OR retry_after IS NOT NULL
       OR status_reason IS NOT NULL
       OR status_reason_detail IS NOT NULL
-      OR status_reason_updated_at IS NOT NULL
   )
 RETURNING
     source_type,
@@ -917,8 +886,6 @@ RETURNING
     retry_after,
     status_reason,
     status_reason_detail,
-    status_reason_updated_at,
-    audit_revision,
     membership_revision,
     updated_at
 """

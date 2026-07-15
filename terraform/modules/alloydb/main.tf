@@ -179,14 +179,6 @@ resource "google_storage_bucket_object" "bcfy_calls_sid_operation" {
   source = "${path.module}/sql/operations/bcfy_calls_sid/${each.value}"
 }
 
-resource "google_storage_bucket_object" "ingestion_lease_runtime_check" {
-  count = var.apply_schema ? 1 : 0
-
-  name   = "ci/ingestion_lease_runtime_columns_check.sql"
-  bucket = google_storage_bucket.schema[0].name
-  source = "${path.module}/sql/ci/ingestion_lease_runtime_columns_check.sql"
-}
-
 # Dedicated service account for the Cloud Run Job, scoped to only the
 # permissions it needs: reading the database password from Secret Manager
 # and reading SQL files from the GCS staging bucket.
@@ -470,7 +462,6 @@ resource "google_cloud_run_v2_job" "bcfy_calls_sid_operation" {
     google_secret_manager_secret_iam_member.schema_migrator,
     google_storage_bucket_iam_member.schema_migrator,
     google_storage_bucket_object.bcfy_calls_sid_operation,
-    google_storage_bucket_object.ingestion_lease_runtime_check,
   ]
 }
 

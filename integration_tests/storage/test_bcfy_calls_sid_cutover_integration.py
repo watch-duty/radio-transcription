@@ -130,20 +130,18 @@ async def _child_rows(pool: asyncpg.Pool) -> list[dict[str, object]]:
 async def test_reduced_schema_executes_real_runtime_lifecycle(
     cutover_pool: asyncpg.Pool,
 ) -> None:
-    """Migration 038 upgrades reduced 031 for every Lease lifecycle path."""
+    """The reduced Lease schema supports every runtime lifecycle path."""
     sid = str(uuid.uuid4().int)
     await cutover_pool.execute(
         """
         INSERT INTO public.ingestion_leases (
             source_type,
             lease_key,
-            status,
-            unclaimed_since
+            status
         ) VALUES (
             'bcfy_calls',
             $1,
-            'unclaimed'::public.feed_status,
-            NOW()
+            'unclaimed'::public.feed_status
         )
         """,
         sid,

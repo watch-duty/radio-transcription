@@ -74,8 +74,6 @@ def _lease_snapshot() -> ingestion_lease_store.LeaseSnapshot:
         retry_after=None,
         status_reason=None,
         status_reason_detail=None,
-        status_reason_updated_at=None,
-        audit_revision=1,
         membership_revision=1,
         updated_at=_NOW,
     )

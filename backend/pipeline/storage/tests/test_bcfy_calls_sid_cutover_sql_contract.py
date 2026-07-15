@@ -8,14 +8,7 @@ import unittest
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
 _ALLOYDB_ROOT = _REPO_ROOT / "terraform/modules/alloydb"
-_INGESTION_SQL = _ALLOYDB_ROOT / "sql/ingestion"
 _OPERATIONS_SQL = _ALLOYDB_ROOT / "sql/operations/bcfy_calls_sid"
-_RUNTIME_MIGRATION = _INGESTION_SQL / (
-    "039_ingestion_lease_runtime_columns.sql"
-)
-_RUNTIME_CHECK = _ALLOYDB_ROOT / (
-    "sql/ci/ingestion_lease_runtime_columns_check.sql"
-)
 
 
 def _named_block(text: str, marker: str) -> str:
@@ -88,55 +81,6 @@ def _sql_without_comments(sql: str) -> str:
         line for line in sql.splitlines() if not line.lstrip().startswith("--")
     )
     return " ".join(uncommented.split()).lower()
-
-
-class TestLeaseRuntimeMigrationContract(unittest.TestCase):
-    """Pins the forward-only repair required by the generic Lease runtime."""
-
-    def test_runtime_migration_is_unique_and_historical_031_is_unchanged(
-        self,
-    ) -> None:
-        names = {path.name for path in _INGESTION_SQL.glob("*.sql")}
-
-        self.assertIn(_RUNTIME_MIGRATION.name, names)
-        self.assertEqual(
-            sum(name.startswith("039_") for name in names),
-            1,
-        )
-        historical = (_INGESTION_SQL / "031_ingestion_leases.sql").read_text()
-        self.assertNotIn("unclaimed_since", historical)
-        self.assertNotIn("status_reason_updated_at", historical)
-        self.assertNotIn("audit_revision", historical)
-
-    def test_runtime_migration_is_replay_safe_and_fail_closed(self) -> None:
-        sql = _sql_without_comments(_RUNTIME_MIGRATION.read_text())
-
-        for column_contract in (
-            "add column if not exists unclaimed_since timestamptz",
-            "add column if not exists status_reason_updated_at timestamptz",
-            "add column if not exists audit_revision bigint not null default 0",
-        ):
-            self.assertIn(column_contract, sql)
-        self.assertIn("ingestion_leases_audit_revision_nonnegative", sql)
-        self.assertIn("validate constraint", sql)
-        self.assertIn("pg_catalog.pg_attribute", sql)
-        self.assertIn("pg_catalog.pg_constraint", sql)
-        self.assertNotRegex(sql, r"\b(delete|truncate)\b")
-        self.assertNotIn("set fencing_token", sql)
-        self.assertNotIn("set status", sql)
-
-    def test_catalog_check_pins_exact_runtime_shape(self) -> None:
-        sql = _sql_without_comments(_RUNTIME_CHECK.read_text())
-
-        for token in (
-            "unclaimed_since",
-            "status_reason_updated_at",
-            "audit_revision",
-            "ingestion_leases_audit_revision_nonnegative",
-            "pg_catalog.pg_get_expr",
-            "convalidated",
-        ):
-            self.assertIn(token, sql)
 
 
 class TestSidCutoverOperationPlacement(unittest.TestCase):

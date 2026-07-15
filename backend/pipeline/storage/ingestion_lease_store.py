@@ -76,8 +76,6 @@ class LeaseSnapshot:
     retry_after: datetime.datetime | None
     status_reason: feed_store.FeedStatusReason | None
     status_reason_detail: str | None
-    status_reason_updated_at: datetime.datetime | None
-    audit_revision: int
     membership_revision: int
     updated_at: datetime.datetime
 
@@ -1193,8 +1191,6 @@ def _snapshot_from_row(
         retry_after=row[f"{prefix}retry_after"],
         status_reason=_status_reason_from_row(row, prefix),
         status_reason_detail=row[f"{prefix}status_reason_detail"],
-        status_reason_updated_at=row[f"{prefix}status_reason_updated_at"],
-        audit_revision=row[f"{prefix}audit_revision"],
         membership_revision=row[f"{prefix}membership_revision"],
         updated_at=row[f"{prefix}updated_at"],
     )
@@ -1207,7 +1203,6 @@ def _lease_has_dirty_lifecycle(snapshot: LeaseSnapshot) -> bool:
         or snapshot.retry_after is not None
         or snapshot.status_reason is not None
         or snapshot.status_reason_detail is not None
-        or snapshot.status_reason_updated_at is not None
     )
 
 
@@ -2236,12 +2231,6 @@ class IngestionLeaseStore:
                     "lease_key": grant.lease_key,
                     "owner_worker_id": str(grant.owner_worker_id),
                     "fencing_token": grant.fencing_token,
-                    "before_audit_revision": (
-                        committed.lease_effect.before_snapshot.audit_revision
-                    ),
-                    "after_audit_revision": (
-                        committed.lease_effect.after_snapshot.audit_revision
-                    ),
                 },
             )
         return committed
@@ -2472,9 +2461,6 @@ class IngestionLeaseStore:
             or after_snapshot.retry_after is not None
             or after_snapshot.status_reason is not None
             or after_snapshot.status_reason_detail is not None
-            or after_snapshot.status_reason_updated_at is not None
-            or after_snapshot.audit_revision
-            != before_snapshot.audit_revision + 1
             or after_snapshot.membership_revision
             != before_snapshot.membership_revision
         ):
