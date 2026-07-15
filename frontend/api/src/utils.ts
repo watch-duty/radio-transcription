@@ -152,3 +152,28 @@ export function parseTimestamp(dateStr?: string | null): number | undefined {
   const parsed = Date.parse(dateStr);
   return Number.isNaN(parsed) ? undefined : parsed;
 }
+
+/**
+ * Converts an object's keys from camelCase to snake_case recursively, skipping undefined values.
+ */
+export function toSnake<T = unknown>(obj: unknown): T {
+  if (obj === null || obj === undefined || typeof obj !== 'object') {
+    return obj as T;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => toSnake(item)) as unknown as T;
+  }
+  return Object.entries(obj as Record<string, unknown>).reduce(
+    (acc, [key, value]) => {
+      if (value !== undefined) {
+        const snakeKey = key.replace(
+          /[A-Z]/g,
+          (letter) => `_${letter.toLowerCase()}`
+        );
+        acc[snakeKey] = toSnake(value);
+      }
+      return acc;
+    },
+    {} as Record<string, unknown>
+  ) as T;
+}

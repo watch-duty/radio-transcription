@@ -43,6 +43,7 @@ import {
   handleBackendError,
   parseTimestamp,
   toCamel,
+  toSnake,
 } from '../utils.js';
 
 interface BaseFeedBackend {
@@ -212,19 +213,11 @@ function appendTagFilters(queryParams: URLSearchParams, tags: string[]): void {
 }
 
 function convertFeedCreate(create: FeedCreate): FeedCreateBackend {
-  return {
-    name: create.name,
-    source_type: create.sourceType,
-    source_feed_id: create.sourceFeedId,
-    tags: create.tags,
-  };
+  return toSnake<FeedCreateBackend>(create);
 }
 
 function convertFeedUpdate(update: FeedUpdate): FeedUpdateBackend {
-  return {
-    name: update.name,
-    tags: update.tags,
-  };
+  return toSnake<FeedUpdateBackend>(update);
 }
 
 @Route('api/v1/feeds')
