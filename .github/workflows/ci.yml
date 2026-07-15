@@ -191,8 +191,7 @@ jobs:
             echo "=========================================="
             echo "Validating Terraform module in: $dir"
             echo "=========================================="
-            cd "$dir"
-            terraform init -backend=false && terraform validate
+            (cd "$GITHUB_WORKSPACE/$dir" && terraform init -backend=false && terraform validate)
           done
 
   run-backend-tests:
