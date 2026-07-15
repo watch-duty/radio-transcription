@@ -504,7 +504,9 @@ class VMHealthStateTests(unittest.TestCase):
         assert last_probe_completed_ago_sec is not None
         self.assertAlmostEqual(last_probe_completed_ago_sec, 15.1)
 
-    def test_missing_initial_probe_fails_closed_after_grace(self) -> None:
+    def test_missing_initial_probe_reports_unhealthy_before_and_after_grace(
+        self,
+    ) -> None:
         state = vm_health_agent.VMHealthState(started_at=100.0)
 
         fresh = state.current_decision(
@@ -518,7 +520,11 @@ class VMHealthStateTests(unittest.TestCase):
             probe_stale_after_sec=15.0,
         )
 
-        self.assertTrue(fresh.vm_healthy)
+        # No worker has ever been observed healthy, so both report unhealthy
+        # regardless of the probe_stale grace window -- only probe_stale
+        # itself (used for diagnostics) should flip at the boundary.
+        self.assertFalse(fresh.vm_healthy)
+        self.assertEqual(fresh.http_status, 503)
         self.assertFalse(fresh.probe_stale)
         self.assertFalse(stale.vm_healthy)
         self.assertEqual(stale.http_status, 503)
@@ -613,6 +619,54 @@ class VMHealthHandlerTests(AioHTTPTestCase):
             body["last_probe_completed_ago_sec"],
             self.settings.probe_stale_after_sec,
         )
+
+
+class VMHealthHandlerStartupRaceTests(AioHTTPTestCase):
+    """Regression test for the empty-worker_results startup race.
+
+    Before the first probe cycle completes, VMHealthState.worker_results is
+    still its default empty tuple. /healthz must not report the VM healthy
+    in that window -- it must wait for a real probe to observe a healthy
+    worker.
+    """
+
+    async def get_application(self) -> web.Application:
+        self.settings = vm_health_agent.VMHealthSettings(
+            probe_interval_sec=60.0,
+            hysteresis_sec=600.0,
+        )
+        # No probe has run yet: worker_results is still the default ().
+        self.state = vm_health_agent.VMHealthState()
+        return vm_health_agent.build_app(self.settings, self.state)
+
+    async def _get_healthz(self) -> tuple[int, dict]:
+        response = await self.client.request("GET", "/healthz")
+        return response.status, await response.json()
+
+    async def test_unhealthy_until_first_probe_then_healthy(self) -> None:
+        status, body = await self._get_healthz()
+
+        self.assertEqual(status, 503)
+        self.assertEqual(body["status"], "unhealthy")
+        self.assertFalse(body["has_passed_startup"])
+
+        self.state.update(
+            (
+                _probe_result(
+                    "http://127.0.0.1:8081/healthz",
+                    healthy=True,
+                    status_code=200,
+                ),
+            ),
+            now=time.monotonic(),
+            hysteresis_sec=self.settings.hysteresis_sec,
+        )
+
+        status, body = await self._get_healthz()
+
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "healthy")
+        self.assertTrue(body["has_passed_startup"])
 
 
 class VMHealthServeForeverTests(unittest.IsolatedAsyncioTestCase):

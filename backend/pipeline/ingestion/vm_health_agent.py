@@ -266,8 +266,9 @@ class VMHealthState:
         hysteresis_sec: float,
         probe_stale_after_sec: float | None = None,
     ) -> VMHealthDecision:
-        # Default to healthy before the first probe completes so the MIG does
-        # not recycle an otherwise booting instance.
+        # last_probe_completed_at is unset until the first probe cycle
+        # completes; fall back to time-since-process-start so a VM that never
+        # probes still eventually reports probe_stale for diagnostics.
         last_probe_completed_ago_sec: float | None = None
         probe_stale = False
         if self.last_probe_completed_at is not None:
@@ -296,9 +297,13 @@ class VMHealthState:
             elapsed = 0.0
 
         if not self.has_passed_startup:
-            # During startup, the VM is only healthy if the probe is not stale
-            # and workers are healthy. (MIG rolling updates block on this).
-            vm_healthy = not probe_stale and not all_workers_unhealthy
+            # Before any worker has ever been observed healthy, always report
+            # unhealthy. Do not fall back to `not all_workers_unhealthy` here:
+            # worker_results starts as an empty tuple, which makes
+            # all_workers_unhealthy vacuously False and would report the VM
+            # healthy before the first probe cycle ever completes (MIG
+            # rolling updates block on this).
+            vm_healthy = False
         else:
             # Once we pass startup, transient failures are absorbed by the
             # hysteresis grace window before reporting unhealthy.
