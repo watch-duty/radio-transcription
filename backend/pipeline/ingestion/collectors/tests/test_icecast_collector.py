@@ -645,7 +645,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             feed,
             shutdown_event,
             url_base="https://mock.example.com/",
-            resources=_default_resources(),
+            resources=_resources_with_probe_status(403, reason="Forbidden"),
         )
         with self.assertRaises(FeedFailure) as context:
             await asyncio.wait_for(gen.__anext__(), timeout=1.0)
@@ -770,6 +770,111 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             context.exception,
             FeedStatusReason.SOURCE_OFFLINE,
             "HTTP error 404 Not Found",
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_http_401_probe_404_source_offline(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Transient HTTP error 401 with probe 404 maps to source_offline."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7780,
+            wait_delay=0.0,
+            wait_result=8,
+            stderr_lines=[b"HTTP error 401 Unauthorized\n"],
+        )
+
+        feed = _make_feed("transient-401-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(404, reason="Not Found"),
+        )
+        with self.assertRaises(FeedFailure) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SOURCE_OFFLINE,
+            "HTTP error 404 Not Found",
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_http_401_probe_401_auth_failed(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Persistent HTTP error 401 with probe 401 maps to system_authentication_failed."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7780,
+            wait_delay=0.0,
+            wait_result=8,
+            stderr_lines=[b"HTTP error 401 Unauthorized\n"],
+        )
+
+        feed = _make_feed("persistent-401-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(401, reason="Unauthorized"),
+        )
+        with self.assertRaises(FeedFailure) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED,
+            "HTTP error 401 Unauthorized",
+        )
+
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_ffmpeg_error_exit_code_http_401_probe_200_source_unreachable(
+        self, mock_create_ffmpeg: AsyncMock
+    ) -> None:
+        """Transient HTTP error 401 with probe 200 maps to source_unreachable."""
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7780,
+            wait_delay=0.0,
+            wait_result=8,
+            stderr_lines=[b"HTTP error 401 Unauthorized\n"],
+        )
+
+        feed = _make_feed(
+            "transient-401-online-feed", "http://example.com/stream"
+        )
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+        with self.assertRaises(FeedFailure) as context:
+            await asyncio.wait_for(gen.__anext__(), timeout=1.0)
+
+        _assert_collector_failure(
+            self,
+            context.exception,
+            FeedStatusReason.SOURCE_UNREACHABLE,
+            "ffmpeg failed with authentication error despite stream being available "
+            "on probe; stderr: HTTP error 401 Unauthorized",
         )
 
     @patch(
