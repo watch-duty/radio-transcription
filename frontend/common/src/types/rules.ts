@@ -1,3 +1,5 @@
+import type { Tag } from './feeds.js';
+
 export type ScopeLevel = 'FEED_SPECIFIC' | 'GLOBAL';
 export type EvaluationType = 'KEYWORD_MATCH' | 'REGEX_MATCH' | 'RULE_GROUP';
 export type LogicalOperator = 'ANY' | 'ALL';
@@ -44,6 +46,7 @@ export interface Rule {
   isActive: boolean;
   scope: Scope;
   conditions: RuleConditions;
+  tags?: Tag[];
   metadata: RuleMetadata;
 }
 
@@ -53,6 +56,7 @@ export interface RuleCreate {
   isActive?: boolean;
   scope: Scope;
   conditions: RuleConditions;
+  tags?: Tag[];
 }
 
 export interface RuleUpdate {
@@ -61,4 +65,5 @@ export interface RuleUpdate {
   isActive?: boolean;
   scope?: Scope;
   conditions?: RuleConditions;
+  tags?: Tag[];
 }

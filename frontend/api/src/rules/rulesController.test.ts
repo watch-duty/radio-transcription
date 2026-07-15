@@ -45,6 +45,7 @@ describe('RulesController', () => {
       keywords: ['test'],
       case_sensitive: false,
     },
+    tags: [{ key: 'geo_event_type', value: 'flooding' }],
     metadata: {
       created_by: 'test@example.com',
       created_at: '2026-01-01T00:00:00Z',
@@ -67,6 +68,7 @@ describe('RulesController', () => {
       keywords: ['test'],
       caseSensitive: false,
     },
+    tags: [{ key: 'geo_event_type', value: 'flooding' }],
     metadata: {
       createdBy: 'test@example.com',
       createdAt: '2026-01-01T00:00:00Z',
@@ -149,6 +151,7 @@ describe('RulesController', () => {
           keywords: ['test'],
           caseSensitive: false,
         },
+        tags: [{ key: 'geo_event_type', value: 'flooding' }],
       };
       const result = await controller.createRule(mockAdminRequest, payload);
 
@@ -167,6 +170,7 @@ describe('RulesController', () => {
             keywords: ['test'],
             case_sensitive: false,
           },
+          tags: [{ key: 'geo_event_type', value: 'flooding' }],
         },
       });
     });
@@ -206,6 +210,21 @@ describe('RulesController', () => {
         url: 'http://rules-api.example.com/rule_123',
         method: 'PUT',
         data: { rule_name: 'Updated Name' },
+      });
+    });
+
+    it('should send a tags-only update', async () => {
+      mockRequest.mockResolvedValueOnce({ data: mockBackendRule });
+
+      const controller = new RulesController();
+      await controller.updateRule(mockAdminRequest, 'rule_123', {
+        tags: [{ key: 'geo_event_type', value: 'wildfire' }],
+      });
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: 'http://rules-api.example.com/rule_123',
+        method: 'PUT',
+        data: { tags: [{ key: 'geo_event_type', value: 'wildfire' }] },
       });
     });
 

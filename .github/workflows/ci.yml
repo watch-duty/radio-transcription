@@ -461,9 +461,9 @@ jobs:
           assert_hot_guard_clean
           echo "HOT-protection check passed: no index references a guarded column."
 
-  # The unit suite mocks asyncpg. Run the dormant Lease lifecycle against every
-  # supported PostgreSQL major so syntax, lock ordering, and fence transitions
-  # are proven before any runtime is allowed to consume this API.
+  # The unit suite mocks asyncpg. Exercise the dormant fenced storage
+  # contracts against every supported PostgreSQL major so SQL behavior and
+  # fence transitions are proven before the runtime consumes these APIs.
   ingestion-lease-lifecycle-postgres:
     needs: [setup]
     if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
@@ -514,12 +514,15 @@ jobs:
               psql -v ON_ERROR_STOP=1 -f "$migration"
             done
           done
-      - name: Prove fenced Lease lifecycle
+      - name: Prove fenced ingestion storage
         env:
           INGESTION_LEASE_TEST_DSN: postgresql://postgres:postgres@localhost:5432/postgres
           INGESTION_LEASE_EXTERNAL_POSTGRES_REQUIRED: "1"
+          INGESTION_FEED_TEST_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+          INGESTION_FEED_EXTERNAL_POSTGRES_REQUIRED: "1"
           EXPECTED_POSTGRES_MAJOR: ${{ matrix.postgres-version }}
         run: >-
           uv run python -m pytest
           integration_tests/storage/test_ingestion_lease_store_integration.py
+          integration_tests/storage/test_feed_grant_heartbeat_integration.py
           -q -n 0

@@ -214,6 +214,7 @@ class VMHealthDecision:
     probe_stale: bool
     last_probe_completed_ago_sec: float | None
     probe_stale_after_sec: float | None
+    has_passed_startup: bool
 
 
 @dataclass
@@ -224,6 +225,8 @@ class VMHealthState:
     worker_results: tuple[WorkerProbeResult, ...] = field(
         default_factory=tuple,
     )
+
+    has_passed_startup: bool = False
 
     def update(
         self,
@@ -244,6 +247,13 @@ class VMHealthState:
         else:
             self.all_workers_unhealthy_since = None
 
+        if not self.has_passed_startup:
+            any_worker_healthy = bool(self.worker_results) and any(
+                result.healthy for result in self.worker_results
+            )
+            if any_worker_healthy:
+                self.has_passed_startup = True
+
         return self.current_decision(
             now=now,
             hysteresis_sec=hysteresis_sec,
@@ -256,8 +266,9 @@ class VMHealthState:
         hysteresis_sec: float,
         probe_stale_after_sec: float | None = None,
     ) -> VMHealthDecision:
-        # Default to healthy before the first probe completes so the MIG does
-        # not recycle an otherwise booting instance.
+        # last_probe_completed_at is unset until the first probe cycle
+        # completes; fall back to time-since-process-start so a VM that never
+        # probes still eventually reports probe_stale for diagnostics.
         last_probe_completed_ago_sec: float | None = None
         probe_stale = False
         if self.last_probe_completed_at is not None:
@@ -285,9 +296,20 @@ class VMHealthState:
         else:
             elapsed = 0.0
 
-        vm_healthy = not probe_stale and (
-            not all_workers_unhealthy or elapsed < hysteresis_sec
-        )
+        if not self.has_passed_startup:
+            # Before any worker has ever been observed healthy, always report
+            # unhealthy. Do not fall back to `not all_workers_unhealthy` here:
+            # worker_results starts as an empty tuple, which makes
+            # all_workers_unhealthy vacuously False and would report the VM
+            # healthy before the first probe cycle ever completes (MIG
+            # rolling updates block on this).
+            vm_healthy = False
+        else:
+            # Once we pass startup, transient failures are absorbed by the
+            # hysteresis grace window before reporting unhealthy.
+            vm_healthy = not probe_stale and (
+                not all_workers_unhealthy or elapsed < hysteresis_sec
+            )
         return VMHealthDecision(
             vm_healthy=vm_healthy,
             http_status=200 if vm_healthy else 503,
@@ -298,6 +320,7 @@ class VMHealthState:
             probe_stale=probe_stale,
             last_probe_completed_ago_sec=last_probe_completed_ago_sec,
             probe_stale_after_sec=probe_stale_after_sec,
+            has_passed_startup=self.has_passed_startup,
         )
 
 
@@ -436,6 +459,7 @@ async def _healthz(request: web.Request) -> web.Response:
     return web.json_response(
         {
             "status": "healthy" if decision.vm_healthy else "unhealthy",
+            "has_passed_startup": decision.has_passed_startup,
             "workers": [asdict(worker) for worker in decision.workers],
             "all_workers_unhealthy_for_sec": (
                 decision.all_workers_unhealthy_for_sec
