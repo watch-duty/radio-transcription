@@ -94,7 +94,6 @@ class LeaseOperationDisposition(enum.StrEnum):
     """Closed outcome vocabulary for exact-grant control operations."""
 
     APPLIED = "applied"
-    ACCEPTED_NOOP = "accepted_noop"
     MISSING = "missing"
     OWNER_MISMATCH = "owner_mismatch"
     FENCE_MISMATCH = "fence_mismatch"
@@ -115,7 +114,6 @@ class LeaseHeartbeatResult:
 
     grant: LeaseGrant
     disposition: LeaseOperationDisposition
-    snapshot: LeaseSnapshot | None
 
 
 class LeaseReleaseCause(enum.StrEnum):
@@ -153,7 +151,13 @@ class GrantRejected:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class BudgetedFailure:
-    """Closed action for a failure that consumes the Lease budget."""
+    """Failure action that consumes the retained Lease failure budget.
+
+    Attributes:
+        failure_threshold: Retained count that transitions to quarantine.
+        backoff_base_sec: Delay before exponential growth and jitter.
+        backoff_max_sec: Upper bound on the exponential delay before jitter.
+    """
 
     failure_threshold: int = feed_lifecycle.DEFAULT_FAILURE_THRESHOLD
     backoff_base_sec: int = feed_lifecycle.DEFAULT_BACKOFF_BASE_SEC
@@ -178,7 +182,11 @@ class BudgetedFailure:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class NonBudgetedFailure:
-    """Closed action for retryable failure outside the Lease budget."""
+    """Retryable failure action that cannot quarantine the Lease.
+
+    Attributes:
+        retry_after: Caller-selected UTC time when recovery becomes eligible.
+    """
 
     retry_after: datetime.datetime
 
@@ -194,41 +202,36 @@ class NonBudgetedFailure:
 type LeaseFailureAction = BudgetedFailure | NonBudgetedFailure
 
 
-class LeaseFailureEffect(enum.StrEnum):
-    """Durable lifecycle effect of finalized Lease failure."""
-
-    NONE = "none"
-    FAILURE_RECORDED = "failure_recorded"
-    QUARANTINED = "quarantined"
-
-
 @dataclasses.dataclass(frozen=True, slots=True)
 class LeaseFailureResult:
-    """Before/after evidence for one finalized failure attempt."""
+    """Narrow outcome of one exact-grant failure finalization.
+
+    Attributes:
+        disposition: Closed classification of the mutation attempt.
+        final_status: Failing or quarantined after an applied mutation; absent
+            when the exact grant was rejected.
+    """
 
     disposition: LeaseOperationDisposition
-    effect: LeaseFailureEffect
-    before_snapshot: LeaseSnapshot | None
-    after_snapshot: LeaseSnapshot | None
+    final_status: feed_store.FeedStatus | None
 
     def __post_init__(self) -> None:
-        missing = self.disposition is LeaseOperationDisposition.MISSING
-        if missing and (
-            self.before_snapshot is not None or self.after_snapshot is not None
-        ):
-            msg = "failure snapshots may be absent only for a missing Lease"
-            raise ValueError(msg)
-        if not missing and (
-            self.before_snapshot is None or self.after_snapshot is None
-        ):
-            msg = "present Lease failures require before and after snapshots"
-            raise ValueError(msg)
-        if (
-            self.disposition is not LeaseOperationDisposition.APPLIED
-            and self.effect is not LeaseFailureEffect.NONE
-        ):
-            msg = "a non-applied failure cannot report a lifecycle effect"
-            raise ValueError(msg)
+        applied = self.disposition is LeaseOperationDisposition.APPLIED
+        if applied:
+            valid_final_status = isinstance(
+                self.final_status,
+                feed_store.FeedStatus,
+            ) and self.final_status in (
+                feed_store.FeedStatus.FAILING,
+                feed_store.FeedStatus.QUARANTINED,
+            )
+            if valid_final_status:
+                return
+        elif self.final_status is None:
+            return
+
+        msg = "only an applied failure may return failing or quarantined status"
+        raise ValueError(msg)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -591,6 +594,40 @@ def _require_grant(value: object) -> LeaseGrant:
         msg = "grant must be a LeaseGrant"
         raise TypeError(msg)
     return value
+
+
+def _require_failure_action(value: object) -> LeaseFailureAction:
+    if type(value) not in (BudgetedFailure, NonBudgetedFailure):
+        msg = "action must be BudgetedFailure or NonBudgetedFailure"
+        raise TypeError(msg)
+    return typing.cast("LeaseFailureAction", value)
+
+
+def _require_status_reason(value: object) -> feed_store.FeedStatusReason:
+    if not isinstance(value, feed_store.FeedStatusReason):
+        msg = "status_reason must be a FeedStatusReason"
+        raise TypeError(msg)
+    return value
+
+
+def _require_log_actor_id(value: object) -> str:
+    """Validate an actor identity before adding it to structured log fields."""
+    if not isinstance(value, str):
+        msg = "actor_id must be a string"
+        raise TypeError(msg)
+    if not value or len(value) > 512 or any(char.isspace() for char in value):
+        msg = (
+            "actor_id must be nonempty, at most 512 chars, and whitespace-free"
+        )
+        raise ValueError(msg)
+    return value
+
+
+def _require_reason_detail(value: object) -> str | None:
+    if value is not None and not isinstance(value, str):
+        msg = "reason must be a string or None"
+        raise TypeError(msg)
+    return feed_lifecycle.status_reason_detail_storage_value(value)
 
 
 def _require_known_membership_revision(value: object) -> int | None:
@@ -1551,9 +1588,21 @@ class IngestionLeaseStore:
         row: collections.abc.Mapping | None,
     ) -> GrantRejected | None:
         """Classify a locked Lease row against a complete active grant."""
+        reason = self._grant_rejection_reason(grant, row)
+        if reason is None:
+            return None
+        snapshot = None if row is None else _snapshot_from_row(row)
+        return GrantRejected(reason, snapshot)
+
+    def _grant_rejection_reason(
+        self,
+        grant: LeaseGrant,
+        row: collections.abc.Mapping | None,
+    ) -> GrantRejectionReason | None:
+        """Classify a locked Lease row without constructing a snapshot."""
         _require_grant(grant)
         if row is None:
-            return GrantRejected(GrantRejectionReason.MISSING, None)
+            return GrantRejectionReason.MISSING
 
         source_type = _source_type_from_row(row)
         if source_type is not grant.source_type or row["lease_key"] != (
@@ -1562,22 +1611,12 @@ class IngestionLeaseStore:
             msg = "locked Lease identity did not match the requested identity"
             raise ValueError(msg)
 
-        snapshot = _snapshot_from_row(row)
-        if snapshot.status is not feed_store.FeedStatus.ACTIVE:
-            return GrantRejected(
-                GrantRejectionReason.STATUS_INELIGIBLE,
-                snapshot,
-            )
+        if _status_from_row(row) is not feed_store.FeedStatus.ACTIVE:
+            return GrantRejectionReason.STATUS_INELIGIBLE
         if row["worker_id"] != grant.owner_worker_id:
-            return GrantRejected(
-                GrantRejectionReason.OWNER_MISMATCH,
-                snapshot,
-            )
+            return GrantRejectionReason.OWNER_MISMATCH
         if row["fencing_token"] != grant.fencing_token:
-            return GrantRejected(
-                GrantRejectionReason.FENCE_MISMATCH,
-                snapshot,
-            )
+            return GrantRejectionReason.FENCE_MISMATCH
         return None
 
     async def claim_unclaimed(
@@ -1691,25 +1730,22 @@ class IngestionLeaseStore:
             return LeaseHeartbeatResult(
                 grant,
                 LeaseOperationDisposition.MISSING,
-                None,
             )
+        rejection_reason = self._grant_rejection_reason(grant, row)
         if row["applied"]:
+            if rejection_reason is not None:
+                msg = "heartbeat updated a mismatched Lease grant"
+                raise RuntimeError(msg)
             return LeaseHeartbeatResult(
                 grant,
                 LeaseOperationDisposition.APPLIED,
-                _snapshot_from_row(row),
             )
-        rejection = self._grant_rejection(grant, row)
-        if rejection is None:
-            return LeaseHeartbeatResult(
-                grant,
-                LeaseOperationDisposition.ACCEPTED_NOOP,
-                _snapshot_from_row(row),
-            )
+        if rejection_reason is None:
+            msg = "heartbeat did not update an exact active Lease grant"
+            raise RuntimeError(msg)
         return LeaseHeartbeatResult(
             grant,
-            _disposition_for_rejection(rejection.reason),
-            rejection.snapshot,
+            _disposition_for_rejection(rejection_reason),
         )
 
     async def release(
@@ -1754,10 +1790,8 @@ class IngestionLeaseStore:
 
         rejection = self._grant_rejection(grant, row)
         if rejection is None:
-            return LeaseOperationResult(
-                LeaseOperationDisposition.ACCEPTED_NOOP,
-                _snapshot_from_row(row),
-            )
+            msg = "release did not update an exact active Lease grant"
+            raise RuntimeError(msg)
         return LeaseOperationResult(
             _disposition_for_rejection(rejection.reason),
             rejection.snapshot,
@@ -1772,11 +1806,31 @@ class IngestionLeaseStore:
         actor_id: str,
         reason: str | None = None,
     ) -> LeaseFailureResult:
-        """Finalize one exhausted Lease failure through the exact grant."""
+        """Finalize one Lease failure through one exact active grant.
+
+        The caller classifies the failure by choosing a closed action. Storage
+        atomically releases ownership and applies that action without retrying
+        an outcome-unknown database call.
+
+        Args:
+            grant: Complete active ownership generation to finalize.
+            action: Budgeted or non-budgeted durable failure policy.
+            status_reason: Canonical abnormal lifecycle reason.
+            actor_id: Whitespace-free causal actor used in structured logs.
+            reason: Optional operator-facing detail, bounded before persistence.
+
+        Returns:
+            A narrow applied effect or typed exact-grant rejection.
+
+        Raises:
+            TypeError: An argument has the wrong runtime type.
+            ValueError: A bound is invalid or a database value is unknown.
+            RuntimeError: The locked exact grant produced an impossible result.
+        """
         grant = _require_grant(grant)
         action = _require_failure_action(action)
         status_reason = _require_status_reason(status_reason)
-        actor_id = _require_actor_id(actor_id)
+        actor_id = _require_log_actor_id(actor_id)
         detail = _require_reason_detail(reason)
 
         if isinstance(action, BudgetedFailure):
@@ -1787,8 +1841,8 @@ class IngestionLeaseStore:
                 grant.owner_worker_id,
                 grant.fencing_token,
                 action.failure_threshold,
-                action.backoff_max_sec,
                 action.backoff_base_sec,
+                action.backoff_max_sec,
                 status_reason.value,
                 detail,
             )
@@ -1807,6 +1861,10 @@ class IngestionLeaseStore:
         row = await self._pool.fetchrow(query, *parameters)
         result = self._failure_result(grant, row)
         if result.disposition is LeaseOperationDisposition.APPLIED:
+            final_status = result.final_status
+            if final_status is None:
+                msg = "applied Lease failure is missing its final status"
+                raise RuntimeError(msg)
             logger.warning(
                 "Ingestion Lease failure finalized",
                 extra={
@@ -1817,7 +1875,7 @@ class IngestionLeaseStore:
                     "actor_id": actor_id,
                     "status_reason": status_reason.value,
                     "failure_action": type(action).__name__,
-                    "failure_effect": result.effect.value,
+                    "final_status": final_status.value,
                 },
             )
         return result
@@ -1827,38 +1885,57 @@ class IngestionLeaseStore:
         grant: LeaseGrant,
         row: collections.abc.Mapping | None,
     ) -> LeaseFailureResult:
+        """Validate and convert one locked failure-finalization result.
+
+        Args:
+            grant: Complete authority used for the mutation attempt.
+            row: Locked query result, or ``None`` when the Lease is missing.
+
+        Returns:
+            Exact-grant disposition and applied final status, if any.
+
+        Raises:
+            ValueError: Locked identity or returned status is unknown.
+            RuntimeError: The query returned an internally inconsistent result.
+        """
         if row is None:
             return LeaseFailureResult(
                 LeaseOperationDisposition.MISSING,
-                LeaseFailureEffect.NONE,
-                None,
                 None,
             )
 
-        before_snapshot = _snapshot_from_row(row)
+        rejection_reason = self._grant_rejection_reason(grant, row)
         if not row["applied"]:
-            rejection = self._grant_rejection(grant, row)
-            disposition = (
-                LeaseOperationDisposition.ACCEPTED_NOOP
-                if rejection is None
-                else _disposition_for_rejection(rejection.reason)
-            )
+            if row["final_status"] is not None:
+                msg = "rejected Lease failure unexpectedly returned final state"
+                raise RuntimeError(msg)
+            if rejection_reason is None:
+                msg = "failure did not update an exact active Lease grant"
+                raise RuntimeError(msg)
             return LeaseFailureResult(
-                disposition,
-                LeaseFailureEffect.NONE,
-                before_snapshot,
-                before_snapshot,
+                _disposition_for_rejection(rejection_reason),
+                None,
             )
 
-        after_snapshot = _snapshot_from_row(row, "after_")
-        effect = LeaseFailureEffect.FAILURE_RECORDED
-        if after_snapshot.status is feed_store.FeedStatus.QUARANTINED:
-            effect = LeaseFailureEffect.QUARANTINED
+        if rejection_reason is not None:
+            msg = "failure updated a mismatched Lease grant"
+            raise RuntimeError(msg)
+        try:
+            final_status = feed_store.FeedStatus(row["final_status"])
+        except ValueError as error:
+            msg = f"Unknown finalized Lease status {row['final_status']!r}"
+            raise ValueError(msg) from error
+        if final_status not in (
+            feed_store.FeedStatus.FAILING,
+            feed_store.FeedStatus.QUARANTINED,
+        ):
+            msg = (
+                f"Failure finalized to ineligible status {final_status.value!r}"
+            )
+            raise RuntimeError(msg)
         return LeaseFailureResult(
             LeaseOperationDisposition.APPLIED,
-            effect,
-            before_snapshot,
-            after_snapshot,
+            final_status,
         )
 
     async def load_membership(

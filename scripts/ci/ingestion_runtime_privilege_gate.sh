@@ -13,7 +13,7 @@ reconcile_sql="$privilege_dir/999_ingestion_runtime_reconcile.sql"
 contract_sql="$ci_sql_dir/ingestion_runtime_privilege_contract.sql"
 legacy_snapshot_sql="$ci_sql_dir/ingestion_legacy_privilege_snapshot.sql"
 runtime_columns_check_sql="$ci_sql_dir/ingestion_lease_runtime_columns_check.sql"
-runtime_columns_migration_sql="$ingestion_dir/038_ingestion_lease_runtime_columns.sql"
+runtime_columns_migration_sql="$ingestion_dir/039_ingestion_lease_runtime_columns.sql"
 
 psql_gate() {
   psql -X -v ON_ERROR_STOP=1 "$@"

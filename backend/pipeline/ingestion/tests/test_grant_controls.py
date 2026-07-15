@@ -64,20 +64,6 @@ def _feed_grant(
     )
 
 
-def _feed_snapshot(
-    *,
-    status: feed_store.FeedStatus = feed_store.FeedStatus.ACTIVE,
-    failure_count: int = 0,
-    status_reason: feed_store.FeedStatusReason | None = None,
-) -> feed_store.FeedHeartbeatSnapshot:
-    return feed_store.FeedHeartbeatSnapshot(
-        status=status,
-        last_heartbeat=_NOW,
-        failure_count=failure_count,
-        status_reason=status_reason,
-    )
-
-
 def _lease_grant(
     lease_key: str = "123",
     *,
@@ -354,33 +340,17 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         dispositions = (
             feed_store.FeedGrantOperationDisposition.APPLIED,
-            feed_store.FeedGrantOperationDisposition.ACCEPTED_NOOP,
             feed_store.FeedGrantOperationDisposition.STATUS_INELIGIBLE,
             feed_store.FeedGrantOperationDisposition.MISSING,
             feed_store.FeedGrantOperationDisposition.OWNER_MISMATCH,
             feed_store.FeedGrantOperationDisposition.FENCE_MISMATCH,
         )
         grants = tuple(_feed_grant() for _ in dispositions)
-        results = []
-        for index, disposition in enumerate(dispositions):
-            snapshot = None
-            if (
-                disposition
-                is not feed_store.FeedGrantOperationDisposition.MISSING
-            ):
-                snapshot = _feed_snapshot(
-                    failure_count=1 if index == 1 else 0,
-                )
-            results.append(
-                feed_store.FeedGrantHeartbeatResult(
-                    grants[index],
-                    disposition,
-                    snapshot,
-                )
-            )
-        self.heartbeat_store.renew_grant_heartbeats.return_value = tuple(
-            results
+        results = tuple(
+            feed_store.FeedGrantHeartbeatResult(grant, disposition)
+            for grant, disposition in zip(grants, dispositions, strict=True)
         )
+        self.heartbeat_store.renew_grant_heartbeats.return_value = results
 
         translated = await self.control.heartbeat(grants)
 
@@ -392,40 +362,28 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             [item.disposition for item in translated],
             [
                 grant_control.HeartbeatDisposition.RETAINED,
-                grant_control.HeartbeatDisposition.RETAINED,
                 grant_control.HeartbeatDisposition.ADMINISTRATIVE_STOP,
                 grant_control.HeartbeatDisposition.LOST,
                 grant_control.HeartbeatDisposition.LOST,
                 grant_control.HeartbeatDisposition.LOST,
             ],
         )
-        first_lifecycle = translated[0].lifecycle
-        second_lifecycle = translated[1].lifecycle
-        self.assertIsNotNone(first_lifecycle)
-        self.assertIsNotNone(second_lifecycle)
-        assert first_lifecycle is not None
-        assert second_lifecycle is not None
-        self.assertFalse(first_lifecycle.durable_failing)
-        self.assertTrue(second_lifecycle.durable_failing)
-        self.assertTrue(all(item.lifecycle is None for item in translated[2:]))
+        self.assertTrue(all(item.lifecycle is None for item in translated))
 
     async def test_heartbeat_rejects_every_malformed_correlation(self) -> None:
         first = _feed_grant()
         second = _feed_grant()
         first_result = feed_store.FeedGrantHeartbeatResult(
             first,
-            feed_store.FeedGrantOperationDisposition.ACCEPTED_NOOP,
-            _feed_snapshot(),
+            feed_store.FeedGrantOperationDisposition.APPLIED,
         )
         second_result = feed_store.FeedGrantHeartbeatResult(
             second,
-            feed_store.FeedGrantOperationDisposition.ACCEPTED_NOOP,
-            _feed_snapshot(),
+            feed_store.FeedGrantOperationDisposition.APPLIED,
         )
         unknown_result = feed_store.FeedGrantHeartbeatResult(
             _feed_grant(),
-            feed_store.FeedGrantOperationDisposition.ACCEPTED_NOOP,
-            _feed_snapshot(),
+            feed_store.FeedGrantOperationDisposition.APPLIED,
         )
         cases = (
             (first_result,),
@@ -436,8 +394,8 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             (mock.Mock(), second_result),
         )
 
-        for results in cases:
-            with self.subTest(results=results):
+        for case_index, results in enumerate(cases):
+            with self.subTest(case_index=case_index):
                 self.heartbeat_store.reset_mock()
                 self.heartbeat_store.renew_grant_heartbeats.return_value = (
                     results
@@ -918,15 +876,14 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             grant_control.TerminalCause.NORMAL
         )
 
-        for candidate_grant, candidate_payload in (
-            (grant, forged),
-            (grant, copied),
-            (crossed_grant, payload),
+        for case_index, (candidate_grant, candidate_payload) in enumerate(
+            (
+                (grant, forged),
+                (grant, copied),
+                (crossed_grant, payload),
+            )
         ):
-            with self.subTest(
-                grant=candidate_grant,
-                payload=candidate_payload,
-            ):
+            with self.subTest(case_index=case_index):
                 with self.assertRaises(
                     grant_control.GrantControlIntegrityError
                 ):
@@ -959,31 +916,19 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         dispositions = (
             ingestion_lease_store.LeaseOperationDisposition.APPLIED,
-            ingestion_lease_store.LeaseOperationDisposition.ACCEPTED_NOOP,
             ingestion_lease_store.LeaseOperationDisposition.STATUS_INELIGIBLE,
             ingestion_lease_store.LeaseOperationDisposition.MISSING,
             ingestion_lease_store.LeaseOperationDisposition.OWNER_MISMATCH,
             ingestion_lease_store.LeaseOperationDisposition.FENCE_MISMATCH,
         )
-        grants = tuple(_lease_grant(str(index + 1)) for index in range(6))
-        results = []
-        for index, disposition in enumerate(dispositions):
-            snapshot = None
-            if (
-                disposition
-                is not ingestion_lease_store.LeaseOperationDisposition.MISSING
-            ):
-                snapshot = _lease_snapshot(
-                    failure_count=1 if index == 1 else 0,
-                )
-            results.append(
-                ingestion_lease_store.LeaseHeartbeatResult(
-                    grants[index],
-                    disposition,
-                    snapshot,
-                )
-            )
-        self.heartbeat_store.renew_heartbeats.return_value = tuple(results)
+        grants = tuple(
+            _lease_grant(str(index + 1)) for index in range(len(dispositions))
+        )
+        results = tuple(
+            ingestion_lease_store.LeaseHeartbeatResult(grant, disposition)
+            for grant, disposition in zip(grants, dispositions, strict=True)
+        )
+        self.heartbeat_store.renew_heartbeats.return_value = results
 
         translated = await self.control.heartbeat(grants)
 
@@ -993,40 +938,28 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             [item.disposition for item in translated],
             [
                 grant_control.HeartbeatDisposition.RETAINED,
-                grant_control.HeartbeatDisposition.RETAINED,
                 grant_control.HeartbeatDisposition.ADMINISTRATIVE_STOP,
                 grant_control.HeartbeatDisposition.LOST,
                 grant_control.HeartbeatDisposition.LOST,
                 grant_control.HeartbeatDisposition.LOST,
             ],
         )
-        first_lifecycle = translated[0].lifecycle
-        second_lifecycle = translated[1].lifecycle
-        self.assertIsNotNone(first_lifecycle)
-        self.assertIsNotNone(second_lifecycle)
-        assert first_lifecycle is not None
-        assert second_lifecycle is not None
-        self.assertFalse(first_lifecycle.durable_failing)
-        self.assertTrue(second_lifecycle.durable_failing)
-        self.assertTrue(all(item.lifecycle is None for item in translated[2:]))
+        self.assertTrue(all(item.lifecycle is None for item in translated))
 
     async def test_heartbeat_rejects_every_malformed_correlation(self) -> None:
         first = _lease_grant("100")
         second = _lease_grant("200")
         first_result = ingestion_lease_store.LeaseHeartbeatResult(
             first,
-            ingestion_lease_store.LeaseOperationDisposition.ACCEPTED_NOOP,
-            _lease_snapshot(),
+            ingestion_lease_store.LeaseOperationDisposition.APPLIED,
         )
         second_result = ingestion_lease_store.LeaseHeartbeatResult(
             second,
-            ingestion_lease_store.LeaseOperationDisposition.ACCEPTED_NOOP,
-            _lease_snapshot(),
+            ingestion_lease_store.LeaseOperationDisposition.APPLIED,
         )
         unknown_result = ingestion_lease_store.LeaseHeartbeatResult(
             _lease_grant("300"),
-            ingestion_lease_store.LeaseOperationDisposition.ACCEPTED_NOOP,
-            _lease_snapshot(),
+            ingestion_lease_store.LeaseOperationDisposition.APPLIED,
         )
         cases = (
             (first_result,),
@@ -1037,8 +970,8 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             (mock.Mock(), second_result),
         )
 
-        for results in cases:
-            with self.subTest(results=results):
+        for case_index, results in enumerate(cases):
+            with self.subTest(case_index=case_index):
                 self.heartbeat_store.reset_mock()
                 self.heartbeat_store.renew_heartbeats.return_value = results
                 with self.assertRaises(
@@ -1105,20 +1038,10 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
 
     async def test_failure_decisions_make_one_exact_finalize_call(self) -> None:
         grant = _lease_grant()
-        before = _lease_snapshot()
-        after = _lease_snapshot(
-            status=feed_store.FeedStatus.FAILING,
-            failure_count=1,
-            status_reason=(
-                feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
-            ),
-        )
         self.data_store.finalize_failure.return_value = (
             ingestion_lease_store.LeaseFailureResult(
                 ingestion_lease_store.LeaseOperationDisposition.APPLIED,
-                ingestion_lease_store.LeaseFailureEffect.FAILURE_RECORDED,
-                before,
-                after,
+                feed_store.FeedStatus.FAILING,
             )
         )
         policy_mock = mock.Mock(side_effect=AssertionError("policy called"))
@@ -1185,48 +1108,26 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
 
     async def test_non_budgeted_quarantine_is_rejected(self) -> None:
         grant = _lease_grant()
-        before = _lease_snapshot()
-        quarantined = _lease_snapshot(
-            status=feed_store.FeedStatus.QUARANTINED,
-            failure_count=5,
-            status_reason=(
-                feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
-            ),
+        self.data_store.finalize_failure.return_value = (
+            ingestion_lease_store.LeaseFailureResult(
+                ingestion_lease_store.LeaseOperationDisposition.APPLIED,
+                feed_store.FeedStatus.QUARANTINED,
+            )
         )
-        for effect in (
-            ingestion_lease_store.LeaseFailureEffect.QUARANTINED,
-            ingestion_lease_store.LeaseFailureEffect.FAILURE_RECORDED,
-        ):
-            with self.subTest(effect=effect):
-                self.data_store.finalize_failure.return_value = (
-                    ingestion_lease_store.LeaseFailureResult(
-                        ingestion_lease_store.LeaseOperationDisposition.APPLIED,
-                        effect,
-                        before,
-                        quarantined,
-                    )
-                )
 
-                with self.assertRaises(
-                    grant_control.GrantControlIntegrityError
-                ):
-                    await self.control.finalize(
-                        grant,
-                        self._sid_payload(grant),
-                        _non_budgeted_decision(),
-                    )
+        with self.assertRaises(grant_control.GrantControlIntegrityError):
+            await self.control.finalize(
+                grant,
+                self._sid_payload(grant),
+                _non_budgeted_decision(),
+            )
 
-    async def test_finalize_maps_noop_and_loss_without_batch_release(
+    async def test_finalize_maps_loss_without_batch_release(
         self,
     ) -> None:
         grant = _lease_grant()
         snapshot = _lease_snapshot()
         cases = (
-            (
-                ingestion_lease_store.LeaseOperationDisposition.ACCEPTED_NOOP,
-                grant_control.FinalizeDisposition.ACCEPTED_NOOP,
-                snapshot,
-            ),
             (
                 ingestion_lease_store.LeaseOperationDisposition.MISSING,
                 grant_control.FinalizeDisposition.LOST,
@@ -1274,7 +1175,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         grant = _lease_grant()
         self.data_store.release.return_value = (
             ingestion_lease_store.LeaseOperationResult(
-                ingestion_lease_store.LeaseOperationDisposition.ACCEPTED_NOOP,
+                ingestion_lease_store.LeaseOperationDisposition.APPLIED,
                 None,
             )
         )

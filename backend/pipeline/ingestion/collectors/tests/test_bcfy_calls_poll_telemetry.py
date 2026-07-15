@@ -271,7 +271,7 @@ class TestReplayWindowTruncatedTelemetry(unittest.TestCase):
         floor = _NOW - datetime.timedelta(minutes=5)
 
         for cause in cursor_policy.ReplayFloorCause:
-            with self.subTest(cause=cause):
+            with self.subTest(cause=cause.value):
                 payload = telemetry.replay_window_truncated_json_fields(
                     _replay_event(cause, requested_start=floor)
                 )

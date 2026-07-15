@@ -11,7 +11,7 @@ _ALLOYDB_ROOT = _REPO_ROOT / "terraform/modules/alloydb"
 _INGESTION_SQL = _ALLOYDB_ROOT / "sql/ingestion"
 _OPERATIONS_SQL = _ALLOYDB_ROOT / "sql/operations/bcfy_calls_sid"
 _RUNTIME_MIGRATION = _INGESTION_SQL / (
-    "038_ingestion_lease_runtime_columns.sql"
+    "039_ingestion_lease_runtime_columns.sql"
 )
 _RUNTIME_CHECK = _ALLOYDB_ROOT / (
     "sql/ci/ingestion_lease_runtime_columns_check.sql"
@@ -100,7 +100,7 @@ class TestLeaseRuntimeMigrationContract(unittest.TestCase):
 
         self.assertIn(_RUNTIME_MIGRATION.name, names)
         self.assertEqual(
-            sum(name.startswith("038_") for name in names),
+            sum(name.startswith("039_") for name in names),
             1,
         )
         historical = (_INGESTION_SQL / "031_ingestion_leases.sql").read_text()

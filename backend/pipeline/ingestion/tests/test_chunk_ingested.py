@@ -28,9 +28,11 @@ from unittest import mock
 import aiohttp
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
+from backend.pipeline.ingestion import grant_control, worker_profiles
 from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
 from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
 from backend.pipeline.storage.feed_store import (
+    FeedGrant,
     FeedStatusReason,
     LeasedFeed,
     SourceType,
@@ -91,6 +93,7 @@ def _make_settings(**overrides: object) -> mock.MagicMock:
         "pubsub_publish_retry_max_delay_sec": 4.0,
         "health_check_port": 8080,
         "health_check_startup_grace_sec": 120.0,
+        "worker_profile": worker_profiles.LEGACY_PROFILE,
     }
     defaults.update(overrides)
     m = mock.MagicMock()
@@ -153,16 +156,25 @@ def _build_runtime_for_one_chunk(
     ):
         yield chunk
 
-    rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
-    rt._shutdown = asyncio.Event()
-    rt._lease_lost = asyncio.Event()
+    rt = CollectorRuntime(
+        capture_fn=_one_chunk,
+        settings=_make_settings(),
+        runtime_actor_id="service_account:gcp:chunk-ingested-tests",
+    )
     rt._capture_resources = CaptureResources(
         http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
     )
     rt._store = mock.AsyncMock()
     rt._store.update_feed_progress.return_value = bookmark_ok
-    rt._releasing_feeds = set()
     return rt
+
+
+def _run_context() -> grant_control.RunContext:
+    return grant_control.RunContext(
+        stop_requested=asyncio.Event(),
+        grant_lost=asyncio.Event(),
+        set_retrying=lambda _retrying: None,
+    )
 
 
 class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
@@ -175,31 +187,26 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
         bookmark_ok: bool = True,
     ) -> list[logging.LogRecord]:
         rt = _build_runtime_for_one_chunk(chunk, bookmark_ok=bookmark_ok)
+        context = _run_context()
 
         with (
             _mock_upload_audio(),
             _mock_pubsub_publish(),
             self.assertLogs(
-                "backend.pipeline.ingestion.collector_runtime",
+                "backend.pipeline.ingestion",
                 level=logging.INFO,
             ) as cm,
         ):
-            if bookmark_ok:
-                await rt._process_feed(_FEED)
-            else:
-                # Real os._exit(1) never returns. Mocking it to a plain no-op
-                # would let control fall into the emit block (a test artifact),
-                # so we raise SystemExit from the mock to faithfully model the
-                # "process dies here" semantics.
-                with (
-                    mock.patch(
-                        "backend.pipeline.ingestion.collector_runtime.os._exit",
-                        side_effect=SystemExit(1),
-                    ),
-                    mock.patch("logging.shutdown"),
-                    self.assertRaises(SystemExit),
-                ):
-                    await rt._process_feed(_FEED)
+            outcome = await rt._process_feed(
+                FeedGrant(_FEED_ID, _WORKER_ID, 1),
+                _FEED,
+                context,
+            )
+
+        expected_outcome = (
+            grant_control.RunCompleted if bookmark_ok else grant_control.RunLost
+        )
+        self.assertIsInstance(outcome, expected_outcome)
 
         return [r for r in cm.records if r.getMessage() == "Chunk ingested"]
 
@@ -292,7 +299,7 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
         chunk = _make_chunk(datetime.datetime.now(datetime.UTC))
         rt = _build_runtime_for_one_chunk(chunk, bookmark_ok=True)
         store = cast("Any", rt._store)
-        store.release_non_budgeted_failure.return_value = "failing"
+        context = _run_context()
 
         with (
             _mock_upload_audio(),
@@ -302,18 +309,21 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
                 mock.AsyncMock(side_effect=RuntimeError("pubsub boom")),
             ),
             self.assertLogs(
-                "backend.pipeline.ingestion.collector_runtime",
+                "backend.pipeline.ingestion",
                 level=logging.INFO,
             ) as cm,
         ):
-            await rt._process_feed(_FEED)
+            outcome = await rt._process_feed(
+                FeedGrant(_FEED_ID, _WORKER_ID, 1),
+                _FEED,
+                context,
+            )
 
         store.update_feed_progress.assert_awaited_once()
-        store.report_feed_failure.assert_not_awaited()
-        store.release_non_budgeted_failure.assert_awaited_once()
-        kwargs = store.release_non_budgeted_failure.await_args.kwargs
+        self.assertIsInstance(outcome, grant_control.RunFailed)
+        outcome = cast("grant_control.RunFailed", outcome)
         self.assertIs(
-            kwargs["status_reason"],
+            outcome.status_reason,
             FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
         )
         records = [

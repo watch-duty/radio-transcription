@@ -851,8 +851,10 @@ class TestLeasedFeedPayloadValidator(unittest.TestCase):
         wrong_type = {**_FEED, "source_type": "bcfy_feeds"}
         malformed_tags = {**_FEED, "tags": [{"name": 1}]}
 
-        for payload in (missing, wrong_type, malformed_tags):
-            with self.subTest(payload=payload):
+        for case_index, payload in enumerate(
+            (missing, wrong_type, malformed_tags)
+        ):
+            with self.subTest(case_index=case_index):
                 self.assertFalse(
                     collector_runtime._is_leased_feed_payload(payload)
                 )
@@ -971,8 +973,8 @@ class TestLeasedFeedPayloadSupervisorBoundary(unittest.IsolatedAsyncioTestCase):
             {**_FEED, "tags": [{"name": 1}]},
         )
 
-        for payload in payloads:
-            with self.subTest(payload=payload):
+        for case_index, payload in enumerate(payloads):
+            with self.subTest(case_index=case_index):
                 supervisor, runner, control = self._build_supervisor(payload)
                 await supervisor.admit_cycle(_WORKER_ID)
 
@@ -2458,8 +2460,8 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
                 bcfy_calls_cursor_policy.ReplayFloorCause.BOOTSTRAP,
             ),
         )
-        for payload, expected_cause in cases:
-            with self.subTest(payload=payload, cause=expected_cause):
+        for case_index, (payload, expected_cause) in enumerate(cases):
+            with self.subTest(case_index=case_index):
                 processor = processor_factory(
                     grant,
                     payload,
@@ -2803,7 +2805,6 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             ingestion_lease_store.LeaseHeartbeatResult(
                 grant,
                 ingestion_lease_store.LeaseOperationDisposition.APPLIED,
-                active_snapshot,
             ),
         )
         cursor = datetime.datetime.now(datetime.UTC)
@@ -3879,11 +3880,7 @@ class TestSharedFailureTerminalDecision(unittest.IsolatedAsyncioTestCase):
                 disposition=(
                     ingestion_lease_store.LeaseOperationDisposition.APPLIED
                 ),
-                effect=(
-                    ingestion_lease_store.LeaseFailureEffect.FAILURE_RECORDED
-                ),
-                before_snapshot=_lease_snapshot(),
-                after_snapshot=_lease_snapshot(status=FeedStatus.FAILING),
+                final_status=FeedStatus.FAILING,
             )
         )
         control = sid_grant_control.SidGrantControl(
@@ -3919,9 +3916,9 @@ class TestSharedFailureTerminalDecision(unittest.IsolatedAsyncioTestCase):
             ingestion_lease_store.NonBudgetedFailure,
         )
         self.assertEqual(action.retry_after, retry_after)
-        self.assertIsNot(
-            data_store.finalize_failure.return_value.effect,
-            ingestion_lease_store.LeaseFailureEffect.QUARANTINED,
+        self.assertIs(
+            data_store.finalize_failure.return_value.final_status,
+            FeedStatus.FAILING,
         )
 
 

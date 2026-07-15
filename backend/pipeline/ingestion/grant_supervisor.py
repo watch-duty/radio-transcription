@@ -1288,9 +1288,8 @@ class GrantSupervisor:
                     is grant_control.HeartbeatDisposition.RETAINED
                 ):
                     lifecycle = result.lifecycle
-                    if lifecycle is None:
-                        continue
-                    managed.lifecycle = lifecycle
+                    if lifecycle is not None:
+                        managed.lifecycle = lifecycle
                     self._emit_lifecycle(
                         _LifecycleEvent.HEARTBEAT,
                         domain,
@@ -1358,9 +1357,12 @@ class GrantSupervisor:
                 result.disposition
                 is grant_control.HeartbeatDisposition.RETAINED
             )
-            if retained != isinstance(
-                result.lifecycle,
-                grant_control.LifecycleEvidence,
+            if result.lifecycle is not None and (
+                not retained
+                or not isinstance(
+                    result.lifecycle,
+                    grant_control.LifecycleEvidence,
+                )
             ):
                 msg = "heartbeat lifecycle evidence is malformed"
                 raise grant_control.GrantControlIntegrityError(msg)

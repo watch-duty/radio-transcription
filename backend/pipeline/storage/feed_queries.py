@@ -181,19 +181,17 @@ WITH input AS MATERIALIZED (
         input_values.feed_id,
         input_values.owner_worker_id,
         input_values.requested_fencing_token,
-        input_values.caller_ordinal,
-        input_values.lock_ordinal
+        input_values.caller_ordinal
     FROM UNNEST(
         $1::uuid[],
         $2::uuid[],
         $3::bigint[],
         $4::bigint[]
-    ) WITH ORDINALITY AS input_values(
+    ) AS input_values(
         feed_id,
         owner_worker_id,
         requested_fencing_token,
-        caller_ordinal,
-        lock_ordinal
+        caller_ordinal
     )
 ),
 current_state AS MATERIALIZED (
@@ -205,9 +203,7 @@ current_state AS MATERIALIZED (
         feeds.status,
         feeds.worker_id,
         feeds.fencing_token,
-        feeds.last_heartbeat,
-        feeds.failure_count,
-        feeds.status_reason
+        feeds.last_heartbeat
     FROM input
     JOIN feeds ON feeds.id = input.feed_id
     ORDER BY feeds.id
@@ -226,25 +222,17 @@ renewed AS (
           current_state.last_heartbeat IS NULL
           OR current_state.last_heartbeat < NOW() - INTERVAL '15 seconds'
       )
-    RETURNING feeds.id, feeds.last_heartbeat
 )
+-- A fresh exact grant is accepted without exposing whether a write occurred.
 SELECT
     input.caller_ordinal,
     input.feed_id,
     current_state.status::text AS status,
     current_state.worker_id,
-    current_state.fencing_token,
-    CASE
-        WHEN renewed.id IS NOT NULL THEN renewed.last_heartbeat
-        ELSE current_state.last_heartbeat
-    END AS last_heartbeat,
-    current_state.failure_count,
-    current_state.status_reason,
-    renewed.id IS NOT NULL AS applied
+    current_state.fencing_token
 FROM input
 LEFT JOIN current_state
   ON current_state.caller_ordinal = input.caller_ordinal
-LEFT JOIN renewed ON renewed.id = input.feed_id
 ORDER BY input.caller_ordinal
 """
 

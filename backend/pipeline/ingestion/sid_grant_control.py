@@ -95,11 +95,6 @@ def _finalize_disposition(
 ) -> grant_control.FinalizeDisposition:
     if disposition is ingestion_lease_store.LeaseOperationDisposition.APPLIED:
         return grant_control.FinalizeDisposition.APPLIED
-    if (
-        disposition
-        is ingestion_lease_store.LeaseOperationDisposition.ACCEPTED_NOOP
-    ):
-        return grant_control.FinalizeDisposition.ACCEPTED_NOOP
     if disposition in (
         ingestion_lease_store.LeaseOperationDisposition.MISSING,
         ingestion_lease_store.LeaseOperationDisposition.OWNER_MISMATCH,
@@ -268,15 +263,11 @@ class SidGrantControl:
             seen.add(result.grant)
 
             lifecycle = None
-            if result.disposition in (
-                ingestion_lease_store.LeaseOperationDisposition.APPLIED,
-                ingestion_lease_store.LeaseOperationDisposition.ACCEPTED_NOOP,
+            if (
+                result.disposition
+                is ingestion_lease_store.LeaseOperationDisposition.APPLIED
             ):
-                if result.snapshot is None:
-                    msg = "retained SID heartbeat is missing its snapshot"
-                    raise grant_control.GrantControlIntegrityError(msg)
                 disposition = grant_control.HeartbeatDisposition.RETAINED
-                lifecycle = _lifecycle(result.snapshot)
             elif result.disposition is _STATUS_INELIGIBLE:
                 disposition = (
                     grant_control.HeartbeatDisposition.ADMINISTRATIVE_STOP
@@ -300,7 +291,7 @@ class SidGrantControl:
             )
         return tuple(translated)
 
-    async def finalize(  # noqa: PLR0912
+    async def finalize(
         self,
         grant: ingestion_lease_store.LeaseGrant,
         payload: SidClaimPayload,
@@ -337,11 +328,7 @@ class SidGrantControl:
                 raise grant_control.GrantControlIntegrityError(msg)
             disposition = _finalize_disposition(result.disposition)
             if (
-                disposition
-                in (
-                    grant_control.FinalizeDisposition.APPLIED,
-                    grant_control.FinalizeDisposition.ACCEPTED_NOOP,
-                )
+                disposition is grant_control.FinalizeDisposition.APPLIED
                 and result.snapshot is None
             ):
                 msg = "retained SID release is missing its snapshot"
@@ -385,24 +372,14 @@ class SidGrantControl:
             msg = "SID failure returned an invalid result type"
             raise grant_control.GrantControlIntegrityError(msg)
         if isinstance(terminal, grant_control.NonBudgetedFailureDecision) and (
-            result.effect
-            is ingestion_lease_store.LeaseFailureEffect.QUARANTINED
-            or (
-                result.disposition
-                is ingestion_lease_store.LeaseOperationDisposition.APPLIED
-                and result.after_snapshot is not None
-                and result.after_snapshot.status
-                is feed_store.FeedStatus.QUARANTINED
-            )
+            result.final_status is feed_store.FeedStatus.QUARANTINED
         ):
             msg = "non-budgeted SID failure cannot quarantine"
             raise grant_control.GrantControlIntegrityError(msg)
         disposition = _finalize_disposition(result.disposition)
-        lifecycle = None
-        if disposition is not grant_control.FinalizeDisposition.LOST:
-            snapshot = result.after_snapshot or result.before_snapshot
-            if snapshot is None:
-                msg = "retained SID failure result is missing its snapshot"
-                raise grant_control.GrantControlIntegrityError(msg)
-            lifecycle = _lifecycle(snapshot)
+        lifecycle = (
+            grant_control.LifecycleEvidence(durable_failing=True)
+            if disposition is grant_control.FinalizeDisposition.APPLIED
+            else None
+        )
         return grant_control.FinalizeResult(grant, disposition, lifecycle)

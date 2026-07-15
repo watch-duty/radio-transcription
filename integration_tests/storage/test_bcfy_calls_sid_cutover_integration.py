@@ -174,8 +174,18 @@ async def test_reduced_schema_executes_real_runtime_lifecycle(
     assert budgeted.disposition is (
         ingestion_lease_store.LeaseOperationDisposition.APPLIED
     )
-    assert budgeted.after_snapshot is not None
-    assert budgeted.after_snapshot.failure_count == 1
+    assert budgeted.final_status is feed_store.FeedStatus.FAILING
+    assert (
+        await cutover_pool.fetchval(
+            """
+        SELECT failure_count
+        FROM public.ingestion_leases
+        WHERE source_type = 'bcfy_calls' AND lease_key = $1
+        """,
+            sid,
+        )
+        == 1
+    )
     await cutover_pool.execute(
         """
         UPDATE public.ingestion_leases
@@ -206,9 +216,18 @@ async def test_reduced_schema_executes_real_runtime_lifecycle(
     assert failed.disposition is (
         ingestion_lease_store.LeaseOperationDisposition.APPLIED
     )
-    assert failed.after_snapshot is not None
-    assert failed.after_snapshot.failure_count == 0
-    assert failed.after_snapshot.status is feed_store.FeedStatus.FAILING
+    assert failed.final_status is feed_store.FeedStatus.FAILING
+    assert (
+        await cutover_pool.fetchval(
+            """
+        SELECT failure_count
+        FROM public.ingestion_leases
+        WHERE source_type = 'bcfy_calls' AND lease_key = $1
+        """,
+            sid,
+        )
+        == 0
+    )
 
     recovered = await store.claim_recoverable(
         _SOURCE_TYPE,

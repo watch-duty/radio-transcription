@@ -227,7 +227,7 @@ class _ControlledControl[GrantT, PayloadT]:
             grant_control.GrantHeartbeat(
                 grant,
                 grant_control.HeartbeatDisposition.RETAINED,
-                grant_control.LifecycleEvidence(durable_failing=False),
+                None,
             )
             for grant in grants
         )
@@ -1019,8 +1019,8 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             {"id": uuid.UUID(int=1)},
             {**_leased_feed(uuid.UUID(int=2)), "name": 7},
         )
-        for payload in malformed:
-            with self.subTest(payload=payload):
+        for case_index, payload in enumerate(malformed):
+            with self.subTest(case_index=case_index):
                 (
                     supervisor,
                     feed_control,

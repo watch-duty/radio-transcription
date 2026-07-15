@@ -539,6 +539,7 @@ def _log_chunk_ingested(
             chunk.stream_interval_lag_sec,
             2,
         )
+    # SLO: chunk_ingested emit -- strictly after publish success.
     logger.info("Chunk ingested", extra={"json_fields": payload})
 
 

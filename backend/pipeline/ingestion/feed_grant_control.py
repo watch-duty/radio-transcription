@@ -65,16 +65,6 @@ def _claim_lifecycle(
     )
 
 
-def _heartbeat_lifecycle(
-    snapshot: feed_store.FeedHeartbeatSnapshot,
-) -> grant_control.LifecycleEvidence:
-    return grant_control.LifecycleEvidence(
-        durable_failing=(
-            snapshot.failure_count > 0 or snapshot.status_reason is not None
-        )
-    )
-
-
 class FeedGrantControl:
     """Translate generic grant operations to two authoritative Feed stores."""
 
@@ -233,15 +223,11 @@ class FeedGrantControl:
             seen.add(result.grant)
 
             lifecycle = None
-            if result.disposition in (
-                feed_store.FeedGrantOperationDisposition.APPLIED,
-                feed_store.FeedGrantOperationDisposition.ACCEPTED_NOOP,
+            if (
+                result.disposition
+                is feed_store.FeedGrantOperationDisposition.APPLIED
             ):
-                if result.snapshot is None:
-                    msg = "retained Feed heartbeat is missing its snapshot"
-                    raise grant_control.GrantControlIntegrityError(msg)
                 disposition = grant_control.HeartbeatDisposition.RETAINED
-                lifecycle = _heartbeat_lifecycle(result.snapshot)
             elif (
                 result.disposition
                 is feed_store.FeedGrantOperationDisposition.STATUS_INELIGIBLE

@@ -1294,7 +1294,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         )
 
         for payload, expected_cause in cases:
-            with self.subTest(claim_mode=payload.claim_mode):
+            with self.subTest(claim_mode=payload.claim_mode.value):
                 emitted: list[telemetry.ReplayWindowTruncatedEvent] = []
                 processor, _ = _processor(
                     _ScriptedMembershipStore(

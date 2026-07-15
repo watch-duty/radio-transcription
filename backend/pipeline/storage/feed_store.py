@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import datetime
 import enum
 import json
 import logging
@@ -31,16 +30,11 @@ from backend.pipeline.storage.pagination_utils import (
 
 if TYPE_CHECKING:
     import collections.abc
-    from collections.abc import Sequence
+    import datetime
 
 logger = logging.getLogger(__name__)
 
-_CREATE_FEED_UNIQUE_CONSTRAINTS = frozenset(
-    {
-        "feeds_name_key",
-        "idx_feed_properties_source_lookup",
-    }
-)
+_CREATE_FEED_UNIQUE_CONSTRAINTS = frozenset({"feeds_name_key"})
 _UPDATE_FEED_UNIQUE_CONSTRAINTS = frozenset({"feeds_name_key"})
 
 
@@ -136,7 +130,13 @@ class FeedStatusReason(enum.StrEnum):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class FeedGrant:
-    """Complete immutable authority for one Feed ownership generation."""
+    """Complete immutable authority for one Feed ownership generation.
+
+    Attributes:
+        feed_id: Permanent Feed identity.
+        owner_worker_id: Worker authorized for this ownership generation.
+        fencing_token: Monotonic generation that rejects stale workers.
+    """
 
     feed_id: uuid.UUID
     owner_worker_id: uuid.UUID
@@ -160,21 +160,18 @@ class FeedGrant:
             raise ValueError(msg)
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class FeedHeartbeatSnapshot:
-    """Closed mutable Feed state observed outside grant identity."""
-
-    status: FeedStatus
-    last_heartbeat: datetime.datetime | None
-    failure_count: int
-    status_reason: FeedStatusReason | None
-
-
 class FeedGrantOperationDisposition(enum.StrEnum):
-    """Closed outcomes for exact-grant Feed heartbeat operations."""
+    """Closed outcomes for exact-grant Feed heartbeat operations.
+
+    Attributes:
+        APPLIED: The exact active heartbeat request was accepted.
+        MISSING: The permanent Feed identity does not exist.
+        OWNER_MISMATCH: Another worker owns the current generation.
+        FENCE_MISMATCH: The supplied ownership generation is stale.
+        STATUS_INELIGIBLE: The Feed is not active for heartbeat renewal.
+    """
 
     APPLIED = "applied"
-    ACCEPTED_NOOP = "accepted_noop"
     MISSING = "missing"
     OWNER_MISMATCH = "owner_mismatch"
     FENCE_MISMATCH = "fence_mismatch"
@@ -183,11 +180,15 @@ class FeedGrantOperationDisposition(enum.StrEnum):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class FeedGrantHeartbeatResult:
-    """Caller-correlated result for one exact Feed grant heartbeat."""
+    """Caller-correlated result for one exact Feed grant heartbeat.
+
+    Attributes:
+        grant: Original caller grant associated with this result.
+        disposition: Closed classification of the heartbeat attempt.
+    """
 
     grant: FeedGrant
     disposition: FeedGrantOperationDisposition
-    snapshot: FeedHeartbeatSnapshot | None
 
 
 class LeasedFeed(TypedDict):
@@ -284,50 +285,6 @@ def _require_feed_grant(value: object) -> FeedGrant:
     return value
 
 
-def _feed_heartbeat_snapshot_from_row(
-    row: collections.abc.Mapping[str, object],
-) -> FeedHeartbeatSnapshot:
-    try:
-        status = FeedStatus(row["status"])
-    except (KeyError, TypeError, ValueError) as error:
-        msg = "Feed heartbeat row contains an invalid status"
-        raise ValueError(msg) from error
-
-    last_heartbeat = row["last_heartbeat"]
-    if last_heartbeat is not None and not isinstance(
-        last_heartbeat,
-        datetime.datetime,
-    ):
-        msg = "Feed heartbeat row contains an invalid last_heartbeat"
-        raise ValueError(msg)
-
-    failure_count = row["failure_count"]
-    if (
-        isinstance(failure_count, bool)
-        or not isinstance(failure_count, int)
-        or failure_count < 0
-    ):
-        msg = "Feed heartbeat row contains an invalid failure_count"
-        raise ValueError(msg)
-
-    status_reason_raw = row["status_reason"]
-    if status_reason_raw is None:
-        status_reason = None
-    else:
-        try:
-            status_reason = FeedStatusReason(status_reason_raw)
-        except (TypeError, ValueError) as error:
-            msg = "Feed heartbeat row contains an invalid status_reason"
-            raise ValueError(msg) from error
-
-    return FeedHeartbeatSnapshot(
-        status=status,
-        last_heartbeat=last_heartbeat,
-        failure_count=failure_count,
-        status_reason=status_reason,
-    )
-
-
 class FeedStore:
     """
     Storage layer for feed lifecycle operations against AlloyDB.
@@ -358,7 +315,7 @@ class FeedStore:
     def __init__(
         self,
         pool: asyncpg.Pool,
-        claim_types: Sequence[SourceType] | None = None,
+        claim_types: collections.abc.Sequence[SourceType] | None = None,
     ) -> None:
         self._pool = pool
         if claim_types is None:
@@ -620,8 +577,8 @@ class FeedStore:
 
         Raises:
             TypeError: If an input is not a ``FeedGrant``.
-            ValueError: If input identities repeat or the database result is
-                malformed, incomplete, duplicated, or miscorrelated.
+            ValueError: If inputs repeat or results are malformed or
+                miscorrelated.
         """
         grants = tuple(grants)
         feed_ids: set[uuid.UUID] = set()
@@ -692,47 +649,35 @@ class FeedStore:
             "status",
             "worker_id",
             "fencing_token",
-            "last_heartbeat",
-            "failure_count",
-            "status_reason",
-            "applied",
         )
         if any(field not in row for field in required_fields):
             msg = "Feed heartbeat row is missing required state fields"
             raise ValueError(msg)
 
-        applied = row.get("applied")
-        if not isinstance(applied, bool):
-            msg = "Feed heartbeat row contains an invalid applied flag"
-            raise TypeError(msg)
-
         status_raw = row.get("status")
         if status_raw is None:
-            if applied or any(
+            if any(
                 row.get(field) is not None
-                for field in (
-                    "worker_id",
-                    "fencing_token",
-                    "last_heartbeat",
-                    "failure_count",
-                    "status_reason",
-                )
+                for field in ("worker_id", "fencing_token")
             ):
                 msg = "missing Feed heartbeat row contains current state"
                 raise ValueError(msg)
             return FeedGrantHeartbeatResult(
-                grant=grant,
-                disposition=FeedGrantOperationDisposition.MISSING,
-                snapshot=None,
+                grant,
+                FeedGrantOperationDisposition.MISSING,
             )
 
-        snapshot = _feed_heartbeat_snapshot_from_row(row)
+        try:
+            status = FeedStatus(status_raw)
+        except (TypeError, ValueError) as error:
+            msg = "Feed heartbeat row contains an invalid status"
+            raise ValueError(msg) from error
         worker_id = row.get("worker_id")
         if worker_id is not None and not isinstance(worker_id, uuid.UUID):
             msg = "Feed heartbeat row contains an invalid worker_id"
             raise ValueError(msg)
         fencing_token = row.get("fencing_token")
-        if fencing_token is not None and (
+        if (
             isinstance(fencing_token, bool)
             or not isinstance(fencing_token, int)
             or fencing_token < 0
@@ -740,30 +685,16 @@ class FeedStore:
             msg = "Feed heartbeat row contains an invalid fencing_token"
             raise ValueError(msg)
 
-        exact_active = (
-            snapshot.status is FeedStatus.ACTIVE
-            and worker_id == grant.owner_worker_id
-            and fencing_token == grant.fencing_token
-        )
-        if applied:
-            if not exact_active:
-                msg = "Feed heartbeat applied without exact active authority"
-                raise ValueError(msg)
-            disposition = FeedGrantOperationDisposition.APPLIED
-        elif snapshot.status is not FeedStatus.ACTIVE:
+        if status is not FeedStatus.ACTIVE:
             disposition = FeedGrantOperationDisposition.STATUS_INELIGIBLE
         elif worker_id != grant.owner_worker_id:
             disposition = FeedGrantOperationDisposition.OWNER_MISMATCH
         elif fencing_token != grant.fencing_token:
             disposition = FeedGrantOperationDisposition.FENCE_MISMATCH
         else:
-            disposition = FeedGrantOperationDisposition.ACCEPTED_NOOP
+            disposition = FeedGrantOperationDisposition.APPLIED
 
-        return FeedGrantHeartbeatResult(
-            grant=grant,
-            disposition=disposition,
-            snapshot=snapshot,
-        )
+        return FeedGrantHeartbeatResult(grant, disposition)
 
     async def report_feed_failure(
         self,

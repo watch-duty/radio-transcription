@@ -1507,8 +1507,8 @@ class TestFinalizableFactValidation(unittest.TestCase):
             _identity(grant, distinct_member, 0),
         )
 
-        for identity in cases:
-            with self.subTest(identity=identity):
+        for case_index, identity in enumerate(cases):
+            with self.subTest(case_index=case_index):
                 cohorts = (
                     _settled(
                         _record(

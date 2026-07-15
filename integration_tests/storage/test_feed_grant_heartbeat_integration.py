@@ -31,7 +31,11 @@ _OTHER_OWNER_ID = uuid.UUID("22222222-3333-4444-5555-666666666666")
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
 async def ingestion_feed_pool() -> collections.abc.AsyncIterator[asyncpg.Pool]:
-    """Connect only to the explicitly supplied PostgreSQL service."""
+    """Connect only to the explicitly supplied PostgreSQL service.
+
+    Yields:
+        A small asyncpg pool connected to the external PostgreSQL fixture.
+    """
     if os.environ.get("PYTEST_XDIST_WORKER"):
         pytest.fail("the Feed heartbeat PostgreSQL module must run with -n 0")
 
@@ -85,8 +89,6 @@ async def _insert_feed(
     worker_id: uuid.UUID | None = _OWNER_ID,
     fencing_token: int = 7,
     last_heartbeat: datetime.datetime | None = None,
-    failure_count: int = 0,
-    status_reason: str | None = None,
 ) -> uuid.UUID:
     """Insert one unique Feed fixture without cleanup assumptions."""
     feed_id = uuid.uuid4()
@@ -99,9 +101,7 @@ async def _insert_feed(
             status,
             worker_id,
             fencing_token,
-            last_heartbeat,
-            failure_count,
-            status_reason
+            last_heartbeat
         ) VALUES (
             $1,
             $2,
@@ -109,9 +109,7 @@ async def _insert_feed(
             $3::public.feed_status,
             $4,
             $5,
-            $6,
-            $7,
-            $8
+            $6
         )
         """,
         feed_id,
@@ -120,8 +118,6 @@ async def _insert_feed(
         worker_id,
         fencing_token,
         last_heartbeat,
-        failure_count,
-        status_reason,
     )
     return feed_id
 
@@ -135,9 +131,7 @@ async def _fetch_feed(pool: asyncpg.Pool, feed_id: uuid.UUID) -> asyncpg.Record:
             status::text AS status,
             worker_id,
             fencing_token,
-            last_heartbeat,
-            failure_count,
-            status_reason
+            last_heartbeat
         FROM public.feeds
         WHERE id = $1
         """,
@@ -151,8 +145,10 @@ async def test_exact_feed_grant_heartbeats_are_ordered_and_fenced(
     ingestion_feed_pool: asyncpg.Pool,
 ) -> None:
     """Prove exact predicates, no-op semantics, and caller correlation."""
-    now = datetime.datetime.now(datetime.UTC)
-    stale_heartbeat = now - datetime.timedelta(minutes=2)
+    database_now = await ingestion_feed_pool.fetchval("SELECT NOW()")
+    assert isinstance(database_now, datetime.datetime)
+    stale_heartbeat = database_now - datetime.timedelta(minutes=2)
+    fresh_heartbeat = database_now + datetime.timedelta(minutes=1)
 
     stale_id = await _insert_feed(
         ingestion_feed_pool,
@@ -161,7 +157,7 @@ async def test_exact_feed_grant_heartbeats_are_ordered_and_fenced(
     null_id = await _insert_feed(ingestion_feed_pool, last_heartbeat=None)
     fresh_id = await _insert_feed(
         ingestion_feed_pool,
-        last_heartbeat=now,
+        last_heartbeat=fresh_heartbeat,
     )
     owner_mismatch_id = await _insert_feed(
         ingestion_feed_pool,
@@ -177,12 +173,10 @@ async def test_exact_feed_grant_heartbeats_are_ordered_and_fenced(
         ingestion_feed_pool,
         status="deactivated",
         last_heartbeat=stale_heartbeat,
-        failure_count=2,
-        status_reason="source_offline",
     )
     missing_id = uuid.uuid4()
 
-    rejected_ids = (
+    unchanged_ids = (
         fresh_id,
         owner_mismatch_id,
         fence_mismatch_id,
@@ -190,7 +184,7 @@ async def test_exact_feed_grant_heartbeats_are_ordered_and_fenced(
     )
     before = {
         feed_id: dict(await _fetch_feed(ingestion_feed_pool, feed_id))
-        for feed_id in rejected_ids
+        for feed_id in unchanged_ids
     }
 
     grants = (
@@ -210,21 +204,14 @@ async def test_exact_feed_grant_heartbeats_are_ordered_and_fenced(
     assert tuple(result.disposition for result in results) == (
         feed_store.FeedGrantOperationDisposition.FENCE_MISMATCH,
         feed_store.FeedGrantOperationDisposition.MISSING,
-        feed_store.FeedGrantOperationDisposition.ACCEPTED_NOOP,
+        feed_store.FeedGrantOperationDisposition.APPLIED,
         feed_store.FeedGrantOperationDisposition.APPLIED,
         feed_store.FeedGrantOperationDisposition.STATUS_INELIGIBLE,
         feed_store.FeedGrantOperationDisposition.OWNER_MISMATCH,
         feed_store.FeedGrantOperationDisposition.APPLIED,
     )
-    assert results[1].snapshot is None
-    assert results[4].snapshot is not None
-    assert results[4].snapshot.failure_count == 2
-    assert (
-        results[4].snapshot.status_reason
-        is feed_store.FeedStatusReason.SOURCE_OFFLINE
-    )
 
-    for feed_id in rejected_ids:
+    for feed_id in unchanged_ids:
         assert (
             dict(await _fetch_feed(ingestion_feed_pool, feed_id))
             == before[feed_id]

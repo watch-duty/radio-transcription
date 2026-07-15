@@ -540,13 +540,7 @@ async def _assert_old_grant_rejected(
     assert finalized_failure.disposition is not (
         ingestion_lease_store.LeaseOperationDisposition.APPLIED
     )
-    assert (
-        finalized_failure.effect
-        is ingestion_lease_store.LeaseFailureEffect.NONE
-    )
-    assert finalized_failure.before_snapshot is not None
-    assert finalized_failure.after_snapshot is not None
-    assert finalized_failure.before_snapshot == finalized_failure.after_snapshot
+    assert finalized_failure.final_status is None
     assert lease_after_finalized_failure == lease_before
     assert isinstance(child, ingestion_lease_store.GrantRejected)
     assert lease_after == lease_before

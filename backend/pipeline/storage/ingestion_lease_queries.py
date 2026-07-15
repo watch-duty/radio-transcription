@@ -115,21 +115,19 @@ WITH input AS MATERIALIZED (
         input_values.lease_key,
         input_values.owner_worker_id,
         input_values.requested_fencing_token,
-        input_values.caller_ordinal,
-        input_values.lock_ordinal
+        input_values.caller_ordinal
     FROM UNNEST(
         $1::text[],
         $2::text[],
         $3::uuid[],
         $4::bigint[],
         $5::bigint[]
-    ) WITH ORDINALITY AS input_values(
+    ) AS input_values(
         source_type,
         lease_key,
         owner_worker_id,
         requested_fencing_token,
-        caller_ordinal,
-        lock_ordinal
+        caller_ordinal
     )
 ),
 current_state AS MATERIALIZED (
@@ -141,16 +139,7 @@ current_state AS MATERIALIZED (
         leases.lease_key,
         leases.status,
         leases.worker_id,
-        leases.fencing_token,
-        leases.last_heartbeat,
-        leases.failure_count,
-        leases.retry_after,
-        leases.status_reason,
-        leases.status_reason_detail,
-        leases.status_reason_updated_at,
-        leases.audit_revision,
-        leases.membership_revision,
-        leases.updated_at
+        leases.fencing_token
     FROM input
     JOIN public.ingestion_leases AS leases
       ON leases.source_type = input.source_type
@@ -169,77 +158,17 @@ renewed AS (
       AND current_state.worker_id = current_state.owner_worker_id
       AND current_state.fencing_token =
           current_state.requested_fencing_token
-    RETURNING
-        leases.source_type,
-        leases.lease_key,
-        leases.status,
-        leases.worker_id,
-        leases.fencing_token,
-        leases.last_heartbeat,
-        leases.failure_count,
-        leases.retry_after,
-        leases.status_reason,
-        leases.status_reason_detail,
-        leases.status_reason_updated_at,
-        leases.audit_revision,
-        leases.membership_revision,
-        leases.updated_at
+    -- The returned identity is only the per-input applied marker.
+    RETURNING leases.source_type, leases.lease_key
 )
+-- Rejections need only the locked grant fields required for classification.
 SELECT
     input.caller_ordinal,
     input.source_type,
     input.lease_key,
-    CASE
-        WHEN renewed.source_type IS NOT NULL THEN renewed.status::text
-        ELSE current_state.status::text
-    END AS status,
-    CASE
-        WHEN renewed.source_type IS NOT NULL THEN renewed.worker_id
-        ELSE current_state.worker_id
-    END AS worker_id,
-    CASE
-        WHEN renewed.source_type IS NOT NULL THEN renewed.fencing_token
-        ELSE current_state.fencing_token
-    END AS fencing_token,
-    CASE
-        WHEN renewed.source_type IS NOT NULL THEN renewed.last_heartbeat
-        ELSE current_state.last_heartbeat
-    END AS last_heartbeat,
-    CASE
-        WHEN renewed.source_type IS NOT NULL THEN renewed.failure_count
-        ELSE current_state.failure_count
-    END AS failure_count,
-    CASE
-        WHEN renewed.source_type IS NOT NULL THEN renewed.retry_after
-        ELSE current_state.retry_after
-    END AS retry_after,
-    CASE
-        WHEN renewed.source_type IS NOT NULL THEN renewed.status_reason
-        ELSE current_state.status_reason
-    END AS status_reason,
-    CASE
-        WHEN renewed.source_type IS NOT NULL
-            THEN renewed.status_reason_detail
-        ELSE current_state.status_reason_detail
-    END AS status_reason_detail,
-    CASE
-        WHEN renewed.source_type IS NOT NULL
-            THEN renewed.status_reason_updated_at
-        ELSE current_state.status_reason_updated_at
-    END AS status_reason_updated_at,
-    CASE
-        WHEN renewed.source_type IS NOT NULL THEN renewed.audit_revision
-        ELSE current_state.audit_revision
-    END AS audit_revision,
-    CASE
-        WHEN renewed.source_type IS NOT NULL
-            THEN renewed.membership_revision
-        ELSE current_state.membership_revision
-    END AS membership_revision,
-    CASE
-        WHEN renewed.source_type IS NOT NULL THEN renewed.updated_at
-        ELSE current_state.updated_at
-    END AS updated_at,
+    current_state.status::text AS status,
+    current_state.worker_id,
+    current_state.fencing_token,
     renewed.source_type IS NOT NULL AS applied
 FROM input
 LEFT JOIN current_state
@@ -364,98 +293,7 @@ LEFT JOIN released
 """
 
 
-LOCK_LEASE_SQL = """\
-SELECT
-    source_type,
-    lease_key,
-    status::text AS status,
-    worker_id,
-    fencing_token,
-    last_heartbeat,
-    failure_count,
-    retry_after,
-    status_reason,
-    status_reason_detail,
-    status_reason_updated_at,
-    audit_revision,
-    membership_revision,
-    updated_at
-FROM public.ingestion_leases
-WHERE source_type = $1
-  AND lease_key = $2
-FOR NO KEY UPDATE
-"""
-
-
-_FAILURE_RESULT_SELECT_SQL = """\
-SELECT
-    current_state.source_type,
-    current_state.lease_key,
-    current_state.status::text AS status,
-    current_state.worker_id,
-    current_state.fencing_token,
-    current_state.last_heartbeat,
-    current_state.failure_count,
-    current_state.retry_after,
-    current_state.status_reason,
-    current_state.status_reason_detail,
-    current_state.status_reason_updated_at,
-    current_state.audit_revision,
-    current_state.membership_revision,
-    current_state.updated_at,
-    CASE
-        WHEN updated.source_type IS NOT NULL THEN updated.status::text
-        ELSE current_state.status::text
-    END AS after_status,
-    CASE
-        WHEN updated.source_type IS NOT NULL THEN updated.last_heartbeat
-        ELSE current_state.last_heartbeat
-    END AS after_last_heartbeat,
-    CASE
-        WHEN updated.source_type IS NOT NULL THEN updated.failure_count
-        ELSE current_state.failure_count
-    END AS after_failure_count,
-    CASE
-        WHEN updated.source_type IS NOT NULL THEN updated.retry_after
-        ELSE current_state.retry_after
-    END AS after_retry_after,
-    CASE
-        WHEN updated.source_type IS NOT NULL THEN updated.status_reason
-        ELSE current_state.status_reason
-    END AS after_status_reason,
-    CASE
-        WHEN updated.source_type IS NOT NULL
-            THEN updated.status_reason_detail
-        ELSE current_state.status_reason_detail
-    END AS after_status_reason_detail,
-    CASE
-        WHEN updated.source_type IS NOT NULL
-            THEN updated.status_reason_updated_at
-        ELSE current_state.status_reason_updated_at
-    END AS after_status_reason_updated_at,
-    CASE
-        WHEN updated.source_type IS NOT NULL THEN updated.audit_revision
-        ELSE current_state.audit_revision
-    END AS after_audit_revision,
-    CASE
-        WHEN updated.source_type IS NOT NULL
-            THEN updated.membership_revision
-        ELSE current_state.membership_revision
-    END AS after_membership_revision,
-    CASE
-        WHEN updated.source_type IS NOT NULL THEN updated.updated_at
-        ELSE current_state.updated_at
-    END AS after_updated_at,
-    updated.source_type IS NOT NULL AS applied
-FROM current_state
-LEFT JOIN updated
-  ON updated.source_type = current_state.source_type
- AND updated.lease_key = current_state.lease_key
-"""
-
-
-FINALIZE_BUDGETED_FAILURE_SQL = (
-    """\
+FINALIZE_BUDGETED_FAILURE_SQL = """\
 WITH current_state AS MATERIALIZED (
     SELECT
         source_type,
@@ -463,15 +301,15 @@ WITH current_state AS MATERIALIZED (
         status,
         worker_id,
         fencing_token,
-        last_heartbeat,
         failure_count,
-        retry_after,
-        status_reason,
-        status_reason_detail,
-        status_reason_updated_at,
-        audit_revision,
-        membership_revision,
-        updated_at
+        CASE
+            -- POWER(double precision, 1024) overflows. A NULL multiplier
+            -- means every finite caller cap has already been reached.
+            WHEN failure_count < 1024 THEN POWER(
+                2::double precision,
+                failure_count::double precision
+            )
+        END AS backoff_multiplier
     FROM public.ingestion_leases
     WHERE source_type = $1
       AND lease_key = $2
@@ -490,11 +328,16 @@ updated AS (
         retry_after = CASE
             WHEN leases.failure_count + 1 >= $5 THEN NULL
             ELSE NOW()
-                + LEAST(
-                    $6 * INTERVAL '1 second',
-                    $7 * INTERVAL '1 second'
-                        * POWER(2, leases.failure_count)
-                )
+                + INTERVAL '1 second' * CASE
+                    -- Compare before multiplying so the configured cap is
+                    -- preserved without evaluating an overflowing product.
+                    WHEN current_state.backoff_multiplier IS NULL
+                      OR current_state.backoff_multiplier >=
+                          $7::double precision / $6::double precision
+                        THEN $7::double precision
+                    ELSE $6::double precision
+                        * current_state.backoff_multiplier
+                END
                 + (RANDOM() * INTERVAL '10 seconds')
         END,
         unclaimed_since = NOW(),
@@ -512,40 +355,31 @@ updated AS (
     RETURNING
         leases.source_type,
         leases.lease_key,
-        leases.status,
-        leases.last_heartbeat,
-        leases.failure_count,
-        leases.retry_after,
-        leases.status_reason,
-        leases.status_reason_detail,
-        leases.status_reason_updated_at,
-        leases.audit_revision,
-        leases.membership_revision,
-        leases.updated_at
+        leases.status
 )
+SELECT
+    current_state.source_type,
+    current_state.lease_key,
+    current_state.status::text AS status,
+    current_state.worker_id,
+    current_state.fencing_token,
+    updated.status::text AS final_status,
+    updated.source_type IS NOT NULL AS applied
+FROM current_state
+LEFT JOIN updated
+  ON updated.source_type = current_state.source_type
+ AND updated.lease_key = current_state.lease_key
 """
-    + _FAILURE_RESULT_SELECT_SQL
-)
 
 
-FINALIZE_NON_BUDGETED_FAILURE_SQL = (
-    """\
+FINALIZE_NON_BUDGETED_FAILURE_SQL = """\
 WITH current_state AS MATERIALIZED (
     SELECT
         source_type,
         lease_key,
         status,
         worker_id,
-        fencing_token,
-        last_heartbeat,
-        failure_count,
-        retry_after,
-        status_reason,
-        status_reason_detail,
-        status_reason_updated_at,
-        audit_revision,
-        membership_revision,
-        updated_at
+        fencing_token
     FROM public.ingestion_leases
     WHERE source_type = $1
       AND lease_key = $2
@@ -573,20 +407,44 @@ updated AS (
     RETURNING
         leases.source_type,
         leases.lease_key,
-        leases.status,
-        leases.last_heartbeat,
-        leases.failure_count,
-        leases.retry_after,
-        leases.status_reason,
-        leases.status_reason_detail,
-        leases.status_reason_updated_at,
-        leases.audit_revision,
-        leases.membership_revision,
-        leases.updated_at
+        leases.status
 )
+SELECT
+    current_state.source_type,
+    current_state.lease_key,
+    current_state.status::text AS status,
+    current_state.worker_id,
+    current_state.fencing_token,
+    updated.status::text AS final_status,
+    updated.source_type IS NOT NULL AS applied
+FROM current_state
+LEFT JOIN updated
+  ON updated.source_type = current_state.source_type
+ AND updated.lease_key = current_state.lease_key
 """
-    + _FAILURE_RESULT_SELECT_SQL
-)
+
+
+LOCK_LEASE_SQL = """\
+SELECT
+    source_type,
+    lease_key,
+    status::text AS status,
+    worker_id,
+    fencing_token,
+    last_heartbeat,
+    failure_count,
+    retry_after,
+    status_reason,
+    status_reason_detail,
+    status_reason_updated_at,
+    audit_revision,
+    membership_revision,
+    updated_at
+FROM public.ingestion_leases
+WHERE source_type = $1
+  AND lease_key = $2
+FOR NO KEY UPDATE
+"""
 
 
 LOAD_BCFY_CALLS_MEMBERSHIP_SQL = """\

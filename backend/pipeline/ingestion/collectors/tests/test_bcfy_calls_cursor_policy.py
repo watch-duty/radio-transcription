@@ -143,7 +143,7 @@ class TestBootstrapCursor(unittest.TestCase):
         )
 
         for durable_minimum in cases:
-            with self.subTest(durable_minimum=durable_minimum):
+            with self.subTest(durable_minimum=repr(durable_minimum)):
                 decision = cursor_policy.bootstrap_cursor(
                     (durable_minimum,),
                     now=_NOW,
@@ -194,7 +194,7 @@ class TestBootstrapCursor(unittest.TestCase):
         )
 
         for now in cases:
-            with self.subTest(now=now):
+            with self.subTest(now=repr(now)):
                 with self.assertRaisesRegex(
                     ValueError, "now must be UTC-aware"
                 ):
@@ -214,7 +214,7 @@ class TestBootstrapCursor(unittest.TestCase):
         )
 
         for cursor in cases:
-            with self.subTest(cursor=cursor):
+            with self.subTest(cursor=repr(cursor)):
                 with self.assertRaisesRegex(
                     ValueError,
                     "Feed cursor must be UTC-aware",
@@ -240,7 +240,7 @@ class TestReplayFloor(unittest.TestCase):
         requested = _NOW - datetime.timedelta(minutes=20)
 
         for cause in cursor_policy.ReplayFloorCause:
-            with self.subTest(cause=cause):
+            with self.subTest(cause=cause.value):
                 decision = cursor_policy.apply_replay_floor(
                     requested,
                     now=_NOW,
@@ -262,7 +262,7 @@ class TestReplayFloor(unittest.TestCase):
         self,
     ) -> None:
         for cause in cursor_policy.ReplayFloorCause:
-            with self.subTest(cause=cause):
+            with self.subTest(cause=cause.value):
                 decision = cursor_policy.apply_replay_floor(
                     _REPLAY_FLOOR,
                     now=_NOW,
@@ -281,7 +281,7 @@ class TestReplayFloor(unittest.TestCase):
         above = _REPLAY_FLOOR + datetime.timedelta(microseconds=1)
 
         for cause in cursor_policy.ReplayFloorCause:
-            with self.subTest(cause=cause, case="above"):
+            with self.subTest(cause=cause.value, case="above"):
                 decision = cursor_policy.apply_replay_floor(
                     above,
                     now=_NOW,
@@ -289,7 +289,7 @@ class TestReplayFloor(unittest.TestCase):
                 )
                 self.assertEqual(decision.selected_start, above)
                 self.assertIsNone(decision.floor_reached)
-            with self.subTest(cause=cause, case="omitted"):
+            with self.subTest(cause=cause.value, case="omitted"):
                 decision = cursor_policy.apply_replay_floor(
                     None,
                     now=_NOW,
@@ -503,7 +503,7 @@ class TestLeaseCursor(unittest.TestCase):
         )
 
         for last_pos in cases:
-            with self.subTest(last_pos=last_pos):
+            with self.subTest(last_pos=repr(last_pos)):
                 before = _cursor_state(self.cursor)
                 with self.assertRaises(cursor_policy.CursorIntegrityError):
                     self.cursor.prepare(last_pos)
@@ -615,8 +615,10 @@ class TestLeaseCursor(unittest.TestCase):
             _construction_key=cursor_policy._CONSTRUCTION_KEY,
         )
 
-        for settlement in (copied_fields_wrong_seal, changed_last_pos):
-            with self.subTest(settlement=settlement):
+        for case_index, settlement in enumerate(
+            (copied_fields_wrong_seal, changed_last_pos)
+        ):
+            with self.subTest(case_index=case_index):
                 with self.assertRaises(cursor_policy.CursorIntegrityError):
                     self.cursor.accept_replayable(settlement)
                 self.assertEqual(_cursor_state(self.cursor), before)
@@ -654,12 +656,14 @@ class TestLeaseCursor(unittest.TestCase):
         )
 
         self.assertEqual(candidate, other_cursor.outstanding_candidate)
-        for settlement in (
-            crossed_grant,
-            crossed_candidate,
-            skipped_sequence,
+        for case_index, settlement in enumerate(
+            (
+                crossed_grant,
+                crossed_candidate,
+                skipped_sequence,
+            )
         ):
-            with self.subTest(settlement=settlement):
+            with self.subTest(case_index=case_index):
                 with self.assertRaises(cursor_policy.CursorIntegrityError):
                     self.cursor.accept_replayable(settlement)
                 self.assertEqual(_cursor_state(self.cursor), before)
@@ -685,8 +689,8 @@ class TestLeaseCursor(unittest.TestCase):
                 last_pos=candidate.last_pos,
             ),
         )
-        for settlement in wrong_settlements:
-            with self.subTest(settlement=settlement):
+        for case_index, settlement in enumerate(wrong_settlements):
+            with self.subTest(case_index=case_index):
                 with self.assertRaises(cursor_policy.CursorIntegrityError):
                     self.cursor.accept_replayable(
                         typing.cast(
@@ -732,8 +736,8 @@ class TestLeaseCursor(unittest.TestCase):
             skipped_cursor.prepare_no_progress()
         )
 
-        for settlement in (crossed, wrong_seal, skipped):
-            with self.subTest(settlement=settlement):
+        for case_index, settlement in enumerate((crossed, wrong_seal, skipped)):
+            with self.subTest(case_index=case_index):
                 with self.assertRaises(cursor_policy.CursorIntegrityError):
                     self.cursor.accept_no_progress(settlement)
                 self.assertEqual(_cursor_state(self.cursor), before)
@@ -776,8 +780,8 @@ class TestLeaseCursor(unittest.TestCase):
             last_pos=candidate.last_pos,
         )
 
-        for receipt in (None, fake):
-            with self.subTest(receipt=receipt):
+        for case_index, receipt in enumerate((None, fake)):
+            with self.subTest(case_index=case_index):
                 with self.assertRaises(cursor_policy.CursorIntegrityError):
                     self.cursor.accept(
                         typing.cast("cursor_policy._CoveredPage", receipt)

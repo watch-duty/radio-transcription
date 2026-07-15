@@ -745,7 +745,7 @@ class TestSchedulerConstants(unittest.TestCase):
         scheduler_types = _scheduler_types()
 
         for feed_id in _FEED_IDS:
-            with self.subTest(feed_id=feed_id):
+            with self.subTest(feed_id=str(feed_id)):
                 self.assertEqual(
                     scheduler_types._shard_index(feed_id),
                     feed_id.int % 8,

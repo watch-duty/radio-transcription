@@ -12,6 +12,7 @@ from backend.pipeline.common.rules.models import (
     RuleMetadata,
     Scope,
     ScopeLevel,
+    Tag,
 )
 
 from ..main import app, get_rules_service
@@ -63,6 +64,64 @@ class TestRulesAPI(unittest.TestCase):
         data = response.json()
         self.assertEqual(data["rule_id"], "rule_123")
         self.mock_service.create_rule.assert_called_once()
+
+    def test_create_rule_with_tags(self) -> None:
+        """Test that tags are accepted on create and echoed in the response."""
+        payload = {
+            "rule_name": "Tagged Rule",
+            "is_active": True,
+            "scope": {"level": "GLOBAL"},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "keywords": ["flood"],
+            },
+            "tags": [{"key": "geo_event_type", "value": "flooding"}],
+        }
+        mock_rule = Rule(
+            rule_id="rule_456",
+            rule_name="Tagged Rule",
+            is_active=True,
+            scope=Scope(level=ScopeLevel.GLOBAL),
+            conditions=KeywordConditions(
+                evaluation_type=EvaluationType.KEYWORD_MATCH,
+                keywords=["flood"],
+            ),
+            tags=[Tag(key="geo_event_type", value="flooding")],
+            metadata=RuleMetadata(created_by="test@example.com"),
+        )
+        self.mock_service.create_rule.return_value = mock_rule
+
+        response = self.client.post("/v1/rules", json=payload)
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            response.json()["tags"],
+            [{"key": "geo_event_type", "value": "flooding"}],
+        )
+        rule_in = self.mock_service.create_rule.call_args.args[0]
+        self.assertEqual(
+            rule_in.tags, [Tag(key="geo_event_type", value="flooding")]
+        )
+
+    def test_create_rule_with_invalid_tags(self) -> None:
+        """Test that malformed tags are rejected with a validation error."""
+        payload = {
+            "rule_name": "Bad Tags",
+            "is_active": True,
+            "scope": {"level": "GLOBAL"},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "keywords": ["test"],
+            },
+            "tags": [{"key": "missing_value"}],
+        }
+
+        response = self.client.post("/v1/rules", json=payload)
+
+        self.assertEqual(
+            response.status_code, status.HTTP_422_UNPROCESSABLE_CONTENT
+        )
+        self.mock_service.create_rule.assert_not_called()
 
     def test_get_rule_success(self) -> None:
         """Test fetching an existing rule."""
