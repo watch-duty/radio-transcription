@@ -1,6 +1,9 @@
 import { useState } from 'react';
 
+import { saveAs } from 'file-saver';
+
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import DonwloadIcon from '@mui/icons-material/Download';
 import LinkIcon from '@mui/icons-material/Link';
 import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import Box from '@mui/material/Box';
@@ -17,6 +20,7 @@ import {
   findEvaluationAnnotationData,
   findTranscriptAnnotationData,
 } from '../../utils/annotationUtils';
+import { getAudioUrl } from '../../utils/audioUtils';
 import { formatDuration } from '../../utils/timeUtils';
 import TranscriptPlayControl from '../audio/TranscriptPlayControl';
 import AlertTooltip from './AlertTooltip';
@@ -432,6 +436,42 @@ export function TranscriptRow({
               sx={{ cursor: 'copy' }}
             >
               <LinkIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Download audio">
+            <IconButton
+              size="small"
+              aria-label="download audio"
+              disabled={!audioSegment.playbackAudioUri}
+              onClick={async (e) => {
+                e.stopPropagation();
+
+                // Button will be disabled, but need this for type safety.
+                if (!audioSegment.playbackAudioUri) {
+                  return;
+                }
+
+                try {
+                  const url = getAudioUrl(audioSegment.playbackAudioUri);
+                  const response = await fetch(url);
+                  if (!response.ok) {
+                    throw new Error(
+                      `Failed to fetch audio: ${response.statusText}`
+                    );
+                  }
+                  const blob = await response.blob();
+                  const fileName =
+                    audioSegment.playbackAudioUri.split('/').pop() ||
+                    audioSegment.playbackAudioUri;
+                  saveAs(blob, fileName);
+                  triggerSnackbar('Audio downloaded');
+                } catch (err) {
+                  console.error('Failed to download audio:', err);
+                  triggerSnackbar('Failed to download audio');
+                }
+              }}
+            >
+              <DonwloadIcon fontSize="small" />
             </IconButton>
           </Tooltip>
           {isAdmin && (
