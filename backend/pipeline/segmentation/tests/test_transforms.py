@@ -24,6 +24,7 @@ from apache_beam.transforms.userstate import RuntimeTimer
 from apache_beam.transforms.window import TimestampedValue
 from apache_beam.utils.timestamp import Timestamp
 from google.cloud import storage
+from google.protobuf.timestamp_pb2 import Timestamp as ProtoTimestamp
 from opentelemetry.trace import get_current_span
 
 from backend.pipeline.common.tracing_utils import (
@@ -201,6 +202,66 @@ class ParseAndKeyTimestampTest(unittest.TestCase):
         )
         self.assertEqual(len(metrics["counters"]), 1)
         self.assertEqual(metrics["counters"][0].committed, 1)
+
+    def test_parse_and_key_freshness_metric(self) -> None:
+        """Verifies data_freshness_ms distribution metric is recorded."""
+        now = datetime.datetime.now(datetime.UTC)
+        start_time = now - datetime.timedelta(seconds=5)
+        start_timestamp_proto = ProtoTimestamp()
+        start_timestamp_proto.FromDatetime(start_time)
+        chunk = ContinuousAudio(
+            gcs_uri="gs://test-bucket/path/to/test.flac",
+            session_id="mock-session-id",
+            feed_name="mock-feed-name",
+            duration_ms=1000,
+            feed_id="test-feed",
+            start_timestamp=start_timestamp_proto,
+        )
+        mock_msg = PubsubMessage(
+            chunk.SerializeToString(),
+            {"feed_id": "test-feed"},
+        )
+        options = PipelineOptions(
+            flags=[
+                "--continuous_input_subscription=projects/p/subscriptions/a",
+                "--output_topic=b",
+                "--project=c",
+            ]
+        )
+        with BeamTestPipeline(options=options) as p:
+            messages = p | beam.Create([mock_msg])
+            parsed = messages | beam.ParDo(
+                ParseAndKeyFn(is_continuous=True)
+            ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+            assert_that(
+                parsed[MAIN_TAG],
+                equal_to(
+                    [
+                        (
+                            "test-feed#mock-session-id",
+                            ChunkMetadata(
+                                gcs_uri="gs://test-bucket/path/to/test.flac",
+                                session_id="mock-session-id",
+                                duration_ms=1000,
+                                feed_metadata=FeedMetadata(
+                                    feed_name="mock-feed-name",
+                                ),
+                                timestamp_ms=int(start_time.timestamp() * 1000),
+                            ),
+                        )
+                    ]
+                ),
+            )
+
+        # Query metrics for data_freshness_ms distribution
+        metrics = p.result.metrics().query(
+            beam.metrics.metric.MetricsFilter().with_name("data_freshness_ms")
+        )
+        self.assertEqual(len(metrics["distributions"]), 1)
+        dist = metrics["distributions"][0]
+        # Since the chunk was generated 5 seconds ago, the freshness should
+        # be greater than 4000ms (accounting for pipeline execution delay)
+        self.assertGreater(dist.committed.mean, 4000)
 
     def test_parse_and_key_dlq(self) -> None:
         """Verifies that incoming data missing a critical routing attribute like 'feed_id' is gracefully intercepted and routed to the Dead Letter Queue."""

@@ -2,6 +2,7 @@
 
 import dataclasses
 import mimetypes
+from typing import Any
 
 import pydantic
 from google import genai
@@ -188,14 +189,96 @@ class GeminiTranscriber(base.Transcriber):
             else None,
         )
 
-        # Note: Retry policy is configured globally on the client in setup()
-        response = await self.client.aio.models.generate_content(
-            model=self.config.model,
-            contents=contents,
-            config=generation_config,
-        )
+        response = None
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=self.config.model,
+                contents=contents,
+                config=generation_config,
+            )
+            transcript = self._parse_response(response)
+        except Exception as e:
+            self._log_inference(
+                uri=uri,
+                duration_ms=duration_ms,
+                response=response,
+                error=e,
+            )
+            raise
+        else:
+            self._log_inference(
+                uri=uri,
+                duration_ms=duration_ms,
+                response=response,
+                transcript=transcript,
+            )
+            return transcript
 
-        return self._parse_response(response)
+    def _log_inference(
+        self,
+        uri: str | None,
+        duration_ms: int,
+        response: types.GenerateContentResponse | None,
+        transcript: str | None = None,
+        error: Exception | None = None,
+    ) -> None:
+        """Logs structured JSON of the Gemini inference request and response."""
+        log_record: dict[str, Any] = {
+            "type": "transcription_inference",
+            "model": self.config.model,
+            "input_uri": uri or "in-memory-bytes",
+            "audio_duration_ms": duration_ms,
+            "success": error is None,
+        }
+
+        if error is not None:
+            log_record["error_message"] = str(error)
+            log_record["error_type"] = type(error).__name__
+
+        if response is not None:
+            log_record["response_id"] = response.response_id or "Unknown"
+            if response.usage_metadata:
+                log_record["prompt_token_count"] = (
+                    response.usage_metadata.prompt_token_count
+                )
+                log_record["candidates_token_count"] = (
+                    response.usage_metadata.candidates_token_count
+                )
+                log_record["total_token_count"] = (
+                    response.usage_metadata.total_token_count
+                )
+
+            if response.candidates:
+                candidate = response.candidates[0]
+                finish_reason = candidate.finish_reason
+                if finish_reason:
+                    log_record["finish_reason"] = (
+                        finish_reason.name
+                        if hasattr(finish_reason, "name")
+                        else str(finish_reason)
+                    )
+                log_record["safety_ratings"] = self._get_blocked_ratings(
+                    candidate
+                )
+
+            if response.prompt_feedback:
+                block_reason = response.prompt_feedback.block_reason
+                if block_reason:
+                    log_record["prompt_block_reason"] = (
+                        block_reason.name
+                        if hasattr(block_reason, "name")
+                        else str(block_reason)
+                    )
+
+        if transcript is not None:
+            log_record["transcript"] = transcript
+
+        logger.info(
+            "Gemini inference completed"
+            if error is None
+            else "Gemini inference failed",
+            extra=log_record,
+        )
 
     def _get_blocked_ratings(self, candidate: types.Candidate) -> str:
         """Helper to extract a string list of blocked safety categories."""
