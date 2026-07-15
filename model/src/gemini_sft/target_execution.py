@@ -344,7 +344,7 @@ async def run_online_target_inference(
         metadata_uri,
     )
     client = vertex.genai.Client(
-        vertexai=True,
+        enterprise=True,
         project=project,
         location=vertex.resource_location(target_model, default_location),
     )

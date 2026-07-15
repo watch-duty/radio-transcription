@@ -839,12 +839,12 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
             mock_genai.Client.call_args_list,
             [
                 unittest.mock.call(
-                    vertexai=True,
+                    enterprise=True,
                     project="p",
                     location="us-central1",
                 ),
                 unittest.mock.call(
-                    vertexai=True,
+                    enterprise=True,
                     project="p",
                     location="us",
                 ),
@@ -1044,8 +1044,8 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         self.assertEqual(
             mock_genai.Client.call_args_list,
             [
-                unittest.mock.call(vertexai=True, project="p", location="us"),
-                unittest.mock.call(vertexai=True, project="p", location="us"),
+                unittest.mock.call(enterprise=True, project="p", location="us"),
+                unittest.mock.call(enterprise=True, project="p", location="us"),
             ],
         )
 
@@ -1075,8 +1075,8 @@ class TestSubmitBatchInferenceOutputUri(unittest.TestCase):
         self.assertEqual(
             mock_genai.Client.call_args_list,
             [
-                unittest.mock.call(vertexai=True, project="p", location="us"),
-                unittest.mock.call(vertexai=True, project="p", location="us"),
+                unittest.mock.call(enterprise=True, project="p", location="us"),
+                unittest.mock.call(enterprise=True, project="p", location="us"),
             ],
         )
 

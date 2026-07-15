@@ -34,12 +34,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_CREATE_FEED_UNIQUE_CONSTRAINTS = frozenset(
-    {
-        "feeds_name_key",
-        "idx_feed_properties_source_lookup",
-    }
-)
+_CREATE_FEED_UNIQUE_CONSTRAINTS = frozenset({"feeds_name_key"})
 _UPDATE_FEED_UNIQUE_CONSTRAINTS = frozenset({"feeds_name_key"})
 
 
