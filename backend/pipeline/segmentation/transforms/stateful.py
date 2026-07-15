@@ -763,7 +763,7 @@ class OrderedStitchAudioFn(beam.DoFn):
         )
 
     @override
-    def process(
+    def process(  # noqa: PLR0915
         self,
         element: tuple[str, datatypes.ChunkMetadata],
         timestamp: Timestamp = beam.DoFn.TimestampParam,  # type: ignore
@@ -831,14 +831,13 @@ class OrderedStitchAudioFn(beam.DoFn):
                 if metadata.timestamp_ms is not None
                 else int(float(timestamp) * common_constants.MS_PER_SECOND)
             )
-            out_of_order_buffer_state.add(
-                datatypes.BufferedChunk(
-                    timestamp_ms=current_ts_ms,
-                    gcs_uri=metadata.gcs_uri,
-                    traceparent=metadata.traceparent,
-                    baggage=metadata.baggage,
-                )
+            new_chunk = datatypes.BufferedChunk(
+                timestamp_ms=current_ts_ms,
+                gcs_uri=metadata.gcs_uri,
+                traceparent=metadata.traceparent,
+                baggage=metadata.baggage,
             )
+            out_of_order_buffer_state.add(new_chunk)
             if not curr_context.order_timer_active:
                 curr_context = replace(curr_context, order_timer_active=True)
                 state_changed = True
@@ -850,9 +849,19 @@ class OrderedStitchAudioFn(beam.DoFn):
                     last_start_ms_state,
                     out_of_order_buffer_state,
                 )
-            deferred_drain_timer.set(
-                timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
+
+            buffer_elements = list(out_of_order_buffer_state.read())
+            if new_chunk not in buffer_elements:
+                buffer_elements.append(new_chunk)
+
+            oldest_chunk_ts_sec = (
+                min(c.timestamp_ms for c in buffer_elements) / 1000.0
             )
+            next_deadline = max(
+                timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                Timestamp(seconds=oldest_chunk_ts_sec),
+            )
+            deferred_drain_timer.set(next_deadline)
             return
 
         results: list[
@@ -1073,10 +1082,13 @@ class OrderedStitchAudioFn(beam.DoFn):
                     if remaining_chunk.gcs_uri in prefetched_futures:
                         prefetched_futures[remaining_chunk.gcs_uri].cancel()
                 if deferred_drain_timer is not None and timestamp is not None:
-                    deferred_drain_timer.set(
+                    oldest_chunk_ts_sec = chunk.timestamp_ms / 1000.0
+                    next_deadline = max(
                         timestamp
-                        + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
+                        + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                        Timestamp(seconds=oldest_chunk_ts_sec),
                     )
+                    deferred_drain_timer.set(next_deadline)
                 if not isinstance(curr_context, datatypes.ActiveStitchingState):
                     msg = "curr_context must be an ActiveStitchingState"
                     raise TypeError(msg)
