@@ -10,7 +10,6 @@ from pathlib import Path
 import numpy as np
 import onnxruntime as ort
 from pedalboard import (
-    Compressor,
     HighpassFilter,
     LowpassFilter,
     PeakFilter,
@@ -34,11 +33,6 @@ from backend.pipeline.segmentation.constants import (
     VAD_DEFAULT_BLEND_RATIO,
     VAD_DEFAULT_BOOST_FREQ_HZ,
     VAD_DEFAULT_BOOST_GAIN_DB,
-    VAD_DEFAULT_COMP_ATTACK_MS,
-    VAD_DEFAULT_COMP_PEAK_THRESHOLD,
-    VAD_DEFAULT_COMP_RATIO,
-    VAD_DEFAULT_COMP_RELEASE_MS,
-    VAD_DEFAULT_COMP_THRESHOLD_DB,
     VAD_DEFAULT_DITHER_RMS,
     VAD_DEFAULT_FALLBACK_PRIMING_SEC,
     VAD_DEFAULT_HIGHPASS_HZ,
@@ -96,10 +90,6 @@ class VoiceActivityDetector:
     def __init__(
         self,
         *,
-        comp_threshold_db: float = VAD_DEFAULT_COMP_THRESHOLD_DB,
-        comp_ratio: float = VAD_DEFAULT_COMP_RATIO,
-        comp_attack_ms: float = VAD_DEFAULT_COMP_ATTACK_MS,
-        comp_release_ms: float = VAD_DEFAULT_COMP_RELEASE_MS,
         highpass_hz: float = VAD_DEFAULT_HIGHPASS_HZ,
         lowpass_hz: float = VAD_DEFAULT_LOWPASS_HZ,
         blend_ratio: float = VAD_DEFAULT_BLEND_RATIO,
@@ -113,7 +103,6 @@ class VoiceActivityDetector:
         pad_sec: float = VAD_DEFAULT_PAD_SEC,
         priming_sec: float = VAD_DEFAULT_WARMUP_SEC,
         fallback_priming_sec: float = VAD_DEFAULT_FALLBACK_PRIMING_SEC,
-        comp_peak_threshold: float = VAD_DEFAULT_COMP_PEAK_THRESHOLD,
         normalization_target_peak: float = VAD_NORMALIZATION_TARGET_PEAK,
         normalization_min_peak: float = VAD_NORMALIZATION_MIN_PEAK,
         seed: int = VAD_DEFAULT_SEED,
@@ -123,10 +112,6 @@ class VoiceActivityDetector:
         models_dir: str | Path = MODELS_DIR,
     ) -> None:
 
-        self.comp_threshold_db = comp_threshold_db
-        self.comp_ratio = comp_ratio
-        self.comp_attack_ms = comp_attack_ms
-        self.comp_release_ms = comp_release_ms
         self.highpass_hz = highpass_hz
         self.lowpass_hz = lowpass_hz
         self.blend_ratio = blend_ratio
@@ -140,7 +125,6 @@ class VoiceActivityDetector:
         self.pad_sec = pad_sec
         self.priming_sec = priming_sec
         self.fallback_priming_sec = fallback_priming_sec
-        self.comp_peak_threshold = comp_peak_threshold
         self.normalization_target_peak = normalization_target_peak
         self.normalization_min_peak = normalization_min_peak
         self.seed = seed
@@ -214,16 +198,6 @@ class VoiceActivityDetector:
                 LowpassFilter(cutoff_frequency_hz=self.lowpass_hz),
             ]
         )
-        self.comp_board = Pedalboard(
-            [
-                Compressor(
-                    threshold_db=self.comp_threshold_db,
-                    ratio=self.comp_ratio,
-                    attack_ms=self.comp_attack_ms,
-                    release_ms=self.comp_release_ms,
-                )
-            ]
-        )
         self.eq_board = Pedalboard(
             [
                 PeakFilter(
@@ -273,32 +247,13 @@ class VoiceActivityDetector:
             hop_length=hop_length,
         )[0]
 
-    def preprocess(
-        self, audio_array: np.ndarray, prior_len_sec: float = 0.0
-    ) -> np.ndarray:
+    def preprocess(self, audio_array: np.ndarray) -> np.ndarray:
         """Applies the VAD bandpass, denoiser, and eq presence boost pipeline."""
         bp_audio = self.bp_board(audio_array, TARGET_SAMPLE_RATE)
-
-        # Dynamically apply Compressor only if the raw signal is quiet (peak < self.comp_peak_threshold)
-        # Compute the peak amplitude strictly from the actual current chunk (slicing off the pre-roll preamble)
-        # to avoid signal volume contamination from preceding dispatches across streaming boundaries.
-        preamble_samples = int(prior_len_sec * TARGET_SAMPLE_RATE)
-        current_chunk = (
-            audio_array[preamble_samples:]
-            if preamble_samples > 0
-            else audio_array
-        )
-        peak = np.max(np.abs(current_chunk)) if len(current_chunk) > 0 else 0.0
-
-        if peak < self.comp_peak_threshold:
-            comp_audio = self.comp_board(bp_audio, TARGET_SAMPLE_RATE)
-        else:
-            comp_audio = bp_audio
-
-        ulunas_denoised = self.denoise(comp_audio)
+        ulunas_denoised = self.denoise(bp_audio)
 
         mixed_audio = (
-            np.float32(1.0 - self.blend_ratio) * comp_audio
+            np.float32(1.0 - self.blend_ratio) * bp_audio
             + np.float32(self.blend_ratio) * ulunas_denoised
         )
 
@@ -771,9 +726,7 @@ class VoiceActivityDetector:
         else:
             extended_audio = extended_native
 
-        preprocessed = self.preprocess(
-            extended_audio, prior_len_sec=prior_len_sec
-        )
+        preprocessed = self.preprocess(extended_audio)
 
         # 3. Slicing strategy for VAD state warming (Lookback Priming):
         # We run VAD starting from up to 1.5 seconds of the preamble to warm up the VAD RNN states,
