@@ -41,6 +41,7 @@ import {
   HttpError,
   getServiceClient,
   handleBackendError,
+  parseTimestamp,
   toCamel,
 } from '../utils.js';
 
@@ -113,15 +114,13 @@ interface FeedHistoryEventBackend {
 function convertFeedHistoryEventBackend(
   response: FeedHistoryEventBackend
 ): FeedHistoryEvent {
+  const base = toCamel<Record<string, unknown>>(response);
+  delete base.feedRevisionNum;
+
   return {
-    id: response.id,
-    feedId: response.feed_id,
-    action: response.action,
-    actor: response.actor,
-    occurredAt: Date.parse(response.occurred_at),
+    ...(base as unknown as FeedHistoryEvent),
+    occurredAt: parseTimestamp(response.occurred_at) ?? 0,
     feedRevision: response.feed_revision_num,
-    beforeValues: toCamel(response.before_values),
-    afterValues: toCamel(response.after_values),
   };
 }
 
@@ -178,27 +177,21 @@ function getArchiveUrl(
 }
 
 function convertFeedBackend(response: FeedBackend): Feed {
-  const lastHeartbeatParsed = response.last_heartbeat
-    ? Date.parse(response.last_heartbeat)
-    : undefined;
-  const lastSpeechParsed = response.last_speech_segment_timestamp
-    ? Date.parse(response.last_speech_segment_timestamp)
-    : undefined;
+  const base = toCamel<Record<string, unknown>>(response, {
+    nullToUndefined: true,
+  }) as unknown as Feed;
 
   return {
-    id: response.id,
-    name: response.name,
-    sourceType: response.source_type,
-    sourceFeedId: response.source_feed_id,
+    ...base,
     sourceUrl: getSourceUrl(response.source_type, response.source_feed_id),
     archiveUrl: getArchiveUrl(response.source_type, response.source_feed_id),
     status: convertFeedStatusBackend(response.status),
     substatus: response.status,
-    lastHeartbeat: lastHeartbeatParsed,
-    tags: response.tags,
-    statusReasonDetail: response.status_reason_detail ?? undefined,
+    lastHeartbeat: parseTimestamp(response.last_heartbeat),
+    lastSpeechSegmentTimestamp: parseTimestamp(
+      response.last_speech_segment_timestamp
+    ),
     statusReason: convertFeedStatusReason(response.status_reason),
-    lastSpeechSegmentTimestamp: lastSpeechParsed,
   };
 }
 

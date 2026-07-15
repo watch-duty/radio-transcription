@@ -112,24 +112,43 @@ export async function getServiceClient(
   return factory(targetUrl);
 }
 
+export interface ToCamelOptions {
+  nullToUndefined?: boolean;
+}
+
 /**
  * Converts an object's keys from snake_case to camelCase recursively.
  */
-export function toCamel<T = unknown>(obj: unknown): T {
-  if (obj === null || typeof obj !== 'object') {
+export function toCamel<T = unknown>(
+  obj: unknown,
+  options?: ToCamelOptions
+): T {
+  if (obj === null) {
+    return (options?.nullToUndefined ? undefined : null) as T;
+  }
+  if (obj === undefined || typeof obj !== 'object') {
     return obj as T;
   }
   if (Array.isArray(obj)) {
-    return obj.map((item) => toCamel(item)) as unknown as T;
+    return obj.map((item) => toCamel(item, options)) as unknown as T;
   }
   return Object.entries(obj as Record<string, unknown>).reduce(
     (acc, [key, value]) => {
       const camelKey = key.replace(/_([a-z])/g, (_, letter) =>
         letter.toUpperCase()
       );
-      acc[camelKey] = toCamel(value);
+      acc[camelKey] = toCamel(value, options);
       return acc;
     },
     {} as Record<string, unknown>
   ) as T;
+}
+
+/**
+ * Safely converts an ISO date string to a Unix epoch timestamp in milliseconds.
+ */
+export function parseTimestamp(dateStr?: string | null): number | undefined {
+  if (!dateStr) return undefined;
+  const parsed = Date.parse(dateStr);
+  return Number.isNaN(parsed) ? undefined : parsed;
 }

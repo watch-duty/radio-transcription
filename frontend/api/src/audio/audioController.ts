@@ -18,7 +18,12 @@ import {
 } from 'tsoa';
 
 import { AUDIO_SEGMENTS_API_URL } from '../config.js';
-import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
+import {
+  HttpError,
+  getServiceClient,
+  handleBackendError,
+  toCamel,
+} from '../utils.js';
 
 interface BaseAnnotationBackend {
   audio_segment_id: string;
@@ -99,61 +104,35 @@ function convertRuleAnnotation(
 }
 
 function convertAnnotationBackend(response: AnnotationBackend): Annotation {
+  let annotationData: unknown = response.data;
   if (response.type === AnnotationType.EVALUATION) {
-    return {
-      type: response.type,
-      createdAt: response.created_at,
-      data: {
-        decisions: response.data.decisions,
-        errors: response.data.errors,
-        ruleAnnotations: Object.fromEntries(
-          Object.entries(response.data.rule_annotations ?? {}).map(
-            ([ruleId, annotation]) => [
-              ruleId,
-              convertRuleAnnotation(annotation),
-            ]
-          )
-        ),
-      },
-    };
-  }
-
-  if (response.type === AnnotationType.WAVEFORM) {
-    return {
-      type: response.type,
-      createdAt: response.created_at,
-      data: {
-        peaks: response.data.peaks,
-        durationSeconds: response.data.duration_seconds,
-      },
+    annotationData = {
+      decisions: response.data.decisions,
+      errors: response.data.errors,
+      ruleAnnotations: Object.fromEntries(
+        Object.entries(response.data.rule_annotations ?? {}).map(
+          ([ruleId, annotation]) => [ruleId, convertRuleAnnotation(annotation)]
+        )
+      ),
     };
   }
 
   return {
     type: response.type,
     createdAt: response.created_at,
-    data: response.data,
+    data: toCamel(annotationData) as Annotation['data'],
   };
 }
 
 function convertAudioSegmentBackend(
   response: AudioSegmentBackend
 ): AudioSegment {
+  const base = toCamel<Record<string, unknown>>(response, {
+    nullToUndefined: true,
+  }) as unknown as AudioSegment;
+
   return {
-    id: response.id,
-    feedId: response.feed_id,
-    classification: response.classification,
-    startTimestamp: response.start_timestamp,
-    endTimestamp: response.end_timestamp,
-    missingPriorContext: response.missing_prior_context,
-    missingPostContext: response.missing_post_context,
-    sourceAudioUris: response.source_audio_uris,
-    canonicalAudioUri: response.canonical_audio_uri ?? undefined,
-    startAudioOffset: response.start_audio_offset ?? undefined,
-    endAudioOffset: response.end_audio_offset ?? undefined,
-    playbackAudioUri: response.playback_audio_uri ?? undefined,
-    externalAudioSegmentId: response.external_audio_segment_id ?? undefined,
-    createdAt: response.created_at,
+    ...base,
     annotations: (response.annotations || []).map(convertAnnotationBackend),
   };
 }
