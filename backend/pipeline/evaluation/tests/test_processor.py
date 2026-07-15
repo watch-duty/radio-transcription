@@ -181,6 +181,62 @@ class TestEvaluationEventProcessor(unittest.TestCase):
         # Verify
         self.mock_raw_publisher.publish.assert_called_once()
 
+    @patch("backend.pipeline.evaluation.processor.record_pipeline_stage")
+    def test_process_event_missing_segment_id_logs_error(
+        self, mock_record_stage: MagicMock
+    ) -> None:
+        self.transcribed_audio.segment_id = ""
+        base64_audio = base64.b64encode(
+            self.transcribed_audio.SerializeToString()
+        ).decode("utf-8")
+        cloud_event = self._create_mock_event(
+            {"message": {"data": base64_audio}}
+        )
+
+        self.processor.process_event(cloud_event)
+
+        mock_record_stage.assert_called_once_with("evaluation", "error")
+        self.mock_service.evaluate.assert_not_called()
+
+    @patch("backend.pipeline.evaluation.processor.record_pipeline_stage")
+    def test_process_event_missing_transcript_logs_skipped(
+        self, mock_record_stage: MagicMock
+    ) -> None:
+        self.transcribed_audio.transcript = ""
+        base64_audio = base64.b64encode(
+            self.transcribed_audio.SerializeToString()
+        ).decode("utf-8")
+        cloud_event = self._create_mock_event(
+            {"message": {"data": base64_audio}}
+        )
+
+        self.processor.process_event(cloud_event)
+
+        mock_record_stage.assert_called_once_with("evaluation", "skipped")
+        self.mock_service.evaluate.assert_not_called()
+
+    @patch("backend.pipeline.evaluation.processor.record_pipeline_stage")
+    def test_process_event_annotation_failure_logs_error(
+        self, mock_record_stage: MagicMock
+    ) -> None:
+        self.mock_service.evaluate.return_value = self.evaluated_payload
+        self.mock_audio_segments_client.add_audio_segment_annotation.side_effect = Exception(
+            "DB error"
+        )
+
+        base64_audio = base64.b64encode(
+            self.transcribed_audio.SerializeToString()
+        ).decode("utf-8")
+        cloud_event = self._create_mock_event(
+            {"message": {"data": base64_audio}}
+        )
+
+        self.processor.process_event(cloud_event)
+
+        mock_record_stage.assert_called_once_with(
+            "evaluation", "evaluation_error"
+        )
+
     def test_process_event_parse_failure_skips(self) -> None:
         # Setup
         # Missing "data" field

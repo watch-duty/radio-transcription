@@ -856,13 +856,54 @@ describe('FeedsController', () => {
       });
     });
 
-    it('should throw 403 Forbidden if user is not an admin', async () => {
+    it('should succeed and return history events for a non-admin user', async () => {
+      const mockBackendEvent = {
+        id: 'evt_123',
+        feed_id: 'feed_123',
+        action: 'feed.recovered',
+        actor: 'user:google:admin@example.com',
+        occurred_at: '2026-06-26T12:34:56.000Z',
+        feed_revision_num: 2,
+        before_values: { status: 'failing' },
+        after_values: { status: 'active' },
+      };
+
+      mockRequest.mockResolvedValueOnce({
+        data: {
+          history_events: [mockBackendEvent],
+          next_token: 'token_next',
+          total: 1,
+        },
+      });
+
       const controller = new FeedsController();
-      await expect(
-        controller.listFeedHistory(mockNonAdminRequest, 'feed_123', {
-          limit: 10,
-        })
-      ).rejects.toThrow(/Forbidden/);
+      const result = await controller.listFeedHistory(
+        mockNonAdminRequest,
+        'feed_123',
+        { limit: 10 }
+      );
+
+      expect(result).toEqual({
+        historyEvents: [
+          {
+            id: 'evt_123',
+            feedId: 'feed_123',
+            action: 'feed.recovered',
+            actor: 'user:google:admin@example.com',
+            occurredAt: Date.parse('2026-06-26T12:34:56.000Z'),
+            feedRevision: 2,
+            beforeValues: { status: 'failing' },
+            afterValues: { status: 'active' },
+          },
+        ],
+        nextToken: 'token_next',
+        total: 1,
+      });
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: 'http://feeds-api.example.com/feed_123/history?limit=10',
+        method: 'GET',
+      });
     });
 
     it('should throw HTTP error if backend fails', async () => {

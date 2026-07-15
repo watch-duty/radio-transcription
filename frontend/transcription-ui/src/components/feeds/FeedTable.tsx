@@ -357,53 +357,37 @@ export function FeedTable({
             borderBottom: 'none',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: {
-              xs: 'flex-end',
-              sm: allowEdit ? 'flex-end' : 'flex-start',
-            },
             minWidth: 0,
             width: '100%',
             py: { xs: 0.5, sm: undefined },
+            gap: 1,
+            ...(allowEdit && {
+              justifyContent: {
+              xs: 'flex-end',
+              sm: allowEdit ? 'flex-end' : 'flex-start',
+              },
+            }),
           }}
         >
           {allowEdit ? (
-            <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
-              <IconButton
-                size="small"
-                onClick={() => setHistoryFeed(feed)}
-                sx={{
-                  border: '1px solid',
-                  borderRadius: 1.5,
-                  p: 0.5,
-                  '&:hover': {
-                    borderColor: 'primary.main',
-                    bgcolor: 'primary.soft',
-                    color: 'primary.main',
-                  },
-                }}
-                aria-label={`View audit trail for ${feed.name}`}
-              >
-                <VisibilityIcon fontSize="small" />
-              </IconButton>
-              <IconButton
-                size="small"
-                onClick={() => onEditFeed?.(feed)}
-                disabled={isSubmitting || isEditing}
-                sx={{
-                  border: '1px solid',
-                  borderRadius: 1.5,
-                  p: 0.5,
-                  '&:hover': {
-                    borderColor: 'primary.main',
-                    bgcolor: 'primary.soft',
-                    color: 'primary.main',
-                  },
-                }}
-                aria-label={`Edit ${feed.name}`}
-              >
-                <EditIcon fontSize="small" />
-              </IconButton>
-            </Box>
+            <IconButton
+              size="small"
+              onClick={() => onEditFeed?.(feed)}
+              disabled={isSubmitting || isEditing}
+              sx={{
+                border: '1px solid',
+                borderRadius: 1.5,
+                p: 0.5,
+                '&:hover': {
+                  borderColor: 'primary.main',
+                  bgcolor: 'primary.soft',
+                  color: 'primary.main',
+                },
+              }}
+              aria-label={`Edit ${feed.name}`}
+            >
+              <EditIcon fontSize="small" />
+            </IconButton>
           ) : (
             <Box
               sx={{
@@ -411,7 +395,7 @@ export function FeedTable({
                 flexDirection: { xs: 'row', sm: 'column' },
                 gap: { xs: 1.5, sm: 0.5 },
                 alignItems: { xs: 'center', sm: 'flex-start' },
-                width: '100%',
+                flexGrow: 1,
                 overflow: 'hidden',
                 justifyContent: { xs: 'flex-end', sm: 'flex-start' },
               }}
@@ -487,6 +471,25 @@ export function FeedTable({
               ) : null}
             </Box>
           )}
+
+          <IconButton
+            size="small"
+            onClick={() => setHistoryFeed(feed)}
+            sx={{
+              border: '1px solid',
+              borderRadius: 1.5,
+              p: 0.5,
+              flexShrink: 0,
+              '&:hover': {
+                borderColor: 'primary.main',
+                bgcolor: 'primary.soft',
+                color: 'primary.main',
+              },
+            }}
+            aria-label={`View audit trail for ${feed.name}`}
+          >
+            <VisibilityIcon fontSize="small" />
+          </IconButton>
         </TableCell>
 
         {feed.tags && feed.tags.length > 0 ? (
