@@ -387,6 +387,10 @@ class TestLeaseFailureContract(unittest.TestCase):
                 ingestion_lease_store.LeaseOperationDisposition.APPLIED,
                 feed_store.FeedStatus.ACTIVE,
             ),
+            (
+                ingestion_lease_store.LeaseOperationDisposition.FENCE_MISMATCH,
+                feed_store.FeedStatus.ACTIVE,
+            ),
         )
         for case_index, (disposition, final_status) in enumerate(
             invalid_results
@@ -454,8 +458,8 @@ class TestLeaseFailureContract(unittest.TestCase):
         self.assertIn("leases.failure_count + 1 >= $5", sql)
         self.assertIn("'quarantined'::public.feed_status", sql)
         self.assertIn("'failing'::public.feed_status", sql)
-        self.assertIn("LEAST( $7 * INTERVAL '1 second'", sql)
-        self.assertIn("$6 * INTERVAL '1 second' * POWER(2", sql)
+        self.assertIn("INTERVAL '1 second' * LEAST(", sql)
+        self.assertIn("LEAST(leases.failure_count, 30)", sql)
         self.assertIn("RANDOM() * INTERVAL '10 seconds'", sql)
 
     def test_non_budgeted_failure_resets_count_and_cannot_quarantine(
@@ -473,11 +477,12 @@ class TestLeaseFailureContract(unittest.TestCase):
         self.assertNotIn("RANDOM()", sql)
 
     def test_store_owns_no_failure_reason_policy_map(self) -> None:
+        storage_directory = pathlib.Path(__file__).resolve().parents[1]
         production_text = "\n".join(
-            pathlib.Path(path).read_text()
-            for path in (
-                "backend/pipeline/storage/ingestion_lease_store.py",
-                "backend/pipeline/storage/ingestion_lease_queries.py",
+            (storage_directory / filename).read_text(encoding="utf-8")
+            for filename in (
+                "ingestion_lease_store.py",
+                "ingestion_lease_queries.py",
             )
         )
 

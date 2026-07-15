@@ -242,10 +242,12 @@ updated AS (
         retry_after = CASE
             WHEN leases.failure_count + 1 >= $5 THEN NULL
             ELSE NOW()
-                + LEAST(
-                    $7 * INTERVAL '1 second',
-                    $6 * INTERVAL '1 second'
-                        * POWER(2, leases.failure_count)
+                + INTERVAL '1 second' * LEAST(
+                    $7::double precision,
+                    $6::double precision * POWER(
+                        2::double precision,
+                        LEAST(leases.failure_count, 30)::double precision
+                    )
                 )
                 + (RANDOM() * INTERVAL '10 seconds')
         END,

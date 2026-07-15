@@ -257,19 +257,21 @@ class LeaseFailureResult:
 
     def __post_init__(self) -> None:
         applied = self.disposition is LeaseOperationDisposition.APPLIED
-        valid_final_status = isinstance(
-            self.final_status,
-            feed_store.FeedStatus,
-        ) and self.final_status in (
-            feed_store.FeedStatus.FAILING,
-            feed_store.FeedStatus.QUARANTINED,
-        )
-        if applied != valid_final_status:
-            msg = (
-                "only an applied failure may return failing or quarantined "
-                "status"
+        if applied:
+            valid_final_status = isinstance(
+                self.final_status,
+                feed_store.FeedStatus,
+            ) and self.final_status in (
+                feed_store.FeedStatus.FAILING,
+                feed_store.FeedStatus.QUARANTINED,
             )
-            raise ValueError(msg)
+            if valid_final_status:
+                return
+        elif self.final_status is None:
+            return
+
+        msg = "only an applied failure may return failing or quarantined status"
+        raise ValueError(msg)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
