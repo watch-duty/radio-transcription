@@ -29,6 +29,18 @@ class LogicalOperator(StrEnum):
     ALL = "ALL"
 
 
+class Tag(BaseModel):
+    """Key-value pair for any metadata on the rule.
+
+    Attributes:
+        key: The tag key.
+        value: The tag value.
+    """
+
+    key: str
+    value: str
+
+
 class Scope(BaseModel):
     """Represents the scope of a rule, including its level and target feeds."""
 
@@ -89,6 +101,9 @@ class RuleBase(BaseModel):
     is_active: bool = True
     scope: Scope
     conditions: RuleConditions
+    # Inert labels (e.g. for notification routing); which feeds a rule
+    # applies to is modeled exclusively by `scope`.
+    tags: list[Tag] = Field(default_factory=list)
     metadata: RuleMetadata = Field(default_factory=RuleMetadata)
 
 
@@ -104,6 +119,7 @@ class RuleUpdate(BaseModel):
     is_active: bool | None = None
     scope: Scope | None = None
     conditions: RuleConditions | None = None
+    tags: list[Tag] | None = None
     metadata: RuleMetadata | None = None
 
 

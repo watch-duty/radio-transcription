@@ -29,7 +29,7 @@ class RulesStore:
         if data.get("rule_id"):
             data["rule_id"] = str(data["rule_id"])
 
-        for field in ["scope", "conditions", "metadata"]:
+        for field in ["scope", "conditions", "tags", "metadata"]:
             value = data.get(field)
             if value and isinstance(value, (str, bytes, bytearray)):
                 data[field] = json.loads(value)
@@ -39,6 +39,9 @@ class RulesStore:
         """Create a new transcription rule."""
         scope_json = json.dumps(rule_in.scope.model_dump(mode="json"))
         conditions_json = json.dumps(rule_in.conditions.model_dump(mode="json"))
+        tags_json = json.dumps(
+            [tag.model_dump(mode="json") for tag in rule_in.tags]
+        )
 
         # Assign the mandatory created_by field
         created_by = rule_in.metadata.created_by
@@ -53,6 +56,7 @@ class RulesStore:
             rule_in.is_active,
             scope_json,
             conditions_json,
+            tags_json,
             created_by,
         )
         return Rule.model_validate(self._prepare_row(row))
@@ -101,7 +105,7 @@ class RulesStore:
 
         for key, value in update_data.items():
             db_value = value
-            if key in {"scope", "conditions"} and db_value is not None:
+            if key in {"scope", "conditions", "tags"} and db_value is not None:
                 db_value = json.dumps(db_value)
 
             # Skip metadata for now as it contains immutable fields
