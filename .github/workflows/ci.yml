@@ -172,19 +172,9 @@ jobs:
           fetch-depth: 100
       - name: Install mise, install tools
         uses: jdx/mise-action@v3
-      - name: Terraform fmt check
-        run: terraform fmt -check -recursive terraform/
-      - name: Validate Terraform modules
-        run: |
-          set -euo pipefail
-          # Build map of tf modules, omitting any .terraform cache dirs
-          mapfile -t MODULE_DIRS < <(find terraform/ -name "*.tf" -not -path "*/.*" -exec dirname {} \; | sort -u)
-          for dir in "${MODULE_DIRS[@]}"; do
-            echo "=========================================="
-            echo "Validating Terraform module in: $dir"
-            echo "=========================================="
-            (cd "$GITHUB_WORKSPACE/$dir" && terraform init -backend=false && terraform validate)
-          done
+      - name: Validate Terraform
+        run: mise run lint:terraform
+
 
   run-backend-tests:
     needs: [setup]
