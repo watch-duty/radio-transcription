@@ -66,6 +66,7 @@ class RunConfig:
     learning_rate_multiplier: float
     system_prompt: str
     user_prompt: str
+    context_turns: int
     paths: RunPaths
 
     def to_record_dict(self) -> dict[str, Any]:
@@ -86,6 +87,7 @@ class RunConfig:
             "learning_rate_multiplier": self.learning_rate_multiplier,
             "system_prompt": self.system_prompt,
             "user_prompt": self.user_prompt,
+            "context_turns": self.context_turns,
             "canonical_train_uri": self.paths.canonical_train_uri,
             "canonical_validation_uri": self.paths.canonical_validation_uri,
             "canonical_eval_uri": self.paths.canonical_eval_uri,
@@ -159,6 +161,10 @@ def _load_run_config(
     learning_rate_multiplier = _required_lr_multiplier(
         sft, "sft.learning_rate_multiplier"
     )
+    context_turns = int(sft.get("context_turns", 0))
+    if context_turns < 0:
+        msg = "context_turns must be a non-negative integer"
+        raise RunConfigError(msg)
 
     prompts = data.get("prompts", {})
     if prompts is None:
@@ -198,6 +204,7 @@ def _load_run_config(
         learning_rate_multiplier=learning_rate_multiplier,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
+        context_turns=context_turns,
         paths=paths,
     )
 

@@ -29,13 +29,19 @@ logger = logging.getLogger(__name__)
 # never triggers NeMo when [scoring] is not installed.
 try:
     import jiwer
-    from nemo_text_processing.inverse_text_normalization.inverse_normalize import (
-        InverseNormalizer as NemoInverseNormalizer,
-    )
 except ImportError as _e:
     _SCORING_MISSING = _e
 else:
     _SCORING_MISSING = None
+
+try:
+    from nemo_text_processing.inverse_text_normalization.inverse_normalize import (
+        InverseNormalizer as NemoInverseNormalizer,
+    )
+
+    _NEMO_AVAILABLE = True
+except ImportError:
+    _NEMO_AVAILABLE = False
 
 
 def _require_scoring() -> None:
@@ -49,12 +55,14 @@ def _require_scoring() -> None:
 
 
 @cache
-def _get_nemo_inverse_normalizer() -> "NemoInverseNormalizer":
+def _get_nemo_inverse_normalizer() -> "NemoInverseNormalizer | None":
     """Lazy-initialize the NeMo inverse normalizer (30-60s first call; cached).
 
     Returns:
-        Cached NemoInverseNormalizer (English) instance.
+        Cached NemoInverseNormalizer (English) instance or None if unavailable.
     """
+    if not _NEMO_AVAILABLE:
+        return None
     logger.warning(
         "Loading NeMo text normalizer (first use only; takes 30-60 "
         "seconds — this is not a hung kernel; cached for subsequent "
@@ -130,9 +138,9 @@ def build_normalizer() -> "jiwer.Compose":
 
         def process_string(self, s: str) -> str:
             # 1. NeMo ITN on natural text first
-            s = _get_nemo_inverse_normalizer().inverse_normalize(
-                s, verbose=False
-            )
+            normalizer = _get_nemo_inverse_normalizer()
+            if normalizer is not None:
+                s = normalizer.inverse_normalize(s, verbose=False)
             # 2. Manual fallback for small number words missed by NeMo
             for word, digit in self._SMALL_NUMBER_MAP.items():
                 s = re.sub(rf"\b{word}\b", digit, s, flags=re.IGNORECASE)

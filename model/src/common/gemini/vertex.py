@@ -50,6 +50,7 @@ def build_request(
     *,
     system_prompt: str,
     user_prompt: str,
+    prior_context: list[str] | None = None,
     generation_config: dict = GEMINI_GENERATION_CONFIG,
     safety_settings: list = GEMINI_SAFETY_SETTINGS,
 ) -> dict:
@@ -67,23 +68,44 @@ def build_request(
     the request back in camelCase in batch OUTPUT, so output parsers must read both
     casings.
     """
-    return {
-        "request": {
-            "contents": [
+    contents = []
+
+    # 1. Prepend prior context turns
+    if prior_context:
+        for transcript in prior_context:
+            contents.append(
                 {
                     "role": "user",
-                    "parts": [
-                        # snake_case keys are intentional — see the docstring note.
-                        {
-                            "file_data": {
-                                "file_uri": audio_uri,
-                                "mime_type": "audio/flac",
-                            }
-                        },
-                        {"text": user_prompt},
-                    ],
+                    "parts": [{"text": "Transcribe the attached audio."}],
                 }
+            )
+            contents.append(
+                {
+                    "role": "model",
+                    "parts": [{"text": transcript}],
+                }
+            )
+
+    # 2. Append active audio turn
+    contents.append(
+        {
+            "role": "user",
+            "parts": [
+                # snake_case keys are intentional — see the docstring note.
+                {
+                    "file_data": {
+                        "file_uri": audio_uri,
+                        "mime_type": "audio/flac",
+                    }
+                },
+                {"text": user_prompt},
             ],
+        }
+    )
+
+    return {
+        "request": {
+            "contents": contents,
             "system_instruction": {
                 "role": "system",
                 "parts": [{"text": system_prompt}],

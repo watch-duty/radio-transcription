@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from common.gcs_utils import (
@@ -12,6 +13,7 @@ from common.gcs_utils import (
     gcs_uri_exists,
     upload_local_file,
 )
+from common.gemini.context import add_prior_context_to_manifest
 from common.gemini.tuning_data import (
     build_audio_tuning_example,
     validate_audio_tuning_example,
@@ -38,7 +40,6 @@ if TYPE_CHECKING:
     import argparse
     from pathlib import Path
 
-    from common.manifest import CanonicalRow
 
 logger = logging.getLogger(__name__)
 RESULTS_DIR = DEFAULT_RESULTS_DIR
@@ -191,6 +192,25 @@ def prepare_artifacts(
     # eval may intentionally point at the same manifest for Gemini SFT runs.
     reject_split_overlap("train", train_rows, "validation", validation_rows)
     reject_split_overlap("train", train_rows, "eval", eval_rows)
+    if run_cfg.context_turns > 0:
+        logger.info(
+            "Injecting prior context history (up to %s turns) into train and validation splits...",
+            run_cfg.context_turns,
+        )
+        # Note: Since canonical manifests may load in non-sorted order, we run them through
+        # context mapping which automatically clusters and sorts them chronologically.
+        train_rows = add_prior_context_to_manifest(
+            [asdict(r) for r in train_rows],
+            context_turns=run_cfg.context_turns,
+        )
+        validation_rows = add_prior_context_to_manifest(
+            [asdict(r) for r in validation_rows],
+            context_turns=run_cfg.context_turns,
+        )
+    else:
+        # Standard fallback to list of dicts to preserve homogeneous type shape
+        train_rows = [asdict(r) for r in train_rows]
+        validation_rows = [asdict(r) for r in validation_rows]
 
     gemini_train_path = model_inputs_dir / "train.jsonl"
     gemini_validation_path = model_inputs_dir / "validation.jsonl"
@@ -218,7 +238,9 @@ def prepare_artifacts(
         gemini_train_path=gemini_train_path,
         gemini_validation_path=gemini_validation_path,
         preflight_report_path=preflight_dir / "report.json",
-        total_train_duration_seconds=sum(row.duration for row in train_rows),
+        total_train_duration_seconds=sum(
+            row.get("duration") or 0.0 for row in train_rows
+        ),
         canonical_train_rows=len(train_rows),
         canonical_validation_rows=len(validation_rows),
         canonical_eval_rows=len(eval_rows),
@@ -226,7 +248,7 @@ def prepare_artifacts(
 
 
 def write_gemini_jsonl(
-    rows: list[CanonicalRow],
+    rows: list[dict[str, Any]],
     path: Path,
     *,
     system_prompt: str,
@@ -237,10 +259,11 @@ def write_gemini_jsonl(
     with path.open("w", encoding="utf-8") as fh:
         for row in rows:
             example = build_audio_tuning_example(
-                audio_uri=row.audio_filepath,
-                gt_text=row.text,
+                audio_uri=row.get("audio_filepath"),
+                gt_text=row.get("text") or "",
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
+                prior_context=row.get("prior_context"),
             )
             if not validate_audio_tuning_example(example):
                 msg = f"invalid Gemini SFT example for {row.audio_filepath}"

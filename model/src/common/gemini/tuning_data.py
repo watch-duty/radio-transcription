@@ -16,6 +16,7 @@ def build_audio_tuning_example(
     gt_text: str,
     system_prompt: str,
     user_prompt: str,
+    prior_context: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build a single Gemini/Vertex AI audio-SFT JSONL example.
 
@@ -29,32 +30,54 @@ def build_audio_tuning_example(
             ``common.gemini.prompts``).
         user_prompt: Per-turn user instruction (e.g. from
             ``common.gemini.prompts``).
+        prior_context: Optional list of preceding transcript texts from the same feed.
 
     Returns:
         A dict matching the current Vertex AI audio-SFT JSONL schema:
         ``{systemInstruction, contents: [{role:user, parts:[fileData, text]},
                                           {role:model, parts:[text]}]}``.
     """
+    contents = []
+
+    # 1. Prepend prior context as alternating user/model history turns
+    if prior_context:
+        for transcript in prior_context:
+            contents.append(
+                {
+                    "role": "user",
+                    "parts": [{"text": "Transcribe the attached audio."}],
+                }
+            )
+            contents.append(
+                {
+                    "role": "model",
+                    "parts": [{"text": transcript}],
+                }
+            )
+
+    # 2. Append the current active turn containing the target audio
+    contents.append(
+        {
+            "role": "user",
+            "parts": [
+                {
+                    "fileData": {
+                        "mimeType": "audio/flac",
+                        "fileUri": audio_uri,
+                    }
+                },
+                {"text": user_prompt},
+            ],
+        }
+    )
+    contents.append({"role": "model", "parts": [{"text": gt_text}]})
+
     return {
         "systemInstruction": {
             "role": "system",
             "parts": [{"text": system_prompt}],
         },
-        "contents": [
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "fileData": {
-                            "mimeType": "audio/flac",
-                            "fileUri": audio_uri,
-                        }
-                    },
-                    {"text": user_prompt},
-                ],
-            },
-            {"role": "model", "parts": [{"text": gt_text}]},
-        ],
+        "contents": contents,
     }
 
 
@@ -74,19 +97,30 @@ def validate_audio_tuning_example(example: dict[str, Any]) -> bool:
     if "systemInstruction" not in example:
         return False
     contents = example.get("contents")
-    if not isinstance(contents, list) or len(contents) != 2:
-        return False
-    user_turn, model_turn = contents
-    if not isinstance(user_turn, dict) or not isinstance(model_turn, dict):
-        return False
-    if user_turn.get("role") != "user" or model_turn.get("role") != "model":
+    if (
+        not isinstance(contents, list)
+        or len(contents) < 2
+        or len(contents) % 2 != 0
+    ):
         return False
 
-    file_data = _extract_user_file_data(user_turn)
+    # Validate alternating user/model turns
+    for idx, turn in enumerate(contents):
+        if not isinstance(turn, dict):
+            return False
+        expected_role = "user" if idx % 2 == 0 else "model"
+        if turn.get("role") != expected_role:
+            return False
+
+    # The last user turn (index len-2) must contain the audio payload
+    current_user_turn = contents[-2]
+    file_data = _extract_user_file_data(current_user_turn)
     if not _is_valid_audio_file_data(file_data):
         return False
 
-    model_text = _extract_model_text(model_turn)
+    # The last model turn (index len-1) must contain the target transcript
+    current_model_turn = contents[-1]
+    model_text = _extract_model_text(current_model_turn)
     return bool(model_text.strip())
 
 

@@ -7,7 +7,7 @@ import logging
 import tempfile
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from common.gcs_utils import (
     download_blob_to_file,
@@ -34,6 +34,14 @@ class BatchPredictionMap(dict[str, str]):
     output_uri: str
 
 
+def _get_audio_filepath(entry: Any) -> str:
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict):
+        return entry["audio_filepath"]
+    return str(entry.audio_filepath)
+
+
 def run_batch_audio_inference(
     *,
     storage_client: storage.Client,
@@ -42,13 +50,15 @@ def run_batch_audio_inference(
     location: str,
     model_id: str,
     label: str,
-    audio_uris: Sequence[str],
+    audio_uris: Sequence[str] | Sequence[Any],
     system_prompt: str,
     user_prompt: str,
     submit_fn: BatchSubmitFn = submit_batch_inference,
 ) -> BatchPredictionMap | None:
     """Run Gemini batch inference for audio URIs and return parsed predictions."""
-    expected_audio_uris = _unique_audio_uris(audio_uris)
+    # Standardize input list to simple audio GCS URIs for unique verification check
+    flat_uris = [_get_audio_filepath(r) for r in audio_uris]
+    expected_audio_uris = _unique_audio_uris(flat_uris)
     if expected_audio_uris is None:
         logger.error(
             "[%s] eval rows contain duplicate audio_filepath values; one "
@@ -116,7 +126,7 @@ def build_batch_jsonl(
     storage_client: storage.Client,
     run_gcs_prefix: str,
     label: str,
-    audio_uris: Sequence[str],
+    audio_uris: Sequence[str] | Sequence[Any],
     system_prompt: str,
     user_prompt: str,
     tmp_dir: Path,
@@ -124,13 +134,22 @@ def build_batch_jsonl(
     """Write and upload a Vertex batch input JSONL file."""
     batch_input_path = tmp_dir / f"batch_input_{label}.jsonl"
     with batch_input_path.open("w", encoding="utf-8") as fh:
-        for audio_uri in audio_uris:
+        for entry in audio_uris:
+            audio_uri = _get_audio_filepath(entry)
+            if isinstance(entry, str):
+                prior_context = None
+            elif isinstance(entry, dict):
+                prior_context = entry.get("prior_context")
+            else:
+                prior_context = getattr(entry, "prior_context", None)
+
             fh.write(
                 json.dumps(
                     build_request(
                         audio_uri,
                         system_prompt=system_prompt,
                         user_prompt=user_prompt,
+                        prior_context=prior_context,
                     )
                 )
                 + "\n"

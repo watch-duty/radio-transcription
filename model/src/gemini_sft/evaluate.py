@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -12,6 +13,7 @@ from common.gcs_utils import (
     gcs_uri_exists,
 )
 from common.gemini.batch import BatchPredictionMap, run_batch_audio_inference
+from common.gemini.context import add_prior_context_to_manifest
 from common.gemini.prompts import GEMINI_TRANSCRIBE_KEYWORDS
 from common.gemini.vertex import submit_batch_inference
 from common.inference_manifest import (
@@ -105,6 +107,8 @@ def evaluate_run(
         )
         base_only = True
 
+    context_turns = int(config.get("context_turns", 0))
+
     eval_entries = download_jsonl_manifest(storage_client, eval_manifest_uri)
     source_rows, eval_rows = canonical_rows_from_entries(
         eval_entries,
@@ -112,6 +116,22 @@ def evaluate_run(
         source=eval_manifest_uri,
     )
     model_family_slug = model_family_slug_from_model_id(base_model)
+
+    # Cache lists of references and durations before potentially converting eval_rows to dicts
+    refs = [row.text for row in eval_rows]
+    durations = [row.duration for row in eval_rows]
+
+    if context_turns > 0:
+        logger.info(
+            "Injecting prior context history (up to %s turns) into eval split...",
+            context_turns,
+        )
+        eval_rows = add_prior_context_to_manifest(
+            [asdict(r) for r in eval_rows],
+            context_turns=context_turns,
+        )
+    else:
+        eval_rows = [asdict(r) for r in eval_rows]
 
     base_preds = batch_infer(
         storage_client=storage_client,
@@ -127,11 +147,9 @@ def evaluate_run(
     if base_preds is None:
         return 1
 
-    refs = [row.text for row in eval_rows]
-    durations = [row.duration for row in eval_rows]
     # Empty-string fallback is intentional: skipped/missing Vertex outputs
     # score as deletions instead of disappearing from the denominator.
-    base_hyps = [base_preds.get(row.audio_filepath, "") for row in eval_rows]
+    base_hyps = [base_preds.get(row["audio_filepath"], "") for row in eval_rows]
     normalizer = build_normalizer()
     metrics = build_metrics(
         round_id=run_cfg.round_id,
@@ -171,7 +189,7 @@ def evaluate_run(
         if tuned_preds is None:
             return 1
         tuned_hyps = [
-            tuned_preds.get(row.audio_filepath, "") for row in eval_rows
+            tuned_preds.get(row["audio_filepath"], "") for row in eval_rows
         ]
         add_tuned_metrics(
             metrics, refs, durations, base_hyps, tuned_hyps, normalizer
@@ -243,7 +261,7 @@ def batch_infer(
         location=location,
         model_id=model_id,
         label=label,
-        audio_uris=[str(row.audio_filepath) for row in eval_rows],
+        audio_uris=eval_rows,
         system_prompt=system_prompt,
         user_prompt=user_prompt,
         submit_fn=submit_batch_inference,

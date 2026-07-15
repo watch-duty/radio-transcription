@@ -117,6 +117,47 @@ class TestValidateExample(unittest.TestCase):
         ex["contents"] = ex["contents"][:1]
         self.assertFalse(validate_audio_tuning_example(ex))
 
+    def test_accepts_prior_context_multi_turn_example(self) -> None:
+        ex = build_audio_tuning_example(
+            audio_uri="gs://b/s.flac",
+            gt_text="copy current",
+            system_prompt="sys",
+            user_prompt="transcribe",
+            prior_context=[
+                "First transmission text",
+                "Second transmission text",
+            ],
+        )
+        # 2 context segments = 4 turns. 1 current active segment = 2 turns. Total = 6 turns.
+        self.assertEqual(len(ex["contents"]), 6)
+        self.assertEqual(ex["contents"][0]["role"], "user")
+        self.assertEqual(ex["contents"][1]["role"], "model")
+        self.assertEqual(
+            ex["contents"][1]["parts"][0]["text"], "First transmission text"
+        )
+
+        self.assertEqual(ex["contents"][4]["role"], "user")
+        # The last user turn carries the fileUri
+        self.assertEqual(
+            ex["contents"][4]["parts"][0]["fileData"]["fileUri"],
+            "gs://b/s.flac",
+        )
+        self.assertEqual(ex["contents"][5]["parts"][0]["text"], "copy current")
+
+        self.assertTrue(validate_audio_tuning_example(ex))
+
+    def test_rejects_odd_turn_count_in_multi_turn_example(self) -> None:
+        ex = build_audio_tuning_example(
+            audio_uri="gs://b/s.flac",
+            gt_text="copy current",
+            system_prompt="sys",
+            user_prompt="transcribe",
+            prior_context=["First text"],
+        )
+        # Pop one model turn to make total turns odd (3 instead of 4)
+        ex["contents"].pop(1)
+        self.assertFalse(validate_audio_tuning_example(ex))
+
 
 class TestImportIsolation(unittest.TestCase):
     """TEST-03: `import common.prompts` (the light core) must load no heavy deps."""

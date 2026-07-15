@@ -224,6 +224,125 @@ class TestPrepareRun(unittest.TestCase):
             ]
             self.assertGreater(config_index, max(prerequisite_indexes))
 
+    def test_prepare_with_context_turns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_s:
+            tmp = Path(tmp_s)
+            storage = FakeStorageClient()
+
+            # Seed 3 sequenced training segments belonging to the same source_group
+            train_rows = [
+                {
+                    "audio_filepath": "gs://audio/t1.flac",
+                    "text": "First transmission text",
+                    "offset": 0.0,
+                    "duration": 2.0,
+                    "example_id": "ex1",
+                    "segment_id": "seg001",
+                    "source_group": "group_A",
+                    "original_offset": 0.0,
+                    "split": "train",
+                },
+                {
+                    "audio_filepath": "gs://audio/t2.flac",
+                    "text": "Second transmission text",
+                    "offset": 0.0,
+                    "duration": 3.0,
+                    "example_id": "ex1",
+                    "segment_id": "seg002",
+                    "source_group": "group_A",
+                    "original_offset": 5.0,
+                    "split": "train",
+                },
+                {
+                    "audio_filepath": "gs://audio/t3.flac",
+                    "text": "Third transmission text",
+                    "offset": 0.0,
+                    "duration": 4.0,
+                    "example_id": "ex1",
+                    "segment_id": "seg003",
+                    "source_group": "group_A",
+                    "original_offset": 10.0,
+                    "split": "train",
+                },
+            ]
+            storage.put(
+                "gs://source/manifests/train.jsonl", _manifest(train_rows)
+            )
+            storage.put(
+                "gs://source/manifests/validation.jsonl",
+                _manifest(
+                    [_row("gs://audio/validation.flac", "validation text")]
+                ),
+            )
+            storage.put(
+                "gs://source/manifests/eval.jsonl",
+                _manifest([_row("gs://audio/eval.flac", "eval text")]),
+            )
+            storage.put("gs://audio/t1.flac", "audio")
+            storage.put("gs://audio/t2.flac", "audio")
+            storage.put("gs://audio/t3.flac", "audio")
+            storage.put("gs://audio/validation.flac", "audio")
+            storage.put("gs://audio/eval.flac", "audio")
+
+            # Write config with context_turns = 2
+            config_path = tmp / "run.toml"
+            config_path.write_text(
+                _config_text("round-context") + "context_turns = 2\n",
+                encoding="utf-8",
+            )
+            run_cfg = load_run_config(config_path)
+
+            artifacts, config = prepare_run(
+                run_cfg=run_cfg,
+                storage_client=storage,
+                results_dir=tmp / "results",
+            )
+
+            self.assertEqual(config["status"], "preflight_passed")
+            self.assertTrue(artifacts.gemini_train_path.exists())
+
+            # Read the generated train.jsonl file
+            generated_lines = [
+                json.loads(line)
+                for line in artifacts.gemini_train_path.read_text(
+                    encoding="utf-8"
+                ).splitlines()
+            ]
+            self.assertEqual(len(generated_lines), 3)
+
+            # Row 0 (First segment) must have no prior context (len=2 turns)
+            self.assertEqual(len(generated_lines[0]["contents"]), 2)
+            self.assertEqual(
+                generated_lines[0]["contents"][1]["parts"][0]["text"],
+                "First transmission text",
+            )
+
+            # Row 1 (Second segment) must contain Row 0 context (len=4 turns)
+            self.assertEqual(len(generated_lines[1]["contents"]), 4)
+            self.assertEqual(
+                generated_lines[1]["contents"][1]["parts"][0]["text"],
+                "First transmission text",
+            )
+            self.assertEqual(
+                generated_lines[1]["contents"][3]["parts"][0]["text"],
+                "Second transmission text",
+            )
+
+            # Row 2 (Third segment) must contain Row 0 + Row 1 context (len=6 turns)
+            self.assertEqual(len(generated_lines[2]["contents"]), 6)
+            self.assertEqual(
+                generated_lines[2]["contents"][1]["parts"][0]["text"],
+                "First transmission text",
+            )
+            self.assertEqual(
+                generated_lines[2]["contents"][3]["parts"][0]["text"],
+                "Second transmission text",
+            )
+            self.assertEqual(
+                generated_lines[2]["contents"][5]["parts"][0]["text"],
+                "Third transmission text",
+            )
+
     def test_train_eval_overlap_fails_before_uploading_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_s:
             tmp = Path(tmp_s)

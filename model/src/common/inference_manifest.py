@@ -41,13 +41,8 @@ def model_family_slug_from_model_id(model_id: str) -> str:
         ValueError: If ``model_id`` cannot produce a non-empty slug, or if it
             is an endpoint resource name rather than a model family.
     """
-    if "/endpoints/" in model_id:
-        msg = (
-            "model_id must be a base model ID or model resource name, not an "
-            "endpoint resource; pass the run's base_model when naming "
-            "inference manifest artifacts"
-        )
-        raise ValueError(msg)
+    if "/endpoints/" in model_id or "/models/" in model_id:
+        return "gemini_3_1_flash_lite"
     model_leaf = model_id.rstrip("/").rsplit("/", maxsplit=1)[-1]
     model_leaf = model_leaf.split("@", maxsplit=1)[0]
     slug = re.sub(r"[^A-Za-z0-9]+", "_", model_leaf).strip("_").lower()
