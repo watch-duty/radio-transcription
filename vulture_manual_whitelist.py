@@ -16,8 +16,10 @@ _.get_value
 # the focused tests, so keep only dormant public methods, returned result fields,
 # and lifecycle telemetry causes allowlisted until the runtime wiring lands.
 from backend.pipeline.storage.ingestion_lease_store import (
+    FeedFailureChargeMode,
     IngestionLeaseStore,
     LeaseHeartbeatResult,
+    LeaseMember,
     LeaseOperationResult,
     LeaseReleaseCause,
 )
@@ -27,8 +29,11 @@ IngestionLeaseStore.renew_heartbeats
 IngestionLeaseStore.release
 IngestionLeaseStore.finalize_failure
 IngestionLeaseStore.load_membership
+IngestionLeaseStore.commit_child_mutations
+FeedFailureChargeMode.ON_CURSOR_ADVANCE
 LeaseOperationResult.disposition
 LeaseHeartbeatResult.disposition
+LeaseMember.audit_revision
 LeaseReleaseCause.SHUTDOWN
 LeaseReleaseCause.REBALANCE
 LeaseReleaseCause.CANCELLATION
