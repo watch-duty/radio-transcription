@@ -1245,6 +1245,9 @@ class OrderedStitchAudioTest(unittest.TestCase):
                     )
                 )
 
+            # Assert that the entry clamp sets the deadline to the oldest unprocessed element (Chunk 2, ts 102.0)
+            self.assertEqual(deferred_drain_timer.deadline, Timestamp(102.0))
+
             # 2. Simulate handle_deferred_drain firing with a low trigger timestamp (100.0)
             # Inside the loop, it processes Chunks 2 & 3, and clamps at Chunk 4 (timestamp 104).
             # It must reschedule using Chunk 4's timestamp (104.0), NOT the trigger timestamp (100.0)!
