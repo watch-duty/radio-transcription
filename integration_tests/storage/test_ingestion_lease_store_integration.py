@@ -578,6 +578,48 @@ async def test_budgeted_failure_caps_exponential_backoff_before_interval(
     )
 
 
+async def test_budgeted_failure_preserves_cap_beyond_exponent_30(
+    ingestion_lease_pool: asyncpg.Pool,
+) -> None:
+    sid = _unique_digits()
+    owner = uuid.uuid4()
+    expected_delay_sec = 2_000_000_000
+    await _insert_lease(
+        ingestion_lease_pool,
+        sid,
+        status="active",
+        owner_worker_id=owner,
+        fencing_token=14,
+        failure_count=31,
+    )
+    store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
+    grant = ingestion_lease_store.LeaseGrant(_SOURCE_TYPE, sid, owner, 14)
+    database_before = await ingestion_lease_pool.fetchval("SELECT NOW()")
+
+    result = await store.finalize_failure(
+        grant,
+        ingestion_lease_store.BudgetedFailure(
+            failure_threshold=100,
+            backoff_base_sec=1,
+            backoff_max_sec=expected_delay_sec,
+        ),
+        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        actor_id="integration_test",
+    )
+
+    database_after = await ingestion_lease_pool.fetchval("SELECT NOW()")
+    durable = await _fetch_lease(ingestion_lease_pool, sid)
+    assert result.final_status is feed_store.FeedStatus.FAILING
+    assert durable["failure_count"] == 32
+    assert (
+        database_before + datetime.timedelta(seconds=expected_delay_sec)
+        <= durable["retry_after"]
+    )
+    assert durable["retry_after"] <= database_after + datetime.timedelta(
+        seconds=expected_delay_sec + 10
+    )
+
+
 async def test_non_budgeted_failure_resets_budget_and_never_quarantines(
     ingestion_lease_pool: asyncpg.Pool,
 ) -> None:

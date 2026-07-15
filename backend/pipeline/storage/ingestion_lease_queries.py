@@ -223,7 +223,15 @@ WITH current_state AS MATERIALIZED (
         status,
         worker_id,
         fencing_token,
-        failure_count
+        failure_count,
+        CASE
+            -- POWER(double precision, 1024) overflows. A NULL multiplier
+            -- means every finite caller cap has already been reached.
+            WHEN failure_count < 1024 THEN POWER(
+                2::double precision,
+                failure_count::double precision
+            )
+        END AS backoff_multiplier
     FROM public.ingestion_leases
     WHERE source_type = $1
       AND lease_key = $2
@@ -242,13 +250,16 @@ updated AS (
         retry_after = CASE
             WHEN leases.failure_count + 1 >= $5 THEN NULL
             ELSE NOW()
-                + INTERVAL '1 second' * LEAST(
-                    $7::double precision,
-                    $6::double precision * POWER(
-                        2::double precision,
-                        LEAST(leases.failure_count, 30)::double precision
-                    )
-                )
+                + INTERVAL '1 second' * CASE
+                    -- Compare before multiplying so the configured cap is
+                    -- preserved without evaluating an overflowing product.
+                    WHEN current_state.backoff_multiplier IS NULL
+                      OR current_state.backoff_multiplier >=
+                          $7::double precision / $6::double precision
+                        THEN $7::double precision
+                    ELSE $6::double precision
+                        * current_state.backoff_multiplier
+                END
                 + (RANDOM() * INTERVAL '10 seconds')
         END,
         status_reason = $8,

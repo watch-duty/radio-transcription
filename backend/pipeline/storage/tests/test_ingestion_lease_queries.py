@@ -458,8 +458,14 @@ class TestLeaseFailureContract(unittest.TestCase):
         self.assertIn("leases.failure_count + 1 >= $5", sql)
         self.assertIn("'quarantined'::public.feed_status", sql)
         self.assertIn("'failing'::public.feed_status", sql)
-        self.assertIn("INTERVAL '1 second' * LEAST(", sql)
-        self.assertIn("LEAST(leases.failure_count, 30)", sql)
+        self.assertIn("WHEN failure_count < 1024", sql)
+        self.assertIn("END AS backoff_multiplier", sql)
+        self.assertIn(
+            "current_state.backoff_multiplier >= "
+            "$7::double precision / $6::double precision",
+            sql,
+        )
+        self.assertNotIn("LEAST(leases.failure_count", sql)
         self.assertIn("RANDOM() * INTERVAL '10 seconds'", sql)
 
     def test_non_budgeted_failure_resets_count_and_cannot_quarantine(
