@@ -204,7 +204,7 @@ async def test_exact_feed_grant_heartbeats_are_ordered_and_fenced(
     assert tuple(result.disposition for result in results) == (
         feed_store.FeedGrantOperationDisposition.FENCE_MISMATCH,
         feed_store.FeedGrantOperationDisposition.MISSING,
-        feed_store.FeedGrantOperationDisposition.ACCEPTED_NOOP,
+        feed_store.FeedGrantOperationDisposition.APPLIED,
         feed_store.FeedGrantOperationDisposition.APPLIED,
         feed_store.FeedGrantOperationDisposition.STATUS_INELIGIBLE,
         feed_store.FeedGrantOperationDisposition.OWNER_MISMATCH,

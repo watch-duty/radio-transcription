@@ -170,7 +170,6 @@ def _grant_heartbeat_row(
     grant: feed_store.FeedGrant,
     *,
     caller_ordinal: int = 0,
-    applied: bool = False,
     status: str | None = "active",
     worker_id: uuid.UUID | None = None,
     fencing_token: int | None = None,
@@ -191,7 +190,6 @@ def _grant_heartbeat_row(
         "status": status,
         "worker_id": worker_id,
         "fencing_token": fencing_token,
-        "applied": applied,
     }
 
 
@@ -1282,7 +1280,6 @@ class TestFeedGrantHeartbeatValues(unittest.TestCase):
             {item.value for item in feed_store.FeedGrantOperationDisposition},
             {
                 "applied",
-                "accepted_noop",
                 "missing",
                 "owner_mismatch",
                 "fence_mismatch",
@@ -1337,6 +1334,7 @@ class TestFeedGrantHeartbeatSql(unittest.TestCase):
             "retry_after",
             "status_reason",
             "membership_revision",
+            " AS applied",
             "CREATE ",
             "ALTER ",
             "DROP ",
@@ -1383,7 +1381,11 @@ class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
         high = feed_store.FeedGrant(_FEED_ID_B, _WORKER_ID, 4)
         low = feed_store.FeedGrant(_FEED_ID, _WORKER_ID, 3)
         rows = [
-            _grant_heartbeat_row(low, caller_ordinal=1, applied=True),
+            _grant_heartbeat_row(
+                low,
+                caller_ordinal=1,
+                status="deactivated",
+            ),
             _grant_heartbeat_row(high, caller_ordinal=0),
         ]
         pool = make_mock_pool(fetch_result=rows)
@@ -1394,11 +1396,11 @@ class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(tuple(item.grant for item in result), (high, low))
         self.assertIs(
             result[0].disposition,
-            feed_store.FeedGrantOperationDisposition.ACCEPTED_NOOP,
+            feed_store.FeedGrantOperationDisposition.APPLIED,
         )
         self.assertIs(
             result[1].disposition,
-            feed_store.FeedGrantOperationDisposition.APPLIED,
+            feed_store.FeedGrantOperationDisposition.STATUS_INELIGIBLE,
         )
         args = pool.fetch.await_args.args
         self.assertIs(args[0], feed_queries.RENEW_GRANT_HEARTBEATS_SQL)
@@ -1412,12 +1414,8 @@ class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
         other_worker = uuid.uuid4()
         cases = (
             (
-                _grant_heartbeat_row(grant, applied=True),
-                feed_store.FeedGrantOperationDisposition.APPLIED,
-            ),
-            (
                 _grant_heartbeat_row(grant),
-                feed_store.FeedGrantOperationDisposition.ACCEPTED_NOOP,
+                feed_store.FeedGrantOperationDisposition.APPLIED,
             ),
             (
                 _grant_heartbeat_row(grant, status=None),
@@ -1480,7 +1478,6 @@ class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
     async def test_invalid_state_rows_fail_closed(self) -> None:
         grant = feed_store.FeedGrant(_FEED_ID, _WORKER_ID, 7)
         malformed_rows = (
-            _grant_heartbeat_row(grant, applied=cast("bool", "yes")),
             _grant_heartbeat_row(grant, status="unknown"),
             _grant_heartbeat_row(
                 grant,
@@ -1498,16 +1495,6 @@ class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
                 store = FeedStore(pool)
                 with self.assertRaisesRegex(ValueError, "heartbeat"):
                     await store.renew_grant_heartbeats((grant,))
-
-        impossible_applied = _grant_heartbeat_row(
-            grant,
-            applied=True,
-            worker_id=uuid.uuid4(),
-        )
-        pool = make_mock_pool(fetch_result=[impossible_applied])
-        store = FeedStore(pool)
-        with self.assertRaisesRegex(RuntimeError, "heartbeat"):
-            await store.renew_grant_heartbeats((grant,))
 
     async def test_database_exception_propagates_without_retry(self) -> None:
         grant = feed_store.FeedGrant(_FEED_ID, _WORKER_ID, 7)

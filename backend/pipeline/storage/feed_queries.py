@@ -224,17 +224,16 @@ renewed AS (
       )
     RETURNING feeds.id
 )
+-- A fresh exact grant is accepted without exposing whether a write occurred.
 SELECT
     input.caller_ordinal,
     input.feed_id,
     current_state.status::text AS status,
     current_state.worker_id,
-    current_state.fencing_token,
-    renewed.id IS NOT NULL AS applied
+    current_state.fencing_token
 FROM input
 LEFT JOIN current_state
   ON current_state.caller_ordinal = input.caller_ordinal
-LEFT JOIN renewed ON renewed.id = input.feed_id
 ORDER BY input.caller_ordinal
 """
 

@@ -169,8 +169,7 @@ class FeedGrantOperationDisposition(enum.StrEnum):
     """Closed outcomes for exact-grant Feed heartbeat operations.
 
     Attributes:
-        APPLIED: The heartbeat timestamp was renewed.
-        ACCEPTED_NOOP: The exact grant was already recently renewed.
+        APPLIED: The exact active heartbeat request was accepted.
         MISSING: The permanent Feed identity does not exist.
         OWNER_MISMATCH: Another worker owns the current generation.
         FENCE_MISMATCH: The supplied ownership generation is stale.
@@ -178,7 +177,6 @@ class FeedGrantOperationDisposition(enum.StrEnum):
     """
 
     APPLIED = "applied"
-    ACCEPTED_NOOP = "accepted_noop"
     MISSING = "missing"
     OWNER_MISMATCH = "owner_mismatch"
     FENCE_MISMATCH = "fence_mismatch"
@@ -290,16 +288,6 @@ def _require_feed_grant(value: object) -> FeedGrant:
         msg = "grant must be a FeedGrant"
         raise TypeError(msg)
     return value
-
-
-def _heartbeat_applied_from_row(
-    row: collections.abc.Mapping[str, object],
-) -> bool:
-    applied = row.get("applied")
-    if not isinstance(applied, bool):
-        msg = "Feed heartbeat row contains an invalid applied flag"
-        raise ValueError(msg)  # noqa: TRY004
-    return applied
 
 
 class FeedStore:
@@ -596,8 +584,6 @@ class FeedStore:
             TypeError: If an input is not a ``FeedGrant``.
             ValueError: If inputs repeat or results are malformed or
                 miscorrelated.
-            RuntimeError: If the database reports an applied heartbeat for a
-                generation that is not the supplied exact active grant.
         """
         grants = tuple(grants)
         feed_ids: set[uuid.UUID] = set()
@@ -668,17 +654,14 @@ class FeedStore:
             "status",
             "worker_id",
             "fencing_token",
-            "applied",
         )
         if any(field not in row for field in required_fields):
             msg = "Feed heartbeat row is missing required state fields"
             raise ValueError(msg)
 
-        applied = _heartbeat_applied_from_row(row)
-
         status_raw = row.get("status")
         if status_raw is None:
-            if applied or any(
+            if any(
                 row.get(field) is not None
                 for field in ("worker_id", "fencing_token")
             ):
@@ -708,24 +691,14 @@ class FeedStore:
             msg = "Feed heartbeat row contains an invalid fencing_token"
             raise ValueError(msg)
 
-        exact_active = (
-            status is FeedStatus.ACTIVE
-            and worker_id == grant.owner_worker_id
-            and fencing_token == grant.fencing_token
-        )
-        if applied:
-            if not exact_active:
-                msg = "Feed heartbeat applied without exact active authority"
-                raise RuntimeError(msg)
-            disposition = FeedGrantOperationDisposition.APPLIED
-        elif status is not FeedStatus.ACTIVE:
+        if status is not FeedStatus.ACTIVE:
             disposition = FeedGrantOperationDisposition.STATUS_INELIGIBLE
         elif worker_id != grant.owner_worker_id:
             disposition = FeedGrantOperationDisposition.OWNER_MISMATCH
         elif fencing_token != grant.fencing_token:
             disposition = FeedGrantOperationDisposition.FENCE_MISMATCH
         else:
-            disposition = FeedGrantOperationDisposition.ACCEPTED_NOOP
+            disposition = FeedGrantOperationDisposition.APPLIED
 
         return FeedGrantHeartbeatResult(grant, disposition)
 
