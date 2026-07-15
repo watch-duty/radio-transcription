@@ -28,7 +28,9 @@ COPY backend/__init__.py ./backend/__init__.py
 COPY backend/pipeline/__init__.py ./backend/pipeline/__init__.py
 COPY backend/pipeline/common/ ./backend/pipeline/common/
 COPY backend/pipeline/storage/ ./backend/pipeline/storage/
+COPY backend/pipeline/evaluation/ ./backend/pipeline/evaluation/
+COPY backend/pipeline/schema_types/ ./backend/pipeline/schema_types/
+COPY backend/services/audio_segments/ ./backend/services/audio_segments/
 COPY backend/services/rules/ ./backend/services/rules/
-
 # 5. Start the application
 CMD exec uvicorn backend.services.rules.main:app --host 0.0.0.0 --port $PORT
