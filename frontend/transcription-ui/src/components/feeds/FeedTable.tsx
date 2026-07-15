@@ -501,7 +501,7 @@ export function FeedTable({
               gridColumn: { xs: 'unset', sm: '1 / -1' },
               borderBottom: 'none',
               pt: 0,
-              pb: { xs: 1.5, sm: 0 },
+              pb: { xs: 1.5, sm: undefined },
               display: 'flex',
               flexWrap: 'wrap',
               gap: 0.75,
