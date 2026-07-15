@@ -1240,12 +1240,12 @@ class TestFeedGrantHeartbeatValues(unittest.TestCase):
             (_FEED_ID, _WORKER_ID, -1),
         )
 
-        for feed_id, owner_worker_id, fencing_token in cases:
-            with self.subTest(
-                feed_id=feed_id,
-                owner_worker_id=owner_worker_id,
-                fencing_token=fencing_token,
-            ):
+        for case_index, (
+            feed_id,
+            owner_worker_id,
+            fencing_token,
+        ) in enumerate(cases):
+            with self.subTest(case_index=case_index):
                 with self.assertRaises((TypeError, ValueError)):
                     feed_store.FeedGrant(
                         cast("uuid.UUID", feed_id),
@@ -1468,8 +1468,8 @@ class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
             [missing_state_field],
         )
 
-        for rows in cases:
-            with self.subTest(rows=rows):
+        for case_index, rows in enumerate(cases):
+            with self.subTest(case_index=case_index):
                 pool = make_mock_pool(fetch_result=rows)
                 store = FeedStore(pool)
                 with self.assertRaisesRegex(ValueError, "heartbeat"):
@@ -1489,8 +1489,8 @@ class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
             | {"worker_id": _WORKER_ID},
         )
 
-        for row in malformed_rows:
-            with self.subTest(row=row):
+        for case_index, row in enumerate(malformed_rows):
+            with self.subTest(case_index=case_index):
                 pool = make_mock_pool(fetch_result=[row])
                 store = FeedStore(pool)
                 with self.assertRaisesRegex(ValueError, "heartbeat"):
