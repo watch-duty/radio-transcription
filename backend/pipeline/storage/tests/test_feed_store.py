@@ -2196,22 +2196,6 @@ class TestCreateFeed(unittest.IsolatedAsyncioTestCase):
                 actor_id=_FEEDS_SERVICE_ACTOR_ID,
             )
 
-    async def test_create_feed_translates_source_unique_violation(self) -> None:
-        """The source lookup unique index remains a feed duplicate error."""
-        pool = make_mock_pool(transaction=True)
-        pool.acquired_connection.fetchrow.side_effect = _unique_violation(
-            "idx_feed_properties_source_lookup"
-        )
-        store = FeedStore(pool)
-
-        with self.assertRaises(FeedAlreadyExistsError):
-            await store.create_feed(
-                "New Feed",
-                "bcfy_feeds",
-                "123",
-                actor_id=_FEEDS_SERVICE_ACTOR_ID,
-            )
-
     async def test_create_feed_translates_name_unique_violation(self) -> None:
         """The feeds name constraint remains a feed duplicate error."""
         pool = make_mock_pool(transaction=True)

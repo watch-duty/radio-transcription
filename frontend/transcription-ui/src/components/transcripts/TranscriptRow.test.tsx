@@ -29,6 +29,11 @@ vi.mock('../audio/TranscriptPlayControl', () => ({
 }));
 
 let mockIsAdmin = false;
+const mockSaveAs = vi.fn();
+
+vi.mock('file-saver', () => ({
+  saveAs: (...args: unknown[]) => mockSaveAs(...args),
+}));
 
 vi.mock('../../context/AuthContext', () => ({
   useAuth: vi.fn(() => ({
@@ -389,6 +394,49 @@ describe('TranscriptRow', () => {
     expect(audioPlayer.getAttribute('data-audio-uri')).toBe(
       mockAudioSegment.playbackAudioUri
     );
+  });
+
+  it('triggers download audio action successfully when download button is clicked', async () => {
+    const mockBlob = new Blob(['mock audio data'], { type: 'audio/m4a' });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      blob: () => Promise.resolve(mockBlob),
+    } as Response);
+
+    render(
+      <MemoryRouter>
+        <TranscriptRow
+          audioSegment={{
+            ...mockAudioSegment,
+            playbackAudioUri:
+              'gs://ingestion-canonical-bucket-dev/playback/test-audio.m4a',
+          }}
+          index={0}
+          totalAudioSegments={1}
+          ruleIdToNameMap={ruleIdToNameMap}
+          rulesLoading={false}
+          onToggleAudio={mockOnToggleAudio}
+          isAudioPlaying={false}
+          onRowClick={mockOnRowClick}
+          currentlyPlayingSegmentId={null}
+          triggerSnackbar={mockTriggerSnackbar}
+          showHeader={false}
+        />
+      </MemoryRouter>
+    );
+
+    const downloadButton = screen.getByLabelText('download audio');
+    fireEvent.click(downloadButton);
+
+    await vi.waitFor(() => {
+      expect(fetchSpy).toHaveBeenCalledWith(
+        '/gcs/ingestion-canonical-bucket-dev/playback/test-audio.m4a'
+      );
+      expect(mockSaveAs).toHaveBeenCalledWith(mockBlob, 'test-audio.m4a');
+      expect(mockTriggerSnackbar).toHaveBeenCalledWith('Audio downloaded');
+    });
+
+    fetchSpy.mockRestore();
   });
 
   it('blurs the transcript but keeps physical text selection and copy transcript capabilities when redactTranscripts is true', () => {
