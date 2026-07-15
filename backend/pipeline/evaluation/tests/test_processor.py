@@ -233,7 +233,9 @@ class TestEvaluationEventProcessor(unittest.TestCase):
 
         self.processor.process_event(cloud_event)
 
-        mock_record_stage.assert_called_once_with("evaluation", "error")
+        mock_record_stage.assert_called_once_with(
+            "evaluation", "evaluation_error"
+        )
 
     def test_process_event_parse_failure_skips(self) -> None:
         # Setup
