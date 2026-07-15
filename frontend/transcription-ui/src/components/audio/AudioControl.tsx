@@ -43,7 +43,6 @@ export function AudioControl({
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
   const controlSize = isMobile ? 'medium' : 'large';
-  const iconFontSize = isMobile ? 'medium' : 'large';
 
   return (
     <Box
@@ -74,7 +73,7 @@ export function AudioControl({
               disabled={disableControls}
             >
               <MoveToSpeechIcon
-                fontSize={iconFontSize}
+                fontSize={controlSize}
                 sx={{ transform: 'scaleX(-1)' }}
               />
             </IconButton>
@@ -90,7 +89,7 @@ export function AudioControl({
               aria-label="rewind to previous segment"
               disabled={disableControls}
             >
-              <SkipPreviousIcon fontSize={iconFontSize} />
+              <SkipPreviousIcon fontSize={controlSize} />
             </IconButton>
           </span>
         </Tooltip>
@@ -104,7 +103,7 @@ export function AudioControl({
               aria-label="rewind 5 seconds"
               disabled={disableControls}
             >
-              <Replay5Icon fontSize={iconFontSize} />
+              <Replay5Icon fontSize={controlSize} />
             </IconButton>
           </span>
         </Tooltip>
@@ -119,9 +118,9 @@ export function AudioControl({
               disabled={disableControls}
             >
               {isAudioPlaying ? (
-                <PauseIcon fontSize={iconFontSize} />
+                <PauseIcon fontSize={controlSize} />
               ) : (
-                <PlayArrowIcon fontSize={iconFontSize} />
+                <PlayArrowIcon fontSize={controlSize} />
               )}
             </IconButton>
           </span>
@@ -136,7 +135,7 @@ export function AudioControl({
               aria-label="advance 5 seconds"
               disabled={disableControls}
             >
-              <Forward5Icon fontSize={iconFontSize} />
+              <Forward5Icon fontSize={controlSize} />
             </IconButton>
           </span>
         </Tooltip>
@@ -150,7 +149,7 @@ export function AudioControl({
               aria-label="advance to next segment"
               disabled={disableControls}
             >
-              <SkipNextIcon fontSize={iconFontSize} />
+              <SkipNextIcon fontSize={controlSize} />
             </IconButton>
           </span>
         </Tooltip>
@@ -164,7 +163,7 @@ export function AudioControl({
               aria-label="advance to next detected speech"
               disabled={disableControls}
             >
-              <MoveToSpeechIcon fontSize={iconFontSize} />
+              <MoveToSpeechIcon fontSize={controlSize} />
             </IconButton>
           </span>
         </Tooltip>

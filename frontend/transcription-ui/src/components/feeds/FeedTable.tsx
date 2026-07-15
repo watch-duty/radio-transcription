@@ -363,8 +363,8 @@ export function FeedTable({
             gap: 1,
             ...(allowEdit && {
               justifyContent: {
-              xs: 'flex-end',
-              sm: allowEdit ? 'flex-end' : 'flex-start',
+                xs: 'flex-end',
+                sm: allowEdit ? 'flex-end' : 'flex-start',
               },
             }),
           }}
