@@ -132,6 +132,64 @@ async def test_create_feed_proxy(
 
 
 @pytest.mark.asyncio
+async def test_create_echo_feed_missing_directory(
+    proxy_client: httpx.AsyncClient,
+) -> None:
+    """Test that creating an Echo feed fails if the GCS directory does not exist."""
+    feed_id = str(uuid.uuid4())
+    payload = {
+        "name": f"Test Echo Feed {feed_id}",
+        "sourceType": "echo",
+        "sourceFeedId": f"missing-dir-{feed_id}",
+    }
+
+    resp = await proxy_client.post("/feeds", json=payload, timeout=10.0)
+    assert resp.status_code == 400
+    assert "No GCS directory found for Echo feed" in resp.json()["message"]
+
+
+@pytest.mark.asyncio
+async def test_create_echo_feed_success(
+    proxy_client: httpx.AsyncClient,
+    gcs_client: storage.Client,
+) -> None:
+    """Test that creating an Echo feed succeeds if the GCS directory exists."""
+    bucket_name = os.environ.get(
+        "ECHO_RECORDINGS_BUCKET", "echo-recordings-test"
+    )
+    bucket = gcs_client.bucket(bucket_name)
+
+    feed_id = str(uuid.uuid4())
+    source_feed_id = f"valid-echo-dir-{feed_id}"
+
+    # Create a dummy blob to simulate the directory existence
+    blob = bucket.blob(f"{source_feed_id}/.keep")
+    blob.upload_from_string("")
+
+    payload = {
+        "name": f"Test Echo Feed {feed_id}",
+        "sourceType": "echo",
+        "sourceFeedId": source_feed_id,
+    }
+
+    try:
+        resp = await proxy_client.post("/feeds", json=payload, timeout=10.0)
+        assert resp.status_code == 201, resp.text
+
+        data = resp.json()
+        assert data["sourceType"] == "echo"
+        assert data["sourceFeedId"] == source_feed_id
+
+        created_id = data["id"]
+        await proxy_client.post(f"/feeds/{created_id}/deactivate", timeout=10.0)
+    finally:
+        try:
+            blob.delete()
+        except Exception:  # noqa: S110
+            pass
+
+
+@pytest.mark.asyncio
 async def test_update_feed_proxy(
     proxy_client: httpx.AsyncClient, test_bcfy_feed: tuple[str, str]
 ) -> None:
