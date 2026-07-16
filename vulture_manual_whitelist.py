@@ -11,6 +11,34 @@ from backend.pipeline.common.storage.mock_cache_provider import MockCacheProvide
 MockCacheProvider
 _.get_value
 
+# These PRs intentionally introduce the Lease lifecycle and membership storage
+# boundaries before the generic runtime starts calling them. Vulture excludes
+# the focused tests, so keep only dormant public methods, returned result fields,
+# and lifecycle telemetry causes allowlisted until the runtime wiring lands.
+from backend.pipeline.storage.ingestion_lease_store import (
+    IngestionLeaseStore,
+    LeaseHeartbeatResult,
+    LeaseOperationResult,
+    LeaseReleaseCause,
+)
+IngestionLeaseStore.claim_unclaimed
+IngestionLeaseStore.claim_recoverable
+IngestionLeaseStore.renew_heartbeats
+IngestionLeaseStore.release
+IngestionLeaseStore.finalize_failure
+IngestionLeaseStore.load_membership
+LeaseOperationResult.disposition
+LeaseHeartbeatResult.disposition
+LeaseReleaseCause.SHUTDOWN
+LeaseReleaseCause.REBALANCE
+LeaseReleaseCause.CANCELLATION
+LeaseReleaseCause.ABANDONMENT
+
+# The exact Feed-grant heartbeat storage boundary lands before the generic
+# Feed/SID runtime adapter calls it. Vulture excludes the focused tests.
+from backend.pipeline.storage.feed_store import FeedStore
+FeedStore.renew_grant_heartbeats
+
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation
 # and schema reflection, which Vulture cannot trace through direct Python
 # references.

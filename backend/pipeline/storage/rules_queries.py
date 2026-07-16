@@ -7,6 +7,7 @@ RULE_COLUMNS_SQL = """\
     is_active,
     scope,
     conditions,
+    COALESCE(tags, '[]'::jsonb) AS tags,
     json_build_object(
         'created_at', created_at,
         'updated_at', updated_at,
@@ -16,8 +17,8 @@ RULE_COLUMNS_SQL = """\
 
 CREATE_RULE_SQL = (
     "INSERT INTO rules "
-    "(rule_name, description, is_active, scope, conditions, created_by)\n"
-    "VALUES ($1, $2, $3, $4, $5, $6)\n"
+    "(rule_name, description, is_active, scope, conditions, tags, created_by)\n"
+    "VALUES ($1, $2, $3, $4, $5, $6, $7)\n"
     "RETURNING\n"
 ) + RULE_COLUMNS_SQL
 

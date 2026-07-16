@@ -172,7 +172,7 @@ jobs:
 
   terraform-checks:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_terraform == 'true'
+    if: needs.setup.outputs.should_run == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -180,18 +180,9 @@ jobs:
           fetch-depth: 100
       - name: Install mise, install tools
         uses: jdx/mise-action@v3
-      - name: Terraform fmt check
-        run: terraform fmt -check -recursive terraform/
-      - name: Validate Terraform modules
-        run: |
-          set -euo pipefail
-          find terraform/ -name "*.tf" -exec dirname {} \; | sort -u | while read -r dir; do
-            echo "=========================================="
-            echo "Validating Terraform module in: $dir"
-            echo "=========================================="
-            cd "$dir"
-            terraform init -backend=false && terraform validate
-          done
+      - name: Validate Terraform
+        run: mise run lint:terraform
+
 
   run-backend-tests:
     needs: [setup]
@@ -477,3 +468,69 @@ jobs:
 
           assert_hot_guard_clean
           echo "HOT-protection check passed: no index references a guarded column."
+
+  # The unit suite mocks asyncpg. Exercise the dormant fenced storage
+  # contracts against every supported PostgreSQL major so SQL behavior and
+  # fence transitions are proven before the runtime consumes these APIs.
+  ingestion-lease-lifecycle-postgres:
+    needs: [setup]
+    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres-version: ["15", "16", "17"]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres-version }}-alpine
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mise and project tools
+        uses: jdx/mise-action@v3
+      - name: Install dependencies
+        run: uv sync
+      - name: Apply ingestion migrations twice
+        env:
+          PGHOST: localhost
+          PGPORT: "5432"
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: postgres
+        working-directory: terraform/modules/alloydb/sql/ingestion
+        run: |
+          set -euo pipefail
+          for pass in 1 2; do
+            for migration in *.sql; do
+              case "$migration" in
+                *pg_cron*)
+                  echo "Pass $pass: skipping $migration (pg_cron unavailable)"
+                  continue;;
+              esac
+              echo "Pass $pass: applying $migration"
+              psql -v ON_ERROR_STOP=1 -f "$migration"
+            done
+          done
+      - name: Prove fenced ingestion storage
+        env:
+          INGESTION_LEASE_TEST_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+          INGESTION_LEASE_EXTERNAL_POSTGRES_REQUIRED: "1"
+          INGESTION_FEED_TEST_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+          INGESTION_FEED_EXTERNAL_POSTGRES_REQUIRED: "1"
+          EXPECTED_POSTGRES_MAJOR: ${{ matrix.postgres-version }}
+        run: >-
+          uv run python -m pytest
+          integration_tests/storage/test_ingestion_lease_store_integration.py
+          integration_tests/storage/test_feed_grant_heartbeat_integration.py
+          -q -n 0

@@ -92,6 +92,17 @@ components:
         - $ref: "#/components/schemas/KeywordConditions"
         - $ref: "#/components/schemas/RegexConditions"
         - $ref: "#/components/schemas/GroupConditions"
+    Tag:
+      properties:
+        key:
+          type: string
+        value:
+          type: string
+      required:
+        - key
+        - value
+      type: object
+      additionalProperties: false
     RuleMetadata:
       properties:
         createdBy:
@@ -119,6 +130,10 @@ components:
           $ref: "#/components/schemas/Scope"
         conditions:
           $ref: "#/components/schemas/RuleConditions"
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
         metadata:
           $ref: "#/components/schemas/RuleMetadata"
       required:
@@ -151,6 +166,10 @@ components:
           $ref: "#/components/schemas/Scope"
         conditions:
           $ref: "#/components/schemas/RuleConditions"
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
       required:
         - ruleName
         - scope
@@ -169,6 +188,10 @@ components:
           $ref: "#/components/schemas/Scope"
         conditions:
           $ref: "#/components/schemas/RuleConditions"
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
       type: object
       additionalProperties: false
     FeedStatus:
@@ -185,17 +208,6 @@ components:
         - failing
         - quarantined
         - deactivated
-    Tag:
-      properties:
-        key:
-          type: string
-        value:
-          type: string
-      required:
-        - key
-        - value
-      type: object
-      additionalProperties: false
     BackendFeedStatusReason:
       type: string
       enum:
@@ -299,6 +311,102 @@ components:
           type: array
         name:
           type: string
+      type: object
+      additionalProperties: false
+    AuditTrailValues:
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        sourceType:
+          $ref: "#/components/schemas/SourceType"
+        status:
+          $ref: "#/components/schemas/BackendFeedStatus"
+        failureCount:
+          type: number
+          format: double
+        retryAfter:
+          type: string
+        statusReason:
+          allOf:
+            - $ref: "#/components/schemas/BackendFeedStatusReason"
+          nullable: true
+        statusReasonUpdatedAt:
+          type: string
+        statusReasonDetail:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+        sourceFeedId:
+          type: string
+        tags:
+          items:
+            $ref: "#/components/schemas/Tag"
+          type: array
+      type: object
+      additionalProperties: false
+    FeedHistoryEvent:
+      properties:
+        id:
+          type: string
+        feedId:
+          type: string
+        action:
+          type: string
+        actor:
+          type: string
+        occurredAt:
+          type: number
+          format: double
+        feedRevision:
+          type: number
+          format: double
+        beforeValues:
+          $ref: "#/components/schemas/AuditTrailValues"
+        afterValues:
+          $ref: "#/components/schemas/AuditTrailValues"
+      required:
+        - id
+        - feedId
+        - action
+        - actor
+        - occurredAt
+        - feedRevision
+        - beforeValues
+        - afterValues
+      type: object
+      additionalProperties: false
+    ListFeedHistoryResponse:
+      properties:
+        historyEvents:
+          items:
+            $ref: "#/components/schemas/FeedHistoryEvent"
+          type: array
+        nextToken:
+          type: string
+        total:
+          type: number
+          format: double
+      required:
+        - historyEvents
+        - total
+      type: object
+      additionalProperties: false
+    ListFeedHistoryQueryParams:
+      properties:
+        limit:
+          type: integer
+          format: int32
+          default: 100
+        nextToken:
+          type: string
+        order:
+          type: string
+          enum:
+            - asc
+            - desc
       type: object
       additionalProperties: false
     FeedCreate:
@@ -1245,6 +1353,91 @@ paths:
           required: true
           schema:
             type: string
+      x-google-backend: radio-transcription-api
+  /api/v1/feeds/{feedId}/history:
+    get:
+      operationId: ListFeedHistory
+      responses:
+        "200":
+          description: Ok
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListFeedHistoryResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "404":
+          description: Not Found
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+        "500":
+          description: Internal Server Error
+          content:
+            application/json:
+              schema:
+                properties:
+                  message:
+                    type: string
+                required:
+                  - message
+                type: object
+      tags:
+        - Feeds
+      security:
+        - google_id_token: []
+      parameters:
+        - in: path
+          name: feedId
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: limit
+          required: false
+          schema:
+            default: 100
+            format: int32
+            type: integer
+        - in: query
+          name: nextToken
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: order
+          required: false
+          schema:
+            type: string
+            enum:
+              - asc
+              - desc
       x-google-backend: radio-transcription-api
   /api/v1/feeds/{feedId}/reset:
     post:

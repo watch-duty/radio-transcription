@@ -111,3 +111,25 @@ export async function getServiceClient(
   }
   return factory(targetUrl);
 }
+
+/**
+ * Converts an object's keys from snake_case to camelCase recursively.
+ */
+export function toCamel<T = unknown>(obj: unknown): T {
+  if (obj === null || typeof obj !== 'object') {
+    return obj as T;
+  }
+  if (Array.isArray(obj)) {
+    return obj.map((item) => toCamel(item)) as unknown as T;
+  }
+  return Object.entries(obj as Record<string, unknown>).reduce(
+    (acc, [key, value]) => {
+      const camelKey = key.replace(/_([a-z])/g, (_, letter) =>
+        letter.toUpperCase()
+      );
+      acc[camelKey] = toCamel(value);
+      return acc;
+    },
+    {} as Record<string, unknown>
+  ) as T;
+}

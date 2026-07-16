@@ -762,6 +762,53 @@ class OrderedStitchAudioFn(beam.DoFn):
             >= trans_constants.MAX_CHUNKS_PER_WINDMILL_BUNDLE
         )
 
+    def _handle_budget_exhausted(
+        self,
+        metadata: datatypes.ChunkMetadata,
+        timestamp: Timestamp,
+        curr_context: datatypes.ActiveStitchingState | datatypes.IdleFeedState,
+        transmission_context_state: ReadModifyWriteRuntimeState,
+        last_start_ms_state: ReadModifyWriteRuntimeState,
+        out_of_order_buffer_state: BagRuntimeState,
+        deferred_drain_timer: RuntimeTimer,
+        *,
+        state_changed: bool,
+    ) -> None:
+        """Handles bundle budget exhaustion by buffering the chunk and setting the deferred drain timer."""
+        current_ts_ms = (
+            metadata.timestamp_ms
+            if metadata.timestamp_ms is not None
+            else int(float(timestamp) * common_constants.MS_PER_SECOND)
+        )
+        new_chunk = datatypes.BufferedChunk(
+            timestamp_ms=current_ts_ms,
+            gcs_uri=metadata.gcs_uri,
+            traceparent=metadata.traceparent,
+            baggage=metadata.baggage,
+        )
+        out_of_order_buffer_state.add(new_chunk)
+        if not curr_context.order_timer_active:
+            curr_context = replace(curr_context, order_timer_active=True)
+            state_changed = True
+
+        if state_changed:
+            _write_transmission_context(
+                transmission_context_state,
+                curr_context,
+                last_start_ms_state,
+                out_of_order_buffer_state,
+            )
+
+        buffer_elements = list(out_of_order_buffer_state.read())
+        if new_chunk not in buffer_elements:
+            buffer_elements.append(new_chunk)
+
+        oldest_chunk_ts_sec = (
+            min(c.timestamp_ms for c in buffer_elements)
+            / common_constants.MS_PER_SECOND
+        )
+        deferred_drain_timer.set(Timestamp(seconds=oldest_chunk_ts_sec))
+
     @override
     def process(
         self,
@@ -826,32 +873,15 @@ class OrderedStitchAudioFn(beam.DoFn):
 
         # Windmill lease guard
         if self._is_bundle_budget_exhausted():
-            current_ts_ms = (
-                metadata.timestamp_ms
-                if metadata.timestamp_ms is not None
-                else int(float(timestamp) * common_constants.MS_PER_SECOND)
-            )
-            out_of_order_buffer_state.add(
-                datatypes.BufferedChunk(
-                    timestamp_ms=current_ts_ms,
-                    gcs_uri=metadata.gcs_uri,
-                    traceparent=metadata.traceparent,
-                    baggage=metadata.baggage,
-                )
-            )
-            if not curr_context.order_timer_active:
-                curr_context = replace(curr_context, order_timer_active=True)
-                state_changed = True
-
-            if state_changed:
-                _write_transmission_context(
-                    transmission_context_state,
-                    curr_context,
-                    last_start_ms_state,
-                    out_of_order_buffer_state,
-                )
-            deferred_drain_timer.set(
-                timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
+            self._handle_budget_exhausted(
+                metadata=metadata,
+                timestamp=timestamp,
+                curr_context=curr_context,
+                transmission_context_state=transmission_context_state,
+                last_start_ms_state=last_start_ms_state,
+                out_of_order_buffer_state=out_of_order_buffer_state,
+                deferred_drain_timer=deferred_drain_timer,
+                state_changed=state_changed,
             )
             return
 
@@ -1055,19 +1085,33 @@ class OrderedStitchAudioFn(beam.DoFn):
             else active_session_id,
             "transcription-stitcher",
         )
-        prefetched_futures = self.engine.prefetch_audio_futures(
-            elements_to_emit, task_logger
+        # Prefetch only up to PREFETCH_WINDOW_SIZE chunks initially
+        initial_prefetch_chunks = elements_to_emit[
+            : trans_constants.PREFETCH_WINDOW_SIZE
+        ]
+        prefetched_futures = (
+            self.engine.prefetch_audio_futures(
+                initial_prefetch_chunks, task_logger
+            )
+            or {}
         )
         original_expected_ts = previous_expected_ts
         for i, chunk in enumerate(elements_to_emit):
             if i > 0 and self._is_bundle_budget_exhausted():
                 for remaining_chunk in elements_to_emit[i:]:
                     out_of_order_buffer_state.add(remaining_chunk)
+                    if remaining_chunk.gcs_uri in prefetched_futures:
+                        prefetched_futures[remaining_chunk.gcs_uri].cancel()
                 if deferred_drain_timer is not None and timestamp is not None:
-                    deferred_drain_timer.set(
-                        timestamp
-                        + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS
+                    oldest_chunk_ts_sec = (
+                        chunk.timestamp_ms / common_constants.MS_PER_SECOND
                     )
+                    next_deadline = max(
+                        timestamp
+                        + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
+                        Timestamp(seconds=oldest_chunk_ts_sec),
+                    )
+                    deferred_drain_timer.set(next_deadline)
                 if not isinstance(curr_context, datatypes.ActiveStitchingState):
                     msg = "curr_context must be an ActiveStitchingState"
                     raise TypeError(msg)
@@ -1098,6 +1142,17 @@ class OrderedStitchAudioFn(beam.DoFn):
                     out_of_order_buffer_state,
                 )
                 break
+
+            # Enqueue next chunk ahead in sliding window
+            prefetch_idx = i + trans_constants.PREFETCH_WINDOW_SIZE
+            if prefetch_idx < len(elements_to_emit):
+                next_chunk = elements_to_emit[prefetch_idx]
+                if next_chunk.gcs_uri not in prefetched_futures:
+                    future = self.engine.submit_single_prefetch(
+                        next_chunk.gcs_uri, task_logger
+                    )
+                    if future is not None:
+                        prefetched_futures[next_chunk.gcs_uri] = future
 
             if isinstance(curr_context, datatypes.IdleFeedState):
                 curr_context = datatypes.ActiveStitchingState(
@@ -1394,7 +1449,8 @@ class OrderedStitchAudioFn(beam.DoFn):
                 # of the oldest unprocessed chunk currently waiting in the buffer.
                 # If there's a gap (e.g. downtime), this leaps the entire gap in exactly 1 step!
                 oldest_chunk_ts_sec = (
-                    new_buffer_elements[0].timestamp_ms / 1000.0
+                    new_buffer_elements[0].timestamp_ms
+                    / common_constants.MS_PER_SECOND
                 )
                 next_deadline = max(
                     timestamp + trans_constants.WINDMILL_TIMER_MIN_ADVANCE_SECS,
