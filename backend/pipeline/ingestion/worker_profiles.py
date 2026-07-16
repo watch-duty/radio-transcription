@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import enum
-import hashlib
-import json
 import types
 import typing
 
@@ -42,20 +40,17 @@ class WorkerProfile:
 
     Attributes:
         name: Stable deployment-facing profile selector.
-        version: Version of the profile contract.
         process_owned_cap: Maximum enabled grants across the process.
         allocations: Immutable per-domain admission allocations.
     """
 
     name: str
-    version: int
     process_owned_cap: int
     allocations: tuple[DomainAllocation, ...]
 
 
 LEGACY_PROFILE = WorkerProfile(
     name="legacy",
-    version=1,
     process_owned_cap=800,
     allocations=(
         DomainAllocation(
@@ -69,7 +64,6 @@ LEGACY_PROFILE = WorkerProfile(
 
 MIXED_DORMANT_PROFILE = WorkerProfile(
     name="mixed-dormant",
-    version=1,
     process_owned_cap=832,
     allocations=(
         LEGACY_PROFILE.allocations[0],
@@ -84,7 +78,6 @@ MIXED_DORMANT_PROFILE = WorkerProfile(
 
 SID_DORMANT_PROFILE = WorkerProfile(
     name="sid-dormant",
-    version=1,
     process_owned_cap=32,
     allocations=(MIXED_DORMANT_PROFILE.allocations[1],),
 )
@@ -111,7 +104,6 @@ def _validate_profile_shape(profile: WorkerProfile) -> None:
     if not isinstance(profile.name, str) or not profile.name.strip():
         msg = "Worker profile name must not be empty"
         raise ValueError(msg)
-    _positive_int(profile.version, "Worker profile version")
     _positive_int(profile.process_owned_cap, "Worker profile process_owned_cap")
     if not isinstance(profile.allocations, tuple):
         msg = "Worker profile allocations must be an immutable tuple"
@@ -307,35 +299,6 @@ def resolve_worker_profile(
         allocations=tuple(allocations),
     )
     return validate_worker_profile(profile)
-
-
-def profile_digest(profile: WorkerProfile) -> str:
-    """Return a stable non-authoritative SHA-256 profile identity."""
-    validated = validate_worker_profile(profile)
-    ordered_allocations = sorted(
-        validated.allocations,
-        key=lambda allocation: allocation.domain_id.value,
-    )
-    canonical_document = {
-        "name": validated.name,
-        "version": validated.version,
-        "process_owned_cap": validated.process_owned_cap,
-        "allocations": [
-            {
-                "domain_id": allocation.domain_id.value,
-                "owned_cap": allocation.owned_cap,
-                "claims_per_cycle": allocation.claims_per_cycle,
-                "claims_enabled": allocation.claims_enabled,
-            }
-            for allocation in ordered_allocations
-        ],
-    }
-    encoded = json.dumps(
-        canonical_document,
-        ensure_ascii=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
 
 
 for _profile in WORKER_PROFILE_PRESETS.values():

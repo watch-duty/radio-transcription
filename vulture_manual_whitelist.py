@@ -66,7 +66,6 @@ grant_control.GrantControl.finalize
 grant_control.GrantRunner
 worker_profiles.derive_bcfy_calls_authority
 worker_profiles.resolve_worker_profile
-worker_profiles.profile_digest
 
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation
 # and schema reflection, which Vulture cannot trace through direct Python

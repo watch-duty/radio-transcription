@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import dataclasses
 import inspect
-import re
 import typing
 import unittest
 
@@ -31,7 +30,7 @@ class TestWorkerProfile(unittest.TestCase):
         self.assertIsInstance(profile.allocations, tuple)
         self.assertEqual(
             tuple(field.name for field in dataclasses.fields(profile)),
-            ("name", "version", "process_owned_cap", "allocations"),
+            ("name", "process_owned_cap", "allocations"),
         )
 
     def test_presets_have_exact_domains_caps_budgets_and_claim_flags(
@@ -208,74 +207,11 @@ class TestWorkerProfile(unittest.TestCase):
             ),
         )
 
-    def test_digest_is_lowercase_sha256_and_order_independent(self) -> None:
-        profile = worker_profiles.MIXED_DORMANT_PROFILE
-        equivalent = dataclasses.replace(
-            profile,
-            allocations=tuple(reversed(profile.allocations)),
-        )
-
-        digest = worker_profiles.profile_digest(profile)
-        self.assertEqual(digest, worker_profiles.profile_digest(equivalent))
-        self.assertIsNot(profile, equivalent)
-        self.assertIsNotNone(re.fullmatch(r"[0-9a-f]{64}", digest))
-
-    def test_digest_changes_for_every_canonical_field(self) -> None:
-        baseline = worker_profiles.LEGACY_PROFILE
-        feed = baseline.allocations[0]
-        mutations = {
-            "name": dataclasses.replace(baseline, name="legacy-v2"),
-            "version": dataclasses.replace(baseline, version=2),
-            "process_owned_cap": dataclasses.replace(
-                baseline,
-                process_owned_cap=801,
-            ),
-            "domain_id": dataclasses.replace(
-                baseline,
-                allocations=(
-                    dataclasses.replace(
-                        feed,
-                        domain_id=grant_control.DomainId.SID,
-                    ),
-                ),
-            ),
-            "owned_cap": dataclasses.replace(
-                baseline,
-                process_owned_cap=801,
-                allocations=(dataclasses.replace(feed, owned_cap=801),),
-            ),
-            "claims_per_cycle": dataclasses.replace(
-                baseline,
-                allocations=(dataclasses.replace(feed, claims_per_cycle=19),),
-            ),
-            "claims_enabled": dataclasses.replace(
-                baseline,
-                allocations=(dataclasses.replace(feed, claims_enabled=False),),
-            ),
-        }
-        baseline_digest = worker_profiles.profile_digest(baseline)
-
-        for field_name, profile in mutations.items():
-            with self.subTest(field_name=field_name):
-                self.assertNotEqual(
-                    baseline_digest,
-                    worker_profiles.profile_digest(profile),
-                )
-
-    def test_digest_is_observability_identity_not_authority(self) -> None:
-        source = inspect.getsource(worker_profiles.profile_digest).lower()
-
-        self.assertNotIn("authorize", source)
-        self.assertNotIn("credential", source)
-        self.assertNotIn("grant", source)
-
-    def test_profile_type_name_version_and_structure_validation(self) -> None:
+    def test_profile_type_name_and_structure_validation(self) -> None:
         baseline = worker_profiles.LEGACY_PROFILE
         invalid_profiles: dict[str, object] = {
             "non_profile": object(),
             "empty_name": dataclasses.replace(baseline, name=" "),
-            "zero_version": dataclasses.replace(baseline, version=0),
-            "bool_version": dataclasses.replace(baseline, version=True),
             "zero_envelope": dataclasses.replace(
                 baseline,
                 process_owned_cap=0,
