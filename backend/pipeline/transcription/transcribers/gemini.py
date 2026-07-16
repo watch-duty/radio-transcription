@@ -132,7 +132,10 @@ class GeminiTranscriber(base.Transcriber):
             location=self.location,
             http_options=types.HttpOptions(
                 timeout=self.config.client_timeout_ms,
-                async_client_args={"timeout": timeout},
+                async_client_args={
+                    "timeout": timeout,
+                    "http2": True,
+                },
                 retry_options=types.HttpRetryOptions(
                     attempts=self.config.retry_attempts,
                     initial_delay=self.config.retry_initial_delay,
