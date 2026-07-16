@@ -12,6 +12,7 @@ import concurrent.futures
 import logging
 import os
 import uuid
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -43,6 +44,8 @@ from backend.pipeline.storage.sync_feed_store import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from cloudevents.http import event as cloudevent
 
 # ---------------------------------------------------------------------------
@@ -151,10 +154,7 @@ def _handle(  # noqa: PLR0911, PLR0912, PLR0915
         logger.warning("Unexpected path structure, skipping: %s", name)
         return
 
-    # Mirror to dev recordings bucket in background thread concurrently with main pipeline processing
-    mirror_future = _mirror_to_dev_best_effort(bucket, name)
-
-    try:
+    with _dev_mirror_scope(bucket, name):
         channel_name = parts[0]
 
         # Resolve feed from DB
@@ -318,12 +318,6 @@ def _handle(  # noqa: PLR0911, PLR0912, PLR0915
             if should_return_success:
                 return
             raise
-    finally:
-        if mirror_future is not None:
-            try:
-                mirror_future.result(timeout=5)
-            except Exception:
-                logger.exception("Dev mirror background task encountered error")
 
 
 # ---------------------------------------------------------------------------
@@ -397,7 +391,7 @@ def _unexpected_failure_reason(exc: Exception) -> str:
     return reason or type(exc).__name__
 
 
-def _do_mirror_to_dev_best_effort(bucket: str, name: str) -> None:
+def _mirror_to_dev_best_effort(bucket: str, name: str) -> None:
     """Copy the source MP3 into the dev recordings bucket, best-effort.
 
     No-op when ``DEV_RECORDINGS_BUCKET`` is unset (i.e. outside prod).
@@ -425,10 +419,18 @@ def _do_mirror_to_dev_best_effort(bucket: str, name: str) -> None:
         )
 
 
-def _mirror_to_dev_best_effort(
-    bucket: str, name: str
-) -> concurrent.futures.Future[None] | None:
-    return _MIRROR_EXECUTOR.submit(_do_mirror_to_dev_best_effort, bucket, name)
+@contextmanager
+def _dev_mirror_scope(bucket: str, name: str) -> Generator[None]:
+    """Trigger best-effort dev mirroring in background and wait on exit."""
+    future = _MIRROR_EXECUTOR.submit(_mirror_to_dev_best_effort, bucket, name)
+    try:
+        yield
+    finally:
+        if future is not None:
+            try:
+                future.result(timeout=5)
+            except Exception:
+                logger.exception("Dev mirror background task encountered error")
 
 
 # ---------------------------------------------------------------------------
