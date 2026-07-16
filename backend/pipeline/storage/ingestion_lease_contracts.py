@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import enum
+import typing
 import uuid
 
 from backend.pipeline.storage import feed_lifecycle, feed_store
@@ -247,6 +248,30 @@ class NonBudgetedFailure:
 
 
 type LeaseFailureAction = BudgetedFailure | NonBudgetedFailure
+
+
+def _require_failure_action(value: object) -> LeaseFailureAction:
+    """Validate the closed failure-action union at a storage boundary."""
+    if type(value) not in (BudgetedFailure, NonBudgetedFailure):
+        msg = "action must be BudgetedFailure or NonBudgetedFailure"
+        raise TypeError(msg)
+    return typing.cast("LeaseFailureAction", value)
+
+
+def _require_status_reason(value: object) -> feed_store.FeedStatusReason:
+    """Validate a canonical Feed lifecycle reason."""
+    if not isinstance(value, feed_store.FeedStatusReason):
+        msg = "status_reason must be a FeedStatusReason"
+        raise TypeError(msg)
+    return value
+
+
+def _status_reason_detail_storage_value(value: object) -> str | None:
+    """Validate and normalize an operator-facing lifecycle detail."""
+    if value is not None and not isinstance(value, str):
+        msg = "reason must be a string or None"
+        raise TypeError(msg)
+    return feed_lifecycle.status_reason_detail_storage_value(value)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

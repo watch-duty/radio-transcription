@@ -10,7 +10,6 @@ import uuid
 from backend.pipeline.storage import (
     _ingestion_lease_child_commit,
     feed_change_notifications,
-    feed_lifecycle,
     feed_store,
     ingestion_lease_contracts,
     ingestion_lease_queries,
@@ -138,40 +137,6 @@ def _require_grant(value: object) -> LeaseGrant:
         msg = "grant must be a LeaseGrant"
         raise TypeError(msg)
     return value
-
-
-def _require_failure_action(value: object) -> LeaseFailureAction:
-    if type(value) not in (BudgetedFailure, NonBudgetedFailure):
-        msg = "action must be BudgetedFailure or NonBudgetedFailure"
-        raise TypeError(msg)
-    return typing.cast("LeaseFailureAction", value)
-
-
-def _require_status_reason(value: object) -> feed_store.FeedStatusReason:
-    if not isinstance(value, feed_store.FeedStatusReason):
-        msg = "status_reason must be a FeedStatusReason"
-        raise TypeError(msg)
-    return value
-
-
-def _require_log_actor_id(value: object) -> str:
-    """Validate an actor identity before adding it to structured log fields."""
-    if not isinstance(value, str):
-        msg = "actor_id must be a string"
-        raise TypeError(msg)
-    if not value or len(value) > 512 or any(char.isspace() for char in value):
-        msg = (
-            "actor_id must be nonempty, at most 512 chars, and whitespace-free"
-        )
-        raise ValueError(msg)
-    return value
-
-
-def _require_reason_detail(value: object) -> str | None:
-    if value is not None and not isinstance(value, str):
-        msg = "reason must be a string or None"
-        raise TypeError(msg)
-    return feed_lifecycle.status_reason_detail_storage_value(value)
 
 
 def _require_known_membership_revision(value: object) -> int | None:
@@ -663,10 +628,14 @@ class IngestionLeaseStore:
             RuntimeError: The locked exact grant produced an impossible result.
         """
         grant = _require_grant(grant)
-        action = _require_failure_action(action)
-        status_reason = _require_status_reason(status_reason)
-        actor_id = _require_log_actor_id(actor_id)
-        detail = _require_reason_detail(reason)
+        action = ingestion_lease_contracts._require_failure_action(action)  # noqa: SLF001
+        status_reason = ingestion_lease_contracts._require_status_reason(  # noqa: SLF001
+            status_reason
+        )
+        actor_id = _require_actor_id(actor_id)
+        detail = ingestion_lease_contracts._status_reason_detail_storage_value(  # noqa: SLF001
+            reason
+        )
 
         if isinstance(action, BudgetedFailure):
             query = ingestion_lease_queries.FINALIZE_BUDGETED_FAILURE_SQL
@@ -951,7 +920,7 @@ class IngestionLeaseStore:
                 lease_recovered = await self._apply_lease_effect(
                     connection,
                     grant,
-                    prepared.batch.lease_effect,
+                    prepared.lease_effect,
                     lease_row,
                 )
                 pending = (
