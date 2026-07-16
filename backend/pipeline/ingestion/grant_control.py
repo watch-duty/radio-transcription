@@ -34,25 +34,13 @@ class HeartbeatDisposition(enum.StrEnum):
     RETAINED = "retained"
     ADMINISTRATIVE_STOP = "administrative_stop"
     LOST = "lost"
-    UNAVAILABLE = "unavailable"
 
 
 class FinalizeDisposition(enum.StrEnum):
     """Common terminal storage outcomes."""
 
     APPLIED = "applied"
-    ACCEPTED_NOOP = "accepted_noop"
     LOST = "lost"
-    UNAVAILABLE = "unavailable"
-
-
-class TerminalCause(enum.StrEnum):
-    """Neutral reasons an exact grant runner stopped."""
-
-    NORMAL = "normal"
-    SHUTDOWN = "shutdown"
-    PLANNED_DRAIN = "planned_drain"
-    CANCELLATION = "cancellation"
 
 
 class GrantControlIntegrityError(RuntimeError):
@@ -100,18 +88,7 @@ class FinalizeResult[GrantT]:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class NeutralRelease:
-    """Selected neutral exact-grant release.
-
-    Attributes:
-        cause: Structured reason for releasing ownership without failure.
-    """
-
-    cause: TerminalCause
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.cause, TerminalCause):
-            msg = "cause must be a TerminalCause"
-            raise TypeError(msg)
+    """Selected neutral exact-grant release."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -163,17 +140,6 @@ class RunCompleted:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class RunStopped:
-    """Runner stopped for one neutral terminal cause.
-
-    Attributes:
-        cause: Reason local work stopped without reporting failure.
-    """
-
-    cause: TerminalCause
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
 class RunLost:
     """Runner observed confirmed exact-grant loss."""
 
@@ -191,7 +157,7 @@ class RunFailed:
     reason: str | None
 
 
-type RunOutcome = RunCompleted | RunStopped | RunLost | RunFailed
+type RunOutcome = RunCompleted | RunLost | RunFailed
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

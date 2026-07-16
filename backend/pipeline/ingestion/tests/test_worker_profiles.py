@@ -1,41 +1,21 @@
 from __future__ import annotations
 
-import ast
 import dataclasses
 import inspect
 import re
-import types
 import typing
 import unittest
 
 from backend.pipeline.ingestion import grant_control, worker_profiles
 
 
-def _catalog_with(
-    **entries: worker_profiles.DomainCatalogEntry,
-) -> typing.Mapping[
-    grant_control.DomainId,
-    worker_profiles.DomainCatalogEntry,
-]:
-    catalog = dict(worker_profiles.DOMAIN_CATALOG)
-    for domain_name, entry in entries.items():
-        catalog[grant_control.DomainId(domain_name)] = entry
-    return types.MappingProxyType(catalog)
-
-
 class TestWorkerProfile(unittest.TestCase):
-    """Tests for the closed immutable worker-profile model."""
+    """Behavioral tests for immutable worker topology and capacity."""
 
-    def test_values_are_deeply_immutable(self) -> None:
+    def test_values_are_deeply_immutable_and_minimal(self) -> None:
         profile = worker_profiles.MIXED_DORMANT_PROFILE
-        feed_entry = worker_profiles.DOMAIN_CATALOG[grant_control.DomainId.FEED]
         mutable_profile = typing.cast("typing.Any", profile)
         mutable_allocation = typing.cast("typing.Any", profile.allocations[0])
-        mutable_entry = typing.cast("typing.Any", feed_entry)
-        mutable_catalog = typing.cast(
-            "typing.Any",
-            worker_profiles.DOMAIN_CATALOG,
-        )
         mutable_presets = typing.cast(
             "typing.Any",
             worker_profiles.WORKER_PROFILE_PRESETS,
@@ -45,104 +25,14 @@ class TestWorkerProfile(unittest.TestCase):
             mutable_profile.name = "changed"
         with self.assertRaises(dataclasses.FrozenInstanceError):
             mutable_allocation.owned_cap = 1
-        with self.assertRaises(dataclasses.FrozenInstanceError):
-            mutable_entry.logical_authority = "changed"
-        with self.assertRaises(TypeError):
-            mutable_catalog[grant_control.DomainId.FEED] = feed_entry
         with self.assertRaises(TypeError):
             mutable_presets["changed"] = profile
+
         self.assertIsInstance(profile.allocations, tuple)
-        self.assertIsInstance(
-            feed_entry.compatible_resource_classes,
-            frozenset,
-        )
-
-    def test_catalog_has_exact_canonical_domain_coverage(self) -> None:
         self.assertEqual(
-            set(worker_profiles.DOMAIN_CATALOG),
-            set(grant_control.DomainId),
+            tuple(field.name for field in dataclasses.fields(profile)),
+            ("name", "version", "process_owned_cap", "allocations"),
         )
-        self.assertEqual(
-            set(worker_profiles.AuthorityKind),
-            {
-                worker_profiles.AuthorityKind.FEED,
-                worker_profiles.AuthorityKind.SID_LEASE,
-            },
-        )
-        self.assertEqual(
-            set(worker_profiles.ResourceClass),
-            {
-                worker_profiles.ResourceClass.SHARED,
-                worker_profiles.ResourceClass.CONTINUOUS,
-                worker_profiles.ResourceClass.DISCRETE,
-            },
-        )
-        self.assertEqual(
-            {kind.value for kind in worker_profiles.AuthorityKind},
-            {"feed", "sid_lease"},
-        )
-        self.assertEqual(
-            {resource.value for resource in worker_profiles.ResourceClass},
-            {"shared", "continuous", "discrete"},
-        )
-        self.assertEqual(
-            set(worker_profiles.WORKER_PROFILE_PRESETS),
-            {"legacy", "mixed-dormant", "sid-dormant"},
-        )
-        for domain_id, entry in worker_profiles.DOMAIN_CATALOG.items():
-            with self.subTest(domain_id=domain_id.value):
-                self.assertIs(entry.domain_id, domain_id)
-
-        feed = worker_profiles.DOMAIN_CATALOG[grant_control.DomainId.FEED]
-        sid = worker_profiles.DOMAIN_CATALOG[grant_control.DomainId.SID]
-        self.assertEqual(feed.logical_authority, "feed")
-        self.assertIs(feed.authority_kind, worker_profiles.AuthorityKind.FEED)
-        self.assertEqual(feed.required_config_group, "feed")
-        self.assertEqual(
-            feed.compatible_resource_classes,
-            frozenset(
-                (
-                    worker_profiles.ResourceClass.SHARED,
-                    worker_profiles.ResourceClass.CONTINUOUS,
-                )
-            ),
-        )
-        self.assertEqual(sid.logical_authority, "ingestion_lease")
-        self.assertIs(
-            sid.authority_kind,
-            worker_profiles.AuthorityKind.SID_LEASE,
-        )
-        self.assertEqual(sid.required_config_group, "sid")
-        self.assertEqual(
-            sid.compatible_resource_classes,
-            frozenset(
-                (
-                    worker_profiles.ResourceClass.SHARED,
-                    worker_profiles.ResourceClass.DISCRETE,
-                )
-            ),
-        )
-
-    def test_catalog_contains_no_dynamic_execution_surface(self) -> None:
-        tree = ast.parse(inspect.getsource(worker_profiles))
-        imported_roots = {
-            node.names[0].name.split(".", maxsplit=1)[0]
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Import)
-        }
-        called_names = {
-            node.func.id
-            for node in ast.walk(tree)
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-        }
-
-        self.assertTrue(imported_roots.isdisjoint({"importlib", "subprocess"}))
-        self.assertTrue(called_names.isdisjoint({"eval", "exec", "__import__"}))
-        for entry in worker_profiles.DOMAIN_CATALOG.values():
-            self.assertIsInstance(entry.logical_authority, str)
-            self.assertIsInstance(entry.required_config_group, str)
-            self.assertFalse(callable(entry.logical_authority))
-            self.assertFalse(callable(entry.required_config_group))
 
     def test_presets_have_exact_domains_caps_budgets_and_claim_flags(
         self,
@@ -151,6 +41,10 @@ class TestWorkerProfile(unittest.TestCase):
         mixed = worker_profiles.MIXED_DORMANT_PROFILE
         sid_only = worker_profiles.SID_DORMANT_PROFILE
 
+        self.assertEqual(
+            set(worker_profiles.WORKER_PROFILE_PRESETS),
+            {"legacy", "mixed-dormant", "sid-dormant"},
+        )
         self.assertEqual(
             [allocation.domain_id for allocation in legacy.allocations],
             [grant_control.DomainId.FEED],
@@ -174,13 +68,6 @@ class TestWorkerProfile(unittest.TestCase):
 
     def test_bcfy_calls_authority_mode_is_closed(self) -> None:
         self.assertEqual(
-            set(worker_profiles.BcfyCallsAuthorityMode),
-            {
-                worker_profiles.BcfyCallsAuthorityMode.LEGACY_FEED,
-                worker_profiles.BcfyCallsAuthorityMode.SID_LEASE,
-            },
-        )
-        self.assertEqual(
             {mode.value for mode in worker_profiles.BcfyCallsAuthorityMode},
             {"legacy_feed", "sid_lease"},
         )
@@ -200,13 +87,7 @@ class TestWorkerProfile(unittest.TestCase):
             worker_profiles.BcfyCallsAuthorityMode.LEGACY_FEED,
         )
         sid_lease = worker_profiles.derive_bcfy_calls_authority(
-            dataclasses.replace(
-                tampered,
-                allocations=(
-                    dataclasses.replace(feed, claims_enabled=False),
-                    dataclasses.replace(sid, claims_enabled=False),
-                ),
-            ),
+            tampered,
             worker_profiles.BcfyCallsAuthorityMode.SID_LEASE,
         )
 
@@ -231,7 +112,7 @@ class TestWorkerProfile(unittest.TestCase):
             ((800, 20), (32, 2)),
         )
 
-    def test_authority_derivation_rejects_incompatible_topologies(self) -> None:
+    def test_authority_derivation_rejects_absent_domain(self) -> None:
         cases = (
             (
                 worker_profiles.LEGACY_PROFILE,
@@ -270,10 +151,9 @@ class TestWorkerProfile(unittest.TestCase):
             )
 
     def test_sid_budget_is_one_total_cycle_allocation(self) -> None:
-        profile = worker_profiles.MIXED_DORMANT_PROFILE
         sid_allocations = [
             allocation
-            for allocation in profile.allocations
+            for allocation in worker_profiles.MIXED_DORMANT_PROFILE.allocations
             if allocation.domain_id is grant_control.DomainId.SID
         ]
 
@@ -295,7 +175,8 @@ class TestWorkerProfile(unittest.TestCase):
         for selector in ("external.module:profile", " legacy "):
             with self.subTest(selector=selector):
                 with self.assertRaisesRegex(
-                    ValueError, "Unknown WORKER_PROFILE"
+                    ValueError,
+                    "Unknown WORKER_PROFILE",
                 ):
                     worker_profiles.resolve_worker_profile(selector)
 
@@ -345,10 +226,6 @@ class TestWorkerProfile(unittest.TestCase):
         mutations = {
             "name": dataclasses.replace(baseline, name="legacy-v2"),
             "version": dataclasses.replace(baseline, version=2),
-            "resource_class": dataclasses.replace(
-                baseline,
-                resource_class=worker_profiles.ResourceClass.CONTINUOUS,
-            ),
             "process_owned_cap": dataclasses.replace(
                 baseline,
                 process_owned_cap=801,
@@ -421,13 +298,6 @@ class TestWorkerProfile(unittest.TestCase):
                     (object(),),
                 ),
             ),
-            "invalid_resource_class": dataclasses.replace(
-                baseline,
-                resource_class=typing.cast(
-                    "worker_profiles.ResourceClass",
-                    "unknown",
-                ),
-            ),
         }
 
         for case, profile in invalid_profiles.items():
@@ -435,14 +305,13 @@ class TestWorkerProfile(unittest.TestCase):
                 with self.assertRaises((TypeError, ValueError)):
                     worker_profiles.validate_worker_profile(profile)
 
-    def test_profile_rejects_empty_unknown_and_duplicate_domains(self) -> None:
+    def test_profile_rejects_unknown_and_duplicate_domains(self) -> None:
         baseline = worker_profiles.LEGACY_PROFILE
         feed = baseline.allocations[0]
-        invalid_domain_allocations = (
+        for domain_id in (
             typing.cast("grant_control.DomainId", ""),
             typing.cast("grant_control.DomainId", "third-domain"),
-        )
-        for domain_id in invalid_domain_allocations:
+        ):
             with self.subTest(domain_id=domain_id):
                 profile = dataclasses.replace(
                     baseline,
@@ -463,106 +332,6 @@ class TestWorkerProfile(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "Duplicate.*domain"):
             worker_profiles.validate_worker_profile(duplicate)
-
-        missing_catalog_domain = types.MappingProxyType(
-            {
-                grant_control.DomainId.SID: worker_profiles.DOMAIN_CATALOG[
-                    grant_control.DomainId.SID
-                ],
-            }
-        )
-        with self.assertRaisesRegex((TypeError, ValueError), "Unknown.*domain"):
-            worker_profiles.validate_worker_profile(
-                baseline,
-                missing_catalog_domain,
-            )
-
-    def test_profile_rejects_duplicate_logical_authority(self) -> None:
-        mixed = worker_profiles.MIXED_DORMANT_PROFILE
-        sid_entry = worker_profiles.DOMAIN_CATALOG[grant_control.DomainId.SID]
-        catalog = _catalog_with(
-            sid=dataclasses.replace(
-                sid_entry,
-                logical_authority="feed",
-            )
-        )
-
-        with self.assertRaisesRegex(ValueError, "Duplicate.*authority"):
-            worker_profiles.validate_worker_profile(mixed, catalog)
-
-    def test_catalog_entry_metadata_is_validated_before_use(self) -> None:
-        baseline = worker_profiles.LEGACY_PROFILE
-        feed_entry = worker_profiles.DOMAIN_CATALOG[grant_control.DomainId.FEED]
-        invalid_entries = {
-            "key_mismatch": dataclasses.replace(
-                feed_entry,
-                domain_id=grant_control.DomainId.SID,
-            ),
-            "authority_kind": dataclasses.replace(
-                feed_entry,
-                authority_kind=typing.cast(
-                    "worker_profiles.AuthorityKind",
-                    "unknown",
-                ),
-            ),
-            "logical_authority": dataclasses.replace(
-                feed_entry,
-                logical_authority="",
-            ),
-            "logical_authority_type": dataclasses.replace(
-                feed_entry,
-                logical_authority=typing.cast("str", 1),
-            ),
-            "empty_resource_classes": dataclasses.replace(
-                feed_entry,
-                compatible_resource_classes=frozenset(),
-            ),
-            "mutable_resource_classes": dataclasses.replace(
-                feed_entry,
-                compatible_resource_classes=typing.cast(
-                    "frozenset[worker_profiles.ResourceClass]",
-                    {worker_profiles.ResourceClass.SHARED},
-                ),
-            ),
-            "invalid_resource_class": dataclasses.replace(
-                feed_entry,
-                compatible_resource_classes=typing.cast(
-                    "frozenset[worker_profiles.ResourceClass]",
-                    frozenset(("unknown",)),
-                ),
-            ),
-            "required_config_group": dataclasses.replace(
-                feed_entry,
-                required_config_group=" ",
-            ),
-            "required_config_group_type": dataclasses.replace(
-                feed_entry,
-                required_config_group=typing.cast("str", None),
-            ),
-        }
-
-        for case, entry in invalid_entries.items():
-            with self.subTest(case=case):
-                catalog = types.MappingProxyType(
-                    {grant_control.DomainId.FEED: entry}
-                )
-                with self.assertRaises((TypeError, ValueError)):
-                    worker_profiles.validate_worker_profile(baseline, catalog)
-
-    def test_profile_rejects_resource_class_incompatibility(self) -> None:
-        feed_profile = dataclasses.replace(
-            worker_profiles.LEGACY_PROFILE,
-            resource_class=worker_profiles.ResourceClass.DISCRETE,
-        )
-        sid_profile = dataclasses.replace(
-            worker_profiles.SID_DORMANT_PROFILE,
-            resource_class=worker_profiles.ResourceClass.CONTINUOUS,
-        )
-
-        for profile in (feed_profile, sid_profile):
-            with self.subTest(profile=profile.name):
-                with self.assertRaisesRegex(ValueError, "incompatible"):
-                    worker_profiles.validate_worker_profile(profile)
 
     def test_profile_rejects_invalid_caps_budgets_and_claim_flag(self) -> None:
         baseline = worker_profiles.LEGACY_PROFILE
@@ -609,17 +378,18 @@ class TestWorkerProfile(unittest.TestCase):
                     worker_profiles.validate_worker_profile(profile)
 
     def test_enabled_caps_must_fit_process_envelope(self) -> None:
-        baseline = worker_profiles.LEGACY_PROFILE
-        invalid = dataclasses.replace(baseline, process_owned_cap=799)
+        invalid = dataclasses.replace(
+            worker_profiles.LEGACY_PROFILE,
+            process_owned_cap=799,
+        )
 
         with self.assertRaisesRegex(ValueError, "exceed.*envelope"):
             worker_profiles.validate_worker_profile(invalid)
 
-    def test_smaller_envelope_is_valid_when_enabled_caps_fit(self) -> None:
-        mixed = worker_profiles.MIXED_DORMANT_PROFILE
-        feed, sid = mixed.allocations
+    def test_disabled_caps_do_not_consume_process_envelope(self) -> None:
+        feed, sid = worker_profiles.MIXED_DORMANT_PROFILE.allocations
         profile = dataclasses.replace(
-            mixed,
+            worker_profiles.MIXED_DORMANT_PROFILE,
             process_owned_cap=3,
             allocations=(
                 dataclasses.replace(
@@ -636,8 +406,7 @@ class TestWorkerProfile(unittest.TestCase):
             profile,
         )
 
-    def test_resource_and_migration_constraints_remain_data_only(self) -> None:
-        """D-46/47, D-51/52, and D-53/54/55 stay non-action seams."""
+    def test_profile_module_has_no_deployment_execution_surface(self) -> None:
         source = inspect.getsource(worker_profiles).lower()
 
         for forbidden in (

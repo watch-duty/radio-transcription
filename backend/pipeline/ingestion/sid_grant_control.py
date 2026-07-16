@@ -18,20 +18,6 @@ _STATUS_INELIGIBLE = (
 )
 _SID_CLAIM_BINDING_VERSION = "sid-claim-payload-v1"
 _SID_CLAIM_BINDING_KEY = secrets.token_bytes(32)
-_RELEASE_CAUSES = {
-    grant_control.TerminalCause.NORMAL: (
-        ingestion_lease_store.LeaseReleaseCause.NORMAL
-    ),
-    grant_control.TerminalCause.SHUTDOWN: (
-        ingestion_lease_store.LeaseReleaseCause.SHUTDOWN
-    ),
-    grant_control.TerminalCause.PLANNED_DRAIN: (
-        ingestion_lease_store.LeaseReleaseCause.REBALANCE
-    ),
-    grant_control.TerminalCause.CANCELLATION: (
-        ingestion_lease_store.LeaseReleaseCause.CANCELLATION
-    ),
-}
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -298,10 +284,7 @@ class SidGrantControl:
         self._validate_claim_payload(grant, payload)
 
         if isinstance(terminal, grant_control.NeutralRelease):
-            result = await self._data_store.release(
-                grant,
-                cause=_RELEASE_CAUSES[terminal.cause],
-            )
+            result = await self._data_store.release(grant)
             if not isinstance(
                 result, ingestion_lease_store.LeaseOperationResult
             ):

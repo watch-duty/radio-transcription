@@ -124,19 +124,10 @@ class TestGrantControlVocabulary(unittest.TestCase):
                 "retained",
                 "administrative_stop",
                 "lost",
-                "unavailable",
             },
             grant_control.FinalizeDisposition: {
                 "applied",
-                "accepted_noop",
                 "lost",
-                "unavailable",
-            },
-            grant_control.TerminalCause: {
-                "normal",
-                "shutdown",
-                "planned_drain",
-                "cancellation",
             },
         }
 
@@ -149,6 +140,7 @@ class TestGrantControlVocabulary(unittest.TestCase):
             grant_control.ClaimedGrant: ("grant", "payload"),
             grant_control.GrantHeartbeat: ("grant", "disposition"),
             grant_control.FinalizeResult: ("grant", "disposition"),
+            grant_control.NeutralRelease: (),
         }
 
         for result_type, expected in expected_fields.items():
@@ -201,6 +193,14 @@ class TestGrantControlVocabulary(unittest.TestCase):
         self.assertEqual(
             tuple(field.name for field in dataclasses.fields(context)),
             ("stop_requested", "grant_lost", "set_retrying"),
+        )
+        self.assertEqual(
+            set(typing.get_args(grant_control.RunOutcome.__value__)),
+            {
+                grant_control.RunCompleted,
+                grant_control.RunLost,
+                grant_control.RunFailed,
+            },
         )
 
     def test_contract_has_no_open_metadata_or_health_surface(self) -> None:
@@ -389,29 +389,25 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
 
         self.heartbeat_store.renew_grant_heartbeats.assert_awaited_once()
 
-    async def test_every_neutral_cause_uses_exact_feed_release(self) -> None:
+    async def test_neutral_release_uses_exact_feed_release(self) -> None:
         grant = _feed_grant()
+        self.data_store.release_feed.return_value = True
 
-        for cause in grant_control.TerminalCause:
-            with self.subTest(cause=cause.value):
-                self.data_store.reset_mock()
-                self.data_store.release_feed.return_value = True
+        result = await self.control.finalize(
+            grant,
+            _feed_payload_for_grant(grant),
+            grant_control.NeutralRelease(),
+        )
 
-                result = await self.control.finalize(
-                    grant,
-                    _feed_payload_for_grant(grant),
-                    grant_control.NeutralRelease(cause),
-                )
-
-                self.assertIs(
-                    result.disposition,
-                    grant_control.FinalizeDisposition.APPLIED,
-                )
-                self.data_store.release_feed.assert_awaited_once_with(
-                    grant.feed_id,
-                    grant.owner_worker_id,
-                    grant.fencing_token,
-                )
+        self.assertIs(
+            result.disposition,
+            grant_control.FinalizeDisposition.APPLIED,
+        )
+        self.data_store.release_feed.assert_awaited_once_with(
+            grant.feed_id,
+            grant.owner_worker_id,
+            grant.fencing_token,
+        )
 
     async def test_every_terminal_decision_calls_one_exact_feed_method(
         self,
@@ -434,9 +430,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             released = await self.control.finalize(
                 grant,
                 _feed_payload_for_grant(grant),
-                grant_control.NeutralRelease(
-                    grant_control.TerminalCause.SHUTDOWN
-                ),
+                grant_control.NeutralRelease(),
             )
             budgeted = await self.control.finalize(
                 grant,
@@ -501,7 +495,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
         released = await self.control.finalize(
             grant,
             _feed_payload_for_grant(grant),
-            grant_control.NeutralRelease(grant_control.TerminalCause.NORMAL),
+            grant_control.NeutralRelease(),
         )
 
         self.assertIs(
@@ -820,9 +814,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             payload.claim_mode,
         )
         copied = dataclasses.replace(payload)
-        terminal = grant_control.NeutralRelease(
-            grant_control.TerminalCause.NORMAL
-        )
+        terminal = grant_control.NeutralRelease()
 
         for case_index, (candidate_grant, candidate_payload) in enumerate(
             (
@@ -937,50 +929,29 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
 
         self.heartbeat_store.renew_heartbeats.assert_awaited_once()
 
-    async def test_every_neutral_cause_maps_to_exact_lease_release(
+    async def test_neutral_release_maps_to_exact_lease_release(
         self,
     ) -> None:
         grant = _lease_grant()
-        expected = {
-            grant_control.TerminalCause.NORMAL: (
-                ingestion_lease_store.LeaseReleaseCause.NORMAL
-            ),
-            grant_control.TerminalCause.SHUTDOWN: (
-                ingestion_lease_store.LeaseReleaseCause.SHUTDOWN
-            ),
-            grant_control.TerminalCause.PLANNED_DRAIN: (
-                ingestion_lease_store.LeaseReleaseCause.REBALANCE
-            ),
-            grant_control.TerminalCause.CANCELLATION: (
-                ingestion_lease_store.LeaseReleaseCause.CANCELLATION
-            ),
-        }
+        self.data_store.release.return_value = (
+            ingestion_lease_store.LeaseOperationResult(
+                ingestion_lease_store.LeaseOperationDisposition.APPLIED,
+            )
+        )
 
-        for cause, store_cause in expected.items():
-            with self.subTest(cause=cause.value):
-                self.data_store.reset_mock()
-                self.data_store.release.return_value = (
-                    ingestion_lease_store.LeaseOperationResult(
-                        ingestion_lease_store.LeaseOperationDisposition.APPLIED,
-                    )
-                )
+        result = await self.control.finalize(
+            grant,
+            self._sid_payload(grant),
+            grant_control.NeutralRelease(),
+        )
 
-                result = await self.control.finalize(
-                    grant,
-                    self._sid_payload(grant),
-                    grant_control.NeutralRelease(cause),
-                )
-
-                self.assertIs(
-                    result.disposition,
-                    grant_control.FinalizeDisposition.APPLIED,
-                )
-                self.data_store.release.assert_awaited_once_with(
-                    grant,
-                    cause=store_cause,
-                )
-                self.data_store.load_membership.assert_not_awaited()
-                self.data_store.commit_child_mutations.assert_not_awaited()
+        self.assertIs(
+            result.disposition,
+            grant_control.FinalizeDisposition.APPLIED,
+        )
+        self.data_store.release.assert_awaited_once_with(grant)
+        self.data_store.load_membership.assert_not_awaited()
+        self.data_store.commit_child_mutations.assert_not_awaited()
 
     async def test_failure_decisions_make_one_exact_finalize_call(self) -> None:
         grant = _lease_grant()
@@ -1087,9 +1058,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
                 result = await self.control.finalize(
                     grant,
                     self._sid_payload(grant),
-                    grant_control.NeutralRelease(
-                        grant_control.TerminalCause.NORMAL
-                    ),
+                    grant_control.NeutralRelease(),
                 )
 
                 self.assertIs(

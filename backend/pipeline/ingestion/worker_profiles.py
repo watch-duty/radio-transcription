@@ -12,45 +12,11 @@ import typing
 from backend.pipeline.ingestion import grant_control
 
 
-class AuthorityKind(enum.StrEnum):
-    """Closed durable authority kinds exposed to runtime observability."""
-
-    FEED = "feed"
-    SID_LEASE = "sid_lease"
-
-
 class BcfyCallsAuthorityMode(enum.StrEnum):
     """Startup-only authority selection for Broadcastify Calls."""
 
     LEGACY_FEED = "legacy_feed"
     SID_LEASE = "sid_lease"
-
-
-class ResourceClass(enum.StrEnum):
-    """Stable deployment resource classes, never storage authority."""
-
-    SHARED = "shared"
-    CONTINUOUS = "continuous"
-    DISCRETE = "discrete"
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class DomainCatalogEntry:
-    """Static data-only metadata for one durable authority domain.
-
-    Attributes:
-        domain_id: Canonical runtime domain identity.
-        authority_kind: Stable low-cardinality authority classification.
-        logical_authority: Unique data-only storage authority identifier.
-        compatible_resource_classes: Deployment classes allowed to select it.
-        required_config_group: Static selected-domain configuration group.
-    """
-
-    domain_id: grant_control.DomainId
-    authority_kind: AuthorityKind
-    logical_authority: str
-    compatible_resource_classes: frozenset[ResourceClass]
-    required_config_group: str
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -77,49 +43,19 @@ class WorkerProfile:
     Attributes:
         name: Stable deployment-facing profile selector.
         version: Version of the profile contract.
-        resource_class: Deployment resource class hosting the domains.
         process_owned_cap: Maximum enabled grants across the process.
         allocations: Immutable per-domain admission allocations.
     """
 
     name: str
     version: int
-    resource_class: ResourceClass
     process_owned_cap: int
     allocations: tuple[DomainAllocation, ...]
-
-
-DOMAIN_CATALOG: typing.Mapping[
-    grant_control.DomainId,
-    DomainCatalogEntry,
-] = types.MappingProxyType(
-    {
-        grant_control.DomainId.FEED: DomainCatalogEntry(
-            domain_id=grant_control.DomainId.FEED,
-            authority_kind=AuthorityKind.FEED,
-            logical_authority="feed",
-            compatible_resource_classes=frozenset(
-                (ResourceClass.SHARED, ResourceClass.CONTINUOUS),
-            ),
-            required_config_group="feed",
-        ),
-        grant_control.DomainId.SID: DomainCatalogEntry(
-            domain_id=grant_control.DomainId.SID,
-            authority_kind=AuthorityKind.SID_LEASE,
-            logical_authority="ingestion_lease",
-            compatible_resource_classes=frozenset(
-                (ResourceClass.SHARED, ResourceClass.DISCRETE),
-            ),
-            required_config_group="sid",
-        ),
-    }
-)
 
 
 LEGACY_PROFILE = WorkerProfile(
     name="legacy",
     version=1,
-    resource_class=ResourceClass.SHARED,
     process_owned_cap=800,
     allocations=(
         DomainAllocation(
@@ -134,7 +70,6 @@ LEGACY_PROFILE = WorkerProfile(
 MIXED_DORMANT_PROFILE = WorkerProfile(
     name="mixed-dormant",
     version=1,
-    resource_class=ResourceClass.SHARED,
     process_owned_cap=832,
     allocations=(
         LEGACY_PROFILE.allocations[0],
@@ -150,7 +85,6 @@ MIXED_DORMANT_PROFILE = WorkerProfile(
 SID_DORMANT_PROFILE = WorkerProfile(
     name="sid-dormant",
     version=1,
-    resource_class=ResourceClass.DISCRETE,
     process_owned_cap=32,
     allocations=(MIXED_DORMANT_PROFILE.allocations[1],),
 )
@@ -173,56 +107,11 @@ def _positive_int(value: object, field_name: str) -> int:
     return value
 
 
-def _validated_catalog_entry(
-    domain_id: grant_control.DomainId,
-    catalog: typing.Mapping[
-        grant_control.DomainId,
-        DomainCatalogEntry,
-    ],
-) -> DomainCatalogEntry:
-    entry = catalog.get(domain_id)
-    if not isinstance(entry, DomainCatalogEntry):
-        msg = f"Unknown worker profile domain: {domain_id.value}"
-        raise TypeError(msg)
-    if entry.domain_id is not domain_id:
-        msg = f"Catalog entry key does not match domain: {domain_id.value}"
-        raise ValueError(msg)
-    if not isinstance(entry.authority_kind, AuthorityKind):
-        msg = f"Domain {domain_id.value} has an invalid authority kind"
-        raise TypeError(msg)
-    if not isinstance(entry.logical_authority, str):
-        msg = f"Domain {domain_id.value} logical authority must be a string"
-        raise TypeError(msg)
-    if not entry.logical_authority.strip():
-        msg = f"Domain {domain_id.value} has no logical authority"
-        raise ValueError(msg)
-    if (
-        not isinstance(entry.compatible_resource_classes, frozenset)
-        or not entry.compatible_resource_classes
-        or any(
-            not isinstance(resource_class, ResourceClass)
-            for resource_class in entry.compatible_resource_classes
-        )
-    ):
-        msg = f"Domain {domain_id.value} has invalid resource classes"
-        raise ValueError(msg)
-    if not isinstance(entry.required_config_group, str):
-        msg = f"Domain {domain_id.value} config group must be a string"
-        raise TypeError(msg)
-    if not entry.required_config_group.strip():
-        msg = f"Domain {domain_id.value} has no required config group"
-        raise ValueError(msg)
-    return entry
-
-
 def _validate_profile_shape(profile: WorkerProfile) -> None:
     if not isinstance(profile.name, str) or not profile.name.strip():
         msg = "Worker profile name must not be empty"
         raise ValueError(msg)
     _positive_int(profile.version, "Worker profile version")
-    if not isinstance(profile.resource_class, ResourceClass):
-        msg = "Worker profile resource_class is invalid"
-        raise TypeError(msg)
     _positive_int(profile.process_owned_cap, "Worker profile process_owned_cap")
     if not isinstance(profile.allocations, tuple):
         msg = "Worker profile allocations must be an immutable tuple"
@@ -233,13 +122,8 @@ def _validate_profile_shape(profile: WorkerProfile) -> None:
 
 
 def _validate_allocation(
-    profile: WorkerProfile,
     allocation: object,
-    catalog: typing.Mapping[
-        grant_control.DomainId,
-        DomainCatalogEntry,
-    ],
-) -> tuple[DomainAllocation, DomainCatalogEntry, int]:
+) -> tuple[DomainAllocation, int]:
     if not isinstance(allocation, DomainAllocation):
         msg = "Worker profile allocation is invalid"
         raise TypeError(msg)
@@ -247,13 +131,6 @@ def _validate_allocation(
         msg = "Worker profile contains an empty or unknown domain"
         raise TypeError(msg)
 
-    entry = _validated_catalog_entry(allocation.domain_id, catalog)
-    if profile.resource_class not in entry.compatible_resource_classes:
-        msg = (
-            f"Domain {allocation.domain_id.value} is incompatible with "
-            f"resource class {profile.resource_class.value}"
-        )
-        raise ValueError(msg)
     owned_cap = _positive_int(
         allocation.owned_cap,
         f"Domain {allocation.domain_id.value} owned_cap",
@@ -273,29 +150,21 @@ def _validate_allocation(
             f"Domain {allocation.domain_id.value} claims_enabled must be a bool"
         )
         raise TypeError(msg)
-    return allocation, entry, owned_cap
+    return allocation, owned_cap
 
 
-def validate_worker_profile(
-    profile: object,
-    catalog: typing.Mapping[
-        grant_control.DomainId,
-        DomainCatalogEntry,
-    ] = DOMAIN_CATALOG,
-) -> WorkerProfile:
+def validate_worker_profile(profile: object) -> WorkerProfile:
     """Validate and return one closed immutable worker profile.
 
     Args:
         profile: Candidate profile value.
-        catalog: Closed static domain metadata used for validation.
 
     Returns:
         The validated immutable profile.
 
     Raises:
         TypeError: If ``profile`` is not a ``WorkerProfile``.
-        ValueError: If profile structure, allocation, or catalog metadata is
-            invalid.
+        ValueError: If profile structure or allocation is invalid.
     """
     if not isinstance(profile, WorkerProfile):
         msg = "profile must be a WorkerProfile"
@@ -303,27 +172,15 @@ def validate_worker_profile(
     _validate_profile_shape(profile)
 
     seen_domains: set[grant_control.DomainId] = set()
-    seen_authorities: set[str] = set()
     enabled_owned_cap = 0
     for candidate in profile.allocations:
-        allocation, entry, owned_cap = _validate_allocation(
-            profile,
-            candidate,
-            catalog,
-        )
+        allocation, owned_cap = _validate_allocation(candidate)
         if allocation.domain_id in seen_domains:
             msg = (
                 f"Duplicate worker profile domain: {allocation.domain_id.value}"
             )
             raise ValueError(msg)
         seen_domains.add(allocation.domain_id)
-        if entry.logical_authority in seen_authorities:
-            msg = (
-                "Duplicate worker profile logical authority: "
-                f"{entry.logical_authority}"
-            )
-            raise ValueError(msg)
-        seen_authorities.add(entry.logical_authority)
         if allocation.claims_enabled:
             enabled_owned_cap += owned_cap
 
@@ -462,7 +319,6 @@ def profile_digest(profile: WorkerProfile) -> str:
     canonical_document = {
         "name": validated.name,
         "version": validated.version,
-        "resource_class": validated.resource_class.value,
         "process_owned_cap": validated.process_owned_cap,
         "allocations": [
             {
