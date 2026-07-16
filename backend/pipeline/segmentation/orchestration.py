@@ -149,6 +149,7 @@ def get_pipeline(
     uploaded_segments.main | "WriteToPubSub" >> WriteToPubSub(
         topic=options.output_topic,
         with_attributes=True,
+        publish_with_ordering_key=True,
     )
 
     # Route all DLQ outputs to a dedicated topic
@@ -160,6 +161,7 @@ def get_pipeline(
     dlq_messages | "WriteDlqToPubSub" >> WriteToPubSub(
         topic=options.dlq_topic or f"{options.output_topic}-dlq",
         with_attributes=True,
+        publish_with_ordering_key=True,
     )
 
     return pipeline

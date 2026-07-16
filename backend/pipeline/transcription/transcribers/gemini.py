@@ -122,7 +122,7 @@ class GeminiTranscriber(base.Transcriber):
     def setup(self) -> None:
         """Instantiate the GenAI API client with a robust retry policy."""
         self.client = genai.Client(
-            vertexai=True,
+            enterprise=True,
             project=self.project_id,
             location=self.location,
             http_options=types.HttpOptions(

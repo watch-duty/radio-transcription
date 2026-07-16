@@ -109,3 +109,16 @@ variable "tmpfs_mounts" {
   type        = list(string)
   default     = []
 }
+
+variable "cos_image_self_link" {
+  description = "The self_link of the COS image to use. If not specified, the module will query the latest stable COS image."
+  type        = string
+  default     = null
+}
+
+variable "available_zones" {
+  description = "The list of zones in the region. If not specified, the module will query the available zones in the region."
+  type        = list(string)
+  default     = null
+}
+
