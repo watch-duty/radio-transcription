@@ -880,13 +880,10 @@ def _child_audit_action(
             and after_row["failure_count"] > before_row["failure_count"]
         ):
             return "feed.quarantined"
-        if after_status is feed_store.FeedStatus.FAILING and (
-            before_status is not feed_store.FeedStatus.FAILING
-            or _status_reason_from_row(before_row)
-            != _status_reason_from_row(after_row)
-        ):
+        if after_status is feed_store.FeedStatus.FAILING:
             return "feed.failure_reported"
-        return None
+        msg = "committed Feed failure returned an invalid lifecycle state"
+        raise ValueError(msg)
     if (
         before_status
         in (feed_store.FeedStatus.FAILING, feed_store.FeedStatus.QUARANTINED)

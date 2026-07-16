@@ -2492,6 +2492,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         feed_id = uuid.UUID("99999999-0000-0000-0000-000000000090")
+        payload_row = _child_audit_payload(
+            feed_id,
+            action="feed.failure_reported",
+        )
         pool = connection_util.make_mock_pool(transaction=True)
         connection = pool.acquired_connection
         connection.fetchrow.return_value = _lease_row()
@@ -2513,6 +2517,8 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     audit_revision=1,
                 )
             ],
+            [_audit_property_row(feed_id)],
+            [payload_row],
             [
                 _child_row(
                     feed_id,
@@ -2531,6 +2537,8 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     audit_revision=2,
                 )
             ],
+            [_audit_property_row(feed_id)],
+            [payload_row],
         ]
         store = ingestion_lease_store.IngestionLeaseStore(pool)
         batch = ingestion_lease_store.ChildMutationBatch(
@@ -2550,8 +2558,8 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             tuple(result.children[0].disposition for result in (first, second)),
             (ingestion_lease_store.ChildDisposition.COMMITTED,) * 2,
         )
-        self.assertEqual(connection.fetch.await_count, 4)
-        for call_index in (1, 3):
+        self.assertEqual(connection.fetch.await_count, 8)
+        for call_index in (1, 5):
             failure_args = connection.fetch.await_args_list[call_index].args
             self.assertIs(
                 failure_args[0],
@@ -2559,6 +2567,13 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(failure_args[3], [False])
             self.assertEqual(failure_args[4], [True])
+        for call_index in (3, 7):
+            audit_args = connection.fetch.await_args_list[call_index].args
+            self.assertIs(
+                audit_args[0],
+                ingestion_lease_queries.INSERT_CHILD_AUDIT_EVENTS_SQL,
+            )
+            self.assertEqual(audit_args[2], ("feed.failure_reported",))
 
     async def test_budgeted_failure_quarantines_and_audits_atomically(
         self,
@@ -2622,6 +2637,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         retry_after = _NOW + datetime.timedelta(minutes=8)
         action = ingestion_lease_store.NonBudgetedFailure(retry_after)
         prior_cursor = _NOW - datetime.timedelta(seconds=1)
+        payload_row = _child_audit_payload(
+            feed_id,
+            action="feed.failure_reported",
+        )
         pool = connection_util.make_mock_pool(transaction=True)
         connection = pool.acquired_connection
         connection.fetchrow.return_value = _lease_row()
@@ -2646,6 +2665,8 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     audit_revision=1,
                 )
             ],
+            [_audit_property_row(feed_id)],
+            [payload_row],
         ]
         store = ingestion_lease_store.IngestionLeaseStore(pool)
 
@@ -2674,6 +2695,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         failure_args = connection.fetch.await_args_list[1].args
         self.assertEqual(failure_args[4], [False])
         self.assertEqual(failure_args[8], [retry_after])
+        self.assertEqual(
+            connection.fetch.await_args_list[3].args[2],
+            ("feed.failure_reported",),
+        )
 
     async def test_all_non_budgeted_reasons_reset_at_quarantine_threshold(
         self,
@@ -2698,6 +2723,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         for reason_index, status_reason in enumerate(non_budgeted_reasons):
             with self.subTest(status_reason=status_reason.value):
                 feed_id = uuid.UUID(int=500 + reason_index)
+                payload_row = _child_audit_payload(
+                    feed_id,
+                    action="feed.failure_reported",
+                )
                 pool = connection_util.make_mock_pool(transaction=True)
                 connection = pool.acquired_connection
                 connection.fetchrow.return_value = _lease_row()
@@ -2722,6 +2751,8 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                             audit_revision=1,
                         )
                     ],
+                    [_audit_property_row(feed_id)],
+                    [payload_row],
                 ]
                 store = ingestion_lease_store.IngestionLeaseStore(pool)
 
@@ -2752,6 +2783,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(failure_args[4], [False])
                 self.assertEqual(failure_args[8], [retry_after])
                 self.assertEqual(failure_args[9], [status_reason.value])
+                self.assertEqual(
+                    connection.fetch.await_args_list[3].args[2],
+                    ("feed.failure_reported",),
+                )
 
     async def test_failure_and_neutral_closure_finalize_independently(
         self,
@@ -2764,6 +2799,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             retry_after=None,
             status_reason=None,
             status_reason_detail=None,
+        )
+        payload_row = _child_audit_payload(
+            failed_feed_id,
+            action="feed.failure_reported",
         )
         pool = connection_util.make_mock_pool(transaction=True)
         connection = pool.acquired_connection
@@ -2800,6 +2839,8 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     audit_revision=1,
                 )
             ],
+            [_audit_property_row(failed_feed_id)],
+            [payload_row],
         ]
         store = ingestion_lease_store.IngestionLeaseStore(pool)
 
@@ -2820,7 +2861,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             tuple(child.disposition for child in result.children),
             (ingestion_lease_store.ChildDisposition.COMMITTED,) * 2,
         )
-        self.assertEqual(connection.fetch.await_count, 3)
+        self.assertEqual(connection.fetch.await_count, 5)
         self.assertIs(
             connection.fetch.await_args_list[1].args[0],
             ingestion_lease_queries.APPLY_CLOSED_COHORT_PROGRESS_SQL,
@@ -2832,6 +2873,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(failure_args[3], [False])
         self.assertEqual(failure_args[4], [True])
+        self.assertEqual(
+            connection.fetch.await_args_list[4].args[2],
+            ("feed.failure_reported",),
+        )
         self.assertIs(
             connection.fetchrow.await_args_list[1].args[0],
             ingestion_lease_queries.FINALIZE_LEASE_RECOVERY_SQL,
