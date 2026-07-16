@@ -111,7 +111,8 @@ class RunFailed:
 
     Attributes:
         status_reason: Canonical failure classification.
-        reason: Optional bounded operator-facing detail.
+        reason: Optional diagnostic detail. The storage seam applies its
+            durable length cap.
     """
 
     status_reason: feed_store.FeedStatusReason
