@@ -687,10 +687,7 @@ async def test_claim_order_and_property_free_claim(
         membership,
         ingestion_lease_store.MembershipInvariantViolation,
     )
-    assert (
-        membership.reason
-        is ingestion_lease_store.MembershipInvariantReason.EMPTY
-    )
+    assert membership.grant == property_free_grant
 
 
 @pytest.mark.parametrize(
@@ -754,7 +751,7 @@ async def test_child_and_grant_transition_linearize_both_orders(  # noqa: PLR091
 
         assert isinstance(child_result, ingestion_lease_store.BatchCommitted)
         assert child_result.children[0].disposition is (
-            ingestion_lease_store.ChildDisposition.APPLIED
+            ingestion_lease_store.ChildDisposition.COMMITTED
         )
         assert isinstance(
             transition_result,
@@ -961,16 +958,8 @@ async def test_reverse_overlapping_feed_sets_do_not_deadlock(
         low_member.feed_id,
         high_member.feed_id,
     ]
-    assert [child.cursor_effect for child in first_result.children] == [
-        ingestion_lease_store.CursorEffect.INITIALIZED,
-        ingestion_lease_store.CursorEffect.INITIALIZED,
-    ]
-    assert [child.cursor_effect for child in second_result.children] == [
-        ingestion_lease_store.CursorEffect.ADVANCED,
-        ingestion_lease_store.CursorEffect.ADVANCED,
-    ]
     assert all(
-        child.disposition is ingestion_lease_store.ChildDisposition.APPLIED
+        child.disposition is ingestion_lease_store.ChildDisposition.COMMITTED
         for child in first_result.children + second_result.children
     )
     for member in ordered_members:
@@ -1024,12 +1013,12 @@ async def test_selective_child_dispositions_commit_valid_siblings(
 
     assert isinstance(result, ingestion_lease_store.BatchCommitted)
     assert [child.disposition for child in result.children] == [
-        ingestion_lease_store.ChildDisposition.APPLIED,
-        ingestion_lease_store.ChildDisposition.APPLIED,
-        ingestion_lease_store.ChildDisposition.APPLIED_AFTER_DEACTIVATION,
-        ingestion_lease_store.ChildDisposition.MISSING,
-        ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE,
-        ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE,
+        ingestion_lease_store.ChildDisposition.COMMITTED,
+        ingestion_lease_store.ChildDisposition.COMMITTED,
+        ingestion_lease_store.ChildDisposition.COMMITTED,
+        ingestion_lease_store.ChildDisposition.REJECTED,
+        ingestion_lease_store.ChildDisposition.REJECTED,
+        ingestion_lease_store.ChildDisposition.REJECTED,
     ]
     assert (await _fetch_feed(ingestion_lease_pool, progress_member.feed_id))[
         "last_bookmark_time"
@@ -1142,7 +1131,7 @@ async def test_deactivation_races_and_revision_is_not_fence(  # noqa: PLR0915
                 ingestion_lease_store.BatchCommitted,
             )
             assert child_result.children[0].disposition is (
-                ingestion_lease_store.ChildDisposition.APPLIED_AFTER_DEACTIVATION
+                ingestion_lease_store.ChildDisposition.COMMITTED
             )
         else:
             async with ingestion_lease_pool.acquire() as blocker:
@@ -1192,7 +1181,7 @@ async def test_deactivation_races_and_revision_is_not_fence(  # noqa: PLR0915
                 ingestion_lease_store.BatchCommitted,
             )
             assert child_result.children[0].disposition is (
-                ingestion_lease_store.ChildDisposition.APPLIED
+                ingestion_lease_store.ChildDisposition.COMMITTED
             )
 
         deactivated_row = await _fetch_feed(
@@ -1225,10 +1214,10 @@ async def test_deactivation_races_and_revision_is_not_fence(  # noqa: PLR0915
         assert isinstance(observation, ingestion_lease_store.BatchCommitted)
         assert isinstance(failure, ingestion_lease_store.BatchCommitted)
         assert observation.children[0].disposition is (
-            ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE
+            ingestion_lease_store.ChildDisposition.REJECTED
         )
         assert failure.children[0].disposition is (
-            ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE
+            ingestion_lease_store.ChildDisposition.REJECTED
         )
         assert (
             dict(await _fetch_feed(ingestion_lease_pool, member.feed_id))
@@ -1297,7 +1286,7 @@ async def test_deactivation_races_and_revision_is_not_fence(  # noqa: PLR0915
 
     assert isinstance(revision_result, ingestion_lease_store.BatchCommitted)
     assert revision_result.children[0].disposition is (
-        ingestion_lease_store.ChildDisposition.APPLIED
+        ingestion_lease_store.ChildDisposition.COMMITTED
     )
     after_snapshot = await store.load_membership(revision_grant)
     assert isinstance(after_snapshot, ingestion_lease_store.MembershipSnapshot)
@@ -1321,36 +1310,31 @@ def _expected_cursor(
 
 @pytest.mark.parametrize("operation", ["progress", "observation"])
 @pytest.mark.parametrize(
-    ("current", "requested", "expected_effect"),
+    ("current", "requested"),
     [
         pytest.param(
             None,
             _BASE_CURSOR,
-            ingestion_lease_store.CursorEffect.INITIALIZED,
             id="initialize",
         ),
         pytest.param(
             _BASE_CURSOR,
             _BASE_CURSOR + datetime.timedelta(seconds=1),
-            ingestion_lease_store.CursorEffect.ADVANCED,
             id="advance",
         ),
         pytest.param(
             _BASE_CURSOR,
             _BASE_CURSOR,
-            ingestion_lease_store.CursorEffect.EQUAL,
             id="equal",
         ),
         pytest.param(
             _BASE_CURSOR,
             _BASE_CURSOR - datetime.timedelta(seconds=1),
-            ingestion_lease_store.CursorEffect.REGRESSIVE,
             id="regressive",
         ),
         pytest.param(
             _BASE_CURSOR,
             None,
-            ingestion_lease_store.CursorEffect.ABSENT,
             id="absent",
         ),
     ],
@@ -1360,7 +1344,6 @@ async def test_cursor_matrix_is_independent_from_lifecycle(
     operation: str,
     current: datetime.datetime | None,
     requested: datetime.datetime | None,
-    expected_effect: ingestion_lease_store.CursorEffect,
 ) -> None:
     sid = _unique_digits()
     await _insert_lease(ingestion_lease_pool, sid)
@@ -1410,9 +1393,12 @@ async def test_cursor_matrix_is_independent_from_lifecycle(
     assert isinstance(clean, ingestion_lease_store.BatchCommitted)
     assert isinstance(failing, ingestion_lease_store.BatchCommitted)
     assert isinstance(deactivated, ingestion_lease_store.BatchCommitted)
-    assert clean.children[0].cursor_effect is expected_effect
-    assert failing.children[0].cursor_effect is expected_effect
-    assert deactivated.children[0].cursor_effect is expected_effect
+    assert clean.children[0].disposition is (
+        ingestion_lease_store.ChildDisposition.COMMITTED
+    )
+    assert failing.children[0].disposition is (
+        ingestion_lease_store.ChildDisposition.COMMITTED
+    )
 
     expected_cursor = _expected_cursor(current, requested)
     clean_row = await _fetch_feed(
@@ -1431,9 +1417,6 @@ async def test_cursor_matrix_is_independent_from_lifecycle(
     assert failing_row["last_bookmark_time"] == expected_cursor
     assert failing_row["status"] == "active"
     assert failing_row["failure_count"] == 0
-    assert failing.children[0].lifecycle_effect is (
-        ingestion_lease_store.LifecycleEffect.RECOVERED
-    )
     assert (
         len(await _audit_rows(ingestion_lease_pool, failing_member.feed_id))
         == 1
@@ -1441,20 +1424,14 @@ async def test_cursor_matrix_is_independent_from_lifecycle(
 
     if operation == "progress":
         assert deactivated.children[0].disposition is (
-            ingestion_lease_store.ChildDisposition.APPLIED_AFTER_DEACTIVATION
-        )
-        assert deactivated.children[0].lifecycle_effect is (
-            ingestion_lease_store.LifecycleEffect.CLEARED_WHILE_DEACTIVATED
+            ingestion_lease_store.ChildDisposition.COMMITTED
         )
         assert deactivated_row["status"] == "deactivated"
         assert deactivated_row["failure_count"] == 0
         assert deactivated_row["last_bookmark_time"] == expected_cursor
     else:
         assert deactivated.children[0].disposition is (
-            ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE
-        )
-        assert deactivated.children[0].lifecycle_effect is (
-            ingestion_lease_store.LifecycleEffect.NONE
+            ingestion_lease_store.ChildDisposition.REJECTED
         )
         assert deactivated_row["status"] == "deactivated"
         assert deactivated_row["failure_count"] == 2
@@ -1495,13 +1472,7 @@ async def test_budgeted_failure_threshold_quarantines_retained_count(
 
     assert isinstance(result, ingestion_lease_store.BatchCommitted)
     assert result.children[0].disposition is (
-        ingestion_lease_store.ChildDisposition.APPLIED
-    )
-    assert result.children[0].cursor_effect is (
-        ingestion_lease_store.CursorEffect.ADVANCED
-    )
-    assert result.children[0].lifecycle_effect is (
-        ingestion_lease_store.LifecycleEffect.QUARANTINED
+        ingestion_lease_store.ChildDisposition.COMMITTED_AND_QUARANTINED
     )
     assert feed_after["status"] == "quarantined"
     assert feed_after["failure_count"] == 5
@@ -1621,28 +1592,17 @@ async def test_repeated_boundary_invocation_uses_command_semantics(  # noqa: PLR
     assert isinstance(first, ingestion_lease_store.BatchCommitted)
     assert isinstance(second, ingestion_lease_store.BatchCommitted)
     assert lease_after_second == lease_after_first
-    assert second.children[0].cursor_effect is (
-        ingestion_lease_store.CursorEffect.EQUAL
-    )
+    assert [result.children[0].disposition for result in (first, second)] == [
+        ingestion_lease_store.ChildDisposition.COMMITTED,
+        ingestion_lease_store.ChildDisposition.COMMITTED,
+    ]
     if boundary_kind == "finalized_recovery":
         assert feed_after_second == feed_after_first
         assert events_after_second == events_after_first
         assert len(events_after_first) == 1
-        assert first.lease_effect.effect is (
-            ingestion_lease_store.LeaseLifecycleEffect.RECOVERED
-        )
-        assert second.lease_effect.effect is (
-            ingestion_lease_store.LeaseLifecycleEffect.NONE
-        )
         assert feed_after_first["failure_count"] == 0
         assert lease_after_first["failure_count"] == 0
     else:
-        assert [
-            result.children[0].disposition for result in (first, second)
-        ] == [ingestion_lease_store.ChildDisposition.APPLIED] * 2
-        assert [
-            result.children[0].lifecycle_effect for result in (first, second)
-        ] == [ingestion_lease_store.LifecycleEffect.FAILURE_RECORDED] * 2
         assert feed_after_first["audit_revision"] == 1
         assert feed_after_second["audit_revision"] == 2
         assert [event["feed_revision"] for event in events_after_second] == [
@@ -1824,16 +1784,14 @@ async def test_cancellation_while_blocked_rolls_back_without_notification(  # no
         effect_grant: ingestion_lease_store.LeaseGrant,
         effect: ingestion_lease_store.LeaseEffect,
         before_row: collections.abc.Mapping,
-    ) -> ingestion_lease_store.LeaseLifecycleResult:
+    ) -> bool:
         result = await original_apply_lease_effect(
             connection,
             effect_grant,
             effect,
             before_row,
         )
-        assert result.effect is (
-            ingestion_lease_store.LeaseLifecycleEffect.RECOVERED
-        )
+        assert result is True
         lease_effect_applied.set()
         return result
 
@@ -2114,8 +2072,8 @@ async def test_clean_paths_do_not_touch_feed_properties(
 
     assert isinstance(clean_result, ingestion_lease_store.BatchCommitted)
     assert [child.disposition for child in clean_result.children] == [
-        ingestion_lease_store.ChildDisposition.APPLIED,
-        ingestion_lease_store.ChildDisposition.APPLIED,
+        ingestion_lease_store.ChildDisposition.COMMITTED,
+        ingestion_lease_store.ChildDisposition.COMMITTED,
     ]
     assert (
         await _audit_rows(
@@ -2138,9 +2096,15 @@ async def test_clean_paths_do_not_touch_feed_properties(
         _batch(_progress(recovery_member, clean_cursor)),
     )
     assert isinstance(recovery, ingestion_lease_store.BatchCommitted)
-    assert recovery.children[0].lifecycle_effect is (
-        ingestion_lease_store.LifecycleEffect.RECOVERED
+    assert recovery.children[0].disposition is (
+        ingestion_lease_store.ChildDisposition.COMMITTED
     )
+    recovered_row = await _fetch_feed(
+        ingestion_lease_pool,
+        recovery_member.feed_id,
+    )
+    assert recovered_row["status"] == "active"
+    assert recovered_row["failure_count"] == 0
     events = await _audit_rows(
         ingestion_lease_pool,
         recovery_member.feed_id,
