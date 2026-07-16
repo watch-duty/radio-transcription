@@ -253,11 +253,10 @@ class GeminiTranscriber(base.Transcriber):
             return ""
 
         logger.warning(
-            "Tuned model %s failed: %s. "
-            "Falling back to foundation model "
-            "gemini-3.1-flash-lite...",
+            "Tuned model %s failed: %s. Falling back to foundation model %s...",
             self.config.model,
             reason,
+            DEFAULT_GEMINI_MODEL,
         )
         for attempt in range(1, 3):
             try:
@@ -272,16 +271,18 @@ class GeminiTranscriber(base.Transcriber):
             except GeminiTransientTranscriptionError as e:
                 if attempt == 2:
                     logger.info(
-                        "Fallback model gemini-3.1-flash-lite also returned "
+                        "Fallback model %s also returned "
                         "incomplete/empty response: %s. "
                         "Treating as empty transcription.",
+                        DEFAULT_GEMINI_MODEL,
                         e,
                     )
                     return ""
                 logger.warning(
-                    "Fallback call to gemini-3.1-flash-lite "
+                    "Fallback call to %s "
                     "returned incomplete response (attempt %d/2): %s. "
                     "Retrying in 1s...",
+                    DEFAULT_GEMINI_MODEL,
                     attempt,
                     e,
                 )
