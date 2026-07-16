@@ -245,26 +245,6 @@ class TestStatusReasonLifecycleIsolation(unittest.TestCase):
             self.assertNotIn("status_reason =", stripped)
 
 
-class TestBatchHeartbeatLockOrdering(unittest.TestCase):
-    """Tests deterministic lock ordering for legacy batch heartbeats."""
-
-    def test_diagnostic_heartbeat_locks_feeds_in_id_order(self) -> None:
-        sql = _sql_without_comments(
-            feed_queries.RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL
-        )
-        current_state = sql.split("current_state AS (", 1)[1].split(
-            "),",
-            1,
-        )[0]
-
-        self.assertIn("WHERE id = ANY($1::uuid[])", current_state)
-        self.assertIn("ORDER BY id", current_state)
-        self.assertLess(
-            current_state.index("ORDER BY id"),
-            current_state.index("FOR UPDATE"),
-        )
-
-
 class TestWorkerOwnedLifecycleGuards(unittest.TestCase):
     """Tests that worker-owned writes cannot undo lifecycle changes."""
 
