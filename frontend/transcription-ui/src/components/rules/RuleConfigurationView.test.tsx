@@ -15,6 +15,7 @@ import { type Feed, type Rule, SourceType } from '@transcription/common';
 
 import { createRule } from '../../service/createRule';
 import { deleteRule } from '../../service/deleteRule';
+import { dryRunRule } from '../../service/dryRunRule';
 import { listFeeds } from '../../service/listFeeds';
 import { listRules } from '../../service/listRules';
 import { updateRule } from '../../service/updateRule';
@@ -40,6 +41,10 @@ vi.mock('../../service/deleteRule', () => ({
 
 vi.mock('../../service/listFeeds', () => ({
   listFeeds: vi.fn(),
+}));
+
+vi.mock('../../service/dryRunRule', () => ({
+  dryRunRule: vi.fn(),
 }));
 
 // Mock AuthContext
@@ -543,6 +548,69 @@ describe('RuleConfigurationView', () => {
           },
           'fake-jwt-token-xyz'
         );
+      });
+    });
+    it('supports dry run testing of a rule configuration', async () => {
+      vi.mocked(dryRunRule).mockResolvedValue({
+        hitCount: 45,
+        totalEvaluated: 5000,
+        examples: [
+          {
+            feedId: '1',
+            audioSegmentId: '123',
+            text: 'This is an evacuate test transcript.',
+            matchedSpans: [{ startIndex: 11, endIndex: 19 }],
+          },
+        ],
+      });
+
+      renderView();
+
+      const formCard = screen.getByTestId('rule-config-card');
+
+      fireEvent.change(within(formCard).getByLabelText('Rule Name'), {
+        target: { value: 'Evacuation Test Rule' },
+      });
+      fireEvent.change(within(formCard).getByLabelText('Add Keywords'), {
+        target: { value: 'evacuate' },
+      });
+
+      const testBtn = within(formCard).getByRole('button', {
+        name: /Test Rule/i,
+      });
+      fireEvent.click(testBtn);
+
+      expect(screen.getByText('Test Rule Results')).toBeInTheDocument();
+      expect(
+        screen.getByText(/Running rule against historical transcripts/i)
+      ).toBeInTheDocument();
+
+      await waitFor(() => {
+        expect(dryRunRule).toHaveBeenCalledTimes(1);
+        expect(dryRunRule).toHaveBeenCalledWith(
+          {
+            rule: {
+              ruleName: 'Evacuation Test Rule',
+              description: undefined,
+              isActive: true,
+              scope: { level: 'GLOBAL', targetFeeds: [] },
+              conditions: {
+                evaluationType: 'KEYWORD_MATCH',
+                operator: 'ANY',
+                keywords: ['evacuate'],
+                caseSensitive: false,
+              },
+            },
+          },
+          'fake-jwt-token-xyz'
+        );
+
+        // The modal should display the results
+        expect(
+          screen.getByText('Tested against 5,000 recent transcripts.')
+        ).toBeInTheDocument();
+        expect(screen.getByText('Found 45 matches.')).toBeInTheDocument();
+        expect(screen.getByText('evacuate')).toBeInTheDocument();
       });
     });
   });
