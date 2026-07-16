@@ -1,0 +1,1094 @@
+"""Private child-Feed commit capability for ingestion Lease storage."""
+
+from __future__ import annotations
+
+import dataclasses
+import datetime
+import enum
+import json
+import typing
+import uuid
+
+from backend.pipeline.storage import (
+    feed_audit_sql,
+    feed_lifecycle,
+    feed_store,
+    ingestion_lease_contracts,
+    ingestion_lease_queries,
+)
+
+if typing.TYPE_CHECKING:
+    import collections.abc
+
+    import asyncpg
+
+
+LeaseGrant = ingestion_lease_contracts.LeaseGrant
+BudgetedFailure = ingestion_lease_contracts.BudgetedFailure
+NonBudgetedFailure = ingestion_lease_contracts.NonBudgetedFailure
+LeaseFailureAction = ingestion_lease_contracts.LeaseFailureAction
+LeaseMemberIdentity = ingestion_lease_contracts.LeaseMemberIdentity
+AdmittedAudioProgress = ingestion_lease_contracts.AdmittedAudioProgress
+SourceObservation = ingestion_lease_contracts.SourceObservation
+ClosedCohortProgress = ingestion_lease_contracts.ClosedCohortProgress
+FeedFailureTransition = ingestion_lease_contracts.FeedFailureTransition
+ChildMutation = ingestion_lease_contracts.ChildMutation
+NoLeaseEffect = ingestion_lease_contracts.NoLeaseEffect
+FinalizeLeaseRecovery = ingestion_lease_contracts.FinalizeLeaseRecovery
+LeaseEffect = ingestion_lease_contracts.LeaseEffect
+ChildMutationBatch = ingestion_lease_contracts.ChildMutationBatch
+ChildDisposition = ingestion_lease_contracts.ChildDisposition
+ChildMutationResult = ingestion_lease_contracts.ChildMutationResult
+BatchCommitted = ingestion_lease_contracts.BatchCommitted
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _PlannedChildMutation:
+    """Private, database-derived execution plan for one child command."""
+
+    mutation: ChildMutation
+    before_row: collections.abc.Mapping | None
+    disposition: ChildDisposition
+    write_cursor: bool = False
+    write_path: bool = False
+    clear_lifecycle: bool = False
+
+    @property
+    def feed_id(self) -> uuid.UUID:
+        """Return the command's immutable Feed UUID."""
+        return self.mutation.member.feed_id
+
+    @property
+    def needs_update(self) -> bool:
+        """Whether this command requires a write-hot Feed update."""
+        return (
+            self.write_cursor
+            or self.write_path
+            or self.clear_lifecycle
+            or (
+                isinstance(self.mutation, FeedFailureTransition)
+                and self.disposition is not ChildDisposition.REJECTED
+            )
+        )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _ChildAuditRowset:
+    """Private parallel arrays for one rowset-safe Feed audit insert."""
+
+    feed_ids: tuple[uuid.UUID, ...]
+    actions: tuple[str, ...]
+    actors: tuple[str, ...]
+    revisions: tuple[int, ...]
+    before_values: tuple[str, ...]
+    after_values: tuple[str, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class PreparedChildCommit:
+    """Validated child batch prepared before pool checkout."""
+
+    grant: LeaseGrant
+    batch: ChildMutationBatch
+    actor_id: str
+    target_feed_ids: tuple[uuid.UUID, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class AppliedChildCommit:
+    """Planned children and returned rows beneath the held Lease lock."""
+
+    prepared: PreparedChildCommit
+    plans: tuple[_PlannedChildMutation, ...]
+    updated_by_feed_id: dict[uuid.UUID, collections.abc.Mapping]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class PendingChildEffects:
+    """Committed result and notifications buffered until transaction exit."""
+
+    committed: BatchCommitted
+    notification_payloads: dict[uuid.UUID, object]
+
+
+def _require_failure_action(value: object) -> LeaseFailureAction:
+    if type(value) not in (BudgetedFailure, NonBudgetedFailure):
+        msg = "action must be BudgetedFailure or NonBudgetedFailure"
+        raise TypeError(msg)
+    return typing.cast("LeaseFailureAction", value)
+
+
+def _require_status_reason(value: object) -> feed_store.FeedStatusReason:
+    if not isinstance(value, feed_store.FeedStatusReason):
+        msg = "status_reason must be a FeedStatusReason"
+        raise TypeError(msg)
+    return value
+
+
+def _require_reason_detail(value: object) -> str | None:
+    if value is not None and not isinstance(value, str):
+        msg = "reason must be a string or None"
+        raise TypeError(msg)
+    return feed_lifecycle.status_reason_detail_storage_value(value)
+
+
+def _require_utc_cursor(
+    value: object,
+    *,
+    field_name: str = "cursor",
+) -> datetime.datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, datetime.datetime):
+        msg = f"{field_name} must be a datetime or None"
+        raise TypeError(msg)
+    if value.utcoffset() != datetime.timedelta(0):
+        msg = f"{field_name} must be UTC-aware"
+        raise ValueError(msg)
+    return value
+
+
+def _require_member_identity(
+    grant: LeaseGrant,
+    value: object,
+) -> LeaseMemberIdentity:
+    if not isinstance(value, LeaseMemberIdentity):
+        msg = "child member must be a LeaseMemberIdentity"
+        raise TypeError(msg)
+    if not isinstance(value.feed_id, uuid.UUID):
+        msg = "child member feed_id must be a UUID"
+        raise TypeError(msg)
+    if not isinstance(value.source_type, feed_store.SourceType):
+        msg = "child member source_type must be a SourceType"
+        raise TypeError(msg)
+    for field_name, field_value in (
+        ("sid", value.sid),
+        ("group_id", value.group_id),
+    ):
+        if (
+            not isinstance(field_value, str)
+            or not field_value
+            or not field_value.isascii()
+            or not field_value.isdigit()
+        ):
+            msg = f"child member {field_name} must contain ASCII digits"
+            raise ValueError(msg)
+    if not isinstance(value.source_feed_id, str):
+        msg = "child member source_feed_id must be a string"
+        raise TypeError(msg)
+    if value.source_type is not grant.source_type:
+        msg = "child member source type does not match the Lease grant"
+        raise ValueError(msg)
+    if value.sid != grant.lease_key:
+        msg = "child member SID does not match the Lease key"
+        raise ValueError(msg)
+    if value.source_feed_id != f"{value.sid}-{value.group_id}":
+        msg = "child member source_feed_id does not match SID-group identity"
+        raise ValueError(msg)
+    return value
+
+
+def _require_parallel_cardinality(
+    rowset_name: str,
+    *columns: collections.abc.Sequence[object],
+) -> None:
+    lengths = {len(column) for column in columns}
+    if len(lengths) > 1:
+        msg = f"{rowset_name} rowset columns have different cardinalities"
+        raise ValueError(msg)
+
+
+def _mutation_cursor(
+    mutation: ChildMutation,
+) -> datetime.datetime | None:
+    """Return the cursor field shared semantically by child commands."""
+    if isinstance(mutation, FeedFailureTransition):
+        return mutation.completion_cursor
+    return mutation.cursor
+
+
+def _require_closed_cohort_progress(
+    mutation: ClosedCohortProgress,
+) -> None:
+    """Validate lifecycle-neutral progress fields before pool checkout."""
+    path = mutation.last_processed_filename
+    if path is not None and not isinstance(path, str):
+        msg = "closed cohort last_processed_filename must be a string or None"
+        raise TypeError(msg)
+    if isinstance(path, str) and not path.strip():
+        msg = (
+            "closed cohort last_processed_filename must be nonempty "
+            "when present"
+        )
+        raise ValueError(msg)
+    if path is None and mutation.cursor is None:
+        msg = "closed cohort progress requires a path or cursor"
+        raise ValueError(msg)
+
+
+def _require_child_batch(
+    grant: LeaseGrant,
+    value: object,
+) -> ChildMutationBatch:
+    if type(value) is not ChildMutationBatch:
+        msg = "batch must be a ChildMutationBatch"
+        raise TypeError(msg)
+    batch = value
+    if not isinstance(batch.mutations, tuple):
+        msg = "batch mutations must be an immutable tuple"
+        raise TypeError(msg)
+    if type(batch.lease_effect) not in (
+        NoLeaseEffect,
+        FinalizeLeaseRecovery,
+    ):
+        msg = "lease_effect must be NoLeaseEffect or FinalizeLeaseRecovery"
+        raise TypeError(msg)
+
+    seen_feed_ids: set[uuid.UUID] = set()
+    progress_commands: list[AdmittedAudioProgress] = []
+    observation_commands: list[SourceObservation] = []
+    closed_cohort_commands: list[ClosedCohortProgress] = []
+    failure_commands: list[FeedFailureTransition] = []
+    for mutation in batch.mutations:
+        if type(mutation) not in (
+            AdmittedAudioProgress,
+            SourceObservation,
+            ClosedCohortProgress,
+            FeedFailureTransition,
+        ):
+            msg = f"unsupported child mutation {type(mutation).__name__}"
+            raise TypeError(msg)
+        member = _require_member_identity(grant, mutation.member)
+        if member.feed_id in seen_feed_ids:
+            msg = f"duplicate Feed UUID {member.feed_id}"
+            raise ValueError(msg)
+        seen_feed_ids.add(member.feed_id)
+        _require_utc_cursor(
+            _mutation_cursor(mutation),
+            field_name=(
+                "completion_cursor"
+                if isinstance(mutation, FeedFailureTransition)
+                else "cursor"
+            ),
+        )
+        if isinstance(mutation, AdmittedAudioProgress):
+            if (
+                not isinstance(mutation.last_processed_filename, str)
+                or not mutation.last_processed_filename.strip()
+            ):
+                msg = "last_processed_filename must be nonempty"
+                raise ValueError(msg)
+            progress_commands.append(mutation)
+        elif isinstance(mutation, SourceObservation):
+            observation_commands.append(mutation)
+        elif isinstance(mutation, ClosedCohortProgress):
+            _require_closed_cohort_progress(mutation)
+            closed_cohort_commands.append(mutation)
+        else:
+            _require_failure_action(mutation.action)
+            _require_status_reason(mutation.status_reason)
+            _require_reason_detail(mutation.reason)
+            failure_commands.append(mutation)
+
+    _require_parallel_cardinality(
+        "admitted progress",
+        tuple(command.member.feed_id for command in progress_commands),
+        tuple(command.last_processed_filename for command in progress_commands),
+        tuple(command.cursor for command in progress_commands),
+    )
+    _require_parallel_cardinality(
+        "source observation",
+        tuple(command.member.feed_id for command in observation_commands),
+        tuple(command.cursor for command in observation_commands),
+    )
+    _require_parallel_cardinality(
+        "closed cohort progress",
+        tuple(command.member.feed_id for command in closed_cohort_commands),
+        tuple(
+            command.last_processed_filename
+            for command in closed_cohort_commands
+        ),
+        tuple(command.cursor for command in closed_cohort_commands),
+    )
+    _require_parallel_cardinality(
+        "Feed failure",
+        tuple(command.member.feed_id for command in failure_commands),
+        tuple(command.completion_cursor for command in failure_commands),
+        tuple(command.action for command in failure_commands),
+        tuple(command.status_reason for command in failure_commands),
+        tuple(command.reason for command in failure_commands),
+    )
+    return batch
+
+
+def _child_feed_id_from_row(row: collections.abc.Mapping) -> uuid.UUID:
+    feed_id = row["id"]
+    if not isinstance(feed_id, uuid.UUID):
+        msg = "child Feed row contains a non-UUID id"
+        raise TypeError(msg)
+    return feed_id
+
+
+def _child_source_type_from_row(
+    row: collections.abc.Mapping,
+) -> feed_store.SourceType:
+    value = row["source_type"]
+    try:
+        return feed_store.SourceType(value)
+    except ValueError as error:
+        msg = f"Unknown child Feed source type {value!r}"
+        raise ValueError(msg) from error
+
+
+def _should_write_cursor(
+    current: datetime.datetime | None,
+    requested: datetime.datetime | None,
+) -> bool:
+    """Return whether ``requested`` advances the durable Feed cursor."""
+    return requested is not None and (current is None or requested > current)
+
+
+def _has_dirty_child_lifecycle(
+    status: feed_store.FeedStatus,
+    row: collections.abc.Mapping,
+) -> bool:
+    return (
+        status is feed_store.FeedStatus.FAILING
+        or row["failure_count"] != 0
+        or row["retry_after"] is not None
+        or row["status_reason"] is not None
+        or row["status_reason_detail"] is not None
+    )
+
+
+def _effective_prior_status(
+    row: collections.abc.Mapping,
+) -> feed_store.FeedStatus:
+    """Apply the canonical dirty-active compatibility interpretation."""
+    status = _status_from_row(row)
+    if status is feed_store.FeedStatus.ACTIVE and (
+        row["failure_count"] > 0 or row["status_reason"] is not None
+    ):
+        return feed_store.FeedStatus.FAILING
+    return status
+
+
+def _child_audit_action(
+    plan: _PlannedChildMutation,
+    after_row: collections.abc.Mapping,
+) -> str | None:
+    """Select a canonical action from the locked before and returned after."""
+    if isinstance(plan.mutation, ClosedCohortProgress):
+        return None
+    before_row = plan.before_row
+    if before_row is None:
+        msg = "updated child lacks locked before state"
+        raise ValueError(msg)
+    before_status = _effective_prior_status(before_row)
+    after_status = _status_from_row(after_row)
+    if isinstance(plan.mutation, FeedFailureTransition):
+        if (
+            after_status is feed_store.FeedStatus.QUARANTINED
+            and before_status is not feed_store.FeedStatus.QUARANTINED
+            and after_row["failure_count"] > before_row["failure_count"]
+        ):
+            return "feed.quarantined"
+        if after_status is feed_store.FeedStatus.FAILING:
+            if (
+                before_status is not feed_store.FeedStatus.FAILING
+                or _status_reason_from_row(before_row)
+                != _status_reason_from_row(after_row)
+            ):
+                return "feed.failure_reported"
+            return None
+        msg = "committed Feed failure returned an invalid lifecycle state"
+        raise ValueError(msg)
+    if (
+        before_status
+        in (feed_store.FeedStatus.FAILING, feed_store.FeedStatus.QUARANTINED)
+        and after_status
+        not in (
+            feed_store.FeedStatus.FAILING,
+            feed_store.FeedStatus.QUARANTINED,
+        )
+        and after_row["status_reason"] is None
+        and after_row["failure_count"] == 0
+    ):
+        return "feed.recovered"
+    return None
+
+
+def _json_compatible(value: object) -> object:
+    if isinstance(value, datetime.datetime):
+        return value.isoformat()
+    if isinstance(value, uuid.UUID):
+        return str(value)
+    if isinstance(value, enum.Enum):
+        return value.value
+    msg = f"unsupported Feed audit JSON value {type(value).__name__}"
+    raise TypeError(msg)
+
+
+def _tags_from_property(value: object) -> object:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        parsed = json.loads(value)
+        if not isinstance(parsed, list):
+            msg = "Feed audit tags must be a JSON array"
+            raise TypeError(msg)
+        return parsed
+    if isinstance(value, list):
+        return value
+    msg = "Feed audit tags must be a JSON array"
+    raise TypeError(msg)
+
+
+def _child_audit_snapshot(
+    row: collections.abc.Mapping,
+    property_row: collections.abc.Mapping,
+) -> str:
+    source = dict(row)
+    source["source_feed_id"] = property_row["source_feed_id"]
+    source["tags"] = _tags_from_property(property_row["tags"])
+    snapshot = {
+        key: source[column]
+        for key, column in feed_audit_sql.AUDITED_FEED_STATE_FIELDS
+    }
+    return json.dumps(
+        snapshot,
+        default=_json_compatible,
+        separators=(",", ":"),
+    )
+
+
+def _audit_properties_by_id(
+    expected_feed_ids: set[uuid.UUID],
+    rows: collections.abc.Sequence[collections.abc.Mapping],
+) -> dict[uuid.UUID, collections.abc.Mapping]:
+    properties_by_id: dict[uuid.UUID, collections.abc.Mapping] = {}
+    for row in rows:
+        feed_id = row["feed_id"]
+        if not isinstance(feed_id, uuid.UUID):
+            msg = "Feed audit property row has a non-UUID id"
+            raise TypeError(msg)
+        if feed_id not in expected_feed_ids or feed_id in properties_by_id:
+            msg = "Feed audit properties returned an unexpected row"
+            raise ValueError(msg)
+        properties_by_id[feed_id] = row
+    if set(properties_by_id) != expected_feed_ids:
+        msg = "Feed audit properties are missing an actual candidate"
+        raise ValueError(msg)
+    return properties_by_id
+
+
+def _build_child_audit_rowset(
+    candidates: collections.abc.Sequence[tuple[_PlannedChildMutation, str]],
+    updated_by_feed_id: dict[uuid.UUID, collections.abc.Mapping],
+    properties_by_id: dict[uuid.UUID, collections.abc.Mapping],
+    actor_id: str,
+) -> _ChildAuditRowset:
+    feed_ids: list[uuid.UUID] = []
+    actions: list[str] = []
+    revisions: list[int] = []
+    before_values: list[str] = []
+    after_values: list[str] = []
+    for plan, action in sorted(
+        candidates,
+        key=lambda item: item[0].feed_id.int,
+    ):
+        before_row = plan.before_row
+        after_row = updated_by_feed_id.get(plan.feed_id)
+        if before_row is None or after_row is None:
+            msg = "Feed audit candidate lacks before or after state"
+            raise ValueError(msg)
+        property_row = properties_by_id[plan.feed_id]
+        if property_row["source_feed_id"] != (
+            plan.mutation.member.source_feed_id
+        ):
+            msg = "Feed audit property identity does not match the member"
+            raise ValueError(msg)
+        before_revision = before_row["audit_revision"]
+        after_revision = after_row["audit_revision"]
+        if (
+            not isinstance(before_revision, int)
+            or not isinstance(after_revision, int)
+            or after_revision != before_revision + 1
+        ):
+            msg = "Feed audit revision did not advance exactly once"
+            raise ValueError(msg)
+        feed_ids.append(plan.feed_id)
+        actions.append(action)
+        revisions.append(after_revision)
+        before_values.append(_child_audit_snapshot(before_row, property_row))
+        after_values.append(_child_audit_snapshot(after_row, property_row))
+
+    actors = [actor_id] * len(feed_ids)
+    _require_parallel_cardinality(
+        "child audit",
+        feed_ids,
+        actions,
+        actors,
+        revisions,
+        before_values,
+        after_values,
+    )
+    return _ChildAuditRowset(
+        feed_ids=tuple(feed_ids),
+        actions=tuple(actions),
+        actors=tuple(actors),
+        revisions=tuple(revisions),
+        before_values=tuple(before_values),
+        after_values=tuple(after_values),
+    )
+
+
+def _status_from_row(
+    row: collections.abc.Mapping,
+    prefix: str = "",
+) -> feed_store.FeedStatus:
+    value = row[f"{prefix}status"]
+    try:
+        return feed_store.FeedStatus(value)
+    except ValueError as error:
+        msg = f"Unknown Lease status {value!r}"
+        raise ValueError(msg) from error
+
+
+def _status_reason_from_row(
+    row: collections.abc.Mapping,
+    prefix: str = "",
+) -> feed_store.FeedStatusReason | None:
+    value = row[f"{prefix}status_reason"]
+    if value is None:
+        return None
+    try:
+        return feed_store.FeedStatusReason(value)
+    except ValueError as error:
+        msg = f"Unknown Lease status reason {value!r}"
+        raise ValueError(msg) from error
+
+
+def _locked_children_by_id(
+    requested_feed_ids: set[uuid.UUID],
+    rows: collections.abc.Sequence[collections.abc.Mapping],
+) -> dict[uuid.UUID, collections.abc.Mapping]:
+    by_id: dict[uuid.UUID, collections.abc.Mapping] = {}
+    for row in rows:
+        feed_id = _child_feed_id_from_row(row)
+        if feed_id not in requested_feed_ids or feed_id in by_id:
+            msg = "child Feed lock returned an unexpected or duplicate row"
+            raise ValueError(msg)
+        _child_source_type_from_row(row)
+        _status_from_row(row)
+        _status_reason_from_row(row)
+        by_id[feed_id] = row
+    return by_id
+
+
+def _plan_non_failure_child_mutation(
+    mutation: AdmittedAudioProgress | SourceObservation | ClosedCohortProgress,
+    before_row: collections.abc.Mapping,
+    status: feed_store.FeedStatus,
+    *,
+    write_cursor: bool,
+) -> _PlannedChildMutation:
+    """Plan progress or observation separately from failure charging."""
+    if isinstance(mutation, ClosedCohortProgress):
+        write_path = (
+            mutation.last_processed_filename is not None
+            and before_row["last_processed_filename"]
+            != mutation.last_processed_filename
+        )
+        return _PlannedChildMutation(
+            mutation=mutation,
+            before_row=before_row,
+            disposition=ChildDisposition.COMMITTED,
+            write_cursor=write_cursor,
+            write_path=write_path,
+        )
+
+    clear_lifecycle = _has_dirty_child_lifecycle(status, before_row)
+
+    write_path = False
+    if isinstance(mutation, AdmittedAudioProgress):
+        write_path = write_cursor or (
+            mutation.cursor is None
+            and before_row["last_processed_filename"]
+            != mutation.last_processed_filename
+        )
+
+    return _PlannedChildMutation(
+        mutation=mutation,
+        before_row=before_row,
+        disposition=ChildDisposition.COMMITTED,
+        write_cursor=write_cursor,
+        write_path=write_path,
+        clear_lifecycle=clear_lifecycle,
+    )
+
+
+def _plan_child_mutation(
+    mutation: ChildMutation,
+    before_row: collections.abc.Mapping | None,
+) -> _PlannedChildMutation:
+    if before_row is None:
+        return _PlannedChildMutation(
+            mutation=mutation,
+            before_row=None,
+            disposition=ChildDisposition.REJECTED,
+        )
+
+    status = _status_from_row(before_row)
+    source_type = _child_source_type_from_row(before_row)
+    write_cursor = _should_write_cursor(
+        before_row["last_bookmark_time"],
+        _mutation_cursor(mutation),
+    )
+    if source_type is not mutation.member.source_type:
+        return _PlannedChildMutation(
+            mutation=mutation,
+            before_row=before_row,
+            disposition=ChildDisposition.REJECTED,
+        )
+
+    is_progress = isinstance(
+        mutation,
+        (AdmittedAudioProgress, ClosedCohortProgress),
+    )
+    allowed_statuses = (
+        (
+            feed_store.FeedStatus.ACTIVE,
+            feed_store.FeedStatus.FAILING,
+            feed_store.FeedStatus.DEACTIVATED,
+        )
+        if is_progress
+        else (
+            feed_store.FeedStatus.ACTIVE,
+            feed_store.FeedStatus.FAILING,
+        )
+    )
+    if status not in allowed_statuses:
+        return _PlannedChildMutation(
+            mutation=mutation,
+            before_row=before_row,
+            disposition=ChildDisposition.REJECTED,
+        )
+
+    if isinstance(mutation, FeedFailureTransition):
+        failure = mutation
+        quarantined = isinstance(failure.action, BudgetedFailure) and (
+            before_row["failure_count"] + 1 >= failure.action.failure_threshold
+        )
+        return _PlannedChildMutation(
+            mutation=mutation,
+            before_row=before_row,
+            disposition=(
+                ChildDisposition.COMMITTED_AND_QUARANTINED
+                if quarantined
+                else ChildDisposition.COMMITTED
+            ),
+            write_cursor=write_cursor,
+        )
+
+    return _plan_non_failure_child_mutation(
+        mutation,
+        before_row,
+        status,
+        write_cursor=write_cursor,
+    )
+
+
+def _updated_children_by_id(
+    expected: collections.abc.Sequence[_PlannedChildMutation],
+    rows: collections.abc.Sequence[collections.abc.Mapping],
+) -> dict[uuid.UUID, collections.abc.Mapping]:
+    expected_feed_ids = {plan.feed_id for plan in expected}
+    rows_by_feed_id: dict[uuid.UUID, collections.abc.Mapping] = {}
+    for row in rows:
+        feed_id = _child_feed_id_from_row(row)
+        if feed_id not in expected_feed_ids or feed_id in rows_by_feed_id:
+            msg = "child DML returned an unexpected or duplicate row"
+            raise ValueError(msg)
+        _child_source_type_from_row(row)
+        _status_from_row(row)
+        _status_reason_from_row(row)
+        rows_by_feed_id[feed_id] = row
+    if set(rows_by_feed_id) != expected_feed_ids:
+        msg = "child DML did not return every locked eligible Feed"
+        raise ValueError(msg)
+    return rows_by_feed_id
+
+
+def _updated_neutral_children_by_id(
+    expected: collections.abc.Sequence[_PlannedChildMutation],
+    rows: collections.abc.Sequence[collections.abc.Mapping],
+) -> dict[uuid.UUID, collections.abc.Mapping]:
+    """Correlate lifecycle-neutral DML without reading lifecycle columns."""
+    expected_feed_ids = {plan.feed_id for plan in expected}
+    rows_by_feed_id: dict[uuid.UUID, collections.abc.Mapping] = {}
+    for row in rows:
+        feed_id = _child_feed_id_from_row(row)
+        if feed_id not in expected_feed_ids or feed_id in rows_by_feed_id:
+            msg = "neutral child DML returned an unexpected or duplicate row"
+            raise ValueError(msg)
+        rows_by_feed_id[feed_id] = row
+    if set(rows_by_feed_id) != expected_feed_ids:
+        msg = "neutral child DML did not return every locked eligible Feed"
+        raise ValueError(msg)
+    return rows_by_feed_id
+
+
+async def _apply_admitted_progress(
+    connection: asyncpg.Connection,
+    plans: tuple[_PlannedChildMutation, ...],
+) -> collections.abc.Sequence[collections.abc.Mapping]:
+    """Apply one static admitted-progress rowset."""
+    mutations = [
+        typing.cast("AdmittedAudioProgress", plan.mutation) for plan in plans
+    ]
+    feed_ids = [plan.feed_id for plan in plans]
+    paths = [mutation.last_processed_filename for mutation in mutations]
+    cursors = [mutation.cursor for mutation in mutations]
+    write_cursors = [plan.write_cursor for plan in plans]
+    write_paths = [plan.write_path for plan in plans]
+    clear_lifecycle = [plan.clear_lifecycle for plan in plans]
+    _require_parallel_cardinality(
+        "admitted progress",
+        feed_ids,
+        paths,
+        cursors,
+        write_cursors,
+        write_paths,
+        clear_lifecycle,
+    )
+    return await connection.fetch(
+        ingestion_lease_queries.APPLY_ADMITTED_PROGRESS_SQL,
+        feed_ids,
+        paths,
+        cursors,
+        write_cursors,
+        write_paths,
+        clear_lifecycle,
+    )
+
+
+async def _apply_source_observations(
+    connection: asyncpg.Connection,
+    plans: tuple[_PlannedChildMutation, ...],
+) -> collections.abc.Sequence[collections.abc.Mapping]:
+    """Apply one static source-observation rowset."""
+    mutations = [
+        typing.cast("SourceObservation", plan.mutation) for plan in plans
+    ]
+    feed_ids = [plan.feed_id for plan in plans]
+    cursors = [mutation.cursor for mutation in mutations]
+    write_cursors = [plan.write_cursor for plan in plans]
+    clear_lifecycle = [plan.clear_lifecycle for plan in plans]
+    _require_parallel_cardinality(
+        "source observation",
+        feed_ids,
+        cursors,
+        write_cursors,
+        clear_lifecycle,
+    )
+    return await connection.fetch(
+        ingestion_lease_queries.APPLY_SOURCE_OBSERVATIONS_SQL,
+        feed_ids,
+        cursors,
+        write_cursors,
+        clear_lifecycle,
+    )
+
+
+async def _apply_closed_cohort_progress(
+    connection: asyncpg.Connection,
+    plans: tuple[_PlannedChildMutation, ...],
+) -> collections.abc.Sequence[collections.abc.Mapping]:
+    """Apply one static lifecycle-neutral cohort progress rowset."""
+    mutations = [
+        typing.cast("ClosedCohortProgress", plan.mutation) for plan in plans
+    ]
+    feed_ids = [plan.feed_id for plan in plans]
+    paths = [mutation.last_processed_filename for mutation in mutations]
+    cursors = [mutation.cursor for mutation in mutations]
+    write_cursors = [plan.write_cursor for plan in plans]
+    write_paths = [plan.write_path for plan in plans]
+    _require_parallel_cardinality(
+        "closed cohort progress",
+        feed_ids,
+        paths,
+        cursors,
+        write_cursors,
+        write_paths,
+    )
+    return await connection.fetch(
+        ingestion_lease_queries.APPLY_CLOSED_COHORT_PROGRESS_SQL,
+        feed_ids,
+        paths,
+        cursors,
+        write_cursors,
+        write_paths,
+    )
+
+
+async def _apply_feed_failures(
+    connection: asyncpg.Connection,
+    plans: tuple[_PlannedChildMutation, ...],
+) -> collections.abc.Sequence[collections.abc.Mapping]:
+    """Apply one static one-shot Feed failure rowset."""
+    mutations = [
+        typing.cast("FeedFailureTransition", plan.mutation) for plan in plans
+    ]
+    actions = [mutation.action for mutation in mutations]
+    feed_ids = [plan.feed_id for plan in plans]
+    cursors = [mutation.completion_cursor for mutation in mutations]
+    write_cursors = [plan.write_cursor for plan in plans]
+    is_budgeted = [isinstance(action, BudgetedFailure) for action in actions]
+    thresholds = [
+        action.failure_threshold
+        if isinstance(action, BudgetedFailure)
+        else feed_lifecycle.DEFAULT_FAILURE_THRESHOLD
+        for action in actions
+    ]
+    backoff_maxima = [
+        action.backoff_max_sec
+        if isinstance(action, BudgetedFailure)
+        else feed_lifecycle.DEFAULT_BACKOFF_MAX_SEC
+        for action in actions
+    ]
+    backoff_bases = [
+        action.backoff_base_sec
+        if isinstance(action, BudgetedFailure)
+        else feed_lifecycle.DEFAULT_BACKOFF_BASE_SEC
+        for action in actions
+    ]
+    retry_times = [
+        action.retry_after if isinstance(action, NonBudgetedFailure) else None
+        for action in actions
+    ]
+    status_reasons = [mutation.status_reason.value for mutation in mutations]
+    reason_details = [
+        _require_reason_detail(mutation.reason) for mutation in mutations
+    ]
+    _require_parallel_cardinality(
+        "Feed failure",
+        feed_ids,
+        cursors,
+        write_cursors,
+        is_budgeted,
+        thresholds,
+        backoff_maxima,
+        backoff_bases,
+        retry_times,
+        status_reasons,
+        reason_details,
+    )
+    return await connection.fetch(
+        ingestion_lease_queries.APPLY_FEED_FAILURES_SQL,
+        feed_ids,
+        cursors,
+        write_cursors,
+        is_budgeted,
+        thresholds,
+        backoff_maxima,
+        backoff_bases,
+        retry_times,
+        status_reasons,
+        reason_details,
+    )
+
+
+async def _write_child_audits(
+    connection: asyncpg.Connection,
+    plans: tuple[_PlannedChildMutation, ...],
+    updated_by_feed_id: dict[uuid.UUID, collections.abc.Mapping],
+    actor_id: str,
+) -> dict[uuid.UUID, object]:
+    """Insert actual child audit candidates as one canonical rowset."""
+    candidates: list[tuple[_PlannedChildMutation, str]] = []
+    for plan in plans:
+        if not plan.needs_update:
+            continue
+        after_row = updated_by_feed_id.get(plan.feed_id)
+        if after_row is None:
+            msg = "updated child lacks returned after state"
+            raise ValueError(msg)
+        action = _child_audit_action(plan, after_row)
+        if action is not None:
+            candidates.append((plan, action))
+    if not candidates:
+        return {}
+
+    sorted_feed_ids = sorted(
+        (plan.feed_id for plan, _action in candidates),
+        key=lambda feed_id: feed_id.int,
+    )
+    property_rows = await connection.fetch(
+        ingestion_lease_queries.LOAD_CHILD_AUDIT_PROPERTIES_SQL,
+        sorted_feed_ids,
+    )
+    properties_by_id = _audit_properties_by_id(
+        set(sorted_feed_ids),
+        property_rows,
+    )
+    rowset = _build_child_audit_rowset(
+        tuple(candidates),
+        updated_by_feed_id,
+        properties_by_id,
+        actor_id,
+    )
+    audit_rows = await connection.fetch(
+        ingestion_lease_queries.INSERT_CHILD_AUDIT_EVENTS_SQL,
+        rowset.feed_ids,
+        rowset.actions,
+        rowset.actors,
+        rowset.revisions,
+        rowset.before_values,
+        rowset.after_values,
+    )
+    payloads: dict[uuid.UUID, object] = {}
+    expected_feed_ids = set(rowset.feed_ids)
+    for row in audit_rows:
+        feed_id = row["feed_id"]
+        if (
+            not isinstance(feed_id, uuid.UUID)
+            or feed_id not in expected_feed_ids
+            or feed_id in payloads
+            or row["feed_audit_event"] is None
+        ):
+            msg = "Feed audit insert returned an unexpected row"
+            raise ValueError(msg)
+        payloads[feed_id] = row["feed_audit_event"]
+    if set(payloads) != expected_feed_ids:
+        msg = "Feed audit insert did not return every candidate"
+        raise ValueError(msg)
+    return payloads
+
+
+def prepare_child_commit(
+    grant: LeaseGrant,
+    batch: object,
+    actor_id: str,
+) -> PreparedChildCommit:
+    """Validate a child batch before pool checkout."""
+    required_batch = _require_child_batch(grant, batch)
+    target_feed_ids = tuple(
+        sorted(
+            (mutation.member.feed_id for mutation in required_batch.mutations),
+            key=lambda feed_id: feed_id.int,
+        )
+    )
+    return PreparedChildCommit(
+        grant=grant,
+        batch=required_batch,
+        actor_id=actor_id,
+        target_feed_ids=target_feed_ids,
+    )
+
+
+async def apply_child_mutations(
+    connection: asyncpg.Connection,
+    prepared: PreparedChildCommit,
+) -> AppliedChildCommit:
+    """Lock, plan, and apply the child portion of one prepared batch."""
+    locked_rows = []
+    if prepared.target_feed_ids:
+        locked_rows = await connection.fetch(
+            ingestion_lease_queries.LOCK_CHILD_FEEDS_SQL,
+            list(prepared.target_feed_ids),
+        )
+    locked_by_id = _locked_children_by_id(
+        set(prepared.target_feed_ids),
+        locked_rows,
+    )
+    plans = tuple(
+        _plan_child_mutation(
+            mutation,
+            locked_by_id.get(mutation.member.feed_id),
+        )
+        for mutation in prepared.batch.mutations
+    )
+
+    updated_by_feed_id: dict[
+        uuid.UUID,
+        collections.abc.Mapping,
+    ] = {}
+    progress_updates = tuple(
+        plan
+        for plan in plans
+        if isinstance(plan.mutation, AdmittedAudioProgress)
+        and plan.needs_update
+    )
+    observation_updates = tuple(
+        plan
+        for plan in plans
+        if isinstance(plan.mutation, SourceObservation) and plan.needs_update
+    )
+    closed_cohort_updates = tuple(
+        plan
+        for plan in plans
+        if isinstance(plan.mutation, ClosedCohortProgress) and plan.needs_update
+    )
+    failure_updates = tuple(
+        plan
+        for plan in plans
+        if isinstance(plan.mutation, FeedFailureTransition)
+        and plan.needs_update
+    )
+    if progress_updates:
+        rows = await _apply_admitted_progress(connection, progress_updates)
+        updated_by_feed_id.update(
+            _updated_children_by_id(progress_updates, rows)
+        )
+    if observation_updates:
+        rows = await _apply_source_observations(
+            connection,
+            observation_updates,
+        )
+        updated_by_feed_id.update(
+            _updated_children_by_id(observation_updates, rows)
+        )
+    if closed_cohort_updates:
+        rows = await _apply_closed_cohort_progress(
+            connection,
+            closed_cohort_updates,
+        )
+        updated_by_feed_id.update(
+            _updated_neutral_children_by_id(closed_cohort_updates, rows)
+        )
+    if failure_updates:
+        rows = await _apply_feed_failures(connection, failure_updates)
+        updated_by_feed_id.update(
+            _updated_children_by_id(failure_updates, rows)
+        )
+
+    return AppliedChildCommit(
+        prepared=prepared,
+        plans=plans,
+        updated_by_feed_id=updated_by_feed_id,
+    )
+
+
+async def prepare_pending_effects(
+    connection: asyncpg.Connection,
+    applied: AppliedChildCommit,
+) -> PendingChildEffects:
+    """Write audits and assemble caller/post-commit effects."""
+    notification_payloads = await _write_child_audits(
+        connection,
+        applied.plans,
+        applied.updated_by_feed_id,
+        applied.prepared.actor_id,
+    )
+    children = tuple(
+        ChildMutationResult(
+            feed_id=plan.feed_id,
+            disposition=plan.disposition,
+        )
+        for plan in applied.plans
+    )
+    return PendingChildEffects(
+        committed=BatchCommitted(children=children),
+        notification_payloads=notification_payloads,
+    )
