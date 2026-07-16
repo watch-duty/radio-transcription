@@ -321,24 +321,11 @@ class ClosedCohortProgress:
     cursor: datetime.datetime | None
 
 
-class FeedFailureChargeMode(enum.StrEnum):
-    """Closed policy for charging one explicit Feed failure command.
-
-    Attributes:
-        ON_CURSOR_ADVANCE: Charge only when the completion cursor advances.
-        ONE_SHOT: Charge exactly once without cursor idempotency.
-    """
-
-    ON_CURSOR_ADVANCE = "on_cursor_advance"
-    ONE_SHOT = "one_shot"
-
-
 @dataclasses.dataclass(frozen=True, slots=True)
 class FeedFailureTransition:
-    """Caller-classified failure at an optional completed source boundary.
+    """One-shot caller-classified failure at an optional source boundary.
 
-    ``charge_mode`` is independent from ``completion_cursor``. One-shot
-    callers must not retry after an outcome-unknown transaction attempt.
+    Callers must not retry after an outcome-unknown transaction attempt.
 
     Attributes:
         member: Immutable child identity from the membership snapshot.
@@ -346,7 +333,6 @@ class FeedFailureTransition:
         status_reason: Canonical abnormal lifecycle reason.
         reason: Optional operator-facing diagnostic detail.
         completion_cursor: Optional completed boundary cursor.
-        charge_mode: Idempotent-cursor or one-shot charging policy.
     """
 
     member: LeaseMemberIdentity
@@ -354,7 +340,6 @@ class FeedFailureTransition:
     status_reason: feed_store.FeedStatusReason
     reason: str | None
     completion_cursor: datetime.datetime | None
-    charge_mode: FeedFailureChargeMode
 
 
 type ChildMutation = (
@@ -611,7 +596,6 @@ class _PlannedChildMutation:
     write_cursor: bool = False
     write_path: bool = False
     clear_lifecycle: bool = False
-    charge_failure: bool = False
     audit_action: str | None = None
 
     @property
@@ -626,7 +610,10 @@ class _PlannedChildMutation:
             self.write_cursor
             or self.write_path
             or self.clear_lifecycle
-            or self.charge_failure
+            or (
+                isinstance(self.mutation, FeedFailureTransition)
+                and self.disposition is ChildDisposition.APPLIED
+            )
         )
 
 
@@ -739,13 +726,6 @@ def _require_actor_id(value: object) -> str:
             "actor_id must be nonempty, at most 512 chars, and whitespace-free"
         )
         raise ValueError(msg)
-    return value
-
-
-def _require_failure_charge_mode(value: object) -> FeedFailureChargeMode:
-    if not isinstance(value, FeedFailureChargeMode):
-        msg = "charge_mode must be a FeedFailureChargeMode"
-        raise TypeError(msg)
     return value
 
 
@@ -903,7 +883,6 @@ def _require_child_batch(
             closed_cohort_commands.append(mutation)
         else:
             _require_failure_action(mutation.action)
-            _require_failure_charge_mode(mutation.charge_mode)
             _require_status_reason(mutation.status_reason)
             _require_reason_detail(mutation.reason)
             failure_commands.append(mutation)
@@ -932,7 +911,6 @@ def _require_child_batch(
         "Feed failure",
         tuple(command.member.feed_id for command in failure_commands),
         tuple(command.completion_cursor for command in failure_commands),
-        tuple(command.charge_mode for command in failure_commands),
         tuple(command.action for command in failure_commands),
         tuple(command.status_reason for command in failure_commands),
         tuple(command.reason for command in failure_commands),
@@ -1533,19 +1511,6 @@ def _plan_child_mutation(
     )
     if isinstance(mutation, FeedFailureTransition):
         failure = mutation
-        charge_mode = _require_failure_charge_mode(failure.charge_mode)
-        charge_failure = (
-            charge_mode is FeedFailureChargeMode.ONE_SHOT or write_cursor
-        )
-        if not charge_failure:
-            return _PlannedChildMutation(
-                caller_ordinal=caller_ordinal,
-                mutation=mutation,
-                before_row=before_row,
-                disposition=ChildDisposition.ACCEPTED_NOOP,
-                cursor_effect=cursor_effect,
-                lifecycle_effect=LifecycleEffect.NONE,
-            )
         lifecycle_effect = LifecycleEffect.FAILURE_RECORDED
         if isinstance(failure.action, BudgetedFailure) and (
             before_row["failure_count"] + 1 >= failure.action.failure_threshold
@@ -1559,7 +1524,6 @@ def _plan_child_mutation(
             cursor_effect=cursor_effect,
             lifecycle_effect=lifecycle_effect,
             write_cursor=write_cursor,
-            charge_failure=True,
             audit_action=_select_failure_audit_action(
                 before_row,
                 failure,
@@ -2463,7 +2427,7 @@ class IngestionLeaseStore:
         connection: asyncpg.Connection,
         plans: tuple[_PlannedChildMutation, ...],
     ) -> collections.abc.Sequence[collections.abc.Mapping]:
-        """Apply one static explicitly charged Feed failure rowset."""
+        """Apply one static one-shot Feed failure rowset."""
         mutations = [
             typing.cast("FeedFailureTransition", plan.mutation)
             for plan in plans
@@ -2471,7 +2435,6 @@ class IngestionLeaseStore:
         actions = [mutation.action for mutation in mutations]
         feed_ids = [plan.feed_id for plan in plans]
         cursors = [mutation.completion_cursor for mutation in mutations]
-        charge_failures = [plan.charge_failure for plan in plans]
         write_cursors = [plan.write_cursor for plan in plans]
         is_budgeted = [
             isinstance(action, BudgetedFailure) for action in actions
@@ -2511,7 +2474,6 @@ class IngestionLeaseStore:
             "Feed failure",
             feed_ids,
             cursors,
-            charge_failures,
             write_cursors,
             is_budgeted,
             thresholds,
@@ -2526,7 +2488,6 @@ class IngestionLeaseStore:
             ingestion_lease_queries.APPLY_FEED_FAILURES_SQL,
             feed_ids,
             cursors,
-            charge_failures,
             write_cursors,
             is_budgeted,
             thresholds,

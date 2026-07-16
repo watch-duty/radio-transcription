@@ -319,9 +319,6 @@ def _failure(
         status_reason=status_reason,
         reason="integration boundary failure",
         completion_cursor=cursor,
-        charge_mode=(
-            ingestion_lease_store.FeedFailureChargeMode.ON_CURSOR_ADVANCE
-        ),
     )
 
 
@@ -1531,7 +1528,7 @@ async def test_budgeted_failure_threshold_quarantines_retained_count(
         "finalized_recovery",
     ],
 )
-async def test_boundary_retry_does_not_double_charge(  # noqa: PLR0915
+async def test_repeated_boundary_invocation_uses_command_semantics(  # noqa: PLR0915
     ingestion_lease_pool: asyncpg.Pool,
     boundary_kind: str,
 ) -> None:
@@ -1623,14 +1620,14 @@ async def test_boundary_retry_does_not_double_charge(  # noqa: PLR0915
 
     assert isinstance(first, ingestion_lease_store.BatchCommitted)
     assert isinstance(second, ingestion_lease_store.BatchCommitted)
-    assert feed_after_second == feed_after_first
     assert lease_after_second == lease_after_first
-    assert events_after_second == events_after_first
-    assert len(events_after_first) == 1
     assert second.children[0].cursor_effect is (
         ingestion_lease_store.CursorEffect.EQUAL
     )
     if boundary_kind == "finalized_recovery":
+        assert feed_after_second == feed_after_first
+        assert events_after_second == events_after_first
+        assert len(events_after_first) == 1
         assert first.lease_effect.effect is (
             ingestion_lease_store.LeaseLifecycleEffect.RECOVERED
         )
@@ -1640,49 +1637,56 @@ async def test_boundary_retry_does_not_double_charge(  # noqa: PLR0915
         assert feed_after_first["failure_count"] == 0
         assert lease_after_first["failure_count"] == 0
     else:
-        assert first.children[0].disposition is (
-            ingestion_lease_store.ChildDisposition.APPLIED
-        )
+        assert [
+            result.children[0].disposition for result in (first, second)
+        ] == [ingestion_lease_store.ChildDisposition.APPLIED] * 2
+        assert [
+            result.children[0].lifecycle_effect for result in (first, second)
+        ] == [ingestion_lease_store.LifecycleEffect.FAILURE_RECORDED] * 2
         assert feed_after_first["audit_revision"] == 1
-        assert [event["feed_revision"] for event in events_after_first] == [1]
+        assert feed_after_second["audit_revision"] == 2
+        assert [event["feed_revision"] for event in events_after_second] == [
+            1,
+            2,
+        ]
         assert events_after_first[0]["before_status"] == "failing"
         assert (
             events_after_first[0]["before_failure_count"]
             == initial_feed_failure_count
         )
-        assert second.children[0].disposition is (
-            ingestion_lease_store.ChildDisposition.ACCEPTED_NOOP
-        )
         if boundary_kind == "nonterminal_budgeted_failure":
-            assert first.children[0].lifecycle_effect is (
-                ingestion_lease_store.LifecycleEffect.FAILURE_RECORDED
-            )
             assert feed_after_first["status"] == "failing"
             assert feed_after_first["failure_count"] == 1
+            assert feed_after_second["failure_count"] == 2
             assert feed_after_first["retry_after"] is not None
             assert events_after_first[0]["after_status"] == "failing"
             assert events_after_first[0]["after_failure_count"] == 1
+            assert events_after_second[1]["before_failure_count"] == 1
+            assert events_after_second[1]["after_failure_count"] == 2
             assert feed_after_first["status_reason"] == (
                 feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID.value
             )
-            assert [event["action"] for event in events_after_first] == [
-                "feed.failure_reported"
+            assert [event["action"] for event in events_after_second] == [
+                "feed.failure_reported",
+                "feed.failure_reported",
             ]
         else:
-            assert first.children[0].lifecycle_effect is (
-                ingestion_lease_store.LifecycleEffect.FAILURE_RECORDED
-            )
             assert requested_retry_after is not None
             assert feed_after_first["status"] == "failing"
             assert feed_after_first["failure_count"] == 0
+            assert feed_after_second["failure_count"] == 0
             assert feed_after_first["retry_after"] == requested_retry_after
+            assert feed_after_second["retry_after"] == requested_retry_after
             assert events_after_first[0]["after_status"] == "failing"
             assert events_after_first[0]["after_failure_count"] == 0
+            assert events_after_second[1]["before_failure_count"] == 0
+            assert events_after_second[1]["after_failure_count"] == 0
             assert feed_after_first["status_reason"] == (
                 feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR.value
             )
-            assert [event["action"] for event in events_after_first] == [
-                "feed.failure_reported"
+            assert [event["action"] for event in events_after_second] == [
+                "feed.failure_reported",
+                "feed.failure_reported",
             ]
 
 

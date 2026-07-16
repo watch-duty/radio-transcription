@@ -1457,9 +1457,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         *,
         cursor: datetime.datetime | None = _NOW,
         action: ingestion_lease_store.LeaseFailureAction | None = None,
-        charge_mode: ingestion_lease_store.FeedFailureChargeMode = (
-            ingestion_lease_store.FeedFailureChargeMode.ON_CURSOR_ADVANCE
-        ),
         status_reason: feed_store.FeedStatusReason = (
             feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
         ),
@@ -1472,7 +1469,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             status_reason=status_reason,
             reason="boundary failed",
             completion_cursor=cursor,
-            charge_mode=charge_mode,
         )
 
     def _closed_cohort(
@@ -1521,24 +1517,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                         ),
                         reason="failed",
                         completion_cursor=_NOW,
-                        charge_mode=(
-                            ingestion_lease_store.FeedFailureChargeMode.ON_CURSOR_ADVANCE
-                        ),
-                    ),
-                ),
-                ingestion_lease_store.NoLeaseEffect(),
-            ),
-            ingestion_lease_store.ChildMutationBatch(
-                (
-                    ingestion_lease_store.FeedFailureTransition(
-                        member=_member_identity(feed_id),
-                        action=ingestion_lease_store.BudgetedFailure(),
-                        status_reason=(
-                            feed_store.FeedStatusReason.SOURCE_UNREACHABLE
-                        ),
-                        reason="failed",
-                        completion_cursor=_NOW,
-                        charge_mode="one_shot",  # ty: ignore[invalid-argument-type]
                     ),
                 ),
                 ingestion_lease_store.NoLeaseEffect(),
@@ -2544,50 +2522,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 exit_args = pool.transaction_context.__aexit__.await_args.args
                 self.assertIs(exit_args[0], type(error))
 
-    async def test_on_cursor_advance_absent_equal_cursor_and_regressive_noop(
-        self,
-    ) -> None:
-        feed_id = uuid.UUID("88888888-0000-0000-0000-000000000080")
-        for cursor, expected_effect in (
-            (None, ingestion_lease_store.CursorEffect.ABSENT),
-            (_NOW, ingestion_lease_store.CursorEffect.EQUAL),
-            (
-                _NOW - datetime.timedelta(seconds=1),
-                ingestion_lease_store.CursorEffect.REGRESSIVE,
-            ),
-        ):
-            with self.subTest(cursor_effect=expected_effect.value):
-                pool = connection_util.make_mock_pool(transaction=True)
-                connection = pool.acquired_connection
-                connection.fetchrow.return_value = _lease_row()
-                connection.fetch.return_value = [
-                    _child_row(feed_id, last_bookmark_time=_NOW)
-                ]
-                store = ingestion_lease_store.IngestionLeaseStore(pool)
-
-                result = await store.commit_child_mutations(
-                    _grant(),
-                    ingestion_lease_store.ChildMutationBatch(
-                        (self._failure(feed_id, cursor=cursor),),
-                        ingestion_lease_store.NoLeaseEffect(),
-                    ),
-                    actor_id="service_account:gcp:collector",
-                )
-
-                assert isinstance(result, ingestion_lease_store.BatchCommitted)
-                child = result.children[0]
-                self.assertIs(child.cursor_effect, expected_effect)
-                self.assertIs(
-                    child.disposition,
-                    ingestion_lease_store.ChildDisposition.ACCEPTED_NOOP,
-                )
-                self.assertIs(
-                    child.lifecycle_effect,
-                    ingestion_lease_store.LifecycleEffect.NONE,
-                )
-                connection.fetch.assert_awaited_once()
-
-    def test_one_shot_charge_is_independent_from_cursor_effect(self) -> None:
+    def test_failure_charge_is_independent_from_cursor_effect(self) -> None:
         feed_id = uuid.UUID("99999999-0000-0000-0000-000000000089")
         earlier = _NOW - datetime.timedelta(seconds=1)
         later = _NOW + datetime.timedelta(seconds=1)
@@ -2618,19 +2553,13 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             with self.subTest(cursor_effect=expected_effect.value):
                 plan = ingestion_lease_store._plan_child_mutation(
                     0,
-                    self._failure(
-                        feed_id,
-                        cursor=requested,
-                        charge_mode=(
-                            ingestion_lease_store.FeedFailureChargeMode.ONE_SHOT
-                        ),
-                    ),
+                    self._failure(feed_id, cursor=requested),
                     _child_row(feed_id, last_bookmark_time=current),
                 )
 
                 self.assertIs(plan.cursor_effect, expected_effect)
-                self.assertTrue(plan.charge_failure)
                 self.assertEqual(plan.write_cursor, write_cursor)
+                self.assertTrue(plan.needs_update)
                 self.assertIs(
                     plan.disposition,
                     ingestion_lease_store.ChildDisposition.APPLIED,
@@ -2640,7 +2569,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     ingestion_lease_store.LifecycleEffect.FAILURE_RECORDED,
                 )
 
-    async def test_explicit_second_one_shot_invocation_charges_again(
+    async def test_explicit_second_failure_invocation_charges_again(
         self,
     ) -> None:
         feed_id = uuid.UUID("99999999-0000-0000-0000-000000000090")
@@ -2688,15 +2617,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         ]
         store = ingestion_lease_store.IngestionLeaseStore(pool)
         batch = ingestion_lease_store.ChildMutationBatch(
-            (
-                self._failure(
-                    feed_id,
-                    cursor=None,
-                    charge_mode=(
-                        ingestion_lease_store.FeedFailureChargeMode.ONE_SHOT
-                    ),
-                ),
-            ),
+            (self._failure(feed_id, cursor=None),),
             ingestion_lease_store.NoLeaseEffect(),
         )
         first = await store.commit_child_mutations(
@@ -2722,8 +2643,8 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 failure_args[0],
                 ingestion_lease_queries.APPLY_FEED_FAILURES_SQL,
             )
-            self.assertEqual(failure_args[3], [True])
-            self.assertEqual(failure_args[4], [False])
+            self.assertEqual(failure_args[3], [False])
+            self.assertEqual(failure_args[4], [True])
 
     async def test_budgeted_failure_quarantines_and_audits_atomically(
         self,
@@ -2832,8 +2753,8 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             ingestion_lease_store.LifecycleEffect.FAILURE_RECORDED,
         )
         failure_args = connection.fetch.await_args_list[1].args
-        self.assertEqual(failure_args[5], [False])
-        self.assertEqual(failure_args[9], [retry_after])
+        self.assertEqual(failure_args[4], [False])
+        self.assertEqual(failure_args[8], [retry_after])
 
     async def test_all_non_budgeted_reasons_reset_at_quarantine_threshold(
         self,
@@ -2896,9 +2817,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                                 action=ingestion_lease_store.NonBudgetedFailure(
                                     retry_after
                                 ),
-                                charge_mode=(
-                                    ingestion_lease_store.FeedFailureChargeMode.ONE_SHOT
-                                ),
                                 status_reason=status_reason,
                             ),
                         ),
@@ -2920,13 +2838,12 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     ingestion_lease_store.LifecycleEffect.QUARANTINED,
                 )
                 failure_args = connection.fetch.await_args_list[1].args
-                self.assertEqual(failure_args[3], [True])
+                self.assertEqual(failure_args[3], [False])
                 self.assertEqual(failure_args[4], [False])
-                self.assertEqual(failure_args[5], [False])
-                self.assertEqual(failure_args[9], [retry_after])
-                self.assertEqual(failure_args[10], [status_reason.value])
+                self.assertEqual(failure_args[8], [retry_after])
+                self.assertEqual(failure_args[9], [status_reason.value])
 
-    async def test_one_shot_failure_and_neutral_closure_finalize_independently(
+    async def test_failure_and_neutral_closure_finalize_independently(
         self,
     ) -> None:
         closed_feed_id = uuid.UUID("bbbbbbbb-0000-0000-0000-000000000111")
@@ -2983,13 +2900,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             ingestion_lease_store.ChildMutationBatch(
                 (
                     self._closed_cohort(closed_feed_id),
-                    self._failure(
-                        failed_feed_id,
-                        cursor=_NOW,
-                        charge_mode=(
-                            ingestion_lease_store.FeedFailureChargeMode.ONE_SHOT
-                        ),
-                    ),
+                    self._failure(failed_feed_id, cursor=_NOW),
                 ),
                 ingestion_lease_store.FinalizeLeaseRecovery(),
             ),
@@ -3018,8 +2929,8 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             failure_args[0],
             ingestion_lease_queries.APPLY_FEED_FAILURES_SQL,
         )
-        self.assertEqual(failure_args[3], [True])
-        self.assertEqual(failure_args[4], [False])
+        self.assertEqual(failure_args[3], [False])
+        self.assertEqual(failure_args[4], [True])
         self.assertIs(
             connection.fetchrow.await_args_list[1].args[0],
             ingestion_lease_queries.FINALIZE_LEASE_RECOVERY_SQL,

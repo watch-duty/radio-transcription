@@ -664,7 +664,6 @@ WITH input AS MATERIALIZED (
     SELECT
         input_values.feed_id,
         input_values.cursor,
-        input_values.charge_failure,
         input_values.write_cursor,
         input_values.is_budgeted,
         input_values.failure_threshold,
@@ -680,18 +679,16 @@ WITH input AS MATERIALIZED (
         $2::timestamptz[],
         $3::boolean[],
         $4::boolean[],
-        $5::boolean[],
+        $5::integer[],
         $6::integer[],
         $7::integer[],
-        $8::integer[],
-        $9::timestamptz[],
+        $8::timestamptz[],
+        $9::text[],
         $10::text[],
-        $11::text[],
-        $12::bigint[]
+        $11::bigint[]
     ) WITH ORDINALITY AS input_values(
         feed_id,
         cursor,
-        charge_failure,
         write_cursor,
         is_budgeted,
         failure_threshold,
@@ -746,7 +743,6 @@ updated AS (
           'active'::public.feed_status,
           'failing'::public.feed_status
       )
-      AND input.charge_failure
     RETURNING
         input.caller_ordinal,
         feeds.id,
