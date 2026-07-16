@@ -1,4 +1,6 @@
 import type {
+  DryRunRequest,
+  DryRunResponse,
   LogicalOperator,
   Rule,
   RuleCreate,
@@ -91,6 +93,25 @@ interface RuleCreateBackend {
 
 type RuleUpdateBackend = Partial<RuleCreateBackend>;
 
+interface TextMatchSpanResponse {
+  start: number;
+  end: number;
+  matched_text: string;
+}
+
+interface DryRunMatchExampleResponse {
+  audio_segment_id: string;
+  feed_id: string;
+  text: string;
+  matched_spans: TextMatchSpanResponse[];
+}
+
+interface DryRunResponseBackend {
+  rule_hit_count: number;
+  total_evaluated: number;
+  examples: DryRunMatchExampleResponse[];
+}
+
 function convertRuleResponse(response: RuleResponse): Rule {
   return toCamel<Rule>(response);
 }
@@ -101,6 +122,25 @@ function convertRuleCreate(create: RuleCreate): RuleCreateBackend {
 
 function convertRuleUpdate(update: RuleUpdate): RuleUpdateBackend {
   return toSnake<RuleUpdateBackend>(update);
+}
+
+function convertDryRunResponse(
+  response: DryRunResponseBackend
+): DryRunResponse {
+  return {
+    hitCount: response.rule_hit_count,
+    totalEvaluated: response.total_evaluated,
+    examples: response.examples.map((ex) => ({
+      audioSegmentId: ex.audio_segment_id,
+      feedId: ex.feed_id,
+      text: ex.text,
+      matchedSpans: ex.matched_spans.map((span) => ({
+        startIndex: span.start,
+        endIndex: span.end,
+        matchedText: span.matched_text,
+      })),
+    })),
+  };
 }
 
 export class ListRulesQueryParams {
@@ -258,6 +298,34 @@ export class RulesController extends Controller {
         error,
         `deleting rule ${ruleId}`
       );
+      throw new HttpError(status, message);
+    }
+  }
+
+  @Post('dry-run')
+  @Security('google_id_token')
+  @SuccessResponse('200', 'OK')
+  @Response<{ message: string }>(401, 'Unauthorized')
+  @Response<{ message: string }>(403, 'Forbidden')
+  @Response<{ message: string }>(500, 'Internal Server Error')
+  @Extension('x-google-backend', 'radio-transcription-api')
+  public async dryRunRule(
+    @Request() request: AuthenticatedRequest,
+    @Body() requestBody: DryRunRequest
+  ): Promise<DryRunResponse> {
+    if (!request.user?.isAdmin) {
+      throw new HttpError(403, 'Forbidden');
+    }
+    try {
+      const client = await this.getClient();
+      const response = await client.request({
+        url: `${RULES_API_URL}/dry-run`,
+        method: 'POST',
+        data: toSnake(requestBody),
+      });
+      return convertDryRunResponse(response.data as DryRunResponseBackend);
+    } catch (error: unknown) {
+      const { status, message } = handleBackendError(error, 'dry running rule');
       throw new HttpError(status, message);
     }
   }
