@@ -19,6 +19,10 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from backend.pipeline.common.log_helper import setup_logging
+from backend.pipeline.common.tracing_utils import (
+    setup_tracing,
+    with_tracer_context,
+)
 from backend.pipeline.ingestion.settings import _require_env
 
 if TYPE_CHECKING:
@@ -218,32 +222,39 @@ def _authenticate() -> dict[str, Any]:
 def broadcastify_credential_rotation(request: flask.Request) -> tuple[str, int]:
     """HTTP entry point for Broadcastify credential rotation."""
     setup_logging()
-    del request  # unused for scheduler-triggered requests
-    global secret_client  # noqa: PLW0603
-
-    if secret_client is None:
-        secret_client = secretmanager.SecretManagerServiceClient()
-
-    auth_data = _authenticate()
-
-    uid = auth_data.get("uid")
-    token = auth_data.get("token")
-    if not uid or not token:
-        missing_fields = []
-        if not uid:
-            missing_fields.append("uid")
-        if not token:
-            missing_fields.append("token")
-        msg = (
-            "Authentication response missing expected fields: "
-            f"{', '.join(missing_fields)}"
-        )
-        raise RuntimeError(msg)
-
-    auth_jwt_token = _generate_jwt({"sub": uid, "utk": token})
-    add_secret_version(secret_client, SECRET_JWT, auth_jwt_token)
-    logger.info(
-        "Broadcastify credentials rotated successfully for username: %s",
-        BROADCASTIFY_USERNAME,
+    setup_tracing(
+        service_name="broadcastify-credential-rotation-service",
+        use_batch=False,
     )
-    return "Successfully updated Broadcastify credentials", 200
+    headers = dict(getattr(request, "headers", {}))
+    with with_tracer_context(
+        headers, "broadcastify_credential_rotation", __name__
+    ):
+        global secret_client  # noqa: PLW0603
+
+        if secret_client is None:
+            secret_client = secretmanager.SecretManagerServiceClient()
+
+        auth_data = _authenticate()
+
+        uid = auth_data.get("uid")
+        token = auth_data.get("token")
+        if not uid or not token:
+            missing_fields = []
+            if not uid:
+                missing_fields.append("uid")
+            if not token:
+                missing_fields.append("token")
+            msg = (
+                "Authentication response missing expected fields: "
+                f"{', '.join(missing_fields)}"
+            )
+            raise RuntimeError(msg)
+
+        auth_jwt_token = _generate_jwt({"sub": uid, "utk": token})
+        add_secret_version(secret_client, SECRET_JWT, auth_jwt_token)
+        logger.info(
+            "Broadcastify credentials rotated successfully for username: %s",
+            BROADCASTIFY_USERNAME,
+        )
+        return "Successfully updated Broadcastify credentials", 200
