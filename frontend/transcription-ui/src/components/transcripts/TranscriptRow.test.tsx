@@ -11,7 +11,6 @@ import {
 } from '@transcription/common';
 
 import { type RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
-import { createMockRenderableAudioSegment } from '../../test/mockDataUtils';
 import TranscriptRow from './TranscriptRow';
 
 // Mocking TranscriptPlayControl to verify it's being called with the correct props.
@@ -118,119 +117,6 @@ describe('TranscriptRow', () => {
     expect(screen.getByText('5 sec')).toBeTruthy();
     // The date should NOT be rendered
     expect(screen.queryByText(/Monday/i)).toBeNull();
-  });
-
-  it('renders warning icon when missingPriorContext is true', () => {
-    const segment = createMockRenderableAudioSegment({
-      id: 'seg-prior-warning',
-      missingPriorContext: true,
-      missingPostContext: false,
-    });
-
-    render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={segment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
-    );
-
-    expect(screen.getByTestId('WarningAmberIcon')).toBeTruthy();
-  });
-
-  it('renders warning icon when missingPostContext is true', () => {
-    const segment = createMockRenderableAudioSegment({
-      id: 'seg-post-warning',
-      missingPriorContext: false,
-      missingPostContext: true,
-    });
-
-    render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={segment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
-    );
-
-    expect(screen.getByTestId('WarningAmberIcon')).toBeTruthy();
-  });
-
-  it('does not render warning icon when both context flags are false', () => {
-    const segment = createMockRenderableAudioSegment({
-      id: 'seg-no-warning',
-      missingPriorContext: false,
-      missingPostContext: false,
-    });
-
-    render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={segment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
-    );
-
-    expect(screen.queryByTestId('WarningAmberIcon')).toBeNull();
-  });
-
-  it('does not render warning icon on outage segments even if flags are true', () => {
-    const segment = createMockRenderableAudioSegment({
-      id: 'outage-warning',
-      isOutageBundle: true,
-      missingPriorContext: true,
-      missingPostContext: true,
-    });
-
-    render(
-      <MemoryRouter>
-        <TranscriptRow
-          audioSegment={segment}
-          index={0}
-          totalAudioSegments={1}
-          ruleIdToNameMap={ruleIdToNameMap}
-          rulesLoading={false}
-          onToggleAudio={mockOnToggleAudio}
-          isAudioPlaying={false}
-          onRowClick={mockOnRowClick}
-          currentlyPlayingSegmentId={null}
-          triggerSnackbar={mockTriggerSnackbar}
-          showHeader={false}
-        />
-      </MemoryRouter>
-    );
-
-    expect(screen.queryByTestId('WarningAmberIcon')).toBeNull();
   });
 
   it('highlights matched spans from the evaluation annotation', () => {
@@ -645,7 +531,7 @@ describe('TranscriptRow', () => {
     expect((copyButton as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it('renders partial transcription with text and warning icon, and copy button enabled', () => {
+  it('renders partial transcription with text and incomplete prefix, and copy button enabled', () => {
     const mockPartialTranscript: AudioSegment = {
       ...mockAudioSegment,
       annotations: [
@@ -680,11 +566,8 @@ describe('TranscriptRow', () => {
 
     // Should render the text itself, NOT [Transcription failed]
     expect(screen.getByText('This is a partial transcript text')).toBeTruthy();
+    expect(screen.getByText('[Transcript may be incomplete]')).toBeTruthy();
     expect(screen.queryByText('[Transcription failed]')).toBeNull();
-
-    // Should render Warning icon
-    expect(screen.getByTestId('WarningAmberIcon')).toBeTruthy();
-
     // Copy button should be enabled
     const copyButton = screen.getByLabelText('copy transcript');
     expect((copyButton as HTMLButtonElement).disabled).toBe(false);

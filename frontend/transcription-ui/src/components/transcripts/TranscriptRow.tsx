@@ -5,7 +5,6 @@ import { saveAs } from 'file-saver';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DonwloadIcon from '@mui/icons-material/Download';
 import LinkIcon from '@mui/icons-material/Link';
-import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import ListItem from '@mui/material/ListItem';
@@ -95,19 +94,17 @@ export function TranscriptRow({
     isSilence || isWaiting || hasErrors || isOutage || isMissingTextButSpeech;
 
   const degradationReasons: string[] = [];
-  if (audioSegment.missingPriorContext || audioSegment.missingPostContext) {
-    const contexts = [
-      audioSegment.missingPriorContext && 'prior',
-      audioSegment.missingPostContext && 'post',
-    ]
-      .filter(Boolean)
-      .join(' and ');
-    degradationReasons.push(`missing ${contexts} audio context`);
+  if (audioSegment.missingPriorContext && audioSegment.missingPostContext) {
+    degradationReasons.push(
+      'Audio recording was cut off at the beginning and end'
+    );
+  } else if (audioSegment.missingPriorContext) {
+    degradationReasons.push('Audio recording was cut off at the beginning');
+  } else if (audioSegment.missingPostContext) {
+    degradationReasons.push('Audio recording was cut off at the end');
   }
   if (hasErrorsWithText && transcriptAnnotation) {
-    degradationReasons.push(
-      ...transcriptAnnotation.errors.map((err) => err.toLowerCase())
-    );
+    degradationReasons.push(...transcriptAnnotation.errors);
   }
 
   function renderTranscriptionText(
@@ -135,7 +132,6 @@ export function TranscriptRow({
 
     return transcriptAnnotation.text;
   }
-
 
   const evaluationAnnotation = findEvaluationAnnotationData(
     audioSegment.annotations
@@ -381,28 +377,28 @@ export function TranscriptRow({
             {isPlaceholder ? (
               renderTranscriptionText(transcriptAnnotation)
             ) : (
-              <HighlightedTranscript
-                text={transcriptAnnotation?.text ?? ''}
-                ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
-              />
+              <>
+                {hasErrorsWithText && (
+                  <Box
+                    component="span"
+                    sx={{
+                      display: 'block',
+                      typography: 'caption',
+                      fontStyle: 'italic',
+                      color: 'error.main',
+                      mb: 1,
+                    }}
+                  >
+                    [Transcript may be incomplete]
+                  </Box>
+                )}
+                <HighlightedTranscript
+                  text={transcriptAnnotation?.text ?? ''}
+                  ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
+                />
+              </>
             )}
           </Typography>
-          {!isSilence && !isOutage && degradationReasons.length > 0 && (
-            <Tooltip
-              title={`Transcription may be degraded: ${degradationReasons.join(
-                ', '
-              )}.`}
-            >
-              <WarningAmberIcon
-                color="warning"
-                fontSize="small"
-                sx={{
-                  flexShrink: 0,
-                  mt: 0.25, // Align slightly down to match text baseline
-                }}
-              />
-            </Tooltip>
-          )}
         </Box>
         <Box
           sx={{
@@ -498,6 +494,7 @@ export function TranscriptRow({
           {isAdmin && (
             <SegmentInfoPopover
               audioSegment={audioSegment}
+              degradationReasons={degradationReasons}
               triggerSnackbar={triggerSnackbar}
             />
           )}
