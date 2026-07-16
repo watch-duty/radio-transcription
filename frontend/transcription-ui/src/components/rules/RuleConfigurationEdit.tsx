@@ -568,6 +568,7 @@ export function RuleConfigurationEdit({
         isLoading={isDryRunning}
         result={dryRunResult}
         error={dryRunError}
+        feeds={feeds}
       />
     </Card>
   );
@@ -737,6 +738,7 @@ interface DryRunResultsModalProps {
   isLoading: boolean;
   result: DryRunResponse | null;
   error: string | null;
+  feeds: Feed[];
 }
 
 function DryRunResultsModal({
@@ -745,6 +747,7 @@ function DryRunResultsModal({
   isLoading,
   result,
   error,
+  feeds,
 }: DryRunResultsModalProps) {
   // Helper to render matched text with bolding
   const renderHighlightedText = (
