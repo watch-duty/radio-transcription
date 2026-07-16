@@ -175,7 +175,7 @@ class GeminiTranscriber(base.Transcriber):
             f"from GCS URI: {uri}" if uri else "from in-memory bytes",
         )
 
-        # TODO: Support context
+        # TODO(GOO-580): Support context
         # https://linear.app/watchduty/issue/GOO-580
         mime_type = self.config.mime_type
         if uri:
