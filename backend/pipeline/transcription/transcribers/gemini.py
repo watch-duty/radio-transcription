@@ -209,6 +209,7 @@ class GeminiTranscriber(base.Transcriber):
             else None,
         )
 
+        # Note: Retry policy is configured globally on the client in setup()
         try:
             response = await self.client.aio.models.generate_content(
                 model=self.config.model,
