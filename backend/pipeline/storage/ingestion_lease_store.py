@@ -454,14 +454,7 @@ class LeaseMember:
 
     identity: LeaseMemberIdentity
     name: str
-    status: feed_store.FeedStatus
-    last_processed_filename: str | None
     last_bookmark_time: datetime.datetime | None
-    failure_count: int
-    retry_after: datetime.datetime | None
-    status_reason: feed_store.FeedStatusReason | None
-    status_reason_detail: str | None
-    audit_revision: int
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1324,14 +1317,7 @@ def _member_from_row(
     return LeaseMember(
         identity=identity,
         name=name,
-        status=_status_from_row(row),
-        last_processed_filename=row["last_processed_filename"],
         last_bookmark_time=row["last_bookmark_time"],
-        failure_count=row["failure_count"],
-        retry_after=row["retry_after"],
-        status_reason=_status_reason_from_row(row),
-        status_reason_detail=row["status_reason_detail"],
-        audit_revision=row["audit_revision"],
     )
 
 
@@ -2062,7 +2048,8 @@ class IngestionLeaseStore:
                 )
             routing_keys.add(identity.source_feed_id)
             member = _member_from_row(identity, row)
-            if member.status in (
+            status = _status_from_row(row)
+            if status in (
                 feed_store.FeedStatus.ACTIVE,
                 feed_store.FeedStatus.FAILING,
             ):

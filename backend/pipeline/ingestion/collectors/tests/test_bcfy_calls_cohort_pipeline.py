@@ -68,14 +68,7 @@ def _member(
     return ingestion_lease_store.LeaseMember(
         identity=identity,
         name="Test Calls Feed",
-        status=feed_store.FeedStatus.ACTIVE,
-        last_processed_filename=None,
         last_bookmark_time=None,
-        failure_count=0,
-        retry_after=None,
-        status_reason=None,
-        status_reason_detail=None,
-        audit_revision=1,
     )
 
 

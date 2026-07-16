@@ -910,12 +910,14 @@ class TestMembershipSnapshotContract(unittest.TestCase):
         self.assertNotIn("owner_worker_id", fields)
         self.assertNotIn("fencing_token", fields)
 
-    def test_lease_member_requires_canonical_name_without_default(self) -> None:
+    def test_lease_member_exposes_only_runtime_consumed_state(self) -> None:
         fields = dataclasses.fields(ingestion_lease_store.LeaseMember)
         fields_by_name = {field.name: field for field in fields}
 
-        self.assertEqual(fields[0].name, "identity")
-        self.assertEqual(fields[1].name, "name")
+        self.assertEqual(
+            tuple(field.name for field in fields),
+            ("identity", "name", "last_bookmark_time"),
+        )
         self.assertIs(fields_by_name["name"].default, dataclasses.MISSING)
         self.assertIs(
             fields_by_name["name"].default_factory,
@@ -931,9 +933,20 @@ class TestMembershipSnapshotContract(unittest.TestCase):
         self.assertIn("fp.bcfy_calls_group_id", sql)
         self.assertIn("fp.source_feed_id", sql)
         self.assertIn("feeds.name AS feed_name", sql)
+        self.assertIn("feeds.status::text AS status", sql)
+        self.assertIn("feeds.last_bookmark_time", sql)
         self.assertIn("fp.source_type = 'bcfy_calls'", sql)
         self.assertIn("fp.bcfy_calls_is_trunked IS TRUE", sql)
         self.assertIn("ORDER BY fp.bcfy_calls_group_id, fp.feed_id", sql)
+        for unused_field in (
+            "last_processed_filename",
+            "failure_count",
+            "retry_after",
+            "status_reason",
+            "status_reason_detail",
+            "audit_revision",
+        ):
+            self.assertNotIn(unused_field, sql)
         self.assertNotIn("split_part", sql.lower())
         self.assertNotRegex(
             sql.lower(), r"bcfy_calls_(sid|group_id)::(int|bigint)"

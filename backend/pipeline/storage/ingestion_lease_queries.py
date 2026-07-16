@@ -361,13 +361,7 @@ SELECT
     fp.bcfy_calls_sid AS sid,
     fp.bcfy_calls_group_id AS group_id,
     feeds.status::text AS status,
-    feeds.last_processed_filename,
-    feeds.last_bookmark_time,
-    feeds.failure_count,
-    feeds.retry_after,
-    feeds.status_reason,
-    feeds.status_reason_detail,
-    feeds.audit_revision
+    feeds.last_bookmark_time
 FROM public.feed_properties AS fp
 LEFT JOIN public.feeds AS feeds
   ON feeds.id = fp.feed_id

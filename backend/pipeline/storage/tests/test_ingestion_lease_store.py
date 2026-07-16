@@ -68,13 +68,7 @@ def _member_row(**overrides: object) -> dict[str, object]:
         "sid": "00123",
         "group_id": "00045",
         "status": "active",
-        "last_processed_filename": "gs://bucket/last.ogg",
         "last_bookmark_time": _NOW,
-        "failure_count": 0,
-        "retry_after": None,
-        "status_reason": None,
-        "status_reason_detail": None,
-        "audit_revision": 2,
     }
     row.update(overrides)
     return row
