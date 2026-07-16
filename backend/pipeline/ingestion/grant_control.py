@@ -32,7 +32,7 @@ class HeartbeatDisposition(enum.StrEnum):
     """Common exact-grant heartbeat meanings."""
 
     RETAINED = "retained"
-    ADMINISTRATIVE_STOP = "administrative_stop"
+    INELIGIBLE = "ineligible"
     LOST = "lost"
 
 

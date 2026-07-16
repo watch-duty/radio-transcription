@@ -221,7 +221,7 @@ class FeedGrantControl:
                 is feed_store.FeedGrantOperationDisposition.STATUS_INELIGIBLE
             ):
                 disposition = (
-                    grant_control.HeartbeatDisposition.ADMINISTRATIVE_STOP
+                    grant_control.HeartbeatDisposition.INELIGIBLE
                 )
             elif result.disposition in (
                 feed_store.FeedGrantOperationDisposition.MISSING,

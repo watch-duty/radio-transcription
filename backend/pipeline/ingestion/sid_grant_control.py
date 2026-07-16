@@ -238,7 +238,7 @@ class SidGrantControl:
                 disposition = grant_control.HeartbeatDisposition.RETAINED
             elif result.disposition is _STATUS_INELIGIBLE:
                 disposition = (
-                    grant_control.HeartbeatDisposition.ADMINISTRATIVE_STOP
+                    grant_control.HeartbeatDisposition.INELIGIBLE
                 )
             elif result.disposition in (
                 ingestion_lease_store.LeaseOperationDisposition.MISSING,

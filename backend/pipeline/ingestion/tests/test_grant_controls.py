@@ -122,7 +122,7 @@ class TestGrantControlVocabulary(unittest.TestCase):
             grant_control.ClaimMode: {"primary", "recovery"},
             grant_control.HeartbeatDisposition: {
                 "retained",
-                "administrative_stop",
+                "ineligible",
                 "lost",
             },
             grant_control.FinalizeDisposition: {
@@ -336,7 +336,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             [item.disposition for item in translated],
             [
                 grant_control.HeartbeatDisposition.RETAINED,
-                grant_control.HeartbeatDisposition.ADMINISTRATIVE_STOP,
+                grant_control.HeartbeatDisposition.INELIGIBLE,
                 grant_control.HeartbeatDisposition.LOST,
                 grant_control.HeartbeatDisposition.LOST,
                 grant_control.HeartbeatDisposition.LOST,
@@ -878,7 +878,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             [item.disposition for item in translated],
             [
                 grant_control.HeartbeatDisposition.RETAINED,
-                grant_control.HeartbeatDisposition.ADMINISTRATIVE_STOP,
+                grant_control.HeartbeatDisposition.INELIGIBLE,
                 grant_control.HeartbeatDisposition.LOST,
                 grant_control.HeartbeatDisposition.LOST,
                 grant_control.HeartbeatDisposition.LOST,
