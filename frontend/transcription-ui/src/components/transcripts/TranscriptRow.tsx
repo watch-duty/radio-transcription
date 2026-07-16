@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 
 import { saveAs } from 'file-saver';
 
@@ -94,24 +94,21 @@ export function TranscriptRow({
   const isPlaceholder =
     isSilence || isWaiting || hasErrors || isOutage || isMissingTextButSpeech;
 
-  const degradationReasons = useMemo(() => {
-    const reasons: string[] = [];
-    if (audioSegment.missingPriorContext || audioSegment.missingPostContext) {
-      const contexts = [
-        audioSegment.missingPriorContext && 'prior',
-        audioSegment.missingPostContext && 'post',
-      ]
-        .filter(Boolean)
-        .join(' and ');
-      reasons.push(`missing ${contexts} audio context`);
-    }
-    if (hasErrorsWithText && transcriptAnnotation) {
-      reasons.push(
-        ...transcriptAnnotation.errors.map((err) => err.toLowerCase())
-      );
-    }
-    return reasons;
-  }, [audioSegment, hasErrorsWithText, transcriptAnnotation]);
+  const degradationReasons: string[] = [];
+  if (audioSegment.missingPriorContext || audioSegment.missingPostContext) {
+    const contexts = [
+      audioSegment.missingPriorContext && 'prior',
+      audioSegment.missingPostContext && 'post',
+    ]
+      .filter(Boolean)
+      .join(' and ');
+    degradationReasons.push(`missing ${contexts} audio context`);
+  }
+  if (hasErrorsWithText && transcriptAnnotation) {
+    degradationReasons.push(
+      ...transcriptAnnotation.errors.map((err) => err.toLowerCase())
+    );
+  }
 
   function renderTranscriptionText(
     transcriptAnnotation: TranscriptAnnotationData | null
