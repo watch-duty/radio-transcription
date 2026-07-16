@@ -107,7 +107,7 @@ interface DryRunMatchExampleResponse {
 }
 
 interface DryRunResponseBackend {
-  rule_hit_count: number;
+  hit_count: number;
   total_evaluated: number;
   examples: DryRunMatchExampleResponse[];
 }
@@ -128,7 +128,7 @@ function convertDryRunResponse(
   response: DryRunResponseBackend
 ): DryRunResponse {
   return {
-    hitCount: response.rule_hit_count,
+    hitCount: response.hit_count,
     totalEvaluated: response.total_evaluated,
     examples: response.examples.map((ex) => ({
       audioSegmentId: ex.audio_segment_id,

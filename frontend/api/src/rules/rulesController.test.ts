@@ -285,7 +285,7 @@ describe('RulesController', () => {
   describe('dryRunRule', () => {
     it('should map start/end to startIndex/endIndex on success', async () => {
       const mockBackendResponse = {
-        rule_hit_count: 5,
+        hit_count: 5,
         total_evaluated: 10,
         examples: [
           {
