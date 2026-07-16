@@ -1880,13 +1880,13 @@ async def test_cancellation_while_blocked_rolls_back_without_notification(  # no
         connection: asyncpg.Connection,
         effect_grant: ingestion_lease_store.LeaseGrant,
         effect: ingestion_lease_store.LeaseEffect,
-        before_snapshot: ingestion_lease_store.LeaseSnapshot,
+        before_row: collections.abc.Mapping,
     ) -> ingestion_lease_store.LeaseLifecycleResult:
         result = await original_apply_lease_effect(
             connection,
             effect_grant,
             effect,
-            before_snapshot,
+            before_row,
         )
         assert result.effect is (
             ingestion_lease_store.LeaseLifecycleEffect.RECOVERED

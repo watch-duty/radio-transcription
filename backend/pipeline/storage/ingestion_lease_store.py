@@ -67,25 +67,17 @@ class LeaseGrant:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class LeaseSnapshot:
-    """Mutable Lease state observed separately from grant identity."""
-
-    status: feed_store.FeedStatus
-    last_heartbeat: datetime.datetime | None
-    failure_count: int
-    retry_after: datetime.datetime | None
-    status_reason: feed_store.FeedStatusReason | None
-    status_reason_detail: str | None
-    membership_revision: int
-    updated_at: datetime.datetime
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
 class LeaseClaim:
-    """A newly established grant and its mutable state snapshot."""
+    """A newly established grant and its retained failure evidence."""
 
     grant: LeaseGrant
-    snapshot: LeaseSnapshot
+    durable_failing: bool
+
+    def __post_init__(self) -> None:
+        _require_grant(self.grant)
+        if not isinstance(self.durable_failing, bool):
+            msg = "durable_failing must be a boolean"
+            raise TypeError(msg)
 
 
 class LeaseOperationDisposition(enum.StrEnum):
@@ -100,10 +92,19 @@ class LeaseOperationDisposition(enum.StrEnum):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LeaseOperationResult:
-    """Diagnostic result for one exact-grant Lease mutation."""
+    """Narrow result for one exact-grant Lease mutation."""
 
     disposition: LeaseOperationDisposition
-    snapshot: LeaseSnapshot | None
+    durable_failing: bool | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.disposition, LeaseOperationDisposition):
+            msg = "disposition must be a LeaseOperationDisposition"
+            raise TypeError(msg)
+        applied = self.disposition is LeaseOperationDisposition.APPLIED
+        if applied != isinstance(self.durable_failing, bool):
+            msg = "only an applied Lease operation returns lifecycle evidence"
+            raise ValueError(msg)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -135,16 +136,14 @@ class GrantRejectionReason(enum.StrEnum):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class GrantRejected:
-    """Shared exact-grant rejection with current locked state."""
+    """Shared exact-grant rejection classification."""
 
     reason: GrantRejectionReason
-    snapshot: LeaseSnapshot | None
 
     def __post_init__(self) -> None:
-        missing = self.reason is GrantRejectionReason.MISSING
-        if missing != (self.snapshot is None):
-            msg = "only a missing Lease may have no rejection snapshot"
-            raise ValueError(msg)
+        if not isinstance(self.reason, GrantRejectionReason):
+            msg = "reason must be a GrantRejectionReason"
+            raise TypeError(msg)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -431,11 +430,14 @@ class ChildMutationResult:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LeaseLifecycleResult:
-    """Before/after evidence for the parent Lease effect."""
+    """Applied effect for the parent Lease lifecycle."""
 
     effect: LeaseLifecycleEffect
-    before_snapshot: LeaseSnapshot
-    after_snapshot: LeaseSnapshot
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.effect, LeaseLifecycleEffect):
+            msg = "effect must be a LeaseLifecycleEffect"
+            raise TypeError(msg)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1180,30 +1182,30 @@ def _status_reason_from_row(
         raise ValueError(msg) from error
 
 
-def _snapshot_from_row(
+def _boolean_from_row(
     row: collections.abc.Mapping,
-    prefix: str = "",
-) -> LeaseSnapshot:
-    return LeaseSnapshot(
-        status=_status_from_row(row, prefix),
-        last_heartbeat=row[f"{prefix}last_heartbeat"],
-        failure_count=row[f"{prefix}failure_count"],
-        retry_after=row[f"{prefix}retry_after"],
-        status_reason=_status_reason_from_row(row, prefix),
-        status_reason_detail=row[f"{prefix}status_reason_detail"],
-        membership_revision=row[f"{prefix}membership_revision"],
-        updated_at=row[f"{prefix}updated_at"],
-    )
+    field_name: str,
+) -> bool:
+    """Return one database-derived Boolean without accepting integer aliases."""
+    value = row[field_name]
+    if not isinstance(value, bool):
+        msg = f"Lease {field_name} must be a boolean"
+        raise TypeError(msg)
+    return value
 
 
-def _lease_has_dirty_lifecycle(snapshot: LeaseSnapshot) -> bool:
-    """Whether a successful finalized boundary has Lease evidence to clear."""
-    return (
-        snapshot.failure_count != 0
-        or snapshot.retry_after is not None
-        or snapshot.status_reason is not None
-        or snapshot.status_reason_detail is not None
-    )
+def _membership_revision_from_row(
+    row: collections.abc.Mapping,
+) -> int:
+    """Return a validated cache-invalidating membership revision."""
+    value = row["membership_revision"]
+    if isinstance(value, bool) or not isinstance(value, int):
+        msg = "Lease membership_revision must be an integer"
+        raise TypeError(msg)
+    if value < 0:
+        msg = "Lease membership_revision must be nonnegative"
+        raise ValueError(msg)
+    return value
 
 
 def _claim_from_row(row: collections.abc.Mapping) -> LeaseClaim:
@@ -1213,7 +1215,10 @@ def _claim_from_row(row: collections.abc.Mapping) -> LeaseClaim:
         owner_worker_id=row["worker_id"],
         fencing_token=row["fencing_token"],
     )
-    return LeaseClaim(grant=grant, snapshot=_snapshot_from_row(row))
+    return LeaseClaim(
+        grant=grant,
+        durable_failing=_boolean_from_row(row, "durable_failing"),
+    )
 
 
 def _disposition_for_rejection(
@@ -1586,8 +1591,7 @@ class IngestionLeaseStore:
         reason = self._grant_rejection_reason(grant, row)
         if reason is None:
             return None
-        snapshot = None if row is None else _snapshot_from_row(row)
-        return GrantRejected(reason, snapshot)
+        return GrantRejected(reason)
 
     def _grant_rejection_reason(
         self,
@@ -1767,7 +1771,10 @@ class IngestionLeaseStore:
                 None,
             )
         if row["applied"]:
-            snapshot = _snapshot_from_row(row)
+            rejection_reason = self._grant_rejection_reason(grant, row)
+            if rejection_reason is not None:
+                msg = "release updated a mismatched Lease grant"
+                raise RuntimeError(msg)
             logger.info(
                 "Ingestion Lease released",
                 extra={
@@ -1780,7 +1787,7 @@ class IngestionLeaseStore:
             )
             return LeaseOperationResult(
                 LeaseOperationDisposition.APPLIED,
-                snapshot,
+                _boolean_from_row(row, "durable_failing"),
             )
 
         rejection = self._grant_rejection(grant, row)
@@ -1789,7 +1796,7 @@ class IngestionLeaseStore:
             raise RuntimeError(msg)
         return LeaseOperationResult(
             _disposition_for_rejection(rejection.reason),
-            rejection.snapshot,
+            None,
         )
 
     async def finalize_failure(
@@ -1989,8 +1996,7 @@ class IngestionLeaseStore:
                     msg = "accepted Lease grant lacks a locked row"
                     raise RuntimeError(msg)
 
-                snapshot = _snapshot_from_row(lease_row)
-                current_revision = snapshot.membership_revision
+                current_revision = _membership_revision_from_row(lease_row)
                 if current_revision == known_revision:
                     return MembershipUnchanged(grant, current_revision)
                 if (
@@ -2110,8 +2116,6 @@ class IngestionLeaseStore:
                 if lease_row is None:
                     msg = "accepted Lease grant lacks a locked row"
                     raise ValueError(msg)
-                lease_before = _snapshot_from_row(lease_row)
-
                 locked_rows = []
                 if target_feed_ids:
                     locked_rows = await connection.fetch(
@@ -2196,7 +2200,7 @@ class IngestionLeaseStore:
                     connection,
                     grant,
                     batch.lease_effect,
-                    lease_before,
+                    lease_row,
                 )
 
                 notification_payloads = await self._write_child_audits(
@@ -2423,17 +2427,15 @@ class IngestionLeaseStore:
         connection: asyncpg.Connection,
         grant: LeaseGrant,
         effect: LeaseEffect,
-        before_snapshot: LeaseSnapshot,
+        before_row: collections.abc.Mapping,
     ) -> LeaseLifecycleResult:
         """Apply success-proven Lease recovery under the held exact grant."""
-        if isinstance(effect, NoLeaseEffect) or not _lease_has_dirty_lifecycle(
-            before_snapshot
-        ):
-            return LeaseLifecycleResult(
-                LeaseLifecycleEffect.NONE,
-                before_snapshot,
-                before_snapshot,
-            )
+        if isinstance(effect, NoLeaseEffect):
+            return LeaseLifecycleResult(LeaseLifecycleEffect.NONE)
+        if not _boolean_from_row(before_row, "lifecycle_dirty"):
+            return LeaseLifecycleResult(LeaseLifecycleEffect.NONE)
+
+        before_revision = _membership_revision_from_row(before_row)
 
         row = await connection.fetchrow(
             ingestion_lease_queries.FINALIZE_LEASE_RECOVERY_SQL,
@@ -2453,24 +2455,14 @@ class IngestionLeaseStore:
         ):
             msg = "Lease recovery returned a different grant"
             raise ValueError(msg)
-        after_snapshot = _snapshot_from_row(row)
         if (
-            after_snapshot.status is not feed_store.FeedStatus.ACTIVE
-            or after_snapshot.last_heartbeat != before_snapshot.last_heartbeat
-            or after_snapshot.failure_count != 0
-            or after_snapshot.retry_after is not None
-            or after_snapshot.status_reason is not None
-            or after_snapshot.status_reason_detail is not None
-            or after_snapshot.membership_revision
-            != before_snapshot.membership_revision
+            _status_from_row(row) is not feed_store.FeedStatus.ACTIVE
+            or _boolean_from_row(row, "lifecycle_dirty")
+            or _membership_revision_from_row(row) != before_revision
         ):
             msg = "Lease recovery returned inconsistent after state"
             raise ValueError(msg)
-        return LeaseLifecycleResult(
-            LeaseLifecycleEffect.RECOVERED,
-            before_snapshot,
-            after_snapshot,
-        )
+        return LeaseLifecycleResult(LeaseLifecycleEffect.RECOVERED)
 
     async def _write_child_audits(
         self,

@@ -121,23 +121,6 @@ def _make_leased_feed(
     )
 
 
-def _lease_snapshot(
-    *,
-    status: FeedStatus = FeedStatus.ACTIVE,
-) -> ingestion_lease_store.LeaseSnapshot:
-    now = datetime.datetime(2026, 7, 11, 12, 0, tzinfo=datetime.UTC)
-    return ingestion_lease_store.LeaseSnapshot(
-        status=status,
-        last_heartbeat=now,
-        failure_count=0,
-        retry_after=None,
-        status_reason=None,
-        status_reason_detail=None,
-        membership_revision=1,
-        updated_at=now,
-    )
-
-
 def _lease_member(
     grant: ingestion_lease_store.LeaseGrant,
     feed_id: uuid.UUID,
@@ -168,7 +151,6 @@ def _lease_member(
 
 
 def _committed_child_batch(
-    snapshot: ingestion_lease_store.LeaseSnapshot,
     batch: ingestion_lease_store.ChildMutationBatch,
 ) -> ingestion_lease_store.BatchCommitted:
     children = tuple(
@@ -183,8 +165,6 @@ def _committed_child_batch(
     return ingestion_lease_store.BatchCommitted(
         lease_effect=ingestion_lease_store.LeaseLifecycleResult(
             effect=ingestion_lease_store.LeaseLifecycleEffect.NONE,
-            before_snapshot=snapshot,
-            after_snapshot=snapshot,
         ),
         children=children,
     )
@@ -867,14 +847,11 @@ class TestSidClaimPayloadValidator(unittest.TestCase):
 
     def test_sid_claim_payload_type_is_exact(self) -> None:
         payload = sid_grant_control.SidClaimPayload(
-            _lease_snapshot(),
             grant_control.ClaimMode.RECOVERY,
         )
 
         self.assertTrue(collector_runtime._is_sid_claim_payload(payload))
-        self.assertFalse(
-            collector_runtime._is_sid_claim_payload(payload.snapshot)
-        )
+        self.assertFalse(collector_runtime._is_sid_claim_payload(object()))
         self.assertFalse(collector_runtime._is_sid_claim_payload(None))
 
 
@@ -2417,42 +2394,15 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
         )
-        retained_failure = dataclasses.replace(
-            _lease_snapshot(status=FeedStatus.FAILING),
-            failure_count=2,
-            status_reason=FeedStatusReason.SOURCE_UNREACHABLE,
-        )
-        recovery_looking_primary = dataclasses.replace(
-            _lease_snapshot(status=FeedStatus.FAILING),
-            failure_count=4,
-            retry_after=datetime.datetime(
-                2026,
-                7,
-                11,
-                13,
-                0,
-                tzinfo=datetime.UTC,
-            ),
-            status_reason=FeedStatusReason.SOURCE_RATE_LIMITED,
-        )
         cases = (
             (
                 sid_grant_control.SidClaimPayload(
-                    _lease_snapshot(),
                     grant_control.ClaimMode.RECOVERY,
                 ),
                 bcfy_calls_cursor_policy.ReplayFloorCause.RECOVERY,
             ),
             (
                 sid_grant_control.SidClaimPayload(
-                    retained_failure,
-                    grant_control.ClaimMode.RECOVERY,
-                ),
-                bcfy_calls_cursor_policy.ReplayFloorCause.RECOVERY,
-            ),
-            (
-                sid_grant_control.SidClaimPayload(
-                    recovery_looking_primary,
                     grant_control.ClaimMode.PRIMARY,
                 ),
                 bcfy_calls_cursor_policy.ReplayFloorCause.BOOTSTRAP,
@@ -2788,7 +2738,6 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             _WORKER_ID,
             1,
         )
-        active_snapshot = _lease_snapshot()
         data_store = mock.AsyncMock(
             spec=ingestion_lease_store.IngestionLeaseStore
         )
@@ -2796,7 +2745,10 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             spec=ingestion_lease_store.IngestionLeaseStore
         )
         data_store.claim_unclaimed.return_value = (
-            ingestion_lease_store.LeaseClaim(grant, active_snapshot),
+            ingestion_lease_store.LeaseClaim(
+                grant=grant,
+                durable_failing=False,
+            ),
         )
         data_store.claim_recoverable.return_value = ()
         heartbeat_store.renew_heartbeats.return_value = (
@@ -2859,7 +2811,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(actor_id, _RUNTIME_ACTOR_ID)
             order.append("boundary_commit")
             boundary_committed.set()
-            return _committed_child_batch(active_snapshot, batch)
+            return _committed_child_batch(batch)
 
         data_store.commit_child_mutations.side_effect = commit_child_mutations
 
@@ -2967,7 +2919,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             order.append("release")
             return ingestion_lease_store.LeaseOperationResult(
                 ingestion_lease_store.LeaseOperationDisposition.APPLIED,
-                _lease_snapshot(status=FeedStatus.UNCLAIMED),
+                durable_failing=False,
             )
 
         data_store.release.side_effect = release
@@ -3898,7 +3850,6 @@ class TestSharedFailureTerminalDecision(unittest.IsolatedAsyncioTestCase):
             grant,
             control._issue_claim_payload(
                 grant,
-                _lease_snapshot(),
                 grant_control.ClaimMode.RECOVERY,
             ),
             sid_decision,

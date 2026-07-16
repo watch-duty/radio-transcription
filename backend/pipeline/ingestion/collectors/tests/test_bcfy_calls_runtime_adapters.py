@@ -61,19 +61,6 @@ def _grant(
     )
 
 
-def _snapshot() -> ingestion_lease_store.LeaseSnapshot:
-    return ingestion_lease_store.LeaseSnapshot(
-        status=feed_store.FeedStatus.ACTIVE,
-        last_heartbeat=_NOW,
-        failure_count=0,
-        retry_after=None,
-        status_reason=None,
-        status_reason_detail=None,
-        membership_revision=1,
-        updated_at=_NOW,
-    )
-
-
 def _member(
     grant: ingestion_lease_store.LeaseGrant,
     feed_id: uuid.UUID,
@@ -130,27 +117,23 @@ def _batch_committed(
         ingestion_lease_store.LeaseLifecycleEffect.NONE
     ),
 ) -> ingestion_lease_store.BatchCommitted:
-    snapshot = _snapshot()
     return ingestion_lease_store.BatchCommitted(
         lease_effect=ingestion_lease_store.LeaseLifecycleResult(
             effect=lease_effect,
-            before_snapshot=snapshot,
-            after_snapshot=snapshot,
         ),
         children=children,
     )
 
 
-def _batch_with_changed_neutral_snapshot(
+def _batch_with_malformed_lease_effect(
     *children: ingestion_lease_store.ChildMutationResult,
 ) -> ingestion_lease_store.BatchCommitted:
-    snapshot = _snapshot()
+    lease_effect = ingestion_lease_store.LeaseLifecycleResult(
+        effect=ingestion_lease_store.LeaseLifecycleEffect.NONE,
+    )
+    object.__setattr__(lease_effect, "effect", object())
     return ingestion_lease_store.BatchCommitted(
-        lease_effect=ingestion_lease_store.LeaseLifecycleResult(
-            effect=ingestion_lease_store.LeaseLifecycleEffect.NONE,
-            before_snapshot=snapshot,
-            after_snapshot=dataclasses.replace(snapshot, failure_count=1),
-        ),
+        lease_effect=lease_effect,
         children=children,
     )
 
@@ -428,7 +411,6 @@ class TestFencedBoundaryCommitter(unittest.IsolatedAsyncioTestCase):
         store = _store_with_result(
             ingestion_lease_store.GrantRejected(
                 ingestion_lease_store.GrantRejectionReason.MISSING,
-                None,
             )
         )
         committer = runtime_adapters.FencedBoundaryCommitter(
@@ -628,7 +610,7 @@ class TestFencedBoundaryCommitter(unittest.IsolatedAsyncioTestCase):
                     ingestion_lease_store.LeaseLifecycleEffect.RECOVERED
                 ),
             ),
-            _batch_with_changed_neutral_snapshot(
+            _batch_with_malformed_lease_effect(
                 _child_result(boundaries[0].feed_id),
                 _child_result(boundaries[1].feed_id),
             ),
@@ -1681,7 +1663,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
             ).finalize_page(context)
         self.assertIs(raised.exception, cancelled)
 
-    async def test_finalizer_rejects_contradictory_lease_noop_evidence(
+    async def test_finalizer_rejects_malformed_lease_effect(
         self,
     ) -> None:
         grant = _grant()
@@ -1700,7 +1682,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
             boundaries=(feed_work_scheduler.BoundaryWork(member, target),),
         )
         store = _store_with_result(
-            _batch_with_changed_neutral_snapshot(
+            _batch_with_malformed_lease_effect(
                 _child_result(member.feed_id),
             )
         )
@@ -1842,7 +1824,6 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         rejection_store = _store_with_result(
             ingestion_lease_store.GrantRejected(
                 ingestion_lease_store.GrantRejectionReason.MISSING,
-                None,
             )
         )
         rejected = await runtime_adapters.FencedPageFinalizer(

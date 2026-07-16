@@ -78,24 +78,6 @@ def _lease_grant(
     )
 
 
-def _lease_snapshot(
-    *,
-    status: feed_store.FeedStatus = feed_store.FeedStatus.ACTIVE,
-    failure_count: int = 0,
-    status_reason: feed_store.FeedStatusReason | None = None,
-) -> ingestion_lease_store.LeaseSnapshot:
-    return ingestion_lease_store.LeaseSnapshot(
-        status=status,
-        last_heartbeat=_NOW,
-        failure_count=failure_count,
-        retry_after=None,
-        status_reason=status_reason,
-        status_reason_detail=None,
-        membership_revision=3,
-        updated_at=_NOW,
-    )
-
-
 def _lease_claim(
     lease_key: str,
     *,
@@ -104,22 +86,17 @@ def _lease_claim(
 ) -> ingestion_lease_store.LeaseClaim:
     return ingestion_lease_store.LeaseClaim(
         grant=_lease_grant(lease_key),
-        snapshot=_lease_snapshot(
-            failure_count=failure_count,
-            status_reason=status_reason,
-        ),
+        durable_failing=(failure_count > 0 or status_reason is not None),
     )
 
 
 def _payload_for_grant(
-    grant: feed_store.FeedGrant | ingestion_lease_store.LeaseGrant,
-) -> feed_store.LeasedFeed | ingestion_lease_store.LeaseSnapshot:
-    if isinstance(grant, feed_store.FeedGrant):
-        return _leased_feed(
-            grant.feed_id,
-            fencing_token=grant.fencing_token,
-        )
-    return _lease_snapshot()
+    grant: feed_store.FeedGrant,
+) -> feed_store.LeasedFeed:
+    return _leased_feed(
+        grant.feed_id,
+        fencing_token=grant.fencing_token,
+    )
 
 
 def _budgeted_decision() -> grant_control.BudgetedFailureDecision:
@@ -738,16 +715,11 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         self,
         grant: ingestion_lease_store.LeaseGrant,
         *,
-        snapshot: ingestion_lease_store.LeaseSnapshot | None = None,
         mode: grant_control.ClaimMode = grant_control.ClaimMode.PRIMARY,
     ) -> sid_grant_control.SidClaimPayload:
-        return self.control._issue_claim_payload(
-            grant,
-            snapshot or _lease_snapshot(),
-            mode,
-        )
+        return self.control._issue_claim_payload(grant, mode)
 
-    async def test_primary_and_recovery_preserve_claim_order_and_snapshots(
+    async def test_primary_and_recovery_preserve_order_and_provenance(
         self,
     ) -> None:
         first = _lease_claim("200")
@@ -785,8 +757,10 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             [item.grant for item in primary],
             [first.grant, second.grant],
         )
-        self.assertIs(primary[0].payload.snapshot, first.snapshot)
-        self.assertIs(primary[1].payload.snapshot, second.snapshot)
+        self.assertEqual(
+            [field.name for field in dataclasses.fields(primary[0].payload)],
+            ["claim_mode", "_binding_proof"],
+        )
         self.assertIs(
             primary[0].payload.claim_mode,
             grant_control.ClaimMode.PRIMARY,
@@ -866,7 +840,6 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             mode=grant_control.ClaimMode.RECOVERY,
         )
         forged = sid_grant_control.SidClaimPayload(
-            payload.snapshot,
             payload.claim_mode,
         )
         copied = dataclasses.replace(payload)
@@ -902,7 +875,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
                 grant,
                 typing.cast(
                     "sid_grant_control.SidClaimPayload",
-                    payload.snapshot,
+                    object(),
                 ),
                 terminal,
             )
@@ -1013,7 +986,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
                 self.data_store.release.return_value = (
                     ingestion_lease_store.LeaseOperationResult(
                         ingestion_lease_store.LeaseOperationDisposition.APPLIED,
-                        _lease_snapshot(status=feed_store.FeedStatus.UNCLAIMED),
+                        durable_failing=False,
                     )
                 )
 
@@ -1124,37 +1097,20 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         grant = _lease_grant()
-        snapshot = _lease_snapshot()
-        cases = (
-            (
-                ingestion_lease_store.LeaseOperationDisposition.MISSING,
-                grant_control.FinalizeDisposition.LOST,
-                None,
-            ),
-            (
-                ingestion_lease_store.LeaseOperationDisposition.OWNER_MISMATCH,
-                grant_control.FinalizeDisposition.LOST,
-                snapshot,
-            ),
-            (
-                ingestion_lease_store.LeaseOperationDisposition.FENCE_MISMATCH,
-                grant_control.FinalizeDisposition.LOST,
-                snapshot,
-            ),
-            (
-                ingestion_lease_store.LeaseOperationDisposition.STATUS_INELIGIBLE,
-                grant_control.FinalizeDisposition.LOST,
-                snapshot,
-            ),
+        dispositions = (
+            ingestion_lease_store.LeaseOperationDisposition.MISSING,
+            ingestion_lease_store.LeaseOperationDisposition.OWNER_MISMATCH,
+            ingestion_lease_store.LeaseOperationDisposition.FENCE_MISMATCH,
+            ingestion_lease_store.LeaseOperationDisposition.STATUS_INELIGIBLE,
         )
 
-        for disposition, expected, current in cases:
+        for disposition in dispositions:
             with self.subTest(disposition=disposition.value):
                 self.data_store.reset_mock()
                 self.data_store.release.return_value = (
                     ingestion_lease_store.LeaseOperationResult(
                         disposition,
-                        current,
+                        None,
                     )
                 )
 
@@ -1166,17 +1122,21 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
                     ),
                 )
 
-                self.assertIs(result.disposition, expected)
+                self.assertIs(
+                    result.disposition,
+                    grant_control.FinalizeDisposition.LOST,
+                )
+                self.assertIsNone(result.lifecycle)
                 self.assertFalse(hasattr(self.data_store, "release_batch"))
 
-    async def test_retained_release_requires_snapshot_evidence(self) -> None:
+    async def test_retained_release_requires_lifecycle_evidence(self) -> None:
         grant = _lease_grant()
-        self.data_store.release.return_value = (
-            ingestion_lease_store.LeaseOperationResult(
-                ingestion_lease_store.LeaseOperationDisposition.APPLIED,
-                None,
-            )
+        malformed = ingestion_lease_store.LeaseOperationResult(
+            ingestion_lease_store.LeaseOperationDisposition.APPLIED,
+            durable_failing=False,
         )
+        object.__setattr__(malformed, "durable_failing", None)
+        self.data_store.release.return_value = malformed
 
         with self.assertRaises(grant_control.GrantControlIntegrityError):
             await self.control.finalize(

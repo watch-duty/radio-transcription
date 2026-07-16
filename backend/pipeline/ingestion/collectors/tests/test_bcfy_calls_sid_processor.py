@@ -48,24 +48,10 @@ _GRANT = ingestion_lease_store.LeaseGrant(
 )
 
 
-def _lease_lifecycle_snapshot() -> ingestion_lease_store.LeaseSnapshot:
-    return ingestion_lease_store.LeaseSnapshot(
-        status=feed_store.FeedStatus.ACTIVE,
-        last_heartbeat=_NOW,
-        failure_count=0,
-        retry_after=None,
-        status_reason=None,
-        status_reason_detail=None,
-        membership_revision=4,
-        updated_at=_NOW,
-    )
-
-
 def _claim_payload(
     mode: grant_control.ClaimMode = grant_control.ClaimMode.PRIMARY,
 ) -> sid_grant_control.SidClaimPayload:
     return sid_grant_control.SidClaimPayload(
-        _lease_lifecycle_snapshot(),
         mode,
     )
 
@@ -73,12 +59,9 @@ def _claim_payload(
 def _batch_committed(
     *children: ingestion_lease_store.ChildMutationResult,
 ) -> ingestion_lease_store.BatchCommitted:
-    snapshot = _lease_lifecycle_snapshot()
     return ingestion_lease_store.BatchCommitted(
         lease_effect=ingestion_lease_store.LeaseLifecycleResult(
             effect=ingestion_lease_store.LeaseLifecycleEffect.NONE,
-            before_snapshot=snapshot,
-            after_snapshot=snapshot,
         ),
         children=children,
     )
@@ -1260,31 +1243,15 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         old_cursor = _NOW - datetime.timedelta(minutes=20)
-        misleading_primary = dataclasses.replace(
-            _lease_lifecycle_snapshot(),
-            status=feed_store.FeedStatus.FAILING,
-            failure_count=99,
-            status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-            retry_after=_NOW + datetime.timedelta(minutes=10),
-        )
-        misleading_recovery = dataclasses.replace(
-            _lease_lifecycle_snapshot(),
-            status=feed_store.FeedStatus.ACTIVE,
-            failure_count=0,
-            status_reason=None,
-            retry_after=None,
-        )
         cases = (
             (
                 sid_grant_control.SidClaimPayload(
-                    misleading_primary,
                     grant_control.ClaimMode.PRIMARY,
                 ),
                 cursor_policy.ReplayFloorCause.BOOTSTRAP,
             ),
             (
                 sid_grant_control.SidClaimPayload(
-                    misleading_recovery,
                     grant_control.ClaimMode.RECOVERY,
                 ),
                 cursor_policy.ReplayFloorCause.RECOVERY,
@@ -2589,7 +2556,6 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         wait = _RecordingWait()
         rejection = ingestion_lease_store.GrantRejected(
             ingestion_lease_store.GrantRejectionReason.MISSING,
-            None,
         )
         processor, _ = _processor(
             _ScriptedMembershipStore(rejection),

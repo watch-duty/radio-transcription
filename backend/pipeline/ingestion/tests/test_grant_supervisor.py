@@ -66,23 +66,10 @@ def _leased_feed(
     )
 
 
-def _lease_snapshot() -> ingestion_lease_store.LeaseSnapshot:
-    return ingestion_lease_store.LeaseSnapshot(
-        status=feed_store.FeedStatus.ACTIVE,
-        last_heartbeat=_NOW,
-        failure_count=0,
-        retry_after=None,
-        status_reason=None,
-        status_reason_detail=None,
-        membership_revision=1,
-        updated_at=_NOW,
-    )
-
-
 def _sid_payload(
     mode: grant_control.ClaimMode = grant_control.ClaimMode.PRIMARY,
 ) -> sid_grant_control.SidClaimPayload:
-    return sid_grant_control.SidClaimPayload(_lease_snapshot(), mode)
+    return sid_grant_control.SidClaimPayload(mode)
 
 
 def _valid_leased_feed(

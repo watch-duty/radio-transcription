@@ -38,6 +38,8 @@ def _grant(
 
 
 def _lease_row(**overrides: object) -> dict[str, object]:
+    explicit_durable_failing = "durable_failing" in overrides
+    explicit_lifecycle_dirty = "lifecycle_dirty" in overrides
     row: dict[str, object] = {
         "source_type": "bcfy_calls",
         "lease_key": "123",
@@ -55,6 +57,17 @@ def _lease_row(**overrides: object) -> dict[str, object]:
         "final_status": None,
     }
     row.update(overrides)
+    if not explicit_durable_failing:
+        row["durable_failing"] = (
+            row["failure_count"] != 0 or row["status_reason"] is not None
+        )
+    if not explicit_lifecycle_dirty:
+        row["lifecycle_dirty"] = (
+            row["failure_count"] != 0
+            or row["retry_after"] is not None
+            or row["status_reason"] is not None
+            or row["status_reason_detail"] is not None
+        )
     return row
 
 
@@ -340,11 +353,18 @@ class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
 class TestIngestionLeaseStoreClaims(unittest.IsolatedAsyncioTestCase):
     """Tests for strict typed claim conversion and one-shot execution."""
 
-    async def test_primary_claim_returns_complete_grant_and_snapshot(
+    async def test_primary_claim_returns_complete_grant_and_lifecycle(
         self,
     ) -> None:
         pool = connection_util.make_mock_pool(
-            fetch_result=[_lease_row(fencing_token=8, failure_count=0)]
+            fetch_result=[
+                _lease_row(
+                    fencing_token=8,
+                    failure_count=0,
+                    status_reason=None,
+                    status_reason_detail=None,
+                )
+            ]
         )
         store = ingestion_lease_store.IngestionLeaseStore(pool)
 
@@ -356,7 +376,7 @@ class TestIngestionLeaseStoreClaims(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].grant, _grant(fencing_token=8))
-        self.assertEqual(result[0].snapshot.membership_revision, 4)
+        self.assertFalse(result[0].durable_failing)
         pool.fetch.assert_awaited_once_with(
             ingestion_lease_queries.CLAIM_UNCLAIMED_LEASES_SQL,
             "bcfy_calls",
@@ -416,8 +436,7 @@ class TestIngestionLeaseStoreClaims(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         cases = (
             {"source_type": "future_source"},
-            {"status": "future_status"},
-            {"status_reason": "future_reason"},
+            {"durable_failing": 1},
         )
 
         for overrides in cases:
@@ -426,7 +445,7 @@ class TestIngestionLeaseStoreClaims(unittest.IsolatedAsyncioTestCase):
                     fetch_result=[_lease_row(**overrides)]
                 )
                 store = ingestion_lease_store.IngestionLeaseStore(pool)
-                with self.assertRaises(ValueError):
+                with self.assertRaises((TypeError, ValueError)):
                     await store.claim_unclaimed(
                         feed_store.SourceType.BCFY_CALLS,
                         _OWNER_ID,
@@ -538,13 +557,13 @@ class TestIngestionLeaseStoreHeartbeat(unittest.IsolatedAsyncioTestCase):
 
 
 class TestSharedGrantRejection(unittest.TestCase):
-    """Tests for nullable/current-state rejection semantics."""
+    """Tests for exact-grant rejection classification."""
 
     def setUp(self) -> None:
         self.store = ingestion_lease_store.IngestionLeaseStore(mock.AsyncMock())
         self.grant = _grant()
 
-    def test_only_missing_has_no_snapshot(self) -> None:
+    def test_missing_is_classified_without_exposing_row_state(self) -> None:
         result = self.store._grant_rejection(self.grant, None)
 
         self.assertIsNotNone(result)
@@ -553,9 +572,8 @@ class TestSharedGrantRejection(unittest.TestCase):
             result.reason,
             ingestion_lease_store.GrantRejectionReason.MISSING,
         )
-        self.assertIsNone(result.snapshot)
 
-    def test_owner_fence_and_status_rejections_preserve_snapshot(self) -> None:
+    def test_owner_fence_and_status_rejections_are_classified(self) -> None:
         cases = (
             (
                 _lease_row(worker_id=_OTHER_OWNER_ID),
@@ -577,11 +595,6 @@ class TestSharedGrantRejection(unittest.TestCase):
                 self.assertIsNotNone(result)
                 assert result is not None
                 self.assertIs(result.reason, reason)
-                assert isinstance(
-                    result.snapshot,
-                    ingestion_lease_store.LeaseSnapshot,
-                )
-                self.assertEqual(result.snapshot.failure_count, 2)
 
     def test_exact_active_grant_is_not_rejected(self) -> None:
         self.assertIsNone(self.store._grant_rejection(self.grant, _lease_row()))
@@ -596,9 +609,6 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
         for cause in ingestion_lease_store.LeaseReleaseCause:
             pool = connection_util.make_mock_pool(
                 fetchrow_result=_lease_row(
-                    status="unclaimed",
-                    worker_id=None,
-                    last_heartbeat=None,
                     applied=True,
                 )
             )
@@ -610,8 +620,7 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
                 result.disposition,
                 ingestion_lease_store.LeaseOperationDisposition.APPLIED,
             )
-            assert result.snapshot is not None
-            self.assertIsNone(result.snapshot.last_heartbeat)
+            self.assertTrue(result.durable_failing)
             observed_args.append(pool.fetchrow.await_args.args)
 
         self.assertTrue(all(args == observed_args[0] for args in observed_args))
@@ -620,7 +629,9 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
             ingestion_lease_queries.RELEASE_LEASE_SQL,
         )
 
-    async def test_stale_release_returns_current_diagnostic_state(self) -> None:
+    async def test_stale_release_returns_only_rejection_disposition(
+        self,
+    ) -> None:
         pool = connection_util.make_mock_pool(
             fetchrow_result=_lease_row(
                 status="failing",
@@ -639,9 +650,7 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
             result.disposition,
             ingestion_lease_store.LeaseOperationDisposition.STATUS_INELIGIBLE,
         )
-        assert result.snapshot is not None
-        self.assertEqual(result.snapshot.status, feed_store.FeedStatus.FAILING)
-        self.assertEqual(result.snapshot.failure_count, 2)
+        self.assertIsNone(result.durable_failing)
 
     async def test_missing_release_is_typed(self) -> None:
         pool = connection_util.make_mock_pool(fetchrow_result=None)
@@ -653,7 +662,7 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
             result.disposition,
             ingestion_lease_store.LeaseOperationDisposition.MISSING,
         )
-        self.assertIsNone(result.snapshot)
+        self.assertIsNone(result.durable_failing)
 
     async def test_exact_nonapplied_release_fails_closed(self) -> None:
         pool = connection_util.make_mock_pool(
@@ -1065,12 +1074,6 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
                 )
                 assert isinstance(result, ingestion_lease_store.GrantRejected)
                 self.assertIs(result.reason, expected_reason)
-                if expected_reason is (
-                    ingestion_lease_store.GrantRejectionReason.MISSING
-                ):
-                    self.assertIsNone(result.snapshot)
-                else:
-                    self.assertIsNotNone(result.snapshot)
                 connection.fetch.assert_not_awaited()
 
     async def test_empty_and_no_eligible_members_fail_closed(self) -> None:
@@ -3223,8 +3226,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             result.lease_effect.effect,
             ingestion_lease_store.LeaseLifecycleEffect.RECOVERED,
         )
-        self.assertEqual(result.lease_effect.before_snapshot.failure_count, 2)
-        self.assertEqual(result.lease_effect.after_snapshot.failure_count, 0)
         self.assertIs(
             connection.fetchrow.await_args_list[1].args[0],
             ingestion_lease_queries.FINALIZE_LEASE_RECOVERY_SQL,
@@ -3282,7 +3283,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             result.lease_effect.effect,
             ingestion_lease_store.LeaseLifecycleEffect.NONE,
         )
-        self.assertEqual(result.lease_effect.after_snapshot.failure_count, 3)
         connection.fetchrow.assert_awaited_once()
 
     async def test_audit_failure_rolls_back_children_and_lease_recovery(

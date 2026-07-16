@@ -345,13 +345,7 @@ def _require_neutral_lease_result(value: object) -> None:
     if type(value) is not ingestion_lease_store.LeaseLifecycleResult:
         message = "neutral storage batch returned an invalid Lease result"
         raise BoundaryAdapterIntegrityError(message)
-    if (
-        value.effect is not ingestion_lease_store.LeaseLifecycleEffect.NONE
-        or type(value.before_snapshot)
-        is not ingestion_lease_store.LeaseSnapshot
-        or type(value.after_snapshot) is not ingestion_lease_store.LeaseSnapshot
-        or value.before_snapshot != value.after_snapshot
-    ):
+    if value.effect is not ingestion_lease_store.LeaseLifecycleEffect.NONE:
         message = "neutral storage batch returned contradictory evidence"
         raise BoundaryAdapterIntegrityError(message)
 
@@ -695,21 +689,11 @@ def _require_final_lease_result(
     if type(value) is not ingestion_lease_store.LeaseLifecycleResult:
         message = "final storage batch returned an invalid Lease result"
         raise BoundaryAdapterIntegrityError(message)
-    if (
-        type(value.before_snapshot) is not ingestion_lease_store.LeaseSnapshot
-        or type(value.after_snapshot) is not ingestion_lease_store.LeaseSnapshot
-        or not isinstance(
-            value.effect,
-            ingestion_lease_store.LeaseLifecycleEffect,
-        )
+    if not isinstance(
+        value.effect,
+        ingestion_lease_store.LeaseLifecycleEffect,
     ):
         message = "final storage batch returned malformed Lease evidence"
-        raise BoundaryAdapterIntegrityError(message)
-    if (
-        value.effect is ingestion_lease_store.LeaseLifecycleEffect.NONE
-        and value.before_snapshot != value.after_snapshot
-    ):
-        message = "final Lease no-op returned contradictory snapshots"
         raise BoundaryAdapterIntegrityError(message)
     if type(plan.lease_effect) is ingestion_lease_store.NoLeaseEffect and (
         value.effect is not ingestion_lease_store.LeaseLifecycleEffect.NONE

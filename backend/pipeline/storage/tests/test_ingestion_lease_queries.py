@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import datetime
 import inspect
 import pathlib
 import typing
@@ -49,7 +48,7 @@ class TestLeaseGrantContract(unittest.TestCase):
             {field.name for field in fields},
         )
 
-    def test_grant_and_snapshot_values_are_frozen_and_slotted(self) -> None:
+    def test_grant_and_operation_values_are_frozen_and_slotted(self) -> None:
         grant = ingestion_lease_store.LeaseGrant(
             feed_store.SourceType.BCFY_CALLS,
             "00123",
@@ -62,8 +61,10 @@ class TestLeaseGrantContract(unittest.TestCase):
 
         for value_type in (
             ingestion_lease_store.LeaseGrant,
-            ingestion_lease_store.LeaseSnapshot,
             ingestion_lease_store.LeaseClaim,
+            ingestion_lease_store.LeaseOperationResult,
+            ingestion_lease_store.GrantRejected,
+            ingestion_lease_store.LeaseLifecycleResult,
         ):
             self.assertTrue(dataclasses.is_dataclass(value_type))
             self.assertTrue(hasattr(value_type, "__slots__"))
@@ -86,38 +87,21 @@ class TestLeaseGrantContract(unittest.TestCase):
                     *case,  # ty: ignore[invalid-argument-type]
                 )
 
-    def test_grant_equality_excludes_mutable_snapshot_state(self) -> None:
+    def test_grant_equality_excludes_mutable_lifecycle_state(self) -> None:
         grant = ingestion_lease_store.LeaseGrant(
             feed_store.SourceType.BCFY_CALLS,
             "123",
             self.owner_id,
             4,
         )
-        now = datetime.datetime(2026, 7, 10, tzinfo=datetime.UTC)
         first = ingestion_lease_store.LeaseClaim(
-            grant,
-            ingestion_lease_store.LeaseSnapshot(
-                status=feed_store.FeedStatus.ACTIVE,
-                last_heartbeat=now,
-                failure_count=0,
-                retry_after=None,
-                status_reason=None,
-                status_reason_detail=None,
-                membership_revision=1,
-                updated_at=now,
-            ),
+            grant=grant,
+            durable_failing=False,
         )
-        second = dataclasses.replace(
-            first,
-            snapshot=dataclasses.replace(
-                first.snapshot,
-                membership_revision=2,
-                failure_count=3,
-            ),
-        )
+        second = dataclasses.replace(first, durable_failing=True)
 
         self.assertEqual(first.grant, second.grant)
-        self.assertNotEqual(first.snapshot, second.snapshot)
+        self.assertNotEqual(first.durable_failing, second.durable_failing)
 
 
 class TestLeaseClaimQueryContract(unittest.TestCase):
@@ -209,19 +193,19 @@ class TestLeaseClaimQueryContract(unittest.TestCase):
                 self.assertIn(fragment, sql)
             for fragment in retained:
                 self.assertNotIn(fragment, sql)
-            for projected in (
-                "failure_count",
-                "status_reason",
-                "status_reason_detail",
-                "membership_revision",
+            result_projection = sql.split("RETURNING", 1)[1]
+            self.assertIn("durable_failing", result_projection)
+            for removed in (
+                "leases.status,",
+                "leases.last_heartbeat,",
+                "leases.failure_count,",
+                "leases.retry_after,",
+                "leases.status_reason,",
+                "leases.status_reason_detail,",
+                "leases.membership_revision,",
+                "leases.updated_at,",
             ):
-                self.assertIn(projected, sql)
-            for absent in (
-                "unclaimed_since",
-                "status_reason_updated_at",
-                "audit_revision",
-            ):
-                self.assertNotIn(absent, sql)
+                self.assertNotIn(removed, result_projection)
 
     def test_claims_project_no_child_owner_or_durable_cursor(self) -> None:
         for query in (
@@ -286,6 +270,18 @@ class TestLeaseControlQueryContract(unittest.TestCase):
         self.assertNotIn("failure_count =", sql)
         self.assertNotIn("retry_after =", sql)
         self.assertNotIn("status_reason =", sql)
+        result_projection = sql.rsplit("SELECT", 1)[1]
+        self.assertIn("durable_failing", result_projection)
+        for removed in (
+            "last_heartbeat",
+            "failure_count",
+            "retry_after",
+            "status_reason",
+            "status_reason_detail",
+            "membership_revision",
+            "updated_at",
+        ):
+            self.assertNotIn(removed, result_projection)
 
     def test_no_worker_only_bulk_release_or_internal_retry_surface(
         self,
@@ -504,12 +500,13 @@ class TestGrantRejectionContract(unittest.TestCase):
     def test_rejection_is_frozen_and_slotted(self) -> None:
         rejection = ingestion_lease_store.GrantRejected(
             ingestion_lease_store.GrantRejectionReason.MISSING,
-            None,
         )
 
         self.assertTrue(hasattr(type(rejection), "__slots__"))
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            rejection.snapshot = None  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+            rejection.reason = (  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+                ingestion_lease_store.GrantRejectionReason.FENCE_MISMATCH
+            )
 
 
 class TestChildMutationQueryContract(unittest.TestCase):
@@ -802,6 +799,35 @@ class TestChildMutationQueryContract(unittest.TestCase):
         self.assertNotIn("worker_id =", set_clause)
         self.assertNotIn("fencing_token =", set_clause)
         self.assertNotIn("last_heartbeat =", set_clause)
+        result_projection = sql.split("RETURNING", 1)[1]
+        self.assertIn("lifecycle_dirty", result_projection)
+        self.assertIn("membership_revision", result_projection)
+        for removed in (
+            "last_heartbeat,",
+            "failure_count,",
+            "retry_after,",
+            "status_reason,",
+            "status_reason_detail,",
+            "updated_at,",
+        ):
+            self.assertNotIn(removed, result_projection)
+
+    def test_locked_lease_projects_only_authority_revision_and_dirty_state(
+        self,
+    ) -> None:
+        sql = _normalized_sql(ingestion_lease_queries.LOCK_LEASE_SQL)
+
+        self.assertIn("membership_revision", sql)
+        self.assertIn("lifecycle_dirty", sql)
+        for removed in (
+            "last_heartbeat,",
+            "failure_count,",
+            "retry_after,",
+            "status_reason,",
+            "status_reason_detail,",
+            "updated_at,",
+        ):
+            self.assertNotIn(removed, sql)
 
     def test_child_store_has_no_retry_or_runtime_policy_dependency(
         self,

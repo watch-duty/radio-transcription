@@ -66,16 +66,6 @@ def _grant(
 
 def _snapshot() -> sid_grant_control.SidClaimPayload:
     return sid_grant_control.SidClaimPayload(
-        ingestion_lease_store.LeaseSnapshot(
-            status=feed_store.FeedStatus.ACTIVE,
-            last_heartbeat=_NOW,
-            failure_count=0,
-            retry_after=None,
-            status_reason=None,
-            status_reason_detail=None,
-            membership_revision=1,
-            updated_at=_NOW,
-        ),
         grant_control.ClaimMode.PRIMARY,
     )
 
@@ -335,7 +325,7 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
         scheduler = _ControlledScheduler()
         runner, factory = _runner(sid_runner, scheduler)
         context, _stop, _loss = _context()
-        wrong_payload = _snapshot().snapshot
+        wrong_payload = object()
 
         with self.assertRaises(TypeError):
             await runner.run(
@@ -574,7 +564,6 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
         sid_runner = _sid_runner_module()
         rejection = ingestion_lease_store.GrantRejected(
             ingestion_lease_store.GrantRejectionReason.MISSING,
-            None,
         )
         cases = (
             (

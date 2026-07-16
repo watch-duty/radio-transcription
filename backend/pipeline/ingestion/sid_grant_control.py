@@ -38,7 +38,6 @@ _RELEASE_CAUSES = {
 class SidClaimPayload:
     """Source-minted immutable provenance for one SID claim."""
 
-    snapshot: ingestion_lease_store.LeaseSnapshot
     claim_mode: grant_control.ClaimMode
     _binding_proof: bytes = dataclasses.field(
         default=b"",
@@ -48,12 +47,6 @@ class SidClaimPayload:
     )
 
     def __post_init__(self) -> None:
-        if not isinstance(
-            self.snapshot,
-            ingestion_lease_store.LeaseSnapshot,
-        ):
-            msg = "snapshot must be a LeaseSnapshot"
-            raise TypeError(msg)
         if not isinstance(self.claim_mode, grant_control.ClaimMode):
             msg = "claim_mode must be a ClaimMode"
             raise TypeError(msg)
@@ -72,7 +65,7 @@ def _sid_claim_binding_proof(
             str(grant.owner_worker_id),
             grant.fencing_token,
             payload.claim_mode.value,
-            id(payload.snapshot),
+            id(payload),
         ),
         ensure_ascii=True,
         separators=(",", ":"),
@@ -81,13 +74,10 @@ def _sid_claim_binding_proof(
 
 
 def _lifecycle(
-    snapshot: ingestion_lease_store.LeaseSnapshot,
+    *,
+    durable_failing: bool,
 ) -> grant_control.LifecycleEvidence:
-    return grant_control.LifecycleEvidence(
-        durable_failing=(
-            snapshot.failure_count > 0 or snapshot.status_reason is not None
-        )
-    )
+    return grant_control.LifecycleEvidence(durable_failing=durable_failing)
 
 
 def _finalize_disposition(
@@ -104,6 +94,22 @@ def _finalize_disposition(
         return grant_control.FinalizeDisposition.LOST
     msg = "SID finalization returned an unknown disposition"
     raise grant_control.GrantControlIntegrityError(msg)
+
+
+def _released_lifecycle(
+    result: ingestion_lease_store.LeaseOperationResult,
+    disposition: grant_control.FinalizeDisposition,
+) -> grant_control.LifecycleEvidence | None:
+    """Translate lifecycle evidence from one neutral release result."""
+    if disposition is grant_control.FinalizeDisposition.APPLIED:
+        if not isinstance(result.durable_failing, bool):
+            msg = "retained SID release lacks lifecycle evidence"
+            raise grant_control.GrantControlIntegrityError(msg)
+        return _lifecycle(durable_failing=result.durable_failing)
+    if result.durable_failing is not None:
+        msg = "lost SID release returned lifecycle evidence"
+        raise grant_control.GrantControlIntegrityError(msg)
+    return None
 
 
 class SidGrantControl:
@@ -133,11 +139,10 @@ class SidGrantControl:
     @staticmethod
     def _issue_claim_payload(
         grant: ingestion_lease_store.LeaseGrant,
-        snapshot: ingestion_lease_store.LeaseSnapshot,
         mode: grant_control.ClaimMode,
     ) -> SidClaimPayload:
         """Mint the sole source-owned immutable provenance object."""
-        payload = SidClaimPayload(snapshot, mode)
+        payload = SidClaimPayload(mode)
         object.__setattr__(
             payload,
             "_binding_proof",
@@ -206,14 +211,13 @@ class SidGrantControl:
             seen.add(claim.grant)
             payload = self._issue_claim_payload(
                 claim.grant,
-                claim.snapshot,
                 mode,
             )
             translated.append(
                 grant_control.ClaimedGrant(
                     grant=claim.grant,
                     payload=payload,
-                    lifecycle=_lifecycle(claim.snapshot),
+                    lifecycle=_lifecycle(durable_failing=claim.durable_failing),
                 )
             )
         return tuple(translated)
@@ -222,8 +226,8 @@ class SidGrantControl:
         self,
         grant: ingestion_lease_store.LeaseGrant,
         payload: SidClaimPayload,
-    ) -> ingestion_lease_store.LeaseSnapshot:
-        """Validate and unwrap one exact source-issued claim correlation."""
+    ) -> None:
+        """Validate one exact source-issued claim correlation."""
         if (
             grant.source_type is not self._source_type
             or not hmac.compare_digest(
@@ -233,7 +237,6 @@ class SidGrantControl:
         ):
             msg = "SID finalization payload crossed its complete grant"
             raise grant_control.GrantControlIntegrityError(msg)
-        return payload.snapshot
 
     async def heartbeat(
         self,
@@ -327,22 +330,10 @@ class SidGrantControl:
                 msg = "SID release returned an invalid result type"
                 raise grant_control.GrantControlIntegrityError(msg)
             disposition = _finalize_disposition(result.disposition)
-            if (
-                disposition is grant_control.FinalizeDisposition.APPLIED
-                and result.snapshot is None
-            ):
-                msg = "retained SID release is missing its snapshot"
-                raise grant_control.GrantControlIntegrityError(msg)
-            lifecycle = (
-                _lifecycle(result.snapshot)
-                if result.snapshot is not None
-                and disposition is not grant_control.FinalizeDisposition.LOST
-                else None
-            )
             return grant_control.FinalizeResult(
                 grant,
                 disposition,
-                lifecycle,
+                _released_lifecycle(result, disposition),
             )
 
         if isinstance(terminal, grant_control.BudgetedFailureDecision):

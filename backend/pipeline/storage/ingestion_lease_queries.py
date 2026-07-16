@@ -27,16 +27,12 @@ claimed AS (
     RETURNING
         leases.source_type,
         leases.lease_key,
-        leases.status::text AS status,
         leases.worker_id,
         leases.fencing_token,
-        leases.last_heartbeat,
-        leases.failure_count,
-        leases.retry_after,
-        leases.status_reason,
-        leases.status_reason_detail,
-        leases.membership_revision,
-        leases.updated_at
+        (
+            leases.failure_count <> 0
+            OR leases.status_reason IS NOT NULL
+        ) AS durable_failing
 )
 SELECT *
 FROM claimed
@@ -85,16 +81,12 @@ claimed AS (
     RETURNING
         leases.source_type,
         leases.lease_key,
-        leases.status::text AS status,
         leases.worker_id,
         leases.fencing_token,
-        leases.last_heartbeat,
-        leases.failure_count,
-        leases.retry_after,
-        leases.status_reason,
-        leases.status_reason_detail,
-        leases.membership_revision,
-        leases.updated_at
+        (
+            leases.failure_count <> 0
+            OR leases.status_reason IS NOT NULL
+        ) AS durable_failing
 )
 SELECT *
 FROM claimed
@@ -182,13 +174,10 @@ WITH current_state AS MATERIALIZED (
         status,
         worker_id,
         fencing_token,
-        last_heartbeat,
-        failure_count,
-        retry_after,
-        status_reason,
-        status_reason_detail,
-        membership_revision,
-        updated_at
+        (
+            failure_count <> 0
+            OR status_reason IS NOT NULL
+        ) AS durable_failing
     FROM public.ingestion_leases
     WHERE source_type = $1
       AND lease_key = $2
@@ -206,65 +195,15 @@ released AS (
       AND current_state.status = 'active'::public.feed_status
       AND current_state.worker_id = $3
       AND current_state.fencing_token = $4
-    RETURNING
-        leases.source_type,
-        leases.lease_key,
-        leases.status,
-        leases.worker_id,
-        leases.fencing_token,
-        leases.last_heartbeat,
-        leases.failure_count,
-        leases.retry_after,
-        leases.status_reason,
-        leases.status_reason_detail,
-        leases.membership_revision,
-        leases.updated_at
+    RETURNING leases.source_type, leases.lease_key
 )
 SELECT
     current_state.source_type,
     current_state.lease_key,
-    CASE
-        WHEN released.source_type IS NOT NULL THEN released.status::text
-        ELSE current_state.status::text
-    END AS status,
-    CASE
-        WHEN released.source_type IS NOT NULL THEN released.worker_id
-        ELSE current_state.worker_id
-    END AS worker_id,
-    CASE
-        WHEN released.source_type IS NOT NULL THEN released.fencing_token
-        ELSE current_state.fencing_token
-    END AS fencing_token,
-    CASE
-        WHEN released.source_type IS NOT NULL THEN released.last_heartbeat
-        ELSE current_state.last_heartbeat
-    END AS last_heartbeat,
-    CASE
-        WHEN released.source_type IS NOT NULL THEN released.failure_count
-        ELSE current_state.failure_count
-    END AS failure_count,
-    CASE
-        WHEN released.source_type IS NOT NULL THEN released.retry_after
-        ELSE current_state.retry_after
-    END AS retry_after,
-    CASE
-        WHEN released.source_type IS NOT NULL THEN released.status_reason
-        ELSE current_state.status_reason
-    END AS status_reason,
-    CASE
-        WHEN released.source_type IS NOT NULL
-            THEN released.status_reason_detail
-        ELSE current_state.status_reason_detail
-    END AS status_reason_detail,
-    CASE
-        WHEN released.source_type IS NOT NULL
-            THEN released.membership_revision
-        ELSE current_state.membership_revision
-    END AS membership_revision,
-    CASE
-        WHEN released.source_type IS NOT NULL THEN released.updated_at
-        ELSE current_state.updated_at
-    END AS updated_at,
+    current_state.status::text AS status,
+    current_state.worker_id,
+    current_state.fencing_token,
+    current_state.durable_failing,
     released.source_type IS NOT NULL AS applied
 FROM current_state
 LEFT JOIN released
@@ -405,13 +344,13 @@ SELECT
     status::text AS status,
     worker_id,
     fencing_token,
-    last_heartbeat,
-    failure_count,
-    retry_after,
-    status_reason,
-    status_reason_detail,
     membership_revision,
-    updated_at
+    (
+        failure_count <> 0
+        OR retry_after IS NOT NULL
+        OR status_reason IS NOT NULL
+        OR status_reason_detail IS NOT NULL
+    ) AS lifecycle_dirty
 FROM public.ingestion_leases
 WHERE source_type = $1
   AND lease_key = $2
@@ -881,13 +820,13 @@ RETURNING
     status::text AS status,
     worker_id,
     fencing_token,
-    last_heartbeat,
-    failure_count,
-    retry_after,
-    status_reason,
-    status_reason_detail,
     membership_revision,
-    updated_at
+    (
+        failure_count <> 0
+        OR retry_after IS NOT NULL
+        OR status_reason IS NOT NULL
+        OR status_reason_detail IS NOT NULL
+    ) AS lifecycle_dirty
 """
 
 
