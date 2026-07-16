@@ -18,7 +18,6 @@ from google.cloud.pubsub_v1.publisher import exceptions as pubsub_exceptions
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
 from backend.pipeline.ingestion import (
     collector_runtime,
-    failure_policy,
     memory_watchdog,
 )
 from backend.pipeline.ingestion.collector_runtime import (
@@ -3249,10 +3248,8 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
         rt._releasing_feeds = set()
 
         with mock.patch(
-            "backend.pipeline.ingestion.collector_runtime.failure_policy.classify_failure_policy",
-            return_value=(
-                failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-            ),
+            "backend.pipeline.ingestion.collector_runtime.failure_policy.consumes_failure_budget",
+            return_value=True,
         ):
             await rt._process_feed(_FEED)
 
@@ -3700,10 +3697,8 @@ class TestProcessFeedQuarantine(unittest.IsolatedAsyncioTestCase):
                 mock.AsyncMock(side_effect=RuntimeError("pubsub boom")),
             ),
             mock.patch(
-                "backend.pipeline.ingestion.collector_runtime.failure_policy.classify_failure_policy",
-                return_value=(
-                    failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-                ),
+                "backend.pipeline.ingestion.collector_runtime.failure_policy.consumes_failure_budget",
+                return_value=True,
             ),
             self.assertLogs(
                 "backend.pipeline.ingestion.collector_runtime",

@@ -93,23 +93,25 @@ def _feed_payload_for_grant(
     )
 
 
-def _budgeted_decision() -> grant_control.BudgetedFailureDecision:
-    return grant_control.BudgetedFailureDecision(
-        failure_threshold=5,
-        backoff_base_sec=15,
-        backoff_max_sec=600,
+def _budgeted_plan() -> failure_policy.FailurePersistencePlan:
+    return failure_policy.FailurePersistencePlan(
         status_reason=feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-        actor_id=_ACTOR_ID,
         reason="invalid configuration",
+        treatment=failure_policy.ConsumeFailureBudget(
+            failure_threshold=5,
+            backoff_base_sec=15,
+            backoff_max_sec=600,
+        ),
     )
 
 
-def _non_budgeted_decision() -> grant_control.NonBudgetedFailureDecision:
-    return grant_control.NonBudgetedFailureDecision(
-        retry_after=_NOW + datetime.timedelta(minutes=8),
+def _non_budgeted_plan() -> failure_policy.FailurePersistencePlan:
+    return failure_policy.FailurePersistencePlan(
         status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-        actor_id=_ACTOR_ID,
         reason="provider unavailable",
+        treatment=failure_policy.RetryWithoutBudget(
+            _NOW + datetime.timedelta(minutes=8)
+        ),
     )
 
 
@@ -183,16 +185,15 @@ class TestGrantControlVocabulary(unittest.TestCase):
             ("self", "grant", "payload", "terminal"),
         )
 
-    def test_run_context_owns_only_closed_signals_and_callback(self) -> None:
+    def test_run_context_owns_only_closed_signals(self) -> None:
         context = grant_control.RunContext(
             stop_requested=asyncio.Event(),
             grant_lost=asyncio.Event(),
-            set_retrying=mock.Mock(),
         )
 
         self.assertEqual(
             tuple(field.name for field in dataclasses.fields(context)),
-            ("stop_requested", "grant_lost", "set_retrying"),
+            ("stop_requested", "grant_lost"),
         )
         self.assertEqual(
             set(typing.get_args(grant_control.RunOutcome.__value__)),
@@ -230,6 +231,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             self.heartbeat_store,
             self.caps,
             _ABANDONMENT,
+            actor_id=_ACTOR_ID,
         )
 
     async def test_primary_claim_preserves_water_fill_payload_and_calls(
@@ -422,7 +424,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
         with (
             mock.patch.object(
                 failure_policy,
-                "classify_failure_policy",
+                "consumes_failure_budget",
                 policy_mock,
             ),
             mock.patch.object(retry, "retry_with_lease_check", retry_mock),
@@ -435,12 +437,12 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             budgeted = await self.control.finalize(
                 grant,
                 _feed_payload_for_grant(grant),
-                _budgeted_decision(),
+                _budgeted_plan(),
             )
             non_budgeted = await self.control.finalize(
                 grant,
                 _feed_payload_for_grant(grant),
-                _non_budgeted_decision(),
+                _non_budgeted_plan(),
             )
 
         self.assertIs(
@@ -460,27 +462,35 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             grant.owner_worker_id,
             grant.fencing_token,
         )
-        decision = _budgeted_decision()
+        plan = _budgeted_plan()
+        treatment = typing.cast(
+            "failure_policy.ConsumeFailureBudget",
+            plan.treatment,
+        )
         self.data_store.report_feed_failure.assert_awaited_once_with(
             grant.feed_id,
             grant.owner_worker_id,
             grant.fencing_token,
-            decision.failure_threshold,
-            decision.backoff_base_sec,
-            decision.backoff_max_sec,
-            actor_id=decision.actor_id,
-            reason=decision.reason,
-            status_reason=decision.status_reason,
+            treatment.failure_threshold,
+            treatment.backoff_base_sec,
+            treatment.backoff_max_sec,
+            actor_id=_ACTOR_ID,
+            reason=plan.reason,
+            status_reason=plan.status_reason,
         )
-        non_budgeted_decision = _non_budgeted_decision()
+        non_budgeted_plan = _non_budgeted_plan()
+        retry_treatment = typing.cast(
+            "failure_policy.RetryWithoutBudget",
+            non_budgeted_plan.treatment,
+        )
         self.data_store.release_non_budgeted_failure.assert_awaited_once_with(
             grant.feed_id,
             grant.owner_worker_id,
             grant.fencing_token,
-            retry_after=non_budgeted_decision.retry_after,
-            status_reason=non_budgeted_decision.status_reason,
-            actor_id=non_budgeted_decision.actor_id,
-            reason=non_budgeted_decision.reason,
+            retry_after=retry_treatment.retry_after,
+            status_reason=non_budgeted_plan.status_reason,
+            actor_id=_ACTOR_ID,
+            reason=non_budgeted_plan.reason,
         )
         self.data_store.release_feeds_batch.assert_not_awaited()
         policy_mock.assert_not_called()
@@ -509,7 +519,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             await self.control.finalize(
                 grant,
                 _feed_payload_for_grant(grant),
-                _budgeted_decision(),
+                _budgeted_plan(),
             )
         self.data_store.report_feed_failure.assert_awaited_once()
 
@@ -523,20 +533,21 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             self.heartbeat_store,
             self.caps,
             _ABANDONMENT,
+            actor_id=_ACTOR_ID,
             on_quarantined=observer,
         )
         grant = _feed_grant()
         payload = _feed_payload_for_grant(grant)
-        decision = _budgeted_decision()
+        plan = _budgeted_plan()
         self.data_store.report_feed_failure.return_value = "quarantined"
 
-        result = await control.finalize(grant, payload, decision)
+        result = await control.finalize(grant, payload, plan)
 
         self.assertIs(
             result.disposition,
             grant_control.FinalizeDisposition.APPLIED,
         )
-        observer.assert_awaited_once_with(grant, payload, decision)
+        observer.assert_awaited_once_with(grant, payload, plan)
 
     async def test_quarantine_observer_failure_is_non_authoritative(
         self,
@@ -548,6 +559,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             self.heartbeat_store,
             self.caps,
             _ABANDONMENT,
+            actor_id=_ACTOR_ID,
             on_quarantined=observer,
         )
         grant = _feed_grant()
@@ -557,7 +569,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
         result = await control.finalize(
             grant,
             payload,
-            _budgeted_decision(),
+            _budgeted_plan(),
         )
 
         self.assertIs(
@@ -575,6 +587,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             self.heartbeat_store,
             self.caps,
             _ABANDONMENT,
+            actor_id=_ACTOR_ID,
             on_quarantined=observer,
         )
         grant = _feed_grant()
@@ -584,7 +597,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
         result = await control.finalize(
             grant,
             payload,
-            _budgeted_decision(),
+            _budgeted_plan(),
         )
 
         self.assertIs(
@@ -612,11 +625,12 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             self.heartbeat_store,
             self.caps,
             _ABANDONMENT,
+            actor_id=_ACTOR_ID,
             on_quarantined=observer,
         )
         grant = _feed_grant()
         payload = _feed_payload_for_grant(grant)
-        decision = _budgeted_decision()
+        plan = _budgeted_plan()
         self.data_store.report_feed_failure.return_value = "quarantined"
 
         with mock.patch.object(
@@ -625,7 +639,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             0.01,
         ):
             result = await asyncio.wait_for(
-                control.finalize(grant, payload, decision),
+                control.finalize(grant, payload, plan),
                 timeout=1,
             )
 
@@ -636,7 +650,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             grant_control.FinalizeDisposition.APPLIED,
         )
         self.data_store.report_feed_failure.assert_awaited_once()
-        observer.assert_awaited_once_with(grant, payload, decision)
+        observer.assert_awaited_once_with(grant, payload, plan)
 
     async def test_quarantine_observer_ignores_non_quarantined_failure(
         self,
@@ -647,13 +661,14 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             self.heartbeat_store,
             self.caps,
             _ABANDONMENT,
+            actor_id=_ACTOR_ID,
             on_quarantined=observer,
         )
         grant = _feed_grant()
         payload = _feed_payload_for_grant(grant)
         self.data_store.report_feed_failure.return_value = "failing"
 
-        await control.finalize(grant, payload, _budgeted_decision())
+        await control.finalize(grant, payload, _budgeted_plan())
 
         observer.assert_not_awaited()
 
@@ -664,6 +679,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             self.heartbeat_store,
             self.caps,
             _ABANDONMENT,
+            actor_id=_ACTOR_ID,
             on_quarantined=observer,
         )
         grant = _feed_grant()
@@ -676,7 +692,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             await control.finalize(
                 grant,
                 payload,
-                _non_budgeted_decision(),
+                _non_budgeted_plan(),
             )
 
         observer.assert_not_awaited()
@@ -697,6 +713,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             self.heartbeat_store,
             feed_store.SourceType.BCFY_CALLS,
             _ABANDONMENT,
+            actor_id=_ACTOR_ID,
         )
 
     def _sid_payload(
@@ -953,7 +970,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         self.data_store.load_membership.assert_not_awaited()
         self.data_store.commit_child_mutations.assert_not_awaited()
 
-    async def test_failure_decisions_make_one_exact_finalize_call(self) -> None:
+    async def test_failure_plans_make_one_exact_finalize_call(self) -> None:
         grant = _lease_grant()
         self.data_store.finalize_failure.return_value = (
             ingestion_lease_store.LeaseFailureResult(
@@ -967,7 +984,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         with (
             mock.patch.object(
                 failure_policy,
-                "classify_failure_policy",
+                "consumes_failure_budget",
                 policy_mock,
             ),
             mock.patch.object(retry, "retry_with_lease_check", retry_mock),
@@ -975,14 +992,14 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             budgeted = await self.control.finalize(
                 grant,
                 self._sid_payload(grant),
-                _budgeted_decision(),
+                _budgeted_plan(),
             )
             budgeted_call = self.data_store.finalize_failure.await_args
             self.data_store.finalize_failure.reset_mock()
             non_budgeted = await self.control.finalize(
                 grant,
                 self._sid_payload(grant),
-                _non_budgeted_decision(),
+                _non_budgeted_plan(),
             )
             non_budgeted_call = self.data_store.finalize_failure.await_args
 
@@ -995,7 +1012,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(budgeted_call.args[0], grant)
         self.assertEqual(
             budgeted_call.args[2],
-            _budgeted_decision().status_reason,
+            _budgeted_plan().status_reason,
         )
         self.assertEqual(budgeted_call.kwargs["actor_id"], _ACTOR_ID)
         self.assertIsInstance(
@@ -1004,7 +1021,10 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             non_budgeted_call.args[1].retry_after,
-            _non_budgeted_decision().retry_after,
+            typing.cast(
+                "failure_policy.RetryWithoutBudget",
+                _non_budgeted_plan().treatment,
+            ).retry_after,
         )
         self.assertIs(
             budgeted.disposition,
@@ -1032,7 +1052,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             await self.control.finalize(
                 grant,
                 self._sid_payload(grant),
-                _non_budgeted_decision(),
+                _non_budgeted_plan(),
             )
 
     async def test_finalize_maps_loss_without_batch_release(
@@ -1077,7 +1097,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             await self.control.finalize(
                 grant,
                 self._sid_payload(grant),
-                _budgeted_decision(),
+                _budgeted_plan(),
             )
 
         self.data_store.finalize_failure.assert_awaited_once()
@@ -1109,6 +1129,7 @@ class TestGrantControlStructuralBoundaries(unittest.TestCase):
 
         for source in (feed_source, sid_source):
             self.assertNotIn("classify_failure_policy", source)
+            self.assertNotIn("consumes_failure_budget", source)
             self.assertNotIn("retry_with_lease_check", source)
         self.assertNotIn("release_feeds_batch", feed_source)
         for forbidden in (

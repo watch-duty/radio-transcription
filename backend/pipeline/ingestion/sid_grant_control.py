@@ -10,7 +10,7 @@ import secrets
 import typing
 import uuid
 
-from backend.pipeline.ingestion import grant_control
+from backend.pipeline.ingestion import failure_policy, grant_control
 from backend.pipeline.storage import feed_store, ingestion_lease_store
 
 _STATUS_INELIGIBLE = (
@@ -88,6 +88,8 @@ class SidGrantControl:
         heartbeat_store: ingestion_lease_store.IngestionLeaseStore,
         source_type: feed_store.SourceType,
         abandonment_window: datetime.timedelta,
+        *,
+        actor_id: str,
     ) -> None:
         if not isinstance(source_type, feed_store.SourceType):
             msg = "source_type must be a SourceType"
@@ -98,10 +100,17 @@ class SidGrantControl:
         if abandonment_window <= datetime.timedelta(0):
             msg = "abandonment_window must be positive"
             raise ValueError(msg)
+        if not isinstance(actor_id, str):
+            msg = "actor_id must be a string"
+            raise TypeError(msg)
+        if not actor_id.strip():
+            msg = "actor_id must not be empty"
+            raise ValueError(msg)
         self._data_store = data_store
         self._heartbeat_store = heartbeat_store
         self._source_type = source_type
         self._abandonment_window = abandonment_window
+        self._actor_id = actor_id
 
     @staticmethod
     def _issue_claim_payload(
@@ -237,9 +246,7 @@ class SidGrantControl:
             ):
                 disposition = grant_control.HeartbeatDisposition.RETAINED
             elif result.disposition is _STATUS_INELIGIBLE:
-                disposition = (
-                    grant_control.HeartbeatDisposition.INELIGIBLE
-                )
+                disposition = grant_control.HeartbeatDisposition.INELIGIBLE
             elif result.disposition in (
                 ingestion_lease_store.LeaseOperationDisposition.MISSING,
                 ingestion_lease_store.LeaseOperationDisposition.OWNER_MISMATCH,
@@ -275,8 +282,7 @@ class SidGrantControl:
             terminal,
             (
                 grant_control.NeutralRelease,
-                grant_control.BudgetedFailureDecision,
-                grant_control.NonBudgetedFailureDecision,
+                failure_policy.FailurePersistencePlan,
             ),
         ):
             msg = "terminal must be a closed TerminalDecision"
@@ -293,17 +299,18 @@ class SidGrantControl:
             disposition = _finalize_disposition(result.disposition)
             return grant_control.FinalizeResult(grant, disposition)
 
-        if isinstance(terminal, grant_control.BudgetedFailureDecision):
+        treatment = terminal.treatment
+        if isinstance(treatment, failure_policy.ConsumeFailureBudget):
             action: ingestion_lease_store.LeaseFailureAction = (
                 ingestion_lease_store.BudgetedFailure(
-                    failure_threshold=terminal.failure_threshold,
-                    backoff_base_sec=terminal.backoff_base_sec,
-                    backoff_max_sec=terminal.backoff_max_sec,
+                    failure_threshold=treatment.failure_threshold,
+                    backoff_base_sec=treatment.backoff_base_sec,
+                    backoff_max_sec=treatment.backoff_max_sec,
                 )
             )
-        elif isinstance(terminal, grant_control.NonBudgetedFailureDecision):
+        elif isinstance(treatment, failure_policy.RetryWithoutBudget):
             action = ingestion_lease_store.NonBudgetedFailure(
-                terminal.retry_after
+                treatment.retry_after
             )
         else:
             msg = "terminal must be a closed TerminalDecision"
@@ -313,13 +320,13 @@ class SidGrantControl:
             grant,
             action,
             terminal.status_reason,
-            actor_id=terminal.actor_id,
+            actor_id=self._actor_id,
             reason=terminal.reason,
         )
         if not isinstance(result, ingestion_lease_store.LeaseFailureResult):
             msg = "SID failure returned an invalid result type"
             raise grant_control.GrantControlIntegrityError(msg)
-        if isinstance(terminal, grant_control.NonBudgetedFailureDecision) and (
+        if isinstance(treatment, failure_policy.RetryWithoutBudget) and (
             result.final_status is feed_store.FeedStatus.QUARANTINED
         ):
             msg = "non-budgeted SID failure cannot quarantine"

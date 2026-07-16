@@ -59,7 +59,6 @@ sid_grant_control.SidGrantControl.finalize
 grant_control.ClaimMode.RECOVERY
 grant_control.RunContext.stop_requested
 grant_control.RunContext.grant_lost
-grant_control.RunContext.set_retrying
 grant_control.GrantControl
 grant_control.GrantControl.heartbeat
 grant_control.GrantControl.finalize

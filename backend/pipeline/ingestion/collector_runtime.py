@@ -938,7 +938,15 @@ class CollectorRuntime:
         data_gap_known: bool = False,
     ) -> None:
         """Emit the canonical policy-decision telemetry event."""
-        action = failure_policy.classify_failure_policy(status_reason)
+        if (
+            status_reason
+            is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+        ):
+            executed_action = "record_post_bookmark_publish_gap"
+        elif failure_policy.consumes_failure_budget(status_reason):
+            executed_action = "increment_feed_failure_budget"
+        else:
+            executed_action = "retry_without_feed_budget"
         payload: dict[str, object] = {
             "event_type": "feed_failure_policy_decision",
             "feed_id": str(feed["id"]),
@@ -947,7 +955,7 @@ class CollectorRuntime:
             "status_reason": status_reason.value,
             "replay_missing": replay_missing,
             "data_gap_known": data_gap_known,
-            "executed_action": action.value,
+            "executed_action": executed_action,
         }
         if retry_after is not None:
             payload["retry_after"] = retry_after.isoformat()
@@ -963,7 +971,6 @@ class CollectorRuntime:
         status_reason: FeedStatusReason,
     ) -> None:
         """Emit explicit evidence that capture/bookmark succeeded but publish did not."""
-        action = failure_policy.classify_failure_policy(status_reason)
         payload: dict[str, object] = {
             "event_type": "post_bookmark_publish_failure",
             "feed_id": str(feed["id"]),
@@ -972,7 +979,7 @@ class CollectorRuntime:
             "status_reason": status_reason.value,
             "replay_missing": True,
             "data_gap_known": True,
-            "executed_action": action.value,
+            "executed_action": "record_post_bookmark_publish_gap",
         }
         logger.error(
             "Post-bookmark publish failure",
@@ -1584,11 +1591,7 @@ class CollectorRuntime:
             return
 
         except FeedFailure as e:
-            action = failure_policy.classify_failure_policy(e.status_reason)
-            if (
-                action
-                is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-            ):
+            if failure_policy.consumes_failure_budget(e.status_reason):
                 await self._record_feed_failure(
                     feed,
                     worker_id,
@@ -1607,15 +1610,11 @@ class CollectorRuntime:
             return
 
         except _PipelineFailure as e:
-            action = failure_policy.classify_failure_policy(e.status_reason)
             replay_missing = (
                 e.status_reason
                 is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
             )
-            if (
-                action
-                is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-            ):
+            if failure_policy.consumes_failure_budget(e.status_reason):
                 await self._record_feed_failure(
                     feed,
                     worker_id,
@@ -1643,11 +1642,7 @@ class CollectorRuntime:
             # FeedFailure; the runtime only records the explicit fallback.
             reason = status_reason_detail.exception_text(e)
             status_reason = FeedStatusReason.SYSTEM_UNEXPECTED_ERROR
-            action = failure_policy.classify_failure_policy(status_reason)
-            if (
-                action
-                is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-            ):
+            if failure_policy.consumes_failure_budget(status_reason):
                 await self._record_feed_failure(
                     feed,
                     worker_id,
