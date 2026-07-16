@@ -132,7 +132,7 @@ def _handle(  # noqa: PLR0911, PLR0912, PLR0915
     *,
     actor_id: str,
 ) -> None:
-    """Core handler."""
+    """Core handler — fully synchronous."""
     if gcs_client is None or pubsub_client is None or feed_store is None:
         msg = (
             "Clients not initialized — handle_notification must be called first"
