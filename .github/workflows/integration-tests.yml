@@ -66,27 +66,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Free up disk space (Host SSD)
-        run: |
-          sudo rm -rf \
-            /usr/share/dotnet \
-            /usr/local/lib/android \
-            /opt/ghc \
-            /opt/hostedtoolcache \
-            /usr/local/share/powershell \
-            /usr/local/share/chromium \
-            /usr/local/share/boost \
-            /usr/local/julia* \
-            /usr/local/aws* \
-            /usr/share/swift \
-            /usr/share/az_* \
-            /usr/share/sbt \
-            /var/lib/mongodb
-          sudo swapoff -a || true
-          sudo rm -f /mnt/swapfile /swapfile || true
-          sudo apt-get remove --purge -y azure-cli google-cloud-cli google-chrome-stable firefox powershell mono-devel libgl1-mesa-dri || true
-          sudo apt-get autoremove -y || true
-          sudo apt-get clean
-          sudo docker system prune --all --volumes --force
+        uses: ./.github/actions/free-disk-space
 
       - name: Pull persistent staging base images from ghcr.io
         run: docker compose -f docker-compose.yml pull --ignore-pull-failures
