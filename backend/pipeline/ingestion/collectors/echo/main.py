@@ -408,8 +408,13 @@ def _mirror_to_dev_best_effort(bucket: str, name: str) -> None:
                 source_bucket.blob(name),
                 gcs_client.bucket(DEV_RECORDINGS_BUCKET),
                 name,
+                if_generation_match=0,
                 timeout=30,
             )
+    except PreconditionFailed:
+        logger.info(
+            "Dev mirror target object already exists, skipping copy: %s", name
+        )
     except Exception:
         logger.exception(
             "Dev mirror failed (best-effort): src=%s/%s dst=%s",
