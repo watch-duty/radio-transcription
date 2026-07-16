@@ -83,11 +83,11 @@ export function TranscriptRow({
     ? transcriptAnnotation.errors.length > 0
     : false;
   const isWaiting = !isSilence && !isOutage && !transcriptAnnotation;
-  const isMissingTextButSpeech = transcriptAnnotation
-    ? !transcriptAnnotation.text &&
-      audioSegment.classification === AudioClassification.SPEECH &&
-      !hasErrors
-    : false;
+  const isMissingTextButSpeech =
+    !!transcriptAnnotation &&
+    !transcriptAnnotation.text &&
+    audioSegment.classification === AudioClassification.SPEECH &&
+    !hasErrors;
   const isPlaceholder =
     isSilence || isWaiting || hasErrors || isOutage || isMissingTextButSpeech;
 
@@ -111,7 +111,7 @@ export function TranscriptRow({
     }
 
     if (isMissingTextButSpeech) {
-      return '[Possible speech detected. No transcription available.]';
+      return '[Possible speech detected. No transcription available]';
     }
 
     return transcriptAnnotation.text;
