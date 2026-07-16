@@ -68,7 +68,9 @@ class GeminiTranscriptionError(ValueError):
 
 
 class GeminiTransientTranscriptionError(GeminiTranscriptionError):
-    """Raised when Gemini transcription fails due to a potentially transient model/backend issue."""
+    """Raised when Gemini transcription fails due to a potentially transient
+    model/backend issue.
+    """
 
 
 @dataclasses.dataclass(frozen=True)
@@ -173,7 +175,8 @@ class GeminiTranscriber(base.Transcriber):
             f"from GCS URI: {uri}" if uri else "from in-memory bytes",
         )
 
-        # TODO(http://linear.app/watchduty/issue/GOO-580/extend-gemini-transcriber-to-support-context): Support context
+        # TODO: Support context
+        # https://linear.app/watchduty/issue/GOO-580
         mime_type = self.config.mime_type
         if uri:
             guessed_mime, _ = mimetypes.guess_type(uri)
@@ -333,11 +336,16 @@ class GeminiTranscriber(base.Transcriber):
             ):
                 block_reason = response.prompt_feedback.block_reason
                 logger.error(
-                    "Gemini prompt blocked at request level. Block Reason: %s. Response ID: %s",
+                    "Gemini prompt blocked at request level. "
+                    "Block Reason: %s. Response ID: %s",
                     block_reason,
                     response_id,
                 )
-                msg = f"Gemini prompt blocked. Block Reason: {block_reason}. (Response ID: {response_id})"
+                msg = (
+                    "Gemini prompt blocked. "
+                    f"Block Reason: {block_reason}. "
+                    f"(Response ID: {response_id})"
+                )
                 raise GeminiTranscriptionError(msg)
 
             logger.warning(
@@ -346,7 +354,10 @@ class GeminiTranscriber(base.Transcriber):
                 response_id,
                 headers,
             )
-            msg = f"Gemini response returned no candidates. (Response ID: {response_id})"
+            msg = (
+                "Gemini response returned no candidates. "
+                f"(Response ID: {response_id})"
+            )
             raise GeminiTransientTranscriptionError(msg)
 
         candidate = response.candidates[0]
@@ -369,15 +380,20 @@ class GeminiTranscriber(base.Transcriber):
                 response_id,
             )
             msg = (
-                f"Gemini response blocked by safety filters. "
-                f"Finish Reason: {reason_str}, Blocked Ratings: {blocked_ratings}. (Response ID: {response_id})"
+                "Gemini response blocked by safety filters. "
+                f"Finish Reason: {reason_str}, "
+                f"Blocked Ratings: {blocked_ratings}. "
+                f"(Response ID: {response_id})"
             )
             raise GeminiTranscriptionError(
                 msg, finish_reason=candidate.finish_reason
             )
 
         if reason_str is None:
-            msg = f"Incomplete response from Gemini (finish_reason: None). (Response ID: {response_id})"
+            msg = (
+                "Incomplete response from Gemini (finish_reason: None). "
+                f"(Response ID: {response_id})"
+            )
             raise GeminiTransientTranscriptionError(msg)
 
         if reason_str not in _VALID_FINISH_REASONS:
@@ -405,7 +421,8 @@ class GeminiTranscriber(base.Transcriber):
 
         if reason_str == types.FinishReason.MAX_TOKENS.name:
             logger.warning(
-                "Gemini response reached MAX_TOKENS limit. Transcript is likely truncated. Response ID: %s",
+                "Gemini response reached MAX_TOKENS limit. "
+                "Transcript is likely truncated. Response ID: %s",
                 response_id,
             )
             raise exceptions.PartialTranscriptionError(
