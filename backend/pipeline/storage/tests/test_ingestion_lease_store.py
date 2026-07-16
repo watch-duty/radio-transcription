@@ -983,7 +983,6 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
         assert isinstance(result, ingestion_lease_store.MembershipSnapshot)
         self.assertEqual(result.membership_revision, 4)
         self.assertEqual(len(result.members), 2)
-        self.assertEqual(result.excluded_count, 1)
         self.assertEqual(result.members[0].identity.sid, "00123")
         self.assertEqual(result.members[0].identity.group_id, "00045")
         self.assertEqual(result.members[0].name, "County Fire Dispatch")
@@ -1697,7 +1696,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     plan.disposition,
                     ingestion_lease_store.ChildDisposition.COMMITTED,
                 )
-                self.assertFalse(plan.quarantined)
 
     def test_closed_cohort_plans_path_and_cursor_independently(self) -> None:
         feed_id = uuid.UUID("77777777-0000-0000-0000-000000000142")
@@ -1761,7 +1759,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(plan.write_cursor, write_cursor)
                 self.assertEqual(plan.write_path, write_path)
                 self.assertFalse(plan.clear_lifecycle)
-                self.assertFalse(plan.quarantined)
                 self.assertIsNone(plan.audit_action)
                 self.assertIs(
                     plan.disposition,
@@ -1796,7 +1793,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     ingestion_lease_store.ChildDisposition.COMMITTED,
                 )
                 self.assertFalse(plan.clear_lifecycle)
-                self.assertFalse(plan.quarantined)
                 self.assertIsNone(plan.audit_action)
 
     async def test_closed_cohort_preserves_dirty_lifecycle_and_order(
@@ -1897,7 +1893,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             tuple(child.disposition for child in result.children),
             (ingestion_lease_store.ChildDisposition.COMMITTED,) * 3,
         )
-        self.assertEqual(result.quarantined_feed_ids, ())
         self.assertEqual(connection.fetch.await_count, 2)
         lock_args = connection.fetch.await_args_list[0].args
         self.assertEqual(lock_args[1], [second_id, third_id, first_id])
@@ -1968,7 +1963,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 ingestion_lease_store.ChildDisposition.REJECTED,
             ),
         )
-        self.assertEqual(result.quarantined_feed_ids, ())
         self.assertEqual(connection.fetch.await_count, 1)
 
     async def test_closed_cohort_exact_noop_runs_no_dml(self) -> None:
@@ -2000,7 +1994,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             result.children[0].disposition,
             ingestion_lease_store.ChildDisposition.COMMITTED,
         )
-        self.assertEqual(result.quarantined_feed_ids, ())
         connection.fetch.assert_awaited_once()
 
     async def test_closed_cohort_database_error_rolls_back_once(self) -> None:
@@ -2094,7 +2087,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             result.children[0].disposition,
             ingestion_lease_store.ChildDisposition.COMMITTED,
         )
-        self.assertEqual(result.quarantined_feed_ids, ())
         observation_args = connection.fetch.await_args_list[1].args
         self.assertIs(
             observation_args[0],
@@ -2336,7 +2328,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 ingestion_lease_store.ChildDisposition.REJECTED,
             ],
         )
-        self.assertEqual(result.quarantined_feed_ids, ())
         self.assertEqual(connection.fetch.await_count, 2)
 
     async def test_deactivated_progress_clears_without_audit(self) -> None:
@@ -2381,7 +2372,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             child.disposition,
             ingestion_lease_store.ChildDisposition.COMMITTED,
         )
-        self.assertEqual(result.quarantined_feed_ids, ())
         self.assertEqual(connection.fetch.await_count, 2)
 
     async def test_recovery_audit_notifies_after_transaction_and_checkout(
@@ -2438,7 +2428,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             result.children[0].disposition,
             ingestion_lease_store.ChildDisposition.COMMITTED,
         )
-        self.assertEqual(result.quarantined_feed_ids, ())
         emit.assert_called_once_with(payload_row["feed_audit_event"])
         self.assertIs(
             connection.fetch.await_args_list[2].args[0],
@@ -2513,7 +2502,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     plan.disposition,
                     ingestion_lease_store.ChildDisposition.COMMITTED,
                 )
-                self.assertFalse(plan.quarantined)
 
     async def test_explicit_second_failure_invocation_charges_again(
         self,
@@ -2579,8 +2567,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             tuple(result.children[0].disposition for result in (first, second)),
             (ingestion_lease_store.ChildDisposition.COMMITTED,) * 2,
         )
-        self.assertEqual(first.quarantined_feed_ids, ())
-        self.assertEqual(second.quarantined_feed_ids, ())
         self.assertEqual(connection.fetch.await_count, 4)
         for call_index in (1, 3):
             failure_args = connection.fetch.await_args_list[call_index].args
@@ -2636,9 +2622,8 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertIs(
             result.children[0].disposition,
-            ingestion_lease_store.ChildDisposition.COMMITTED,
+            ingestion_lease_store.ChildDisposition.COMMITTED_AND_QUARANTINED,
         )
-        self.assertEqual(result.quarantined_feed_ids, (feed_id,))
         self.assertEqual(connection.fetch.await_count, 4)
 
     async def test_non_budgeted_failure_resets_and_cannot_quarantine(
@@ -2698,7 +2683,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             result.children[0].disposition,
             ingestion_lease_store.ChildDisposition.COMMITTED,
         )
-        self.assertEqual(result.quarantined_feed_ids, ())
         failure_args = connection.fetch.await_args_list[1].args
         self.assertEqual(failure_args[4], [False])
         self.assertEqual(failure_args[8], [retry_after])
@@ -2776,7 +2760,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     result,
                     ingestion_lease_store.BatchCommitted,
                 )
-                self.assertEqual(result.quarantined_feed_ids, ())
                 failure_args = connection.fetch.await_args_list[1].args
                 self.assertEqual(failure_args[3], [False])
                 self.assertEqual(failure_args[4], [False])
@@ -2852,7 +2835,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             tuple(child.disposition for child in result.children),
             (ingestion_lease_store.ChildDisposition.COMMITTED,) * 2,
         )
-        self.assertEqual(result.quarantined_feed_ids, ())
         self.assertEqual(connection.fetch.await_count, 3)
         self.assertIs(
             connection.fetch.await_args_list[1].args[0],
@@ -2898,7 +2880,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     result.children[0].disposition,
                     ingestion_lease_store.ChildDisposition.REJECTED,
                 )
-                self.assertEqual(result.quarantined_feed_ids, ())
                 connection.fetch.assert_awaited_once()
 
     async def test_empty_batch_can_finalize_lease_recovery_once(self) -> None:
@@ -2937,7 +2918,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
 
         assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertEqual(result.children, ())
-        self.assertEqual(result.quarantined_feed_ids, ())
         self.assertIs(
             connection.fetchrow.await_args_list[1].args[0],
             ingestion_lease_queries.FINALIZE_LEASE_RECOVERY_SQL,
@@ -2984,7 +2964,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
 
                 assert isinstance(result, ingestion_lease_store.BatchCommitted)
                 self.assertEqual(result.children, ())
-                self.assertEqual(result.quarantined_feed_ids, ())
                 self.assertEqual(connection.fetchrow.await_count, 2)
 
     async def test_clean_finalize_retry_is_lease_lifecycle_noop(self) -> None:
@@ -3010,7 +2989,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
 
         assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertEqual(result.children, ())
-        self.assertEqual(result.quarantined_feed_ids, ())
         connection.fetchrow.assert_awaited_once()
 
     async def test_no_lease_effect_preserves_retained_failure_evidence(
@@ -3032,7 +3010,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
 
         assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertEqual(result.children, ())
-        self.assertEqual(result.quarantined_feed_ids, ())
         connection.fetchrow.assert_awaited_once()
 
     async def test_audit_failure_rolls_back_children_and_lease_recovery(

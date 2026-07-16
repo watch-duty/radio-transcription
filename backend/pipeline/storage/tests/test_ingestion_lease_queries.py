@@ -609,7 +609,7 @@ class TestChildMutationQueryContract(unittest.TestCase):
     def test_child_result_vocabularies_are_exhaustive(self) -> None:
         self.assertEqual(
             {value.value for value in ingestion_lease_store.ChildDisposition},
-            {"committed", "rejected"},
+            {"committed", "committed_and_quarantined", "rejected"},
         )
         self.assertEqual(
             [
@@ -627,7 +627,7 @@ class TestChildMutationQueryContract(unittest.TestCase):
                     ingestion_lease_store.BatchCommitted
                 )
             ],
-            ["children", "quarantined_feed_ids"],
+            ["children"],
         )
 
     def test_child_feed_lock_is_sorted_and_uses_one_lock_strength(self) -> None:
@@ -930,6 +930,19 @@ class TestMembershipSnapshotContract(unittest.TestCase):
         self.assertIs(
             fields_by_name["name"].default_factory,
             dataclasses.MISSING,
+        )
+
+    def test_membership_snapshot_exposes_only_runtime_consumed_state(
+        self,
+    ) -> None:
+        self.assertEqual(
+            tuple(
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.MembershipSnapshot
+                )
+            ),
+            ("grant", "membership_revision", "members"),
         )
 
     def test_membership_uses_maintained_index_identity_and_order(self) -> None:

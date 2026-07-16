@@ -380,11 +380,15 @@ class ChildDisposition(enum.StrEnum):
     """Actionable disposition of one requested child mutation.
 
     Attributes:
-        COMMITTED: The requested durable postcondition is satisfied.
+        COMMITTED: The requested durable postcondition is satisfied without
+            newly quarantining the Feed.
+        COMMITTED_AND_QUARANTINED: The requested durable postcondition is
+            satisfied and the Feed crossed its quarantine threshold.
         REJECTED: The child is missing or no longer eligible for the command.
     """
 
     COMMITTED = "committed"
+    COMMITTED_AND_QUARANTINED = "committed_and_quarantined"
     REJECTED = "rejected"
 
 
@@ -407,12 +411,9 @@ class BatchCommitted:
 
     Attributes:
         children: One selective result per command in caller order.
-        quarantined_feed_ids: Committed budgeted failures that exhausted their
-            durable Feed failure budgets, in caller order.
     """
 
     children: tuple[ChildMutationResult, ...]
-    quarantined_feed_ids: tuple[uuid.UUID, ...]
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -422,14 +423,7 @@ class LeaseMember:
     Attributes:
         identity: Immutable routing identity loaded with this state.
         name: Canonical Feed display name frozen for publication.
-        status: Current Feed lifecycle state.
-        last_processed_filename: Last durable source path, if present.
         last_bookmark_time: Durable Feed progress cursor.
-        failure_count: Retained Feed failure count.
-        retry_after: Earliest time a failing Feed may retry.
-        status_reason: Canonical Feed lifecycle reason.
-        status_reason_detail: Bounded operator-facing reason detail.
-        audit_revision: Monotonic Feed audit revision.
     """
 
     identity: LeaseMemberIdentity
@@ -445,13 +439,11 @@ class MembershipSnapshot:
         grant: Complete Lease authority validated before the child read.
         membership_revision: Cache-invalidating parent revision.
         members: Eligible active or failing children in routing order.
-        excluded_count: Existing structurally valid but ineligible children.
     """
 
     grant: LeaseGrant
     membership_revision: int
     members: tuple[LeaseMember, ...]
-    excluded_count: int
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -497,7 +489,6 @@ class _PlannedChildMutation:
     write_cursor: bool = False
     write_path: bool = False
     clear_lifecycle: bool = False
-    quarantined: bool = False
     audit_action: str | None = None
 
     @property
@@ -514,7 +505,7 @@ class _PlannedChildMutation:
             or self.clear_lifecycle
             or (
                 isinstance(self.mutation, FeedFailureTransition)
-                and self.disposition is ChildDisposition.COMMITTED
+                and self.disposition is not ChildDisposition.REJECTED
             )
         )
 
@@ -1366,9 +1357,12 @@ def _plan_child_mutation(
             caller_ordinal=caller_ordinal,
             mutation=mutation,
             before_row=before_row,
-            disposition=ChildDisposition.COMMITTED,
+            disposition=(
+                ChildDisposition.COMMITTED_AND_QUARANTINED
+                if quarantined
+                else ChildDisposition.COMMITTED
+            ),
             write_cursor=write_cursor,
-            quarantined=quarantined,
             audit_action=_select_failure_audit_action(
                 before_row,
                 failure,
@@ -1949,7 +1943,6 @@ class IngestionLeaseStore:
 
         members: list[LeaseMember] = []
         routing_keys: set[str] = set()
-        excluded_count = 0
         for row in rows:
             identity = _membership_identity_from_row(grant, row)
             if isinstance(identity, MembershipInvariantViolation):
@@ -1964,8 +1957,6 @@ class IngestionLeaseStore:
                 feed_store.FeedStatus.FAILING,
             ):
                 members.append(member)
-            else:
-                excluded_count += 1
 
         if not members:
             return MembershipInvariantViolation(grant)
@@ -1973,7 +1964,6 @@ class IngestionLeaseStore:
             grant=grant,
             membership_revision=membership_revision,
             members=tuple(members),
-            excluded_count=excluded_count,
         )
 
     async def commit_child_mutations(
@@ -2123,12 +2113,7 @@ class IngestionLeaseStore:
                     )
                     for plan in plans
                 )
-                committed = BatchCommitted(
-                    children=children,
-                    quarantined_feed_ids=tuple(
-                        plan.feed_id for plan in plans if plan.quarantined
-                    ),
-                )
+                committed = BatchCommitted(children=children)
 
         for caller_ordinal in sorted(notification_payloads):
             feed_change_notifications.emit_feed_change_notification(
