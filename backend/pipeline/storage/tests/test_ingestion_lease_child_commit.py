@@ -98,6 +98,29 @@ def _failure(
     )
 
 
+def _plan(
+    mutation: contracts.ChildMutation,
+    before_row: dict[str, object] | None,
+) -> child_commit._PlannedChildMutation:
+    prepared = child_commit.prepare_child_commit(
+        _grant(),
+        contracts.ChildMutationBatch(
+            mutations=(mutation,),
+            lease_effect=contracts.NoLeaseEffect(),
+        ),
+        "service_account:gcp:collector",
+    )
+    before_state = (
+        None
+        if before_row is None
+        else child_commit._locked_child_state_from_row(before_row)
+    )
+    return child_commit._plan_prepared_child_mutation(
+        prepared.mutations[0],
+        before_state,
+    )
+
+
 class TestChildPlanning(unittest.TestCase):
     """Tests for cursor, path, lifecycle, and failure planning."""
 
@@ -116,11 +139,11 @@ class TestChildPlanning(unittest.TestCase):
             )
         ):
             with self.subTest(case_index=case_index):
-                clean = child_commit._plan_child_mutation(
+                clean = _plan(
                     contracts.SourceObservation(_member(feed_id), requested),
                     _child_row(feed_id, last_bookmark_time=current),
                 )
-                dirty = child_commit._plan_child_mutation(
+                dirty = _plan(
                     contracts.SourceObservation(_member(feed_id), requested),
                     _child_row(
                         feed_id,
@@ -146,7 +169,7 @@ class TestChildPlanning(unittest.TestCase):
 
         for case_index, requested in enumerate((_NOW, earlier, None)):
             with self.subTest(case_index=case_index):
-                plan = child_commit._plan_child_mutation(
+                plan = _plan(
                     _progress(feed_id, cursor=requested),
                     _child_row(
                         feed_id,
@@ -212,7 +235,7 @@ class TestChildPlanning(unittest.TestCase):
 
         for mutation, row, write_cursor, write_path in cases:
             with self.subTest(write_cursor=write_cursor, write_path=write_path):
-                plan = child_commit._plan_child_mutation(mutation, row)
+                plan = _plan(mutation, row)
 
                 self.assertEqual(plan.write_cursor, write_cursor)
                 self.assertEqual(plan.write_path, write_path)
@@ -233,7 +256,7 @@ class TestChildPlanning(unittest.TestCase):
         ):
             with self.subTest(status=status.value):
                 feed_id = uuid.UUID(int=150 + index)
-                plan = child_commit._plan_child_mutation(
+                plan = _plan(
                     _closed_cohort(feed_id, cursor=None),
                     _child_row(
                         feed_id,
@@ -266,7 +289,7 @@ class TestChildPlanning(unittest.TestCase):
             )
         ):
             with self.subTest(case_index=case_index):
-                plan = child_commit._plan_child_mutation(
+                plan = _plan(
                     _failure(feed_id, cursor=requested),
                     _child_row(feed_id, last_bookmark_time=current),
                 )

@@ -150,6 +150,16 @@ class AppliedChildCommit:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class _PlannedMutationGroups:
+    """Write-hot plans partitioned by the four closed command variants."""
+
+    admitted_progress: tuple[_PlannedChildMutation, ...]
+    source_observations: tuple[_PlannedChildMutation, ...]
+    closed_cohort_progress: tuple[_PlannedChildMutation, ...]
+    feed_failures: tuple[_PlannedChildMutation, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class PendingChildEffects:
     """Committed result and notifications buffered until transaction exit."""
 
@@ -229,7 +239,12 @@ def _mutation_cursor(
     """Return the cursor field shared semantically by child commands."""
     if isinstance(mutation, FeedFailureTransition):
         return mutation.completion_cursor
-    return mutation.cursor
+    if isinstance(
+        mutation,
+        (AdmittedAudioProgress, SourceObservation, ClosedCohortProgress),
+    ):
+        return mutation.cursor
+    typing.assert_never(mutation)
 
 
 def _require_closed_cohort_progress(
@@ -304,7 +319,7 @@ def _prepare_child_batch(
             pass
         elif isinstance(mutation, ClosedCohortProgress):
             _require_closed_cohort_progress(mutation)
-        else:
+        elif isinstance(mutation, FeedFailureTransition):
             ingestion_lease_contracts._require_failure_action(  # noqa: SLF001
                 mutation.action
             )
@@ -323,6 +338,8 @@ def _prepare_child_batch(
                 )
             )
             continue
+        else:
+            typing.assert_never(mutation)
         prepared_mutations.append(_PreparedChildMutation(mutation=mutation))
     return tuple(prepared_mutations), batch.lease_effect
 
@@ -675,15 +692,12 @@ def _locked_children_by_id(
 
 def _plan_non_failure_child_mutation(
     prepared: _PreparedChildMutation,
+    mutation: AdmittedAudioProgress | SourceObservation | ClosedCohortProgress,
     before_state: _LockedChildState,
     *,
     write_cursor: bool,
 ) -> _PlannedChildMutation:
     """Plan progress or observation separately from failure charging."""
-    mutation = typing.cast(
-        "AdmittedAudioProgress | SourceObservation | ClosedCohortProgress",
-        prepared.mutation,
-    )
     if isinstance(mutation, ClosedCohortProgress):
         write_path = (
             mutation.last_processed_filename is not None
@@ -780,33 +794,46 @@ def _plan_prepared_child_mutation(
             write_cursor=write_cursor,
         )
 
-    return _plan_non_failure_child_mutation(
-        prepared,
-        before_state,
-        write_cursor=write_cursor,
-    )
-
-
-def _plan_child_mutation(
-    mutation: ChildMutation,
-    before_row: collections.abc.Mapping | None,
-) -> _PlannedChildMutation:
-    """Compatibility helper for direct planner unit tests."""
-    reason_detail = None
-    if isinstance(mutation, FeedFailureTransition):
-        reason_detail = (
-            ingestion_lease_contracts._status_reason_detail_storage_value(  # noqa: SLF001
-                mutation.reason
-            )
+    if isinstance(
+        mutation,
+        (AdmittedAudioProgress, SourceObservation, ClosedCohortProgress),
+    ):
+        return _plan_non_failure_child_mutation(
+            prepared,
+            mutation,
+            before_state,
+            write_cursor=write_cursor,
         )
-    return _plan_prepared_child_mutation(
-        _PreparedChildMutation(
-            mutation=mutation,
-            reason_detail=reason_detail,
-        ),
-        None
-        if before_row is None
-        else _locked_child_state_from_row(before_row),
+    typing.assert_never(mutation)
+
+
+def _group_planned_mutations(
+    plans: tuple[_PlannedChildMutation, ...],
+) -> _PlannedMutationGroups:
+    """Partition write-hot plans with an exhaustive closed-union switch."""
+    admitted_progress: list[_PlannedChildMutation] = []
+    source_observations: list[_PlannedChildMutation] = []
+    closed_cohort_progress: list[_PlannedChildMutation] = []
+    feed_failures: list[_PlannedChildMutation] = []
+    for plan in plans:
+        if not plan.needs_update:
+            continue
+        mutation = plan.mutation
+        if isinstance(mutation, AdmittedAudioProgress):
+            admitted_progress.append(plan)
+        elif isinstance(mutation, SourceObservation):
+            source_observations.append(plan)
+        elif isinstance(mutation, ClosedCohortProgress):
+            closed_cohort_progress.append(plan)
+        elif isinstance(mutation, FeedFailureTransition):
+            feed_failures.append(plan)
+        else:
+            typing.assert_never(mutation)
+    return _PlannedMutationGroups(
+        admitted_progress=tuple(admitted_progress),
+        source_observations=tuple(source_observations),
+        closed_cohort_progress=tuple(closed_cohort_progress),
+        feed_failures=tuple(feed_failures),
     )
 
 
@@ -1131,53 +1158,38 @@ async def apply_child_mutations(
     )
 
     updated_by_feed_id: dict[uuid.UUID, _UpdatedChildState] = {}
-    progress_updates = tuple(
-        plan
-        for plan in plans
-        if isinstance(plan.mutation, AdmittedAudioProgress)
-        and plan.needs_update
-    )
-    observation_updates = tuple(
-        plan
-        for plan in plans
-        if isinstance(plan.mutation, SourceObservation) and plan.needs_update
-    )
-    closed_cohort_updates = tuple(
-        plan
-        for plan in plans
-        if isinstance(plan.mutation, ClosedCohortProgress) and plan.needs_update
-    )
-    failure_updates = tuple(
-        plan
-        for plan in plans
-        if isinstance(plan.mutation, FeedFailureTransition)
-        and plan.needs_update
-    )
-    if progress_updates:
-        rows = await _apply_admitted_progress(connection, progress_updates)
-        updated_by_feed_id.update(
-            _updated_children_by_id(progress_updates, rows)
+    groups = _group_planned_mutations(plans)
+    if groups.admitted_progress:
+        rows = await _apply_admitted_progress(
+            connection,
+            groups.admitted_progress,
         )
-    if observation_updates:
+        updated_by_feed_id.update(
+            _updated_children_by_id(groups.admitted_progress, rows)
+        )
+    if groups.source_observations:
         rows = await _apply_source_observations(
             connection,
-            observation_updates,
+            groups.source_observations,
         )
         updated_by_feed_id.update(
-            _updated_children_by_id(observation_updates, rows)
+            _updated_children_by_id(groups.source_observations, rows)
         )
-    if closed_cohort_updates:
+    if groups.closed_cohort_progress:
         rows = await _apply_closed_cohort_progress(
             connection,
-            closed_cohort_updates,
+            groups.closed_cohort_progress,
         )
         updated_by_feed_id.update(
-            _updated_neutral_children_by_id(closed_cohort_updates, rows)
+            _updated_neutral_children_by_id(
+                groups.closed_cohort_progress,
+                rows,
+            )
         )
-    if failure_updates:
-        rows = await _apply_feed_failures(connection, failure_updates)
+    if groups.feed_failures:
+        rows = await _apply_feed_failures(connection, groups.feed_failures)
         updated_by_feed_id.update(
-            _updated_children_by_id(failure_updates, rows)
+            _updated_children_by_id(groups.feed_failures, rows)
         )
 
     return AppliedChildCommit(

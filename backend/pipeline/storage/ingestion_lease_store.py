@@ -891,15 +891,16 @@ class IngestionLeaseStore:
             batch,
             actor_id,
         )
+        authority = prepared.grant
 
         async with self._pool.acquire() as connection:
             async with connection.transaction(isolation="read_committed"):
                 lease_row = await connection.fetchrow(
                     ingestion_lease_queries.LOCK_LEASE_SQL,
-                    grant.source_type.value,
-                    grant.lease_key,
+                    authority.source_type.value,
+                    authority.lease_key,
                 )
-                rejection = self._grant_rejection(grant, lease_row)
+                rejection = self._grant_rejection(authority, lease_row)
                 if rejection is not None:
                     return rejection
                 if lease_row is None:
@@ -913,7 +914,7 @@ class IngestionLeaseStore:
                 )
                 lease_recovered = await self._apply_lease_effect(
                     connection,
-                    grant,
+                    authority,
                     prepared.lease_effect,
                     lease_row,
                 )
@@ -932,10 +933,10 @@ class IngestionLeaseStore:
             logger.info(
                 "Ingestion Lease recovered after finalized child boundary",
                 extra={
-                    "source_type": grant.source_type.value,
-                    "lease_key": grant.lease_key,
-                    "owner_worker_id": str(grant.owner_worker_id),
-                    "fencing_token": grant.fencing_token,
+                    "source_type": authority.source_type.value,
+                    "lease_key": authority.lease_key,
+                    "owner_worker_id": str(authority.owner_worker_id),
+                    "fencing_token": authority.fencing_token,
                 },
             )
         return pending.committed
