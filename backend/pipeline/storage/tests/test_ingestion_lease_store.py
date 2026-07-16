@@ -1096,6 +1096,22 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
                     ingestion_lease_store.MembershipInvariantViolation,
                 )
 
+    async def test_unknown_member_status_fails_closed(self) -> None:
+        pool = connection_util.make_mock_pool(transaction=True)
+        connection = pool.acquired_connection
+        connection.fetchrow.return_value = _lease_row(lease_key="00123")
+        connection.fetch.return_value = [
+            _member_row(status="future_status"),
+        ]
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        result = await store.load_membership(_grant("00123"))
+
+        self.assertIsInstance(
+            result,
+            ingestion_lease_store.MembershipInvariantViolation,
+        )
+
     async def test_membership_feed_name_rejects_missing_null_and_blank(
         self,
     ) -> None:

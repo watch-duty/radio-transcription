@@ -1880,7 +1880,10 @@ class IngestionLeaseStore:
                 return MembershipInvariantViolation(grant)
             routing_keys.add(identity.source_feed_id)
             member = _member_from_row(identity, row)
-            status = _status_from_row(row)
+            try:
+                status = _status_from_row(row)
+            except ValueError:
+                return MembershipInvariantViolation(grant)
             if status in (
                 feed_store.FeedStatus.ACTIVE,
                 feed_store.FeedStatus.FAILING,
