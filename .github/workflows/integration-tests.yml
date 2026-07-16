@@ -67,13 +67,24 @@ jobs:
 
       - name: Free up disk space (Host SSD)
         run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo rm -rf /usr/local/share/powershell
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /var/lib/mongodb
+          sudo rm -rf \
+            /usr/share/dotnet \
+            /usr/local/lib/android \
+            /opt/ghc \
+            /opt/hostedtoolcache \
+            /usr/local/share/powershell \
+            /usr/local/share/chromium \
+            /usr/local/share/boost \
+            /usr/local/julia* \
+            /usr/local/aws* \
+            /usr/share/swift \
+            /usr/share/az_* \
+            /usr/share/sbt \
+            /var/lib/mongodb
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile /swapfile || true
+          sudo apt-get remove --purge -y azure-cli google-cloud-cli google-chrome-stable firefox powershell mono-devel libgl1-mesa-dri || true
+          sudo apt-get autoremove -y || true
           sudo apt-get clean
           sudo docker system prune --all --volumes --force
 
@@ -89,6 +100,7 @@ jobs:
             --set *.cache-from=type=gha,scope=integration-tests \
             -f docker-compose.yml \
             --load
+          docker builder prune -f
 
       # Note we are not collecting test coverage stats because the tests are run
       # in Docker, so it'll be difficult to collect true coverage.
