@@ -1375,6 +1375,123 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0].chunk_end_time, clamp_time)
 
     @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc",
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_timestamps_adjusted_for_burst(
+        self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Test that start/end timestamps are shifted into the past when a burst is detected."""
+        fixed_anchor = datetime.datetime(
+            2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
+        )
+
+        t_anchor = fixed_anchor
+        t_seg1 = t_anchor + datetime.timedelta(seconds=1)
+        t_seg2 = t_anchor + datetime.timedelta(seconds=2)
+        t_seg3 = t_anchor + datetime.timedelta(seconds=3)
+        t_seg4 = t_seg3 + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS)
+        t_seg5 = t_seg4 + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS)
+        t_future = t_seg5 + datetime.timedelta(seconds=100)
+
+        mock_now_utc.side_effect = [
+            t_anchor,  # stream_anchor_time
+            t_seg1,  # Seg 1 receipt_time
+            t_seg2,  # Seg 2 receipt_time
+            t_seg3,  # Seg 3 receipt_time
+            t_seg4,  # Seg 4 receipt_time
+            t_seg5,  # Seg 5 receipt_time
+            t_future,  # Seg 5 min() clamp (not clamped)
+        ]
+
+        # 5 segments, each of CHUNK_DURATION_SECONDS duration
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=4445,
+            segments=[
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+            ],
+            wait_delay=0.1,
+            wait_result=0,
+        )
+
+        feed = _make_feed("burst-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+        results = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(results), 5)
+
+        # We expect:
+        # Total burst duration (first 3 segments) = CHUNK_DURATION_SECONDS * 3.
+        # Adjusted stream_anchor_time = T - (CHUNK_DURATION_SECONDS * 3).
+        burst_duration = CHUNK_DURATION_SECONDS * 3
+
+        self.assertEqual(
+            results[0].chunk_start_time,
+            fixed_anchor - datetime.timedelta(seconds=burst_duration),
+        )
+        self.assertEqual(
+            results[0].chunk_end_time,
+            fixed_anchor
+            - datetime.timedelta(
+                seconds=burst_duration - CHUNK_DURATION_SECONDS
+            ),
+        )
+
+        self.assertEqual(
+            results[1].chunk_start_time,
+            fixed_anchor
+            - datetime.timedelta(
+                seconds=burst_duration - CHUNK_DURATION_SECONDS
+            ),
+        )
+        self.assertEqual(
+            results[1].chunk_end_time,
+            fixed_anchor
+            - datetime.timedelta(
+                seconds=burst_duration - CHUNK_DURATION_SECONDS * 2
+            ),
+        )
+
+        self.assertEqual(
+            results[2].chunk_start_time,
+            fixed_anchor
+            - datetime.timedelta(
+                seconds=burst_duration - CHUNK_DURATION_SECONDS * 2
+            ),
+        )
+        self.assertEqual(results[2].chunk_end_time, fixed_anchor)
+
+        self.assertEqual(results[3].chunk_start_time, fixed_anchor)
+        self.assertEqual(
+            results[3].chunk_end_time,
+            fixed_anchor + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS),
+        )
+
+        self.assertEqual(
+            results[4].chunk_start_time,
+            fixed_anchor + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS),
+        )
+        self.assertEqual(
+            results[4].chunk_end_time,
+            fixed_anchor
+            + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS * 2),
+        )
+
+    @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )

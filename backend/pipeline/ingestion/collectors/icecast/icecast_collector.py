@@ -720,6 +720,122 @@ async def _check_read_timeout(
     raise failure
 
 
+class IcecastBurstDetector:
+    """Detects and adjusts initial connection bursts for Icecast streams."""
+
+    def __init__(
+        self,
+        stream_anchor_time: datetime.datetime,
+        feed_id: uuid.UUID,
+        feed_name: str,
+    ) -> None:
+        self.stream_anchor_time = stream_anchor_time
+        self.feed_id = feed_id
+        self.feed_name = feed_name
+        self.in_burst = True
+        self.burst_buffer: list[CapturedChunk] = []
+
+    def _adjust_and_yield_burst_buffer(self) -> list[CapturedChunk]:
+        if not self.burst_buffer:
+            return []
+        total_burst_duration_sec = sum(
+            (c.chunk_end_time - c.chunk_start_time).total_seconds()
+            for c in self.burst_buffer
+        )
+        if total_burst_duration_sec > 0:
+            logger.info(
+                "Feed %s (%s): Adjusting timeline anchor backward by %s seconds for connection burst.",
+                self.feed_id,
+                self.feed_name,
+                total_burst_duration_sec,
+            )
+            self.stream_anchor_time -= datetime.timedelta(
+                seconds=total_burst_duration_sec
+            )
+            temp_cumulative = 0.0
+            for idx, buffered_chunk in enumerate(self.burst_buffer):
+                c_duration = (
+                    buffered_chunk.chunk_end_time
+                    - buffered_chunk.chunk_start_time
+                ).total_seconds()
+                new_start = self.stream_anchor_time + datetime.timedelta(
+                    seconds=temp_cumulative
+                )
+                new_end = new_start + datetime.timedelta(seconds=c_duration)
+                self.burst_buffer[idx] = dataclasses.replace(
+                    buffered_chunk,
+                    chunk_start_time=new_start,
+                    chunk_end_time=new_end,
+                )
+                temp_cumulative += c_duration
+        res = list(self.burst_buffer)
+        self.burst_buffer.clear()
+        return res
+
+    def process_chunk(
+        self,
+        chunk: CapturedChunk,
+        cumulative_pcm_samples: int,
+        *,
+        process_done: bool,
+    ) -> list[CapturedChunk]:
+        """Process a chunk, applying burst detection and timeline adjustments.
+
+        Returns a list of chunks that are ready to be yielded.
+        """
+        if not self.in_burst:
+            return [chunk]
+
+        if process_done:
+            # If the process is done but we are still in_burst, just flush the buffer without adjusting
+            self.in_burst = False
+            res = list(self.burst_buffer)
+            self.burst_buffer.clear()
+            res.append(chunk)
+            return res
+
+        # Calculate arrival time since previous segment
+        chunk_receipt = chunk.receipt_time or _now_utc()
+        if not self.burst_buffer:
+            arrival_time = (
+                chunk_receipt - self.stream_anchor_time
+            ).total_seconds()
+        else:
+            prev_receipt = self.burst_buffer[-1].receipt_time or _now_utc()
+            arrival_time = (chunk_receipt - prev_receipt).total_seconds()
+
+        chunk_duration_sec = (
+            chunk.chunk_end_time - chunk.chunk_start_time
+        ).total_seconds()
+        if arrival_time >= chunk_duration_sec * 0.8:
+            self.in_burst = False
+            res = self._adjust_and_yield_burst_buffer()
+            # Re-calculate current chunk's timestamps using updated stream_anchor_time
+            start_offset_sec = (
+                cumulative_pcm_samples / SAMPLE_RATE_HZ - chunk_duration_sec
+            )
+            new_start = self.stream_anchor_time + datetime.timedelta(
+                seconds=start_offset_sec
+            )
+            new_end = new_start + datetime.timedelta(seconds=chunk_duration_sec)
+            chunk = dataclasses.replace(
+                chunk,
+                chunk_start_time=new_start,
+                chunk_end_time=new_end,
+            )
+            res.append(chunk)
+            return res
+
+        self.burst_buffer.append(chunk)
+        return []
+
+    def flush(self) -> list[CapturedChunk]:
+        """Flush any remaining buffered chunks without adjusting."""
+        res = list(self.burst_buffer)
+        self.burst_buffer.clear()
+        return res
+
+
 async def capture_icecast_stream(
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
@@ -800,6 +916,12 @@ async def capture_icecast_stream(
         # long-session source-clock drift.
         previous_receipt_time: datetime.datetime | None = None
 
+        burst_detector = IcecastBurstDetector(
+            stream_anchor_time=stream_anchor_time,
+            feed_id=feed_id,
+            feed_name=feed_name,
+        )
+
         try:
             while True:
                 if shutdown_event.is_set():
@@ -808,6 +930,8 @@ async def capture_icecast_stream(
                         feed_id,
                         feed_name,
                     )
+                    for buffered_chunk in burst_detector.flush():
+                        yield buffered_chunk
                     return
 
                 current_segment_pcm = _segment_path(
@@ -837,7 +961,7 @@ async def capture_icecast_stream(
                     ) = await _process_finalized_segment(
                         current_segment_pcm=current_segment_pcm,
                         next_index=next_index,
-                        stream_anchor_time=stream_anchor_time,
+                        stream_anchor_time=burst_detector.stream_anchor_time,
                         process_done=process_done,
                         previous_receipt_time=previous_receipt_time,
                         cumulative_pcm_samples=cumulative_pcm_samples,
@@ -847,7 +971,12 @@ async def capture_icecast_stream(
                     )
                     next_index += 1
                     if chunk is not None:
-                        yield chunk
+                        for ready_chunk in burst_detector.process_chunk(
+                            chunk=chunk,
+                            cumulative_pcm_samples=cumulative_pcm_samples,
+                            process_done=process_done,
+                        ):
+                            yield ready_chunk
                     continue
 
                 # If ffmpeg is done and there is no pending finalized segment,
@@ -864,6 +993,8 @@ async def capture_icecast_stream(
                     stderr_tail=stderr_tail,
                     stderr_http_status_lines=stderr_http_status_lines,
                 ):
+                    for buffered_chunk in burst_detector.flush():
+                        yield buffered_chunk
                     return
 
                 last_activity_age_sec = time.monotonic() - last_activity_time
