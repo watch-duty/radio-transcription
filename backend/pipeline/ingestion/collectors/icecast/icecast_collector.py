@@ -14,7 +14,7 @@ import time
 import uuid
 from enum import Enum, auto
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 from urllib.parse import urlencode, urljoin
 
 import aiohttp
@@ -62,6 +62,7 @@ STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
 _STREAM_PROBE_TIMEOUT_SEC = 10
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
+MAX_STREAM_DRIFT_SECS: Final = 5.0  # Timeline drift threshold (in seconds)
 
 
 # Stream endpoint semantics differ from item/API endpoints: a stream 404 means
@@ -467,7 +468,7 @@ async def _process_finalized_segment(
     session_id: str,
     feed_id: Any,
     feed_name: Any,
-) -> tuple[CapturedChunk | None, datetime.datetime, int, datetime.datetime]:
+) -> tuple[CapturedChunk | None, datetime.datetime, int]:
     """Processes a finalized PCM segment on disk into a decodable FLAC CapturedChunk.
 
     Args:
@@ -505,7 +506,6 @@ async def _process_finalized_segment(
             if previous_receipt_time is None
             else previous_receipt_time,
             updated_cumulative_samples,
-            stream_anchor_time,
         )
 
     stream_interval_lag_sec = None
@@ -513,28 +513,6 @@ async def _process_finalized_segment(
         stream_interval_lag_sec = (
             receipt_time - previous_receipt_time
         ).total_seconds() - chunk_duration_sec
-
-        # Detect significant timeline drift (e.g. from ffmpeg internal
-        # reconnect stalls) and re-anchor stream_anchor_time to wall-clock
-        # time to prevent downstream watermark delay.
-        MAX_STREAM_DRIFT_SECS = 5.0
-        if stream_interval_lag_sec > MAX_STREAM_DRIFT_SECS:
-            old_anchor = stream_anchor_time
-            stream_anchor_time = receipt_time - datetime.timedelta(
-                seconds=(cumulative_pcm_samples / SAMPLE_RATE_HZ)
-                + chunk_duration_sec
-            )
-            logger.warning(
-                "Feed %s (%s): Stream interval lag %.2fs exceeds threshold "
-                "%.2fs. Re-anchoring timeline: "
-                "old_anchor=%s, new_anchor=%s",
-                feed_id,
-                feed_name,
-                stream_interval_lag_sec,
-                MAX_STREAM_DRIFT_SECS,
-                old_anchor.isoformat(),
-                stream_anchor_time.isoformat(),
-            )
 
     chunk_start_offset_sec = cumulative_pcm_samples / SAMPLE_RATE_HZ
     chunk_start_time = stream_anchor_time + datetime.timedelta(
@@ -554,7 +532,7 @@ async def _process_finalized_segment(
         receipt_time=receipt_time,
         stream_interval_lag_sec=stream_interval_lag_sec,
     )
-    return chunk, receipt_time, updated_cumulative_samples, stream_anchor_time
+    return chunk, receipt_time, updated_cumulative_samples
 
 
 async def _handle_process_done_no_segment(
@@ -743,8 +721,13 @@ async def _check_read_timeout(
     raise failure
 
 
-class IcecastBurstDetector:
-    """Detects and adjusts initial connection bursts for Icecast streams."""
+class IcecastTimelineManager:
+    """Manages the stream timeline and anchor for Icecast collector.
+
+    Handles:
+    1. Connection burst detection and backward timeline adjustment.
+    2. Reconnect latency drift detection and forward timeline re-anchoring.
+    """
 
     def __init__(
         self,
@@ -806,51 +789,108 @@ class IcecastBurstDetector:
 
         Returns a list of chunks that are ready to be yielded.
         """
-        if not self.in_burst:
-            return [chunk]
+        if self.in_burst:
+            if process_done:
+                self.in_burst = False
+                res = list(self.burst_buffer)
+                self.burst_buffer.clear()
+                res.append(chunk)
+                return res
 
-        if process_done:
-            # If the process is done but we are still in_burst, just flush the buffer without adjusting
-            self.in_burst = False
-            res = list(self.burst_buffer)
-            self.burst_buffer.clear()
-            res.append(chunk)
-            return res
+            chunk_receipt = chunk.receipt_time or _now_utc()
+            if not self.burst_buffer:
+                arrival_time = (
+                    chunk_receipt - self.stream_anchor_time
+                ).total_seconds()
+            else:
+                prev_receipt = self.burst_buffer[-1].receipt_time or _now_utc()
+                arrival_time = (chunk_receipt - prev_receipt).total_seconds()
 
-        # Calculate arrival time since previous segment
-        chunk_receipt = chunk.receipt_time or _now_utc()
-        if not self.burst_buffer:
-            arrival_time = (
-                chunk_receipt - self.stream_anchor_time
+            chunk_duration_sec = (
+                chunk.chunk_end_time - chunk.chunk_start_time
             ).total_seconds()
-        else:
-            prev_receipt = self.burst_buffer[-1].receipt_time or _now_utc()
-            arrival_time = (chunk_receipt - prev_receipt).total_seconds()
+            if arrival_time >= chunk_duration_sec * 0.8:
+                self.in_burst = False
+                res = self._adjust_and_yield_burst_buffer()
+                # Re-calculate current chunk's timestamps using updated stream_anchor_time
+                start_offset_sec = (
+                    cumulative_pcm_samples / SAMPLE_RATE_HZ - chunk_duration_sec
+                )
+                new_start = self.stream_anchor_time + datetime.timedelta(
+                    seconds=start_offset_sec
+                )
+                new_end = new_start + datetime.timedelta(
+                    seconds=chunk_duration_sec
+                )
+                chunk = dataclasses.replace(
+                    chunk,
+                    chunk_start_time=new_start,
+                    chunk_end_time=new_end,
+                )
+                # Check reconnect lag on this chunk even if we just exited burst
+                chunk = self._check_and_apply_drift_correction(
+                    chunk=chunk,
+                    cumulative_pcm_samples=cumulative_pcm_samples,
+                    chunk_duration_sec=chunk_duration_sec,
+                )
+                res.append(chunk)
+                return res
+
+            self.burst_buffer.append(chunk)
+            return []
 
         chunk_duration_sec = (
             chunk.chunk_end_time - chunk.chunk_start_time
         ).total_seconds()
-        if arrival_time >= chunk_duration_sec * 0.8:
-            self.in_burst = False
-            res = self._adjust_and_yield_burst_buffer()
-            # Re-calculate current chunk's timestamps using updated stream_anchor_time
-            start_offset_sec = (
-                cumulative_pcm_samples / SAMPLE_RATE_HZ - chunk_duration_sec
-            )
-            new_start = self.stream_anchor_time + datetime.timedelta(
-                seconds=start_offset_sec
-            )
-            new_end = new_start + datetime.timedelta(seconds=chunk_duration_sec)
-            chunk = dataclasses.replace(
-                chunk,
-                chunk_start_time=new_start,
-                chunk_end_time=new_end,
-            )
-            res.append(chunk)
-            return res
+        chunk = self._check_and_apply_drift_correction(
+            chunk=chunk,
+            cumulative_pcm_samples=cumulative_pcm_samples,
+            chunk_duration_sec=chunk_duration_sec,
+        )
+        return [chunk]
 
-        self.burst_buffer.append(chunk)
-        return []
+    def _check_and_apply_drift_correction(
+        self,
+        chunk: CapturedChunk,
+        cumulative_pcm_samples: int,
+        chunk_duration_sec: float,
+    ) -> CapturedChunk:
+        if chunk.stream_interval_lag_sec is not None:
+            if chunk.stream_interval_lag_sec > MAX_STREAM_DRIFT_SECS:
+                old_anchor = self.stream_anchor_time
+                # Re-anchor the stream timeline to align chunk_end_time with receipt_time
+                self.stream_anchor_time = (
+                    chunk.receipt_time or _now_utc()
+                ) - datetime.timedelta(
+                    seconds=(cumulative_pcm_samples / SAMPLE_RATE_HZ)
+                )
+                logger.warning(
+                    "Feed %s (%s): Stream interval lag %.2fs exceeds threshold "
+                    "%.2fs. Re-anchoring timeline: "
+                    "old_anchor=%s, new_anchor=%s",
+                    self.feed_id,
+                    self.feed_name,
+                    chunk.stream_interval_lag_sec,
+                    MAX_STREAM_DRIFT_SECS,
+                    old_anchor.isoformat(),
+                    self.stream_anchor_time.isoformat(),
+                )
+                # Recalculate current chunk's timestamps using the new anchor
+                start_offset_sec = (
+                    cumulative_pcm_samples / SAMPLE_RATE_HZ - chunk_duration_sec
+                )
+                new_start = self.stream_anchor_time + datetime.timedelta(
+                    seconds=start_offset_sec
+                )
+                new_end = new_start + datetime.timedelta(
+                    seconds=chunk_duration_sec
+                )
+                chunk = dataclasses.replace(
+                    chunk,
+                    chunk_start_time=new_start,
+                    chunk_end_time=new_end,
+                )
+        return chunk
 
     def flush(self) -> list[CapturedChunk]:
         """Flush any remaining buffered chunks without adjusting."""
@@ -939,7 +979,7 @@ async def capture_icecast_stream(
         # long-session source-clock drift.
         previous_receipt_time: datetime.datetime | None = None
 
-        burst_detector = IcecastBurstDetector(
+        timeline_manager = IcecastTimelineManager(
             stream_anchor_time=stream_anchor_time,
             feed_id=feed_id,
             feed_name=feed_name,
@@ -953,7 +993,7 @@ async def capture_icecast_stream(
                         feed_id,
                         feed_name,
                     )
-                    for buffered_chunk in burst_detector.flush():
+                    for buffered_chunk in timeline_manager.flush():
                         yield buffered_chunk
                     return
 
@@ -981,11 +1021,10 @@ async def capture_icecast_stream(
                         chunk,
                         previous_receipt_time,
                         cumulative_pcm_samples,
-                        stream_anchor_time,
                     ) = await _process_finalized_segment(
                         current_segment_pcm=current_segment_pcm,
                         next_index=next_index,
-                        stream_anchor_time=burst_detector.stream_anchor_time,
+                        stream_anchor_time=timeline_manager.stream_anchor_time,
                         process_done=process_done,
                         previous_receipt_time=previous_receipt_time,
                         cumulative_pcm_samples=cumulative_pcm_samples,
@@ -995,7 +1034,7 @@ async def capture_icecast_stream(
                     )
                     next_index += 1
                     if chunk is not None:
-                        for ready_chunk in burst_detector.process_chunk(
+                        for ready_chunk in timeline_manager.process_chunk(
                             chunk=chunk,
                             cumulative_pcm_samples=cumulative_pcm_samples,
                             process_done=process_done,
@@ -1017,7 +1056,7 @@ async def capture_icecast_stream(
                     stderr_tail=stderr_tail,
                     stderr_http_status_lines=stderr_http_status_lines,
                 ):
-                    for buffered_chunk in burst_detector.flush():
+                    for buffered_chunk in timeline_manager.flush():
                         yield buffered_chunk
                     return
 
