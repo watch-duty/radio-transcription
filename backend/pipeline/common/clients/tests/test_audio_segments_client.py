@@ -202,6 +202,15 @@ class TestAsyncAudioSegmentsClient(unittest.IsolatedAsyncioTestCase):
         if isinstance(auth, GCPMetadataAsyncAuth):
             self.assertEqual(auth.audience, "http://test-api.com")
 
+    def test_async_client_initializes_with_http2(self) -> None:
+        client = AsyncAudioSegmentsClient("http://test-api.com")
+        transport = client.client._transport
+        self.assertIsNotNone(transport)
+        self.assertIsInstance(transport, httpx.AsyncHTTPTransport)
+        self.assertTrue(
+            getattr(getattr(transport, "_pool", None), "_http2", False)
+        )
+
     @patch("backend.pipeline.common.clients.audio_segments_client.get_id_token")
     async def test_gcp_metadata_async_auth_adds_header(
         self, mock_get_id_token
