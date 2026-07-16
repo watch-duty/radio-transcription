@@ -341,7 +341,6 @@ async def test_dry_run_rule(
                 "case_sensitive": False,
             },
         },
-        "evaluation_limit": 100,
         "max_examples": 10,
         "feed_ids": [feed_id],
     }

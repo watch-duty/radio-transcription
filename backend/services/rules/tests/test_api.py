@@ -224,7 +224,6 @@ class TestRulesAPI(unittest.TestCase):
                     "keywords": ["fire"],
                 },
             },
-            "evaluation_limit": 100,
         }
 
         seg1 = AudioSegment(
