@@ -334,18 +334,11 @@ class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
 class TestIngestionLeaseStoreClaims(unittest.IsolatedAsyncioTestCase):
     """Tests for strict typed claim conversion and one-shot execution."""
 
-    async def test_primary_claim_returns_complete_grant_and_lifecycle(
+    async def test_primary_claim_returns_complete_grant(
         self,
     ) -> None:
         pool = connection_util.make_mock_pool(
-            fetch_result=[
-                _lease_row(
-                    fencing_token=8,
-                    failure_count=0,
-                    status_reason=None,
-                    status_reason_detail=None,
-                )
-            ]
+            fetch_result=[_lease_row(fencing_token=8)]
         )
         store = ingestion_lease_store.IngestionLeaseStore(pool)
 
@@ -357,7 +350,6 @@ class TestIngestionLeaseStoreClaims(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].grant, _grant(fencing_token=8))
-        self.assertFalse(result[0].durable_failing)
         pool.fetch.assert_awaited_once_with(
             ingestion_lease_queries.CLAIM_UNCLAIMED_LEASES_SQL,
             "bcfy_calls",
@@ -417,8 +409,9 @@ class TestIngestionLeaseStoreClaims(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         cases = (
             {"source_type": "future_source"},
-            {"failure_count": True},
-            {"failure_count": -1},
+            {"lease_key": ""},
+            {"worker_id": "not-a-uuid"},
+            {"fencing_token": True},
         )
 
         for overrides in cases:
@@ -447,38 +440,6 @@ class TestIngestionLeaseStoreClaims(unittest.IsolatedAsyncioTestCase):
             )
 
         pool.fetch.assert_awaited_once()
-
-    async def test_claim_derives_lifecycle_from_raw_failure_evidence(
-        self,
-    ) -> None:
-        cases = (
-            (0, None, False),
-            (1, None, True),
-            (0, "source_unreachable", True),
-        )
-
-        for failure_count, status_reason, expected in cases:
-            with self.subTest(
-                failure_count=failure_count,
-                status_reason=status_reason,
-            ):
-                pool = connection_util.make_mock_pool(
-                    fetch_result=[
-                        _lease_row(
-                            failure_count=failure_count,
-                            status_reason=status_reason,
-                        )
-                    ]
-                )
-                store = ingestion_lease_store.IngestionLeaseStore(pool)
-
-                result = await store.claim_unclaimed(
-                    feed_store.SourceType.BCFY_CALLS,
-                    _OWNER_ID,
-                    1,
-                )
-
-                self.assertIs(result[0].durable_failing, expected)
 
 
 class TestIngestionLeaseStoreHeartbeat(unittest.IsolatedAsyncioTestCase):
@@ -634,7 +595,6 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
                 result.disposition,
                 ingestion_lease_store.LeaseOperationDisposition.APPLIED,
             )
-            self.assertTrue(result.durable_failing)
             observed_args.append(pool.fetchrow.await_args.args)
 
         self.assertTrue(all(args == observed_args[0] for args in observed_args))
@@ -664,7 +624,6 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
             result.disposition,
             ingestion_lease_store.LeaseOperationDisposition.STATUS_INELIGIBLE,
         )
-        self.assertIsNone(result.durable_failing)
 
     async def test_missing_release_is_typed(self) -> None:
         pool = connection_util.make_mock_pool(fetchrow_result=None)
@@ -676,7 +635,6 @@ class TestIngestionLeaseStoreRelease(unittest.IsolatedAsyncioTestCase):
             result.disposition,
             ingestion_lease_store.LeaseOperationDisposition.MISSING,
         )
-        self.assertIsNone(result.durable_failing)
 
     async def test_exact_nonapplied_release_fails_closed(self) -> None:
         pool = connection_util.make_mock_pool(

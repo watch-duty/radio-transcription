@@ -56,7 +56,6 @@ def _snapshot_payload(
             "authority_kind": catalog_entry.authority_kind.value,
             "active": count.active,
             "retrying": count.retrying,
-            "durable_failing": count.durable_failing,
         }
         if domain_id is grant_control.DomainId.FEED:
             active_feeds = count.active

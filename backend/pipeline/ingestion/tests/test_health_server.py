@@ -36,7 +36,6 @@ def _snapshot(
     *,
     feed_active: int = 0,
     feed_retrying: int = 0,
-    feed_failing: int = 0,
     sid_active: int | None = None,
 ) -> grant_supervisor.SupervisorSnapshot:
     """Build one immutable local health projection."""
@@ -44,14 +43,12 @@ def _snapshot(
         grant_control.DomainId.FEED: grant_supervisor.GrantCount(
             active=feed_active,
             retrying=feed_retrying,
-            durable_failing=feed_failing,
         )
     }
     if sid_active is not None:
         counts[grant_control.DomainId.SID] = grant_supervisor.GrantCount(
             active=sid_active,
             retrying=0,
-            durable_failing=0,
         )
     return grant_supervisor.SupervisorSnapshot(
         profile=worker_profiles.LEGACY_PROFILE.name,
@@ -162,7 +159,6 @@ class HealthzHandlerTests(AioHTTPTestCase):
         snapshot = _snapshot(
             feed_active=3,
             feed_retrying=1,
-            feed_failing=2,
         )
         snapshot_provider = mock.Mock(return_value=snapshot)
         self.state.snapshot_provider = snapshot_provider
@@ -197,7 +193,6 @@ class HealthzHandlerTests(AioHTTPTestCase):
                     "authority_kind": "feed",
                     "active": 3,
                     "retrying": 1,
-                    "durable_failing": 2,
                 }
             },
         )

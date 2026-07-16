@@ -60,24 +60,11 @@ class GrantControlIntegrityError(RuntimeError):
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class LifecycleEvidence:
-    """Only common projection of mutable durable lifecycle state."""
-
-    durable_failing: bool
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.durable_failing, bool):
-            msg = "durable_failing must be a bool"
-            raise TypeError(msg)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
 class ClaimedGrant[GrantT, PayloadT]:
     """One newly claimed typed grant and its separate runner payload."""
 
     grant: GrantT
     payload: PayloadT
-    lifecycle: LifecycleEvidence
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -86,7 +73,6 @@ class GrantHeartbeat[GrantT]:
 
     grant: GrantT
     disposition: HeartbeatDisposition
-    lifecycle: LifecycleEvidence | None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -95,7 +81,6 @@ class FinalizeResult[GrantT]:
 
     grant: GrantT
     disposition: FinalizeDisposition
-    lifecycle: LifecycleEvidence | None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

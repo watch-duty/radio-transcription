@@ -212,7 +212,6 @@ class _ControlledControl[GrantT, PayloadT]:
             grant_control.GrantHeartbeat(
                 grant,
                 grant_control.HeartbeatDisposition.RETAINED,
-                None,
             )
             for grant in grants
         )
@@ -243,7 +242,6 @@ class _ControlledControl[GrantT, PayloadT]:
             return grant_control.FinalizeResult(
                 grant,
                 grant_control.FinalizeDisposition.APPLIED,
-                None,
             )
         finally:
             self.finalize_active -= 1
@@ -413,7 +411,6 @@ def _claim[GrantT, PayloadT](
     return grant_control.ClaimedGrant(
         grant=grant,
         payload=payload,
-        lifecycle=grant_control.LifecycleEvidence(durable_failing=False),
     )
 
 
@@ -1237,18 +1234,13 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                     _claim(second, _leased_feed(second_id)),
                 )
                 await supervisor.admit_cycle(_OWNER_ID)
-                retained = grant_control.LifecycleEvidence(
-                    durable_failing=False
-                )
                 first_result = grant_control.GrantHeartbeat(
                     first,
                     grant_control.HeartbeatDisposition.RETAINED,
-                    retained,
                 )
                 second_result = grant_control.GrantHeartbeat(
                     second,
                     grant_control.HeartbeatDisposition.RETAINED,
-                    retained,
                 )
                 if case == "missing":
                     feed_control.heartbeat_results = (first_result,)
@@ -1278,12 +1270,10 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                         grant_control.GrantHeartbeat(
                             first,
                             grant_control.HeartbeatDisposition.UNAVAILABLE,
-                            None,
                         ),
                         grant_control.GrantHeartbeat(
                             second,
                             grant_control.HeartbeatDisposition.UNAVAILABLE,
-                            None,
                         ),
                     )
                 else:
@@ -1530,7 +1520,6 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             grant_control.GrantHeartbeat(
                 sid_grant,
                 grant_control.HeartbeatDisposition.ADMINISTRATIVE_STOP,
-                None,
             ),
         )
 
@@ -1615,7 +1604,6 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             grant_control.GrantHeartbeat(
                 grant,
                 grant_control.HeartbeatDisposition.LOST,
-                None,
             ),
         )
 
@@ -1685,7 +1673,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             snapshot = supervisor.snapshot()
             self.assertEqual(
                 snapshot.counts_by_domain[grant_control.DomainId.FEED],
-                grant_supervisor.GrantCount(1, 1, 0),
+                grant_supervisor.GrantCount(1, 1),
             )
             await supervisor.heartbeat_cycle(lambda: None)
             self.assertEqual(len(feed_control.heartbeat_calls), 1)
@@ -2203,7 +2191,6 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             grant_control.GrantHeartbeat(
                 old_grant,
                 grant_control.HeartbeatDisposition.RETAINED,
-                grant_control.LifecycleEvidence(durable_failing=True),
             ),
         )
         feed_control.block_heartbeat = True
@@ -2231,7 +2218,6 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         await cycle
 
         self.assertEqual(successor_managed.key.fencing_token, 2)
-        self.assertFalse(successor_managed.lifecycle.durable_failing)
         self.assertIs(
             successor_managed.terminal_state,
             grant_supervisor.TerminalState.OPEN,
@@ -2364,7 +2350,6 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             grant_control.ClaimedGrant(
                 grant=sid_grant,
                 payload=_sid_payload(),
-                lifecycle=grant_control.LifecycleEvidence(durable_failing=True),
             ),
         )
         feed_runner.wait_for_signal = "stop"
@@ -2398,19 +2383,17 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             snapshot.counts_by_domain[grant_control.DomainId.FEED],
-            grant_supervisor.GrantCount(1, 1, 0),
+            grant_supervisor.GrantCount(1, 1),
         )
         self.assertEqual(
             snapshot.counts_by_domain[grant_control.DomainId.SID],
-            grant_supervisor.GrantCount(1, 1, 1),
+            grant_supervisor.GrantCount(1, 1),
         )
         with self.assertRaises(TypeError):
             typing.cast(
                 "dict[grant_control.DomainId, grant_supervisor.GrantCount]",
                 snapshot.counts_by_domain,
-            )[grant_control.DomainId.FEED] = grant_supervisor.GrantCount(
-                0, 0, 0
-            )
+            )[grant_control.DomainId.FEED] = grant_supervisor.GrantCount(0, 0)
 
         records = [
             call.kwargs["extra"]["json_fields"]

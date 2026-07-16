@@ -28,9 +28,7 @@ claimed AS (
         leases.source_type,
         leases.lease_key,
         leases.worker_id,
-        leases.fencing_token,
-        leases.failure_count,
-        leases.status_reason
+        leases.fencing_token
 )
 SELECT *
 FROM claimed
@@ -80,9 +78,7 @@ claimed AS (
         leases.source_type,
         leases.lease_key,
         leases.worker_id,
-        leases.fencing_token,
-        leases.failure_count,
-        leases.status_reason
+        leases.fencing_token
 )
 SELECT *
 FROM claimed
@@ -169,9 +165,7 @@ WITH current_state AS MATERIALIZED (
         lease_key,
         status,
         worker_id,
-        fencing_token,
-        failure_count,
-        status_reason
+        fencing_token
     FROM public.ingestion_leases
     WHERE source_type = $1
       AND lease_key = $2
@@ -197,8 +191,6 @@ SELECT
     current_state.status::text AS status,
     current_state.worker_id,
     current_state.fencing_token,
-    current_state.failure_count,
-    current_state.status_reason,
     released.source_type IS NOT NULL AS applied
 FROM current_state
 LEFT JOIN released

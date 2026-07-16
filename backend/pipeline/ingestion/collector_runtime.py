@@ -560,7 +560,6 @@ class CollectorRuntime:
                     allocation.domain_id: grant_supervisor.GrantCount(
                         active=0,
                         retrying=0,
-                        durable_failing=0,
                     )
                     for allocation in profile.allocations
                 }

@@ -80,14 +80,8 @@ def _lease_grant(
 
 def _lease_claim(
     lease_key: str,
-    *,
-    failure_count: int = 0,
-    status_reason: feed_store.FeedStatusReason | None = None,
 ) -> ingestion_lease_store.LeaseClaim:
-    return ingestion_lease_store.LeaseClaim(
-        grant=_lease_grant(lease_key),
-        durable_failing=(failure_count > 0 or status_reason is not None),
-    )
+    return ingestion_lease_store.LeaseClaim(grant=_lease_grant(lease_key))
 
 
 def _payload_for_grant(
@@ -150,14 +144,21 @@ class TestGrantControlVocabulary(unittest.TestCase):
             with self.subTest(enum_type=enum_type.__name__):
                 self.assertEqual({item.value for item in enum_type}, values)
 
-    def test_lifecycle_evidence_has_only_one_boolean_projection(self) -> None:
-        evidence = grant_control.LifecycleEvidence(durable_failing=True)
+    def test_results_expose_only_functional_control_state(self) -> None:
+        expected_fields = {
+            grant_control.ClaimedGrant: ("grant", "payload"),
+            grant_control.GrantHeartbeat: ("grant", "disposition"),
+            grant_control.FinalizeResult: ("grant", "disposition"),
+        }
 
-        self.assertEqual(
-            tuple(field.name for field in dataclasses.fields(evidence)),
-            ("durable_failing",),
-        )
-        self.assertFalse(hasattr(evidence, "__dict__"))
+        for result_type, expected in expected_fields.items():
+            with self.subTest(result_type=result_type.__name__):
+                self.assertEqual(
+                    tuple(
+                        field.name for field in dataclasses.fields(result_type)
+                    ),
+                    expected,
+                )
 
     def test_protocol_signatures_are_only_claim_heartbeat_finalize_run(
         self,
@@ -268,8 +269,6 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
         )
         self.assertIs(result[0].payload, first)
         self.assertIs(result[1].payload, second)
-        self.assertFalse(result[0].lifecycle.durable_failing)
-        self.assertTrue(result[1].lifecycle.durable_failing)
         self.data_store.acquire_feeds_recovery.assert_not_awaited()
 
     async def test_recovery_refreshes_counts_and_uses_remaining_limits(
@@ -343,7 +342,6 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
                 grant_control.HeartbeatDisposition.LOST,
             ],
         )
-        self.assertTrue(all(item.lifecycle is None for item in translated))
 
     async def test_heartbeat_rejects_every_malformed_correlation(self) -> None:
         first = _feed_grant()
@@ -455,14 +453,14 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             released.disposition,
             grant_control.FinalizeDisposition.APPLIED,
         )
-        budgeted_lifecycle = budgeted.lifecycle
-        non_budgeted_lifecycle = non_budgeted.lifecycle
-        self.assertIsNotNone(budgeted_lifecycle)
-        self.assertIsNotNone(non_budgeted_lifecycle)
-        assert budgeted_lifecycle is not None
-        assert non_budgeted_lifecycle is not None
-        self.assertTrue(budgeted_lifecycle.durable_failing)
-        self.assertTrue(non_budgeted_lifecycle.durable_failing)
+        self.assertIs(
+            budgeted.disposition,
+            grant_control.FinalizeDisposition.APPLIED,
+        )
+        self.assertIs(
+            non_budgeted.disposition,
+            grant_control.FinalizeDisposition.APPLIED,
+        )
         self.data_store.release_feed.assert_awaited_once_with(
             grant.feed_id,
             grant.owner_worker_id,
@@ -650,7 +648,9 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
         self.data_store.report_feed_failure.assert_awaited_once()
         observer.assert_awaited_once_with(grant, payload, decision)
 
-    async def test_quarantine_observer_ignores_durable_failing(self) -> None:
+    async def test_quarantine_observer_ignores_non_quarantined_failure(
+        self,
+    ) -> None:
         observer = mock.AsyncMock()
         control = feed_grant_control.FeedGrantControl(
             self.data_store,
@@ -723,11 +723,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         first = _lease_claim("200")
-        second = _lease_claim(
-            "100",
-            failure_count=2,
-            status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-        )
+        second = _lease_claim("100")
         self.data_store.claim_unclaimed.return_value = (first, second)
         self.data_store.claim_recoverable.return_value = (second, first)
 
@@ -769,8 +765,6 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             recovery[0].payload.claim_mode,
             grant_control.ClaimMode.RECOVERY,
         )
-        self.assertFalse(primary[0].lifecycle.durable_failing)
-        self.assertTrue(primary[1].lifecycle.durable_failing)
         self.assertEqual(
             [item.grant for item in recovery],
             [second.grant, first.grant],
@@ -778,20 +772,12 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         self.data_store.load_membership.assert_not_awaited()
         self.data_store.commit_child_mutations.assert_not_awaited()
 
-    async def test_sid_claim_payload_provenance_ignores_mutable_lifecycle(
+    async def test_sid_claim_payload_provenance_is_bound_to_claim_mode(
         self,
     ) -> None:
         stale_active = _lease_claim("stale-active")
-        retained_failure = _lease_claim(
-            "retained-failure",
-            failure_count=3,
-            status_reason=feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-        )
-        primary_failed = _lease_claim(
-            "primary-failed",
-            failure_count=2,
-            status_reason=feed_store.FeedStatusReason.SOURCE_RATE_LIMITED,
-        )
+        retained_failure = _lease_claim("retained-failure")
+        primary_failed = _lease_claim("primary-failed")
         self.data_store.claim_recoverable.return_value = (
             stale_active,
             retained_failure,
@@ -819,9 +805,6 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             primary[0].payload.claim_mode,
             grant_control.ClaimMode.PRIMARY,
         )
-        self.assertFalse(recovered[0].lifecycle.durable_failing)
-        self.assertTrue(recovered[1].lifecycle.durable_failing)
-        self.assertTrue(primary[0].lifecycle.durable_failing)
         claim_mode_field = "claim_mode"
         with self.assertRaises(dataclasses.FrozenInstanceError):
             setattr(
@@ -915,7 +898,6 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
                 grant_control.HeartbeatDisposition.LOST,
             ],
         )
-        self.assertTrue(all(item.lifecycle is None for item in translated))
 
     async def test_heartbeat_rejects_every_malformed_correlation(self) -> None:
         first = _lease_grant("100")
@@ -986,7 +968,6 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
                 self.data_store.release.return_value = (
                     ingestion_lease_store.LeaseOperationResult(
                         ingestion_lease_store.LeaseOperationDisposition.APPLIED,
-                        durable_failing=False,
                     )
                 )
 
@@ -1064,14 +1045,10 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             budgeted.disposition,
             grant_control.FinalizeDisposition.APPLIED,
         )
-        budgeted_lifecycle = budgeted.lifecycle
-        non_budgeted_lifecycle = non_budgeted.lifecycle
-        self.assertIsNotNone(budgeted_lifecycle)
-        self.assertIsNotNone(non_budgeted_lifecycle)
-        assert budgeted_lifecycle is not None
-        assert non_budgeted_lifecycle is not None
-        self.assertTrue(budgeted_lifecycle.durable_failing)
-        self.assertTrue(non_budgeted_lifecycle.durable_failing)
+        self.assertIs(
+            non_budgeted.disposition,
+            grant_control.FinalizeDisposition.APPLIED,
+        )
         policy_mock.assert_not_called()
         retry_mock.assert_not_awaited()
         self.data_store.load_membership.assert_not_awaited()
@@ -1110,7 +1087,6 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
                 self.data_store.release.return_value = (
                     ingestion_lease_store.LeaseOperationResult(
                         disposition,
-                        None,
                     )
                 )
 
@@ -1126,26 +1102,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
                     result.disposition,
                     grant_control.FinalizeDisposition.LOST,
                 )
-                self.assertIsNone(result.lifecycle)
                 self.assertFalse(hasattr(self.data_store, "release_batch"))
-
-    async def test_retained_release_requires_lifecycle_evidence(self) -> None:
-        grant = _lease_grant()
-        malformed = ingestion_lease_store.LeaseOperationResult(
-            ingestion_lease_store.LeaseOperationDisposition.APPLIED,
-            durable_failing=False,
-        )
-        object.__setattr__(malformed, "durable_failing", None)
-        self.data_store.release.return_value = malformed
-
-        with self.assertRaises(grant_control.GrantControlIntegrityError):
-            await self.control.finalize(
-                grant,
-                self._sid_payload(grant),
-                grant_control.NeutralRelease(
-                    grant_control.TerminalCause.NORMAL
-                ),
-            )
 
     async def test_store_exception_propagates_without_retry(self) -> None:
         grant = _lease_grant()

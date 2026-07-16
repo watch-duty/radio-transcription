@@ -68,16 +68,12 @@ class LeaseGrant:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LeaseClaim:
-    """A newly established grant and its retained failure evidence."""
+    """A newly established complete Lease grant."""
 
     grant: LeaseGrant
-    durable_failing: bool
 
     def __post_init__(self) -> None:
         _require_grant(self.grant)
-        if not isinstance(self.durable_failing, bool):
-            msg = "durable_failing must be a boolean"
-            raise TypeError(msg)
 
 
 class LeaseOperationDisposition(enum.StrEnum):
@@ -95,16 +91,11 @@ class LeaseOperationResult:
     """Narrow result for one exact-grant Lease mutation."""
 
     disposition: LeaseOperationDisposition
-    durable_failing: bool | None
 
     def __post_init__(self) -> None:
         if not isinstance(self.disposition, LeaseOperationDisposition):
             msg = "disposition must be a LeaseOperationDisposition"
             raise TypeError(msg)
-        applied = self.disposition is LeaseOperationDisposition.APPLIED
-        if applied != isinstance(self.durable_failing, bool):
-            msg = "only an applied Lease operation returns lifecycle evidence"
-            raise ValueError(msg)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1187,15 +1178,11 @@ def _failure_count_from_row(row: collections.abc.Mapping) -> int:
     return value
 
 
-def _durable_failing_from_row(row: collections.abc.Mapping) -> bool:
-    """Interpret the retained failure evidence shared with Feed grants."""
-    return _failure_count_from_row(row) != 0 or row["status_reason"] is not None
-
-
 def _lifecycle_dirty_from_row(row: collections.abc.Mapping) -> bool:
     """Whether successful work must clear any retained lifecycle field."""
     return (
-        _durable_failing_from_row(row)
+        _failure_count_from_row(row) != 0
+        or row["status_reason"] is not None
         or row["retry_after"] is not None
         or row["status_reason_detail"] is not None
     )
@@ -1222,10 +1209,7 @@ def _claim_from_row(row: collections.abc.Mapping) -> LeaseClaim:
         owner_worker_id=row["worker_id"],
         fencing_token=row["fencing_token"],
     )
-    return LeaseClaim(
-        grant=grant,
-        durable_failing=_durable_failing_from_row(row),
-    )
+    return LeaseClaim(grant=grant)
 
 
 def _disposition_for_rejection(
@@ -1766,10 +1750,7 @@ class IngestionLeaseStore:
             grant.fencing_token,
         )
         if row is None:
-            return LeaseOperationResult(
-                LeaseOperationDisposition.MISSING,
-                None,
-            )
+            return LeaseOperationResult(LeaseOperationDisposition.MISSING)
         if row["applied"]:
             rejection_reason = self._grant_rejection_reason(grant, row)
             if rejection_reason is not None:
@@ -1785,18 +1766,14 @@ class IngestionLeaseStore:
                     "release_cause": cause.value,
                 },
             )
-            return LeaseOperationResult(
-                LeaseOperationDisposition.APPLIED,
-                _durable_failing_from_row(row),
-            )
+            return LeaseOperationResult(LeaseOperationDisposition.APPLIED)
 
         rejection = self._grant_rejection(grant, row)
         if rejection is None:
             msg = "release did not update an exact active Lease grant"
             raise RuntimeError(msg)
         return LeaseOperationResult(
-            _disposition_for_rejection(rejection.reason),
-            None,
+            _disposition_for_rejection(rejection.reason)
         )
 
     async def finalize_failure(

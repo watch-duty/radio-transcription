@@ -1403,7 +1403,6 @@ async def test_real_lease_store_runs_through_runtime_pool(
         owner_worker_id=privilege_fixtures.lease_owner,
         fencing_token=1,
     )
-    assert claims[0].durable_failing is False
 
     membership = await lease_store.load_membership(grant)
     assert isinstance(membership, ingestion_lease_store.MembershipSnapshot)

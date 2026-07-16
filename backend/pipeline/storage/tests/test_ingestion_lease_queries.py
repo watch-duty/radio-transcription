@@ -87,21 +87,28 @@ class TestLeaseGrantContract(unittest.TestCase):
                     *case,  # ty: ignore[invalid-argument-type]
                 )
 
-    def test_grant_equality_excludes_mutable_lifecycle_state(self) -> None:
+    def test_claim_exposes_only_the_complete_grant(self) -> None:
         grant = ingestion_lease_store.LeaseGrant(
             feed_store.SourceType.BCFY_CALLS,
             "123",
             self.owner_id,
             4,
         )
-        first = ingestion_lease_store.LeaseClaim(
-            grant=grant,
-            durable_failing=False,
-        )
-        second = dataclasses.replace(first, durable_failing=True)
+        claim = ingestion_lease_store.LeaseClaim(grant=grant)
 
-        self.assertEqual(first.grant, second.grant)
-        self.assertNotEqual(first.durable_failing, second.durable_failing)
+        self.assertEqual(
+            tuple(field.name for field in dataclasses.fields(claim)),
+            ("grant",),
+        )
+        operation = ingestion_lease_store.LeaseOperationResult(
+            ingestion_lease_store.LeaseOperationDisposition.APPLIED
+        )
+        self.assertEqual(
+            tuple(field.name for field in dataclasses.fields(operation)),
+            ("disposition",),
+        )
+        self.assertFalse(hasattr(claim, "__dict__"))
+        self.assertFalse(hasattr(operation, "__dict__"))
 
 
 class TestLeaseClaimQueryContract(unittest.TestCase):
@@ -194,13 +201,12 @@ class TestLeaseClaimQueryContract(unittest.TestCase):
             for fragment in retained:
                 self.assertNotIn(fragment, sql)
             result_projection = sql.split("RETURNING", 1)[1]
-            self.assertIn("leases.failure_count", result_projection)
-            self.assertIn("leases.status_reason", result_projection)
-            self.assertNotIn("durable_failing", result_projection)
             for removed in (
                 "leases.status,",
                 "leases.last_heartbeat,",
+                "leases.failure_count,",
                 "leases.retry_after,",
+                "leases.status_reason,",
                 "leases.status_reason_detail,",
                 "leases.membership_revision,",
                 "leases.updated_at,",
@@ -271,12 +277,11 @@ class TestLeaseControlQueryContract(unittest.TestCase):
         self.assertNotIn("retry_after =", sql)
         self.assertNotIn("status_reason =", sql)
         result_projection = sql.rsplit("SELECT", 1)[1]
-        self.assertIn("current_state.failure_count", result_projection)
-        self.assertIn("current_state.status_reason", result_projection)
-        self.assertNotIn("durable_failing", result_projection)
         for removed in (
             "last_heartbeat",
+            "failure_count",
             "retry_after",
+            "status_reason",
             "status_reason_detail",
             "membership_revision",
             "updated_at",

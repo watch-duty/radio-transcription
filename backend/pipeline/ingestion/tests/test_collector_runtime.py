@@ -881,9 +881,6 @@ class TestLeasedFeedPayloadSupervisorBoundary(unittest.IsolatedAsyncioTestCase):
                 grant_control.ClaimedGrant(
                     grant=grant,
                     payload=payload,
-                    lifecycle=grant_control.LifecycleEvidence(
-                        durable_failing=False
-                    ),
                 ),
             )
 
@@ -892,7 +889,6 @@ class TestLeasedFeedPayloadSupervisorBoundary(unittest.IsolatedAsyncioTestCase):
             return grant_control.FinalizeResult(
                 finalized_grant,
                 grant_control.FinalizeDisposition.APPLIED,
-                None,
             )
 
         control.claim.side_effect = claim
@@ -1096,9 +1092,6 @@ class TestProcessFeedSideEffectOrdering(unittest.IsolatedAsyncioTestCase):
                 grant_control.ClaimedGrant(
                     grant=_make_feed_grant(),
                     payload=_FEED,
-                    lifecycle=grant_control.LifecycleEvidence(
-                        durable_failing=False
-                    ),
                 ),
             )
 
@@ -2740,7 +2733,6 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         data_store.claim_unclaimed.return_value = (
             ingestion_lease_store.LeaseClaim(
                 grant=grant,
-                durable_failing=False,
             ),
         )
         data_store.claim_recoverable.return_value = ()
@@ -2912,7 +2904,6 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             order.append("release")
             return ingestion_lease_store.LeaseOperationResult(
                 ingestion_lease_store.LeaseOperationDisposition.APPLIED,
-                durable_failing=False,
             )
 
         data_store.release.side_effect = release

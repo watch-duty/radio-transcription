@@ -58,7 +58,6 @@ class GrantCount:
 
     active: int
     retrying: int
-    durable_failing: int
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -188,7 +187,6 @@ class _LifecycleRecord:
     outcome: str
     active: int | None = None
     retrying: int | None = None
-    durable_failing: int | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -211,7 +209,6 @@ class _ErasedClaim:
 
     grant: object
     payload: object
-    lifecycle: grant_control.LifecycleEvidence
     authority: Authority
     owner_worker_id: uuid.UUID
     fencing_token: int
@@ -225,7 +222,6 @@ class _ErasedClaim:
 class _ErasedHeartbeat:
     grant: object
     disposition: grant_control.HeartbeatDisposition
-    lifecycle: grant_control.LifecycleEvidence | None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -258,7 +254,6 @@ class _ManagedGrant:
     domain: _ErasedRegisteredDomain
     grant: object
     payload: object
-    lifecycle: grant_control.LifecycleEvidence
     key: _GenerationKey
     root_task: asyncio.Task[None] | None
     stop_requested: asyncio.Event
@@ -319,9 +314,6 @@ def _erase_registered_domain[GrantT, PayloadT](  # noqa: PLR0915
         if not payload_valid:
             msg = "claim returned a malformed runner payload"
             raise grant_control.GrantControlIntegrityError(msg)
-        if not isinstance(candidate.lifecycle, grant_control.LifecycleEvidence):
-            msg = "claim returned invalid lifecycle evidence"
-            raise grant_control.GrantControlIntegrityError(msg)
         try:
             authority = registered.authority_of(grant)
             owner_worker_id = registered.owner_of(grant)
@@ -348,7 +340,6 @@ def _erase_registered_domain[GrantT, PayloadT](  # noqa: PLR0915
         return _ErasedClaim(
             grant=grant,
             payload=payload,
-            lifecycle=candidate.lifecycle,
             authority=authority,
             owner_worker_id=owner_worker_id,
             fencing_token=fencing_token,
@@ -392,7 +383,6 @@ def _erase_registered_domain[GrantT, PayloadT](  # noqa: PLR0915
                 _ErasedHeartbeat(
                     grant=result.grant,
                     disposition=result.disposition,
-                    lifecycle=result.lifecycle,
                 )
             )
         return tuple(erased)
@@ -415,7 +405,6 @@ def _erase_registered_domain[GrantT, PayloadT](  # noqa: PLR0915
         return grant_control.FinalizeResult(
             grant=result.grant,
             disposition=result.disposition,
-            lifecycle=result.lifecycle,
         )
 
     return _ErasedRegisteredDomain(
@@ -803,7 +792,6 @@ class GrantSupervisor:
             domain=domain,
             grant=claim.grant,
             payload=claim.payload,
-            lifecycle=claim.lifecycle,
             key=key,
             root_task=None,
             stop_requested=asyncio.Event(),
@@ -1159,15 +1147,9 @@ class GrantSupervisor:
         if not isinstance(
             result.disposition,
             grant_control.FinalizeDisposition,
-        ) or (
-            result.lifecycle is not None
-            and not isinstance(
-                result.lifecycle,
-                grant_control.LifecycleEvidence,
-            )
         ):
             failure = grant_control.GrantControlIntegrityError(
-                "finalize result lifecycle or disposition is malformed"
+                "finalize result disposition is malformed"
             )
             managed.terminal_state = TerminalState.ABANDONED
             managed.terminal_kind = _ReservationKind.UNCERTAIN
@@ -1183,8 +1165,6 @@ class GrantSupervisor:
             grant_control.FinalizeDisposition.APPLIED,
             grant_control.FinalizeDisposition.ACCEPTED_NOOP,
         ):
-            if result.lifecycle is not None:
-                managed.lifecycle = result.lifecycle
             managed.terminal_state = TerminalState.FINALIZED
             self._emit_lifecycle(
                 _LifecycleEvent.FINALIZATION,
@@ -1287,9 +1267,6 @@ class GrantSupervisor:
                     result.disposition
                     is grant_control.HeartbeatDisposition.RETAINED
                 ):
-                    lifecycle = result.lifecycle
-                    if lifecycle is not None:
-                        managed.lifecycle = lifecycle
                     self._emit_lifecycle(
                         _LifecycleEvent.HEARTBEAT,
                         domain,
@@ -1352,19 +1329,6 @@ class GrantSupervisor:
                 grant_control.HeartbeatDisposition,
             ):
                 msg = "heartbeat returned an invalid disposition"
-                raise grant_control.GrantControlIntegrityError(msg)
-            retained = (
-                result.disposition
-                is grant_control.HeartbeatDisposition.RETAINED
-            )
-            if result.lifecycle is not None and (
-                not retained
-                or not isinstance(
-                    result.lifecycle,
-                    grant_control.LifecycleEvidence,
-                )
-            ):
-                msg = "heartbeat lifecycle evidence is malformed"
                 raise grant_control.GrantControlIntegrityError(msg)
 
     def _heartbeat_eligible(self, managed: _ManagedGrant) -> bool:
@@ -1492,9 +1456,6 @@ class GrantSupervisor:
         return GrantCount(
             active=len(active_entries),
             retrying=sum(managed.retrying for managed in active_entries),
-            durable_failing=sum(
-                managed.lifecycle.durable_failing for managed in entries
-            ),
         )
 
     async def _claim_shutdown_blocker(
@@ -1735,9 +1696,6 @@ class GrantSupervisor:
             outcome=outcome,
             active=count.active if count is not None else None,
             retrying=count.retrying if count is not None else None,
-            durable_failing=(
-                count.durable_failing if count is not None else None
-            ),
         )
         logger.info(
             "Grant supervisor lifecycle",
