@@ -243,7 +243,7 @@ class GeminiTranscriber(base.Transcriber):
         if self.client is None:
             msg = "Client not initialized"
             raise RuntimeError(msg)
-        if self.config.model == "gemini-3.1-flash-lite":
+        if self.config.model == DEFAULT_GEMINI_MODEL:
             logger.info(
                 "Model %s returned incomplete/empty response: %s. "
                 "Treating as empty transcription.",
@@ -263,7 +263,7 @@ class GeminiTranscriber(base.Transcriber):
             try:
                 fallback_response = (
                     await self.client.aio.models.generate_content(
-                        model="gemini-3.1-flash-lite",
+                        model=DEFAULT_GEMINI_MODEL,
                         contents=contents,
                         config=generation_config,
                     )

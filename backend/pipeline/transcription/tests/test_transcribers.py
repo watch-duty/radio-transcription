@@ -18,6 +18,7 @@ from backend.pipeline.transcription.transcribers.chirp import (
 )
 from backend.pipeline.transcription.transcribers.factory import get_transcriber
 from backend.pipeline.transcription.transcribers.gemini import (
+    DEFAULT_GEMINI_MODEL,
     GeminiTranscriptionError,
 )
 
@@ -1040,7 +1041,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 ]
             )
             self.assertEqual(
-                second_call_args.kwargs["model"], "gemini-3.1-flash-lite"
+                second_call_args.kwargs["model"], DEFAULT_GEMINI_MODEL
             )
 
     async def test_gemini_transcriber_tuned_model_fallback_on_empty_string(
