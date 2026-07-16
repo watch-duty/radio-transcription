@@ -14,6 +14,7 @@ import uuid
 from unittest import mock
 
 from backend.pipeline.ingestion import (
+    failure_policy,
     feed_work_scheduler,
     grant_control,
     models,
@@ -3094,7 +3095,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         finalizer = runtime_adapters.FencedPageFinalizer(
             store,
             actor_id="service_account:gcp:sid-processor-tests",
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         )
         scheduler = feed_work_scheduler.FeedWorkScheduler(
@@ -3197,7 +3198,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         finalizer = runtime_adapters.FencedPageFinalizer(
             store,
             actor_id="service_account:gcp:sid-processor-tests",
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         )
         scheduler = feed_work_scheduler.FeedWorkScheduler(

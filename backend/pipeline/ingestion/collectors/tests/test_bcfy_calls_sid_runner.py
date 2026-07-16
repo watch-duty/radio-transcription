@@ -300,7 +300,6 @@ def _context() -> tuple[
         grant_control.RunContext(
             stop_requested=stop,
             grant_lost=loss,
-            set_retrying=lambda _retrying: None,
         ),
         stop,
         loss,

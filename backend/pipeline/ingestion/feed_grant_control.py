@@ -9,7 +9,7 @@ import typing
 import uuid
 from types import MappingProxyType
 
-from backend.pipeline.ingestion import grant_control
+from backend.pipeline.ingestion import failure_policy, grant_control
 from backend.pipeline.storage import feed_store
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ type QuarantineObserver = typing.Callable[
     [
         feed_store.FeedGrant,
         feed_store.LeasedFeed,
-        grant_control.BudgetedFailureDecision,
+        failure_policy.FailurePersistencePlan,
     ],
     typing.Awaitable[None],
 ]
@@ -65,6 +65,7 @@ class FeedGrantControl:
         source_caps: typing.Mapping[feed_store.SourceType, int],
         abandonment_window: datetime.timedelta,
         *,
+        actor_id: str,
         on_quarantined: QuarantineObserver | None = None,
     ) -> None:
         caps: dict[feed_store.SourceType, int] = {}
@@ -85,6 +86,12 @@ class FeedGrantControl:
         if abandonment_window <= datetime.timedelta(0):
             msg = "abandonment_window must be positive"
             raise ValueError(msg)
+        if not isinstance(actor_id, str):
+            msg = "actor_id must be a string"
+            raise TypeError(msg)
+        if not actor_id.strip():
+            msg = "actor_id must not be empty"
+            raise ValueError(msg)
         if on_quarantined is not None and not callable(on_quarantined):
             msg = "on_quarantined must be callable"
             raise TypeError(msg)
@@ -93,13 +100,14 @@ class FeedGrantControl:
         self._heartbeat_store = heartbeat_store
         self._source_caps = MappingProxyType(caps)
         self._abandonment_window = abandonment_window
+        self._actor_id = actor_id
         self._on_quarantined = on_quarantined
 
     async def _observe_quarantine(
         self,
         grant: feed_store.FeedGrant,
         payload: feed_store.LeasedFeed,
-        terminal: grant_control.BudgetedFailureDecision,
+        terminal: failure_policy.FailurePersistencePlan,
     ) -> None:
         """Bound non-authoritative evidence after durable finalization."""
         observer = self._on_quarantined
@@ -271,26 +279,31 @@ class FeedGrantControl:
             )
             return grant_control.FinalizeResult(grant, disposition)
 
-        if isinstance(terminal, grant_control.BudgetedFailureDecision):
+        if not isinstance(terminal, failure_policy.FailurePersistencePlan):
+            msg = "terminal must be a closed TerminalDecision"
+            raise TypeError(msg)
+
+        treatment = terminal.treatment
+        if isinstance(treatment, failure_policy.ConsumeFailureBudget):
             status = await self._data_store.report_feed_failure(
                 grant.feed_id,
                 grant.owner_worker_id,
                 grant.fencing_token,
-                terminal.failure_threshold,
-                terminal.backoff_base_sec,
-                terminal.backoff_max_sec,
-                actor_id=terminal.actor_id,
+                treatment.failure_threshold,
+                treatment.backoff_base_sec,
+                treatment.backoff_max_sec,
+                actor_id=self._actor_id,
                 reason=terminal.reason,
                 status_reason=terminal.status_reason,
             )
-        elif isinstance(terminal, grant_control.NonBudgetedFailureDecision):
+        elif isinstance(treatment, failure_policy.RetryWithoutBudget):
             status = await self._data_store.release_non_budgeted_failure(
                 grant.feed_id,
                 grant.owner_worker_id,
                 grant.fencing_token,
-                retry_after=terminal.retry_after,
+                retry_after=treatment.retry_after,
                 status_reason=terminal.status_reason,
-                actor_id=terminal.actor_id,
+                actor_id=self._actor_id,
                 reason=terminal.reason,
             )
         else:
@@ -309,13 +322,13 @@ class FeedGrantControl:
             msg = f"Feed failure returned unexpected status {status!r}"
             raise grant_control.GrantControlIntegrityError(msg)
         if (
-            isinstance(terminal, grant_control.NonBudgetedFailureDecision)
+            isinstance(treatment, failure_policy.RetryWithoutBudget)
             and status == feed_store.FeedStatus.QUARANTINED.value
         ):
             msg = "Non-budgeted Feed finalization returned quarantined"
             raise grant_control.GrantControlIntegrityError(msg)
         if status == feed_store.FeedStatus.QUARANTINED.value and isinstance(
-            terminal, grant_control.BudgetedFailureDecision
+            treatment, failure_policy.ConsumeFailureBudget
         ):
             await self._observe_quarantine(grant, payload, terminal)
         return grant_control.FinalizeResult(

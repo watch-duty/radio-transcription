@@ -93,7 +93,7 @@ async def settle_committed_awaitable[ResultT](
 
 # TODO: https://linear.app/watchduty/issue/GOO-566/ - Move retry callers to a
 # RetryConfig + coroutine-factory API so keyword args and type checking survive.
-async def retry_with_lease_check[T](  # noqa: PLR0912
+async def retry_with_lease_check[T](
     fn: Callable[..., Awaitable[T]],
     *args: object,
     lease_lost: asyncio.Event,
@@ -103,7 +103,6 @@ async def retry_with_lease_check[T](  # noqa: PLR0912
     max_delay_sec: float = 8.0,
     retryable: tuple[type[Exception], ...] = (Exception,),
     operation_name: str = "operation",
-    retry_state_changed: Callable[[bool], None] | None = None,
     attempt_observer: Callable[[int], None] | None = None,
 ) -> T:
     """
@@ -128,8 +127,6 @@ async def retry_with_lease_check[T](  # noqa: PLR0912
         max_delay_sec: Cap on backoff delay.
         retryable: Exception types eligible for retry.
         operation_name: Label for log messages.
-        retry_state_changed: Optional non-awaiting callback that reports the
-            exact bounded-backoff interval.
         attempt_observer: Optional non-awaiting callback invoked immediately
             before each actual call with its one-based attempt number.
 
@@ -141,8 +138,6 @@ async def retry_with_lease_check[T](  # noqa: PLR0912
 
     """
     last_exception: Exception | None = None
-    retrying = False
-
     for attempt in range(max_retries + 1):
         if lease_lost.is_set():
             msg = f"Lease lost before {operation_name} attempt {attempt}"
@@ -183,10 +178,6 @@ async def retry_with_lease_check[T](  # noqa: PLR0912
                 remaining,
             )
 
-            if retry_state_changed is not None:
-                retry_state_changed(True)  # noqa: FBT003
-            retrying = True
-
             # Race backoff against both lease_lost and shutdown to maintain
             # the runtime's SIGTERM-interruptibility invariant.
             lease_task = asyncio.create_task(lease_lost.wait())
@@ -204,10 +195,6 @@ async def retry_with_lease_check[T](  # noqa: PLR0912
                         await t
                     except asyncio.CancelledError:
                         pass
-                if retrying:
-                    if retry_state_changed is not None:
-                        retry_state_changed(False)  # noqa: FBT003
-                    retrying = False
 
             if lease_lost.is_set():
                 msg = f"Lease lost during {operation_name} backoff"

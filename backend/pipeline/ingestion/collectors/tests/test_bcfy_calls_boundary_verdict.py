@@ -10,7 +10,7 @@ import unittest
 import uuid
 from unittest import mock
 
-from backend.pipeline.ingestion import feed_work_scheduler
+from backend.pipeline.ingestion import failure_policy, feed_work_scheduler
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.bcfy_calls import boundary_verdict
 from backend.pipeline.storage import feed_store, ingestion_lease_store
@@ -1020,7 +1020,7 @@ class TestFinalMutationPlan(unittest.TestCase):
             feed_work_scheduler.BoundaryWork(member, target)
             for member in (failed, quiet)
         )
-        policy = ingestion_lease_store.BudgetedFailure(9, 17, 701)
+        policy = failure_policy.ConsumeFailureBudget(9, 17, 701)
 
         plan = boundary_verdict.plan_final_mutations(
             verdict,
@@ -1040,7 +1040,10 @@ class TestFinalMutationPlan(unittest.TestCase):
         )
         assert isinstance(failure, ingestion_lease_store.FeedFailureTransition)
         self.assertIs(failure.member, failed)
-        self.assertIs(failure.action, policy)
+        self.assertEqual(
+            failure.action,
+            ingestion_lease_store.BudgetedFailure(9, 17, 701),
+        )
         self.assertEqual(failure.reason, "first direct failure")
         self.assertEqual(failure.completion_cursor, target)
         self.assertIs(
@@ -1085,7 +1088,7 @@ class TestFinalMutationPlan(unittest.TestCase):
             locally_retired_members=(),
             requested_target=None,
             boundary_settled_utc=_SOURCE_TIME,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
         )
 
         self.assertEqual(
@@ -1138,7 +1141,7 @@ class TestFinalMutationPlan(unittest.TestCase):
             locally_retired_members=(),
             requested_target=target,
             boundary_settled_utc=_SOURCE_TIME,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
         )
 
         self.assertIs(

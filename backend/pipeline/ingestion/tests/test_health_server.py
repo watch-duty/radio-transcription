@@ -35,20 +35,17 @@ def _fake_settings(
 def _snapshot(
     *,
     feed_active: int = 0,
-    feed_retrying: int = 0,
     sid_active: int | None = None,
 ) -> grant_supervisor.SupervisorSnapshot:
     """Build one immutable local health projection."""
     counts = {
         grant_control.DomainId.FEED: grant_supervisor.GrantCount(
             active=feed_active,
-            retrying=feed_retrying,
         )
     }
     if sid_active is not None:
         counts[grant_control.DomainId.SID] = grant_supervisor.GrantCount(
             active=sid_active,
-            retrying=0,
         )
     return grant_supervisor.SupervisorSnapshot(
         profile=worker_profiles.LEGACY_PROFILE.name,
@@ -156,10 +153,7 @@ class HealthzHandlerTests(AioHTTPTestCase):
         now = time.monotonic()
         self.state.startup_time = now - 400.0
         self.state.last_heartbeat_tick = now - 2.0
-        snapshot = _snapshot(
-            feed_active=3,
-            feed_retrying=1,
-        )
+        snapshot = _snapshot(feed_active=3)
         snapshot_provider = mock.Mock(return_value=snapshot)
         self.state.snapshot_provider = snapshot_provider
 
@@ -192,7 +186,6 @@ class HealthzHandlerTests(AioHTTPTestCase):
                 "feed": {
                     "authority_kind": "feed",
                     "active": 3,
-                    "retrying": 1,
                 }
             },
         )

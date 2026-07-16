@@ -10,7 +10,11 @@ import types
 import typing
 import uuid
 
-from backend.pipeline.ingestion import grant_control, worker_profiles
+from backend.pipeline.ingestion import (
+    failure_policy,
+    grant_control,
+    worker_profiles,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +61,6 @@ class GrantCount:
     """Low-cardinality local counts for one registered domain."""
 
     active: int
-    retrying: int
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -93,7 +96,6 @@ class RegisteredDomain[GrantT, PayloadT]:
         control: Typed authoritative claim/heartbeat/finalize adapter.
         runner: Typed source-work runner.
         allocation: Validated process-local capacity declaration.
-        terminal_decision_for: Pure selector for a closed runner outcome.
     """
 
     domain_id: grant_control.DomainId
@@ -106,10 +108,6 @@ class RegisteredDomain[GrantT, PayloadT]:
     control: grant_control.GrantControl[GrantT, PayloadT]
     runner: grant_control.GrantRunner[GrantT, PayloadT]
     allocation: worker_profiles.DomainAllocation
-    terminal_decision_for: typing.Callable[
-        [grant_control.RunOutcome],
-        grant_control.TerminalDecision,
-    ]
 
 
 class TerminalState(enum.StrEnum):
@@ -135,7 +133,6 @@ class _LifecycleEvent(enum.StrEnum):
     ADMINISTRATIVE_STOP = "administrative_stop"
     LOSS = "loss"
     UNAVAILABLE = "unavailable"
-    RETRY_STATE = "retry_state"
     FINALIZATION = "finalization"
     COUNT_SNAPSHOT = "count_snapshot"
     SHUTDOWN = "shutdown"
@@ -165,15 +162,16 @@ class _UncertainAbandonment:
 
 type _TerminalReservation = (
     grant_control.TerminalDecision
+    | grant_control.RunFailed
     | _AdministrativeNoWrite
     | _ConfirmedLoss
     | _UncertainAbandonment
 )
 
-_STORAGE_DECISION_TYPES = (
+_STORAGE_RESERVATION_TYPES = (
     grant_control.NeutralRelease,
-    grant_control.BudgetedFailureDecision,
-    grant_control.NonBudgetedFailureDecision,
+    failure_policy.FailurePersistencePlan,
+    grant_control.RunFailed,
 )
 
 
@@ -186,7 +184,6 @@ class _LifecycleRecord:
     authority_kind: str
     outcome: str
     active: int | None = None
-    retrying: int | None = None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -243,10 +240,6 @@ class _ErasedRegisteredDomain:
         [object, object, grant_control.TerminalDecision],
         typing.Awaitable[grant_control.FinalizeResult[object]],
     ]
-    terminal_decision_for: typing.Callable[
-        [grant_control.RunOutcome],
-        grant_control.TerminalDecision,
-    ]
 
 
 @dataclasses.dataclass(slots=True)
@@ -259,7 +252,6 @@ class _ManagedGrant:
     stop_requested: asyncio.Event
     grant_lost: asyncio.Event
     runner_closed: asyncio.Event
-    retrying: bool = False
     closed_outcome: grant_control.RunOutcome | None = None
     terminal_state: TerminalState = TerminalState.OPEN
     terminal_kind: _ReservationKind | None = None
@@ -414,7 +406,6 @@ def _erase_registered_domain[GrantT, PayloadT](  # noqa: PLR0915
         claim=claim,
         heartbeat=heartbeat,
         finalize=finalize,
-        terminal_decision_for=registered.terminal_decision_for,
     )
 
 
@@ -427,6 +418,15 @@ class GrantSupervisor:
         registered_domains: typing.Iterable[object],
         *,
         finalize_concurrency: int,
+        failure_planner: typing.Callable[
+            [grant_control.RunFailed],
+            failure_policy.FailurePersistencePlan,
+        ],
+        failure_plan_observer: typing.Callable[
+            [grant_control.DomainId, failure_policy.FailurePersistencePlan],
+            None,
+        ]
+        | None = None,
     ) -> None:
         """Validate immutable composition before any admission side effect."""
         self._profile = worker_profiles.validate_worker_profile(profile)
@@ -439,6 +439,14 @@ class GrantSupervisor:
         if finalize_concurrency <= 0:
             msg = "finalize_concurrency must be positive"
             raise ValueError(msg)
+        if not callable(failure_planner):
+            msg = "failure_planner must be callable"
+            raise TypeError(msg)
+        if failure_plan_observer is not None and not callable(
+            failure_plan_observer
+        ):
+            msg = "failure_plan_observer must be callable or None"
+            raise TypeError(msg)
 
         supplied = tuple(registered_domains)
         by_domain: dict[
@@ -481,7 +489,6 @@ class GrantSupervisor:
                 registered.authority_of,
                 registered.owner_of,
                 registered.fencing_token_of,
-                registered.terminal_decision_for,
             ):
                 if not callable(callback):
                     msg = "registered domain callbacks must be callable"
@@ -508,6 +515,8 @@ class GrantSupervisor:
         self._profile_digest = worker_profiles.profile_digest(self._profile)
         self._finalize_concurrency = finalize_concurrency
         self._finalize_semaphore = asyncio.Semaphore(finalize_concurrency)
+        self._failure_planner = failure_planner
+        self._failure_plan_observer = failure_plan_observer
         self._registry: dict[_GenerationKey, _ManagedGrant] = {}
         self._current_by_slot: dict[_AuthoritySlot, _GenerationKey] = {}
         self._owned_by_domain = dict.fromkeys(self._domains_by_id, 0)
@@ -847,7 +856,6 @@ class GrantSupervisor:
         context = grant_control.RunContext(
             stop_requested=managed.stop_requested,
             grant_lost=managed.grant_lost,
-            set_retrying=lambda retrying: self._set_retrying(key, retrying),
         )
         acknowledged_closed_outcome = False
         try:
@@ -868,36 +876,9 @@ class GrantSupervisor:
             if current is managed:
                 managed.closed_outcome = outcome
         finally:
-            if managed.retrying:
-                self._set_retrying(key, False)  # noqa: FBT003
             if acknowledged_closed_outcome:
                 managed.runner_closed.set()
                 self._handle_runner_closed(key)
-
-    def _set_retrying(
-        self,
-        key: _GenerationKey,
-        retrying: bool,  # noqa: FBT001
-    ) -> None:
-        if not isinstance(retrying, bool):
-            msg = "retrying must be a bool"
-            raise TypeError(msg)
-        managed = self._registry.get(key)
-        slot = _AuthoritySlot(key.domain_id, key.authority)
-        if (
-            managed is not None
-            and self._current_by_slot.get(slot) == key
-            and managed.key == key
-            and (managed.terminal_state is TerminalState.OPEN or not retrying)
-        ):
-            if managed.retrying == retrying:
-                return
-            managed.retrying = retrying
-            self._emit_lifecycle(
-                _LifecycleEvent.RETRY_STATE,
-                managed.domain,
-                outcome="retrying" if retrying else "active",
-            )
 
     def _root_done(
         self,
@@ -917,7 +898,7 @@ class GrantSupervisor:
         ):
             self._surface_integrity_failure(exception)
 
-    def _handle_runner_closed(  # noqa: PLR0911, PLR0912
+    def _handle_runner_closed(
         self,
         key: _GenerationKey,
     ) -> None:
@@ -960,19 +941,7 @@ class GrantSupervisor:
                 self._discard_exact_generation(key)
             return
         if isinstance(outcome, grant_control.RunFailed):
-            try:
-                decision = managed.domain.terminal_decision_for(outcome)
-            except Exception as exc:
-                self._reserve_terminal(key, _UncertainAbandonment())
-                self._surface_integrity_failure(exc)
-                return
-            if not isinstance(decision, _STORAGE_DECISION_TYPES):
-                failure = grant_control.GrantControlIntegrityError(
-                    "terminal selector returned an invalid decision"
-                )
-                self._reserve_terminal(key, _UncertainAbandonment())
-                self._surface_integrity_failure(failure)
-                return
+            decision: _TerminalReservation = outcome
         elif isinstance(outcome, grant_control.RunStopped):
             decision = grant_control.NeutralRelease(outcome.cause)
         else:
@@ -1006,7 +975,7 @@ class GrantSupervisor:
         ):
             kind = _ReservationKind.SHUTDOWN
             state = TerminalState.RESERVED
-        elif isinstance(decision, _STORAGE_DECISION_TYPES):
+        elif isinstance(decision, _STORAGE_RESERVATION_TYPES):
             kind = _ReservationKind.STORAGE
             state = TerminalState.RESERVED
         else:
@@ -1075,8 +1044,8 @@ class GrantSupervisor:
             and not self._heartbeat_stopped.is_set()
         ):
             return _FinalizeEffect.SKIPPED
-        decision = managed.terminal_decision
-        if not isinstance(decision, _STORAGE_DECISION_TYPES):
+        reservation = managed.terminal_decision
+        if not isinstance(reservation, _STORAGE_RESERVATION_TYPES):
             return _FinalizeEffect.SKIPPED
         try:
             async with self._finalize_semaphore:
@@ -1084,13 +1053,19 @@ class GrantSupervisor:
                 if (
                     current is not managed
                     or managed.terminal_state is not TerminalState.RESERVED
-                    or managed.terminal_decision is not decision
+                    or managed.terminal_decision is not reservation
                 ):
                     return _FinalizeEffect.SKIPPED
+                terminal: grant_control.TerminalDecision
+                if isinstance(reservation, grant_control.RunFailed):
+                    terminal = self._materialize_failure_plan(reservation)
+                    self._observe_failure_plan(managed.domain, terminal)
+                else:
+                    terminal = reservation
                 result = await managed.domain.finalize(
                     managed.grant,
                     managed.payload,
-                    decision,
+                    terminal,
                 )
         except asyncio.CancelledError as exc:
             current = self._current_exact(key)
@@ -1127,7 +1102,7 @@ class GrantSupervisor:
         if (
             current is not managed
             or managed.terminal_state is not TerminalState.RESERVED
-            or managed.terminal_decision is not decision
+            or managed.terminal_decision is not reservation
         ):
             return _FinalizeEffect.SKIPPED
         if result.grant != managed.grant:
@@ -1455,7 +1430,6 @@ class GrantSupervisor:
         )
         return GrantCount(
             active=len(active_entries),
-            retrying=sum(managed.retrying for managed in active_entries),
         )
 
     async def _claim_shutdown_blocker(
@@ -1498,27 +1472,8 @@ class GrantSupervisor:
             or not isinstance(managed.closed_outcome, grant_control.RunFailed)
         ):
             return
-        try:
-            decision = managed.domain.terminal_decision_for(
-                managed.closed_outcome
-            )
-        except Exception as exc:
-            managed.terminal_state = TerminalState.ABANDONED
-            managed.terminal_kind = _ReservationKind.UNCERTAIN
-            managed.terminal_decision = _UncertainAbandonment()
-            self._surface_integrity_failure(exc)
-            return
-        if not isinstance(decision, _STORAGE_DECISION_TYPES):
-            failure = grant_control.GrantControlIntegrityError(
-                "shutdown failure selector returned an invalid decision"
-            )
-            managed.terminal_state = TerminalState.ABANDONED
-            managed.terminal_kind = _ReservationKind.UNCERTAIN
-            managed.terminal_decision = _UncertainAbandonment()
-            self._surface_integrity_failure(failure)
-            return
         managed.terminal_kind = _ReservationKind.STORAGE
-        managed.terminal_decision = decision
+        managed.terminal_decision = managed.closed_outcome
         self._emit_lifecycle(
             _LifecycleEvent.SHUTDOWN,
             managed.domain,
@@ -1695,12 +1650,36 @@ class GrantSupervisor:
             authority_kind=domain.authority_kind.value,
             outcome=outcome,
             active=count.active if count is not None else None,
-            retrying=count.retrying if count is not None else None,
         )
         logger.info(
             "Grant supervisor lifecycle",
             extra={"json_fields": dataclasses.asdict(record)},
         )
+
+    def _observe_failure_plan(
+        self,
+        domain: _ErasedRegisteredDomain,
+        plan: failure_policy.FailurePersistencePlan,
+    ) -> None:
+        """Run optional telemetry without allowing it to affect lifecycle."""
+        observer = self._failure_plan_observer
+        if observer is None:
+            return
+        try:
+            observer(domain.domain_id, plan)
+        except Exception:
+            logger.exception("Failure-plan observer raised")
+
+    def _materialize_failure_plan(
+        self,
+        failure: grant_control.RunFailed,
+    ) -> failure_policy.FailurePersistencePlan:
+        """Validate the sole shared planner result before storage I/O."""
+        plan = self._failure_planner(failure)
+        if not isinstance(plan, failure_policy.FailurePersistencePlan):
+            msg = "failure_planner returned an invalid plan"
+            raise grant_control.GrantControlIntegrityError(msg)
+        return plan
 
     def _discard_exact_generation(self, key: _GenerationKey) -> bool:
         """Remove one closed exact generation, never its successor."""

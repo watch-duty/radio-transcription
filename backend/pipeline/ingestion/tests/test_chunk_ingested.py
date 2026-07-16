@@ -173,7 +173,6 @@ def _run_context() -> grant_control.RunContext:
     return grant_control.RunContext(
         stop_requested=asyncio.Event(),
         grant_lost=asyncio.Event(),
-        set_retrying=lambda _retrying: None,
     )
 
 

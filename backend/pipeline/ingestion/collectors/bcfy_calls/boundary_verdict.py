@@ -953,13 +953,24 @@ def _require_optional_utc_datetime(
 def _failure_action(
     failure: BoundaryFailure,
     *,
-    budgeted_failure: ingestion_lease_store.BudgetedFailure,
+    budgeted_failure: failure_policy.ConsumeFailureBudget,
     boundary_settled_utc: datetime.datetime,
 ) -> ingestion_lease_store.LeaseFailureAction:
-    action = failure_policy.classify_failure_policy(failure.status_reason)
-    if action is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET:
-        return budgeted_failure
-    return ingestion_lease_store.NonBudgetedFailure(boundary_settled_utc)
+    plan = failure_policy.plan_failure(
+        failure.status_reason,
+        failure.detail,
+        budgeted=budgeted_failure,
+        non_budgeted=lambda: failure_policy.RetryWithoutBudget(
+            boundary_settled_utc
+        ),
+    )
+    if isinstance(plan.treatment, failure_policy.ConsumeFailureBudget):
+        return ingestion_lease_store.BudgetedFailure(
+            plan.treatment.failure_threshold,
+            plan.treatment.backoff_base_sec,
+            plan.treatment.backoff_max_sec,
+        )
+    return ingestion_lease_store.NonBudgetedFailure(plan.treatment.retry_after)
 
 
 def _require_identity_tuple(
@@ -1013,12 +1024,12 @@ def _require_retired_member_tuple(
 
 def _require_final_plan_policy(
     value: object,
-) -> ingestion_lease_store.BudgetedFailure:
-    if type(value) is not ingestion_lease_store.BudgetedFailure:
-        message = "budgeted_failure must be an exact BudgetedFailure"
+) -> failure_policy.ConsumeFailureBudget:
+    if type(value) is not failure_policy.ConsumeFailureBudget:
+        message = "budgeted_failure must be an exact ConsumeFailureBudget"
         raise TypeError(message)
     try:
-        validated = ingestion_lease_store.BudgetedFailure(
+        validated = failure_policy.ConsumeFailureBudget(
             value.failure_threshold,
             value.backoff_base_sec,
             value.backoff_max_sec,
@@ -1116,7 +1127,7 @@ def _plan_one_feed_mutation(
     *,
     promoted: bool,
     target: datetime.datetime | None,
-    policy: ingestion_lease_store.BudgetedFailure,
+    policy: failure_policy.ConsumeFailureBudget,
     settled_utc: datetime.datetime,
 ) -> ingestion_lease_store.ChildMutation | None:
     feed_id = feed.member.feed_id
@@ -1201,7 +1212,7 @@ def plan_final_mutations(
     ],
     requested_target: datetime.datetime | None,
     boundary_settled_utc: datetime.datetime,
-    budgeted_failure: ingestion_lease_store.BudgetedFailure,
+    budgeted_failure: failure_policy.ConsumeFailureBudget,
 ) -> FinalMutationPlan:
     """Build one deterministic final child transaction without I/O.
 

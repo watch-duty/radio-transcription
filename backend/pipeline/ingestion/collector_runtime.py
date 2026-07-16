@@ -329,7 +329,7 @@ class _SidSchedulerResources:
     pubsub_client: pubsub_client.PubSubClient
     settings: CollectorSettings
     actor_id: str
-    budgeted_failure: ingestion_lease_store.BudgetedFailure
+    budgeted_failure: failure_policy.ConsumeFailureBudget
 
 
 def _create_sid_feed_work_scheduler(
@@ -491,6 +491,11 @@ class CollectorRuntime:
             if runtime_actor_id is not None
             else resolve_runtime_service_actor_id()
         )
+        self._failure_budget = failure_policy.ConsumeFailureBudget(
+            failure_threshold=settings.feed_failure_threshold,
+            backoff_base_sec=feed_lifecycle.DEFAULT_BACKOFF_BASE_SEC,
+            backoff_max_sec=feed_lifecycle.DEFAULT_BACKOFF_MAX_SEC,
+        )
         # threading.Event (not asyncio.Event) — the heartbeat OS thread
         # and memory watchdog thread can't use asyncio primitives; they need a
         # shared thread-safe stop signal.
@@ -559,7 +564,6 @@ class CollectorRuntime:
                 {
                     allocation.domain_id: grant_supervisor.GrantCount(
                         active=0,
-                        retrying=0,
                     )
                     for allocation in profile.allocations
                 }
@@ -589,7 +593,7 @@ class CollectorRuntime:
         self,
         grant: FeedGrant,
         payload: LeasedFeed,
-        decision: grant_control.BudgetedFailureDecision,
+        decision: failure_policy.FailurePersistencePlan,
     ) -> None:
         """Emit observational evidence after exact durable quarantine."""
         await quarantine_telemetry.emit_quarantine_event(
@@ -603,21 +607,6 @@ class CollectorRuntime:
             domain_id=grant_control.DomainId.FEED.value,
             authority_kind=worker_profiles.AuthorityKind.FEED.value,
         )
-
-    def _sid_terminal_decision(
-        self,
-        outcome: grant_control.RunOutcome,
-    ) -> grant_control.TerminalDecision:
-        """Select one SID Lease terminal action exactly once."""
-        if isinstance(outcome, grant_control.RunFailed):
-            return self._failure_terminal_decision(
-                outcome,
-                authority_kind=worker_profiles.AuthorityKind.SID_LEASE,
-                event_type="sid_failure_policy_decision",
-            )
-        if isinstance(outcome, grant_control.RunStopped):
-            return grant_control.NeutralRelease(outcome.cause)
-        return grant_control.NeutralRelease(grant_control.TerminalCause.NORMAL)
 
     async def _start_feed_work_scheduler(self) -> None:
         """Construct and start one shared selected-SID resource set."""
@@ -651,11 +640,6 @@ class CollectorRuntime:
         ):
             message = "SID provider factory returned an invalid provider"
             raise TypeError(message)
-        budgeted_failure = ingestion_lease_store.BudgetedFailure(
-            failure_threshold=self._collector_settings.feed_failure_threshold,
-            backoff_base_sec=feed_lifecycle.DEFAULT_BACKOFF_BASE_SEC,
-            backoff_max_sec=feed_lifecycle.DEFAULT_BACKOFF_MAX_SEC,
-        )
         candidate = self._scheduler_factory(
             _SidSchedulerResources(
                 data_store=self._sid_data_store,
@@ -665,7 +649,7 @@ class CollectorRuntime:
                 pubsub_client=self._pubsub_client,
                 settings=self._collector_settings,
                 actor_id=self._runtime_actor_id,
-                budgeted_failure=budgeted_failure,
+                budgeted_failure=self._failure_budget,
             )
         )
         if not _is_feed_work_scheduler(candidate):
@@ -696,6 +680,7 @@ class CollectorRuntime:
                     self._heartbeat_store,
                     settings.feed_claim_caps,
                     abandonment,
+                    actor_id=self._runtime_actor_id,
                     on_quarantined=self._emit_feed_quarantine,
                 )
                 self._feed_runner = _FeedRunner(self)
@@ -711,7 +696,6 @@ class CollectorRuntime:
                         control=feed_control,
                         runner=self._feed_runner,
                         allocation=allocation,
-                        terminal_decision_for=self._feed_terminal_decision,
                     )
                 )
                 continue
@@ -738,6 +722,7 @@ class CollectorRuntime:
                 heartbeat_store,
                 SourceType.BCFY_CALLS,
                 abandonment,
+                actor_id=self._runtime_actor_id,
             )
             if self._sid_runner_factory is None:
 
@@ -798,7 +783,6 @@ class CollectorRuntime:
                     control=sid_control,
                     runner=sid_runner,
                     allocation=allocation,
-                    terminal_decision_for=self._sid_terminal_decision,
                 )
             )
 
@@ -806,6 +790,8 @@ class CollectorRuntime:
             settings.worker_profile,
             registrations,
             finalize_concurrency=settings.db.pool_max_size,
+            failure_planner=self._plan_terminal_failure,
+            failure_plan_observer=self._observe_terminal_failure,
         )
 
     # -- Async core -------------------------------------------------------
@@ -1033,25 +1019,58 @@ class CollectorRuntime:
             raise grant_control.GrantControlIntegrityError(msg)
         raise failure
 
-    def _failure_terminal_decision(
+    def _plan_terminal_failure(
         self,
         outcome: grant_control.RunFailed,
-        *,
-        authority_kind: worker_profiles.AuthorityKind,
-        event_type: str,
-    ) -> grant_control.TerminalDecision:
-        """Apply one shared direct metadata failure policy."""
-        action = failure_policy.classify_failure_policy(outcome.status_reason)
+    ) -> failure_policy.FailurePersistencePlan:
+        """Plan one direct Feed or SID failure through shared policy."""
+        return failure_policy.plan_failure(
+            outcome.status_reason,
+            outcome.reason,
+            budgeted=self._failure_budget,
+            non_budgeted=lambda: failure_policy.RetryWithoutBudget(
+                self._non_budgeted_retry_after()
+            ),
+        )
+
+    def _observe_terminal_failure(
+        self,
+        domain_id: grant_control.DomainId,
+        plan: failure_policy.FailurePersistencePlan,
+    ) -> None:
+        """Emit derived policy telemetry without influencing persistence."""
+        authority_kind = (
+            worker_profiles.AuthorityKind.FEED
+            if domain_id is grant_control.DomainId.FEED
+            else worker_profiles.AuthorityKind.SID_LEASE
+        )
+        event_type = (
+            "feed_failure_policy_decision"
+            if domain_id is grant_control.DomainId.FEED
+            else "sid_failure_policy_decision"
+        )
         post_bookmark_gap = (
-            outcome.status_reason
+            plan.status_reason
             is FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED
+        )
+        budgeted = isinstance(
+            plan.treatment,
+            failure_policy.ConsumeFailureBudget,
         )
         fields: dict[str, object] = {
             "event_type": event_type,
             "authority_kind": authority_kind.value,
-            "status_reason": outcome.status_reason.value,
-            "reason": outcome.reason,
-            "executed_action": action.value,
+            "status_reason": plan.status_reason.value,
+            "reason": plan.reason,
+            "executed_action": (
+                "increment_feed_failure_budget"
+                if budgeted
+                else (
+                    "record_post_bookmark_publish_gap"
+                    if post_bookmark_gap
+                    else "retry_without_feed_budget"
+                )
+            ),
             "replay_missing": post_bookmark_gap,
             "data_gap_known": post_bookmark_gap,
         }
@@ -1060,34 +1079,19 @@ class CollectorRuntime:
             if authority_kind is worker_profiles.AuthorityKind.FEED
             else "SID failure policy decision"
         )
-        if (
-            action
-            is failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-        ):
+        if budgeted:
             logger.info(
                 log_message,
                 extra={"json_fields": fields},
             )
-            return grant_control.BudgetedFailureDecision(
-                failure_threshold=(
-                    self._collector_settings.feed_failure_threshold
-                ),
-                backoff_base_sec=feed_lifecycle.DEFAULT_BACKOFF_BASE_SEC,
-                backoff_max_sec=feed_lifecycle.DEFAULT_BACKOFF_MAX_SEC,
-                status_reason=outcome.status_reason,
-                actor_id=self._runtime_actor_id,
-                reason=outcome.reason,
-            )
-        retry_after = self._non_budgeted_retry_after()
-        fields["retry_after"] = retry_after.isoformat()
+            return
+        treatment = plan.treatment
+        fields["retry_after"] = treatment.retry_after.isoformat()
         logger.info(
             log_message,
             extra={"json_fields": fields},
         )
-        if (
-            authority_kind is worker_profiles.AuthorityKind.FEED
-            and post_bookmark_gap
-        ):
+        if domain_id is grant_control.DomainId.FEED and post_bookmark_gap:
             logger.error(
                 "Post-bookmark publish failure",
                 extra={
@@ -1097,27 +1101,6 @@ class CollectorRuntime:
                     }
                 },
             )
-        return grant_control.NonBudgetedFailureDecision(
-            retry_after=retry_after,
-            status_reason=outcome.status_reason,
-            actor_id=self._runtime_actor_id,
-            reason=outcome.reason,
-        )
-
-    def _feed_terminal_decision(
-        self,
-        outcome: grant_control.RunOutcome,
-    ) -> grant_control.TerminalDecision:
-        """Select one legacy-compatible terminal action exactly once."""
-        if isinstance(outcome, grant_control.RunFailed):
-            return self._failure_terminal_decision(
-                outcome,
-                authority_kind=worker_profiles.AuthorityKind.FEED,
-                event_type="feed_failure_policy_decision",
-            )
-        if isinstance(outcome, grant_control.RunStopped):
-            return grant_control.NeutralRelease(outcome.cause)
-        return grant_control.NeutralRelease(grant_control.TerminalCause.NORMAL)
 
     # -- Leasing ----------------------------------------------------------
     async def _leasing_loop(self) -> None:
@@ -1189,7 +1172,6 @@ class CollectorRuntime:
                 max_retries=settings.gcs_upload_max_retries,
                 base_delay_sec=settings.gcs_upload_retry_base_delay_sec,
                 max_delay_sec=settings.gcs_upload_retry_max_delay_sec,
-                retry_state_changed=context.set_retrying,
                 extension=chunk_extension,
                 content_type=chunk_content_type,
             )
@@ -1231,7 +1213,6 @@ class CollectorRuntime:
                     OSError,
                 ),
                 operation_name="bookmark write",
-                retry_state_changed=context.set_retrying,
             )
         except (asyncio.CancelledError, LeaseExpiredError):
             raise
@@ -1255,7 +1236,6 @@ class CollectorRuntime:
                 max_retries=settings.pubsub_publish_max_retries,
                 base_delay_sec=settings.pubsub_publish_retry_base_delay_sec,
                 max_delay_sec=settings.pubsub_publish_retry_max_delay_sec,
-                retry_state_changed=context.set_retrying,
             )
             publication.unwrap()
         except (asyncio.CancelledError, LeaseExpiredError):
@@ -1331,7 +1311,6 @@ class CollectorRuntime:
                     OSError,
                 ),
                 operation_name="source observation write",
-                retry_state_changed=context.set_retrying,
             )
         except (asyncio.CancelledError, LeaseExpiredError):
             raise

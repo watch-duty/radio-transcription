@@ -67,6 +67,20 @@ if TYPE_CHECKING:
 _WORKER_ID = uuid.UUID("11111111-2222-3333-4444-555555555555")
 _FEED_ID = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee")
 _RUNTIME_ACTOR_ID = "service_account:gcp:123456789012345678901"
+_FAILURE_RETRY_AT = datetime.datetime(2026, 7, 12, tzinfo=datetime.UTC)
+
+
+def _plan_test_failure(
+    outcome: grant_control.RunFailed,
+) -> failure_policy.FailurePersistencePlan:
+    return failure_policy.plan_failure(
+        outcome.status_reason,
+        outcome.reason,
+        budgeted=failure_policy.ConsumeFailureBudget(5, 15, 600),
+        non_budgeted=lambda: failure_policy.RetryWithoutBudget(
+            _FAILURE_RETRY_AT
+        ),
+    )
 
 
 def _make_captured_chunk(audio_bytes: bytes) -> CapturedChunk:
@@ -484,7 +498,6 @@ def _make_run_context(
     *,
     stopped: bool = False,
     lost: bool = False,
-    retry_transitions: list[bool] | None = None,
 ) -> grant_control.RunContext:
     """Build exact-generation runner signals for a unit test."""
     stop_requested = asyncio.Event()
@@ -493,11 +506,9 @@ def _make_run_context(
         stop_requested.set()
     if lost:
         grant_lost.set()
-    transitions = retry_transitions if retry_transitions is not None else []
     return grant_control.RunContext(
         stop_requested=stop_requested,
         grant_lost=grant_lost,
-        set_retrying=transitions.append,
     )
 
 
@@ -906,14 +917,12 @@ class TestLeasedFeedPayloadSupervisorBoundary(unittest.IsolatedAsyncioTestCase):
             control=control,
             runner=runner,
             allocation=allocation,
-            terminal_decision_for=lambda outcome: grant_control.NeutralRelease(
-                grant_control.TerminalCause.NORMAL
-            ),
         )
         supervisor = grant_supervisor.GrantSupervisor(
             settings.worker_profile,
             (registration,),
             finalize_concurrency=1,
+            failure_planner=_plan_test_failure,
         )
         return supervisor, runner, control
 
@@ -1110,10 +1119,11 @@ class TestProcessFeedSideEffectOrdering(unittest.IsolatedAsyncioTestCase):
                     control=control,
                     runner=collector_runtime._FeedRunner(rt),
                     allocation=allocation,
-                    terminal_decision_for=rt._feed_terminal_decision,
                 ),
             ),
             finalize_concurrency=1,
+            failure_planner=rt._plan_terminal_failure,
+            failure_plan_observer=rt._observe_terminal_failure,
         )
 
         with (
@@ -2590,7 +2600,7 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             instance=True,
         )
         settings = _make_settings(feed_failure_threshold=7)
-        policy = ingestion_lease_store.BudgetedFailure(7, 15, 600)
+        policy = failure_policy.ConsumeFailureBudget(7, 15, 600)
         resources = collector_runtime._SidSchedulerResources(
             data_store=data_store,
             calls_provider=mock.create_autospec(
@@ -2654,37 +2664,23 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
             scheduler_factory=scheduler_factory,
             feed_failure_threshold=7,
         )
-        constructor = ingestion_lease_store.BudgetedFailure
+        await rt._start_feed_work_scheduler()
 
-        with mock.patch.object(
-            collector_runtime.ingestion_lease_store,
-            "BudgetedFailure",
-            side_effect=constructor,
-        ) as budgeted_failure_constructor:
-            await rt._start_feed_work_scheduler()
-
-        budgeted_failure_constructor.assert_called_once_with(
-            failure_threshold=7,
-            backoff_base_sec=15,
-            backoff_max_sec=600,
-        )
         resources = scheduler_factory.call_args.args[0]
+        self.assertIs(resources.budgeted_failure, rt._failure_budget)
         self.assertEqual(
             resources.budgeted_failure,
-            ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            failure_policy.ConsumeFailureBudget(7, 15, 600),
         )
 
     async def test_quarantine_observer_adds_static_runtime_context(
         self,
     ) -> None:
         rt = self._runtime(worker_profiles.LEGACY_PROFILE)
-        decision = grant_control.BudgetedFailureDecision(
-            failure_threshold=3,
-            backoff_base_sec=15,
-            backoff_max_sec=600,
+        decision = failure_policy.FailurePersistencePlan(
             status_reason=FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
-            actor_id=_RUNTIME_ACTOR_ID,
             reason="invalid configuration",
+            treatment=failure_policy.ConsumeFailureBudget(3, 15, 600),
         )
 
         with mock.patch(
@@ -3309,10 +3305,7 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         upload_mock = mock.AsyncMock(
             side_effect=[aiohttp.ClientError("transient"), "gs://b/p"],
         )
-        retry_transitions: list[bool] = []
-        run_context = _make_run_context(
-            retry_transitions=retry_transitions,
-        )
+        run_context = _make_run_context()
 
         with (
             mock.patch(
@@ -3324,7 +3317,6 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
             await _run_feed(rt, _FEED, context=run_context)
 
         self.assertEqual(upload_mock.await_count, 2)
-        self.assertEqual(retry_transitions, [True, False])
         rt._store.release_feed.assert_not_awaited()
 
     async def test_preconfirmed_grant_loss_has_no_pipeline_side_effects(
@@ -3365,20 +3357,19 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
         rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
-        rt._store.update_feed_progress.side_effect = asyncpg.InterfaceError(
-            "connection lost"
-        )
         stop_requested = asyncio.Event()
         grant_lost = asyncio.Event()
 
-        def retry_state_changed(retrying: bool) -> None:  # noqa: FBT001
-            if retrying:
-                grant_lost.set()
+        async def fail_after_loss(*_args, **_kwargs):
+            grant_lost.set()
+            message = "connection lost"
+            raise asyncpg.InterfaceError(message)
+
+        rt._store.update_feed_progress.side_effect = fail_after_loss
 
         context = grant_control.RunContext(
             stop_requested=stop_requested,
             grant_lost=grant_lost,
-            set_retrying=retry_state_changed,
         )
 
         with (
@@ -3555,28 +3546,28 @@ class TestProcessFeedRetry(unittest.IsolatedAsyncioTestCase):
                 "_non_budgeted_retry_after",
                 return_value=retry_after,
             ) as retry_factory,
-            mock.patch(
-                "backend.pipeline.ingestion.collector_runtime.failure_policy.classify_failure_policy",
-                wraps=failure_policy.classify_failure_policy,
-            ) as classify,
             self.assertLogs(
                 "backend.pipeline.ingestion.collector_runtime",
                 level=logging.INFO,
             ) as cm,
         ):
-            decision = rt._feed_terminal_decision(outcome)
+            decision = rt._plan_terminal_failure(outcome)
+            rt._observe_terminal_failure(
+                grant_control.DomainId.FEED,
+                decision,
+            )
 
-        classify.assert_called_once_with(outcome.status_reason)
         retry_factory.assert_called_once_with()
         self.assertIsInstance(
-            decision,
-            grant_control.NonBudgetedFailureDecision,
+            decision.treatment,
+            failure_policy.RetryWithoutBudget,
         )
         control = feed_grant_control.FeedGrantControl(
             rt._store,
             mock.AsyncMock(),
             rt._collector_settings.caps,
             datetime.timedelta(seconds=60),
+            actor_id=rt._runtime_actor_id,
         )
         result = await control.finalize(_make_feed_grant(), _FEED, decision)
 
@@ -3634,19 +3625,18 @@ class TestFeedTerminalOwnership(unittest.IsolatedAsyncioTestCase):
         )
         rt._store.report_feed_failure.return_value = "quarantined"
 
-        with mock.patch(
-            "backend.pipeline.ingestion.collector_runtime.failure_policy.classify_failure_policy",
-            wraps=failure_policy.classify_failure_policy,
-        ) as classify:
-            decision = rt._feed_terminal_decision(outcome)
+        decision = rt._plan_terminal_failure(outcome)
 
-        classify.assert_called_once_with(outcome.status_reason)
-        self.assertIsInstance(decision, grant_control.BudgetedFailureDecision)
+        self.assertIsInstance(
+            decision.treatment,
+            failure_policy.ConsumeFailureBudget,
+        )
         control = feed_grant_control.FeedGrantControl(
             rt._store,
             mock.AsyncMock(),
             rt._collector_settings.caps,
             datetime.timedelta(seconds=60),
+            actor_id=rt._runtime_actor_id,
         )
         result = await control.finalize(_make_feed_grant(), _FEED, decision)
 
@@ -3666,34 +3656,30 @@ class TestFeedTerminalOwnership(unittest.IsolatedAsyncioTestCase):
         rt._store.release_non_budgeted_failure.return_value = "failing"
 
         with (
-            mock.patch(
-                "backend.pipeline.ingestion.collector_runtime.failure_policy.classify_failure_policy",
-                wraps=failure_policy.classify_failure_policy,
-            ) as classify,
             mock.patch.object(
                 CollectorRuntime,
                 "_non_budgeted_retry_after",
                 return_value=retry_after,
             ) as retry_factory,
         ):
-            decision = rt._feed_terminal_decision(outcome)
+            decision = rt._plan_terminal_failure(outcome)
 
-        classify.assert_called_once_with(outcome.status_reason)
         retry_factory.assert_called_once_with()
         self.assertIsInstance(
-            decision,
-            grant_control.NonBudgetedFailureDecision,
+            decision.treatment,
+            failure_policy.RetryWithoutBudget,
         )
         assert isinstance(
-            decision,
-            grant_control.NonBudgetedFailureDecision,
+            decision.treatment,
+            failure_policy.RetryWithoutBudget,
         )
-        self.assertEqual(decision.retry_after, retry_after)
+        self.assertEqual(decision.treatment.retry_after, retry_after)
         control = feed_grant_control.FeedGrantControl(
             rt._store,
             mock.AsyncMock(),
             rt._collector_settings.caps,
             datetime.timedelta(seconds=60),
+            actor_id=rt._runtime_actor_id,
         )
         await control.finalize(_make_feed_grant(), _FEED, decision)
 
@@ -3725,31 +3711,28 @@ class TestFeedTerminalOwnership(unittest.IsolatedAsyncioTestCase):
         self.assertIn("capture_failed", outcome.reason or "")
         rt._store.report_feed_failure.assert_not_awaited()
 
-    async def test_pre_stopped_generation_is_neutral(self) -> None:
+    async def test_pre_stopped_generation_returns_neutral_evidence(
+        self,
+    ) -> None:
         rt = _make_runtime()
         rt._store = mock.AsyncMock()
 
-        with mock.patch(
-            "backend.pipeline.ingestion.collector_runtime.failure_policy.classify_failure_policy"
-        ) as classify:
+        with mock.patch.object(failure_policy, "plan_failure") as planner:
             outcome = await _run_feed(
                 rt,
                 _FEED,
                 context=_make_run_context(stopped=True),
             )
-            decision = rt._feed_terminal_decision(outcome)
 
         self.assertIsInstance(outcome, grant_control.RunStopped)
-        self.assertEqual(
-            decision,
-            grant_control.NeutralRelease(grant_control.TerminalCause.SHUTDOWN),
-        )
-        classify.assert_not_called()
+        assert isinstance(outcome, grant_control.RunStopped)
+        self.assertIs(outcome.cause, grant_control.TerminalCause.SHUTDOWN)
+        planner.assert_not_called()
         rt._store.report_feed_failure.assert_not_awaited()
 
 
-class TestSharedFailureTerminalDecision(unittest.IsolatedAsyncioTestCase):
-    """Feed and SID direct failures share one terminal policy selector."""
+class TestSharedFailurePlan(unittest.IsolatedAsyncioTestCase):
+    """Feed and SID direct failures share one persistence planner."""
 
     def test_budgeted_sid_failure_matches_feed_threshold_and_backoff(
         self,
@@ -3764,20 +3747,17 @@ class TestSharedFailureTerminalDecision(unittest.IsolatedAsyncioTestCase):
             "invalid configuration",
         )
 
-        feed_decision = rt._feed_terminal_decision(outcome)
-        sid_decision = rt._sid_terminal_decision(outcome)
+        decision = rt._plan_terminal_failure(outcome)
 
-        self.assertEqual(sid_decision, feed_decision)
         self.assertIsInstance(
-            sid_decision,
-            grant_control.BudgetedFailureDecision,
+            decision.treatment,
+            failure_policy.ConsumeFailureBudget,
         )
         assert isinstance(
-            sid_decision,
-            grant_control.BudgetedFailureDecision,
+            decision.treatment,
+            failure_policy.ConsumeFailureBudget,
         )
-        self.assertEqual(sid_decision.failure_threshold, 7)
-        self.assertEqual(sid_decision.actor_id, _RUNTIME_ACTOR_ID)
+        self.assertEqual(decision.treatment.failure_threshold, 7)
 
     async def test_non_budgeted_sid_failure_retries_without_quarantine(
         self,
@@ -3797,14 +3777,12 @@ class TestSharedFailureTerminalDecision(unittest.IsolatedAsyncioTestCase):
             "_non_budgeted_retry_after",
             return_value=retry_after,
         ) as retry_factory:
-            feed_decision = rt._feed_terminal_decision(outcome)
-            sid_decision = rt._sid_terminal_decision(outcome)
+            decision = rt._plan_terminal_failure(outcome)
 
-        self.assertEqual(sid_decision, feed_decision)
-        self.assertEqual(retry_factory.call_count, 2)
+        retry_factory.assert_called_once_with()
         self.assertIsInstance(
-            sid_decision,
-            grant_control.NonBudgetedFailureDecision,
+            decision.treatment,
+            failure_policy.RetryWithoutBudget,
         )
         data_store = mock.AsyncMock(
             spec=ingestion_lease_store.IngestionLeaseStore
@@ -3822,6 +3800,7 @@ class TestSharedFailureTerminalDecision(unittest.IsolatedAsyncioTestCase):
             mock.AsyncMock(),
             SourceType.BCFY_CALLS,
             datetime.timedelta(seconds=60),
+            actor_id=_RUNTIME_ACTOR_ID,
         )
         grant = ingestion_lease_store.LeaseGrant(
             SourceType.BCFY_CALLS,
@@ -3836,7 +3815,7 @@ class TestSharedFailureTerminalDecision(unittest.IsolatedAsyncioTestCase):
                 grant,
                 grant_control.ClaimMode.RECOVERY,
             ),
-            sid_decision,
+            decision,
         )
 
         self.assertIs(

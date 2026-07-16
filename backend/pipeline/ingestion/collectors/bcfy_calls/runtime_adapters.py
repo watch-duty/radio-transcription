@@ -9,7 +9,7 @@ import enum
 import typing
 import uuid
 
-from backend.pipeline.ingestion import feed_work_scheduler
+from backend.pipeline.ingestion import failure_policy, feed_work_scheduler
 from backend.pipeline.ingestion.collectors.bcfy_calls import (
     boundary_verdict,
     cursor_policy,
@@ -641,11 +641,11 @@ def _require_boundary_settled_utc(value: object) -> datetime.datetime:
 
 def _require_finalizer_policy(
     value: object,
-) -> ingestion_lease_store.BudgetedFailure:
-    if type(value) is not ingestion_lease_store.BudgetedFailure:
-        message = "budgeted_failure must be an exact BudgetedFailure"
+) -> failure_policy.ConsumeFailureBudget:
+    if type(value) is not failure_policy.ConsumeFailureBudget:
+        message = "budgeted_failure must be an exact ConsumeFailureBudget"
         raise TypeError(message)
-    validated = ingestion_lease_store.BudgetedFailure(
+    validated = failure_policy.ConsumeFailureBudget(
         value.failure_threshold,
         value.backoff_base_sec,
         value.backoff_max_sec,
@@ -979,7 +979,7 @@ class FencedPageFinalizer:
         store: ingestion_lease_store.IngestionLeaseStore,
         *,
         actor_id: str,
-        budgeted_failure: ingestion_lease_store.BudgetedFailure,
+        budgeted_failure: failure_policy.ConsumeFailureBudget,
         boundary_settled_utc: typing.Callable[[], datetime.datetime],
     ) -> None:
         """Create an exact one-attempt source page finalizer.
@@ -1015,7 +1015,7 @@ class FencedPageFinalizer:
         self._boundary_settled_utc = boundary_settled_utc
 
     @property
-    def budgeted_failure(self) -> ingestion_lease_store.BudgetedFailure:
+    def budgeted_failure(self) -> failure_policy.ConsumeFailureBudget:
         """Return the exact runtime policy object retained by identity."""
         return self._budgeted_failure
 

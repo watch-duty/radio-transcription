@@ -7,29 +7,17 @@
 # MockCacheProvider is a mock implementation of CacheProvider used in integration and unit tests.
 # Vulture excludes test directories (**/tests/**, **/test_*.py) from analysis, so it misses
 # the imports of this class in tests, falsely flagging it as dead code.
-from backend.pipeline.common.storage.mock_cache_provider import MockCacheProvider
+from backend.pipeline.common.storage.mock_cache_provider import (
+    MockCacheProvider,
+)
+
 MockCacheProvider
 _.get_value
 
-# Phase 2 intentionally exposes the Lease storage surface for Phase 3 runtime
-# wiring. Vulture excludes its unit and integration tests, so keep only this
-# dormant public API and its planned release telemetry causes allowlisted.
-from backend.pipeline.storage.ingestion_lease_store import (
-    IngestionLeaseStore,
-    LeaseMember,
-    LeaseReleaseCause,
-)
-IngestionLeaseStore.claim_unclaimed
-IngestionLeaseStore.claim_recoverable
-IngestionLeaseStore.renew_heartbeats
-IngestionLeaseStore.release
-IngestionLeaseStore.finalize_failure
-IngestionLeaseStore.load_membership
-IngestionLeaseStore.commit_child_mutations
-LeaseMember.audit_revision
-LeaseReleaseCause.SHUTDOWN
-LeaseReleaseCause.REBALANCE
-LeaseReleaseCause.CANCELLATION
+# Abandonment is retained as a durable audit vocabulary value even though the
+# runtime's recovery claim does not perform a separate release operation.
+from backend.pipeline.storage.ingestion_lease_store import LeaseReleaseCause
+
 LeaseReleaseCause.ABANDONMENT
 
 # Feed.status_reason_updated_at is part of the existing feed response shape and
@@ -37,6 +25,7 @@ LeaseReleaseCause.ABANDONMENT
 # The exact Feed-grant heartbeat storage boundary lands before the generic
 # Feed/SID runtime adapter calls it. Vulture excludes the focused tests.
 from backend.pipeline.storage.feed_store import Feed, FeedStore
+
 Feed.status_reason_updated_at
 FeedStore.renew_grant_heartbeats
 

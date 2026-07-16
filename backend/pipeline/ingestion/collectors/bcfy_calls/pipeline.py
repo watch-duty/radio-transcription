@@ -404,7 +404,6 @@ async def stage_chunk_upload(
     max_retries: int,
     base_delay_sec: float,
     max_delay_sec: float,
-    retry_state_changed: Callable[[bool], None] | None = None,
     extension: str | None = None,
     content_type: str | None = None,
 ) -> StagedChunk:
@@ -437,7 +436,6 @@ async def stage_chunk_upload(
         max_delay_sec=max_delay_sec,
         retryable=_GCS_RETRYABLE,
         operation_name="GCS upload",
-        retry_state_changed=retry_state_changed,
         attempt_observer=observe_attempt,
     )
     return StagedChunk(chunk, gcs_uri, attempt_count)
@@ -452,7 +450,6 @@ async def publish_staged_chunk(
     max_retries: int,
     base_delay_sec: float,
     max_delay_sec: float,
-    retry_state_changed: Callable[[bool], None] | None = None,
     attempt_observer: Callable[[int], None] | None = None,
 ) -> CommittedAwaitableSettlement[PublishedChunk]:
     """Publish one bookmarked chunk and defer caller cancellation safely."""
@@ -496,7 +493,6 @@ async def publish_staged_chunk(
             max_delay_sec=max_delay_sec,
             retryable=_PUBSUB_RETRYABLE,
             operation_name="Pub/Sub publish",
-            retry_state_changed=retry_state_changed,
             attempt_observer=observe_attempt,
         )
         return PublishedChunk(message_id, attempt_count)
@@ -627,7 +623,6 @@ class BcfyCallsCohortExecutor:
         committer: runtime_adapters.PhysicalCohortCommitter,
         settings: CollectorSettings,
         topic_path: str,
-        retry_state_changed: Callable[[bool], None] | None = None,
         control_gate: _ControlGateOperation = _no_control_gate,
         stage_operation: _StageOperation = stage_chunk_upload,
         publish_operation: _PublishOperation = publish_staged_chunk,
@@ -655,7 +650,6 @@ class BcfyCallsCohortExecutor:
         self._committer = committer
         self._settings = settings
         self._topic_path = topic_path
-        self._retry_state_changed = retry_state_changed
         self._control_gate = control_gate
         self._stage_operation = stage_operation
         self._publish_operation = publish_operation
@@ -768,7 +762,6 @@ class BcfyCallsCohortExecutor:
                     max_delay_sec=(
                         self._settings.gcs_upload_retry_max_delay_sec
                     ),
-                    retry_state_changed=self._retry_state_changed,
                 )
                 if (
                     type(staged_chunk) is not StagedChunk
@@ -944,7 +937,6 @@ class BcfyCallsCohortExecutor:
                     max_delay_sec=(
                         self._settings.pubsub_publish_retry_max_delay_sec
                     ),
-                    retry_state_changed=self._retry_state_changed,
                     attempt_observer=observe_publication_attempt,
                 )
             except CommittedAwaitableCancelled:

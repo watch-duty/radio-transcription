@@ -1,38 +1,125 @@
-"""Pure failure policy vocabulary and classification helpers."""
+"""Shared failure-budget classification and persistence planning."""
 
 from __future__ import annotations
 
-from enum import StrEnum
+import dataclasses
+import datetime
+import typing
 
 from backend.pipeline.storage import feed_store
 
 
-class ExecutedAction(StrEnum):
-    """Policy action selected for runtime/store execution."""
+@dataclasses.dataclass(frozen=True, slots=True)
+class ConsumeFailureBudget:
+    """Configured treatment for a failure that may quarantine."""
 
-    INCREMENT_FEED_FAILURE_BUDGET = "increment_feed_failure_budget"
-    RETRY_WITHOUT_FEED_BUDGET = "retry_without_feed_budget"
-    RECORD_POST_BOOKMARK_PUBLISH_GAP = "record_post_bookmark_publish_gap"
+    failure_threshold: int
+    backoff_base_sec: int
+    backoff_max_sec: int
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("failure_threshold", self.failure_threshold),
+            ("backoff_base_sec", self.backoff_base_sec),
+            ("backoff_max_sec", self.backoff_max_sec),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int):
+                msg = f"{name} must be an integer"
+                raise TypeError(msg)
+            if value <= 0:
+                msg = f"{name} must be positive"
+                raise ValueError(msg)
+        if self.backoff_base_sec > self.backoff_max_sec:
+            msg = "backoff_base_sec must not exceed backoff_max_sec"
+            raise ValueError(msg)
 
 
-_POLICY_ACTIONS = {
-    feed_store.FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED: (
-        ExecutedAction.RECORD_POST_BOOKMARK_PUBLISH_GAP
-    ),
-    feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID: (
-        ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-    ),
-    feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID: (
-        ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
-    ),
-}
+@dataclasses.dataclass(frozen=True, slots=True)
+class RetryWithoutBudget:
+    """Configured treatment for a failure that cannot quarantine."""
+
+    retry_after: datetime.datetime
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.retry_after, datetime.datetime):
+            msg = "retry_after must be a datetime"
+            raise TypeError(msg)
+        if self.retry_after.utcoffset() != datetime.timedelta(0):
+            msg = "retry_after must be UTC-aware"
+            raise ValueError(msg)
 
 
-def classify_failure_policy(
+type FailureTreatment = ConsumeFailureBudget | RetryWithoutBudget
+type NonBudgetedTreatmentProvider = typing.Callable[[], RetryWithoutBudget]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class FailurePersistencePlan:
+    """Canonical failure evidence paired with one selected treatment."""
+
+    status_reason: feed_store.FeedStatusReason
+    reason: str | None
+    treatment: FailureTreatment
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status_reason, feed_store.FeedStatusReason):
+            msg = "status_reason must be a FeedStatusReason"
+            raise TypeError(msg)
+        if self.reason is not None and not isinstance(self.reason, str):
+            msg = "reason must be a string or None"
+            raise TypeError(msg)
+        if not isinstance(
+            self.treatment,
+            (ConsumeFailureBudget, RetryWithoutBudget),
+        ):
+            msg = "treatment must be a closed FailureTreatment"
+            raise TypeError(msg)
+
+
+_BUDGETED_REASONS = frozenset(
+    {
+        feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+        feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
+    }
+)
+
+
+def consumes_failure_budget(
     status_reason: feed_store.FeedStatusReason,
-) -> ExecutedAction:
-    """Classify a status reason into a side-effect-free policy action."""
-    return _POLICY_ACTIONS.get(
-        status_reason,
-        ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
-    )
+) -> bool:
+    """Return whether one canonical reason consumes the failure budget."""
+    if not isinstance(status_reason, feed_store.FeedStatusReason):
+        msg = "status_reason must be a FeedStatusReason"
+        raise TypeError(msg)
+    return status_reason in _BUDGETED_REASONS
+
+
+def plan_failure(
+    status_reason: feed_store.FeedStatusReason,
+    reason: str | None,
+    *,
+    budgeted: ConsumeFailureBudget,
+    non_budgeted: NonBudgetedTreatmentProvider,
+) -> FailurePersistencePlan:
+    """Select one immutable persistence treatment from the shared policy."""
+    if not isinstance(status_reason, feed_store.FeedStatusReason):
+        msg = "status_reason must be a FeedStatusReason"
+        raise TypeError(msg)
+    if reason is not None and not isinstance(reason, str):
+        msg = "reason must be a string or None"
+        raise TypeError(msg)
+    if not isinstance(budgeted, ConsumeFailureBudget):
+        msg = "budgeted must be a ConsumeFailureBudget"
+        raise TypeError(msg)
+    if not callable(non_budgeted):
+        msg = "non_budgeted must be callable"
+        raise TypeError(msg)
+
+    if consumes_failure_budget(status_reason):
+        treatment: FailureTreatment = budgeted
+    else:
+        treatment = non_budgeted()
+        if not isinstance(treatment, RetryWithoutBudget):
+            msg = "non_budgeted must return RetryWithoutBudget"
+            raise TypeError(msg)
+    return FailurePersistencePlan(status_reason, reason, treatment)

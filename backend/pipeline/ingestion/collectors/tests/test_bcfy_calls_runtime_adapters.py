@@ -693,12 +693,12 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         self.assertIs(settled_parameter.default, inspect.Parameter.empty)
 
         store = _store_with_result(_batch_committed())
-        with self.assertRaisesRegex(TypeError, "exact BudgetedFailure"):
+        with self.assertRaisesRegex(TypeError, "exact ConsumeFailureBudget"):
             runtime_adapters.FencedPageFinalizer(
                 store,
                 actor_id=_ACTOR_ID,
                 budgeted_failure=typing.cast(
-                    "ingestion_lease_store.BudgetedFailure",
+                    "failure_policy.ConsumeFailureBudget",
                     object(),
                 ),
                 boundary_settled_utc=lambda: _NOW,
@@ -770,7 +770,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
                 ),
             )
         )
-        policy = ingestion_lease_store.BudgetedFailure(7, 15, 600)
+        policy = failure_policy.ConsumeFailureBudget(7, 15, 600)
         finalizer = runtime_adapters.FencedPageFinalizer(
             store,
             actor_id=_ACTOR_ID,
@@ -812,9 +812,8 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
             failure.action,
             ingestion_lease_store.NonBudgetedFailure(_NOW),
         )
-        self.assertEqual(
-            failure_policy.classify_failure_policy(failure.status_reason),
-            failure_policy.ExecutedAction.RETRY_WITHOUT_FEED_BUDGET,
+        self.assertFalse(
+            failure_policy.consumes_failure_budget(failure.status_reason)
         )
         assert isinstance(result, feed_work_scheduler.FinalPageReplayable)
         self.assertEqual(
@@ -870,7 +869,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         finalizer = runtime_adapters.FencedPageFinalizer(
             store,
             actor_id=_ACTOR_ID,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         )
 
@@ -915,7 +914,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         finalizer = runtime_adapters.FencedPageFinalizer(
             store,
             actor_id=_ACTOR_ID,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         )
 
@@ -972,7 +971,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         finalizer = runtime_adapters.FencedPageFinalizer(
             store,
             actor_id=_ACTOR_ID,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         )
 
@@ -1018,7 +1017,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         finalizer = runtime_adapters.FencedPageFinalizer(
             store,
             actor_id=_ACTOR_ID,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         )
         result = await finalizer.finalize_page(context)
@@ -1116,7 +1115,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
                 _child_result(successful_member.feed_id),
             )
         )
-        policy = ingestion_lease_store.BudgetedFailure(9, 17, 701)
+        policy = failure_policy.ConsumeFailureBudget(9, 17, 701)
         clock = mock.Mock(return_value=_NOW)
         finalizer = runtime_adapters.FencedPageFinalizer(
             store,
@@ -1132,7 +1131,10 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         clock.assert_called_once_with()
         batch = store.commit_child_mutations.await_args.args[1]
         budgeted, nonbudgeted, observation = batch.mutations
-        self.assertIs(budgeted.action, policy)
+        self.assertEqual(
+            budgeted.action,
+            ingestion_lease_store.BudgetedFailure(9, 17, 701),
+        )
         self.assertEqual(
             nonbudgeted.action,
             ingestion_lease_store.NonBudgetedFailure(_NOW),
@@ -1247,7 +1249,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
                     store,
                     actor_id=_ACTOR_ID,
                     budgeted_failure=(
-                        ingestion_lease_store.BudgetedFailure(7, 15, 600)
+                        failure_policy.ConsumeFailureBudget(7, 15, 600)
                     ),
                     boundary_settled_utc=lambda: _NOW,
                 )
@@ -1340,7 +1342,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         finalizer = runtime_adapters.FencedPageFinalizer(
             store,
             actor_id=_ACTOR_ID,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         )
 
@@ -1427,7 +1429,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         finalizer = runtime_adapters.FencedPageFinalizer(
             store,
             actor_id=_ACTOR_ID,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         )
 
@@ -1480,7 +1482,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         replay_finalizer = runtime_adapters.FencedPageFinalizer(
             replay_store,
             actor_id=_ACTOR_ID,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         )
 
@@ -1552,7 +1554,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         finalizer = runtime_adapters.FencedPageFinalizer(
             store,
             actor_id=_ACTOR_ID,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         )
 
@@ -1611,7 +1613,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         finalizer = runtime_adapters.FencedPageFinalizer(
             store,
             actor_id=_ACTOR_ID,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         )
 
@@ -1627,7 +1629,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         retryable = await runtime_adapters.FencedPageFinalizer(
             typing.cast("ingestion_lease_store.IngestionLeaseStore", no_start),
             actor_id=_ACTOR_ID,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         ).finalize_page(context)
         self.assertIs(type(retryable), feed_work_scheduler.FinalPageRetryable)
@@ -1640,7 +1642,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         unknown = await runtime_adapters.FencedPageFinalizer(
             uncertain_store,
             actor_id=_ACTOR_ID,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         ).finalize_page(context)
         self.assertIs(
@@ -1657,7 +1659,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
                 cancelled_store,
                 actor_id=_ACTOR_ID,
                 budgeted_failure=(
-                    ingestion_lease_store.BudgetedFailure(7, 15, 600)
+                    failure_policy.ConsumeFailureBudget(7, 15, 600)
                 ),
                 boundary_settled_utc=lambda: _NOW,
             ).finalize_page(context)
@@ -1689,7 +1691,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         finalizer = runtime_adapters.FencedPageFinalizer(
             store,
             actor_id=_ACTOR_ID,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         )
 
@@ -1743,7 +1745,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         finalizer = runtime_adapters.FencedPageFinalizer(
             store,
             actor_id=_ACTOR_ID,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         )
 
@@ -1808,7 +1810,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
                     store,
                     actor_id=_ACTOR_ID,
                     budgeted_failure=(
-                        ingestion_lease_store.BudgetedFailure(7, 15, 600)
+                        failure_policy.ConsumeFailureBudget(7, 15, 600)
                     ),
                     boundary_settled_utc=lambda: _NOW,
                 )
@@ -1829,7 +1831,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         rejected = await runtime_adapters.FencedPageFinalizer(
             rejection_store,
             actor_id=_ACTOR_ID,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW,
         ).finalize_page(context)
         self.assertIs(
@@ -1855,7 +1857,7 @@ class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
         finalizer = runtime_adapters.FencedPageFinalizer(
             store,
             actor_id=_ACTOR_ID,
-            budgeted_failure=ingestion_lease_store.BudgetedFailure(7, 15, 600),
+            budgeted_failure=failure_policy.ConsumeFailureBudget(7, 15, 600),
             boundary_settled_utc=lambda: _NOW.replace(tzinfo=None),
         )
 

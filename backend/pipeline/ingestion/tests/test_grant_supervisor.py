@@ -13,6 +13,7 @@ import uuid
 from unittest import mock
 
 from backend.pipeline.ingestion import (
+    failure_policy,
     grant_control,
     grant_supervisor,
     sid_grant_control,
@@ -124,19 +125,18 @@ def _valid_sid_payload(
     return type(value) is sid_grant_control.SidClaimPayload
 
 
-def _terminal_for(
-    outcome: grant_control.RunOutcome,
-) -> grant_control.TerminalDecision:
-    if isinstance(outcome, grant_control.RunFailed):
-        return grant_control.BudgetedFailureDecision(
-            failure_threshold=5,
-            backoff_base_sec=15,
-            backoff_max_sec=600,
-            status_reason=outcome.status_reason,
-            actor_id="service_account:gcp:grant-supervisor-tests",
-            reason=outcome.reason,
-        )
-    return grant_control.NeutralRelease(grant_control.TerminalCause.NORMAL)
+_FAILURE_BUDGET = failure_policy.ConsumeFailureBudget(5, 15, 600)
+
+
+def _plan_failure(
+    outcome: grant_control.RunFailed,
+) -> failure_policy.FailurePersistencePlan:
+    return failure_policy.plan_failure(
+        outcome.status_reason,
+        outcome.reason,
+        budgeted=_FAILURE_BUDGET,
+        non_budgeted=lambda: failure_policy.RetryWithoutBudget(_NOW),
+    )
 
 
 class _ControlledControl[GrantT, PayloadT]:
@@ -259,7 +259,6 @@ class _ControlledRunner[GrantT, PayloadT]:
         self.release_child = asyncio.Event()
         self.block_child_cleanup = False
         self.swallow_cancellation = False
-        self.set_retrying = False
 
     async def run(
         self,
@@ -269,31 +268,25 @@ class _ControlledRunner[GrantT, PayloadT]:
     ) -> grant_control.RunOutcome:
         self.calls.append((grant, payload, context))
         self.started.set()
-        if self.set_retrying:
-            context.set_retrying(True)
-        try:
-            if self.wait_for_signal == "stop":
-                await context.stop_requested.wait()
-                self.signal_observed.set()
-            elif self.wait_for_signal == "loss":
-                await context.grant_lost.wait()
-                self.signal_observed.set()
-            else:
-                await self.finish.wait()
-            if self.block_child_cleanup:
-                self.child_started.set()
-                try:
-                    await self.release_child.wait()
-                except asyncio.CancelledError:
-                    if not self.swallow_cancellation:
-                        raise
-                    current = asyncio.current_task()
-                    assert current is not None
-                    current.uncancel()
-                    await self.release_child.wait()
-        finally:
-            if self.set_retrying:
-                context.set_retrying(False)
+        if self.wait_for_signal == "stop":
+            await context.stop_requested.wait()
+            self.signal_observed.set()
+        elif self.wait_for_signal == "loss":
+            await context.grant_lost.wait()
+            self.signal_observed.set()
+        else:
+            await self.finish.wait()
+        if self.block_child_cleanup:
+            self.child_started.set()
+            try:
+                await self.release_child.wait()
+            except asyncio.CancelledError:
+                if not self.swallow_cancellation:
+                    raise
+                current = asyncio.current_task()
+                assert current is not None
+                current.uncancel()
+                await self.release_child.wait()
         return self.outcome
 
 
@@ -368,7 +361,6 @@ def _feed_registration(
         control=control,
         runner=runner,
         allocation=allocation,
-        terminal_decision_for=_terminal_for,
     )
 
 
@@ -400,7 +392,6 @@ def _sid_registration(
         control=control,
         runner=runner,
         allocation=allocation,
-        terminal_decision_for=_terminal_for,
     )
 
 
@@ -420,6 +411,16 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
     def _mixed(
         self,
         profile: worker_profiles.WorkerProfile,
+        *,
+        failure_planner: typing.Callable[
+            [grant_control.RunFailed],
+            failure_policy.FailurePersistencePlan,
+        ] = _plan_failure,
+        failure_plan_observer: typing.Callable[
+            [grant_control.DomainId, failure_policy.FailurePersistencePlan],
+            None,
+        ]
+        | None = None,
     ) -> tuple[
         grant_supervisor.GrantSupervisor,
         _ControlledControl[feed_store.FeedGrant, feed_store.LeasedFeed],
@@ -474,6 +475,8 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             profile,
             registrations,
             finalize_concurrency=2,
+            failure_planner=failure_planner,
+            failure_plan_observer=failure_plan_observer,
         )
         return (
             supervisor,
@@ -482,6 +485,97 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             sid_control,
             sid_runner,
         )
+
+    async def test_failure_is_planned_once_after_exact_revalidation(
+        self,
+    ) -> None:
+        profile = _profile(
+            process_cap=1,
+            feed_cap=1,
+            feed_budget=1,
+            domains=(grant_control.DomainId.FEED,),
+        )
+        planner = mock.Mock(side_effect=_plan_failure)
+        observer = mock.Mock()
+        (
+            supervisor,
+            feed_control,
+            feed_runner,
+            _sid_control,
+            _sid_runner,
+        ) = self._mixed(
+            profile,
+            failure_planner=planner,
+            failure_plan_observer=observer,
+        )
+        feed_id = uuid.UUID(int=9001)
+        grant = feed_store.FeedGrant(feed_id, _OWNER_ID, 1)
+        outcome = grant_control.RunFailed(
+            feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+            "invalid configuration",
+        )
+        feed_control.results[grant_control.ClaimMode.PRIMARY] = (
+            _claim(grant, _leased_feed(feed_id)),
+        )
+        feed_runner.outcome = outcome
+
+        await supervisor.admit_cycle(_OWNER_ID)
+        await asyncio.wait_for(feed_runner.started.wait(), timeout=1)
+        feed_runner.finish.set()
+        managed = next(iter(supervisor._registry.values()))
+        assert managed.root_task is not None
+        await asyncio.wait_for(managed.root_task, timeout=1)
+        await supervisor._settle_terminal_tasks()
+
+        planner.assert_called_once_with(outcome)
+        self.assertEqual(len(feed_control.finalize_calls), 1)
+        plan = feed_control.finalize_calls[0][1]
+        observer.assert_called_once_with(grant_control.DomainId.FEED, plan)
+        self.assertEqual(feed_control.finalize_calls, [(grant, plan)])
+
+    async def test_stale_failure_never_materializes_a_plan(self) -> None:
+        profile = _profile(
+            process_cap=1,
+            feed_cap=1,
+            feed_budget=1,
+            domains=(grant_control.DomainId.FEED,),
+        )
+        planner = mock.Mock(side_effect=_plan_failure)
+        (
+            supervisor,
+            feed_control,
+            feed_runner,
+            _sid_control,
+            _sid_runner,
+        ) = self._mixed(profile, failure_planner=planner)
+        feed_id = uuid.UUID(int=9002)
+        grant = feed_store.FeedGrant(feed_id, _OWNER_ID, 1)
+        feed_control.results[grant_control.ClaimMode.PRIMARY] = (
+            _claim(grant, _leased_feed(feed_id)),
+        )
+        feed_runner.outcome = grant_control.RunFailed(
+            feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+            "provider unavailable",
+        )
+
+        await supervisor._finalize_semaphore.acquire()
+        await supervisor._finalize_semaphore.acquire()
+        try:
+            await supervisor.admit_cycle(_OWNER_ID)
+            await asyncio.wait_for(feed_runner.started.wait(), timeout=1)
+            managed = next(iter(supervisor._registry.values()))
+            feed_runner.finish.set()
+            assert managed.root_task is not None
+            await asyncio.wait_for(managed.root_task, timeout=1)
+            self.assertTrue(supervisor._discard_exact_generation(managed.key))
+            planner.assert_not_called()
+        finally:
+            supervisor._finalize_semaphore.release()
+            supervisor._finalize_semaphore.release()
+        await supervisor._settle_terminal_tasks()
+
+        planner.assert_not_called()
+        self.assertEqual(feed_control.finalize_calls, [])
 
     async def _close(
         self,
@@ -637,7 +731,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
 
                 self.assertEqual(
                     sid_control.finalize_calls,
-                    [(grant, _terminal_for(outcome))],
+                    [(grant, _plan_failure(outcome))],
                 )
                 self.assertEqual(sid_control.finalize_payloads, [payload])
                 self.assertEqual(feed_control.finalize_calls, [])
@@ -915,12 +1009,14 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
 
         self.assertFalse(supervisor.admission_enabled)
         self.assertTrue(supervisor.integrity_failure_event.is_set())
+        failure = supervisor.integrity_failure
         self.assertIsInstance(
-            supervisor.integrity_failure,
+            failure,
             grant_control.GrantControlIntegrityError,
         )
+        assert failure is not None
         self.assertIs(
-            supervisor.integrity_failure.__cause__,
+            failure.__cause__,
             feed_control.claim_error,
         )
         self.assertEqual(supervisor._process_reserved, 0)
@@ -1068,6 +1164,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             profile,
             (registration,),
             finalize_concurrency=1,
+            failure_planner=_plan_failure,
         )
         feed_id = uuid.UUID(int=3)
         feed_control.results[grant_control.ClaimMode.PRIMARY] = (
@@ -1646,7 +1743,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(managed.runner_closed.wait(), timeout=1)
         self.assertEqual(supervisor._registry, {})
 
-    async def test_local_retry_remains_active_across_heartbeat(self) -> None:
+    async def test_active_runner_remains_owned_across_heartbeat(self) -> None:
         profile = _profile(
             process_cap=1,
             feed_cap=1,
@@ -1665,20 +1762,17 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         feed_control.results[grant_control.ClaimMode.PRIMARY] = (
             _claim(grant, _leased_feed(feed_id)),
         )
-        feed_runner.set_retrying = True
-
         try:
             await supervisor.admit_cycle(_OWNER_ID)
             await asyncio.wait_for(feed_runner.started.wait(), timeout=1)
             snapshot = supervisor.snapshot()
             self.assertEqual(
                 snapshot.counts_by_domain[grant_control.DomainId.FEED],
-                grant_supervisor.GrantCount(1, 1),
+                grant_supervisor.GrantCount(1),
             )
             await supervisor.heartbeat_cycle(lambda: None)
             self.assertEqual(len(feed_control.heartbeat_calls), 1)
             self.assertEqual(feed_control.finalize_calls, [])
-            self.assertTrue(next(iter(supervisor._registry.values())).retrying)
         finally:
             await self._close(
                 supervisor,
@@ -1731,9 +1825,15 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(heartbeat_stopped.wait(), timeout=1)
         self.assertEqual(len(feed_control.finalize_calls), 1)
         self.assertEqual(feed_control.finalize_payloads, [payload])
+        terminal = feed_control.finalize_calls[0][1]
         self.assertIsInstance(
-            feed_control.finalize_calls[0][1],
-            grant_control.BudgetedFailureDecision,
+            terminal,
+            failure_policy.FailurePersistencePlan,
+        )
+        assert isinstance(terminal, failure_policy.FailurePersistencePlan)
+        self.assertIsInstance(
+            terminal.treatment,
+            failure_policy.ConsumeFailureBudget,
         )
         feed_control.release_finalize.set()
         await shutdown
@@ -2321,7 +2421,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(feed_control.finalize_calls), 1)
         self.assertIsInstance(
             feed_control.finalize_calls[0][1],
-            grant_control.BudgetedFailureDecision,
+            failure_policy.FailurePersistencePlan,
         )
 
     async def test_snapshot_and_lifecycle_records_are_low_cardinality(
@@ -2359,12 +2459,8 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             await supervisor.admit_cycle(_OWNER_ID)
             await asyncio.wait_for(feed_runner.started.wait(), timeout=1)
             await asyncio.wait_for(sid_runner.started.wait(), timeout=1)
-            feed_runner.calls[0][2].set_retrying(True)
-            sid_runner.calls[0][2].set_retrying(True)
             snapshot = supervisor.snapshot()
             await supervisor.heartbeat_cycle(lambda: None)
-            feed_runner.calls[0][2].set_retrying(False)
-            sid_runner.calls[0][2].set_retrying(False)
 
             async def stop_heartbeat() -> None:
                 return None
@@ -2383,17 +2479,17 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(
             snapshot.counts_by_domain[grant_control.DomainId.FEED],
-            grant_supervisor.GrantCount(1, 1),
+            grant_supervisor.GrantCount(1),
         )
         self.assertEqual(
             snapshot.counts_by_domain[grant_control.DomainId.SID],
-            grant_supervisor.GrantCount(1, 1),
+            grant_supervisor.GrantCount(1),
         )
         with self.assertRaises(TypeError):
             typing.cast(
                 "dict[grant_control.DomainId, grant_supervisor.GrantCount]",
                 snapshot.counts_by_domain,
-            )[grant_control.DomainId.FEED] = grant_supervisor.GrantCount(0, 0)
+            )[grant_control.DomainId.FEED] = grant_supervisor.GrantCount(0)
 
         records = [
             call.kwargs["extra"]["json_fields"]
@@ -2404,7 +2500,6 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             {
                 "admission",
                 "heartbeat",
-                "retry_state",
                 "count_snapshot",
                 "shutdown",
                 "finalization",
@@ -2577,7 +2672,6 @@ class TestGrantSupervisorStructure(unittest.TestCase):
                 "control",
                 "runner",
                 "allocation",
-                "terminal_decision_for",
             ),
         )
 

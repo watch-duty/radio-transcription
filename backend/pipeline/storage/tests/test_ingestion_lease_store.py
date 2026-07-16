@@ -2942,8 +2942,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         non_budgeted_reasons = tuple(
             reason
             for reason in feed_store.FeedStatusReason
-            if failure_policy.classify_failure_policy(reason)
-            is not failure_policy.ExecutedAction.INCREMENT_FEED_FAILURE_BUDGET
+            if not failure_policy.consumes_failure_budget(reason)
         )
         self.assertEqual(
             set(feed_store.FeedStatusReason) - set(non_budgeted_reasons),

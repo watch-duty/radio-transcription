@@ -6,9 +6,10 @@ import dataclasses
 import enum
 import typing
 
+from backend.pipeline.ingestion import failure_policy
+
 if typing.TYPE_CHECKING:
     import asyncio
-    import datetime
     import uuid
 
     from backend.pipeline.storage import feed_store
@@ -95,31 +96,7 @@ class NeutralRelease:
             raise TypeError(msg)
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class BudgetedFailureDecision:
-    """Already-selected failure action that consumes a durable budget."""
-
-    failure_threshold: int
-    backoff_base_sec: int
-    backoff_max_sec: int
-    status_reason: feed_store.FeedStatusReason
-    actor_id: str
-    reason: str | None
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class NonBudgetedFailureDecision:
-    """Already-selected retryable failure outside the durable budget."""
-
-    retry_after: datetime.datetime
-    status_reason: feed_store.FeedStatusReason
-    actor_id: str
-    reason: str | None
-
-
-type TerminalDecision = (
-    NeutralRelease | BudgetedFailureDecision | NonBudgetedFailureDecision
-)
+type TerminalDecision = NeutralRelease | failure_policy.FailurePersistencePlan
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -152,11 +129,15 @@ type RunOutcome = RunCompleted | RunStopped | RunLost | RunFailed
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class RunContext:
-    """Supervisor-owned signals and retry-state callback for one runner."""
+    """Supervisor-owned stop and authority-loss signals for one runner.
+
+    Attributes:
+        stop_requested: Set when the runner should stop cooperatively.
+        grant_lost: Set when exact durable authority has been lost.
+    """
 
     stop_requested: asyncio.Event
     grant_lost: asyncio.Event
-    set_retrying: typing.Callable[[bool], None]
 
 
 class GrantControl[GrantT, PayloadT](typing.Protocol):
