@@ -233,6 +233,12 @@ class GeminiTranscriber(base.Transcriber):
         generation_config: types.GenerateContentConfig,
         reason: str,
     ) -> str:
+        """Falls back to foundation model if tuned model fails with empty/None.
+
+        If the configured model is already the foundation model, or if the
+        fallback call also fails with a transient empty response, returns an
+        empty string ("") to prevent infinite retries.
+        """
         if self.client is None:
             msg = "Client not initialized"
             raise RuntimeError(msg)

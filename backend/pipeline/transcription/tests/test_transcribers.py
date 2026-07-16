@@ -1101,6 +1101,60 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 mock_client_instance.aio.models.generate_content.call_count, 2
             )
 
+    async def test_gemini_transcriber_tuned_model_fallback_both_fail(
+        self,
+    ) -> None:
+        """Verifies that if both tuned and fallback models fail, we return empty string."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            # Mock first response: tuned model returns None finish_reason
+            mock_response_1 = MagicMock()
+            mock_candidate_1 = MagicMock()
+            mock_candidate_1.finish_reason = None
+            mock_candidate_1.content = None
+            mock_response_1.candidates = [mock_candidate_1]
+            mock_response_1.response_id = "tuned-failed-id"
+
+            # Mock second response: fallback model also returns None finish_reason
+            mock_response_2 = MagicMock()
+            mock_candidate_2 = MagicMock()
+            mock_candidate_2.finish_reason = None
+            mock_candidate_2.content = None
+            mock_response_2.candidates = [mock_candidate_2]
+            mock_response_2.response_id = "fallback-failed-id"
+
+            # AsyncMock to return response 1 on first call, response 2 on second
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                side_effect=[mock_response_1, mock_response_2]
+            )
+
+            # Initialize transcriber with a tuned model config
+            config_json = (
+                '{"model": "projects/123/locations/us/endpoints/456", '
+                '"location": "us-central1"}'
+            )
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                config_json,
+            )
+            transcriber.setup()
+
+            result = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
+            )
+
+            # Asserts: both models called, but result is empty transcript
+            self.assertEqual(result, "")
+            self.assertEqual(
+                mock_client_instance.aio.models.generate_content.call_count, 2
+            )
+
     def test_gemini_transcriber_setup(self) -> None:
         """Verifies that the Gemini transcriber initializes the GenAI client with correct options."""
         with patch(
