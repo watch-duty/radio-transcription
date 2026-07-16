@@ -90,6 +90,12 @@ class FailurePersistencePlan:
         ):
             msg = "treatment must be a closed FailureTreatment"
             raise TypeError(msg)
+        if consumes_failure_budget(self.status_reason) != isinstance(
+            self.treatment,
+            ConsumeFailureBudget,
+        ):
+            msg = "status_reason classification must match treatment"
+            raise ValueError(msg)
 
 
 _BUDGETED_REASONS = frozenset(

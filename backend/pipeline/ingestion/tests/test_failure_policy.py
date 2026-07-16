@@ -77,6 +77,30 @@ class TestFailurePlanning(unittest.TestCase):
             expected_budgeted,
         )
 
+    def test_persistence_plan_rejects_mismatched_treatment(self) -> None:
+        cases = (
+            (
+                feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                failure_policy.RetryWithoutBudget(_NOW),
+            ),
+            (
+                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                _BUDGETED,
+            ),
+        )
+
+        for status_reason, treatment in cases:
+            with self.subTest(status_reason=status_reason.value):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "classification must match treatment",
+                ):
+                    failure_policy.FailurePersistencePlan(
+                        status_reason=status_reason,
+                        reason=None,
+                        treatment=treatment,
+                    )
+
     def test_budgeted_plan_does_not_materialize_retry_treatment(self) -> None:
         non_budgeted = mock.Mock(
             side_effect=AssertionError("non-budgeted provider called")
