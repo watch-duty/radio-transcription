@@ -122,6 +122,7 @@ class FeedGrantControl:
             logger.warning(
                 "Quarantine observer cancelled after exact Feed finalization"
             )
+            raise
         except TimeoutError:
             logger.warning(
                 "Quarantine observer timed out after exact Feed finalization"

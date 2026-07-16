@@ -88,6 +88,8 @@ class SidGrantControl:
         if limit < 0:
             msg = "limit must be nonnegative"
             raise ValueError(msg)
+        if limit == 0:
+            return ()
 
         if mode is grant_control.ClaimMode.PRIMARY:
             claims = await self._data_store.claim_unclaimed(

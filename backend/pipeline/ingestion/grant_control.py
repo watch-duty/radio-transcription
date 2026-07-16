@@ -2,17 +2,17 @@
 
 from __future__ import annotations
 
+# Runtime imports keep typing.get_type_hints() resolvable.
+import asyncio  # noqa: TC003
 import dataclasses
 import enum
 import typing
 
 from backend.pipeline.ingestion import failure_policy
+from backend.pipeline.storage import feed_store  # noqa: TC001
 
 if typing.TYPE_CHECKING:
-    import asyncio
     import uuid
-
-    from backend.pipeline.storage import feed_store
 
 
 class DomainId(enum.StrEnum):

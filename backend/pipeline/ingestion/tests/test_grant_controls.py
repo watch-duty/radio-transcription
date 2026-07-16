@@ -204,6 +204,17 @@ class TestGrantControlVocabulary(unittest.TestCase):
             },
         )
 
+    def test_dataclass_annotations_resolve_at_runtime(self) -> None:
+        failed_hints = typing.get_type_hints(grant_control.RunFailed)
+        context_hints = typing.get_type_hints(grant_control.RunContext)
+
+        self.assertIs(
+            failed_hints["status_reason"],
+            feed_store.FeedStatusReason,
+        )
+        self.assertIs(context_hints["stop_requested"], asyncio.Event)
+        self.assertIs(context_hints["grant_lost"], asyncio.Event)
+
     def test_contract_has_no_open_metadata_or_health_surface(self) -> None:
         source = pathlib.Path(grant_control.__file__).read_text()
 
@@ -578,7 +589,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
         )
         self.data_store.report_feed_failure.assert_awaited_once()
 
-    async def test_quarantine_observer_cancellation_is_non_authoritative(
+    async def test_quarantine_observer_cancellation_propagates_after_commit(
         self,
     ) -> None:
         observer = mock.AsyncMock(side_effect=asyncio.CancelledError)
@@ -594,16 +605,14 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
         payload = _feed_payload_for_grant(grant)
         self.data_store.report_feed_failure.return_value = "quarantined"
 
-        result = await control.finalize(
-            grant,
-            payload,
-            _budgeted_plan(),
-        )
+        with self.assertRaises(asyncio.CancelledError):
+            await control.finalize(
+                grant,
+                payload,
+                _budgeted_plan(),
+            )
 
-        self.assertIs(
-            result.disposition,
-            grant_control.FinalizeDisposition.APPLIED,
-        )
+        self.data_store.report_feed_failure.assert_awaited_once()
         observer.assert_awaited_once()
 
     async def test_quarantine_observer_timeout_is_non_authoritative(
@@ -798,6 +807,16 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             primary[0].payload,
             grant_control.ClaimMode.PRIMARY,
         )
+
+    async def test_zero_claim_limit_touches_no_store(self) -> None:
+        for mode in grant_control.ClaimMode:
+            with self.subTest(mode=mode.value):
+                result = await self.control.claim(mode, _OWNER_ID, 0)
+
+                self.assertEqual(result, ())
+
+        self.data_store.claim_unclaimed.assert_not_awaited()
+        self.data_store.claim_recoverable.assert_not_awaited()
 
     async def test_finalize_rejects_non_claim_mode_before_io(
         self,
