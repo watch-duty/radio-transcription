@@ -1106,9 +1106,14 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         """Verifies that if both tuned and fallback models fail, we return empty string."""
-        with patch(
-            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
-        ) as mock_client_cls:
+        with (
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+            ) as mock_client_cls,
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.asyncio.sleep"
+            ) as mock_sleep,
+        ):
             mock_client_instance = MagicMock()
             mock_client_cls.return_value = mock_client_instance
 
@@ -1163,6 +1168,75 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 mock_client_instance.aio.models.generate_content.call_count, 3
             )
+            mock_sleep.assert_called_once_with(1)
+
+    async def test_gemini_transcriber_tuned_model_fallback_on_empty_string_both_fail(
+        self,
+    ) -> None:
+        """Verifies that fallback model retries and returns empty string if both return empty text."""
+        with (
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+            ) as mock_client_cls,
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.asyncio.sleep"
+            ) as mock_sleep,
+        ):
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            # Mock first response: tuned model returns STOP but with empty/no text parts
+            mock_response_1 = MagicMock()
+            mock_candidate_1 = MagicMock()
+            mock_candidate_1.finish_reason = types.FinishReason.STOP
+            mock_candidate_1.content.parts = []
+            mock_response_1.candidates = [mock_candidate_1]
+            mock_response_1.response_id = "tuned-empty-id"
+
+            # Mock second response: fallback model attempt 1 returns STOP with empty text
+            mock_response_2 = MagicMock()
+            mock_candidate_2 = MagicMock()
+            mock_candidate_2.finish_reason = types.FinishReason.STOP
+            mock_candidate_2.content.parts = []
+            mock_response_2.candidates = [mock_candidate_2]
+            mock_response_2.response_id = "fallback-empty-1"
+
+            # Mock third response: fallback model attempt 2 also returns STOP with empty text
+            mock_response_3 = MagicMock()
+            mock_candidate_3 = MagicMock()
+            mock_candidate_3.finish_reason = types.FinishReason.STOP
+            mock_candidate_3.content.parts = []
+            mock_response_3.candidates = [mock_candidate_3]
+            mock_response_3.response_id = "fallback-empty-2"
+
+            # AsyncMock to return resp 1, resp 2, resp 3 sequentially
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                side_effect=[mock_response_1, mock_response_2, mock_response_3]
+            )
+
+            # Initialize transcriber with a tuned model config
+            config_json = (
+                '{"model": "projects/123/locations/us/endpoints/456", '
+                '"location": "us-central1"}'
+            )
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                config_json,
+            )
+            transcriber.setup()
+
+            result = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
+            )
+
+            # Asserts: all 3 attempts made, result is empty transcript
+            self.assertEqual(result, "")
+            self.assertEqual(
+                mock_client_instance.aio.models.generate_content.call_count, 3
+            )
+            mock_sleep.assert_called_once_with(1)
 
     def test_gemini_transcriber_setup(self) -> None:
         """Verifies that the Gemini transcriber initializes the GenAI client with correct options."""

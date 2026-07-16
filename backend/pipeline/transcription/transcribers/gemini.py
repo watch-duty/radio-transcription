@@ -267,26 +267,37 @@ class GeminiTranscriber(base.Transcriber):
                         config=generation_config,
                     )
                 )
-                return self._parse_response(fallback_response)
-            except GeminiTransientTranscriptionError as e:
-                if attempt == 2:
-                    logger.info(
-                        "Fallback model %s also returned "
-                        "incomplete/empty response: %s. "
-                        "Treating as empty transcription.",
-                        DEFAULT_GEMINI_MODEL,
-                        e,
-                    )
-                    return ""
-                logger.warning(
-                    "Fallback call to %s "
-                    "returned incomplete response (attempt %d/2): %s. "
-                    "Retrying in 1s...",
+                transcript = self._parse_response(fallback_response)
+                if transcript.strip():
+                    return transcript
+
+                resp_id = fallback_response.response_id or "Unknown"
+                msg = (
+                    "Empty transcript returned by fallback model. "
+                    f"(Response ID: {resp_id})"
+                )
+                e = GeminiTransientTranscriptionError(msg)
+            except GeminiTransientTranscriptionError as exc:
+                e = exc
+
+            if attempt == 2:
+                logger.info(
+                    "Fallback model %s also returned "
+                    "incomplete/empty response: %s. "
+                    "Treating as empty transcription.",
                     DEFAULT_GEMINI_MODEL,
-                    attempt,
                     e,
                 )
-                await asyncio.sleep(1)
+                return ""
+            logger.warning(
+                "Fallback call to %s "
+                "returned incomplete response (attempt %d/2): %s. "
+                "Retrying in 1s...",
+                DEFAULT_GEMINI_MODEL,
+                attempt,
+                e,
+            )
+            await asyncio.sleep(1)
 
         return ""
 
