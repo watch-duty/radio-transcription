@@ -18,7 +18,6 @@ _.get_value
 from backend.pipeline.storage.ingestion_lease_store import (
     IngestionLeaseStore,
     LeaseHeartbeatResult,
-    LeaseMember,
     LeaseOperationResult,
     LeaseReleaseCause,
 )
@@ -31,7 +30,6 @@ IngestionLeaseStore.load_membership
 IngestionLeaseStore.commit_child_mutations
 LeaseOperationResult.disposition
 LeaseHeartbeatResult.disposition
-LeaseMember.audit_revision
 LeaseReleaseCause.SHUTDOWN
 LeaseReleaseCause.REBALANCE
 LeaseReleaseCause.CANCELLATION

@@ -91,12 +91,6 @@ __all__ = (
     "SourceObservation",
 )
 
-# Temporary private compatibility seam while planner tests move with the
-# extracted child-commit capability.
-_plan_child_mutation = (
-    _ingestion_lease_child_commit._plan_child_mutation  # noqa: SLF001
-)
-
 
 def _require_source_type(value: object) -> feed_store.SourceType:
     if not isinstance(value, feed_store.SourceType):
