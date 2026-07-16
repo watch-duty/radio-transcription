@@ -322,7 +322,15 @@ export function RuleConfigurationEdit({
     setIsDryRunModalOpen(true);
 
     try {
-      const response = await dryRunRule({ rule: payload }, token!);
+      const dryRunPayload: DryRunRequest = { rule: payload };
+      if (
+        payload.scope.level === 'FEED_SPECIFIC' &&
+        payload.scope.targetFeeds.length > 0
+      ) {
+        dryRunPayload.feedIds = payload.scope.targetFeeds;
+      }
+
+      const response = await dryRunRule(dryRunPayload, token!);
       setDryRunResult(response);
     } catch (e: unknown) {
       const errorMessage =
@@ -861,6 +869,15 @@ function DryRunResultsModal({
                   {result.examples.map((example, i) => (
                     <Card key={i} variant="outlined">
                       <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{ display: 'block', mb: 1, fontWeight: 500 }}
+                        >
+                          Feed:{' '}
+                          {feeds.find((f) => f.id === example.feedId)?.name ||
+                            example.feedId}
+                        </Typography>
                         {renderHighlightedText(
                           example.text,
                           example.matchedSpans
