@@ -1,12 +1,15 @@
-"""Integration tests for the Rules Frontend Proxy API."""
+"""Integration tests for the Rules Frontend Proxy and Backend Rules APIs."""
 
 import os
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 import pytest
 
+from integration_tests.feed_utils import create_test_bcfy_feed  # noqa: F401
 from integration_tests.test_utils import DUMMY_JWT
 
 
@@ -15,6 +18,48 @@ async def create_proxy_client() -> AsyncIterator[httpx.AsyncClient]:
     async with httpx.AsyncClient(
         base_url=f"http://{os.environ.get('FRONTEND_API_HOST', 'localhost:8088')}/api/v1",
         headers={"Authorization": f"Bearer {DUMMY_JWT}"},
+    ) as client:
+        yield client
+
+
+def get_rules_api_host() -> str:
+    """Return the Rules API host for the current environment."""
+    configured_host = os.environ.get("RULES_API_HOST")
+    if configured_host:
+        return configured_host
+
+    if Path("/.dockerenv").exists():
+        return "rules-management:8086"
+
+    return "localhost:8086"
+
+
+def get_audio_segments_api_host() -> str:
+    """Return the Audio Segments API host for the current environment."""
+    configured_host = os.environ.get("AUDIO_SEGMENTS_API_HOST")
+    if configured_host:
+        return configured_host
+
+    if Path("/.dockerenv").exists():
+        return "audio-segments-api:8091"
+
+    return "localhost:8091"
+
+
+@pytest.fixture(name="audio_client")
+async def create_audio_client() -> AsyncIterator[httpx.AsyncClient]:
+    """Sets up client for audio segment requests."""
+    async with httpx.AsyncClient(
+        base_url=f"http://{get_audio_segments_api_host()}/v1"
+    ) as client:
+        yield client
+
+
+@pytest.fixture(name="api_client")
+async def create_api_client() -> AsyncIterator[httpx.AsyncClient]:
+    """Sets up client for requests."""
+    async with httpx.AsyncClient(
+        base_url=f"http://{get_rules_api_host()}/v1"
     ) as client:
         yield client
 
@@ -243,3 +288,78 @@ async def test_delete_rule_proxy(
     # Verify GET returns 404 after deletion
     get_resp = await proxy_client.get(f"/rules/{rule_id}", timeout=10.0)
     assert get_resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_dry_run_rule(
+    api_client: httpx.AsyncClient,
+    audio_client: httpx.AsyncClient,
+    test_bcfy_feed: tuple[str, str],
+) -> None:
+    """Test evaluating a prospective rule via dry-run."""
+    feed_id, _ = test_bcfy_feed
+
+    # 1. Seed actual data into the database via the Audio Segments API
+    segment_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+    start_ts = now.isoformat()
+    end_ts = (now + timedelta(minutes=1)).isoformat()
+
+    await audio_client.post(
+        "/audio_segments",
+        json={
+            "id": segment_id,
+            "feed_id": feed_id,
+            "classification": "SPEECH",
+            "start_timestamp": start_ts,
+            "end_timestamp": end_ts,
+            "missing_prior_context": False,
+            "missing_post_context": False,
+            "source_audio_uris": ["gs://bucket/audio1.ogg"],
+            "canonical_audio_uri": "gs://bucket/canonical.ogg",
+        },
+    )
+
+    # Add a transcript containing the keyword "fire"
+    await audio_client.post(
+        f"/audio_segments/{segment_id}/annotations",
+        json={
+            "type": "TRANSCRIPT",
+            "data": {
+                "text": "A massive fire is spreading rapidly on the ridge.",
+                "errors": [],
+            },
+        },
+    )
+
+    # 2. Execute the dry-run against the real database
+    rule_payload = {
+        "rule": {
+            "rule_name": "Integration Test Dry Run",
+            "description": "Test rule for dry-run",
+            "is_active": True,
+            "scope": {"level": "GLOBAL"},
+            "conditions": {
+                "evaluation_type": "KEYWORD_MATCH",
+                "operator": "ANY",
+                "keywords": ["fire", "evacuate"],
+                "case_sensitive": False,
+            },
+        },
+        "max_examples": 10,
+        "feed_ids": [feed_id],
+    }
+
+    response = await api_client.post(
+        "/rules/dry-run", json=rule_payload, timeout=10.0
+    )
+
+    assert response.status_code == 200, f"Dry-run failed: {response.text}"
+
+    data = response.json()
+    assert data["hit_count"] >= 1, (
+        "Expected at least 1 hit from the seeded segment"
+    )
+    assert data["total_evaluated"] >= 1
+    assert len(data["examples"]) >= 1
+    assert data["examples"][0]["audio_segment_id"] == segment_id
