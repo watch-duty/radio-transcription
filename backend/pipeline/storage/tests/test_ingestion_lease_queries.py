@@ -87,21 +87,28 @@ class TestLeaseGrantContract(unittest.TestCase):
                     *case,  # ty: ignore[invalid-argument-type]
                 )
 
-    def test_grant_equality_excludes_mutable_lifecycle_state(self) -> None:
+    def test_claim_exposes_only_the_complete_grant(self) -> None:
         grant = ingestion_lease_store.LeaseGrant(
             feed_store.SourceType.BCFY_CALLS,
             "123",
             self.owner_id,
             4,
         )
-        first = ingestion_lease_store.LeaseClaim(
-            grant=grant,
-            durable_failing=False,
-        )
-        second = dataclasses.replace(first, durable_failing=True)
+        claim = ingestion_lease_store.LeaseClaim(grant=grant)
 
-        self.assertEqual(first.grant, second.grant)
-        self.assertNotEqual(first.durable_failing, second.durable_failing)
+        self.assertEqual(
+            tuple(field.name for field in dataclasses.fields(claim)),
+            ("grant",),
+        )
+        operation = ingestion_lease_store.LeaseOperationResult(
+            ingestion_lease_store.LeaseOperationDisposition.APPLIED
+        )
+        self.assertEqual(
+            tuple(field.name for field in dataclasses.fields(operation)),
+            ("disposition",),
+        )
+        self.assertFalse(hasattr(claim, "__dict__"))
+        self.assertFalse(hasattr(operation, "__dict__"))
 
 
 class TestLeaseClaimQueryContract(unittest.TestCase):
@@ -194,13 +201,12 @@ class TestLeaseClaimQueryContract(unittest.TestCase):
             for fragment in retained:
                 self.assertNotIn(fragment, sql)
             result_projection = sql.split("RETURNING", 1)[1]
-            self.assertIn("leases.failure_count", result_projection)
-            self.assertIn("leases.status_reason", result_projection)
-            self.assertNotIn("durable_failing", result_projection)
             for removed in (
                 "leases.status,",
                 "leases.last_heartbeat,",
+                "leases.failure_count,",
                 "leases.retry_after,",
+                "leases.status_reason,",
                 "leases.status_reason_detail,",
                 "leases.membership_revision,",
                 "leases.updated_at,",
@@ -274,12 +280,11 @@ class TestLeaseControlQueryContract(unittest.TestCase):
         self.assertNotIn("status_reason_updated_at", sql)
         self.assertNotIn("audit_revision", sql)
         result_projection = sql.rsplit("SELECT", 1)[1]
-        self.assertIn("current_state.failure_count", result_projection)
-        self.assertIn("current_state.status_reason", result_projection)
-        self.assertNotIn("durable_failing", result_projection)
         for removed in (
             "last_heartbeat",
+            "failure_count",
             "retry_after",
+            "status_reason",
             "status_reason_detail",
             "membership_revision",
             "updated_at",
@@ -919,12 +924,14 @@ class TestMembershipSnapshotContract(unittest.TestCase):
         self.assertNotIn("owner_worker_id", fields)
         self.assertNotIn("fencing_token", fields)
 
-    def test_lease_member_requires_canonical_name_without_default(self) -> None:
+    def test_lease_member_exposes_only_runtime_consumed_state(self) -> None:
         fields = dataclasses.fields(ingestion_lease_store.LeaseMember)
         fields_by_name = {field.name: field for field in fields}
 
-        self.assertEqual(fields[0].name, "identity")
-        self.assertEqual(fields[1].name, "name")
+        self.assertEqual(
+            tuple(field.name for field in fields),
+            ("identity", "name", "last_bookmark_time"),
+        )
         self.assertIs(fields_by_name["name"].default, dataclasses.MISSING)
         self.assertIs(
             fields_by_name["name"].default_factory,
@@ -940,9 +947,20 @@ class TestMembershipSnapshotContract(unittest.TestCase):
         self.assertIn("fp.bcfy_calls_group_id", sql)
         self.assertIn("fp.source_feed_id", sql)
         self.assertIn("feeds.name AS feed_name", sql)
+        self.assertIn("feeds.status::text AS status", sql)
+        self.assertIn("feeds.last_bookmark_time", sql)
         self.assertIn("fp.source_type = 'bcfy_calls'", sql)
         self.assertIn("fp.bcfy_calls_is_trunked IS TRUE", sql)
         self.assertIn("ORDER BY fp.bcfy_calls_group_id, fp.feed_id", sql)
+        for unused_field in (
+            "last_processed_filename",
+            "failure_count",
+            "retry_after",
+            "status_reason",
+            "status_reason_detail",
+            "audit_revision",
+        ):
+            self.assertNotIn(unused_field, sql)
         self.assertNotIn("split_part", sql.lower())
         self.assertNotRegex(
             sql.lower(), r"bcfy_calls_(sid|group_id)::(int|bigint)"

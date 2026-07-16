@@ -75,22 +75,12 @@ class LeaseGrant:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class LeaseClaim:
-    """A newly established grant and its retained failure evidence.
-
-    Attributes:
-        grant: Complete authority for the newly claimed generation.
-        durable_failing: Whether retained durable evidence marks the Lease as
-            failing after the claim write.
-    """
+    """A newly established complete Lease grant."""
 
     grant: LeaseGrant
-    durable_failing: bool
 
     def __post_init__(self) -> None:
         _require_grant(self.grant)
-        if not isinstance(self.durable_failing, bool):
-            msg = "durable_failing must be a boolean"
-            raise TypeError(msg)
 
 
 class LeaseOperationDisposition(enum.StrEnum):
@@ -117,21 +107,14 @@ class LeaseOperationResult:
 
     Attributes:
         disposition: Closed classification of the mutation attempt.
-        durable_failing: Retained failure evidence after an applied neutral
-            mutation; absent when the exact grant was rejected.
     """
 
     disposition: LeaseOperationDisposition
-    durable_failing: bool | None
 
     def __post_init__(self) -> None:
         if not isinstance(self.disposition, LeaseOperationDisposition):
             msg = "disposition must be a LeaseOperationDisposition"
             raise TypeError(msg)
-        applied = self.disposition is LeaseOperationDisposition.APPLIED
-        if applied != isinstance(self.durable_failing, bool):
-            msg = "only an applied Lease operation returns lifecycle evidence"
-            raise ValueError(msg)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -606,14 +589,7 @@ class LeaseMember:
 
     identity: LeaseMemberIdentity
     name: str
-    status: feed_store.FeedStatus
-    last_processed_filename: str | None
     last_bookmark_time: datetime.datetime | None
-    failure_count: int
-    retry_after: datetime.datetime | None
-    status_reason: feed_store.FeedStatusReason | None
-    status_reason_detail: str | None
-    audit_revision: int
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1352,15 +1328,11 @@ def _failure_count_from_row(row: collections.abc.Mapping) -> int:
     return value
 
 
-def _durable_failing_from_row(row: collections.abc.Mapping) -> bool:
-    """Interpret the retained failure evidence shared with Feed grants."""
-    return _failure_count_from_row(row) != 0 or row["status_reason"] is not None
-
-
 def _lifecycle_dirty_from_row(row: collections.abc.Mapping) -> bool:
     """Whether successful work must clear any retained lifecycle field."""
     return (
-        _durable_failing_from_row(row)
+        _failure_count_from_row(row) != 0
+        or row["status_reason"] is not None
         or row["retry_after"] is not None
         or row["status_reason_detail"] is not None
     )
@@ -1387,10 +1359,7 @@ def _claim_from_row(row: collections.abc.Mapping) -> LeaseClaim:
         owner_worker_id=row["worker_id"],
         fencing_token=row["fencing_token"],
     )
-    return LeaseClaim(
-        grant=grant,
-        durable_failing=_durable_failing_from_row(row),
-    )
+    return LeaseClaim(grant=grant)
 
 
 def _disposition_for_rejection(
@@ -1482,14 +1451,7 @@ def _member_from_row(
     return LeaseMember(
         identity=identity,
         name=name,
-        status=_status_from_row(row),
-        last_processed_filename=row["last_processed_filename"],
         last_bookmark_time=row["last_bookmark_time"],
-        failure_count=row["failure_count"],
-        retry_after=row["retry_after"],
-        status_reason=_status_reason_from_row(row),
-        status_reason_detail=row["status_reason_detail"],
-        audit_revision=row["audit_revision"],
     )
 
 
@@ -1994,10 +1956,7 @@ class IngestionLeaseStore:
             grant.fencing_token,
         )
         if row is None:
-            return LeaseOperationResult(
-                LeaseOperationDisposition.MISSING,
-                None,
-            )
+            return LeaseOperationResult(LeaseOperationDisposition.MISSING)
         if row["applied"]:
             rejection_reason = self._grant_rejection_reason(grant, row)
             if rejection_reason is not None:
@@ -2013,18 +1972,14 @@ class IngestionLeaseStore:
                     "release_cause": cause.value,
                 },
             )
-            return LeaseOperationResult(
-                LeaseOperationDisposition.APPLIED,
-                _durable_failing_from_row(row),
-            )
+            return LeaseOperationResult(LeaseOperationDisposition.APPLIED)
 
         rejection = self._grant_rejection(grant, row)
         if rejection is None:
             msg = "release did not update an exact active Lease grant"
             raise RuntimeError(msg)
         return LeaseOperationResult(
-            _disposition_for_rejection(rejection.reason),
-            None,
+            _disposition_for_rejection(rejection.reason)
         )
 
     async def finalize_failure(
@@ -2287,7 +2242,8 @@ class IngestionLeaseStore:
                 )
             routing_keys.add(identity.source_feed_id)
             member = _member_from_row(identity, row)
-            if member.status in (
+            status = _status_from_row(row)
+            if status in (
                 feed_store.FeedStatus.ACTIVE,
                 feed_store.FeedStatus.FAILING,
             ):
