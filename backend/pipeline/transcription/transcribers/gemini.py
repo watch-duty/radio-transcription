@@ -1,5 +1,6 @@
 """Google Gemini transcriber implementation."""
 
+import asyncio
 import dataclasses
 import mimetypes
 
@@ -258,21 +259,35 @@ class GeminiTranscriber(base.Transcriber):
             self.config.model,
             reason,
         )
-        try:
-            fallback_response = await self.client.aio.models.generate_content(
-                model="gemini-3.1-flash-lite",
-                contents=contents,
-                config=generation_config,
-            )
-            return self._parse_response(fallback_response)
-        except GeminiTransientTranscriptionError as e:
-            logger.info(
-                "Fallback model gemini-3.1-flash-lite also returned "
-                "incomplete/empty response: %s. "
-                "Treating as empty transcription.",
-                e,
-            )
-            return ""
+        for attempt in range(1, 3):
+            try:
+                fallback_response = (
+                    await self.client.aio.models.generate_content(
+                        model="gemini-3.1-flash-lite",
+                        contents=contents,
+                        config=generation_config,
+                    )
+                )
+                return self._parse_response(fallback_response)
+            except GeminiTransientTranscriptionError as e:
+                if attempt == 2:
+                    logger.info(
+                        "Fallback model gemini-3.1-flash-lite also returned "
+                        "incomplete/empty response: %s. "
+                        "Treating as empty transcription.",
+                        e,
+                    )
+                    return ""
+                logger.warning(
+                    "Fallback call to gemini-3.1-flash-lite "
+                    "returned incomplete response (attempt %d/2): %s. "
+                    "Retrying in 1s...",
+                    attempt,
+                    e,
+                )
+                await asyncio.sleep(1)
+
+        return ""
 
     def _get_blocked_ratings(self, candidate: types.Candidate) -> str:
         """Helper to extract a string list of blocked safety categories."""

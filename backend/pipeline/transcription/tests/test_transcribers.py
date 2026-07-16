@@ -1119,17 +1119,25 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             mock_response_1.candidates = [mock_candidate_1]
             mock_response_1.response_id = "tuned-failed-id"
 
-            # Mock second response: fallback model also returns None finish_reason
+            # Mock second response: fallback model attempt 1 returns None
             mock_response_2 = MagicMock()
             mock_candidate_2 = MagicMock()
             mock_candidate_2.finish_reason = None
             mock_candidate_2.content = None
             mock_response_2.candidates = [mock_candidate_2]
-            mock_response_2.response_id = "fallback-failed-id"
+            mock_response_2.response_id = "fallback-failed-1"
 
-            # AsyncMock to return response 1 on first call, response 2 on second
+            # Mock third response: fallback model attempt 2 also returns None
+            mock_response_3 = MagicMock()
+            mock_candidate_3 = MagicMock()
+            mock_candidate_3.finish_reason = None
+            mock_candidate_3.content = None
+            mock_response_3.candidates = [mock_candidate_3]
+            mock_response_3.response_id = "fallback-failed-2"
+
+            # AsyncMock to return resp 1, resp 2, resp 3 sequentially
             mock_client_instance.aio.models.generate_content = AsyncMock(
-                side_effect=[mock_response_1, mock_response_2]
+                side_effect=[mock_response_1, mock_response_2, mock_response_3]
             )
 
             # Initialize transcriber with a tuned model config
@@ -1149,10 +1157,10 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 duration_ms=1000,
             )
 
-            # Asserts: both models called, but result is empty transcript
+            # Asserts: all 3 attempts made, result is empty transcript
             self.assertEqual(result, "")
             self.assertEqual(
-                mock_client_instance.aio.models.generate_content.call_count, 2
+                mock_client_instance.aio.models.generate_content.call_count, 3
             )
 
     def test_gemini_transcriber_setup(self) -> None:
