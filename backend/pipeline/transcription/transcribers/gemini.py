@@ -247,7 +247,8 @@ class GeminiTranscriber(base.Transcriber):
 
         logger.warning(
             "Tuned model %s failed: %s. "
-            "Falling back to foundation model gemini-3.1-flash-lite...",
+            "Falling back to foundation model "
+            "gemini-3.1-flash-lite...",
             self.config.model,
             reason,
         )
@@ -260,7 +261,8 @@ class GeminiTranscriber(base.Transcriber):
             return self._parse_response(fallback_response)
         except GeminiTransientTranscriptionError as e:
             logger.info(
-                "Fallback model gemini-3.1-flash-lite also returned incomplete/empty response: %s. "
+                "Fallback model gemini-3.1-flash-lite also returned "
+                "incomplete/empty response: %s. "
                 "Treating as empty transcription.",
                 e,
             )
@@ -342,15 +344,8 @@ class GeminiTranscriber(base.Transcriber):
             )
 
         if reason_str is None:
-            # If the response is returned successfully but has no finish reason,
-            # it means the model finished without producing any text content parts.
-            # We treat this as a successful empty transcription rather than a transient failure.
-            logger.info(
-                "Gemini response candidate contains no finish reason (Response ID: %s). "
-                "Treating as empty transcription.",
-                response_id,
-            )
-            return ""
+            msg = f"Incomplete response from Gemini (finish_reason: None). (Response ID: {response_id})"
+            raise GeminiTransientTranscriptionError(msg)
 
         if reason_str not in _VALID_FINISH_REASONS:
             finish_msg = candidate.finish_message or "No finish message"

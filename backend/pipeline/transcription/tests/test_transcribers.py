@@ -999,11 +999,16 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
 
             # Initialize transcriber with a tuned model config
+            config_json = (
+                '{"model": "projects/123/locations/us/endpoints/456", '
+                '"location": "us-central1"}'
+            )
             transcriber = get_transcriber(
                 TranscriberType.GEMINI,
                 "test-project",
-                '{"model": "projects/123/locations/us/endpoints/456", "location": "us-central1"}',
+                config_json,
             )
+
             transcriber.setup()
 
             result = await transcriber.transcribe(
@@ -1041,7 +1046,9 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
     async def test_gemini_transcriber_tuned_model_fallback_on_empty_string(
         self,
     ) -> None:
-        """Verifies that if the tuned model returns an empty transcript (STOP with empty text), we fall back."""
+        """Verifies that if the tuned model returns an empty transcript
+        (STOP with empty text), we fall back.
+        """
         with patch(
             "backend.pipeline.transcription.transcribers.gemini.genai.Client"
         ) as mock_client_cls:
@@ -1072,10 +1079,14 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
 
             # Initialize transcriber with a tuned model config
+            config_json = (
+                '{"model": "projects/123/locations/us/endpoints/456", '
+                '"location": "us-central1"}'
+            )
             transcriber = get_transcriber(
                 TranscriberType.GEMINI,
                 "test-project",
-                '{"model": "projects/123/locations/us/endpoints/456", "location": "us-central1"}',
+                config_json,
             )
             transcriber.setup()
 
