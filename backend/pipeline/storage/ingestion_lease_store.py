@@ -1182,16 +1182,30 @@ def _status_reason_from_row(
         raise ValueError(msg) from error
 
 
-def _boolean_from_row(
-    row: collections.abc.Mapping,
-    field_name: str,
-) -> bool:
-    """Return one database-derived Boolean without accepting integer aliases."""
-    value = row[field_name]
-    if not isinstance(value, bool):
-        msg = f"Lease {field_name} must be a boolean"
+def _failure_count_from_row(row: collections.abc.Mapping) -> int:
+    """Return one validated durable Lease failure count."""
+    value = row["failure_count"]
+    if isinstance(value, bool) or not isinstance(value, int):
+        msg = "Lease failure_count must be an integer"
         raise TypeError(msg)
+    if value < 0:
+        msg = "Lease failure_count must be nonnegative"
+        raise ValueError(msg)
     return value
+
+
+def _durable_failing_from_row(row: collections.abc.Mapping) -> bool:
+    """Interpret the retained failure evidence shared with Feed grants."""
+    return _failure_count_from_row(row) != 0 or row["status_reason"] is not None
+
+
+def _lifecycle_dirty_from_row(row: collections.abc.Mapping) -> bool:
+    """Whether successful work must clear any retained lifecycle field."""
+    return (
+        _durable_failing_from_row(row)
+        or row["retry_after"] is not None
+        or row["status_reason_detail"] is not None
+    )
 
 
 def _membership_revision_from_row(
@@ -1217,7 +1231,7 @@ def _claim_from_row(row: collections.abc.Mapping) -> LeaseClaim:
     )
     return LeaseClaim(
         grant=grant,
-        durable_failing=_boolean_from_row(row, "durable_failing"),
+        durable_failing=_durable_failing_from_row(row),
     )
 
 
@@ -1787,7 +1801,7 @@ class IngestionLeaseStore:
             )
             return LeaseOperationResult(
                 LeaseOperationDisposition.APPLIED,
-                _boolean_from_row(row, "durable_failing"),
+                _durable_failing_from_row(row),
             )
 
         rejection = self._grant_rejection(grant, row)
@@ -2432,7 +2446,7 @@ class IngestionLeaseStore:
         """Apply success-proven Lease recovery under the held exact grant."""
         if isinstance(effect, NoLeaseEffect):
             return LeaseLifecycleResult(LeaseLifecycleEffect.NONE)
-        if not _boolean_from_row(before_row, "lifecycle_dirty"):
+        if not _lifecycle_dirty_from_row(before_row):
             return LeaseLifecycleResult(LeaseLifecycleEffect.NONE)
 
         before_revision = _membership_revision_from_row(before_row)
@@ -2457,7 +2471,7 @@ class IngestionLeaseStore:
             raise ValueError(msg)
         if (
             _status_from_row(row) is not feed_store.FeedStatus.ACTIVE
-            or _boolean_from_row(row, "lifecycle_dirty")
+            or _lifecycle_dirty_from_row(row)
             or _membership_revision_from_row(row) != before_revision
         ):
             msg = "Lease recovery returned inconsistent after state"

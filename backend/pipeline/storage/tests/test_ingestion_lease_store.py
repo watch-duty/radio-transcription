@@ -38,8 +38,6 @@ def _grant(
 
 
 def _lease_row(**overrides: object) -> dict[str, object]:
-    explicit_durable_failing = "durable_failing" in overrides
-    explicit_lifecycle_dirty = "lifecycle_dirty" in overrides
     row: dict[str, object] = {
         "source_type": "bcfy_calls",
         "lease_key": "123",
@@ -57,17 +55,6 @@ def _lease_row(**overrides: object) -> dict[str, object]:
         "final_status": None,
     }
     row.update(overrides)
-    if not explicit_durable_failing:
-        row["durable_failing"] = (
-            row["failure_count"] != 0 or row["status_reason"] is not None
-        )
-    if not explicit_lifecycle_dirty:
-        row["lifecycle_dirty"] = (
-            row["failure_count"] != 0
-            or row["retry_after"] is not None
-            or row["status_reason"] is not None
-            or row["status_reason_detail"] is not None
-        )
     return row
 
 
@@ -436,7 +423,8 @@ class TestIngestionLeaseStoreClaims(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         cases = (
             {"source_type": "future_source"},
-            {"durable_failing": 1},
+            {"failure_count": True},
+            {"failure_count": -1},
         )
 
         for overrides in cases:
@@ -465,6 +453,38 @@ class TestIngestionLeaseStoreClaims(unittest.IsolatedAsyncioTestCase):
             )
 
         pool.fetch.assert_awaited_once()
+
+    async def test_claim_derives_lifecycle_from_raw_failure_evidence(
+        self,
+    ) -> None:
+        cases = (
+            (0, None, False),
+            (1, None, True),
+            (0, "source_unreachable", True),
+        )
+
+        for failure_count, status_reason, expected in cases:
+            with self.subTest(
+                failure_count=failure_count,
+                status_reason=status_reason,
+            ):
+                pool = connection_util.make_mock_pool(
+                    fetch_result=[
+                        _lease_row(
+                            failure_count=failure_count,
+                            status_reason=status_reason,
+                        )
+                    ]
+                )
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+                result = await store.claim_unclaimed(
+                    feed_store.SourceType.BCFY_CALLS,
+                    _OWNER_ID,
+                    1,
+                )
+
+                self.assertIs(result[0].durable_failing, expected)
 
 
 class TestIngestionLeaseStoreHeartbeat(unittest.IsolatedAsyncioTestCase):
@@ -3232,6 +3252,48 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         )
         connection.fetch.assert_not_awaited()
         log_recovery.assert_called_once()
+
+    async def test_each_raw_lifecycle_field_can_trigger_recovery(self) -> None:
+        cases = (
+            ("failure_count", {"failure_count": 1}),
+            ("retry_after", {"retry_after": _NOW}),
+            ("status_reason", {"status_reason": "source_unreachable"}),
+            (
+                "status_reason_detail",
+                {"status_reason_detail": "provider timeout"},
+            ),
+        )
+
+        for field_name, dirty_override in cases:
+            with self.subTest(field_name=field_name):
+                clean_lifecycle: dict[str, object] = {
+                    "failure_count": 0,
+                    "retry_after": None,
+                    "status_reason": None,
+                    "status_reason_detail": None,
+                }
+                before = _lease_row(**(clean_lifecycle | dirty_override))
+                after = _lease_row(**clean_lifecycle)
+                pool = connection_util.make_mock_pool(transaction=True)
+                connection = pool.acquired_connection
+                connection.fetchrow.side_effect = [before, after]
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+                result = await store.commit_child_mutations(
+                    _grant(),
+                    ingestion_lease_store.ChildMutationBatch(
+                        (),
+                        ingestion_lease_store.FinalizeLeaseRecovery(),
+                    ),
+                    actor_id="service_account:gcp:collector",
+                )
+
+                assert isinstance(result, ingestion_lease_store.BatchCommitted)
+                self.assertIs(
+                    result.lease_effect.effect,
+                    ingestion_lease_store.LeaseLifecycleEffect.RECOVERED,
+                )
+                self.assertEqual(connection.fetchrow.await_count, 2)
 
     async def test_clean_finalize_retry_is_lease_lifecycle_noop(self) -> None:
         clean_lease = _lease_row(

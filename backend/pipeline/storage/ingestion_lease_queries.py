@@ -29,10 +29,8 @@ claimed AS (
         leases.lease_key,
         leases.worker_id,
         leases.fencing_token,
-        (
-            leases.failure_count <> 0
-            OR leases.status_reason IS NOT NULL
-        ) AS durable_failing
+        leases.failure_count,
+        leases.status_reason
 )
 SELECT *
 FROM claimed
@@ -83,10 +81,8 @@ claimed AS (
         leases.lease_key,
         leases.worker_id,
         leases.fencing_token,
-        (
-            leases.failure_count <> 0
-            OR leases.status_reason IS NOT NULL
-        ) AS durable_failing
+        leases.failure_count,
+        leases.status_reason
 )
 SELECT *
 FROM claimed
@@ -174,10 +170,8 @@ WITH current_state AS MATERIALIZED (
         status,
         worker_id,
         fencing_token,
-        (
-            failure_count <> 0
-            OR status_reason IS NOT NULL
-        ) AS durable_failing
+        failure_count,
+        status_reason
     FROM public.ingestion_leases
     WHERE source_type = $1
       AND lease_key = $2
@@ -203,7 +197,8 @@ SELECT
     current_state.status::text AS status,
     current_state.worker_id,
     current_state.fencing_token,
-    current_state.durable_failing,
+    current_state.failure_count,
+    current_state.status_reason,
     released.source_type IS NOT NULL AS applied
 FROM current_state
 LEFT JOIN released
@@ -345,12 +340,10 @@ SELECT
     worker_id,
     fencing_token,
     membership_revision,
-    (
-        failure_count <> 0
-        OR retry_after IS NOT NULL
-        OR status_reason IS NOT NULL
-        OR status_reason_detail IS NOT NULL
-    ) AS lifecycle_dirty
+    failure_count,
+    retry_after,
+    status_reason,
+    status_reason_detail
 FROM public.ingestion_leases
 WHERE source_type = $1
   AND lease_key = $2
@@ -508,8 +501,6 @@ updated AS (
         feeds.name,
         feeds.source_type,
         feeds.status::text AS status,
-        feeds.last_processed_filename,
-        feeds.last_bookmark_time,
         feeds.failure_count,
         feeds.retry_after,
         feeds.status_reason,
@@ -608,8 +599,6 @@ updated AS (
         feeds.name,
         feeds.source_type,
         feeds.status::text AS status,
-        feeds.last_processed_filename,
-        feeds.last_bookmark_time,
         feeds.failure_count,
         feeds.retry_after,
         feeds.status_reason,
@@ -676,9 +665,7 @@ updated AS (
       )
     RETURNING
         input.caller_ordinal,
-        feeds.id,
-        feeds.last_processed_filename,
-        feeds.last_bookmark_time
+        feeds.id
 )
 SELECT *
 FROM updated
@@ -780,8 +767,6 @@ updated AS (
         feeds.name,
         feeds.source_type,
         feeds.status::text AS status,
-        feeds.last_processed_filename,
-        feeds.last_bookmark_time,
         feeds.failure_count,
         feeds.retry_after,
         feeds.status_reason,
@@ -821,12 +806,10 @@ RETURNING
     worker_id,
     fencing_token,
     membership_revision,
-    (
-        failure_count <> 0
-        OR retry_after IS NOT NULL
-        OR status_reason IS NOT NULL
-        OR status_reason_detail IS NOT NULL
-    ) AS lifecycle_dirty
+    failure_count,
+    retry_after,
+    status_reason,
+    status_reason_detail
 """
 
 

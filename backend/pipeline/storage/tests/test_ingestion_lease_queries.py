@@ -194,13 +194,13 @@ class TestLeaseClaimQueryContract(unittest.TestCase):
             for fragment in retained:
                 self.assertNotIn(fragment, sql)
             result_projection = sql.split("RETURNING", 1)[1]
-            self.assertIn("durable_failing", result_projection)
+            self.assertIn("leases.failure_count", result_projection)
+            self.assertIn("leases.status_reason", result_projection)
+            self.assertNotIn("durable_failing", result_projection)
             for removed in (
                 "leases.status,",
                 "leases.last_heartbeat,",
-                "leases.failure_count,",
                 "leases.retry_after,",
-                "leases.status_reason,",
                 "leases.status_reason_detail,",
                 "leases.membership_revision,",
                 "leases.updated_at,",
@@ -271,12 +271,12 @@ class TestLeaseControlQueryContract(unittest.TestCase):
         self.assertNotIn("retry_after =", sql)
         self.assertNotIn("status_reason =", sql)
         result_projection = sql.rsplit("SELECT", 1)[1]
-        self.assertIn("durable_failing", result_projection)
+        self.assertIn("current_state.failure_count", result_projection)
+        self.assertIn("current_state.status_reason", result_projection)
+        self.assertNotIn("durable_failing", result_projection)
         for removed in (
             "last_heartbeat",
-            "failure_count",
             "retry_after",
-            "status_reason",
             "status_reason_detail",
             "membership_revision",
             "updated_at",
@@ -654,6 +654,40 @@ class TestChildMutationQueryContract(unittest.TestCase):
         ):
             self.assertNotRegex(_normalized_sql(query), r"\bupdated_at\b")
 
+    def test_child_dml_projects_only_correlation_and_audit_state(self) -> None:
+        audited_after_fields = (
+            "feeds.name",
+            "feeds.source_type",
+            "feeds.status::text AS status",
+            "feeds.failure_count",
+            "feeds.retry_after",
+            "feeds.status_reason",
+            "feeds.status_reason_detail",
+            "feeds.status_reason_updated_at",
+            "feeds.audit_revision",
+            "feeds.created_at",
+        )
+        for query in (
+            ingestion_lease_queries.APPLY_ADMITTED_PROGRESS_SQL,
+            ingestion_lease_queries.APPLY_SOURCE_OBSERVATIONS_SQL,
+            ingestion_lease_queries.APPLY_FEED_FAILURES_SQL,
+        ):
+            projection = _normalized_sql(query).split("RETURNING", 1)[1]
+            self.assertIn("input.caller_ordinal", projection)
+            self.assertIn("feeds.id", projection)
+            for field in audited_after_fields:
+                self.assertIn(field, projection)
+            self.assertNotIn("feeds.last_processed_filename", projection)
+            self.assertNotIn("feeds.last_bookmark_time", projection)
+
+        neutral_projection = _normalized_sql(
+            ingestion_lease_queries.APPLY_CLOSED_COHORT_PROGRESS_SQL
+        ).split("RETURNING", 1)[1]
+        self.assertIn("input.caller_ordinal", neutral_projection)
+        self.assertIn("feeds.id", neutral_projection)
+        self.assertNotIn("feeds.last_processed_filename", neutral_projection)
+        self.assertNotIn("feeds.last_bookmark_time", neutral_projection)
+
     def test_progress_and_observation_are_static_monotonic_rowsets(
         self,
     ) -> None:
@@ -800,31 +834,37 @@ class TestChildMutationQueryContract(unittest.TestCase):
         self.assertNotIn("fencing_token =", set_clause)
         self.assertNotIn("last_heartbeat =", set_clause)
         result_projection = sql.split("RETURNING", 1)[1]
-        self.assertIn("lifecycle_dirty", result_projection)
         self.assertIn("membership_revision", result_projection)
+        for retained in (
+            "failure_count",
+            "retry_after",
+            "status_reason",
+            "status_reason_detail",
+        ):
+            self.assertIn(retained, result_projection)
+        self.assertNotIn("lifecycle_dirty", result_projection)
         for removed in (
             "last_heartbeat,",
-            "failure_count,",
-            "retry_after,",
-            "status_reason,",
-            "status_reason_detail,",
             "updated_at,",
         ):
             self.assertNotIn(removed, result_projection)
 
-    def test_locked_lease_projects_only_authority_revision_and_dirty_state(
+    def test_locked_lease_projects_authority_revision_and_lifecycle_state(
         self,
     ) -> None:
         sql = _normalized_sql(ingestion_lease_queries.LOCK_LEASE_SQL)
 
         self.assertIn("membership_revision", sql)
-        self.assertIn("lifecycle_dirty", sql)
+        for retained in (
+            "failure_count",
+            "retry_after",
+            "status_reason",
+            "status_reason_detail",
+        ):
+            self.assertIn(retained, sql)
+        self.assertNotIn("lifecycle_dirty", sql)
         for removed in (
             "last_heartbeat,",
-            "failure_count,",
-            "retry_after,",
-            "status_reason,",
-            "status_reason_detail,",
             "updated_at,",
         ):
             self.assertNotIn(removed, sql)
