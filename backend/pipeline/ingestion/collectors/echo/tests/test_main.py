@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
-from google.api_core.exceptions import NotFound
+from google.api_core.exceptions import NotFound, PreconditionFailed
 
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.echo.main import (
@@ -885,6 +885,26 @@ class TestHandle:
 
         gcs = _patch_globals["gcs"]
         gcs.bucket.return_value.copy_blob.assert_called_once()
+
+    @pytest.mark.usefixtures("_patch_globals")
+    def test_dual_write_precondition_failed_swallowed(
+        self, mock_store, _patch_globals
+    ) -> None:
+        feed = self._active_feed()
+        self._set_feed(mock_store, feed)
+
+        gcs = _patch_globals["gcs"]
+        gcs.bucket.return_value.copy_blob.side_effect = PreconditionFailed(
+            "Already exists"
+        )
+
+        with patch(
+            "backend.pipeline.ingestion.collectors.echo.main.DEV_RECORDINGS_BUCKET",
+            "wd-echo-recordings-dev",
+        ):
+            _handle(self._make_event())
+
+        self._assert_heartbeat_recorded(mock_store, feed["id"])
 
 
 # ---------------------------------------------------------------------------

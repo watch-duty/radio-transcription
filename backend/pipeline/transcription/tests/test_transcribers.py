@@ -604,9 +604,9 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(config.thinking_config)
             self.assertEqual(config.thinking_config.thinking_budget, 0)
 
-            # Verify all 6 safety settings are BLOCK_NONE
+            # Verify all 5 safety settings are BLOCK_NONE
             self.assertIsNotNone(config.safety_settings)
-            self.assertEqual(len(config.safety_settings), 6)
+            self.assertEqual(len(config.safety_settings), 5)
             for setting in config.safety_settings:
                 self.assertEqual(
                     setting.threshold, types.HarmBlockThreshold.BLOCK_NONE
@@ -622,7 +622,6 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
                 types.HarmCategory.HARM_CATEGORY_HARASSMENT,
                 types.HarmCategory.HARM_CATEGORY_CIVIC_INTEGRITY,
-                types.HarmCategory.HARM_CATEGORY_JAILBREAK,
             }
             self.assertEqual(categories, expected_categories)
 

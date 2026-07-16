@@ -10,13 +10,19 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 
 from backend.pipeline.common.auth import verify_oidc_token
 from backend.pipeline.common.fastapi_tracing import setup_fastapi_tracing
-from backend.pipeline.common.rules.models import Rule, RuleCreate, RuleUpdate
+from backend.pipeline.common.rules.models import (
+    Rule,
+    RuleCreate,
+    RuleUpdate,
+)
+from backend.pipeline.storage.audio_segment_store import AudioSegmentStore
 from backend.pipeline.storage.connection import (
     close_pool,
     create_pool_with_retry,
 )
 from backend.pipeline.storage.rules_store import RulesStore
 
+from .dry_run import DryRunRequest, DryRunResponse, execute_dry_run
 from .service import AlloyRulesService, BaseRulesService
 
 
@@ -26,6 +32,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     pool = await create_pool_with_retry()
     store = RulesStore(pool)
     app.state.rules_service = AlloyRulesService(store)
+    app.state.audio_segment_store = AudioSegmentStore(pool)
     yield
     await close_pool(pool)
 
@@ -45,6 +52,11 @@ setup_fastapi_tracing(app, service_name="rules-service")
 def get_rules_service(request: Request) -> BaseRulesService:
     """Dependency that retrieves the rules service from application state."""
     return request.app.state.rules_service
+
+
+def get_audio_segment_store(request: Request) -> AudioSegmentStore:
+    """Get the audio segment store from application state."""
+    return request.app.state.audio_segment_store
 
 
 @app.post(
@@ -132,3 +144,16 @@ async def delete_rule(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Rule {rule_id} not found",
         )
+
+
+@app.post(
+    "/v1/rules/dry-run",
+    response_model=DryRunResponse,
+    tags=["rules"],
+)
+async def dry_run_rule(
+    request: DryRunRequest,
+    audio_store: Annotated[AudioSegmentStore, Depends(get_audio_segment_store)],
+) -> DryRunResponse:
+    """Test a prospective rule against recent historical transcripts."""
+    return await execute_dry_run(request, audio_store)
