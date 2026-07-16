@@ -394,26 +394,21 @@ WITH input AS MATERIALIZED (
         input_values.cursor,
         input_values.write_cursor,
         input_values.write_path,
-        input_values.clear_lifecycle,
-        input_values.caller_ordinal,
-        input_values.row_ordinal
+        input_values.clear_lifecycle
     FROM UNNEST(
         $1::uuid[],
         $2::text[],
         $3::timestamptz[],
         $4::boolean[],
         $5::boolean[],
-        $6::boolean[],
-        $7::bigint[]
-    ) WITH ORDINALITY AS input_values(
+        $6::boolean[]
+    ) AS input_values(
         feed_id,
         last_processed_filename,
         cursor,
         write_cursor,
         write_path,
-        clear_lifecycle,
-        caller_ordinal,
-        row_ordinal
+        clear_lifecycle
     )
 ),
 updated AS (
@@ -482,7 +477,6 @@ updated AS (
           OR input.clear_lifecycle
       )
     RETURNING
-        input.caller_ordinal,
         feeds.id,
         feeds.name,
         feeds.source_type,
@@ -497,7 +491,6 @@ updated AS (
 )
 SELECT *
 FROM updated
-ORDER BY caller_ordinal
 """
 
 
@@ -507,22 +500,17 @@ WITH input AS MATERIALIZED (
         input_values.feed_id,
         input_values.cursor,
         input_values.write_cursor,
-        input_values.clear_lifecycle,
-        input_values.caller_ordinal,
-        input_values.row_ordinal
+        input_values.clear_lifecycle
     FROM UNNEST(
         $1::uuid[],
         $2::timestamptz[],
         $3::boolean[],
-        $4::boolean[],
-        $5::bigint[]
-    ) WITH ORDINALITY AS input_values(
+        $4::boolean[]
+    ) AS input_values(
         feed_id,
         cursor,
         write_cursor,
-        clear_lifecycle,
-        caller_ordinal,
-        row_ordinal
+        clear_lifecycle
     )
 ),
 updated AS (
@@ -580,7 +568,6 @@ updated AS (
           OR input.clear_lifecycle
       )
     RETURNING
-        input.caller_ordinal,
         feeds.id,
         feeds.name,
         feeds.source_type,
@@ -595,7 +582,6 @@ updated AS (
 )
 SELECT *
 FROM updated
-ORDER BY caller_ordinal
 """
 
 
@@ -606,24 +592,19 @@ WITH input AS MATERIALIZED (
         input_values.last_processed_filename,
         input_values.cursor,
         input_values.write_cursor,
-        input_values.write_path,
-        input_values.caller_ordinal,
-        input_values.row_ordinal
+        input_values.write_path
     FROM UNNEST(
         $1::uuid[],
         $2::text[],
         $3::timestamptz[],
         $4::boolean[],
-        $5::boolean[],
-        $6::bigint[]
-    ) WITH ORDINALITY AS input_values(
+        $5::boolean[]
+    ) AS input_values(
         feed_id,
         last_processed_filename,
         cursor,
         write_cursor,
-        write_path,
-        caller_ordinal,
-        row_ordinal
+        write_path
     )
 ),
 updated AS (
@@ -649,13 +630,10 @@ updated AS (
           )
           OR input.write_path
       )
-    RETURNING
-        input.caller_ordinal,
-        feeds.id
+    RETURNING feeds.id
 )
 SELECT *
 FROM updated
-ORDER BY caller_ordinal
 """
 
 
@@ -671,9 +649,7 @@ WITH input AS MATERIALIZED (
         input_values.backoff_base_sec,
         input_values.retry_after,
         input_values.status_reason,
-        input_values.status_reason_detail,
-        input_values.caller_ordinal,
-        input_values.row_ordinal
+        input_values.status_reason_detail
     FROM UNNEST(
         $1::uuid[],
         $2::timestamptz[],
@@ -684,9 +660,8 @@ WITH input AS MATERIALIZED (
         $7::integer[],
         $8::timestamptz[],
         $9::text[],
-        $10::text[],
-        $11::bigint[]
-    ) WITH ORDINALITY AS input_values(
+        $10::text[]
+    ) AS input_values(
         feed_id,
         cursor,
         write_cursor,
@@ -696,9 +671,7 @@ WITH input AS MATERIALIZED (
         backoff_base_sec,
         retry_after,
         status_reason,
-        status_reason_detail,
-        caller_ordinal,
-        row_ordinal
+        status_reason_detail
     )
 ),
 updated AS (
@@ -744,7 +717,6 @@ updated AS (
           'failing'::public.feed_status
       )
     RETURNING
-        input.caller_ordinal,
         feeds.id,
         feeds.name,
         feeds.source_type,
@@ -759,7 +731,6 @@ updated AS (
 )
 SELECT *
 FROM updated
-ORDER BY caller_ordinal
 """
 
 
@@ -814,26 +785,21 @@ WITH input AS MATERIALIZED (
         input_values.actor_id,
         input_values.feed_revision,
         input_values.before_values,
-        input_values.after_values,
-        input_values.caller_ordinal,
-        input_values.row_ordinal
+        input_values.after_values
     FROM UNNEST(
         $1::uuid[],
         $2::text[],
         $3::text[],
         $4::bigint[],
         $5::jsonb[],
-        $6::jsonb[],
-        $7::bigint[]
-    ) WITH ORDINALITY AS input_values(
+        $6::jsonb[]
+    ) AS input_values(
         feed_id,
         action,
         actor_id,
         feed_revision,
         before_values,
-        after_values,
-        caller_ordinal,
-        row_ordinal
+        after_values
     )
 ),
 inserted AS (
@@ -853,7 +819,7 @@ inserted AS (
         input.before_values,
         input.after_values
     FROM input
-    ORDER BY input.caller_ordinal
+    ORDER BY input.feed_id
     RETURNING
         id,
         feed_id,
@@ -865,12 +831,12 @@ inserted AS (
         after_values
 )
 SELECT
-    input.caller_ordinal,
+    input.feed_id,
     {feed_audit_sql.feed_audit_event_payload_sql("inserted")}
         AS feed_audit_event
 FROM input
 JOIN inserted
   ON inserted.feed_id = input.feed_id
  AND inserted.feed_revision = input.feed_revision
-ORDER BY input.caller_ordinal
+ORDER BY input.feed_id
 """

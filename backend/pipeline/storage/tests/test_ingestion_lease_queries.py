@@ -672,8 +672,8 @@ class TestChildMutationQueryContract(unittest.TestCase):
             ingestion_lease_queries.APPLY_FEED_FAILURES_SQL,
         ):
             projection = _normalized_sql(query).split("RETURNING", 1)[1]
-            self.assertIn("input.caller_ordinal", projection)
             self.assertIn("feeds.id", projection)
+            self.assertNotIn("caller_ordinal", projection)
             for field in audited_after_fields:
                 self.assertIn(field, projection)
             self.assertNotIn("feeds.last_processed_filename", projection)
@@ -682,8 +682,8 @@ class TestChildMutationQueryContract(unittest.TestCase):
         neutral_projection = _normalized_sql(
             ingestion_lease_queries.APPLY_CLOSED_COHORT_PROGRESS_SQL
         ).split("RETURNING", 1)[1]
-        self.assertIn("input.caller_ordinal", neutral_projection)
         self.assertIn("feeds.id", neutral_projection)
+        self.assertNotIn("caller_ordinal", neutral_projection)
         self.assertNotIn("feeds.last_processed_filename", neutral_projection)
         self.assertNotIn("feeds.last_bookmark_time", neutral_projection)
 
@@ -696,7 +696,8 @@ class TestChildMutationQueryContract(unittest.TestCase):
         ):
             sql = _normalized_sql(query)
             self.assertIn("UNNEST(", sql)
-            self.assertIn("WITH ORDINALITY", sql)
+            self.assertNotIn("WITH ORDINALITY", sql)
+            self.assertNotIn("caller_ordinal", sql)
             self.assertIn("GREATEST(", sql)
             self.assertRegex(
                 sql,
@@ -718,14 +719,14 @@ class TestChildMutationQueryContract(unittest.TestCase):
 
         self.assertIn("AS MATERIALIZED", sql)
         self.assertIn("UNNEST(", sql)
-        self.assertIn("WITH ORDINALITY", sql)
+        self.assertNotIn("WITH ORDINALITY", sql)
+        self.assertNotIn("caller_ordinal", sql)
         for typed_array in (
             "$1::uuid[]",
             "$2::text[]",
             "$3::timestamptz[]",
             "$4::boolean[]",
             "$5::boolean[]",
-            "$6::bigint[]",
         ):
             self.assertIn(typed_array, sql)
         self.assertIn("last_processed_filename", sql)
@@ -758,7 +759,9 @@ class TestChildMutationQueryContract(unittest.TestCase):
         self.assertIn("WHERE fp.feed_id = ANY($1::uuid[])", properties_sql)
         self.assertIn("ORDER BY fp.feed_id", properties_sql)
         self.assertIn("UNNEST(", audit_sql)
-        self.assertIn("WITH ORDINALITY", audit_sql)
+        self.assertNotIn("WITH ORDINALITY", audit_sql)
+        self.assertNotIn("caller_ordinal", audit_sql)
+        self.assertIn("SELECT input.feed_id", audit_sql)
         self.assertIn("INSERT INTO public.feed_audit_events", audit_sql)
         self.assertIn("feed_audit_event_payload_sql", query_source)
         self.assertNotIn("feed_audit_event_scalar_sql", query_source)
@@ -777,11 +780,11 @@ class TestChildMutationQueryContract(unittest.TestCase):
             "$8::timestamptz[]",
             "$9::text[]",
             "$10::text[]",
-            "$11::bigint[]",
         ):
             self.assertIn(typed_array, sql)
         self.assertIn("UNNEST(", sql)
-        self.assertIn("WITH ORDINALITY", sql)
+        self.assertNotIn("WITH ORDINALITY", sql)
+        self.assertNotIn("caller_ordinal", sql)
         self.assertNotIn("charge_failure", sql)
         self.assertIn("input.write_cursor", sql)
         self.assertIn("GREATEST(feeds.last_bookmark_time, input.cursor)", sql)

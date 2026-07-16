@@ -128,15 +128,15 @@ def _audit_property_row(
 def _child_audit_payload(
     feed_id: uuid.UUID,
     *,
-    caller_ordinal: int,
+    action: str = "feed.recovered",
 ) -> dict[str, object]:
     return {
-        "caller_ordinal": caller_ordinal,
+        "feed_id": feed_id,
         "feed_audit_event": {
             "event_type": "radio_transcription.feed_change_notification",
             "schema_version": 1,
             "event_id": uuid.uuid4(),
-            "action": "feed.recovered",
+            "action": action,
             "occurred_at": _NOW,
             "actor_id": "service_account:gcp:collector",
             "feed_id": feed_id,
@@ -1637,7 +1637,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         ):
             with self.subTest(case_index=case_index):
                 clean_plan = ingestion_lease_store._plan_child_mutation(
-                    0,
                     ingestion_lease_store.SourceObservation(
                         _member_identity(feed_id),
                         requested,
@@ -1652,7 +1651,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 )
 
                 failing_plan = ingestion_lease_store._plan_child_mutation(
-                    0,
                     ingestion_lease_store.SourceObservation(
                         _member_identity(feed_id),
                         requested,
@@ -1668,7 +1666,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 self.assertIs(failing_plan.write_cursor, write_cursor)
                 self.assertTrue(failing_plan.clear_lifecycle)
                 self.assertTrue(failing_plan.needs_update)
-                self.assertEqual(failing_plan.audit_action, "feed.recovered")
 
     def test_clean_deactivated_cursor_noops_remain_committed(
         self,
@@ -1680,7 +1677,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         for case_index, requested in enumerate(cursor_cases):
             with self.subTest(case_index=case_index):
                 plan = ingestion_lease_store._plan_child_mutation(
-                    0,
                     self._progress(feed_id, cursor=requested),
                     _child_row(
                         feed_id,
@@ -1751,7 +1747,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 write_path=write_path,
             ):
                 plan = ingestion_lease_store._plan_child_mutation(
-                    0,
                     mutation,
                     row,
                 )
@@ -1759,7 +1754,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(plan.write_cursor, write_cursor)
                 self.assertEqual(plan.write_path, write_path)
                 self.assertFalse(plan.clear_lifecycle)
-                self.assertIsNone(plan.audit_action)
                 self.assertIs(
                     plan.disposition,
                     ingestion_lease_store.ChildDisposition.COMMITTED,
@@ -1775,7 +1769,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             with self.subTest(status=status.value):
                 feed_id = uuid.UUID(int=150 + index)
                 plan = ingestion_lease_store._plan_child_mutation(
-                    0,
                     self._closed_cohort(feed_id, cursor=None),
                     _child_row(
                         feed_id,
@@ -1793,7 +1786,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     ingestion_lease_store.ChildDisposition.COMMITTED,
                 )
                 self.assertFalse(plan.clear_lifecycle)
-                self.assertIsNone(plan.audit_action)
 
     async def test_closed_cohort_preserves_dirty_lifecycle_and_order(
         self,
@@ -1842,19 +1834,16 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             ],
             [
                 {
-                    "caller_ordinal": 2,
                     "id": third_id,
                     "last_processed_filename": paths[2],
                     "last_bookmark_time": _NOW,
                 },
                 {
-                    "caller_ordinal": 0,
                     "id": first_id,
                     "last_processed_filename": paths[0],
                     "last_bookmark_time": _NOW,
                 },
                 {
-                    "caller_ordinal": 1,
                     "id": second_id,
                     "last_processed_filename": paths[1],
                     "last_bookmark_time": _NOW,
@@ -2033,7 +2022,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         feed_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000151")
-        payload_row = _child_audit_payload(feed_id, caller_ordinal=0)
+        payload_row = _child_audit_payload(feed_id)
         pool = connection_util.make_mock_pool(transaction=True)
         connection = pool.acquired_connection
         connection.fetchrow.return_value = _lease_row()
@@ -2053,7 +2042,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             [
                 _child_row(
                     feed_id,
-                    caller_ordinal=0,
                     status="active",
                     last_bookmark_time=_NOW,
                     failure_count=0,
@@ -2111,7 +2099,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 [_child_row(feed_id) for feed_id in reversed(feed_ids)],
                 [
                     {
-                        "caller_ordinal": index,
                         "id": feed_id,
                         "last_processed_filename": None,
                         "last_bookmark_time": _NOW,
@@ -2216,7 +2203,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 self.assertIs(result.reason, reason)
                 connection.fetch.assert_not_awaited()
 
-    async def test_sorted_lock_and_scrambled_dml_return_caller_order(
+    async def test_feed_id_correlation_preserves_batch_order_after_scramble(
         self,
     ) -> None:
         first_id = uuid.UUID("ffffffff-0000-0000-0000-000000000001")
@@ -2229,13 +2216,11 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             [
                 _child_row(
                     second_id,
-                    caller_ordinal=1,
                     last_processed_filename="gs://bucket/second.flac",
                     last_bookmark_time=_NOW,
                 ),
                 _child_row(
                     first_id,
-                    caller_ordinal=0,
                     last_processed_filename="gs://bucket/first.flac",
                     last_bookmark_time=_NOW,
                 ),
@@ -2291,7 +2276,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             [
                 _child_row(
                     valid_id,
-                    caller_ordinal=0,
                     last_bookmark_time=_NOW,
                     last_processed_filename="gs://bucket/audio.flac",
                 )
@@ -2347,7 +2331,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             [
                 _child_row(
                     feed_id,
-                    caller_ordinal=0,
                     status="deactivated",
                     last_bookmark_time=_NOW,
                     last_processed_filename="gs://bucket/audio.flac",
@@ -2378,7 +2361,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         feed_id = uuid.UUID("55555555-0000-0000-0000-000000000050")
-        payload_row = _child_audit_payload(feed_id, caller_ordinal=0)
+        payload_row = _child_audit_payload(feed_id)
         pool = connection_util.make_mock_pool(transaction=True)
         connection = pool.acquired_connection
         connection.fetchrow.return_value = _lease_row()
@@ -2394,7 +2377,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             [
                 _child_row(
                     feed_id,
-                    caller_ordinal=0,
                     status="active",
                     last_bookmark_time=_NOW,
                     last_processed_filename="gs://bucket/audio.flac",
@@ -2436,6 +2418,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         self.assertIs(
             connection.fetch.await_args_list[3].args[0],
             ingestion_lease_queries.INSERT_CHILD_AUDIT_EVENTS_SQL,
+        )
+        self.assertEqual(
+            connection.fetch.await_args_list[3].args[2],
+            ("feed.recovered",),
         )
 
     async def test_database_error_and_cancellation_escape_without_notification(
@@ -2491,7 +2477,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         for case_index, (current, requested, write_cursor) in enumerate(cases):
             with self.subTest(case_index=case_index):
                 plan = ingestion_lease_store._plan_child_mutation(
-                    0,
                     self._failure(feed_id, cursor=requested),
                     _child_row(feed_id, last_bookmark_time=current),
                 )
@@ -2522,7 +2507,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             [
                 _child_row(
                     feed_id,
-                    caller_ordinal=0,
                     status="failing",
                     failure_count=2,
                     status_reason="system_configuration_invalid",
@@ -2541,7 +2525,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             [
                 _child_row(
                     feed_id,
-                    caller_ordinal=0,
                     status="failing",
                     failure_count=3,
                     status_reason="system_configuration_invalid",
@@ -2581,7 +2564,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         feed_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000100")
-        payload_row = _child_audit_payload(feed_id, caller_ordinal=0)
+        payload_row = _child_audit_payload(
+            feed_id,
+            action="feed.quarantined",
+        )
         pool = connection_util.make_mock_pool(transaction=True)
         connection = pool.acquired_connection
         connection.fetchrow.return_value = _lease_row()
@@ -2597,7 +2583,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             [
                 _child_row(
                     feed_id,
-                    caller_ordinal=0,
                     status="quarantined",
                     failure_count=5,
                     status_reason="system_configuration_invalid",
@@ -2625,6 +2610,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             ingestion_lease_store.ChildDisposition.COMMITTED_AND_QUARANTINED,
         )
         self.assertEqual(connection.fetch.await_count, 4)
+        self.assertEqual(
+            connection.fetch.await_args_list[3].args[2],
+            ("feed.quarantined",),
+        )
 
     async def test_non_budgeted_failure_resets_and_cannot_quarantine(
         self,
@@ -2649,7 +2638,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             [
                 _child_row(
                     feed_id,
-                    caller_ordinal=0,
                     status="failing",
                     failure_count=0,
                     retry_after=retry_after,
@@ -2726,7 +2714,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     [
                         _child_row(
                             feed_id,
-                            caller_ordinal=0,
                             status="failing",
                             failure_count=0,
                             retry_after=retry_after,
@@ -2797,7 +2784,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             ],
             [
                 {
-                    "caller_ordinal": 0,
                     "id": closed_feed_id,
                     "last_processed_filename": "gs://bucket/cohort.flac",
                     "last_bookmark_time": _NOW,
@@ -2806,7 +2792,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             [
                 _child_row(
                     failed_feed_id,
-                    caller_ordinal=1,
                     status="failing",
                     failure_count=2,
                     status_reason="system_configuration_invalid",
@@ -3037,7 +3022,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             [
                 _child_row(
                     feed_id,
-                    caller_ordinal=0,
                     status="active",
                     failure_count=0,
                     status_reason=None,
@@ -3087,7 +3071,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 [
                     _child_row(
                         feed_id,
-                        caller_ordinal=index,
                         last_bookmark_time=_NOW,
                         last_processed_filename=f"gs://bucket/{index}.flac",
                     )

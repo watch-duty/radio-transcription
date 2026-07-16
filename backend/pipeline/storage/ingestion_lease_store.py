@@ -482,14 +482,12 @@ type MembershipRefreshResult = (
 class _PlannedChildMutation:
     """Private, database-derived execution plan for one child command."""
 
-    caller_ordinal: int
     mutation: ChildMutation
     before_row: collections.abc.Mapping | None
     disposition: ChildDisposition
     write_cursor: bool = False
     write_path: bool = False
     clear_lifecycle: bool = False
-    audit_action: str | None = None
 
     @property
     def feed_id(self) -> uuid.UUID:
@@ -520,7 +518,6 @@ class _ChildAuditRowset:
     revisions: tuple[int, ...]
     before_values: tuple[str, ...]
     after_values: tuple[str, ...]
-    caller_ordinals: tuple[int, ...]
 
 
 def _require_source_type(value: object) -> feed_store.SourceType:
@@ -851,38 +848,6 @@ def _has_dirty_child_lifecycle(
     )
 
 
-def _select_recovery_audit_action(
-    status: feed_store.FeedStatus,
-    row: collections.abc.Mapping,
-) -> str | None:
-    effective_abnormal = status is feed_store.FeedStatus.FAILING or (
-        status is feed_store.FeedStatus.ACTIVE
-        and (row["failure_count"] > 0 or row["status_reason"] is not None)
-    )
-    return "feed.recovered" if effective_abnormal else None
-
-
-def _select_failure_audit_action(
-    row: collections.abc.Mapping,
-    mutation: FeedFailureTransition,
-    *,
-    quarantined: bool,
-) -> str | None:
-    """Apply the canonical Feed failure/quarantine event rules."""
-    if quarantined:
-        return "feed.quarantined"
-    status = _status_from_row(row)
-    effective_prior_failing = status is feed_store.FeedStatus.FAILING or (
-        status is feed_store.FeedStatus.ACTIVE
-        and (row["failure_count"] > 0 or row["status_reason"] is not None)
-    )
-    if not effective_prior_failing or (
-        _status_reason_from_row(row) is not mutation.status_reason
-    ):
-        return "feed.failure_reported"
-    return None
-
-
 def _effective_prior_status(
     row: collections.abc.Mapping,
 ) -> feed_store.FeedStatus:
@@ -895,15 +860,12 @@ def _effective_prior_status(
     return status
 
 
-def _confirmed_child_audit_action(
+def _child_audit_action(
     plan: _PlannedChildMutation,
     after_row: collections.abc.Mapping,
 ) -> str | None:
     """Select a canonical action from the locked before and returned after."""
     if isinstance(plan.mutation, ClosedCohortProgress):
-        if plan.audit_action is not None:
-            msg = "closed cohort progress cannot request an audit action"
-            raise ValueError(msg)
         return None
     before_row = plan.before_row
     if before_row is None:
@@ -1005,8 +967,8 @@ def _audit_properties_by_id(
 
 
 def _build_child_audit_rowset(
-    candidates: collections.abc.Sequence[_PlannedChildMutation],
-    updated_by_ordinal: dict[int, collections.abc.Mapping],
+    candidates: collections.abc.Sequence[tuple[_PlannedChildMutation, str]],
+    updated_by_feed_id: dict[uuid.UUID, collections.abc.Mapping],
     properties_by_id: dict[uuid.UUID, collections.abc.Mapping],
     actor_id: str,
 ) -> _ChildAuditRowset:
@@ -1015,10 +977,12 @@ def _build_child_audit_rowset(
     revisions: list[int] = []
     before_values: list[str] = []
     after_values: list[str] = []
-    caller_ordinals: list[int] = []
-    for plan in sorted(candidates, key=lambda item: item.caller_ordinal):
+    for plan, action in sorted(
+        candidates,
+        key=lambda item: item[0].feed_id.int,
+    ):
         before_row = plan.before_row
-        after_row = updated_by_ordinal.get(plan.caller_ordinal)
+        after_row = updated_by_feed_id.get(plan.feed_id)
         if before_row is None or after_row is None:
             msg = "Feed audit candidate lacks before or after state"
             raise ValueError(msg)
@@ -1038,11 +1002,10 @@ def _build_child_audit_rowset(
             msg = "Feed audit revision did not advance exactly once"
             raise ValueError(msg)
         feed_ids.append(plan.feed_id)
-        actions.append(typing.cast("str", plan.audit_action))
+        actions.append(action)
         revisions.append(after_revision)
         before_values.append(_child_audit_snapshot(before_row, property_row))
         after_values.append(_child_audit_snapshot(after_row, property_row))
-        caller_ordinals.append(plan.caller_ordinal)
 
     actors = [actor_id] * len(feed_ids)
     _require_parallel_cardinality(
@@ -1053,7 +1016,6 @@ def _build_child_audit_rowset(
         revisions,
         before_values,
         after_values,
-        caller_ordinals,
     )
     return _ChildAuditRowset(
         feed_ids=tuple(feed_ids),
@@ -1062,7 +1024,6 @@ def _build_child_audit_rowset(
         revisions=tuple(revisions),
         before_values=tuple(before_values),
         after_values=tuple(after_values),
-        caller_ordinals=tuple(caller_ordinals),
     )
 
 
@@ -1247,7 +1208,6 @@ def _locked_children_by_id(
 
 
 def _plan_non_failure_child_mutation(
-    caller_ordinal: int,
     mutation: AdmittedAudioProgress | SourceObservation | ClosedCohortProgress,
     before_row: collections.abc.Mapping,
     status: feed_store.FeedStatus,
@@ -1262,7 +1222,6 @@ def _plan_non_failure_child_mutation(
             != mutation.last_processed_filename
         )
         return _PlannedChildMutation(
-            caller_ordinal=caller_ordinal,
             mutation=mutation,
             before_row=before_row,
             disposition=ChildDisposition.COMMITTED,
@@ -1280,31 +1239,22 @@ def _plan_non_failure_child_mutation(
             != mutation.last_processed_filename
         )
 
-    audit_action = (
-        _select_recovery_audit_action(status, before_row)
-        if clear_lifecycle and status is not feed_store.FeedStatus.DEACTIVATED
-        else None
-    )
     return _PlannedChildMutation(
-        caller_ordinal=caller_ordinal,
         mutation=mutation,
         before_row=before_row,
         disposition=ChildDisposition.COMMITTED,
         write_cursor=write_cursor,
         write_path=write_path,
         clear_lifecycle=clear_lifecycle,
-        audit_action=audit_action,
     )
 
 
 def _plan_child_mutation(
-    caller_ordinal: int,
     mutation: ChildMutation,
     before_row: collections.abc.Mapping | None,
 ) -> _PlannedChildMutation:
     if before_row is None:
         return _PlannedChildMutation(
-            caller_ordinal=caller_ordinal,
             mutation=mutation,
             before_row=None,
             disposition=ChildDisposition.REJECTED,
@@ -1318,7 +1268,6 @@ def _plan_child_mutation(
     )
     if source_type is not mutation.member.source_type:
         return _PlannedChildMutation(
-            caller_ordinal=caller_ordinal,
             mutation=mutation,
             before_row=before_row,
             disposition=ChildDisposition.REJECTED,
@@ -1342,7 +1291,6 @@ def _plan_child_mutation(
     )
     if status not in allowed_statuses:
         return _PlannedChildMutation(
-            caller_ordinal=caller_ordinal,
             mutation=mutation,
             before_row=before_row,
             disposition=ChildDisposition.REJECTED,
@@ -1354,7 +1302,6 @@ def _plan_child_mutation(
             before_row["failure_count"] + 1 >= failure.action.failure_threshold
         )
         return _PlannedChildMutation(
-            caller_ordinal=caller_ordinal,
             mutation=mutation,
             before_row=before_row,
             disposition=(
@@ -1363,15 +1310,9 @@ def _plan_child_mutation(
                 else ChildDisposition.COMMITTED
             ),
             write_cursor=write_cursor,
-            audit_action=_select_failure_audit_action(
-                before_row,
-                failure,
-                quarantined=quarantined,
-            ),
         )
 
     return _plan_non_failure_child_mutation(
-        caller_ordinal,
         mutation,
         before_row,
         status,
@@ -1379,58 +1320,44 @@ def _plan_child_mutation(
     )
 
 
-def _updated_children_by_ordinal(
+def _updated_children_by_id(
     expected: collections.abc.Sequence[_PlannedChildMutation],
     rows: collections.abc.Sequence[collections.abc.Mapping],
-) -> dict[int, collections.abc.Mapping]:
-    expected_by_ordinal = {
-        plan.caller_ordinal: plan.feed_id for plan in expected
-    }
-    rows_by_ordinal: dict[int, collections.abc.Mapping] = {}
+) -> dict[uuid.UUID, collections.abc.Mapping]:
+    expected_feed_ids = {plan.feed_id for plan in expected}
+    rows_by_feed_id: dict[uuid.UUID, collections.abc.Mapping] = {}
     for row in rows:
-        ordinal = row["caller_ordinal"]
-        if (
-            not isinstance(ordinal, int)
-            or ordinal not in expected_by_ordinal
-            or ordinal in rows_by_ordinal
-            or _child_feed_id_from_row(row) != expected_by_ordinal[ordinal]
-        ):
+        feed_id = _child_feed_id_from_row(row)
+        if feed_id not in expected_feed_ids or feed_id in rows_by_feed_id:
             msg = "child DML returned an unexpected or duplicate row"
             raise ValueError(msg)
         _child_source_type_from_row(row)
         _status_from_row(row)
         _status_reason_from_row(row)
-        rows_by_ordinal[ordinal] = row
-    if set(rows_by_ordinal) != set(expected_by_ordinal):
+        rows_by_feed_id[feed_id] = row
+    if set(rows_by_feed_id) != expected_feed_ids:
         msg = "child DML did not return every locked eligible Feed"
         raise ValueError(msg)
-    return rows_by_ordinal
+    return rows_by_feed_id
 
 
-def _updated_neutral_children_by_ordinal(
+def _updated_neutral_children_by_id(
     expected: collections.abc.Sequence[_PlannedChildMutation],
     rows: collections.abc.Sequence[collections.abc.Mapping],
-) -> dict[int, collections.abc.Mapping]:
+) -> dict[uuid.UUID, collections.abc.Mapping]:
     """Correlate lifecycle-neutral DML without reading lifecycle columns."""
-    expected_by_ordinal = {
-        plan.caller_ordinal: plan.feed_id for plan in expected
-    }
-    rows_by_ordinal: dict[int, collections.abc.Mapping] = {}
+    expected_feed_ids = {plan.feed_id for plan in expected}
+    rows_by_feed_id: dict[uuid.UUID, collections.abc.Mapping] = {}
     for row in rows:
-        ordinal = row["caller_ordinal"]
-        if (
-            not isinstance(ordinal, int)
-            or ordinal not in expected_by_ordinal
-            or ordinal in rows_by_ordinal
-            or _child_feed_id_from_row(row) != expected_by_ordinal[ordinal]
-        ):
+        feed_id = _child_feed_id_from_row(row)
+        if feed_id not in expected_feed_ids or feed_id in rows_by_feed_id:
             msg = "neutral child DML returned an unexpected or duplicate row"
             raise ValueError(msg)
-        rows_by_ordinal[ordinal] = row
-    if set(rows_by_ordinal) != set(expected_by_ordinal):
+        rows_by_feed_id[feed_id] = row
+    if set(rows_by_feed_id) != expected_feed_ids:
         msg = "neutral child DML did not return every locked eligible Feed"
         raise ValueError(msg)
-    return rows_by_ordinal
+    return rows_by_feed_id
 
 
 class IngestionLeaseStore:
@@ -1998,7 +1925,7 @@ class IngestionLeaseStore:
             (mutation.member.feed_id for mutation in batch.mutations),
             key=lambda feed_id: feed_id.int,
         )
-        notification_payloads: dict[int, object] = {}
+        notification_payloads: dict[uuid.UUID, object] = {}
 
         async with self._pool.acquire() as connection:
             async with connection.transaction(isolation="read_committed"):
@@ -2025,14 +1952,16 @@ class IngestionLeaseStore:
                 )
                 plans = tuple(
                     _plan_child_mutation(
-                        caller_ordinal,
                         mutation,
                         locked_by_id.get(mutation.member.feed_id),
                     )
-                    for caller_ordinal, mutation in enumerate(batch.mutations)
+                    for mutation in batch.mutations
                 )
 
-                updated_by_ordinal: dict[int, collections.abc.Mapping] = {}
+                updated_by_feed_id: dict[
+                    uuid.UUID,
+                    collections.abc.Mapping,
+                ] = {}
                 progress_updates = tuple(
                     plan
                     for plan in plans
@@ -2062,24 +1991,24 @@ class IngestionLeaseStore:
                         connection,
                         progress_updates,
                     )
-                    updated_by_ordinal.update(
-                        _updated_children_by_ordinal(progress_updates, rows)
+                    updated_by_feed_id.update(
+                        _updated_children_by_id(progress_updates, rows)
                     )
                 if observation_updates:
                     rows = await self._apply_source_observations(
                         connection,
                         observation_updates,
                     )
-                    updated_by_ordinal.update(
-                        _updated_children_by_ordinal(observation_updates, rows)
+                    updated_by_feed_id.update(
+                        _updated_children_by_id(observation_updates, rows)
                     )
                 if closed_cohort_updates:
                     rows = await self._apply_closed_cohort_progress(
                         connection,
                         closed_cohort_updates,
                     )
-                    updated_by_ordinal.update(
-                        _updated_neutral_children_by_ordinal(
+                    updated_by_feed_id.update(
+                        _updated_neutral_children_by_id(
                             closed_cohort_updates,
                             rows,
                         )
@@ -2089,8 +2018,8 @@ class IngestionLeaseStore:
                         connection,
                         failure_updates,
                     )
-                    updated_by_ordinal.update(
-                        _updated_children_by_ordinal(failure_updates, rows)
+                    updated_by_feed_id.update(
+                        _updated_children_by_id(failure_updates, rows)
                     )
 
                 lease_recovered = await self._apply_lease_effect(
@@ -2103,7 +2032,7 @@ class IngestionLeaseStore:
                 notification_payloads = await self._write_child_audits(
                     connection,
                     plans,
-                    updated_by_ordinal,
+                    updated_by_feed_id,
                     actor_id,
                 )
                 children = tuple(
@@ -2115,10 +2044,10 @@ class IngestionLeaseStore:
                 )
                 committed = BatchCommitted(children=children)
 
-        for caller_ordinal in sorted(notification_payloads):
-            feed_change_notifications.emit_feed_change_notification(
-                notification_payloads[caller_ordinal]
-            )
+        for plan in plans:
+            payload = notification_payloads.get(plan.feed_id)
+            if payload is not None:
+                feed_change_notifications.emit_feed_change_notification(payload)
         if lease_recovered:
             logger.info(
                 "Ingestion Lease recovered after finalized child boundary",
@@ -2147,7 +2076,6 @@ class IngestionLeaseStore:
         write_cursors = [plan.write_cursor for plan in plans]
         write_paths = [plan.write_path for plan in plans]
         clear_lifecycle = [plan.clear_lifecycle for plan in plans]
-        caller_ordinals = [plan.caller_ordinal for plan in plans]
         _require_parallel_cardinality(
             "admitted progress",
             feed_ids,
@@ -2156,7 +2084,6 @@ class IngestionLeaseStore:
             write_cursors,
             write_paths,
             clear_lifecycle,
-            caller_ordinals,
         )
         return await connection.fetch(
             ingestion_lease_queries.APPLY_ADMITTED_PROGRESS_SQL,
@@ -2166,7 +2093,6 @@ class IngestionLeaseStore:
             write_cursors,
             write_paths,
             clear_lifecycle,
-            caller_ordinals,
         )
 
     async def _apply_source_observations(
@@ -2182,14 +2108,12 @@ class IngestionLeaseStore:
         cursors = [mutation.cursor for mutation in mutations]
         write_cursors = [plan.write_cursor for plan in plans]
         clear_lifecycle = [plan.clear_lifecycle for plan in plans]
-        caller_ordinals = [plan.caller_ordinal for plan in plans]
         _require_parallel_cardinality(
             "source observation",
             feed_ids,
             cursors,
             write_cursors,
             clear_lifecycle,
-            caller_ordinals,
         )
         return await connection.fetch(
             ingestion_lease_queries.APPLY_SOURCE_OBSERVATIONS_SQL,
@@ -2197,7 +2121,6 @@ class IngestionLeaseStore:
             cursors,
             write_cursors,
             clear_lifecycle,
-            caller_ordinals,
         )
 
     async def _apply_closed_cohort_progress(
@@ -2214,7 +2137,6 @@ class IngestionLeaseStore:
         cursors = [mutation.cursor for mutation in mutations]
         write_cursors = [plan.write_cursor for plan in plans]
         write_paths = [plan.write_path for plan in plans]
-        caller_ordinals = [plan.caller_ordinal for plan in plans]
         _require_parallel_cardinality(
             "closed cohort progress",
             feed_ids,
@@ -2222,7 +2144,6 @@ class IngestionLeaseStore:
             cursors,
             write_cursors,
             write_paths,
-            caller_ordinals,
         )
         return await connection.fetch(
             ingestion_lease_queries.APPLY_CLOSED_COHORT_PROGRESS_SQL,
@@ -2231,7 +2152,6 @@ class IngestionLeaseStore:
             cursors,
             write_cursors,
             write_paths,
-            caller_ordinals,
         )
 
     async def _apply_feed_failures(
@@ -2281,7 +2201,6 @@ class IngestionLeaseStore:
         reason_details = [
             _require_reason_detail(mutation.reason) for mutation in mutations
         ]
-        caller_ordinals = [plan.caller_ordinal for plan in plans]
         _require_parallel_cardinality(
             "Feed failure",
             feed_ids,
@@ -2294,7 +2213,6 @@ class IngestionLeaseStore:
             retry_times,
             status_reasons,
             reason_details,
-            caller_ordinals,
         )
         return await connection.fetch(
             ingestion_lease_queries.APPLY_FEED_FAILURES_SQL,
@@ -2308,7 +2226,6 @@ class IngestionLeaseStore:
             retry_times,
             status_reasons,
             reason_details,
-            caller_ordinals,
         )
 
     async def _apply_lease_effect(
@@ -2357,31 +2274,26 @@ class IngestionLeaseStore:
         self,
         connection: asyncpg.Connection,
         plans: tuple[_PlannedChildMutation, ...],
-        updated_by_ordinal: dict[int, collections.abc.Mapping],
+        updated_by_feed_id: dict[uuid.UUID, collections.abc.Mapping],
         actor_id: str,
-    ) -> dict[int, object]:
+    ) -> dict[uuid.UUID, object]:
         """Insert actual child audit candidates as one canonical rowset."""
-        candidates: list[_PlannedChildMutation] = []
+        candidates: list[tuple[_PlannedChildMutation, str]] = []
         for plan in plans:
             if not plan.needs_update:
                 continue
-            after_row = updated_by_ordinal.get(plan.caller_ordinal)
+            after_row = updated_by_feed_id.get(plan.feed_id)
             if after_row is None:
                 msg = "updated child lacks returned after state"
                 raise ValueError(msg)
-            confirmed_action = _confirmed_child_audit_action(plan, after_row)
-            if confirmed_action != plan.audit_action:
-                msg = "child DML returned an inconsistent audit transition"
-                raise ValueError(msg)
-            if confirmed_action is not None:
-                candidates.append(
-                    dataclasses.replace(plan, audit_action=confirmed_action)
-                )
+            action = _child_audit_action(plan, after_row)
+            if action is not None:
+                candidates.append((plan, action))
         if not candidates:
             return {}
 
         sorted_feed_ids = sorted(
-            (plan.feed_id for plan in candidates),
+            (plan.feed_id for plan, _action in candidates),
             key=lambda feed_id: feed_id.int,
         )
         property_rows = await connection.fetch(
@@ -2394,7 +2306,7 @@ class IngestionLeaseStore:
         )
         rowset = _build_child_audit_rowset(
             tuple(candidates),
-            updated_by_ordinal,
+            updated_by_feed_id,
             properties_by_id,
             actor_id,
         )
@@ -2406,22 +2318,21 @@ class IngestionLeaseStore:
             rowset.revisions,
             rowset.before_values,
             rowset.after_values,
-            rowset.caller_ordinals,
         )
-        payloads: dict[int, object] = {}
-        expected_ordinals = set(rowset.caller_ordinals)
+        payloads: dict[uuid.UUID, object] = {}
+        expected_feed_ids = set(rowset.feed_ids)
         for row in audit_rows:
-            caller_ordinal = row["caller_ordinal"]
+            feed_id = row["feed_id"]
             if (
-                not isinstance(caller_ordinal, int)
-                or caller_ordinal not in expected_ordinals
-                or caller_ordinal in payloads
+                not isinstance(feed_id, uuid.UUID)
+                or feed_id not in expected_feed_ids
+                or feed_id in payloads
                 or row["feed_audit_event"] is None
             ):
                 msg = "Feed audit insert returned an unexpected row"
                 raise ValueError(msg)
-            payloads[caller_ordinal] = row["feed_audit_event"]
-        if set(payloads) != expected_ordinals:
+            payloads[feed_id] = row["feed_audit_event"]
+        if set(payloads) != expected_feed_ids:
             msg = "Feed audit insert did not return every candidate"
             raise ValueError(msg)
         return payloads
