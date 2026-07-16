@@ -6,7 +6,6 @@
     "outputDirectory": ".",
     "specFileBaseName": "openapi",
     "specVersion": 3.0,
-    "yaml": true,
     "securityDefinitions": {
       "google_id_token": {
         "type": "oauth2",
