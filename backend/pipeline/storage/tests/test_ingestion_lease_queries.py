@@ -903,12 +903,8 @@ class TestMembershipSnapshotContract(unittest.TestCase):
     """Tests for authoritative immutable membership snapshot SQL."""
 
     def test_member_identity_has_no_revision_or_lease_projection(self) -> None:
-        fields = {
-            field.name
-            for field in dataclasses.fields(
-                ingestion_lease_store.LeaseMemberIdentity
-            )
-        }
+        identity_type = ingestion_lease_store.LeaseMemberIdentity
+        fields = {field.name for field in dataclasses.fields(identity_type)}
 
         self.assertEqual(
             fields,
@@ -923,6 +919,18 @@ class TestMembershipSnapshotContract(unittest.TestCase):
         self.assertNotIn("membership_revision", fields)
         self.assertNotIn("owner_worker_id", fields)
         self.assertNotIn("fencing_token", fields)
+        self.assertTrue(hasattr(identity_type, "__slots__"))
+
+        identity = identity_type(
+            feed_id=uuid.uuid4(),
+            source_type=feed_store.SourceType.BCFY_CALLS,
+            source_feed_id="123-45",
+            sid="123",
+            group_id="45",
+        )
+        self.assertFalse(hasattr(identity, "__dict__"))
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            identity.group_id = "46"  # type: ignore[misc]  # ty: ignore[invalid-assignment]
 
     def test_lease_member_exposes_only_runtime_consumed_state(self) -> None:
         fields = dataclasses.fields(ingestion_lease_store.LeaseMember)

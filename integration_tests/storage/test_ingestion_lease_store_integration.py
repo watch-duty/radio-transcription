@@ -79,29 +79,13 @@ def _unique_digits() -> str:
     return str(uuid.uuid4().int)
 
 
-def _forged_member_for_sid(
-    feed_id: uuid.UUID,
-    sid: str,
-    group_id: str,
-) -> ingestion_lease_store.LeaseMemberIdentity:
-    """Construct an unsealed identity only for negative forgery proofs."""
-    return ingestion_lease_store.LeaseMemberIdentity(
-        feed_id=feed_id,
-        source_type=_SOURCE_TYPE,
-        source_feed_id=f"{sid}-{group_id}",
-        sid=sid,
-        group_id=group_id,
-    )
-
-
-def _issued_member_for_grant(
+def _member_for_grant(
     grant: ingestion_lease_store.LeaseGrant,
     feed_id: uuid.UUID,
     group_id: str,
 ) -> ingestion_lease_store.LeaseMemberIdentity:
-    """Issue a fixture identity with the same capability as its exact grant."""
-    return ingestion_lease_store._issue_member_identity(
-        grant,
+    """Construct one immutable member identity for an exact Lease."""
+    return ingestion_lease_store.LeaseMemberIdentity(
         feed_id=feed_id,
         source_type=grant.source_type,
         source_feed_id=f"{grant.lease_key}-{group_id}",
@@ -257,7 +241,7 @@ async def _insert_member(
                 sid,
                 group_id,
             )
-    return _issued_member_for_grant(grant, feed_id, group_id)
+    return _member_for_grant(grant, feed_id, group_id)
 
 
 async def _claim_exact(
@@ -888,7 +872,7 @@ async def test_child_and_grant_transition_linearize_both_orders(  # noqa: PLR091
     ) == dict(durable_before_stale_retry)
 
 
-async def test_reverse_overlapping_feed_sets_do_not_deadlock(  # noqa: PLR0915
+async def test_reverse_overlapping_feed_sets_do_not_deadlock(
     ingestion_lease_pool: asyncpg.Pool,
 ) -> None:
     sid = _unique_digits()
@@ -902,51 +886,6 @@ async def test_reverse_overlapping_feed_sets_do_not_deadlock(  # noqa: PLR0915
         key=lambda member: member.feed_id.int,
     )
     low_member, high_member = ordered_members
-
-    forged_sid = _unique_digits()
-    await _insert_lease(ingestion_lease_pool, forged_sid)
-    forged_grant = await _claim_exact(store, forged_sid, uuid.uuid4())
-    forged_member = _forged_member_for_sid(
-        low_member.feed_id,
-        forged_sid,
-        low_member.group_id,
-    )
-    forged_lease_before = dict(
-        await _fetch_lease(ingestion_lease_pool, forged_sid)
-    )
-    feed_before_forgery = dict(
-        await _fetch_feed(ingestion_lease_pool, low_member.feed_id)
-    )
-    audit_before_forgery = await _audit_rows(
-        ingestion_lease_pool,
-        low_member.feed_id,
-    )
-    checkout_forbidden_pool = mock.Mock(spec=asyncpg.Pool)
-    forged_store = ingestion_lease_store.IngestionLeaseStore(
-        typing.cast("asyncpg.Pool", checkout_forbidden_pool)
-    )
-    with pytest.raises(
-        ValueError,
-        match="binding was not issued by authoritative membership loading",
-    ):
-        await _commit(
-            forged_store,
-            forged_grant,
-            _batch(_progress(forged_member, _BASE_CURSOR)),
-        )
-    checkout_forbidden_pool.acquire.assert_not_called()
-    assert (
-        dict(await _fetch_lease(ingestion_lease_pool, forged_sid))
-        == forged_lease_before
-    )
-    assert (
-        dict(await _fetch_feed(ingestion_lease_pool, low_member.feed_id))
-        == feed_before_forgery
-    )
-    assert (
-        await _audit_rows(ingestion_lease_pool, low_member.feed_id)
-        == audit_before_forgery
-    )
 
     first_cursor = _BASE_CURSOR + datetime.timedelta(minutes=1)
     second_cursor = _BASE_CURSOR + datetime.timedelta(minutes=2)
@@ -1066,7 +1005,7 @@ async def test_selective_child_dispositions_commit_valid_siblings(
         grant,
         status="unclaimed",
     )
-    missing_member = _issued_member_for_grant(
+    missing_member = _member_for_grant(
         grant,
         uuid.uuid4(),
         _unique_digits(),

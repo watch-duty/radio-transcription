@@ -80,8 +80,7 @@ def _member_identity(
     sid: str = "123",
     group_id: str = "45",
 ) -> ingestion_lease_store.LeaseMemberIdentity:
-    return ingestion_lease_store._issue_member_identity(
-        _grant(sid),
+    return ingestion_lease_store.LeaseMemberIdentity(
         feed_id=feed_id,
         source_type=feed_store.SourceType.BCFY_CALLS,
         source_feed_id=f"{sid}-{group_id}",
@@ -1489,73 +1488,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             cursor=cursor,
         )
 
-    async def test_rejects_directly_forged_member_before_checkout(
-        self,
-    ) -> None:
-        feed_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000001")
-        forged_member = ingestion_lease_store.LeaseMemberIdentity(
-            feed_id=feed_id,
-            source_type=feed_store.SourceType.BCFY_CALLS,
-            source_feed_id="123-45",
-            sid="123",
-            group_id="45",
-        )
-        pool = connection_util.make_mock_pool(transaction=True)
-        store = ingestion_lease_store.IngestionLeaseStore(pool)
-
-        with self.assertRaisesRegex(ValueError, "membership loading"):
-            await store.commit_child_mutations(
-                _grant(),
-                ingestion_lease_store.ChildMutationBatch(
-                    (
-                        ingestion_lease_store.SourceObservation(
-                            forged_member,
-                            _NOW,
-                        ),
-                    ),
-                    ingestion_lease_store.NoLeaseEffect(),
-                ),
-                actor_id="service_account:gcp:collector",
-            )
-
-        pool.acquire.assert_not_called()
-
-    async def test_rejects_altered_loaded_member_before_checkout(
-        self,
-    ) -> None:
-        grant = _grant("00123")
-        loaded_member = ingestion_lease_store._membership_identity_from_row(
-            grant,
-            _member_row(),
-        )
-        assert isinstance(
-            loaded_member,
-            ingestion_lease_store.LeaseMemberIdentity,
-        )
-        altered_member = dataclasses.replace(
-            loaded_member,
-            feed_id=uuid.UUID("aaaaaaaa-0000-0000-0000-000000000002"),
-        )
-        pool = connection_util.make_mock_pool(transaction=True)
-        store = ingestion_lease_store.IngestionLeaseStore(pool)
-
-        with self.assertRaisesRegex(ValueError, "membership loading"):
-            await store.commit_child_mutations(
-                grant,
-                ingestion_lease_store.ChildMutationBatch(
-                    (
-                        ingestion_lease_store.SourceObservation(
-                            altered_member,
-                            _NOW,
-                        ),
-                    ),
-                    ingestion_lease_store.NoLeaseEffect(),
-                ),
-                actor_id="service_account:gcp:collector",
-            )
-
-        pool.acquire.assert_not_called()
-
     async def test_precheckout_validation_rejects_bad_batch_shapes(
         self,
     ) -> None:
@@ -1702,38 +1634,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                             feed_id,
                             cursor=None,
                             path="gs://bucket/other.flac",
-                        ),
-                    ),
-                    ingestion_lease_store.NoLeaseEffect(),
-                ),
-                actor_id="service_account:gcp:collector",
-            )
-
-        pool.acquire.assert_not_called()
-
-    async def test_closed_cohort_forged_member_rejected_before_checkout(
-        self,
-    ) -> None:
-        feed_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000141")
-        forged_member = ingestion_lease_store.LeaseMemberIdentity(
-            feed_id=feed_id,
-            source_type=feed_store.SourceType.BCFY_CALLS,
-            source_feed_id="123-45",
-            sid="123",
-            group_id="45",
-        )
-        pool = connection_util.make_mock_pool(transaction=True)
-        store = ingestion_lease_store.IngestionLeaseStore(pool)
-
-        with self.assertRaisesRegex(ValueError, "membership loading"):
-            await store.commit_child_mutations(
-                _grant(),
-                ingestion_lease_store.ChildMutationBatch(
-                    (
-                        ingestion_lease_store.ClosedCohortProgress(
-                            forged_member,
-                            "gs://bucket/cohort.flac",
-                            _NOW,
                         ),
                     ),
                     ingestion_lease_store.NoLeaseEffect(),
