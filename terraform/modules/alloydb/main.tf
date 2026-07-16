@@ -71,6 +71,12 @@ resource "google_alloydb_instance" "primary" {
     enabled = var.connection_pooling_enabled
     flags   = var.connection_pooling_enabled ? var.connection_pooling_flags : {}
   }
+
+  lifecycle {
+    ignore_changes = [
+      query_insights_config,
+    ]
+  }
 }
 
 resource "google_alloydb_user" "worker" {
