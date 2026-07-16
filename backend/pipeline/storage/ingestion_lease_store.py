@@ -92,8 +92,8 @@ __all__ = (
 )
 
 
-def _require_limit(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+def _require_limit(value: int) -> int:
+    if isinstance(value, bool):
         msg = "limit must be an integer"
         raise TypeError(msg)
     if value < 0:
@@ -102,20 +102,19 @@ def _require_limit(value: object) -> int:
     return value
 
 
-def _require_abandonment_after(value: object) -> datetime.timedelta:
-    if not isinstance(value, datetime.timedelta):
-        msg = "abandonment_after must be a timedelta"
-        raise TypeError(msg)
+def _require_abandonment_after(
+    value: datetime.timedelta,
+) -> datetime.timedelta:
     if value <= datetime.timedelta(0):
         msg = "abandonment_after must be positive"
         raise ValueError(msg)
     return value
 
 
-def _require_known_membership_revision(value: object) -> int | None:
+def _require_known_membership_revision(value: int | None) -> int | None:
     if value is None:
         return None
-    if isinstance(value, bool) or not isinstance(value, int):
+    if isinstance(value, bool):
         msg = "known_revision must be an integer or None"
         raise TypeError(msg)
     if value < 0:
@@ -124,10 +123,7 @@ def _require_known_membership_revision(value: object) -> int | None:
     return value
 
 
-def _require_actor_id(value: object) -> str:
-    if not isinstance(value, str):
-        msg = "actor_id must be a string"
-        raise TypeError(msg)
+def _require_actor_id(value: str) -> str:
     if not value or len(value) > 512 or any(char.isspace() for char in value):
         msg = (
             "actor_id must be nonempty, at most 512 chars, and whitespace-free"
@@ -387,7 +383,8 @@ class IngestionLeaseStore:
             Claims ordered by permanent Lease identity.
 
         Raises:
-            TypeError: An argument has the wrong runtime type.
+            TypeError: The limit is boolean or a returned row has an invalid
+                runtime type.
             ValueError: The limit is negative or a returned row is invalid.
         """
         limit = _require_limit(limit)
@@ -429,7 +426,8 @@ class IngestionLeaseStore:
             Claims ordered by permanent Lease identity after recovery priority.
 
         Raises:
-            TypeError: An argument has the wrong runtime type.
+            TypeError: The limit is boolean or a returned row has an invalid
+                runtime type.
             ValueError: A bound is invalid or a returned row is invalid.
         """
         limit = _require_limit(limit)
@@ -609,7 +607,6 @@ class IngestionLeaseStore:
             A narrow applied effect or typed exact-grant rejection.
 
         Raises:
-            TypeError: An argument has the wrong runtime type.
             ValueError: A bound is invalid or a database value is unknown.
             RuntimeError: The locked exact grant produced an impossible result.
         """
@@ -767,7 +764,8 @@ class IngestionLeaseStore:
             structural invariant violation.
 
         Raises:
-            TypeError: If the known revision has the wrong runtime type.
+            TypeError: If the known revision is boolean or a returned row has
+                an invalid runtime type.
             ValueError: If the source or known revision is invalid.
         """
         known_revision = _require_known_membership_revision(known_revision)
@@ -883,7 +881,8 @@ class IngestionLeaseStore:
             A batch-level grant rejection or caller-ordered committed results.
 
         Raises:
-            TypeError: If a command uses an unsupported or malformed type.
+            TypeError: If a returned child or audit row has an invalid runtime
+                type.
             ValueError: If command identity, cursor, or rowset data is invalid.
         """
         actor_id = _require_actor_id(actor_id)

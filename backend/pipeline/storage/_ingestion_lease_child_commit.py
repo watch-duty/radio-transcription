@@ -32,8 +32,6 @@ SourceObservation = ingestion_lease_contracts.SourceObservation
 ClosedCohortProgress = ingestion_lease_contracts.ClosedCohortProgress
 FeedFailureTransition = ingestion_lease_contracts.FeedFailureTransition
 ChildMutation = ingestion_lease_contracts.ChildMutation
-NoLeaseEffect = ingestion_lease_contracts.NoLeaseEffect
-FinalizeLeaseRecovery = ingestion_lease_contracts.FinalizeLeaseRecovery
 LeaseEffect = ingestion_lease_contracts.LeaseEffect
 ChildMutationBatch = ingestion_lease_contracts.ChildMutationBatch
 ChildDisposition = ingestion_lease_contracts.ChildDisposition
@@ -189,15 +187,12 @@ class PendingChildEffects:
 
 
 def _require_utc_cursor(
-    value: object,
+    value: datetime.datetime | None,
     *,
     field_name: str = "cursor",
 ) -> datetime.datetime | None:
     if value is None:
         return None
-    if not isinstance(value, datetime.datetime):
-        msg = f"{field_name} must be a datetime or None"
-        raise TypeError(msg)
     if value.utcoffset() != datetime.timedelta(0):
         msg = f"{field_name} must be UTC-aware"
         raise ValueError(msg)
@@ -206,32 +201,19 @@ def _require_utc_cursor(
 
 def _require_member_identity(
     grant: LeaseGrant,
-    value: object,
+    value: LeaseMemberIdentity,
 ) -> LeaseMemberIdentity:
-    if not isinstance(value, LeaseMemberIdentity):
-        msg = "child member must be a LeaseMemberIdentity"
-        raise TypeError(msg)
-    if not isinstance(value.feed_id, uuid.UUID):
-        msg = "child member feed_id must be a UUID"
-        raise TypeError(msg)
-    if not isinstance(value.source_type, feed_store.SourceType):
-        msg = "child member source_type must be a SourceType"
-        raise TypeError(msg)
     for field_name, field_value in (
         ("sid", value.sid),
         ("group_id", value.group_id),
     ):
         if (
-            not isinstance(field_value, str)
-            or not field_value
+            not field_value
             or not field_value.isascii()
             or not field_value.isdigit()
         ):
             msg = f"child member {field_name} must contain ASCII digits"
             raise ValueError(msg)
-    if not isinstance(value.source_feed_id, str):
-        msg = "child member source_feed_id must be a string"
-        raise TypeError(msg)
     if value.source_type is not grant.source_type:
         msg = "child member source type does not match the Lease grant"
         raise ValueError(msg)
@@ -273,10 +255,7 @@ def _require_closed_cohort_progress(
 ) -> None:
     """Validate lifecycle-neutral progress fields before pool checkout."""
     path = mutation.last_processed_filename
-    if path is not None and not isinstance(path, str):
-        msg = "closed cohort last_processed_filename must be a string or None"
-        raise TypeError(msg)
-    if isinstance(path, str) and not path.strip():
+    if path is not None and not path.strip():
         msg = (
             "closed cohort last_processed_filename must be nonempty "
             "when present"
@@ -296,49 +275,26 @@ def _require_bcfy_calls_grant(grant: LeaseGrant) -> None:
 
 def _prepare_child_batch(
     grant: LeaseGrant,
-    value: object,
+    batch: ChildMutationBatch,
 ) -> tuple[tuple[_PreparedChildMutation, ...], LeaseEffect]:
     """Validate and normalize one child batch before connection checkout.
 
     Args:
         grant: Exact Lease authority used for grant-relative member checks.
-        value: Runtime batch value supplied through the public store seam.
+        batch: Typed child batch to validate and normalize.
 
     Returns:
         Caller-ordered prepared mutations and the validated parent effect.
 
     Raises:
-        TypeError: A batch, command, member, or command field has the wrong
-            runtime type.
         ValueError: A member conflicts with the grant, a Feed UUID repeats, or
             a cursor/path violates the child command contract.
     """
-    if type(value) is not ChildMutationBatch:
-        msg = "batch must be a ChildMutationBatch"
-        raise TypeError(msg)
-    batch = value
     _require_bcfy_calls_grant(grant)
-    if not isinstance(batch.mutations, tuple):
-        msg = "batch mutations must be an immutable tuple"
-        raise TypeError(msg)
-    if type(batch.lease_effect) not in (
-        NoLeaseEffect,
-        FinalizeLeaseRecovery,
-    ):
-        msg = "lease_effect must be NoLeaseEffect or FinalizeLeaseRecovery"
-        raise TypeError(msg)
 
     seen_feed_ids: set[uuid.UUID] = set()
     prepared_mutations: list[_PreparedChildMutation] = []
     for mutation in batch.mutations:
-        if type(mutation) not in (
-            AdmittedAudioProgress,
-            SourceObservation,
-            ClosedCohortProgress,
-            FeedFailureTransition,
-        ):
-            msg = f"unsupported child mutation {type(mutation).__name__}"
-            raise TypeError(msg)
         member = _require_member_identity(grant, mutation.member)
         if member.feed_id in seen_feed_ids:
             msg = f"duplicate Feed UUID {member.feed_id}"
@@ -353,10 +309,7 @@ def _prepare_child_batch(
             ),
         )
         if isinstance(mutation, AdmittedAudioProgress):
-            if (
-                not isinstance(mutation.last_processed_filename, str)
-                or not mutation.last_processed_filename.strip()
-            ):
+            if not mutation.last_processed_filename.strip():
                 msg = "last_processed_filename must be nonempty"
                 raise ValueError(msg)
         elif isinstance(mutation, SourceObservation):
@@ -364,12 +317,6 @@ def _prepare_child_batch(
         elif isinstance(mutation, ClosedCohortProgress):
             _require_closed_cohort_progress(mutation)
         elif isinstance(mutation, FeedFailureTransition):
-            ingestion_lease_contracts._require_failure_action(  # noqa: SLF001
-                mutation.action
-            )
-            ingestion_lease_contracts._require_status_reason(  # noqa: SLF001
-                mutation.status_reason
-            )
             reason_detail = (
                 ingestion_lease_contracts._status_reason_detail_storage_value(  # noqa: SLF001
                     mutation.reason
@@ -1255,21 +1202,20 @@ async def _write_child_audits(
 
 def prepare_child_commit(
     grant: LeaseGrant,
-    batch: object,
+    batch: ChildMutationBatch,
     actor_id: str,
 ) -> PreparedChildCommit:
     """Prepare a child batch before the facade checks out a connection.
 
     Args:
         grant: Exact Lease authority; its database fence is checked later.
-        batch: Runtime child batch to validate and normalize.
-        actor_id: Runtime-validated durable audit actor identity.
+        batch: Typed child batch to validate and normalize.
+        actor_id: Validated durable audit actor identity.
 
     Returns:
         An immutable prepared stage safe to carry into database orchestration.
 
     Raises:
-        TypeError: The batch or a nested command has the wrong runtime type.
         ValueError: Batch identity, cursor, path, or uniqueness is invalid.
     """
     mutations, lease_effect = _prepare_child_batch(grant, batch)

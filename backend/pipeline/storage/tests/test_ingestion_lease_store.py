@@ -194,16 +194,15 @@ class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
             (
                 datetime.timedelta(0),
                 datetime.timedelta(seconds=-1),
-                "60 seconds",
             )
         ):
             with self.subTest(case_index=case_index):
-                with self.assertRaises((TypeError, ValueError)):
+                with self.assertRaises(ValueError):
                     await store.claim_recoverable(
                         feed_store.SourceType.BCFY_CALLS,
                         _OWNER_ID,
                         1,
-                        abandonment_after,  # ty: ignore[invalid-argument-type]
+                        abandonment_after,
                     )
 
         pool.fetch.assert_not_awaited()
@@ -624,7 +623,7 @@ class TestLeaseFailureActionValidation(unittest.IsolatedAsyncioTestCase):
                         retry_after,  # ty: ignore[invalid-argument-type]
                     )
 
-    async def test_finalize_rejects_invalid_actor_and_reason_before_pool(
+    async def test_finalize_rejects_invalid_actor_before_pool(
         self,
     ) -> None:
         pool = connection_util.make_mock_pool()
@@ -640,15 +639,6 @@ class TestLeaseFailureActionValidation(unittest.IsolatedAsyncioTestCase):
                     feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
                     actor_id=actor_id,
                 )
-
-        with self.assertRaises(TypeError):
-            await store.finalize_failure(
-                _grant(),
-                action,
-                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-                actor_id="service_account:gcp:collector",
-                reason=123,  # ty: ignore[invalid-argument-type]
-            )
 
         pool.fetchrow.assert_not_awaited()
 
@@ -1241,7 +1231,7 @@ class TestRefreshMembership(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_invalid_known_revisions_fail_before_checkout(self) -> None:
-        invalid_revisions = (-1, True, 1.0, "4")
+        invalid_revisions = (-1, True)
 
         for known_revision in invalid_revisions:
             with self.subTest(known_revision=known_revision):
@@ -1251,7 +1241,7 @@ class TestRefreshMembership(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises((TypeError, ValueError)):
                     await store.refresh_membership(
                         _grant(),
-                        known_revision=known_revision,  # ty: ignore[invalid-argument-type]
+                        known_revision=known_revision,
                     )
 
                 pool.acquire.assert_not_called()
@@ -1457,20 +1447,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             ),
             ingestion_lease_store.ChildMutationBatch(
                 (
-                    ingestion_lease_store.FeedFailureTransition(
-                        member=_member_identity(feed_id),
-                        action="budgeted",  # ty: ignore[invalid-argument-type]
-                        status_reason=(
-                            feed_store.FeedStatusReason.SOURCE_UNREACHABLE
-                        ),
-                        reason="failed",
-                        completion_cursor=_NOW,
-                    ),
-                ),
-                ingestion_lease_store.NoLeaseEffect(),
-            ),
-            ingestion_lease_store.ChildMutationBatch(
-                (
                     ingestion_lease_store.AdmittedAudioProgress(
                         malformed_member,
                         "gs://bucket/audio.flac",
@@ -1521,7 +1497,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             with self.subTest(case_index=case_index):
                 pool = connection_util.make_mock_pool(transaction=True)
                 store = ingestion_lease_store.IngestionLeaseStore(pool)
-                with self.assertRaises((TypeError, ValueError)):
+                with self.assertRaises(ValueError):
                     await store.commit_child_mutations(
                         _grant(),
                         batch,
