@@ -61,7 +61,9 @@ Generate a 15,000-feed dataset adhering to the required 50/25/25 mix output to `
 python3 backend/scripts/generate_load_test_csv.py \
   --output backend/scripts/test_data/load_test_feeds_15k.csv \
   --total 15000 \
-  --prefix "$LOAD_PREFIX"
+  --prefix "$LOAD_PREFIX" \
+  --echo-bucket "$ECHO_BUCKET" \
+  --gcp-project "$GCP_PROJECT"
 ```
 
 ---

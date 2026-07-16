@@ -14,7 +14,10 @@ import sys
 from pathlib import Path
 from typing import Any, NamedTuple
 
-from backend.scripts.bcfy_catalog import load_broadcastify_all_feeds_csv
+from backend.scripts.feed_catalog import (
+    load_broadcastify_all_feeds_csv,
+    load_echo_all_streams_csv,
+)
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 TEMPLATES_JSON_PATH = (
@@ -60,8 +63,11 @@ def calculate_mix_counts(total: int) -> dict[str, int]:
     }
 
 
-def load_authentic_templates() -> dict[str, list[dict[str, Any]]]:
-    """Load authentic templates and unique Broadcastify live feeds catalog."""
+def load_authentic_templates(
+    echo_bucket: str,
+    gcp_project: str,
+) -> dict[str, list[dict[str, Any]]]:
+    """Load authentic templates and unique Broadcastify/Echo catalogs."""
     categorized: dict[str, list[dict[str, Any]]] = {
         "fire_notifications": [],
         "echo": [],
@@ -80,14 +86,28 @@ def load_authentic_templates() -> dict[str, list[dict[str, Any]]]:
             }
         )
 
-    # Load fire_notifications and echo templates from JSON resource file
+    # Load Echo directory streams from GCS bucket
+    echo_specs = load_echo_all_streams_csv(
+        echo_bucket=echo_bucket, gcp_project=gcp_project
+    )
+    for spec in echo_specs:
+        categorized["echo"].append(
+            {
+                "name": spec.name,
+                "source_type": spec.source_type,
+                "source_feed_id": spec.source_feed_id,
+                "tags": spec.tags,
+            }
+        )
+
+    # Load fire_notifications templates from JSON resource file
     if TEMPLATES_JSON_PATH.exists():
         with TEMPLATES_JSON_PATH.open("r", encoding="utf-8") as f:
             data: list[dict[str, Any]] = json.load(f)
 
         for item in data:
             st = item["source_type"]
-            if st in ("fire_notifications", "echo"):
+            if st == "fire_notifications":
                 sanitized_item = dict(item)
                 sanitized_item["source_feed_id"] = sanitize_source_feed_id(
                     st, item["source_feed_id"]
@@ -97,9 +117,17 @@ def load_authentic_templates() -> dict[str, list[dict[str, Any]]]:
     return categorized
 
 
-def generate_csv(output_path: Path, total: int, prefix: str) -> int:
+def generate_csv(
+    output_path: Path,
+    total: int,
+    prefix: str,
+    echo_bucket: str,
+    gcp_project: str,
+) -> int:
     """Generate CSV using authentic production feed templates and exact tags."""
-    categorized = load_authentic_templates()
+    categorized = load_authentic_templates(
+        echo_bucket=echo_bucket, gcp_project=gcp_project
+    )
     counts = calculate_mix_counts(total)
     rows: list[FeedSpec] = []
 
@@ -173,8 +201,24 @@ def main(argv: list[str] | None = None) -> int:
         default="loadtest-",
         help="Feed display name prefix.",
     )
+    parser.add_argument(
+        "--echo-bucket",
+        default="gs://wd-echo-recordings-dev",
+        help="GCS bucket URL or name for Echo feed streams.",
+    )
+    parser.add_argument(
+        "--gcp-project",
+        default="probable-symbol-492218-i7",
+        help="GCP project ID owning the Echo GCS bucket.",
+    )
     args = parser.parse_args(argv)
-    return generate_csv(args.output, args.total, args.prefix)
+    return generate_csv(
+        args.output,
+        args.total,
+        args.prefix,
+        echo_bucket=args.echo_bucket,
+        gcp_project=args.gcp_project,
+    )
 
 
 if __name__ == "__main__":

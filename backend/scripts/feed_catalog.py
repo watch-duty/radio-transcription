@@ -5,6 +5,7 @@ Loads authentic unique Broadcastify live feeds from all_bcfy_feeds_202601.csv.
 """
 
 import csv
+import subprocess
 import sys
 from pathlib import Path
 from typing import NamedTuple
@@ -53,3 +54,50 @@ def load_broadcastify_all_feeds_csv(
                 )
 
     return specs
+
+
+def load_echo_all_streams_csv(
+    echo_bucket: str,
+    gcp_project: str,
+) -> list[RawFeedSpec]:
+    """Load authentic Echo directory stream names from GCS bucket."""
+    bucket_url = (
+        echo_bucket
+        if echo_bucket.startswith("gs://")
+        else f"gs://{echo_bucket}"
+    )
+    bucket_name = bucket_url.rstrip("/").split("/")[-1]
+    dirs: list[str] = []
+
+    # Attempt to list directory prefixes via gcloud CLI
+    try:
+        cmd = [
+            "gcloud",
+            "storage",
+            "ls",
+            "--project",
+            gcp_project,
+            f"{bucket_url}/",
+        ]
+        output = subprocess.check_output(
+            cmd, text=True, stderr=subprocess.DEVNULL
+        )
+        for raw_line in output.splitlines():
+            line = raw_line.strip()
+            if line.startswith("gs://"):
+                folder = line.rstrip("/").split("/")[-1]
+                if folder and folder != bucket_name:
+                    dirs.append(folder)
+    except (subprocess.SubprocessError, OSError):
+        pass
+
+    dirs = sorted(set(dirs))
+    return [
+        RawFeedSpec(
+            name=folder,
+            source_type="echo",
+            source_feed_id=folder,
+            tags="[]",
+        )
+        for folder in dirs
+    ]
