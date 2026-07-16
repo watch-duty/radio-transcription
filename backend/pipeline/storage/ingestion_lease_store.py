@@ -92,20 +92,6 @@ __all__ = (
 )
 
 
-def _require_source_type(value: object) -> feed_store.SourceType:
-    if not isinstance(value, feed_store.SourceType):
-        msg = "source_type must be a SourceType"
-        raise TypeError(msg)
-    return value
-
-
-def _require_owner_worker_id(value: object) -> uuid.UUID:
-    if not isinstance(value, uuid.UUID):
-        msg = "owner_worker_id must be a UUID"
-        raise TypeError(msg)
-    return value
-
-
 def _require_limit(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         msg = "limit must be an integer"
@@ -123,13 +109,6 @@ def _require_abandonment_after(value: object) -> datetime.timedelta:
     if value <= datetime.timedelta(0):
         msg = "abandonment_after must be positive"
         raise ValueError(msg)
-    return value
-
-
-def _require_grant(value: object) -> LeaseGrant:
-    if not isinstance(value, LeaseGrant):
-        msg = "grant must be a LeaseGrant"
-        raise TypeError(msg)
     return value
 
 
@@ -373,7 +352,6 @@ class IngestionLeaseStore:
         row: collections.abc.Mapping | None,
     ) -> GrantRejectionReason | None:
         """Classify a locked Lease row without constructing a snapshot."""
-        _require_grant(grant)
         if row is None:
             return GrantRejectionReason.MISSING
 
@@ -412,8 +390,6 @@ class IngestionLeaseStore:
             TypeError: An argument has the wrong runtime type.
             ValueError: The limit is negative or a returned row is invalid.
         """
-        source_type = _require_source_type(source_type)
-        owner_worker_id = _require_owner_worker_id(owner_worker_id)
         limit = _require_limit(limit)
         if limit == 0:
             return ()
@@ -456,8 +432,6 @@ class IngestionLeaseStore:
             TypeError: An argument has the wrong runtime type.
             ValueError: A bound is invalid or a returned row is invalid.
         """
-        source_type = _require_source_type(source_type)
-        owner_worker_id = _require_owner_worker_id(owner_worker_id)
         limit = _require_limit(limit)
         abandonment_after = _require_abandonment_after(abandonment_after)
         if limit == 0:
@@ -493,14 +467,12 @@ class IngestionLeaseStore:
             One typed result per input grant in the original caller order.
 
         Raises:
-            TypeError: An item is not a complete Lease grant.
             ValueError: The input repeats a permanent Lease identity.
             RuntimeError: An exact active row unexpectedly was not updated.
         """
         grants = tuple(grants)
         identities: set[tuple[feed_store.SourceType, str]] = set()
-        for candidate in grants:
-            grant = _require_grant(candidate)
+        for grant in grants:
             identity = (grant.source_type, grant.lease_key)
             if identity in identities:
                 msg = f"duplicate Lease identity {identity!r}"
@@ -575,14 +547,8 @@ class IngestionLeaseStore:
             Applied result or current typed rejection state.
 
         Raises:
-            TypeError: The grant or cause has the wrong runtime type.
             RuntimeError: An exact active row unexpectedly was not updated.
         """
-        grant = _require_grant(grant)
-        if not isinstance(cause, LeaseReleaseCause):
-            msg = "cause must be a LeaseReleaseCause"
-            raise TypeError(msg)
-
         row = await self._pool.fetchrow(
             ingestion_lease_queries.RELEASE_LEASE_SQL,
             grant.source_type.value,
@@ -647,11 +613,6 @@ class IngestionLeaseStore:
             ValueError: A bound is invalid or a database value is unknown.
             RuntimeError: The locked exact grant produced an impossible result.
         """
-        grant = _require_grant(grant)
-        action = ingestion_lease_contracts._require_failure_action(action)  # noqa: SLF001
-        status_reason = ingestion_lease_contracts._require_status_reason(  # noqa: SLF001
-            status_reason
-        )
         actor_id = _require_actor_id(actor_id)
         detail = ingestion_lease_contracts._status_reason_detail_storage_value(  # noqa: SLF001
             reason
@@ -780,7 +741,7 @@ class IngestionLeaseStore:
             invariant violation.
 
         Raises:
-            TypeError: If the grant has the wrong runtime type.
+            TypeError: If a returned row has an invalid runtime type.
             ValueError: If the source is unsupported or a row is invalid.
         """
         result = await self.refresh_membership(grant, known_revision=None)
@@ -806,10 +767,9 @@ class IngestionLeaseStore:
             structural invariant violation.
 
         Raises:
-            TypeError: If the grant or known revision has the wrong type.
+            TypeError: If the known revision has the wrong runtime type.
             ValueError: If the source or known revision is invalid.
         """
-        grant = _require_grant(grant)
         known_revision = _require_known_membership_revision(known_revision)
         if grant.source_type is not feed_store.SourceType.BCFY_CALLS:
             msg = "membership loading supports only bcfy_calls Leases"
@@ -926,7 +886,6 @@ class IngestionLeaseStore:
             TypeError: If a command uses an unsupported or malformed type.
             ValueError: If command identity, cursor, or rowset data is invalid.
         """
-        grant = _require_grant(grant)
         actor_id = _require_actor_id(actor_id)
         prepared = _ingestion_lease_child_commit.prepare_child_commit(
             grant,

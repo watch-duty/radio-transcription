@@ -1261,7 +1261,7 @@ def prepare_child_commit(
     """Prepare a child batch before the facade checks out a connection.
 
     Args:
-        grant: Runtime-validated exact Lease authority.
+        grant: Exact Lease authority; its database fence is checked later.
         batch: Runtime child batch to validate and normalize.
         actor_id: Runtime-validated durable audit actor identity.
 
