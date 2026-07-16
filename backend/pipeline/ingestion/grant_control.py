@@ -60,34 +60,16 @@ class GrantControlIntegrityError(RuntimeError):
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class LifecycleEvidence:
-    """Only common projection of mutable durable lifecycle state.
-
-    Attributes:
-        durable_failing: Whether durable state records a retained failure.
-    """
-
-    durable_failing: bool
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.durable_failing, bool):
-            msg = "durable_failing must be a bool"
-            raise TypeError(msg)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
 class ClaimedGrant[GrantT, PayloadT]:
     """One newly claimed typed grant and its separate runner payload.
 
     Attributes:
         grant: Complete immutable authority for the ownership generation.
         payload: Domain-specific data passed unchanged to the runner.
-        lifecycle: Common lifecycle evidence observed during the claim.
     """
 
     grant: GrantT
     payload: PayloadT
-    lifecycle: LifecycleEvidence
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -97,12 +79,10 @@ class GrantHeartbeat[GrantT]:
     Attributes:
         grant: Original grant associated with the storage result.
         disposition: Domain-neutral meaning of the heartbeat result.
-        lifecycle: Updated lifecycle evidence when storage returns it.
     """
 
     grant: GrantT
     disposition: HeartbeatDisposition
-    lifecycle: LifecycleEvidence | None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -112,12 +92,10 @@ class FinalizeResult[GrantT]:
     Attributes:
         grant: Exact grant submitted for finalization.
         disposition: Domain-neutral meaning of the storage result.
-        lifecycle: Updated lifecycle evidence when authority is retained.
     """
 
     grant: GrantT
     disposition: FinalizeDisposition
-    lifecycle: LifecycleEvidence | None
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

@@ -55,16 +55,6 @@ def _calculate_branch_limits(
     return limits
 
 
-def _claim_lifecycle(
-    payload: feed_store.LeasedFeed,
-) -> grant_control.LifecycleEvidence:
-    return grant_control.LifecycleEvidence(
-        durable_failing=(
-            payload["failure_count"] > 0 or payload["status_reason"] is not None
-        )
-    )
-
-
 class FeedGrantControl:
     """Translate generic grant operations to two authoritative Feed stores."""
 
@@ -195,7 +185,6 @@ class FeedGrantControl:
                 grant_control.ClaimedGrant(
                     grant=grant,
                     payload=payload,
-                    lifecycle=_claim_lifecycle(payload),
                 )
             )
         return tuple(claims)
@@ -222,7 +211,6 @@ class FeedGrantControl:
                 raise grant_control.GrantControlIntegrityError(msg)
             seen.add(result.grant)
 
-            lifecycle = None
             if (
                 result.disposition
                 is feed_store.FeedGrantOperationDisposition.APPLIED
@@ -249,7 +237,6 @@ class FeedGrantControl:
                 grant_control.GrantHeartbeat(
                     grant=result.grant,
                     disposition=disposition,
-                    lifecycle=lifecycle,
                 )
             )
         return tuple(translated)
@@ -282,7 +269,7 @@ class FeedGrantControl:
                 if applied
                 else grant_control.FinalizeDisposition.LOST
             )
-            return grant_control.FinalizeResult(grant, disposition, None)
+            return grant_control.FinalizeResult(grant, disposition)
 
         if isinstance(terminal, grant_control.BudgetedFailureDecision):
             status = await self._data_store.report_feed_failure(
@@ -314,7 +301,6 @@ class FeedGrantControl:
             return grant_control.FinalizeResult(
                 grant,
                 grant_control.FinalizeDisposition.LOST,
-                None,
             )
         if status not in (
             feed_store.FeedStatus.FAILING.value,
@@ -335,5 +321,4 @@ class FeedGrantControl:
         return grant_control.FinalizeResult(
             grant,
             grant_control.FinalizeDisposition.APPLIED,
-            grant_control.LifecycleEvidence(durable_failing=True),
         )

@@ -77,13 +77,6 @@ def _sid_claim_binding_proof(
     return hmac.digest(_SID_CLAIM_BINDING_KEY, message, "sha256")
 
 
-def _lifecycle(
-    *,
-    durable_failing: bool,
-) -> grant_control.LifecycleEvidence:
-    return grant_control.LifecycleEvidence(durable_failing=durable_failing)
-
-
 def _finalize_disposition(
     disposition: ingestion_lease_store.LeaseOperationDisposition,
 ) -> grant_control.FinalizeDisposition:
@@ -98,22 +91,6 @@ def _finalize_disposition(
         return grant_control.FinalizeDisposition.LOST
     msg = "SID finalization returned an unknown disposition"
     raise grant_control.GrantControlIntegrityError(msg)
-
-
-def _released_lifecycle(
-    result: ingestion_lease_store.LeaseOperationResult,
-    disposition: grant_control.FinalizeDisposition,
-) -> grant_control.LifecycleEvidence | None:
-    """Translate lifecycle evidence from one neutral release result."""
-    if disposition is grant_control.FinalizeDisposition.APPLIED:
-        if not isinstance(result.durable_failing, bool):
-            msg = "retained SID release lacks lifecycle evidence"
-            raise grant_control.GrantControlIntegrityError(msg)
-        return _lifecycle(durable_failing=result.durable_failing)
-    if result.durable_failing is not None:
-        msg = "lost SID release returned lifecycle evidence"
-        raise grant_control.GrantControlIntegrityError(msg)
-    return None
 
 
 class SidGrantControl:
@@ -221,7 +198,6 @@ class SidGrantControl:
                 grant_control.ClaimedGrant(
                     grant=claim.grant,
                     payload=payload,
-                    lifecycle=_lifecycle(durable_failing=claim.durable_failing),
                 )
             )
         return tuple(translated)
@@ -269,7 +245,6 @@ class SidGrantControl:
                 raise grant_control.GrantControlIntegrityError(msg)
             seen.add(result.grant)
 
-            lifecycle = None
             if (
                 result.disposition
                 is ingestion_lease_store.LeaseOperationDisposition.APPLIED
@@ -293,7 +268,6 @@ class SidGrantControl:
                 grant_control.GrantHeartbeat(
                     grant=result.grant,
                     disposition=disposition,
-                    lifecycle=lifecycle,
                 )
             )
         return tuple(translated)
@@ -334,11 +308,7 @@ class SidGrantControl:
                 msg = "SID release returned an invalid result type"
                 raise grant_control.GrantControlIntegrityError(msg)
             disposition = _finalize_disposition(result.disposition)
-            return grant_control.FinalizeResult(
-                grant,
-                disposition,
-                _released_lifecycle(result, disposition),
-            )
+            return grant_control.FinalizeResult(grant, disposition)
 
         if isinstance(terminal, grant_control.BudgetedFailureDecision):
             action: ingestion_lease_store.LeaseFailureAction = (
@@ -372,9 +342,4 @@ class SidGrantControl:
             msg = "non-budgeted SID failure cannot quarantine"
             raise grant_control.GrantControlIntegrityError(msg)
         disposition = _finalize_disposition(result.disposition)
-        lifecycle = (
-            grant_control.LifecycleEvidence(durable_failing=True)
-            if disposition is grant_control.FinalizeDisposition.APPLIED
-            else None
-        )
-        return grant_control.FinalizeResult(grant, disposition, lifecycle)
+        return grant_control.FinalizeResult(grant, disposition)
