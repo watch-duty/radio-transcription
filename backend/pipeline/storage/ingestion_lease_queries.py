@@ -215,6 +215,131 @@ LEFT JOIN released
 """
 
 
+FINALIZE_BUDGETED_FAILURE_SQL = """\
+WITH current_state AS MATERIALIZED (
+    SELECT
+        source_type,
+        lease_key,
+        status,
+        worker_id,
+        fencing_token,
+        failure_count,
+        CASE
+            -- POWER(double precision, 1024) overflows. A NULL multiplier
+            -- means every finite caller cap has already been reached.
+            WHEN failure_count < 1024 THEN POWER(
+                2::double precision,
+                failure_count::double precision
+            )
+        END AS backoff_multiplier
+    FROM public.ingestion_leases
+    WHERE source_type = $1
+      AND lease_key = $2
+    FOR NO KEY UPDATE
+),
+updated AS (
+    UPDATE public.ingestion_leases AS leases
+    SET status = CASE
+            WHEN leases.failure_count + 1 >= $5
+                THEN 'quarantined'::public.feed_status
+            ELSE 'failing'::public.feed_status
+        END,
+        worker_id = NULL,
+        last_heartbeat = NULL,
+        failure_count = leases.failure_count + 1,
+        retry_after = CASE
+            WHEN leases.failure_count + 1 >= $5 THEN NULL
+            ELSE NOW()
+                + INTERVAL '1 second' * CASE
+                    -- Compare before multiplying so the configured cap is
+                    -- preserved without evaluating an overflowing product.
+                    WHEN current_state.backoff_multiplier IS NULL
+                      OR current_state.backoff_multiplier >=
+                          $7::double precision / $6::double precision
+                        THEN $7::double precision
+                    ELSE $6::double precision
+                        * current_state.backoff_multiplier
+                END
+                + (RANDOM() * INTERVAL '10 seconds')
+        END,
+        status_reason = $8,
+        status_reason_detail = $9,
+        updated_at = NOW()
+    FROM current_state
+    WHERE leases.source_type = current_state.source_type
+      AND leases.lease_key = current_state.lease_key
+      AND current_state.status = 'active'::public.feed_status
+      AND current_state.worker_id = $3
+      AND current_state.fencing_token = $4
+    RETURNING
+        leases.source_type,
+        leases.lease_key,
+        leases.status
+)
+SELECT
+    current_state.source_type,
+    current_state.lease_key,
+    current_state.status::text AS status,
+    current_state.worker_id,
+    current_state.fencing_token,
+    updated.status::text AS final_status,
+    updated.source_type IS NOT NULL AS applied
+FROM current_state
+LEFT JOIN updated
+  ON updated.source_type = current_state.source_type
+ AND updated.lease_key = current_state.lease_key
+"""
+
+
+FINALIZE_NON_BUDGETED_FAILURE_SQL = """\
+WITH current_state AS MATERIALIZED (
+    SELECT
+        source_type,
+        lease_key,
+        status,
+        worker_id,
+        fencing_token
+    FROM public.ingestion_leases
+    WHERE source_type = $1
+      AND lease_key = $2
+    FOR NO KEY UPDATE
+),
+updated AS (
+    UPDATE public.ingestion_leases AS leases
+    SET status = 'failing'::public.feed_status,
+        worker_id = NULL,
+        last_heartbeat = NULL,
+        failure_count = 0,
+        retry_after = $5,
+        status_reason = $6,
+        status_reason_detail = $7,
+        updated_at = NOW()
+    FROM current_state
+    WHERE leases.source_type = current_state.source_type
+      AND leases.lease_key = current_state.lease_key
+      AND current_state.status = 'active'::public.feed_status
+      AND current_state.worker_id = $3
+      AND current_state.fencing_token = $4
+    RETURNING
+        leases.source_type,
+        leases.lease_key,
+        leases.status
+)
+SELECT
+    current_state.source_type,
+    current_state.lease_key,
+    current_state.status::text AS status,
+    current_state.worker_id,
+    current_state.fencing_token,
+    updated.status::text AS final_status,
+    updated.source_type IS NOT NULL AS applied
+FROM current_state
+LEFT JOIN updated
+  ON updated.source_type = current_state.source_type
+ AND updated.lease_key = current_state.lease_key
+"""
+
+
 LOCK_LEASE_SQL = """\
 SELECT
     source_type,
