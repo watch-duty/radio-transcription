@@ -996,12 +996,12 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(kwargs.get("project"), "test-project")
             self.assertEqual(kwargs.get("location"), "us-test")
 
-            # Verify retry options are explicitly set to 5 attempts and timeout is default
+            # Verify retry options are set to 3 attempts and default timeout.
             http_options = kwargs.get("http_options")
             self.assertIsNotNone(http_options)
-            self.assertEqual(http_options.timeout, 120000)
+            self.assertEqual(http_options.timeout, 30000)
             self.assertIsNotNone(http_options.retry_options)
-            self.assertEqual(http_options.retry_options.attempts, 5)
+            self.assertEqual(http_options.retry_options.attempts, 3)
 
     def test_gemini_transcriber_setup_custom_retry(self) -> None:
         """Verifies that the Gemini transcriber initializes the GenAI client with custom retry options."""
