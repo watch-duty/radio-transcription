@@ -12,7 +12,10 @@ import ListItem from '@mui/material/ListItem';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import { type TranscriptAnnotationData } from '@transcription/common';
+import {
+  AudioClassification,
+  type TranscriptAnnotationData,
+} from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
@@ -72,6 +75,22 @@ export function TranscriptRow({
   const isSilence = !!audioSegment.isSilenceBundle;
   const isOutage = !!audioSegment.isOutageBundle;
 
+  const transcriptAnnotation = findTranscriptAnnotationData(
+    audioSegment.annotations
+  );
+
+  const hasErrors = transcriptAnnotation
+    ? transcriptAnnotation.errors.length > 0
+    : false;
+  const isWaiting = !isSilence && !isOutage && !transcriptAnnotation;
+  const isMissingTextButSpeech =
+    !!transcriptAnnotation &&
+    !transcriptAnnotation.text &&
+    audioSegment.classification === AudioClassification.SPEECH &&
+    !hasErrors;
+  const isPlaceholder =
+    isSilence || isWaiting || hasErrors || isOutage || isMissingTextButSpeech;
+
   function renderTranscriptionText(
     transcriptAnnotation: TranscriptAnnotationData | null
   ): string {
@@ -91,18 +110,12 @@ export function TranscriptRow({
       return '[Transcription failed]';
     }
 
+    if (isMissingTextButSpeech) {
+      return '[Possible speech detected. No transcription available]';
+    }
+
     return transcriptAnnotation.text;
   }
-
-  const transcriptAnnotation = findTranscriptAnnotationData(
-    audioSegment.annotations
-  );
-
-  const hasErrors = transcriptAnnotation
-    ? transcriptAnnotation.errors.length > 0
-    : false;
-  const isWaiting = !isSilence && !isOutage && !transcriptAnnotation;
-  const isPlaceholder = isSilence || isWaiting || hasErrors || isOutage;
 
   const evaluationAnnotation = findEvaluationAnnotationData(
     audioSegment.annotations
@@ -342,10 +355,7 @@ export function TranscriptRow({
               transition: 'filter 0.3s ease, opacity 0.3s ease',
               filter: redactTranscripts ? 'blur(6px)' : 'none',
               opacity: redactTranscripts ? 0.6 : 1,
-              fontStyle:
-                isSilence || isWaiting || hasErrors || isOutage
-                  ? 'italic'
-                  : 'normal',
+              fontStyle: isPlaceholder ? 'italic' : 'normal',
             }}
           >
             {isPlaceholder ? (
