@@ -15,7 +15,6 @@ jobs:
       should_run: ${{ steps.check.outputs.should_run }}
       requires_backend: ${{ steps.filter.outputs.requires_backend }}
       requires_model: ${{ steps.filter.outputs.requires_model }}
-      requires_terraform: ${{ steps.filter.outputs.requires_terraform }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -66,13 +65,6 @@ jobs:
             echo "requires_model=true" >> $GITHUB_OUTPUT
           else
             echo "requires_model=false" >> $GITHUB_OUTPUT
-          fi
-
-          # 4. Filter C: requires_terraform. If any modified file touches terraform/ or .github/workflows/, we require terraform validation.
-          if echo "$FILES" | grep -qE '^(terraform/|\.github/workflows/)'; then
-            echo "requires_terraform=true" >> $GITHUB_OUTPUT
-          else
-            echo "requires_terraform=false" >> $GITHUB_OUTPUT
           fi
       - name: Validate merge with main (fail fast on conflicts)
         if: steps.check.outputs.should_run == 'true'
