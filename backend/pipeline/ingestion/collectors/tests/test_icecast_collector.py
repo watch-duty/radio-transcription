@@ -448,6 +448,88 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertAlmostEqual(chunks[1].stream_interval_lag_sec, 5.0, places=3)
 
     @patch(
+        "backend.pipeline.ingestion.collectors"
+        ".icecast.icecast_collector._now_utc"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors"
+        ".icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_stream_interval_lag_triggers_timeline_re_anchor(
+        self, mock_create_ffmpeg: AsyncMock, mock_now: MagicMock
+    ) -> None:
+        """If interval lag exceeds threshold (5s), the stream anchor is moved
+        forward to re-align subsequent chunks to real-time.
+        """
+        anchor = datetime.datetime(2026, 4, 22, 12, 0, 0, tzinfo=datetime.UTC)
+        seg0_receipt = anchor + datetime.timedelta(seconds=15)
+        # 30-second gap before segment 1 (chunk duration is 15s, so
+        # interval is 45s and lag is 30s)
+        seg1_receipt = seg0_receipt + datetime.timedelta(seconds=45)
+        # segment 2 arrives normally 15s after segment 1
+        seg2_receipt = seg1_receipt + datetime.timedelta(seconds=15)
+
+        # Calls to _now_utc:
+        # 1. capture start anchor
+        # 2. seg0 receipt_time
+        # 3. seg1 receipt_time
+        # 4. seg2 receipt_time
+        # 5. seg2 process_done clamp
+        mock_now.side_effect = [
+            anchor,
+            seg0_receipt,
+            seg1_receipt,
+            seg2_receipt,
+            seg2_receipt,
+        ]
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=7,
+            segments=[
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+            ],
+            wait_delay=0.05,
+            wait_result=0,
+        )
+
+        feed = _make_feed("reanchor-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_resources_with_probe_status(200, reason="OK"),
+        )
+        chunks = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(chunks), 3)
+
+        # Chunk 0: normal
+        self.assertEqual(chunks[0].chunk_start_time, anchor)
+        self.assertEqual(chunks[0].chunk_end_time, seg0_receipt)
+        self.assertIsNone(chunks[0].stream_interval_lag_sec)
+
+        # Chunk 1: lag is 30s (exceeds 5s threshold)
+        # It should trigger re-anchoring.
+        # Adjusted start time: 12:00:45 (receipt_time 12:01:00 - 15s duration)
+        # Adjusted end time: 12:01:00
+        self.assertEqual(chunks[1].stream_interval_lag_sec, 30.0)
+        expected_start1 = anchor + datetime.timedelta(seconds=45)
+        self.assertEqual(chunks[1].chunk_start_time, expected_start1)
+        self.assertEqual(chunks[1].chunk_end_time, seg1_receipt)
+
+        # Chunk 2: normal, calculated relative to new anchor
+        # Start time should be contiguous with Chunk 1's end time: 12:01:00
+        # End time: 12:01:15 (matching seg2_receipt)
+        self.assertEqual(chunks[2].stream_interval_lag_sec, 0.0)
+        expected_start2 = anchor + datetime.timedelta(seconds=60)
+        self.assertEqual(chunks[2].chunk_start_time, expected_start2)
+        self.assertEqual(chunks[2].chunk_end_time, seg2_receipt)
+
+    @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )

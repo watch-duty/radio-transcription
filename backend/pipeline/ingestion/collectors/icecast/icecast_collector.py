@@ -467,7 +467,7 @@ async def _process_finalized_segment(
     session_id: str,
     feed_id: Any,
     feed_name: Any,
-) -> tuple[CapturedChunk | None, datetime.datetime, int]:
+) -> tuple[CapturedChunk | None, datetime.datetime, int, datetime.datetime]:
     """Processes a finalized PCM segment on disk into a decodable FLAC CapturedChunk.
 
     Args:
@@ -505,7 +505,36 @@ async def _process_finalized_segment(
             if previous_receipt_time is None
             else previous_receipt_time,
             updated_cumulative_samples,
+            stream_anchor_time,
         )
+
+    stream_interval_lag_sec = None
+    if previous_receipt_time is not None:
+        stream_interval_lag_sec = (
+            receipt_time - previous_receipt_time
+        ).total_seconds() - chunk_duration_sec
+
+        # Detect significant timeline drift (e.g. from ffmpeg internal
+        # reconnect stalls) and re-anchor stream_anchor_time to wall-clock
+        # time to prevent downstream watermark delay.
+        MAX_STREAM_DRIFT_SECS = 5.0
+        if stream_interval_lag_sec > MAX_STREAM_DRIFT_SECS:
+            old_anchor = stream_anchor_time
+            stream_anchor_time = receipt_time - datetime.timedelta(
+                seconds=(cumulative_pcm_samples / SAMPLE_RATE_HZ)
+                + chunk_duration_sec
+            )
+            logger.warning(
+                "Feed %s (%s): Stream interval lag %.2fs exceeds threshold "
+                "%.2fs. Re-anchoring timeline: "
+                "old_anchor=%s, new_anchor=%s",
+                feed_id,
+                feed_name,
+                stream_interval_lag_sec,
+                MAX_STREAM_DRIFT_SECS,
+                old_anchor.isoformat(),
+                stream_anchor_time.isoformat(),
+            )
 
     chunk_start_offset_sec = cumulative_pcm_samples / SAMPLE_RATE_HZ
     chunk_start_time = stream_anchor_time + datetime.timedelta(
@@ -517,12 +546,6 @@ async def _process_finalized_segment(
     if process_done:
         chunk_end_time = min(chunk_end_time, _now_utc())
 
-    stream_interval_lag_sec = None
-    if previous_receipt_time is not None:
-        stream_interval_lag_sec = (
-            receipt_time - previous_receipt_time
-        ).total_seconds() - chunk_duration_sec
-
     chunk = CapturedChunk(
         audio_bytes=segment_bytes,
         chunk_start_time=chunk_start_time,
@@ -531,7 +554,7 @@ async def _process_finalized_segment(
         receipt_time=receipt_time,
         stream_interval_lag_sec=stream_interval_lag_sec,
     )
-    return chunk, receipt_time, updated_cumulative_samples
+    return chunk, receipt_time, updated_cumulative_samples, stream_anchor_time
 
 
 async def _handle_process_done_no_segment(
@@ -834,6 +857,7 @@ async def capture_icecast_stream(
                         chunk,
                         previous_receipt_time,
                         cumulative_pcm_samples,
+                        stream_anchor_time,
                     ) = await _process_finalized_segment(
                         current_segment_pcm=current_segment_pcm,
                         next_index=next_index,
