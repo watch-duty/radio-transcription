@@ -1,7 +1,6 @@
 import type {
   LogicalOperator,
   Rule,
-  RuleConditions,
   RuleCreate,
   RuleUpdate,
   ScopeLevel,
@@ -27,7 +26,13 @@ import {
 
 import { AuthenticatedRequest } from '../authentication.js';
 import { RULES_API_URL } from '../config.js';
-import { HttpError, getServiceClient, handleBackendError } from '../utils.js';
+import {
+  HttpError,
+  getServiceClient,
+  handleBackendError,
+  toCamel,
+  toSnake,
+} from '../utils.js';
 
 interface ScopeResponse {
   level: ScopeLevel;
@@ -86,131 +91,16 @@ interface RuleCreateBackend {
 
 type RuleUpdateBackend = Partial<RuleCreateBackend>;
 
-function convertConditions(conditions: RuleConditionsResponse): RuleConditions {
-  switch (conditions.evaluation_type) {
-    case 'KEYWORD_MATCH':
-      return {
-        evaluationType: conditions.evaluation_type,
-        operator: conditions.operator,
-        keywords: conditions.keywords,
-        caseSensitive: conditions.case_sensitive,
-      };
-    case 'REGEX_MATCH':
-      return {
-        evaluationType: conditions.evaluation_type,
-        expression: conditions.expression,
-        flags: conditions.flags,
-      };
-    case 'RULE_GROUP':
-      return {
-        evaluationType: conditions.evaluation_type,
-        operator: conditions.operator,
-        childRuleIds: conditions.child_rule_ids,
-      };
-  }
-}
-
 function convertRuleResponse(response: RuleResponse): Rule {
-  return {
-    ruleId: response.rule_id,
-    ruleName: response.rule_name,
-    description: response.description,
-    isActive: response.is_active,
-    scope: {
-      level: response.scope.level,
-      targetFeeds: response.scope.target_feeds,
-    },
-    conditions: convertConditions(response.conditions),
-    tags: response.tags,
-    metadata: {
-      createdBy: response.metadata.created_by,
-      createdAt: response.metadata.created_at,
-      updatedAt: response.metadata.updated_at,
-    },
-  };
+  return toCamel<Rule>(response);
 }
 
 function convertRuleCreate(create: RuleCreate): RuleCreateBackend {
-  let conditions: RuleConditionsResponse;
-  switch (create.conditions.evaluationType) {
-    case 'KEYWORD_MATCH':
-      conditions = {
-        evaluation_type: 'KEYWORD_MATCH',
-        operator: create.conditions.operator,
-        keywords: create.conditions.keywords,
-        case_sensitive: create.conditions.caseSensitive,
-      };
-      break;
-    case 'REGEX_MATCH':
-      conditions = {
-        evaluation_type: 'REGEX_MATCH',
-        expression: create.conditions.expression,
-        flags: create.conditions.flags,
-      };
-      break;
-    case 'RULE_GROUP':
-      conditions = {
-        evaluation_type: 'RULE_GROUP',
-        operator: create.conditions.operator,
-        child_rule_ids: create.conditions.childRuleIds,
-      };
-      break;
-  }
-
-  return {
-    rule_name: create.ruleName,
-    description: create.description,
-    is_active: create.isActive,
-    scope: {
-      level: create.scope.level,
-      target_feeds: create.scope.targetFeeds,
-    },
-    conditions: conditions,
-    tags: create.tags,
-  };
+  return toSnake<RuleCreateBackend>(create);
 }
 
 function convertRuleUpdate(update: RuleUpdate): RuleUpdateBackend {
-  const result: RuleUpdateBackend = {};
-  if (update.ruleName !== undefined) result.rule_name = update.ruleName;
-  if (update.description !== undefined) result.description = update.description;
-  if (update.isActive !== undefined) result.is_active = update.isActive;
-  if (update.scope !== undefined) {
-    result.scope = {
-      level: update.scope.level,
-      target_feeds: update.scope.targetFeeds,
-    };
-  }
-  if (update.conditions !== undefined) {
-    let conditions: RuleConditionsResponse;
-    switch (update.conditions.evaluationType) {
-      case 'KEYWORD_MATCH':
-        conditions = {
-          evaluation_type: 'KEYWORD_MATCH',
-          operator: update.conditions.operator,
-          keywords: update.conditions.keywords,
-          case_sensitive: update.conditions.caseSensitive,
-        };
-        break;
-      case 'REGEX_MATCH':
-        conditions = {
-          evaluation_type: 'REGEX_MATCH',
-          expression: update.conditions.expression,
-          flags: update.conditions.flags,
-        };
-        break;
-      case 'RULE_GROUP':
-        conditions = {
-          evaluation_type: 'RULE_GROUP',
-          operator: update.conditions.operator,
-          child_rule_ids: update.conditions.childRuleIds,
-        };
-        break;
-    }
-    result.conditions = conditions;
-  }
-  if (update.tags !== undefined) result.tags = update.tags;
-  return result;
+  return toSnake<RuleUpdateBackend>(update);
 }
 
 export class ListRulesQueryParams {
