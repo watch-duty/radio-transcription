@@ -1073,6 +1073,8 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
         cases = (
             _member_row(source_feed_id=None),
             _member_row(feed_source_type="openmhz"),
+            _member_row(property_source_type="future_source"),
+            _member_row(feed_source_type="future_source"),
             _member_row(group_id=None),
             _member_row(feed_source_type=None),
             _member_row(feed_id=None),
@@ -1083,11 +1085,11 @@ class TestLoadMembership(unittest.IsolatedAsyncioTestCase):
             with self.subTest(case_index=case_index):
                 pool = connection_util.make_mock_pool(transaction=True)
                 connection = pool.acquired_connection
-                connection.fetchrow.return_value = _lease_row()
+                connection.fetchrow.return_value = _lease_row(lease_key="00123")
                 connection.fetch.return_value = [row]
                 store = ingestion_lease_store.IngestionLeaseStore(pool)
 
-                result = await store.load_membership(_grant())
+                result = await store.load_membership(_grant("00123"))
 
                 self.assertIsInstance(
                     result,

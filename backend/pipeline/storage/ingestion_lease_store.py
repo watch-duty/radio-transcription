@@ -1154,9 +1154,8 @@ def _membership_identity_from_row(
     try:
         property_source = feed_store.SourceType(property_source_raw)
         feed_source = feed_store.SourceType(feed_source_raw)
-    except ValueError as error:
-        msg = "membership row contains an unknown source binding"
-        raise ValueError(msg) from error
+    except ValueError:
+        return MembershipInvariantViolation(grant)
     if (
         property_source is not grant.source_type
         or feed_source is not property_source
