@@ -442,7 +442,20 @@ def _child_audit_action(
     plan: _PlannedChildMutation,
     after_state: _AuditedChildState,
 ) -> str | None:
-    """Select a canonical action from the locked before and returned after."""
+    """Select the canonical audit action for one actual child update.
+
+    Args:
+        plan: Mutation plan containing the locked Feed before-state.
+        after_state: Audited Feed state returned by the corresponding DML.
+
+    Returns:
+        The lifecycle audit action to insert, or ``None`` when the update is
+        lifecycle-neutral or does not cross an audited transition boundary.
+
+    Raises:
+        ValueError: The updated plan lacks locked state or a committed failure
+            returns a lifecycle state that its command cannot produce.
+    """
     if isinstance(plan.mutation, ClosedCohortProgress):
         return None
     before_state = plan.before_state
@@ -566,6 +579,23 @@ def _build_child_audit_rowset(
     properties_by_id: dict[uuid.UUID, collections.abc.Mapping],
     actor_id: str,
 ) -> _ChildAuditRowset:
+    """Build one revision-checked audit rowset in deterministic Feed order.
+
+    Args:
+        candidates: Planned mutations paired with their selected audit action.
+        updated_by_feed_id: Audited DML after-state keyed by Feed UUID.
+        properties_by_id: Locked canonical Feed properties keyed by Feed UUID.
+        actor_id: Validated durable actor written to every audit event.
+
+    Returns:
+        Immutable parallel audit columns sorted by Feed UUID.
+
+    Raises:
+        TypeError: A property or state value cannot be encoded in an audit
+            snapshot.
+        ValueError: Before-state, after-state, property identity, revision, or
+            parallel-rowset cardinality violates the commit invariants.
+    """
     feed_ids: list[uuid.UUID] = []
     actions: list[str] = []
     revisions: list[int] = []
@@ -820,6 +850,18 @@ def _plan_prepared_child_mutation(
     prepared: _PreparedChildMutation,
     before_state: _LockedChildState | None,
 ) -> _PlannedChildMutation:
+    """Plan one validated command against its locked authoritative Feed row.
+
+    Args:
+        prepared: Validated command with normalized storage values.
+        before_state: Locked Feed state, or ``None`` when the target is absent.
+
+    Returns:
+        A rejection or selective write plan derived only from locked state.
+
+    Raises:
+        AssertionError: A command escapes the validated closed mutation union.
+    """
     mutation = prepared.mutation
     if before_state is None:
         return _PlannedChildMutation(

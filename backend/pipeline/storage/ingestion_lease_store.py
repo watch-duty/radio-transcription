@@ -314,6 +314,19 @@ def _member_from_row(
     identity: LeaseMemberIdentity,
     row: collections.abc.Mapping,
 ) -> LeaseMember:
+    """Decode canonical presentation fields for one validated member identity.
+
+    Args:
+        identity: Fail-closed structural identity decoded from the same row.
+        row: Membership projection containing Feed name and progress cursor.
+
+    Returns:
+        The immutable Lease member exposed in a membership snapshot.
+
+    Raises:
+        TypeError: The canonical Feed name is not a string.
+        ValueError: The canonical Feed name is missing or blank.
+    """
     try:
         name = row["feed_name"]
     except KeyError as error:
@@ -977,7 +990,22 @@ class IngestionLeaseStore:
         effect: LeaseEffect,
         before_row: collections.abc.Mapping,
     ) -> bool:
-        """Apply success-proven Lease recovery under the held exact grant."""
+        """Apply success-proven Lease recovery under the held exact grant.
+
+        Args:
+            connection: Transaction connection holding the exact Lease lock.
+            grant: Complete immutable authority matched by that locked row.
+            effect: Validated parent lifecycle effect requested by the batch.
+            before_row: Locked Lease state used to detect meaningful recovery.
+
+        Returns:
+            ``True`` only when dirty lifecycle state was cleared in storage.
+
+        Raises:
+            TypeError: A returned Lease field has an invalid runtime type.
+            ValueError: Recovery does not return the same grant or produces an
+                inconsistent lifecycle or membership revision.
+        """
         if isinstance(effect, NoLeaseEffect):
             return False
         if not _lifecycle_dirty_from_row(before_row):
