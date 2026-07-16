@@ -41,6 +41,24 @@ Reason: local E2E/resource-stack tests can start many containers and emulators,
 including AlloyDB Omni, Pub/Sub, GCS, Redis, and pipeline services. CI runners
 isolate those resource costs.
 
+## Runtime Validation and Trust Seams
+
+Within statically checked monorepo code, trust annotated parameters and domain
+objects whose constructors already enforce their invariants. After verifying
+all legitimate callers, do not add runtime type checks that only repeat an
+annotation, such as `isinstance()` wrappers around enums, UUIDs, or validated
+dataclasses.
+
+- Validate a value once, at the earliest real trust seam.
+- Before adding or removing a runtime check, inspect the repository's callers
+  and identify the untrusted input or invariant that the check protects.
+- Keep constructor validation that establishes a trustworthy domain object.
+- Keep runtime validation for external or untyped inputs, database rows,
+  deserialized data, value ranges, cross-field invariants, canonical identity
+  relationships, authorization, ownership, and fencing.
+- Do not remove substantive domain or authority validation merely because a
+  parameter has a type annotation.
+
 ## Agent Action Standards
 
 Prefer the project's **mise** task runner for standard formatting, linting, and
