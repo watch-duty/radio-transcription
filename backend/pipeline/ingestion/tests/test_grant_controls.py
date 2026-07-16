@@ -716,15 +716,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             actor_id=_ACTOR_ID,
         )
 
-    def _sid_payload(
-        self,
-        grant: ingestion_lease_store.LeaseGrant,
-        *,
-        mode: grant_control.ClaimMode = grant_control.ClaimMode.PRIMARY,
-    ) -> sid_grant_control.SidClaimPayload:
-        return self.control._issue_claim_payload(grant, mode)
-
-    async def test_primary_and_recovery_preserve_order_and_provenance(
+    async def test_primary_and_recovery_preserve_order_and_mode(
         self,
     ) -> None:
         first = _lease_claim("200")
@@ -758,16 +750,12 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             [item.grant for item in primary],
             [first.grant, second.grant],
         )
-        self.assertEqual(
-            [field.name for field in dataclasses.fields(primary[0].payload)],
-            ["claim_mode", "_binding_proof"],
-        )
         self.assertIs(
-            primary[0].payload.claim_mode,
+            primary[0].payload,
             grant_control.ClaimMode.PRIMARY,
         )
         self.assertIs(
-            recovery[0].payload.claim_mode,
+            recovery[0].payload,
             grant_control.ClaimMode.RECOVERY,
         )
         self.assertEqual(
@@ -777,7 +765,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         self.data_store.load_membership.assert_not_awaited()
         self.data_store.commit_child_mutations.assert_not_awaited()
 
-    async def test_sid_claim_payload_provenance_is_bound_to_claim_mode(
+    async def test_claim_mode_is_returned_for_every_claim(
         self,
     ) -> None:
         stale_active = _lease_claim("stale-active")
@@ -802,69 +790,33 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(
             all(
-                claim.payload.claim_mode is grant_control.ClaimMode.RECOVERY
+                claim.payload is grant_control.ClaimMode.RECOVERY
                 for claim in recovered
             )
         )
         self.assertIs(
-            primary[0].payload.claim_mode,
+            primary[0].payload,
             grant_control.ClaimMode.PRIMARY,
         )
-        claim_mode_field = "claim_mode"
-        with self.assertRaises(dataclasses.FrozenInstanceError):
-            setattr(
-                primary[0].payload,
-                claim_mode_field,
-                grant_control.ClaimMode.RECOVERY,
-            )
 
-    async def test_sid_claim_payload_rejects_forged_and_crossed_before_io(
+    async def test_finalize_rejects_non_claim_mode_before_io(
         self,
     ) -> None:
         grant = _lease_grant("exact", fencing_token=9)
-        crossed_grant = _lease_grant("crossed", fencing_token=10)
-        payload = self._sid_payload(
-            grant,
-            mode=grant_control.ClaimMode.RECOVERY,
-        )
-        forged = sid_grant_control.SidClaimPayload(
-            payload.claim_mode,
-        )
-        copied = dataclasses.replace(payload)
         terminal = grant_control.NeutralRelease()
 
-        for case_index, (candidate_grant, candidate_payload) in enumerate(
-            (
-                (grant, forged),
-                (grant, copied),
-                (crossed_grant, payload),
-            )
-        ):
-            with self.subTest(case_index=case_index):
-                with self.assertRaises(
-                    grant_control.GrantControlIntegrityError
-                ):
+        for candidate_payload in (None, 7, "primary"):
+            with self.subTest(payload=candidate_payload):
+                with self.assertRaises(TypeError):
                     await self.control.finalize(
-                        candidate_grant,
-                        candidate_payload,
+                        grant,
+                        typing.cast(
+                            "grant_control.ClaimMode",
+                            candidate_payload,
+                        ),
                         terminal,
                     )
 
-        with self.assertRaises(TypeError):
-            await self.control.finalize(
-                grant,
-                typing.cast("sid_grant_control.SidClaimPayload", None),
-                terminal,
-            )
-        with self.assertRaises(TypeError):
-            await self.control.finalize(
-                grant,
-                typing.cast(
-                    "sid_grant_control.SidClaimPayload",
-                    object(),
-                ),
-                terminal,
-            )
         self.data_store.release.assert_not_awaited()
         self.data_store.finalize_failure.assert_not_awaited()
 
@@ -958,7 +910,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
 
         result = await self.control.finalize(
             grant,
-            self._sid_payload(grant),
+            grant_control.ClaimMode.PRIMARY,
             grant_control.NeutralRelease(),
         )
 
@@ -991,14 +943,14 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         ):
             budgeted = await self.control.finalize(
                 grant,
-                self._sid_payload(grant),
+                grant_control.ClaimMode.PRIMARY,
                 _budgeted_plan(),
             )
             budgeted_call = self.data_store.finalize_failure.await_args
             self.data_store.finalize_failure.reset_mock()
             non_budgeted = await self.control.finalize(
                 grant,
-                self._sid_payload(grant),
+                grant_control.ClaimMode.PRIMARY,
                 _non_budgeted_plan(),
             )
             non_budgeted_call = self.data_store.finalize_failure.await_args
@@ -1051,7 +1003,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(grant_control.GrantControlIntegrityError):
             await self.control.finalize(
                 grant,
-                self._sid_payload(grant),
+                grant_control.ClaimMode.PRIMARY,
                 _non_budgeted_plan(),
             )
 
@@ -1077,7 +1029,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
 
                 result = await self.control.finalize(
                     grant,
-                    self._sid_payload(grant),
+                    grant_control.ClaimMode.PRIMARY,
                     grant_control.NeutralRelease(),
                 )
 
@@ -1096,7 +1048,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(RuntimeError, "outcome unknown"):
             await self.control.finalize(
                 grant,
-                self._sid_payload(grant),
+                grant_control.ClaimMode.PRIMARY,
                 _budgeted_plan(),
             )
 

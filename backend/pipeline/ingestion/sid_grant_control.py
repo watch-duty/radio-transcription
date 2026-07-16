@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import dataclasses
 import datetime
-import hmac
-import json
-import secrets
 import typing
 import uuid
 
@@ -16,51 +12,6 @@ from backend.pipeline.storage import feed_store, ingestion_lease_store
 _STATUS_INELIGIBLE = (
     ingestion_lease_store.LeaseOperationDisposition.STATUS_INELIGIBLE
 )
-_SID_CLAIM_BINDING_VERSION = "sid-claim-payload-v1"
-_SID_CLAIM_BINDING_KEY = secrets.token_bytes(32)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class SidClaimPayload:
-    """Source-minted immutable provenance for one SID claim.
-
-    Attributes:
-        claim_mode: Admission path that established this generation.
-    """
-
-    claim_mode: grant_control.ClaimMode
-    _binding_proof: bytes = dataclasses.field(
-        default=b"",
-        init=False,
-        repr=False,
-        compare=False,
-    )
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.claim_mode, grant_control.ClaimMode):
-            msg = "claim_mode must be a ClaimMode"
-            raise TypeError(msg)
-
-
-def _sid_claim_binding_proof(
-    grant: ingestion_lease_store.LeaseGrant,
-    payload: SidClaimPayload,
-) -> bytes:
-    """Bind exact claim provenance to one complete grant in this process."""
-    message = json.dumps(
-        (
-            _SID_CLAIM_BINDING_VERSION,
-            grant.source_type.value,
-            grant.lease_key,
-            str(grant.owner_worker_id),
-            grant.fencing_token,
-            payload.claim_mode.value,
-            id(payload),
-        ),
-        ensure_ascii=True,
-        separators=(",", ":"),
-    ).encode("ascii")
-    return hmac.digest(_SID_CLAIM_BINDING_KEY, message, "sha256")
 
 
 def _finalize_disposition(
@@ -112,20 +63,6 @@ class SidGrantControl:
         self._abandonment_window = abandonment_window
         self._actor_id = actor_id
 
-    @staticmethod
-    def _issue_claim_payload(
-        grant: ingestion_lease_store.LeaseGrant,
-        mode: grant_control.ClaimMode,
-    ) -> SidClaimPayload:
-        """Mint the sole source-owned immutable provenance object."""
-        payload = SidClaimPayload(mode)
-        object.__setattr__(
-            payload,
-            "_binding_proof",
-            _sid_claim_binding_proof(grant, payload),
-        )
-        return payload
-
     async def claim(
         self,
         mode: grant_control.ClaimMode,
@@ -134,7 +71,7 @@ class SidGrantControl:
     ) -> tuple[
         grant_control.ClaimedGrant[
             ingestion_lease_store.LeaseGrant,
-            SidClaimPayload,
+            grant_control.ClaimMode,
         ],
         ...,
     ]:
@@ -185,33 +122,13 @@ class SidGrantControl:
                 msg = "SID claim returned an unexpected grant identity"
                 raise grant_control.GrantControlIntegrityError(msg)
             seen.add(claim.grant)
-            payload = self._issue_claim_payload(
-                claim.grant,
-                mode,
-            )
             translated.append(
                 grant_control.ClaimedGrant(
                     grant=claim.grant,
-                    payload=payload,
+                    payload=mode,
                 )
             )
         return tuple(translated)
-
-    def _validate_claim_payload(
-        self,
-        grant: ingestion_lease_store.LeaseGrant,
-        payload: SidClaimPayload,
-    ) -> None:
-        """Validate one exact source-issued claim correlation."""
-        if (
-            grant.source_type is not self._source_type
-            or not hmac.compare_digest(
-                payload._binding_proof,  # noqa: SLF001
-                _sid_claim_binding_proof(grant, payload),
-            )
-        ):
-            msg = "SID finalization payload crossed its complete grant"
-            raise grant_control.GrantControlIntegrityError(msg)
 
     async def heartbeat(
         self,
@@ -268,15 +185,15 @@ class SidGrantControl:
     async def finalize(
         self,
         grant: ingestion_lease_store.LeaseGrant,
-        payload: SidClaimPayload,
+        payload: grant_control.ClaimMode,
         terminal: grant_control.TerminalDecision,
     ) -> grant_control.FinalizeResult[ingestion_lease_store.LeaseGrant]:
         """Execute one exact Lease release or selected failure action."""
         if not isinstance(grant, ingestion_lease_store.LeaseGrant):
             msg = "grant must be a LeaseGrant"
             raise TypeError(msg)
-        if type(payload) is not SidClaimPayload:
-            msg = "payload must be an exact SidClaimPayload"
+        if not isinstance(payload, grant_control.ClaimMode):
+            msg = "payload must be a ClaimMode"
             raise TypeError(msg)
         if not isinstance(
             terminal,
@@ -287,7 +204,6 @@ class SidGrantControl:
         ):
             msg = "terminal must be a closed TerminalDecision"
             raise TypeError(msg)
-        self._validate_claim_payload(grant, payload)
 
         if isinstance(terminal, grant_control.NeutralRelease):
             result = await self._data_store.release(grant)
