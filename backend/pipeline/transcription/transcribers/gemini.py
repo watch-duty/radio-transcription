@@ -2,7 +2,6 @@
 
 import dataclasses
 import mimetypes
-import socket
 
 import httpx
 import pydantic
@@ -122,19 +121,10 @@ class GeminiTranscriber(base.Transcriber):
 
     def setup(self) -> None:
         """Instantiate the GenAI API client with a robust retry policy."""
-        socket_options = [
-            (socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1),
-        ]
-        if hasattr(socket, "TCP_KEEPIDLE"):
-            socket_options.append((socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60))
-        if hasattr(socket, "TCP_KEEPINTVL"):
-            socket_options.append(
-                (socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
-            )
-        if hasattr(socket, "TCP_KEEPCNT"):
-            socket_options.append((socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3))
-
-        transport = httpx.AsyncHTTPTransport(socket_options=socket_options)
+        timeout = httpx.Timeout(
+            timeout=self.config.client_timeout_ms / 1000.0,
+            connect=10.0,
+        )
 
         self.client = genai.Client(
             enterprise=True,
@@ -142,7 +132,7 @@ class GeminiTranscriber(base.Transcriber):
             location=self.location,
             http_options=types.HttpOptions(
                 timeout=self.config.client_timeout_ms,
-                async_client_args={"transport": transport},
+                async_client_args={"timeout": timeout},
                 retry_options=types.HttpRetryOptions(
                     attempts=self.config.retry_attempts,
                     initial_delay=self.config.retry_initial_delay,
