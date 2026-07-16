@@ -3,6 +3,7 @@
 import os
 import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -300,14 +301,18 @@ async def test_dry_run_rule(
 
     # 1. Seed actual data into the database via the Audio Segments API
     segment_id = str(uuid.uuid4())
+    now = datetime.now(UTC)
+    start_ts = now.isoformat()
+    end_ts = (now + timedelta(minutes=1)).isoformat()
+
     await audio_client.post(
         "/audio_segments",
         json={
             "id": segment_id,
             "feed_id": feed_id,
             "classification": "SPEECH",
-            "start_timestamp": "2026-01-01T10:00:00Z",
-            "end_timestamp": "2026-01-01T10:01:00Z",
+            "start_timestamp": start_ts,
+            "end_timestamp": end_ts,
             "missing_prior_context": False,
             "missing_post_context": False,
             "source_audio_uris": ["gs://bucket/audio1.ogg"],
