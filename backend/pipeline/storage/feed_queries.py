@@ -154,6 +154,7 @@ RENEW_HEARTBEATS_BATCH_DIAGNOSTIC_SQL = """\
 WITH current_state AS (
     SELECT id, worker_id, status, last_heartbeat
     FROM feeds WHERE id = ANY($1::uuid[])
+    ORDER BY id
     FOR UPDATE
 ),
 do_update AS (

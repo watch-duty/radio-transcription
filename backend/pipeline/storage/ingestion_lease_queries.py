@@ -695,11 +695,22 @@ updated AS (
             WHEN NOT input.is_budgeted THEN input.retry_after
             WHEN feeds.failure_count + 1 >= input.failure_threshold THEN NULL
             ELSE NOW()
-                + LEAST(
-                    input.backoff_max_sec * INTERVAL '1 second',
-                    input.backoff_base_sec * INTERVAL '1 second'
-                        * POWER(2, feeds.failure_count)
-                )
+                + INTERVAL '1 second' * CASE
+                    -- Cap before multiplying so neither POWER nor the
+                    -- resulting interval can overflow.
+                    WHEN feeds.failure_count >= 1024
+                        THEN input.backoff_max_sec::double precision
+                    WHEN POWER(
+                        2::double precision,
+                        feeds.failure_count::double precision
+                    ) >= input.backoff_max_sec::double precision
+                        / input.backoff_base_sec::double precision
+                        THEN input.backoff_max_sec::double precision
+                    ELSE input.backoff_base_sec::double precision * POWER(
+                        2::double precision,
+                        feeds.failure_count::double precision
+                    )
+                END
                 + (RANDOM() * INTERVAL '10 seconds')
         END,
         status_reason = input.status_reason,

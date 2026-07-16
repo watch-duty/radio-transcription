@@ -815,6 +815,23 @@ class TestChildMutationQueryContract(unittest.TestCase):
         ):
             self.assertNotIn(legacy_authority, sql)
 
+    def test_failure_rowset_caps_backoff_before_multiplication(self) -> None:
+        sql = _normalized_sql(ingestion_lease_queries.APPLY_FEED_FAILURES_SQL)
+
+        self.assertIn("WHEN feeds.failure_count >= 1024", sql)
+        self.assertIn("INTERVAL '1 second' * CASE", sql)
+        self.assertIn(
+            "input.backoff_max_sec::double precision / "
+            "input.backoff_base_sec::double precision",
+            sql,
+        )
+        self.assertIn(
+            "POWER( 2::double precision, "
+            "feeds.failure_count::double precision )",
+            sql,
+        )
+        self.assertNotIn("POWER(2, feeds.failure_count)", sql)
+
     def test_lease_recovery_clears_evidence_under_exact_grant(self) -> None:
         sql = _normalized_sql(
             ingestion_lease_queries.FINALIZE_LEASE_RECOVERY_SQL

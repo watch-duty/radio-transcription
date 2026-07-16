@@ -1491,6 +1491,49 @@ async def test_budgeted_failure_threshold_quarantines_retained_count(
     assert events_after[0]["after_failure_count"] == 5
 
 
+async def test_budgeted_failure_caps_backoff_before_power_overflow(
+    ingestion_lease_pool: asyncpg.Pool,
+) -> None:
+    sid = _unique_digits()
+    await _insert_lease(ingestion_lease_pool, sid)
+    store = ingestion_lease_store.IngestionLeaseStore(ingestion_lease_pool)
+    grant = await _claim_exact(store, sid, uuid.uuid4())
+    member = await _insert_member(
+        ingestion_lease_pool,
+        grant,
+        status="failing",
+        cursor=_BASE_CURSOR,
+        failure_count=1024,
+        status_reason=(
+            feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID.value
+        ),
+    )
+    failure = ingestion_lease_store.FeedFailureTransition(
+        member=member,
+        action=ingestion_lease_store.BudgetedFailure(
+            failure_threshold=2048,
+            backoff_base_sec=15,
+            backoff_max_sec=600,
+        ),
+        status_reason=(
+            feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID
+        ),
+        reason="overflow boundary",
+        completion_cursor=None,
+    )
+
+    result = await _commit(store, grant, _batch(failure))
+    feed_after = await _fetch_feed(ingestion_lease_pool, member.feed_id)
+
+    assert isinstance(result, ingestion_lease_store.BatchCommitted)
+    assert result.children[0].disposition is (
+        ingestion_lease_store.ChildDisposition.COMMITTED
+    )
+    assert feed_after["status"] == "failing"
+    assert feed_after["failure_count"] == 1025
+    assert feed_after["retry_after"] is not None
+
+
 @pytest.mark.parametrize(
     "boundary_kind",
     [
@@ -1605,10 +1648,8 @@ async def test_repeated_boundary_invocation_uses_command_semantics(  # noqa: PLR
     else:
         assert feed_after_first["audit_revision"] == 1
         assert feed_after_second["audit_revision"] == 2
-        assert [event["feed_revision"] for event in events_after_second] == [
-            1,
-            2,
-        ]
+        assert events_after_second == events_after_first
+        assert [event["feed_revision"] for event in events_after_second] == [1]
         assert events_after_first[0]["before_status"] == "failing"
         assert (
             events_after_first[0]["before_failure_count"]
@@ -1621,15 +1662,10 @@ async def test_repeated_boundary_invocation_uses_command_semantics(  # noqa: PLR
             assert feed_after_first["retry_after"] is not None
             assert events_after_first[0]["after_status"] == "failing"
             assert events_after_first[0]["after_failure_count"] == 1
-            assert events_after_second[1]["before_failure_count"] == 1
-            assert events_after_second[1]["after_failure_count"] == 2
             assert feed_after_first["status_reason"] == (
                 feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID.value
             )
-            assert [event["action"] for event in events_after_second] == [
-                "feed.failure_reported",
-                "feed.failure_reported",
-            ]
+            assert events_after_second[0]["action"] == "feed.failure_reported"
         else:
             assert requested_retry_after is not None
             assert feed_after_first["status"] == "failing"
@@ -1639,15 +1675,10 @@ async def test_repeated_boundary_invocation_uses_command_semantics(  # noqa: PLR
             assert feed_after_second["retry_after"] == requested_retry_after
             assert events_after_first[0]["after_status"] == "failing"
             assert events_after_first[0]["after_failure_count"] == 0
-            assert events_after_second[1]["before_failure_count"] == 0
-            assert events_after_second[1]["after_failure_count"] == 0
             assert feed_after_first["status_reason"] == (
                 feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR.value
             )
-            assert [event["action"] for event in events_after_second] == [
-                "feed.failure_reported",
-                "feed.failure_reported",
-            ]
+            assert events_after_second[0]["action"] == "feed.failure_reported"
 
 
 async def _insert_conflicting_audit_event(
