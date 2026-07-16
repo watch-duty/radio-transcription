@@ -250,6 +250,19 @@ def _membership_identity_from_row(
     grant: LeaseGrant,
     row: collections.abc.Mapping,
 ) -> LeaseMemberIdentity | MembershipInvariantViolation:
+    """Decode immutable member identity with fail-closed domain checks.
+
+    Args:
+        grant: Exact Lease authority whose source and key own the membership.
+        row: One authoritative membership query row.
+
+    Returns:
+        A decoded immutable identity, or ``MembershipInvariantViolation`` when
+        Feed/source/SID/group values are malformed, unknown, or inconsistent.
+
+    Raises:
+        KeyError: The query row omits a required projected column.
+    """
     feed_id = row["feed_id"]
     source_feed_id = row["source_feed_id"]
     sid = row["sid"]
@@ -828,6 +841,22 @@ class IngestionLeaseStore:
         membership_revision: int,
         rows: collections.abc.Sequence[collections.abc.Mapping],
     ) -> MembershipSnapshot | MembershipInvariantViolation:
+        """Decode one authoritative membership page under the held lock.
+
+        Args:
+            grant: Exact active Lease authority for the loaded page.
+            membership_revision: Validated parent revision for the snapshot.
+            rows: Authoritative membership rows in routing order.
+
+        Returns:
+            A frozen eligible snapshot, or ``MembershipInvariantViolation``
+            for empty, duplicate, unknown, or inconsistent membership state.
+
+        Raises:
+            TypeError: A required canonical Feed value has an invalid type.
+            ValueError: A required canonical Feed value is structurally
+                corrupt rather than an expected membership invariant failure.
+        """
         if not rows:
             return MembershipInvariantViolation(grant)
 

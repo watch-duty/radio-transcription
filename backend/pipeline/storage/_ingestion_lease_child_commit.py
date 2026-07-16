@@ -53,15 +53,17 @@ class _PreparedChildMutation:
 class _AuditedChildState:
     """Decoded Feed state shared by locks and audited DML returns."""
 
-    values: collections.abc.Mapping
     feed_id: uuid.UUID
+    name: str
     source_type: feed_store.SourceType
     status: feed_store.FeedStatus
     status_reason: feed_store.FeedStatusReason | None
     failure_count: int
     retry_after: datetime.datetime | None
     status_reason_detail: str | None
+    status_reason_updated_at: datetime.datetime | None
     audit_revision: int
+    created_at: datetime.datetime
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -131,7 +133,15 @@ class _ChildAuditRowset:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class PreparedChildCommit:
-    """Validated child batch prepared before pool checkout."""
+    """Validated child batch prepared before pool checkout.
+
+    Attributes:
+        grant: Exact parent Lease authority for the transaction.
+        mutations: Caller-ordered commands with normalized storage values.
+        lease_effect: Independent lifecycle effect for the parent Lease.
+        actor_id: Validated durable audit actor identity.
+        target_feed_ids: Unique Feed UUIDs in deterministic lock order.
+    """
 
     grant: LeaseGrant
     mutations: tuple[_PreparedChildMutation, ...]
@@ -142,7 +152,13 @@ class PreparedChildCommit:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class AppliedChildCommit:
-    """Planned children and returned rows beneath the held Lease lock."""
+    """Planned children and returned rows beneath the held Lease lock.
+
+    Attributes:
+        prepared: Pre-checkout authority, commands, and parent effect.
+        plans: Caller-ordered selective child outcomes and write decisions.
+        updated_by_feed_id: Decoded actual state returned by child DML.
+    """
 
     prepared: PreparedChildCommit
     plans: tuple[_PlannedChildMutation, ...]
@@ -161,7 +177,12 @@ class _PlannedMutationGroups:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class PendingChildEffects:
-    """Committed result and notifications buffered until transaction exit."""
+    """Result and notifications buffered until transaction exit.
+
+    Attributes:
+        committed: Caller-ordered child result assembled inside the transaction.
+        notification_payloads: Audit payloads keyed by immutable Feed UUID.
+    """
 
     committed: BatchCommitted
     notification_payloads: dict[uuid.UUID, object]
@@ -266,14 +287,37 @@ def _require_closed_cohort_progress(
         raise ValueError(msg)
 
 
+def _require_bcfy_calls_grant(grant: LeaseGrant) -> None:
+    """Restrict the SID child boundary to its supported source family."""
+    if grant.source_type is not feed_store.SourceType.BCFY_CALLS:
+        msg = "child mutations require a bcfy_calls Lease grant"
+        raise ValueError(msg)
+
+
 def _prepare_child_batch(
     grant: LeaseGrant,
     value: object,
 ) -> tuple[tuple[_PreparedChildMutation, ...], LeaseEffect]:
+    """Validate and normalize one child batch before connection checkout.
+
+    Args:
+        grant: Exact Lease authority used for grant-relative member checks.
+        value: Runtime batch value supplied through the public store seam.
+
+    Returns:
+        Caller-ordered prepared mutations and the validated parent effect.
+
+    Raises:
+        TypeError: A batch, command, member, or command field has the wrong
+            runtime type.
+        ValueError: A member conflicts with the grant, a Feed UUID repeats, or
+            a cursor/path violates the child command contract.
+    """
     if type(value) is not ChildMutationBatch:
         msg = "batch must be a ChildMutationBatch"
         raise TypeError(msg)
     batch = value
+    _require_bcfy_calls_grant(grant)
     if not isinstance(batch.mutations, tuple):
         msg = "batch mutations must be an immutable tuple"
         raise TypeError(msg)
@@ -468,9 +512,20 @@ def _child_audit_snapshot(
     state: _AuditedChildState,
     property_row: collections.abc.Mapping,
 ) -> str:
-    source = dict(state.values)
-    source["source_feed_id"] = property_row["source_feed_id"]
-    source["tags"] = _tags_from_property(property_row["tags"])
+    source = {
+        "id": state.feed_id,
+        "name": state.name,
+        "source_type": state.source_type,
+        "status": state.status,
+        "failure_count": state.failure_count,
+        "retry_after": state.retry_after,
+        "status_reason": state.status_reason,
+        "status_reason_updated_at": state.status_reason_updated_at,
+        "status_reason_detail": state.status_reason_detail,
+        "created_at": state.created_at,
+        "source_feed_id": property_row["source_feed_id"],
+        "tags": _tags_from_property(property_row["tags"]),
+    }
     snapshot = {
         key: source[column]
         for key, column in feed_audit_sql.AUDITED_FEED_STATE_FIELDS
@@ -622,13 +677,35 @@ def _optional_row_string(
     return value
 
 
+def _row_datetime(
+    row: collections.abc.Mapping,
+    column: str,
+) -> datetime.datetime:
+    value = row[column]
+    if not isinstance(value, datetime.datetime):
+        msg = f"child Feed {column} must be a datetime"
+        raise TypeError(msg)
+    return value
+
+
+def _row_string(
+    row: collections.abc.Mapping,
+    column: str,
+) -> str:
+    value = row[column]
+    if not isinstance(value, str):
+        msg = f"child Feed {column} must be a string"
+        raise TypeError(msg)
+    return value
+
+
 def _audited_child_state_from_row(
     row: collections.abc.Mapping,
 ) -> _AuditedChildState:
     """Decode the projection shared by auditable child mutations."""
     return _AuditedChildState(
-        values=row,
         feed_id=_child_feed_id_from_row(row),
+        name=_row_string(row, "name"),
         source_type=_child_source_type_from_row(row),
         status=_status_from_row(row),
         status_reason=_status_reason_from_row(row),
@@ -638,7 +715,12 @@ def _audited_child_state_from_row(
             row,
             "status_reason_detail",
         ),
+        status_reason_updated_at=_optional_row_datetime(
+            row,
+            "status_reason_updated_at",
+        ),
         audit_revision=_nonnegative_row_integer(row, "audit_revision"),
+        created_at=_row_datetime(row, "created_at"),
     )
 
 
@@ -648,15 +730,17 @@ def _locked_child_state_from_row(
     """Decode the canonical child lock projection once at the boundary."""
     audited = _audited_child_state_from_row(row)
     return _LockedChildState(
-        values=audited.values,
         feed_id=audited.feed_id,
+        name=audited.name,
         source_type=audited.source_type,
         status=audited.status,
         status_reason=audited.status_reason,
         failure_count=audited.failure_count,
         retry_after=audited.retry_after,
         status_reason_detail=audited.status_reason_detail,
+        status_reason_updated_at=audited.status_reason_updated_at,
         audit_revision=audited.audit_revision,
+        created_at=audited.created_at,
         last_processed_filename=_optional_row_string(
             row,
             "last_processed_filename",
@@ -1043,7 +1127,22 @@ async def _write_child_audits(
     ],
     actor_id: str,
 ) -> dict[uuid.UUID, object]:
-    """Insert actual child audit candidates as one canonical rowset."""
+    """Insert actual child audit candidates as one canonical rowset.
+
+    Args:
+        connection: Transaction connection holding the Lease and Feed locks.
+        plans: Caller-ordered child plans derived from locked before-state.
+        updated_by_feed_id: Decoded after-state returned by child DML.
+        actor_id: Validated durable audit actor identity.
+
+    Returns:
+        Feed Change Notification payloads keyed by immutable Feed UUID.
+
+    Raises:
+        TypeError: An audited row contains an invalid projection value.
+        ValueError: Before/after revisions, properties, or returned audit rows
+            fail exact correlation.
+    """
     candidates: list[tuple[_PlannedChildMutation, str]] = []
     audited_by_feed_id: dict[uuid.UUID, _AuditedChildState] = {}
     for plan in plans:
@@ -1117,7 +1216,20 @@ def prepare_child_commit(
     batch: object,
     actor_id: str,
 ) -> PreparedChildCommit:
-    """Validate a child batch before pool checkout."""
+    """Prepare a child batch before the facade checks out a connection.
+
+    Args:
+        grant: Runtime-validated exact Lease authority.
+        batch: Runtime child batch to validate and normalize.
+        actor_id: Runtime-validated durable audit actor identity.
+
+    Returns:
+        An immutable prepared stage safe to carry into database orchestration.
+
+    Raises:
+        TypeError: The batch or a nested command has the wrong runtime type.
+        ValueError: Batch identity, cursor, path, or uniqueness is invalid.
+    """
     mutations, lease_effect = _prepare_child_batch(grant, batch)
     target_feed_ids = tuple(
         sorted(
@@ -1138,7 +1250,23 @@ async def apply_child_mutations(
     connection: asyncpg.Connection,
     prepared: PreparedChildCommit,
 ) -> AppliedChildCommit:
-    """Lock, plan, and apply the child portion of one prepared batch."""
+    """Lock, plan, and apply the child portion of one prepared batch.
+
+    The caller must already hold the exact parent Lease lock. This function
+    then locks Feeds in sorted UUID order and executes at most one rowset per
+    command variant without committing or publishing external effects.
+
+    Args:
+        connection: Transaction connection holding the parent Lease lock.
+        prepared: Validated pre-checkout child stage.
+
+    Returns:
+        Caller-ordered plans plus exactly correlated decoded DML after-state.
+
+    Raises:
+        TypeError: A locked or returned database value has an invalid type.
+        ValueError: Lock or DML rows are missing, duplicated, or unexpected.
+    """
     locked_rows = []
     if prepared.target_feed_ids:
         locked_rows = await connection.fetch(
@@ -1203,7 +1331,21 @@ async def prepare_pending_effects(
     connection: asyncpg.Connection,
     applied: AppliedChildCommit,
 ) -> PendingChildEffects:
-    """Write audits and assemble caller/post-commit effects."""
+    """Write child audits and assemble caller/post-commit effects.
+
+    Args:
+        connection: Transaction connection holding the relevant row locks.
+        applied: Applied child stage with plans and decoded DML after-state.
+
+    Returns:
+        The public batch result and audit notifications buffered for the
+        facade to publish only after transaction and connection exit.
+
+    Raises:
+        TypeError: An audited database value has an invalid runtime type.
+        ValueError: Audit state, properties, revisions, or inserts do not
+            correlate exactly with the applied child plans.
+    """
     notification_payloads = await _write_child_audits(
         connection,
         applied.plans,

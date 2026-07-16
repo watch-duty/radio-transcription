@@ -1638,6 +1638,37 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
 
         pool.acquire.assert_not_called()
 
+    async def test_non_bcfy_lease_rejected_before_checkout(self) -> None:
+        feed_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000141")
+        grant = ingestion_lease_store.LeaseGrant(
+            source_type=feed_store.SourceType.OPENMHZ,
+            lease_key="123",
+            owner_worker_id=_OWNER_ID,
+            fencing_token=7,
+        )
+        member = ingestion_lease_store.LeaseMemberIdentity(
+            feed_id=feed_id,
+            source_type=feed_store.SourceType.OPENMHZ,
+            source_feed_id="123-45",
+            sid="123",
+            group_id="45",
+        )
+        batch = ingestion_lease_store.ChildMutationBatch(
+            mutations=(ingestion_lease_store.SourceObservation(member, _NOW),),
+            lease_effect=ingestion_lease_store.NoLeaseEffect(),
+        )
+        pool = connection_util.make_mock_pool(transaction=True)
+        store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+        with self.assertRaisesRegex(ValueError, "bcfy_calls Lease grant"):
+            await store.commit_child_mutations(
+                grant,
+                batch,
+                actor_id="service_account:gcp:collector",
+            )
+
+        pool.acquire.assert_not_called()
+
     async def test_closed_cohort_preserves_dirty_lifecycle_and_order(
         self,
     ) -> None:
