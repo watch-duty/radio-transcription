@@ -205,14 +205,66 @@ class GeminiTranscriber(base.Transcriber):
             else None,
         )
 
-        # Note: Retry policy is configured globally on the client in setup()
-        response = await self.client.aio.models.generate_content(
-            model=self.config.model,
-            contents=contents,
-            config=generation_config,
-        )
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=self.config.model,
+                contents=contents,
+                config=generation_config,
+            )
+            transcript = self._parse_response(response)
+            if not transcript.strip():
+                return await self._fallback_transcribe(
+                    contents,
+                    generation_config,
+                    "Tuned model returned empty transcript",
+                )
+        except GeminiTransientTranscriptionError as e:
+            return await self._fallback_transcribe(
+                contents,
+                generation_config,
+                str(e),
+            )
+        else:
+            return transcript
 
-        return self._parse_response(response)
+    async def _fallback_transcribe(
+        self,
+        contents: types.Content,
+        generation_config: types.GenerateContentConfig,
+        reason: str,
+    ) -> str:
+        if self.client is None:
+            msg = "Client not initialized"
+            raise RuntimeError(msg)
+        if self.config.model == "gemini-3.1-flash-lite":
+            logger.info(
+                "Model %s returned incomplete/empty response: %s. "
+                "Treating as empty transcription.",
+                self.config.model,
+                reason,
+            )
+            return ""
+
+        logger.warning(
+            "Tuned model %s failed: %s. "
+            "Falling back to foundation model gemini-3.1-flash-lite...",
+            self.config.model,
+            reason,
+        )
+        try:
+            fallback_response = await self.client.aio.models.generate_content(
+                model="gemini-3.1-flash-lite",
+                contents=contents,
+                config=generation_config,
+            )
+            return self._parse_response(fallback_response)
+        except GeminiTransientTranscriptionError as e:
+            logger.info(
+                "Fallback model gemini-3.1-flash-lite also returned incomplete/empty response: %s. "
+                "Treating as empty transcription.",
+                e,
+            )
+            return ""
 
     def _get_blocked_ratings(self, candidate: types.Candidate) -> str:
         """Helper to extract a string list of blocked safety categories."""
@@ -290,15 +342,15 @@ class GeminiTranscriber(base.Transcriber):
             )
 
         if reason_str is None:
-            logger.warning(
-                "Gemini response interrupted (finish_reason is None). "
-                "Usually caused by hitting the client timeout (%s ms) before completion. "
-                "Response ID: %s",
-                self.config.client_timeout_ms,
+            # If the response is returned successfully but has no finish reason,
+            # it means the model finished without producing any text content parts.
+            # We treat this as a successful empty transcription rather than a transient failure.
+            logger.info(
+                "Gemini response candidate contains no finish reason (Response ID: %s). "
+                "Treating as empty transcription.",
                 response_id,
             )
-            msg = f"Incomplete response from Gemini (finish_reason: None). (Response ID: {response_id})"
-            raise GeminiTransientTranscriptionError(msg)
+            return ""
 
         if reason_str not in _VALID_FINISH_REASONS:
             finish_msg = candidate.finish_message or "No finish message"

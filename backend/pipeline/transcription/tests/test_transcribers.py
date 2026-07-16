@@ -19,7 +19,6 @@ from backend.pipeline.transcription.transcribers.chirp import (
 from backend.pipeline.transcription.transcribers.factory import get_transcriber
 from backend.pipeline.transcription.transcribers.gemini import (
     GeminiTranscriptionError,
-    GeminiTransientTranscriptionError,
 )
 
 BYTES_PER_SECOND_16KHZ_MONO = 16000 * 2
@@ -801,16 +800,11 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             transcriber.setup()
 
-            with self.assertRaises(
-                GeminiTransientTranscriptionError
-            ) as context:
-                await transcriber.transcribe(
-                    audio_data=b"\x00" * 100,
-                    duration_ms=1000,
-                )
-            self.assertIn(
-                "Gemini response returned no candidates", str(context.exception)
+            result = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
             )
+            self.assertEqual(result, "")
 
     async def test_gemini_transcriber_prompt_blocked_safety(self) -> None:
         """Verifies that a prompt-level safety block raises a permanent GeminiTranscriptionError."""
@@ -915,17 +909,11 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             transcriber.setup()
 
-            with self.assertRaises(
-                GeminiTransientTranscriptionError
-            ) as context:
-                await transcriber.transcribe(
-                    audio_data=b"\x00" * 100,
-                    duration_ms=1000,
-                )
-            self.assertIn(
-                "Incomplete response from Gemini (finish_reason: None).",
-                str(context.exception),
+            result = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
             )
+            self.assertEqual(result, "")
 
     async def test_gemini_transcriber_finish_reason_none_safety_block(
         self,
@@ -976,6 +964,130 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertIn(
                 "HARM_CATEGORY_HATE_SPEECH=HIGH",
                 str(context.exception),
+            )
+
+    async def test_gemini_transcriber_tuned_model_fallback(self) -> None:
+        """Verifies that tuned model failures fall back to the foundation model."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            # Mock first response: tuned model returns None finish_reason
+            mock_response_1 = MagicMock()
+            mock_candidate_1 = MagicMock()
+            mock_candidate_1.finish_reason = None
+            mock_candidate_1.content = None
+            mock_response_1.candidates = [mock_candidate_1]
+            mock_response_1.response_id = "tuned-failed-id"
+
+            # Mock second response: foundation model succeeds
+            mock_response_2 = MagicMock()
+            mock_candidate_2 = MagicMock()
+            mock_candidate_2.finish_reason = types.FinishReason.STOP
+
+            mock_part = MagicMock()
+            mock_part.text = "Fallback succeeded text"
+            mock_candidate_2.content.parts = [mock_part]
+            mock_response_2.candidates = [mock_candidate_2]
+            mock_response_2.response_id = "fallback-success-id"
+
+            # AsyncMock to return response 1 on first call, response 2 on second
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                side_effect=[mock_response_1, mock_response_2]
+            )
+
+            # Initialize transcriber with a tuned model config
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"model": "projects/123/locations/us/endpoints/456", "location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            result = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
+            )
+
+            # Asserts
+            self.assertEqual(result, "Fallback succeeded text")
+            self.assertEqual(
+                mock_client_instance.aio.models.generate_content.call_count, 2
+            )
+
+            # Check arguments of the first call (tuned endpoint)
+            first_call_args = (
+                mock_client_instance.aio.models.generate_content.call_args_list[
+                    0
+                ]
+            )
+            self.assertEqual(
+                first_call_args.kwargs["model"],
+                "projects/123/locations/us/endpoints/456",
+            )
+
+            # Check arguments of the second call (foundation fallback model)
+            second_call_args = (
+                mock_client_instance.aio.models.generate_content.call_args_list[
+                    1
+                ]
+            )
+            self.assertEqual(
+                second_call_args.kwargs["model"], "gemini-3.1-flash-lite"
+            )
+
+    async def test_gemini_transcriber_tuned_model_fallback_on_empty_string(
+        self,
+    ) -> None:
+        """Verifies that if the tuned model returns an empty transcript (STOP with empty text), we fall back."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            # Mock first response: tuned model returns STOP but with empty/no text parts
+            mock_response_1 = MagicMock()
+            mock_candidate_1 = MagicMock()
+            mock_candidate_1.finish_reason = types.FinishReason.STOP
+            mock_candidate_1.content.parts = []
+            mock_response_1.candidates = [mock_candidate_1]
+            mock_response_1.response_id = "tuned-empty-id"
+
+            # Mock second response: foundation model succeeds
+            mock_response_2 = MagicMock()
+            mock_candidate_2 = MagicMock()
+            mock_candidate_2.finish_reason = types.FinishReason.STOP
+            mock_part = MagicMock()
+            mock_part.text = "Fallback succeeded on empty"
+            mock_candidate_2.content.parts = [mock_part]
+            mock_response_2.candidates = [mock_candidate_2]
+            mock_response_2.response_id = "fallback-success-id"
+
+            # AsyncMock to return response 1 on first call, response 2 on second
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                side_effect=[mock_response_1, mock_response_2]
+            )
+
+            # Initialize transcriber with a tuned model config
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"model": "projects/123/locations/us/endpoints/456", "location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            result = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
+            )
+
+            # Asserts
+            self.assertEqual(result, "Fallback succeeded on empty")
+            self.assertEqual(
+                mock_client_instance.aio.models.generate_content.call_count, 2
             )
 
     def test_gemini_transcriber_setup(self) -> None:
