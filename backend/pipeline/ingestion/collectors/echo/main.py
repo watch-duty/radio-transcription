@@ -8,6 +8,7 @@ for downstream transcription.
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import os
 import uuid
@@ -73,6 +74,9 @@ _HEARTBEAT_WRITE_FAILED = "echo_heartbeat_write_failed"
 _RETURN_SUCCESS_AFTER_FAILURE_RECORD_ATTEMPT_STATUS_REASONS = {
     FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
 }
+_MIRROR_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+    max_workers=4, thread_name_prefix="echo_dev_mirror"
+)
 
 # ---------------------------------------------------------------------------
 # Global state (persisted across warm invocations)
@@ -128,7 +132,7 @@ def _handle(  # noqa: PLR0911, PLR0912, PLR0915
     *,
     actor_id: str,
 ) -> None:
-    """Core handler — fully synchronous."""
+    """Core handler."""
     if gcs_client is None or pubsub_client is None or feed_store is None:
         msg = (
             "Clients not initialized — handle_notification must be called first"
@@ -147,167 +151,179 @@ def _handle(  # noqa: PLR0911, PLR0912, PLR0915
         logger.warning("Unexpected path structure, skipping: %s", name)
         return
 
-    channel_name = parts[0]
-
-    # Resolve feed from DB
-    feed = feed_store.resolve_echo_feed(channel_name)
-
-    if not feed:
-        return
-    if feed["status"] is FeedStatus.DEACTIVATED:
-        logger.info(
-            "Draining deactivated feed %s (channel: %s)",
-            feed["id"],
-            channel_name,
-        )
-        return
-    if feed["status"] is FeedStatus.QUARANTINED:
-        logger.warning(
-            "Feed %s is quarantined (channel: %s), dropping event",
-            feed["id"],
-            channel_name,
-        )
-        return
-
-    failure: failure_classification.FailureInfo | None = None
+    # Mirror to dev recordings bucket in background thread concurrently with main pipeline processing
+    mirror_future = _mirror_to_dev_best_effort(bucket, name)
 
     try:
-        # Download MP3.  A NotFound means the object was deleted between the
-        # OBJECT_FINALIZE event and our download — not the feed's fault.
-        try:
-            mp3_bytes = gcs_client.bucket(bucket).blob(name).download_as_bytes()
-        except NotFound:
-            logger.warning("Object deleted before download, skipping: %s", name)
+        channel_name = parts[0]
+
+        # Resolve feed from DB
+        feed = feed_store.resolve_echo_feed(channel_name)
+
+        if not feed:
             return
-        except Exception:
-            failure = _pipeline_failure(_RECORDING_DOWNLOAD_FAILED)
-            raise
-
-        # Calculate duration of audio bytes using shared helper
-        try:
-            duration_ms = get_audio_duration(mp3_bytes, input_format="mp3")
-        except Exception as exc:
-            reason = ffmpeg_classifier.ffprobe_exception_failure_reason(exc)
-            logger.warning(
-                "Echo duration probe failed: %s",
-                reason,
-            )
-            failure = _collector_failure(reason)
-            raise
-
-        # RTL-Airband appends the filename timestamp when opening a split
-        # transmission file; GCS timeCreated is only upload finalization time.
-        try:
-            start_ts = _parse_timestamp(name)
-        except ValueError:
-            time_created_str = data.get("timeCreated")
-            if not time_created_str:
-                logger.warning("Unparseable filename, skipping: %s", name)
-                return
-            try:
-                end_ts = datetime.fromisoformat(time_created_str)
-                start_ts = end_ts - timedelta(milliseconds=duration_ms)
-            except ValueError:
-                logger.warning(
-                    "Unparseable filename and GCS timeCreated, skipping: "
-                    "name=%s timeCreated=%s",
-                    name,
-                    time_created_str,
-                )
-                return
-
-        # Skip historical recordings uploaded/created before the feed was registered in the database.
-        # Truncate the feed's created_at to second precision before comparison because start_ts
-        # from the filename only has second precision. This prevents race/precision bugs when
-        # a recording is created in the same second as the feed itself.
-        if start_ts < feed["created_at"].replace(microsecond=0):
+        if feed["status"] is FeedStatus.DEACTIVATED:
             logger.info(
-                "Skipping historical Echo recording: %s (start_ts: %s < feed created_at: %s)",
-                name,
-                start_ts,
-                feed["created_at"],
+                "Draining deactivated feed %s (channel: %s)",
+                feed["id"],
+                channel_name,
+            )
+            return
+        if feed["status"] is FeedStatus.QUARANTINED:
+            logger.warning(
+                "Feed %s is quarantined (channel: %s), dropping event",
+                feed["id"],
+                channel_name,
             )
             return
 
-        # Upload MP3 directly to staging bucket.
-        # if_generation_match=0 skips redundant writes but we
-        # always proceed to publish (prior invocation may have crashed after upload).
-        date_dir = parts[1]
-        mp3_path = f"echo/{feed['id']}/{date_dir}/{Path(name).name}"
-        staging_uri = f"gs://{STAGING_BUCKET}/{mp3_path}"
-        blob = gcs_client.bucket(STAGING_BUCKET).blob(mp3_path)
-        with tracer.start_as_current_span("upload_echo_staged_audio"):
+        failure: failure_classification.FailureInfo | None = None
+
+        try:
+            # Download MP3.  A NotFound means the object was deleted between the
+            # OBJECT_FINALIZE event and our download — not the feed's fault.
             try:
-                blob.upload_from_string(
-                    mp3_bytes,
-                    content_type="audio/mpeg",
-                    if_generation_match=0,
+                mp3_bytes = (
+                    gcs_client.bucket(bucket).blob(name).download_as_bytes()
                 )
-            except PreconditionFailed:
-                logger.info(
-                    "MP3 already exists, skipping upload: %s", staging_uri
+            except NotFound:
+                logger.warning(
+                    "Object deleted before download, skipping: %s", name
                 )
+                return
             except Exception:
-                failure = _pipeline_failure(_STAGING_UPLOAD_FAILED)
+                failure = _pipeline_failure(_RECORDING_DOWNLOAD_FAILED)
                 raise
 
-        # Publish AudioChunk with deterministic session_id for dedup.
-        feed_id_str = str(feed["id"])
-        session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, staging_uri))
+            # Calculate duration of audio bytes using shared helper
+            try:
+                duration_ms = get_audio_duration(mp3_bytes, input_format="mp3")
+            except Exception as exc:
+                reason = ffmpeg_classifier.ffprobe_exception_failure_reason(exc)
+                logger.warning(
+                    "Echo duration probe failed: %s",
+                    reason,
+                )
+                failure = _collector_failure(reason)
+                raise
 
-        try:
-            publisher = pubsub_client.get_publisher()
-            publish_audio_chunk_sync(
-                publisher,
-                SEGMENTED_PUBSUB_TOPIC_PATH,
-                feed_id_str,
-                feed["name"],
-                staging_uri,
-                session_id,
-                start_ts,
-                duration_ms=duration_ms,
-                source_type="echo",
-                external_audio_segment_id=f"{bucket}/{name}",
+            # RTL-Airband appends the filename timestamp when opening a split
+            # transmission file; GCS timeCreated is only upload finalization time.
+            try:
+                start_ts = _parse_timestamp(name)
+            except ValueError:
+                time_created_str = data.get("timeCreated")
+                if not time_created_str:
+                    logger.warning("Unparseable filename, skipping: %s", name)
+                    return
+                try:
+                    end_ts = datetime.fromisoformat(time_created_str)
+                    start_ts = end_ts - timedelta(milliseconds=duration_ms)
+                except ValueError:
+                    logger.warning(
+                        "Unparseable filename and GCS timeCreated, skipping: "
+                        "name=%s timeCreated=%s",
+                        name,
+                        time_created_str,
+                    )
+                    return
+
+            # Skip historical recordings uploaded/created before the feed was registered in the database.
+            # Truncate the feed's created_at to second precision before comparison because start_ts
+            # from the filename only has second precision. This prevents race/precision bugs when
+            # a recording is created in the same second as the feed itself.
+            if start_ts < feed["created_at"].replace(microsecond=0):
+                logger.info(
+                    "Skipping historical Echo recording: %s (start_ts: %s < feed created_at: %s)",
+                    name,
+                    start_ts,
+                    feed["created_at"],
+                )
+                return
+
+            # Upload MP3 directly to staging bucket.
+            # if_generation_match=0 skips redundant writes but we
+            # always proceed to publish (prior invocation may have crashed after upload).
+            date_dir = parts[1]
+            mp3_path = f"echo/{feed['id']}/{date_dir}/{Path(name).name}"
+            staging_uri = f"gs://{STAGING_BUCKET}/{mp3_path}"
+            blob = gcs_client.bucket(STAGING_BUCKET).blob(mp3_path)
+            with tracer.start_as_current_span("upload_echo_staged_audio"):
+                try:
+                    blob.upload_from_string(
+                        mp3_bytes,
+                        content_type="audio/mpeg",
+                        if_generation_match=0,
+                    )
+                except PreconditionFailed:
+                    logger.info(
+                        "MP3 already exists, skipping upload: %s", staging_uri
+                    )
+                except Exception:
+                    failure = _pipeline_failure(_STAGING_UPLOAD_FAILED)
+                    raise
+
+            # Publish AudioChunk with deterministic session_id for dedup.
+            feed_id_str = str(feed["id"])
+            session_id = str(uuid.uuid5(uuid.NAMESPACE_URL, staging_uri))
+
+            try:
+                publisher = pubsub_client.get_publisher()
+                publish_audio_chunk_sync(
+                    publisher,
+                    SEGMENTED_PUBSUB_TOPIC_PATH,
+                    feed_id_str,
+                    feed["name"],
+                    staging_uri,
+                    session_id,
+                    start_ts,
+                    duration_ms=duration_ms,
+                    source_type="echo",
+                    external_audio_segment_id=f"{bucket}/{name}",
+                )
+            except Exception:
+                failure = _pipeline_failure(_PUBSUB_PUBLISH_FAILED)
+                raise
+
+            # Unconditional heartbeat — also resets failure_count if recovering.
+            try:
+                feed_store.record_heartbeat(
+                    feed["id"],
+                    actor_id=actor_id,
+                )
+            except Exception:
+                failure = _pipeline_failure(_HEARTBEAT_WRITE_FAILED)
+                raise
+
+        except Exception as exc:
+            classification = failure or failure_classification.FailureInfo(
+                FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
+                _unexpected_failure_reason(exc),
             )
-        except Exception:
-            failure = _pipeline_failure(_PUBSUB_PUBLISH_FAILED)
+            should_return_success = (
+                _should_return_success_after_failure_record_attempt(
+                    classification.status_reason
+                )
+            )
+            if should_return_success:
+                logger.exception(
+                    "Echo processing failure will return success for "
+                    "object notification: "
+                    "feed=%s status_reason=%s reason=%s",
+                    feed["id"],
+                    classification.status_reason.value,
+                    classification.reason,
+                )
+            _record_failure_by_policy(feed, classification, actor_id=actor_id)
+            if should_return_success:
+                return
             raise
-
-        # Unconditional heartbeat — also resets failure_count if recovering.
-        try:
-            feed_store.record_heartbeat(
-                feed["id"],
-                actor_id=actor_id,
-            )
-        except Exception:
-            failure = _pipeline_failure(_HEARTBEAT_WRITE_FAILED)
-            raise
-
-        _mirror_to_dev_best_effort(bucket, name)
-
-    except Exception as exc:
-        classification = failure or failure_classification.FailureInfo(
-            FeedStatusReason.SYSTEM_UNEXPECTED_ERROR,
-            _unexpected_failure_reason(exc),
-        )
-        should_return_success = (
-            _should_return_success_after_failure_record_attempt(
-                classification.status_reason
-            )
-        )
-        if should_return_success:
-            logger.exception(
-                "Echo processing failure will return success for "
-                "object notification: "
-                "feed=%s status_reason=%s reason=%s",
-                feed["id"],
-                classification.status_reason.value,
-                classification.reason,
-            )
-        _record_failure_by_policy(feed, classification, actor_id=actor_id)
-        if should_return_success:
-            return
-        raise
+    finally:
+        if mirror_future is not None:
+            try:
+                mirror_future.result(timeout=5)
+            except Exception:
+                logger.exception("Dev mirror background task encountered error")
 
 
 # ---------------------------------------------------------------------------
@@ -381,7 +397,7 @@ def _unexpected_failure_reason(exc: Exception) -> str:
     return reason or type(exc).__name__
 
 
-def _mirror_to_dev_best_effort(bucket: str, name: str) -> None:
+def _do_mirror_to_dev_best_effort(bucket: str, name: str) -> None:
     """Copy the source MP3 into the dev recordings bucket, best-effort.
 
     No-op when ``DEV_RECORDINGS_BUCKET`` is unset (i.e. outside prod).
@@ -407,6 +423,12 @@ def _mirror_to_dev_best_effort(bucket: str, name: str) -> None:
             name,
             DEV_RECORDINGS_BUCKET,
         )
+
+
+def _mirror_to_dev_best_effort(
+    bucket: str, name: str
+) -> concurrent.futures.Future[None] | None:
+    return _MIRROR_EXECUTOR.submit(_do_mirror_to_dev_best_effort, bucket, name)
 
 
 # ---------------------------------------------------------------------------
