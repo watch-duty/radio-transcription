@@ -67,11 +67,12 @@ def _feed_grant(
 def _lease_grant(
     lease_key: str = "123",
     *,
+    source_type: feed_store.SourceType = feed_store.SourceType.BCFY_CALLS,
     owner_worker_id: uuid.UUID = _OWNER_ID,
     fencing_token: int = 7,
 ) -> ingestion_lease_store.LeaseGrant:
     return ingestion_lease_store.LeaseGrant(
-        source_type=feed_store.SourceType.BCFY_CALLS,
+        source_type=source_type,
         lease_key=lease_key,
         owner_worker_id=owner_worker_id,
         fencing_token=fencing_token,
@@ -321,6 +322,32 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, ())
         self.data_store.count_held_by_type.assert_not_awaited()
         self.data_store.acquire_feeds_batch.assert_not_awaited()
+
+    async def test_claim_rejects_excess_and_duplicate_authority(self) -> None:
+        first = _leased_feed(uuid.UUID(int=1))
+        second = _leased_feed(uuid.UUID(int=2))
+        cases = (
+            ([first, second], 1),
+            ([first, first], 2),
+        )
+
+        for payloads, limit in cases:
+            with self.subTest(payloads=payloads, limit=limit):
+                self.data_store.reset_mock()
+                self.data_store.count_held_by_type.return_value = dict.fromkeys(
+                    feed_store.SourceType,
+                    0,
+                )
+                self.data_store.acquire_feeds_batch.return_value = payloads
+
+                with self.assertRaises(
+                    grant_control.GrantControlIntegrityError
+                ):
+                    await self.control.claim(
+                        grant_control.ClaimMode.PRIMARY,
+                        _OWNER_ID,
+                        limit,
+                    )
 
     async def test_heartbeat_maps_every_disposition_in_caller_order(
         self,
@@ -817,6 +844,43 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
 
         self.data_store.claim_unclaimed.assert_not_awaited()
         self.data_store.claim_recoverable.assert_not_awaited()
+
+    async def test_claim_rejects_every_malformed_authority(self) -> None:
+        first = _lease_claim("100")
+        second = _lease_claim("200")
+        wrong_source = ingestion_lease_store.LeaseClaim(
+            _lease_grant(
+                "wrong-source",
+                source_type=feed_store.SourceType.BCFY_FEEDS,
+            )
+        )
+        wrong_owner = ingestion_lease_store.LeaseClaim(
+            _lease_grant(
+                "wrong-owner",
+                owner_worker_id=_OTHER_OWNER_ID,
+            )
+        )
+        cases = (
+            ((first, second), 1),
+            ((first, first), 2),
+            ((mock.Mock(),), 1),
+            ((wrong_source,), 1),
+            ((wrong_owner,), 1),
+        )
+
+        for claims, limit in cases:
+            with self.subTest(claims=claims, limit=limit):
+                self.data_store.reset_mock()
+                self.data_store.claim_unclaimed.return_value = claims
+
+                with self.assertRaises(
+                    grant_control.GrantControlIntegrityError
+                ):
+                    await self.control.claim(
+                        grant_control.ClaimMode.PRIMARY,
+                        _OWNER_ID,
+                        limit,
+                    )
 
     async def test_finalize_rejects_non_claim_mode_before_io(
         self,

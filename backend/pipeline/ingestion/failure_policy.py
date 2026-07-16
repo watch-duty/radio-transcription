@@ -11,7 +11,13 @@ from backend.pipeline.storage import feed_store
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ConsumeFailureBudget:
-    """Configured treatment for a failure that may quarantine."""
+    """Configured treatment for a failure that may quarantine.
+
+    Attributes:
+        failure_threshold: Consecutive failures that trigger quarantine.
+        backoff_base_sec: Initial exponential-backoff delay in seconds.
+        backoff_max_sec: Maximum exponential-backoff delay in seconds.
+    """
 
     failure_threshold: int
     backoff_base_sec: int
@@ -36,7 +42,11 @@ class ConsumeFailureBudget:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class RetryWithoutBudget:
-    """Configured treatment for a failure that cannot quarantine."""
+    """Configured treatment for a failure that cannot quarantine.
+
+    Attributes:
+        retry_after: UTC-aware time when recovery becomes eligible.
+    """
 
     retry_after: datetime.datetime
 
@@ -55,7 +65,13 @@ type NonBudgetedTreatmentProvider = typing.Callable[[], RetryWithoutBudget]
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class FailurePersistencePlan:
-    """Canonical failure evidence paired with one selected treatment."""
+    """Canonical failure evidence paired with one selected treatment.
+
+    Attributes:
+        status_reason: Canonical failure classification.
+        reason: Optional operator-facing diagnostic detail.
+        treatment: Closed budgeted or non-budgeted persistence action.
+    """
 
     status_reason: feed_store.FeedStatusReason
     reason: str | None
@@ -87,7 +103,17 @@ _BUDGETED_REASONS = frozenset(
 def consumes_failure_budget(
     status_reason: feed_store.FeedStatusReason,
 ) -> bool:
-    """Return whether one canonical reason consumes the failure budget."""
+    """Return whether one canonical reason consumes the failure budget.
+
+    Args:
+        status_reason: Canonical reason to classify.
+
+    Returns:
+        ``True`` only for configuration-invalid reasons.
+
+    Raises:
+        TypeError: ``status_reason`` is not a ``FeedStatusReason``.
+    """
     if not isinstance(status_reason, feed_store.FeedStatusReason):
         msg = "status_reason must be a FeedStatusReason"
         raise TypeError(msg)
@@ -101,7 +127,21 @@ def plan_failure(
     budgeted: ConsumeFailureBudget,
     non_budgeted: NonBudgetedTreatmentProvider,
 ) -> FailurePersistencePlan:
-    """Select one immutable persistence treatment from the shared policy."""
+    """Select one immutable persistence treatment from the shared policy.
+
+    Args:
+        status_reason: Canonical reason to classify.
+        reason: Optional operator-facing diagnostic detail.
+        budgeted: Configured treatment for budget-consuming failures.
+        non_budgeted: Lazy provider for the non-budgeted retry treatment.
+
+    Returns:
+        Canonical failure evidence with one materialized treatment.
+
+    Raises:
+        TypeError: An input has an invalid type, or ``non_budgeted`` returns an
+            invalid treatment.
+    """
     if not isinstance(status_reason, feed_store.FeedStatusReason):
         msg = "status_reason must be a FeedStatusReason"
         raise TypeError(msg)

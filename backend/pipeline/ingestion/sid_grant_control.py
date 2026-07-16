@@ -17,6 +17,17 @@ _STATUS_INELIGIBLE = (
 def _finalize_disposition(
     disposition: ingestion_lease_store.LeaseOperationDisposition,
 ) -> grant_control.FinalizeDisposition:
+    """Translate one authoritative Lease finalization disposition.
+
+    Args:
+        disposition: Storage-level exact-grant outcome.
+
+    Returns:
+        Domain-neutral applied or lost outcome.
+
+    Raises:
+        grant_control.GrantControlIntegrityError: ``disposition`` is unknown.
+    """
     if disposition is ingestion_lease_store.LeaseOperationDisposition.APPLIED:
         return grant_control.FinalizeDisposition.APPLIED
     if disposition in (
@@ -75,7 +86,23 @@ class SidGrantControl:
         ],
         ...,
     ]:
-        """Map primary or recovery admission directly to the Lease store."""
+        """Map primary or recovery admission directly to the Lease store.
+
+        Args:
+            mode: Primary or recovery admission mode.
+            owner_worker_id: Worker that will own returned grants.
+            limit: Maximum total grants to return.
+
+        Returns:
+            Store-ordered exact Lease grants paired with ``mode``.
+
+        Raises:
+            TypeError: An argument has an invalid type.
+            ValueError: ``limit`` is negative.
+            grant_control.GrantControlIntegrityError: Claims exceed ``limit``,
+                repeat authority, have an invalid type, or do not match the
+                configured source and requested owner.
+        """
         if not isinstance(mode, grant_control.ClaimMode):
             msg = "mode must be a ClaimMode"
             raise TypeError(msg)
@@ -139,7 +166,18 @@ class SidGrantControl:
         grant_control.GrantHeartbeat[ingestion_lease_store.LeaseGrant],
         ...,
     ]:
-        """Translate exact Lease heartbeat results without losing order."""
+        """Translate exact Lease heartbeat results without losing order.
+
+        Args:
+            grants: Complete Lease grants in caller correlation order.
+
+        Returns:
+            One domain-neutral disposition for every submitted grant.
+
+        Raises:
+            grant_control.GrantControlIntegrityError: Results have invalid
+                cardinality, type, identity, order, or disposition.
+        """
         grants = tuple(grants)
         results = await self._heartbeat_store.renew_heartbeats(grants)
         if len(results) != len(grants):
@@ -190,7 +228,22 @@ class SidGrantControl:
         payload: grant_control.ClaimMode,
         terminal: grant_control.TerminalDecision,
     ) -> grant_control.FinalizeResult[ingestion_lease_store.LeaseGrant]:
-        """Execute one exact Lease release or selected failure action."""
+        """Execute one exact Lease release or selected failure action.
+
+        Args:
+            grant: Exact Lease ownership generation to finalize.
+            payload: Claim mode returned with the original claim.
+            terminal: Neutral release or preclassified failure plan.
+
+        Returns:
+            Applied or lost exact-grant disposition.
+
+        Raises:
+            TypeError: ``grant``, ``payload``, or ``terminal`` has an invalid
+                type.
+            grant_control.GrantControlIntegrityError: Storage returns an
+                invalid result or a non-budgeted failure quarantines.
+        """
         if not isinstance(grant, ingestion_lease_store.LeaseGrant):
             msg = "grant must be a LeaseGrant"
             raise TypeError(msg)

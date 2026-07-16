@@ -45,11 +45,13 @@ FeedStore.renew_grant_heartbeats
 # their focused tests and cannot see Protocol member use through structural
 # typing. Remove these entries as the supervisor and startup wiring land.
 from backend.pipeline.ingestion import (
+    failure_policy,
     feed_grant_control,
     grant_control,
     sid_grant_control,
     worker_profiles,
 )
+failure_policy.plan_failure
 feed_grant_control.FeedGrantControl
 feed_grant_control.FeedGrantControl.heartbeat
 feed_grant_control.FeedGrantControl.finalize

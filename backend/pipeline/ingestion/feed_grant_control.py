@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import types
 import typing
 import uuid
-from types import MappingProxyType
 
 from backend.pipeline.ingestion import failure_policy, grant_control
 from backend.pipeline.storage import feed_store
@@ -31,7 +31,16 @@ def _calculate_branch_limits(
     caps: typing.Mapping[feed_store.SourceType, int],
     held: typing.Mapping[feed_store.SourceType, int],
 ) -> dict[feed_store.SourceType, int]:
-    """Preserve the legacy deterministic water-fill allocation."""
+    """Preserve the legacy deterministic water-fill allocation.
+
+    Args:
+        total_slack: Maximum grants available in this admission pass.
+        caps: Per-source ownership ceilings.
+        held: Current durable ownership counts by source.
+
+    Returns:
+        Per-source claim limits whose sum does not exceed ``total_slack``.
+    """
     headroom = {
         source_type: min(
             caps[source_type],
@@ -98,7 +107,7 @@ class FeedGrantControl:
 
         self._data_store = data_store
         self._heartbeat_store = heartbeat_store
-        self._source_caps = MappingProxyType(caps)
+        self._source_caps = types.MappingProxyType(caps)
         self._abandonment_window = abandonment_window
         self._actor_id = actor_id
         self._on_quarantined = on_quarantined
@@ -109,7 +118,16 @@ class FeedGrantControl:
         payload: feed_store.LeasedFeed,
         terminal: failure_policy.FailurePersistencePlan,
     ) -> None:
-        """Bound non-authoritative evidence after durable finalization."""
+        """Bound non-authoritative evidence after durable finalization.
+
+        Args:
+            grant: Exact Feed ownership generation that was finalized.
+            payload: Original leased Feed payload.
+            terminal: Applied budgeted failure plan.
+
+        Raises:
+            asyncio.CancelledError: The caller cancels observation.
+        """
         observer = self._on_quarantined
         if observer is None:
             return
@@ -144,7 +162,22 @@ class FeedGrantControl:
         ],
         ...,
     ]:
-        """Claim primary or recoverable Feeds through legacy water filling."""
+        """Claim primary or recoverable Feeds through legacy water filling.
+
+        Args:
+            mode: Primary or recovery admission mode.
+            owner_worker_id: Worker that will own returned grants.
+            limit: Maximum total grants to return.
+
+        Returns:
+            Store-ordered exact Feed grants and unchanged leased payloads.
+
+        Raises:
+            TypeError: An argument has an invalid type.
+            ValueError: ``limit`` is negative.
+            grant_control.GrantControlIntegrityError: The store returns too
+                many claims or repeats a Feed authority.
+        """
         if not isinstance(mode, grant_control.ClaimMode):
             msg = "mode must be a ClaimMode"
             raise TypeError(msg)
@@ -202,7 +235,18 @@ class FeedGrantControl:
         self,
         grants: typing.Sequence[feed_store.FeedGrant],
     ) -> tuple[grant_control.GrantHeartbeat[feed_store.FeedGrant], ...]:
-        """Translate exact Feed heartbeat results without losing order."""
+        """Translate exact Feed heartbeat results without losing order.
+
+        Args:
+            grants: Complete Feed grants in caller correlation order.
+
+        Returns:
+            One domain-neutral disposition for every submitted grant.
+
+        Raises:
+            grant_control.GrantControlIntegrityError: Results have invalid
+                cardinality, type, identity, order, or disposition.
+        """
         grants = tuple(grants)
         results = await self._heartbeat_store.renew_grant_heartbeats(grants)
         if len(results) != len(grants):
@@ -254,7 +298,23 @@ class FeedGrantControl:
         payload: feed_store.LeasedFeed,
         terminal: grant_control.TerminalDecision,
     ) -> grant_control.FinalizeResult[feed_store.FeedGrant]:
-        """Execute one exact Feed release or selected failure action."""
+        """Execute one exact Feed release or selected failure action.
+
+        Args:
+            grant: Exact Feed ownership generation to finalize.
+            payload: Original leased Feed payload paired with ``grant``.
+            terminal: Neutral release or preclassified failure plan.
+
+        Returns:
+            Applied or lost exact-grant disposition.
+
+        Raises:
+            TypeError: ``grant`` or ``terminal`` has an invalid type.
+            grant_control.GrantControlIntegrityError: The payload does not
+                match the grant, or storage returns an invalid outcome.
+            asyncio.CancelledError: Quarantine observation is cancelled after
+                durable failure finalization.
+        """
         if not isinstance(grant, feed_store.FeedGrant):
             msg = "grant must be a FeedGrant"
             raise TypeError(msg)

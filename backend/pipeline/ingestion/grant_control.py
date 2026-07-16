@@ -144,14 +144,38 @@ class GrantControl[GrantT, PayloadT](typing.Protocol):
         owner_worker_id: uuid.UUID,
         limit: int,
     ) -> tuple[ClaimedGrant[GrantT, PayloadT], ...]:
-        """Claim one closed admission mode up to ``limit`` grants."""
+        """Claim one closed admission mode up to ``limit`` grants.
+
+        Args:
+            mode: Primary or recovery admission mode.
+            owner_worker_id: Worker that will own returned grants.
+            limit: Maximum number of grants to claim.
+
+        Returns:
+            Caller-ordered claims with their domain-specific runner payloads.
+
+        Raises:
+            GrantControlIntegrityError: A store response violates the control
+                contract.
+        """
         ...
 
     async def heartbeat(
         self,
         grants: typing.Sequence[GrantT],
     ) -> tuple[GrantHeartbeat[GrantT], ...]:
-        """Heartbeat complete grants with exact caller correlation."""
+        """Heartbeat complete grants with exact caller correlation.
+
+        Args:
+            grants: Complete grants in caller correlation order.
+
+        Returns:
+            One caller-ordered disposition for every submitted grant.
+
+        Raises:
+            GrantControlIntegrityError: A store response cannot be correlated
+                exactly.
+        """
         ...
 
     async def finalize(
@@ -160,7 +184,20 @@ class GrantControl[GrantT, PayloadT](typing.Protocol):
         payload: PayloadT,
         terminal: TerminalDecision,
     ) -> FinalizeResult[GrantT]:
-        """Execute one selected action with its exact validated payload."""
+        """Execute one selected action with its exact validated payload.
+
+        Args:
+            grant: Exact ownership generation to finalize.
+            payload: Domain-specific payload returned with the claim.
+            terminal: Selected neutral or failure persistence decision.
+
+        Returns:
+            Exact-grant finalization disposition.
+
+        Raises:
+            GrantControlIntegrityError: The payload or store response violates
+                the control contract.
+        """
         ...
 
 
@@ -173,5 +210,14 @@ class GrantRunner[GrantT, PayloadT](typing.Protocol):
         payload: PayloadT,
         context: RunContext,
     ) -> RunOutcome:
-        """Run work for one exact grant until a closed outcome."""
+        """Run work for one exact grant until a closed outcome.
+
+        Args:
+            grant: Exact authority held while the runner is active.
+            payload: Domain-specific claim payload.
+            context: Supervisor-owned stop and authority-loss signals.
+
+        Returns:
+            One closed completion, loss, or failure outcome.
+        """
         ...

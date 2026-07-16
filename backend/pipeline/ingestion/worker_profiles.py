@@ -189,7 +189,15 @@ def allocation_for_domain(
     profile: WorkerProfile,
     domain_id: grant_control.DomainId,
 ) -> DomainAllocation | None:
-    """Return the selected allocation for ``domain_id``, if any."""
+    """Return the selected allocation for ``domain_id``, if any.
+
+    Args:
+        profile: Worker topology to inspect.
+        domain_id: Durable-authority domain to locate.
+
+    Returns:
+        The matching immutable allocation, or ``None`` when absent.
+    """
     for allocation in profile.allocations:
         if allocation.domain_id is domain_id:
             return allocation
@@ -261,7 +269,23 @@ def resolve_worker_profile(
     sid_owned_cap: int = 32,
     sid_claims_per_cycle: int = 2,
 ) -> WorkerProfile:
-    """Resolve a closed preset with explicit immutable domain capacities."""
+    """Resolve a closed preset with explicit immutable domain capacities.
+
+    Args:
+        selector: Exact preset name, or ``None`` for the legacy profile.
+        feed_owned_cap: Feed-domain ownership ceiling.
+        feed_claims_per_cycle: Feed-domain admission-cycle budget.
+        sid_owned_cap: SID-domain ownership ceiling.
+        sid_claims_per_cycle: SID-domain admission-cycle budget.
+
+    Returns:
+        A validated immutable profile containing the selected domains only.
+
+    Raises:
+        ValueError: ``selector`` is blank or unknown, or a selected capacity
+            is invalid.
+        TypeError: A selected profile value has an invalid type.
+    """
     if selector is None:
         preset = LEGACY_PROFILE
     elif not isinstance(selector, str) or not selector.strip():
