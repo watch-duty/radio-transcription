@@ -75,6 +75,22 @@ export function TranscriptRow({
   const isSilence = !!audioSegment.isSilenceBundle;
   const isOutage = !!audioSegment.isOutageBundle;
 
+  const transcriptAnnotation = findTranscriptAnnotationData(
+    audioSegment.annotations
+  );
+
+  const hasErrors = transcriptAnnotation
+    ? transcriptAnnotation.errors.length > 0
+    : false;
+  const isWaiting = !isSilence && !isOutage && !transcriptAnnotation;
+  const isMissingTextButSpeech = transcriptAnnotation
+    ? !transcriptAnnotation.text &&
+      audioSegment.classification === AudioClassification.SPEECH &&
+      !hasErrors
+    : false;
+  const isPlaceholder =
+    isSilence || isWaiting || hasErrors || isOutage || isMissingTextButSpeech;
+
   function renderTranscriptionText(
     transcriptAnnotation: TranscriptAnnotationData | null
   ): string {
@@ -94,31 +110,12 @@ export function TranscriptRow({
       return '[Transcription failed]';
     }
 
-    if (
-      !transcriptAnnotation.text &&
-      audioSegment.classification === AudioClassification.SPEECH
-    ) {
+    if (isMissingTextButSpeech) {
       return '[Possible speech detected. No transcription available.]';
     }
 
     return transcriptAnnotation.text;
   }
-
-  const transcriptAnnotation = findTranscriptAnnotationData(
-    audioSegment.annotations
-  );
-
-  const hasErrors = transcriptAnnotation
-    ? transcriptAnnotation.errors.length > 0
-    : false;
-  const isWaiting = !isSilence && !isOutage && !transcriptAnnotation;
-  const isMissingTextButSpeech = transcriptAnnotation
-    ? !transcriptAnnotation.text &&
-      audioSegment.classification === AudioClassification.SPEECH &&
-      !hasErrors
-    : false;
-  const isPlaceholder =
-    isSilence || isWaiting || hasErrors || isOutage || isMissingTextButSpeech;
 
   const evaluationAnnotation = findEvaluationAnnotationData(
     audioSegment.annotations
