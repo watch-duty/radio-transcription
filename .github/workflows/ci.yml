@@ -164,7 +164,7 @@ jobs:
 
   terraform-checks:
     needs: [setup]
-    if: needs.setup.outputs.should_run == 'true' && needs.setup.outputs.requires_backend == 'true'
+    if: needs.setup.outputs.should_run == 'true'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -172,18 +172,9 @@ jobs:
           fetch-depth: 100
       - name: Install mise, install tools
         uses: jdx/mise-action@v3
-      - name: Terraform fmt check
-        run: terraform fmt -check -recursive terraform/
-      - name: Terraform validate AlloyDB module
-        working-directory: terraform/modules/alloydb
-        run: |
-          terraform init -backend=false
-          terraform validate
-      - name: Terraform validate Container MIG module
-        working-directory: terraform/modules/container_mig
-        run: |
-          terraform init -backend=false
-          terraform validate
+      - name: Validate Terraform
+        run: mise run lint:terraform
+
 
   run-backend-tests:
     needs: [setup]
