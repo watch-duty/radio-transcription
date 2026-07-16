@@ -377,69 +377,15 @@ class ChildMutationBatch:
 
 
 class ChildDisposition(enum.StrEnum):
-    """Selective disposition of one requested child mutation.
+    """Actionable disposition of one requested child mutation.
 
     Attributes:
-        APPLIED: The requested child mutation changed durable state.
-        APPLIED_AFTER_DEACTIVATION: Admitted progress finished after removal.
-        ACCEPTED_NOOP: The request was current but changed no durable state.
-        MISSING: The child Feed no longer exists.
-        STATUS_INELIGIBLE: The child state does not permit this operation.
+        COMMITTED: The requested durable postcondition is satisfied.
+        REJECTED: The child is missing or no longer eligible for the command.
     """
 
-    APPLIED = "applied"
-    APPLIED_AFTER_DEACTIVATION = "applied_after_deactivation"
-    ACCEPTED_NOOP = "accepted_noop"
-    MISSING = "missing"
-    STATUS_INELIGIBLE = "status_ineligible"
-
-
-class CursorEffect(enum.StrEnum):
-    """Relationship between a requested and durable Feed cursor.
-
-    Attributes:
-        INITIALIZED: A null durable cursor accepted its first value.
-        ADVANCED: The requested cursor exceeded durable progress.
-        EQUAL: The requested cursor matched durable progress.
-        REGRESSIVE: The requested cursor was behind durable progress.
-        ABSENT: The command carried no cursor.
-    """
-
-    INITIALIZED = "initialized"
-    ADVANCED = "advanced"
-    EQUAL = "equal"
-    REGRESSIVE = "regressive"
-    ABSENT = "absent"
-
-
-class LifecycleEffect(enum.StrEnum):
-    """Independent Feed lifecycle effect of a child mutation.
-
-    Attributes:
-        NONE: No Feed lifecycle state changed.
-        RECOVERED: Current success cleared active/failing evidence.
-        CLEARED_WHILE_DEACTIVATED: Success cleared fields without reactivation.
-        FAILURE_RECORDED: The Feed entered or remained failing.
-        QUARANTINED: A budgeted failure exhausted the Feed budget.
-    """
-
-    NONE = "none"
-    RECOVERED = "recovered"
-    CLEARED_WHILE_DEACTIVATED = "cleared_while_deactivated"
-    FAILURE_RECORDED = "failure_recorded"
-    QUARANTINED = "quarantined"
-
-
-class LeaseLifecycleEffect(enum.StrEnum):
-    """Lifecycle effect applied to the still-owned parent Lease.
-
-    Attributes:
-        NONE: No parent Lease lifecycle state changed.
-        RECOVERED: A successful boundary cleared retained Lease failure state.
-    """
-
-    NONE = "none"
-    RECOVERED = "recovered"
+    COMMITTED = "committed"
+    REJECTED = "rejected"
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -448,44 +394,25 @@ class ChildMutationResult:
 
     Attributes:
         feed_id: Permanent Feed UUID from the caller command.
-        disposition: Whether and how the command was accepted.
-        cursor_effect: Relationship to the prior durable cursor.
-        lifecycle_effect: Independent child lifecycle transition.
+        disposition: Whether the requested postcondition was committed.
     """
 
     feed_id: uuid.UUID
     disposition: ChildDisposition
-    cursor_effect: CursorEffect
-    lifecycle_effect: LifecycleEffect
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class LeaseLifecycleResult:
-    """Applied effect for the parent Lease lifecycle.
-
-    Attributes:
-        effect: Applied parent Lease lifecycle transition.
-    """
-
-    effect: LeaseLifecycleEffect
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.effect, LeaseLifecycleEffect):
-            msg = "effect must be a LeaseLifecycleEffect"
-            raise TypeError(msg)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class BatchCommitted:
-    """Committed parent effect and caller-ordered child results.
+    """Committed parent effect and actionable child results.
 
     Attributes:
-        lease_effect: Applied effect for the parent Lease.
         children: One selective result per command in caller order.
+        quarantined_feed_ids: Committed budgeted failures that exhausted their
+            durable Feed failure budgets, in caller order.
     """
 
-    lease_effect: LeaseLifecycleResult
     children: tuple[ChildMutationResult, ...]
+    quarantined_feed_ids: tuple[uuid.UUID, ...]
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -540,39 +467,15 @@ class MembershipUnchanged:
     membership_revision: int
 
 
-class MembershipInvariantReason(enum.StrEnum):
-    """Closed reasons an authoritative membership load can fail closed.
-
-    Attributes:
-        EMPTY: The owned Lease has no structurally valid membership rows.
-        MISSING_IDENTITY: A joined child lacks a complete source identity.
-        SOURCE_MISMATCH: A child cannot belong to the validated Lease.
-        NO_ELIGIBLE_MEMBERS: No active or failing child remains.
-        REVISION_REGRESSION: Durable membership revision moved backward.
-        DUPLICATE_ROUTING_KEY: Multiple children share one routing identity.
-    """
-
-    EMPTY = "empty"
-    MISSING_IDENTITY = "missing_identity"
-    SOURCE_MISMATCH = "source_mismatch"
-    NO_ELIGIBLE_MEMBERS = "no_eligible_members"
-    REVISION_REGRESSION = "revision_regression"
-    DUPLICATE_ROUTING_KEY = "duplicate_routing_key"
-
-
 @dataclasses.dataclass(frozen=True, slots=True)
 class MembershipInvariantViolation:
-    """Fail-closed result for structurally invalid Lease membership.
+    """Fail-closed result for deterministically invalid Lease membership.
 
     Attributes:
         grant: Complete Lease authority associated with the failed load.
-        reason: Closed structural membership failure classification.
-        detail: Bounded diagnostic explanation without row credentials.
     """
 
     grant: LeaseGrant
-    reason: MembershipInvariantReason
-    detail: str
 
 
 type MembershipRefreshResult = (
@@ -591,11 +494,10 @@ class _PlannedChildMutation:
     mutation: ChildMutation
     before_row: collections.abc.Mapping | None
     disposition: ChildDisposition
-    cursor_effect: CursorEffect
-    lifecycle_effect: LifecycleEffect
     write_cursor: bool = False
     write_path: bool = False
     clear_lifecycle: bool = False
+    quarantined: bool = False
     audit_action: str | None = None
 
     @property
@@ -612,7 +514,7 @@ class _PlannedChildMutation:
             or self.clear_lifecycle
             or (
                 isinstance(self.mutation, FeedFailureTransition)
-                and self.disposition is ChildDisposition.APPLIED
+                and self.disposition is ChildDisposition.COMMITTED
             )
         )
 
@@ -937,19 +839,12 @@ def _child_source_type_from_row(
         raise ValueError(msg) from error
 
 
-def _cursor_effect(
+def _should_write_cursor(
     current: datetime.datetime | None,
     requested: datetime.datetime | None,
-) -> CursorEffect:
-    if requested is None:
-        return CursorEffect.ABSENT
-    if current is None:
-        return CursorEffect.INITIALIZED
-    if requested > current:
-        return CursorEffect.ADVANCED
-    if requested == current:
-        return CursorEffect.EQUAL
-    return CursorEffect.REGRESSIVE
+) -> bool:
+    """Return whether ``requested`` advances the durable Feed cursor."""
+    return requested is not None and (current is None or requested > current)
 
 
 def _has_dirty_child_lifecycle(
@@ -979,10 +874,11 @@ def _select_recovery_audit_action(
 def _select_failure_audit_action(
     row: collections.abc.Mapping,
     mutation: FeedFailureTransition,
-    lifecycle_effect: LifecycleEffect,
+    *,
+    quarantined: bool,
 ) -> str | None:
     """Apply the canonical Feed failure/quarantine event rules."""
-    if lifecycle_effect is LifecycleEffect.QUARANTINED:
+    if quarantined:
         return "feed.quarantined"
     status = _status_from_row(row)
     effective_prior_failing = status is feed_store.FeedStatus.FAILING or (
@@ -1291,11 +1187,7 @@ def _membership_identity_from_row(
         or source_feed_id != f"{sid}-{group_id}"
         or sid != grant.lease_key
     ):
-        return MembershipInvariantViolation(
-            grant,
-            MembershipInvariantReason.MISSING_IDENTITY,
-            "membership row has a missing or inconsistent immutable identity",
-        )
+        return MembershipInvariantViolation(grant)
 
     property_source_raw = row["property_source_type"]
     feed_source_raw = row["feed_source_type"]
@@ -1303,11 +1195,7 @@ def _membership_identity_from_row(
         feed_source_raw,
         str,
     ):
-        return MembershipInvariantViolation(
-            grant,
-            MembershipInvariantReason.MISSING_IDENTITY,
-            "membership row is missing a joined source identity",
-        )
+        return MembershipInvariantViolation(grant)
     try:
         property_source = feed_store.SourceType(property_source_raw)
         feed_source = feed_store.SourceType(feed_source_raw)
@@ -1318,11 +1206,7 @@ def _membership_identity_from_row(
         property_source is not grant.source_type
         or feed_source is not property_source
     ):
-        return MembershipInvariantViolation(
-            grant,
-            MembershipInvariantReason.SOURCE_MISMATCH,
-            "Feed and property source bindings do not match the Lease",
-        )
+        return MembershipInvariantViolation(grant)
     return LeaseMemberIdentity(
         feed_id=feed_id,
         source_type=property_source,
@@ -1376,7 +1260,6 @@ def _plan_non_failure_child_mutation(
     mutation: AdmittedAudioProgress | SourceObservation | ClosedCohortProgress,
     before_row: collections.abc.Mapping,
     status: feed_store.FeedStatus,
-    cursor_effect: CursorEffect,
     *,
     write_cursor: bool,
 ) -> _PlannedChildMutation:
@@ -1387,33 +1270,16 @@ def _plan_non_failure_child_mutation(
             and before_row["last_processed_filename"]
             != mutation.last_processed_filename
         )
-        needs_update = write_cursor or write_path
-        disposition = (
-            ChildDisposition.APPLIED
-            if needs_update
-            else ChildDisposition.ACCEPTED_NOOP
-        )
-        if status is feed_store.FeedStatus.DEACTIVATED and needs_update:
-            disposition = ChildDisposition.APPLIED_AFTER_DEACTIVATION
         return _PlannedChildMutation(
             caller_ordinal=caller_ordinal,
             mutation=mutation,
             before_row=before_row,
-            disposition=disposition,
-            cursor_effect=cursor_effect,
-            lifecycle_effect=LifecycleEffect.NONE,
+            disposition=ChildDisposition.COMMITTED,
             write_cursor=write_cursor,
             write_path=write_path,
         )
 
     clear_lifecycle = _has_dirty_child_lifecycle(status, before_row)
-    lifecycle_effect = LifecycleEffect.NONE
-    if clear_lifecycle:
-        lifecycle_effect = (
-            LifecycleEffect.CLEARED_WHILE_DEACTIVATED
-            if status is feed_store.FeedStatus.DEACTIVATED
-            else LifecycleEffect.RECOVERED
-        )
 
     write_path = False
     if isinstance(mutation, AdmittedAudioProgress):
@@ -1423,24 +1289,16 @@ def _plan_non_failure_child_mutation(
             != mutation.last_processed_filename
         )
 
-    needs_update = write_cursor or write_path or clear_lifecycle
-    disposition = (
-        ChildDisposition.APPLIED
-        if needs_update
-        else ChildDisposition.ACCEPTED_NOOP
+    audit_action = (
+        _select_recovery_audit_action(status, before_row)
+        if clear_lifecycle and status is not feed_store.FeedStatus.DEACTIVATED
+        else None
     )
-    if status is feed_store.FeedStatus.DEACTIVATED and needs_update:
-        disposition = ChildDisposition.APPLIED_AFTER_DEACTIVATION
-    audit_action = None
-    if lifecycle_effect is LifecycleEffect.RECOVERED:
-        audit_action = _select_recovery_audit_action(status, before_row)
     return _PlannedChildMutation(
         caller_ordinal=caller_ordinal,
         mutation=mutation,
         before_row=before_row,
-        disposition=disposition,
-        cursor_effect=cursor_effect,
-        lifecycle_effect=lifecycle_effect,
+        disposition=ChildDisposition.COMMITTED,
         write_cursor=write_cursor,
         write_path=write_path,
         clear_lifecycle=clear_lifecycle,
@@ -1458,14 +1316,12 @@ def _plan_child_mutation(
             caller_ordinal=caller_ordinal,
             mutation=mutation,
             before_row=None,
-            disposition=ChildDisposition.MISSING,
-            cursor_effect=CursorEffect.ABSENT,
-            lifecycle_effect=LifecycleEffect.NONE,
+            disposition=ChildDisposition.REJECTED,
         )
 
     status = _status_from_row(before_row)
     source_type = _child_source_type_from_row(before_row)
-    cursor_effect = _cursor_effect(
+    write_cursor = _should_write_cursor(
         before_row["last_bookmark_time"],
         _mutation_cursor(mutation),
     )
@@ -1474,9 +1330,7 @@ def _plan_child_mutation(
             caller_ordinal=caller_ordinal,
             mutation=mutation,
             before_row=before_row,
-            disposition=ChildDisposition.STATUS_INELIGIBLE,
-            cursor_effect=cursor_effect,
-            lifecycle_effect=LifecycleEffect.NONE,
+            disposition=ChildDisposition.REJECTED,
         )
 
     is_progress = isinstance(
@@ -1500,34 +1354,25 @@ def _plan_child_mutation(
             caller_ordinal=caller_ordinal,
             mutation=mutation,
             before_row=before_row,
-            disposition=ChildDisposition.STATUS_INELIGIBLE,
-            cursor_effect=cursor_effect,
-            lifecycle_effect=LifecycleEffect.NONE,
+            disposition=ChildDisposition.REJECTED,
         )
 
-    write_cursor = cursor_effect in (
-        CursorEffect.INITIALIZED,
-        CursorEffect.ADVANCED,
-    )
     if isinstance(mutation, FeedFailureTransition):
         failure = mutation
-        lifecycle_effect = LifecycleEffect.FAILURE_RECORDED
-        if isinstance(failure.action, BudgetedFailure) and (
+        quarantined = isinstance(failure.action, BudgetedFailure) and (
             before_row["failure_count"] + 1 >= failure.action.failure_threshold
-        ):
-            lifecycle_effect = LifecycleEffect.QUARANTINED
+        )
         return _PlannedChildMutation(
             caller_ordinal=caller_ordinal,
             mutation=mutation,
             before_row=before_row,
-            disposition=ChildDisposition.APPLIED,
-            cursor_effect=cursor_effect,
-            lifecycle_effect=lifecycle_effect,
+            disposition=ChildDisposition.COMMITTED,
             write_cursor=write_cursor,
+            quarantined=quarantined,
             audit_action=_select_failure_audit_action(
                 before_row,
                 failure,
-                lifecycle_effect,
+                quarantined=quarantined,
             ),
         )
 
@@ -1536,7 +1381,6 @@ def _plan_child_mutation(
         mutation,
         before_row,
         status,
-        cursor_effect,
         write_cursor=write_cursor,
     )
 
@@ -2082,12 +1926,7 @@ class IngestionLeaseStore:
                     known_revision is not None
                     and current_revision < known_revision
                 ):
-                    return MembershipInvariantViolation(
-                        grant,
-                        MembershipInvariantReason.REVISION_REGRESSION,
-                        "locked membership revision regressed below the "
-                        "authoritative cached revision",
-                    )
+                    return MembershipInvariantViolation(grant)
 
                 rows = await connection.fetch(
                     ingestion_lease_queries.LOAD_BCFY_CALLS_MEMBERSHIP_SQL,
@@ -2106,11 +1945,7 @@ class IngestionLeaseStore:
         rows: collections.abc.Sequence[collections.abc.Mapping],
     ) -> MembershipSnapshot | MembershipInvariantViolation:
         if not rows:
-            return MembershipInvariantViolation(
-                grant,
-                MembershipInvariantReason.EMPTY,
-                "owned Lease has no structurally valid membership rows",
-            )
+            return MembershipInvariantViolation(grant)
 
         members: list[LeaseMember] = []
         routing_keys: set[str] = set()
@@ -2120,11 +1955,7 @@ class IngestionLeaseStore:
             if isinstance(identity, MembershipInvariantViolation):
                 return identity
             if identity.source_feed_id in routing_keys:
-                return MembershipInvariantViolation(
-                    grant,
-                    MembershipInvariantReason.DUPLICATE_ROUTING_KEY,
-                    "membership contains a duplicate canonical routing key",
-                )
+                return MembershipInvariantViolation(grant)
             routing_keys.add(identity.source_feed_id)
             member = _member_from_row(identity, row)
             status = _status_from_row(row)
@@ -2137,11 +1968,7 @@ class IngestionLeaseStore:
                 excluded_count += 1
 
         if not members:
-            return MembershipInvariantViolation(
-                grant,
-                MembershipInvariantReason.NO_ELIGIBLE_MEMBERS,
-                "owned Lease has no active or failing member",
-            )
+            return MembershipInvariantViolation(grant)
         return MembershipSnapshot(
             grant=grant,
             membership_revision=membership_revision,
@@ -2276,7 +2103,7 @@ class IngestionLeaseStore:
                         _updated_children_by_ordinal(failure_updates, rows)
                     )
 
-                lease_lifecycle = await self._apply_lease_effect(
+                lease_recovered = await self._apply_lease_effect(
                     connection,
                     grant,
                     batch.lease_effect,
@@ -2293,21 +2120,21 @@ class IngestionLeaseStore:
                     ChildMutationResult(
                         feed_id=plan.feed_id,
                         disposition=plan.disposition,
-                        cursor_effect=plan.cursor_effect,
-                        lifecycle_effect=plan.lifecycle_effect,
                     )
                     for plan in plans
                 )
                 committed = BatchCommitted(
-                    lease_effect=lease_lifecycle,
                     children=children,
+                    quarantined_feed_ids=tuple(
+                        plan.feed_id for plan in plans if plan.quarantined
+                    ),
                 )
 
         for caller_ordinal in sorted(notification_payloads):
             feed_change_notifications.emit_feed_change_notification(
                 notification_payloads[caller_ordinal]
             )
-        if committed.lease_effect.effect is LeaseLifecycleEffect.RECOVERED:
+        if lease_recovered:
             logger.info(
                 "Ingestion Lease recovered after finalized child boundary",
                 extra={
@@ -2505,12 +2332,12 @@ class IngestionLeaseStore:
         grant: LeaseGrant,
         effect: LeaseEffect,
         before_row: collections.abc.Mapping,
-    ) -> LeaseLifecycleResult:
+    ) -> bool:
         """Apply success-proven Lease recovery under the held exact grant."""
         if isinstance(effect, NoLeaseEffect):
-            return LeaseLifecycleResult(LeaseLifecycleEffect.NONE)
+            return False
         if not _lifecycle_dirty_from_row(before_row):
-            return LeaseLifecycleResult(LeaseLifecycleEffect.NONE)
+            return False
 
         before_revision = _membership_revision_from_row(before_row)
 
@@ -2539,7 +2366,7 @@ class IngestionLeaseStore:
         ):
             msg = "Lease recovery returned inconsistent after state"
             raise ValueError(msg)
-        return LeaseLifecycleResult(LeaseLifecycleEffect.RECOVERED)
+        return True
 
     async def _write_child_audits(
         self,

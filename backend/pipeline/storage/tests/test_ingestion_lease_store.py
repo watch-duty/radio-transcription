@@ -1283,9 +1283,9 @@ class TestRefreshMembership(unittest.IsolatedAsyncioTestCase):
             regressed,
             ingestion_lease_store.MembershipInvariantViolation,
         )
-        self.assertIs(
-            regressed.reason,
-            ingestion_lease_store.MembershipInvariantReason.REVISION_REGRESSION,
+        self.assertEqual(
+            regressed,
+            ingestion_lease_store.MembershipInvariantViolation(grant),
         )
         connection.fetch.assert_awaited_once_with(
             ingestion_lease_queries.LOAD_BCFY_CALLS_MEMBERSHIP_SQL,
@@ -1355,9 +1355,9 @@ class TestRefreshMembership(unittest.IsolatedAsyncioTestCase):
             result,
             ingestion_lease_store.MembershipInvariantViolation,
         )
-        self.assertIs(
-            result.reason,
-            ingestion_lease_store.MembershipInvariantReason.DUPLICATE_ROUTING_KEY,
+        self.assertEqual(
+            result,
+            ingestion_lease_store.MembershipInvariantViolation(_grant("00123")),
         )
 
     async def test_textually_distinct_leading_zero_keys_remain_distinct(
@@ -1621,20 +1621,22 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
 
         pool.acquire.assert_not_called()
 
-    def test_cursor_and_lifecycle_effects_are_independent(self) -> None:
+    def test_cursor_write_and_lifecycle_recovery_are_independent(self) -> None:
         feed_id = uuid.UUID("77777777-0000-0000-0000-000000000070")
         earlier = _NOW - datetime.timedelta(seconds=1)
         later = _NOW + datetime.timedelta(seconds=1)
         cursor_cases = (
-            (None, _NOW, ingestion_lease_store.CursorEffect.INITIALIZED),
-            (_NOW, later, ingestion_lease_store.CursorEffect.ADVANCED),
-            (_NOW, _NOW, ingestion_lease_store.CursorEffect.EQUAL),
-            (_NOW, earlier, ingestion_lease_store.CursorEffect.REGRESSIVE),
-            (_NOW, None, ingestion_lease_store.CursorEffect.ABSENT),
+            (None, _NOW, True),
+            (_NOW, later, True),
+            (_NOW, _NOW, False),
+            (_NOW, earlier, False),
+            (_NOW, None, False),
         )
 
-        for current, requested, expected in cursor_cases:
-            with self.subTest(expected=expected.value):
+        for case_index, (current, requested, write_cursor) in enumerate(
+            cursor_cases
+        ):
+            with self.subTest(case_index=case_index):
                 clean_plan = ingestion_lease_store._plan_child_mutation(
                     0,
                     ingestion_lease_store.SourceObservation(
@@ -1643,10 +1645,11 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     ),
                     _child_row(feed_id, last_bookmark_time=current),
                 )
-                self.assertIs(clean_plan.cursor_effect, expected)
+                self.assertIs(clean_plan.write_cursor, write_cursor)
+                self.assertFalse(clean_plan.clear_lifecycle)
                 self.assertIs(
-                    clean_plan.lifecycle_effect,
-                    ingestion_lease_store.LifecycleEffect.NONE,
+                    clean_plan.disposition,
+                    ingestion_lease_store.ChildDisposition.COMMITTED,
                 )
 
                 failing_plan = ingestion_lease_store._plan_child_mutation(
@@ -1663,26 +1666,20 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                         last_bookmark_time=current,
                     ),
                 )
-                self.assertIs(failing_plan.cursor_effect, expected)
-                self.assertIs(
-                    failing_plan.lifecycle_effect,
-                    ingestion_lease_store.LifecycleEffect.RECOVERED,
-                )
+                self.assertIs(failing_plan.write_cursor, write_cursor)
+                self.assertTrue(failing_plan.clear_lifecycle)
                 self.assertTrue(failing_plan.needs_update)
+                self.assertEqual(failing_plan.audit_action, "feed.recovered")
 
-    def test_clean_deactivated_cursor_noops_remain_accepted_noop(
+    def test_clean_deactivated_cursor_noops_remain_committed(
         self,
     ) -> None:
         feed_id = uuid.UUID("77777777-0000-0000-0000-000000000071")
         earlier = _NOW - datetime.timedelta(seconds=1)
-        cursor_cases = (
-            (_NOW, ingestion_lease_store.CursorEffect.EQUAL),
-            (earlier, ingestion_lease_store.CursorEffect.REGRESSIVE),
-            (None, ingestion_lease_store.CursorEffect.ABSENT),
-        )
+        cursor_cases = (_NOW, earlier, None)
 
-        for requested, expected in cursor_cases:
-            with self.subTest(expected=expected.value):
+        for case_index, requested in enumerate(cursor_cases):
+            with self.subTest(case_index=case_index):
                 plan = ingestion_lease_store._plan_child_mutation(
                     0,
                     self._progress(feed_id, cursor=requested),
@@ -1694,16 +1691,13 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     ),
                 )
 
-                self.assertIs(plan.cursor_effect, expected)
+                self.assertFalse(plan.write_cursor)
                 self.assertFalse(plan.needs_update)
                 self.assertIs(
                     plan.disposition,
-                    ingestion_lease_store.ChildDisposition.ACCEPTED_NOOP,
+                    ingestion_lease_store.ChildDisposition.COMMITTED,
                 )
-                self.assertIs(
-                    plan.lifecycle_effect,
-                    ingestion_lease_store.LifecycleEffect.NONE,
-                )
+                self.assertFalse(plan.quarantined)
 
     def test_closed_cohort_plans_path_and_cursor_independently(self) -> None:
         feed_id = uuid.UUID("77777777-0000-0000-0000-000000000142")
@@ -1714,35 +1708,30 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             (
                 self._closed_cohort(feed_id, cursor=later, path=path),
                 _child_row(feed_id, last_bookmark_time=_NOW),
-                ingestion_lease_store.CursorEffect.ADVANCED,
                 True,
                 True,
             ),
             (
                 self._closed_cohort(feed_id, cursor=later, path=None),
                 _child_row(feed_id, last_bookmark_time=_NOW),
-                ingestion_lease_store.CursorEffect.ADVANCED,
                 True,
                 False,
             ),
             (
                 self._closed_cohort(feed_id, cursor=None, path=path),
                 _child_row(feed_id, last_processed_filename="old"),
-                ingestion_lease_store.CursorEffect.ABSENT,
                 False,
                 True,
             ),
             (
                 self._closed_cohort(feed_id, cursor=_NOW, path=path),
                 _child_row(feed_id, last_bookmark_time=_NOW),
-                ingestion_lease_store.CursorEffect.EQUAL,
                 False,
                 True,
             ),
             (
                 self._closed_cohort(feed_id, cursor=earlier, path=path),
                 _child_row(feed_id, last_bookmark_time=_NOW),
-                ingestion_lease_store.CursorEffect.REGRESSIVE,
                 False,
                 True,
             ),
@@ -1753,15 +1742,13 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     last_bookmark_time=_NOW,
                     last_processed_filename=path,
                 ),
-                ingestion_lease_store.CursorEffect.EQUAL,
                 False,
                 False,
             ),
         )
 
-        for mutation, row, cursor_effect, write_cursor, write_path in cases:
+        for mutation, row, write_cursor, write_path in cases:
             with self.subTest(
-                cursor_effect=cursor_effect.value,
                 write_cursor=write_cursor,
                 write_path=write_path,
             ):
@@ -1771,21 +1758,15 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     row,
                 )
 
-                self.assertIs(plan.cursor_effect, cursor_effect)
                 self.assertEqual(plan.write_cursor, write_cursor)
                 self.assertEqual(plan.write_path, write_path)
-                self.assertIs(
-                    plan.lifecycle_effect,
-                    ingestion_lease_store.LifecycleEffect.NONE,
-                )
                 self.assertFalse(plan.clear_lifecycle)
+                self.assertFalse(plan.quarantined)
                 self.assertIsNone(plan.audit_action)
-                expected_disposition = (
-                    ingestion_lease_store.ChildDisposition.APPLIED
-                    if write_cursor or write_path
-                    else ingestion_lease_store.ChildDisposition.ACCEPTED_NOOP
+                self.assertIs(
+                    plan.disposition,
+                    ingestion_lease_store.ChildDisposition.COMMITTED,
                 )
-                self.assertIs(plan.disposition, expected_disposition)
 
     def test_closed_cohort_allows_dirty_and_deactivated_members(self) -> None:
         statuses = (
@@ -1810,15 +1791,12 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     ),
                 )
 
-                expected = ingestion_lease_store.ChildDisposition.APPLIED
-                if status is feed_store.FeedStatus.DEACTIVATED:
-                    expected = ingestion_lease_store.ChildDisposition.APPLIED_AFTER_DEACTIVATION
-                self.assertIs(plan.disposition, expected)
                 self.assertIs(
-                    plan.lifecycle_effect,
-                    ingestion_lease_store.LifecycleEffect.NONE,
+                    plan.disposition,
+                    ingestion_lease_store.ChildDisposition.COMMITTED,
                 )
                 self.assertFalse(plan.clear_lifecycle)
+                self.assertFalse(plan.quarantined)
                 self.assertIsNone(plan.audit_action)
 
     async def test_closed_cohort_preserves_dirty_lifecycle_and_order(
@@ -1916,13 +1894,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             feed_ids,
         )
         self.assertEqual(
-            tuple(child.lifecycle_effect for child in result.children),
-            (ingestion_lease_store.LifecycleEffect.NONE,) * 3,
+            tuple(child.disposition for child in result.children),
+            (ingestion_lease_store.ChildDisposition.COMMITTED,) * 3,
         )
-        self.assertIs(
-            result.children[2].disposition,
-            ingestion_lease_store.ChildDisposition.APPLIED_AFTER_DEACTIVATION,
-        )
+        self.assertEqual(result.quarantined_feed_ids, ())
         self.assertEqual(connection.fetch.await_count, 2)
         lock_args = connection.fetch.await_args_list[0].args
         self.assertEqual(lock_args[1], [second_id, third_id, first_id])
@@ -1989,10 +1964,11 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             tuple(child.disposition for child in result.children),
             (
-                ingestion_lease_store.ChildDisposition.MISSING,
-                ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE,
+                ingestion_lease_store.ChildDisposition.REJECTED,
+                ingestion_lease_store.ChildDisposition.REJECTED,
             ),
         )
+        self.assertEqual(result.quarantined_feed_ids, ())
         self.assertEqual(connection.fetch.await_count, 1)
 
     async def test_closed_cohort_exact_noop_runs_no_dml(self) -> None:
@@ -2022,16 +1998,9 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertIs(
             result.children[0].disposition,
-            ingestion_lease_store.ChildDisposition.ACCEPTED_NOOP,
+            ingestion_lease_store.ChildDisposition.COMMITTED,
         )
-        self.assertIs(
-            result.children[0].cursor_effect,
-            ingestion_lease_store.CursorEffect.EQUAL,
-        )
-        self.assertIs(
-            result.children[0].lifecycle_effect,
-            ingestion_lease_store.LifecycleEffect.NONE,
-        )
+        self.assertEqual(result.quarantined_feed_ids, ())
         connection.fetch.assert_awaited_once()
 
     async def test_closed_cohort_database_error_rolls_back_once(self) -> None:
@@ -2122,13 +2091,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
 
         assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertIs(
-            result.children[0].cursor_effect,
-            ingestion_lease_store.CursorEffect.ABSENT,
+            result.children[0].disposition,
+            ingestion_lease_store.ChildDisposition.COMMITTED,
         )
-        self.assertIs(
-            result.children[0].lifecycle_effect,
-            ingestion_lease_store.LifecycleEffect.RECOVERED,
-        )
+        self.assertEqual(result.quarantined_feed_ids, ())
         observation_args = connection.fetch.await_args_list[1].args
         self.assertIs(
             observation_args[0],
@@ -2311,7 +2277,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(
             all(
                 child.disposition
-                is ingestion_lease_store.ChildDisposition.APPLIED
+                is ingestion_lease_store.ChildDisposition.COMMITTED
                 for child in result.children
             )
         )
@@ -2365,11 +2331,12 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             [child.disposition for child in result.children],
             [
-                ingestion_lease_store.ChildDisposition.APPLIED,
-                ingestion_lease_store.ChildDisposition.MISSING,
-                ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE,
+                ingestion_lease_store.ChildDisposition.COMMITTED,
+                ingestion_lease_store.ChildDisposition.REJECTED,
+                ingestion_lease_store.ChildDisposition.REJECTED,
             ],
         )
+        self.assertEqual(result.quarantined_feed_ids, ())
         self.assertEqual(connection.fetch.await_count, 2)
 
     async def test_deactivated_progress_clears_without_audit(self) -> None:
@@ -2412,12 +2379,9 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         child = result.children[0]
         self.assertIs(
             child.disposition,
-            ingestion_lease_store.ChildDisposition.APPLIED_AFTER_DEACTIVATION,
+            ingestion_lease_store.ChildDisposition.COMMITTED,
         )
-        self.assertIs(
-            child.lifecycle_effect,
-            ingestion_lease_store.LifecycleEffect.CLEARED_WHILE_DEACTIVATED,
-        )
+        self.assertEqual(result.quarantined_feed_ids, ())
         self.assertEqual(connection.fetch.await_count, 2)
 
     async def test_recovery_audit_notifies_after_transaction_and_checkout(
@@ -2471,9 +2435,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
 
         assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertIs(
-            result.children[0].lifecycle_effect,
-            ingestion_lease_store.LifecycleEffect.RECOVERED,
+            result.children[0].disposition,
+            ingestion_lease_store.ChildDisposition.COMMITTED,
         )
+        self.assertEqual(result.quarantined_feed_ids, ())
         emit.assert_called_once_with(payload_row["feed_audit_event"])
         self.assertIs(
             connection.fetch.await_args_list[2].args[0],
@@ -2522,52 +2487,33 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 exit_args = pool.transaction_context.__aexit__.await_args.args
                 self.assertIs(exit_args[0], type(error))
 
-    def test_failure_charge_is_independent_from_cursor_effect(self) -> None:
+    def test_failure_charge_is_independent_from_cursor_write(self) -> None:
         feed_id = uuid.UUID("99999999-0000-0000-0000-000000000089")
         earlier = _NOW - datetime.timedelta(seconds=1)
         later = _NOW + datetime.timedelta(seconds=1)
         cases = (
-            (None, None, ingestion_lease_store.CursorEffect.ABSENT, False),
-            (_NOW, _NOW, ingestion_lease_store.CursorEffect.EQUAL, False),
-            (
-                _NOW,
-                earlier,
-                ingestion_lease_store.CursorEffect.REGRESSIVE,
-                False,
-            ),
-            (
-                None,
-                _NOW,
-                ingestion_lease_store.CursorEffect.INITIALIZED,
-                True,
-            ),
-            (
-                _NOW,
-                later,
-                ingestion_lease_store.CursorEffect.ADVANCED,
-                True,
-            ),
+            (None, None, False),
+            (_NOW, _NOW, False),
+            (_NOW, earlier, False),
+            (None, _NOW, True),
+            (_NOW, later, True),
         )
 
-        for current, requested, expected_effect, write_cursor in cases:
-            with self.subTest(cursor_effect=expected_effect.value):
+        for case_index, (current, requested, write_cursor) in enumerate(cases):
+            with self.subTest(case_index=case_index):
                 plan = ingestion_lease_store._plan_child_mutation(
                     0,
                     self._failure(feed_id, cursor=requested),
                     _child_row(feed_id, last_bookmark_time=current),
                 )
 
-                self.assertIs(plan.cursor_effect, expected_effect)
                 self.assertEqual(plan.write_cursor, write_cursor)
                 self.assertTrue(plan.needs_update)
                 self.assertIs(
                     plan.disposition,
-                    ingestion_lease_store.ChildDisposition.APPLIED,
+                    ingestion_lease_store.ChildDisposition.COMMITTED,
                 )
-                self.assertIs(
-                    plan.lifecycle_effect,
-                    ingestion_lease_store.LifecycleEffect.FAILURE_RECORDED,
-                )
+                self.assertFalse(plan.quarantined)
 
     async def test_explicit_second_failure_invocation_charges_again(
         self,
@@ -2630,12 +2576,11 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         assert isinstance(first, ingestion_lease_store.BatchCommitted)
         assert isinstance(second, ingestion_lease_store.BatchCommitted)
         self.assertEqual(
-            tuple(
-                result.children[0].lifecycle_effect
-                for result in (first, second)
-            ),
-            (ingestion_lease_store.LifecycleEffect.FAILURE_RECORDED,) * 2,
+            tuple(result.children[0].disposition for result in (first, second)),
+            (ingestion_lease_store.ChildDisposition.COMMITTED,) * 2,
         )
+        self.assertEqual(first.quarantined_feed_ids, ())
+        self.assertEqual(second.quarantined_feed_ids, ())
         self.assertEqual(connection.fetch.await_count, 4)
         for call_index in (1, 3):
             failure_args = connection.fetch.await_args_list[call_index].args
@@ -2690,9 +2635,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
 
         assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertIs(
-            result.children[0].lifecycle_effect,
-            ingestion_lease_store.LifecycleEffect.QUARANTINED,
+            result.children[0].disposition,
+            ingestion_lease_store.ChildDisposition.COMMITTED,
         )
+        self.assertEqual(result.quarantined_feed_ids, (feed_id,))
         self.assertEqual(connection.fetch.await_count, 4)
 
     async def test_non_budgeted_failure_resets_and_cannot_quarantine(
@@ -2749,9 +2695,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
 
         assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertIs(
-            result.children[0].lifecycle_effect,
-            ingestion_lease_store.LifecycleEffect.FAILURE_RECORDED,
+            result.children[0].disposition,
+            ingestion_lease_store.ChildDisposition.COMMITTED,
         )
+        self.assertEqual(result.quarantined_feed_ids, ())
         failure_args = connection.fetch.await_args_list[1].args
         self.assertEqual(failure_args[4], [False])
         self.assertEqual(failure_args[8], [retry_after])
@@ -2829,14 +2776,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                     result,
                     ingestion_lease_store.BatchCommitted,
                 )
-                self.assertIs(
-                    result.children[0].lifecycle_effect,
-                    ingestion_lease_store.LifecycleEffect.FAILURE_RECORDED,
-                )
-                self.assertIsNot(
-                    result.children[0].lifecycle_effect,
-                    ingestion_lease_store.LifecycleEffect.QUARANTINED,
-                )
+                self.assertEqual(result.quarantined_feed_ids, ())
                 failure_args = connection.fetch.await_args_list[1].args
                 self.assertEqual(failure_args[3], [False])
                 self.assertEqual(failure_args[4], [False])
@@ -2909,16 +2849,10 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
 
         assert isinstance(result, ingestion_lease_store.BatchCommitted)
         self.assertEqual(
-            tuple(child.lifecycle_effect for child in result.children),
-            (
-                ingestion_lease_store.LifecycleEffect.NONE,
-                ingestion_lease_store.LifecycleEffect.FAILURE_RECORDED,
-            ),
+            tuple(child.disposition for child in result.children),
+            (ingestion_lease_store.ChildDisposition.COMMITTED,) * 2,
         )
-        self.assertIs(
-            result.lease_effect.effect,
-            ingestion_lease_store.LeaseLifecycleEffect.RECOVERED,
-        )
+        self.assertEqual(result.quarantined_feed_ids, ())
         self.assertEqual(connection.fetch.await_count, 3)
         self.assertIs(
             connection.fetch.await_args_list[1].args[0],
@@ -2962,12 +2896,9 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 assert isinstance(result, ingestion_lease_store.BatchCommitted)
                 self.assertIs(
                     result.children[0].disposition,
-                    ingestion_lease_store.ChildDisposition.STATUS_INELIGIBLE,
+                    ingestion_lease_store.ChildDisposition.REJECTED,
                 )
-                self.assertIs(
-                    result.children[0].lifecycle_effect,
-                    ingestion_lease_store.LifecycleEffect.NONE,
-                )
+                self.assertEqual(result.quarantined_feed_ids, ())
                 connection.fetch.assert_awaited_once()
 
     async def test_empty_batch_can_finalize_lease_recovery_once(self) -> None:
@@ -3005,10 +2936,8 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             )
 
         assert isinstance(result, ingestion_lease_store.BatchCommitted)
-        self.assertIs(
-            result.lease_effect.effect,
-            ingestion_lease_store.LeaseLifecycleEffect.RECOVERED,
-        )
+        self.assertEqual(result.children, ())
+        self.assertEqual(result.quarantined_feed_ids, ())
         self.assertIs(
             connection.fetchrow.await_args_list[1].args[0],
             ingestion_lease_queries.FINALIZE_LEASE_RECOVERY_SQL,
@@ -3054,10 +2983,8 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 )
 
                 assert isinstance(result, ingestion_lease_store.BatchCommitted)
-                self.assertIs(
-                    result.lease_effect.effect,
-                    ingestion_lease_store.LeaseLifecycleEffect.RECOVERED,
-                )
+                self.assertEqual(result.children, ())
+                self.assertEqual(result.quarantined_feed_ids, ())
                 self.assertEqual(connection.fetchrow.await_count, 2)
 
     async def test_clean_finalize_retry_is_lease_lifecycle_noop(self) -> None:
@@ -3082,10 +3009,8 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         )
 
         assert isinstance(result, ingestion_lease_store.BatchCommitted)
-        self.assertIs(
-            result.lease_effect.effect,
-            ingestion_lease_store.LeaseLifecycleEffect.NONE,
-        )
+        self.assertEqual(result.children, ())
+        self.assertEqual(result.quarantined_feed_ids, ())
         connection.fetchrow.assert_awaited_once()
 
     async def test_no_lease_effect_preserves_retained_failure_evidence(
@@ -3106,10 +3031,8 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
         )
 
         assert isinstance(result, ingestion_lease_store.BatchCommitted)
-        self.assertIs(
-            result.lease_effect.effect,
-            ingestion_lease_store.LeaseLifecycleEffect.NONE,
-        )
+        self.assertEqual(result.children, ())
+        self.assertEqual(result.quarantined_feed_ids, ())
         connection.fetchrow.assert_awaited_once()
 
     async def test_audit_failure_rolls_back_children_and_lease_recovery(

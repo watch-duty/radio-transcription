@@ -64,7 +64,6 @@ class TestLeaseGrantContract(unittest.TestCase):
             ingestion_lease_store.LeaseClaim,
             ingestion_lease_store.LeaseOperationResult,
             ingestion_lease_store.GrantRejected,
-            ingestion_lease_store.LeaseLifecycleResult,
         ):
             self.assertTrue(dataclasses.is_dataclass(value_type))
             self.assertTrue(hasattr(value_type, "__slots__"))
@@ -587,7 +586,6 @@ class TestChildMutationQueryContract(unittest.TestCase):
             ingestion_lease_store.FinalizeLeaseRecovery,
             ingestion_lease_store.ChildMutationBatch,
             ingestion_lease_store.ChildMutationResult,
-            ingestion_lease_store.LeaseLifecycleResult,
             ingestion_lease_store.BatchCommitted,
         ):
             self.assertTrue(dataclasses.is_dataclass(value_type))
@@ -611,27 +609,25 @@ class TestChildMutationQueryContract(unittest.TestCase):
     def test_child_result_vocabularies_are_exhaustive(self) -> None:
         self.assertEqual(
             {value.value for value in ingestion_lease_store.ChildDisposition},
-            {
-                "applied",
-                "applied_after_deactivation",
-                "accepted_noop",
-                "missing",
-                "status_ineligible",
-            },
+            {"committed", "rejected"},
         )
         self.assertEqual(
-            {value.value for value in ingestion_lease_store.CursorEffect},
-            {"initialized", "advanced", "equal", "regressive", "absent"},
+            [
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.ChildMutationResult
+                )
+            ],
+            ["feed_id", "disposition"],
         )
         self.assertEqual(
-            {value.value for value in ingestion_lease_store.LifecycleEffect},
-            {
-                "none",
-                "recovered",
-                "cleared_while_deactivated",
-                "failure_recorded",
-                "quarantined",
-            },
+            [
+                field.name
+                for field in dataclasses.fields(
+                    ingestion_lease_store.BatchCommitted
+                )
+            ],
+            ["children", "quarantined_feed_ids"],
         )
 
     def test_child_feed_lock_is_sorted_and_uses_one_lock_strength(self) -> None:
