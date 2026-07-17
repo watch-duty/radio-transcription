@@ -105,6 +105,9 @@ class GeminiConfig(utils.ConfigBase):
     retry_multiplier: float = DEFAULT_GEMINI_RETRY_MULTIPLIER
     client_timeout_ms: int = DEFAULT_GEMINI_CLIENT_TIMEOUT_MS
 
+    fallback_model: str | None = DEFAULT_GEMINI_MODEL
+    fallback_retry_attempts: int = 2
+
 
 class GeminiTranscriber(base.Transcriber):
     """Transcriber implementation using Google GenAI SDK with Gemini 3.1."""
@@ -247,9 +250,13 @@ class GeminiTranscriber(base.Transcriber):
         if self.client is None:
             msg = "Client not initialized"
             raise RuntimeError(msg)
-        if self.config.model == DEFAULT_GEMINI_MODEL:
+
+        fallback_model = self.config.fallback_model
+        if not fallback_model or self.config.model == fallback_model:
             logger.info(
                 "Model %s returned incomplete/empty response: %s. "
+                "No fallback model configured or model is already the "
+                "fallback. "
                 "Treating as empty transcription.",
                 self.config.model,
                 reason,
@@ -260,13 +267,15 @@ class GeminiTranscriber(base.Transcriber):
             "Tuned model %s failed: %s. Falling back to foundation model %s...",
             self.config.model,
             reason,
-            DEFAULT_GEMINI_MODEL,
+            fallback_model,
         )
-        for attempt in range(1, 3):
+
+        attempts = self.config.fallback_retry_attempts
+        for attempt in range(1, attempts + 1):
             try:
                 fallback_response = (
                     await self.client.aio.models.generate_content(
-                        model=DEFAULT_GEMINI_MODEL,
+                        model=fallback_model,
                         contents=contents,
                         config=generation_config,
                     )
@@ -284,21 +293,22 @@ class GeminiTranscriber(base.Transcriber):
             except GeminiTransientTranscriptionError as exc:
                 e = exc
 
-            if attempt == 2:
+            if attempt == attempts:
                 logger.info(
                     "Fallback model %s also returned "
                     "incomplete/empty response: %s. "
                     "Treating as empty transcription.",
-                    DEFAULT_GEMINI_MODEL,
+                    fallback_model,
                     e,
                 )
                 return ""
             logger.warning(
                 "Fallback call to %s "
-                "returned incomplete response (attempt %d/2): %s. "
+                "returned incomplete response (attempt %d/%d): %s. "
                 "Retrying in 1s...",
-                DEFAULT_GEMINI_MODEL,
+                fallback_model,
                 attempt,
+                attempts,
                 e,
             )
             await asyncio.sleep(1)
