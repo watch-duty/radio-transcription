@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router';
 
 import { decodeJwt } from 'jose';
 
+import RateReviewIcon from '@mui/icons-material/RateReview';
 import {
   CssBaseline,
   ThemeProvider,
@@ -17,7 +18,7 @@ import { ApiError } from '@transcription/common';
 
 import AppContainer from './components/AppContainer';
 import Login from './components/Login';
-import { CsatBanner } from './components/common/CsatBanner';
+import { AnnouncementBanner } from './components/common/AnnouncementBanner';
 import LoginModal from './components/common/LoginModal';
 import { RequireAdmin } from './components/common/RequireAdmin';
 import FeedConfigurationView from './components/feeds/FeedConfigurationView';
@@ -181,10 +182,14 @@ function App() {
             onClose={() => setSnackbarMessage(null)}
             message={snackbarMessage}
           />
-          <CsatBanner
+          <AnnouncementBanner
             startDate={CSAT_SURVEY_START_DATE}
             endDate={CSAT_SURVEY_END_DATE}
-            formUrl={CSAT_SURVEY_FORM_URL}
+            title="CSAT Survey:"
+            message="Please share your experience of this transcription tool by Wed, July 29!"
+            linkUrl={CSAT_SURVEY_FORM_URL}
+            linkText={`${CSAT_SURVEY_FORM_URL} (2 min survey)`}
+            icon={<RateReviewIcon />}
           />
           {alerts.length > 0 && (
             <Stack sx={{ width: '100%', marginBottom: 1 }} spacing={1}>

@@ -3,17 +3,19 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import { CsatBanner } from './CsatBanner';
+import { AnnouncementBanner } from './AnnouncementBanner';
 
 const TEST_START_DATE = new Date('2026-07-20T00:00:00');
 const TEST_END_DATE = new Date('2026-07-29T23:59:59');
-const TEST_FORM_URL = 'https://forms.gle/KocdXk8qWXyw7UCw9';
+const TEST_LINK_URL = 'https://forms.gle/KocdXk8qWXyw7UCw9';
+const TEST_MESSAGE =
+  'Please share your experience of this transcription tool by Wed, July 29!';
 
 afterEach(() => {
   cleanup();
 });
 
-describe('CsatBanner', () => {
+describe('AnnouncementBanner', () => {
   beforeEach(() => {
     localStorage.clear();
   });
@@ -21,10 +23,12 @@ describe('CsatBanner', () => {
   it('does not render before the start date', () => {
     const beforeStart = new Date(TEST_START_DATE.getTime() - 1000);
     render(
-      <CsatBanner
+      <AnnouncementBanner
         startDate={TEST_START_DATE}
         endDate={TEST_END_DATE}
-        formUrl={TEST_FORM_URL}
+        title="CSAT Survey:"
+        message={TEST_MESSAGE}
+        linkUrl={TEST_LINK_URL}
         currentDate={beforeStart}
       />
     );
@@ -34,59 +38,64 @@ describe('CsatBanner', () => {
   it('does not render after the end date', () => {
     const afterEnd = new Date(TEST_END_DATE.getTime() + 1000);
     render(
-      <CsatBanner
+      <AnnouncementBanner
         startDate={TEST_START_DATE}
         endDate={TEST_END_DATE}
-        formUrl={TEST_FORM_URL}
+        title="CSAT Survey:"
+        message={TEST_MESSAGE}
+        linkUrl={TEST_LINK_URL}
         currentDate={afterEnd}
       />
     );
     expect(screen.queryByText(/Please share your experience/i)).toBeNull();
   });
 
-  it('renders within the valid date window with default message and derived link text', () => {
+  it('renders within the valid date window with title, message, and custom link text', () => {
     const duringWindow = new Date(TEST_START_DATE.getTime() + 3600000);
     render(
-      <CsatBanner
+      <AnnouncementBanner
         startDate={TEST_START_DATE}
         endDate={TEST_END_DATE}
-        formUrl={TEST_FORM_URL}
+        title="CSAT Survey:"
+        message={TEST_MESSAGE}
+        linkUrl={TEST_LINK_URL}
+        linkText={`${TEST_LINK_URL} (2 min survey)`}
         currentDate={duringWindow}
       />
     );
+    expect(screen.getByText('CSAT Survey:')).toBeTruthy();
     expect(screen.getByText(/Please share your experience/i)).toBeTruthy();
     const link = screen.getByRole('link', {
       name: /https:\/\/forms\.gle\/KocdXk8qWXyw7UCw9 \(2 min survey\)/i,
     });
-    expect(link.getAttribute('href')).toBe(TEST_FORM_URL);
+    expect(link.getAttribute('href')).toBe(TEST_LINK_URL);
   });
 
-  it('supports string date formats and custom title/message/linkText props', () => {
+  it('renders correctly without title or linkUrl when only message is provided', () => {
     const duringWindow = new Date(TEST_START_DATE.getTime() + 3600000);
     render(
-      <CsatBanner
+      <AnnouncementBanner
         startDate="2026-07-20T00:00:00"
         endDate="2026-07-29T23:59:59"
-        formUrl="https://example.com/survey"
-        title="Feedback:"
-        message="Help us improve this tool!"
-        linkText="Click here"
+        message="System maintenance scheduled for Saturday."
         currentDate={duringWindow}
       />
     );
-    expect(screen.getByText('Feedback:')).toBeTruthy();
-    expect(screen.getByText(/Help us improve this tool!/i)).toBeTruthy();
-    const link = screen.getByRole('link', { name: 'Click here' });
-    expect(link.getAttribute('href')).toBe('https://example.com/survey');
+    expect(
+      screen.getByText('System maintenance scheduled for Saturday.')
+    ).toBeTruthy();
+    expect(screen.queryByRole('link')).toBeNull();
   });
 
   it('renders when forceShow is set to true even outside date window', () => {
     const beforeStart = new Date(TEST_START_DATE.getTime() - 1000);
     render(
-      <CsatBanner
+      <AnnouncementBanner
         startDate={TEST_START_DATE}
         endDate={TEST_END_DATE}
-        formUrl={TEST_FORM_URL}
+        title="Notice:"
+        message={TEST_MESSAGE}
+        linkUrl={TEST_LINK_URL}
         currentDate={beforeStart}
         forceShow
       />
@@ -97,10 +106,12 @@ describe('CsatBanner', () => {
   it('closes and saves dismissal to localStorage when close button is clicked', () => {
     const duringWindow = new Date(TEST_START_DATE.getTime() + 3600000);
     render(
-      <CsatBanner
+      <AnnouncementBanner
         startDate={TEST_START_DATE}
         endDate={TEST_END_DATE}
-        formUrl={TEST_FORM_URL}
+        title="Notice:"
+        message={TEST_MESSAGE}
+        linkUrl={TEST_LINK_URL}
         currentDate={duringWindow}
       />
     );
@@ -111,18 +122,23 @@ describe('CsatBanner', () => {
 
     expect(screen.queryByText(/Please share your experience/i)).toBeNull();
     expect(
-      localStorage.getItem(`survey_banner_dismissed_${TEST_FORM_URL}`)
+      localStorage.getItem(`announcement_banner_dismissed_${TEST_LINK_URL}`)
     ).toBe('true');
   });
 
   it('does not render if previously dismissed in localStorage', () => {
-    localStorage.setItem(`survey_banner_dismissed_${TEST_FORM_URL}`, 'true');
+    localStorage.setItem(
+      `announcement_banner_dismissed_${TEST_LINK_URL}`,
+      'true'
+    );
     const duringWindow = new Date(TEST_START_DATE.getTime() + 3600000);
     render(
-      <CsatBanner
+      <AnnouncementBanner
         startDate={TEST_START_DATE}
         endDate={TEST_END_DATE}
-        formUrl={TEST_FORM_URL}
+        title="Notice:"
+        message={TEST_MESSAGE}
+        linkUrl={TEST_LINK_URL}
         currentDate={duringWindow}
       />
     );
@@ -130,13 +146,15 @@ describe('CsatBanner', () => {
   });
 
   it('uses custom storageKey when provided', () => {
-    const customKey = 'my_custom_survey_dismissal';
+    const customKey = 'my_custom_announcement_dismissal';
     const duringWindow = new Date(TEST_START_DATE.getTime() + 3600000);
     render(
-      <CsatBanner
+      <AnnouncementBanner
         startDate={TEST_START_DATE}
         endDate={TEST_END_DATE}
-        formUrl={TEST_FORM_URL}
+        title="Notice:"
+        message={TEST_MESSAGE}
+        linkUrl={TEST_LINK_URL}
         storageKey={customKey}
         currentDate={duringWindow}
       />

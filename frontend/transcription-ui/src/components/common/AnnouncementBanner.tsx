@@ -1,23 +1,25 @@
-import { useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 
-import RateReviewIcon from '@mui/icons-material/RateReview';
+import CampaignIcon from '@mui/icons-material/Campaign';
 import Alert from '@mui/material/Alert';
 import Box from '@mui/material/Box';
 import Link from '@mui/material/Link';
 
-export interface CsatBannerProps {
+export interface AnnouncementBannerProps {
   /** Start date and time when the banner should begin showing. */
   startDate: Date | string | number;
   /** End date and time when the banner should stop showing. */
   endDate: Date | string | number;
-  /** Survey or feedback form URL to link to. */
-  formUrl: string;
-  /** Optional custom title prefix displayed before the message. Defaults to "CSAT Survey:". */
+  /** Main message text to display in the banner. */
+  message: string;
+  /** Optional title prefix displayed before the message (e.g., "CSAT Survey:"). */
   title?: string;
-  /** Optional custom main message text. Defaults to standard survey notice. */
-  message?: string;
-  /** Optional link display text. Defaults to "${formUrl} (2 min survey)". */
+  /** Optional clickable link URL to append to the banner message. */
+  linkUrl?: string;
+  /** Optional link display text. Defaults to linkUrl if provided. */
   linkText?: string;
+  /** Optional React Node icon override for the alert banner. Defaults to CampaignIcon. */
+  icon?: React.ReactNode;
   /** Optional unique storage key for tracking dismissal state in localStorage. */
   storageKey?: string;
   /** Optional date override for testing or checking display criteria. */
@@ -27,22 +29,27 @@ export interface CsatBannerProps {
 }
 
 /**
- * Reusable survey/CSAT banner component with time window gating and local dismissal tracking.
+ * Reusable general announcement banner component with time window gating and local dismissal tracking.
  */
-export function CsatBanner({
+export function AnnouncementBanner({
   startDate,
   endDate,
-  formUrl,
-  title = 'CSAT Survey:',
-  message = 'Please share your experience of this transcription tool by Wed, July 29!',
+  message,
+  title,
+  linkUrl,
   linkText,
+  icon,
   storageKey,
   currentDate,
   forceShow,
-}: CsatBannerProps) {
+}: AnnouncementBannerProps) {
   const resolvedStorageKey = useMemo(
-    () => storageKey ?? `survey_banner_dismissed_${formUrl}`,
-    [storageKey, formUrl]
+    () =>
+      storageKey ??
+      (linkUrl
+        ? `announcement_banner_dismissed_${linkUrl}`
+        : `announcement_banner_dismissed_${title || ''}_${startDate}`),
+    [storageKey, linkUrl, title, startDate]
   );
 
   const [dismissed, setDismissed] = useState<boolean>(() => {
@@ -75,12 +82,12 @@ export function CsatBanner({
     }
   };
 
-  const displayLinkText = linkText ?? `${formUrl} (2 min survey)`;
+  const displayLinkText = linkText ?? linkUrl;
 
   return (
     <Alert
       severity="info"
-      icon={<RateReviewIcon />}
+      icon={icon ?? <CampaignIcon />}
       onClose={handleClose}
       sx={{
         width: '100%',
@@ -94,16 +101,18 @@ export function CsatBanner({
           {title}
         </Box>
       )}
-      {message}{' '}
-      <Link
-        href={formUrl}
-        target="_blank"
-        rel="noopener noreferrer"
-        underline="hover"
-        sx={{ fontWeight: 600, ml: 0.5 }}
-      >
-        {displayLinkText}
-      </Link>
+      {message}
+      {linkUrl && (
+        <Link
+          href={linkUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          underline="hover"
+          sx={{ fontWeight: 600, ml: 0.5 }}
+        >
+          {displayLinkText}
+        </Link>
+      )}
     </Alert>
   );
 }
