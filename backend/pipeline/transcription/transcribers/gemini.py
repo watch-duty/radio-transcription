@@ -121,15 +121,13 @@ class GeminiTranscriber(base.Transcriber):
 
     def setup(self) -> None:
         """Instantiate the GenAI API client with a robust retry policy."""
-        transport = httpx.AsyncHTTPTransport(http2=True)
-
         self.client = genai.Client(
             enterprise=True,
             project=self.project_id,
             location=self.location,
             http_options=types.HttpOptions(
                 timeout=self.config.client_timeout_ms,
-                async_client_args={"transport": transport},
+                httpx_async_client=httpx.AsyncClient(http2=True),
                 retry_options=types.HttpRetryOptions(
                     attempts=self.config.retry_attempts,
                     initial_delay=self.config.retry_initial_delay,
