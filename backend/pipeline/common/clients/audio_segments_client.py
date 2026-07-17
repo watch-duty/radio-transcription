@@ -156,9 +156,8 @@ class AsyncAudioSegmentsClient:
         """
         self.api_url = api_url.rstrip("/")
         self.max_retries = max_retries
-        transport = httpx.AsyncHTTPTransport(retries=0, http2=True)
         auth = GCPMetadataAsyncAuth(self.api_url) if is_gcp_env() else None
-        self.client = httpx.AsyncClient(transport=transport, auth=auth)
+        self.client = httpx.AsyncClient(http2=True, auth=auth)
 
     async def close(self) -> None:
         """Closes the underlying HTTP client session connection pool."""
