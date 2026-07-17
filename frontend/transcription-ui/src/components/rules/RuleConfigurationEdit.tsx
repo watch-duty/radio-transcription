@@ -30,6 +30,7 @@ import Select from '@mui/material/Select';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
+import { useMutation } from '@tanstack/react-query';
 import type {
   DryRunRequest,
   DryRunResponse,
@@ -170,12 +171,13 @@ export function RuleConfigurationEdit({
       prev.map((tag) => (tag.id === id ? { ...tag, [field]: value } : tag))
     );
   };
-
-  const [isDryRunning, setIsDryRunning] = useState(false);
-  const [dryRunResult, setDryRunResult] = useState<DryRunResponse | null>(null);
-  const [dryRunError, setDryRunError] = useState<string | null>(null);
   const [isDryRunModalOpen, setIsDryRunModalOpen] = useState(false);
   const [daysLookback, setDaysLookback] = useState(1);
+
+  const testRuleMutation = useMutation({
+    mutationFn: (dryRunPayload: DryRunRequest) =>
+      dryRunRule(dryRunPayload, token!),
+  });
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setMenuAnchorEl(event.currentTarget);
@@ -310,7 +312,7 @@ export function RuleConfigurationEdit({
     onDeleteRule();
   };
 
-  const handleTestRule = async () => {
+  const handleTestRule = () => {
     const errors = validateRule(editingRule, newKeyword);
     if (Object.keys(errors).length > 0) {
       setValidationErrors(errors);
@@ -319,29 +321,17 @@ export function RuleConfigurationEdit({
     setValidationErrors({});
     const payload = buildRulePayload(editingRule, newKeyword);
 
-    setIsDryRunning(true);
-    setDryRunError(null);
-    setDryRunResult(null);
     setIsDryRunModalOpen(true);
 
-    try {
-      const dryRunPayload: DryRunRequest = { rule: payload, daysLookback };
-      if (
-        payload.scope.level === 'FEED_SPECIFIC' &&
-        payload.scope.targetFeeds.length > 0
-      ) {
-        dryRunPayload.feedIds = payload.scope.targetFeeds;
-      }
-
-      const response = await dryRunRule(dryRunPayload, token!);
-      setDryRunResult(response);
-    } catch (e: unknown) {
-      const errorMessage =
-        e instanceof Error ? e.message : 'Failed to dry run rule';
-      setDryRunError(errorMessage);
-    } finally {
-      setIsDryRunning(false);
+    const dryRunPayload: DryRunRequest = { rule: payload, daysLookback };
+    if (
+      payload.scope.level === 'FEED_SPECIFIC' &&
+      payload.scope.targetFeeds.length > 0
+    ) {
+      dryRunPayload.feedIds = payload.scope.targetFeeds;
     }
+
+    testRuleMutation.mutate(dryRunPayload);
   };
 
   // Filter out the rule itself if in edit mode to avoid self-reference in groups
@@ -459,7 +449,7 @@ export function RuleConfigurationEdit({
                   variant="outlined"
                   color="info"
                   onClick={handleTestRule}
-                  disabled={isSubmitting || isDryRunning}
+                  disabled={isSubmitting || testRuleMutation.isPending}
                   sx={{ textTransform: 'none' }}
                 >
                   Test Rule
@@ -468,10 +458,10 @@ export function RuleConfigurationEdit({
                   size="small"
                   value={daysLookback}
                   onChange={(e) => setDaysLookback(Number(e.target.value))}
-                  disabled={isSubmitting || isDryRunning}
+                  disabled={isSubmitting || testRuleMutation.isPending}
                   sx={{ minWidth: 140 }}
                 >
-                  <MenuItem value={1}>Past 24 hours</MenuItem>
+                  <MenuItem value={1}>Past day</MenuItem>
                   <MenuItem value={2}>Past 2 days</MenuItem>
                   <MenuItem value={3}>Past 3 days</MenuItem>
                   <MenuItem value={7}>Past 7 days</MenuItem>
@@ -588,10 +578,19 @@ export function RuleConfigurationEdit({
 
       <DryRunResultsModal
         isOpen={isDryRunModalOpen}
-        onClose={() => setIsDryRunModalOpen(false)}
-        isLoading={isDryRunning}
-        result={dryRunResult}
-        error={dryRunError}
+        onClose={() => {
+          setIsDryRunModalOpen(false);
+          testRuleMutation.reset();
+        }}
+        isLoading={testRuleMutation.isPending}
+        result={testRuleMutation.data ?? null}
+        error={
+          testRuleMutation.error
+            ? testRuleMutation.error instanceof Error
+              ? testRuleMutation.error.message
+              : 'Failed to dry run rule'
+            : null
+        }
         feeds={feeds}
         daysLookback={daysLookback}
       />
