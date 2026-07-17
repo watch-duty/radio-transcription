@@ -349,6 +349,36 @@ class TestTracingUtils(unittest.TestCase):
         # Clean up
         tracing_utils._state.custom_provider = None
 
+    @patch(
+        "backend.pipeline.common.tracing_utils.is_gcp_env", return_value=True
+    )
+    @patch("backend.pipeline.common.tracing_utils.CloudTraceSpanExporter")
+    @patch("backend.pipeline.common.tracing_utils.BatchSpanProcessor")
+    def test_setup_tracing_batch_processor_config(
+        self, mock_batch_processor, mock_exporter, mock_is_gcp
+    ) -> None:
+        """Verifies setup_tracing configures BatchSpanProcessor using env overrides."""
+        tracing_utils._state.custom_provider = None
+
+        with patch.dict(
+            "os.environ",
+            {
+                "GOOGLE_CLOUD_PROJECT": "test-project",
+                "OTEL_BSP_MAX_EXPORT_BATCH_SIZE": "256",
+                "OTEL_BSP_SCHEDULE_DELAY": "5000",
+            },
+        ):
+            setup_tracing(service_name="test_service", use_batch=True)
+
+        # Verify BatchSpanProcessor was instantiated with overrides
+        mock_batch_processor.assert_called_once_with(
+            mock_exporter.return_value,
+            max_export_batch_size=256,
+            schedule_delay_millis=5000.0,
+        )
+
+        tracing_utils._state.custom_provider = None
+
 
 class TestTracingForkSafety(unittest.TestCase):
     def setUp(self) -> None:

@@ -188,11 +188,17 @@ def setup_tracing(
         if use_batch:
             # Configure smaller, more frequent batches to avoid 504 Deadline Exceeded errors
             # in high-throughput environments like the Dataflow segmentation pipeline.
+            max_batch_size = int(
+                os.environ.get("OTEL_BSP_MAX_EXPORT_BATCH_SIZE", "64")
+            )
+            schedule_delay = float(
+                os.environ.get("OTEL_BSP_SCHEDULE_DELAY", "1000")
+            )
             provider.add_span_processor(
                 BatchSpanProcessor(
                     exporter,
-                    max_export_batch_size=64,
-                    schedule_delay_millis=1000,
+                    max_export_batch_size=max_batch_size,
+                    schedule_delay_millis=schedule_delay,
                 )
             )
         else:
