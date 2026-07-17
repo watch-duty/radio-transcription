@@ -144,7 +144,9 @@ def get_pipeline(
             staging_audio_bucket=options.staging_audio_bucket,
             project_id=project,
         )
-    ).with_outputs(DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG)
+    ).with_resource_hints(min_ram="8GB").with_outputs(
+        DEAD_LETTER_QUEUE_TAG, main=MAIN_TAG
+    )
 
     uploaded_segments.main | "WriteToPubSub" >> WriteToPubSub(
         topic=options.output_topic,
