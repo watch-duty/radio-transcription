@@ -3,6 +3,7 @@
 import dataclasses
 import mimetypes
 
+import httpx
 import pydantic
 from google import genai
 from google.genai import types
@@ -33,11 +34,11 @@ _DEFAULT_TEMPERATURE = 0.0
 _DEFAULT_MAX_OUTPUT_TOKENS = 512
 
 # API retry defaults
-DEFAULT_GEMINI_RETRY_ATTEMPTS = 5
+DEFAULT_GEMINI_RETRY_ATTEMPTS = 3
 DEFAULT_GEMINI_RETRY_INITIAL_DELAY = 1.0
 DEFAULT_GEMINI_RETRY_MAX_DELAY = 60.0
 DEFAULT_GEMINI_RETRY_MULTIPLIER = 2.0
-DEFAULT_GEMINI_CLIENT_TIMEOUT_MS = 120000
+DEFAULT_GEMINI_CLIENT_TIMEOUT_MS = 60000
 
 
 # Emergency dispatch traffic frequently contains graphic descriptions of
@@ -126,6 +127,7 @@ class GeminiTranscriber(base.Transcriber):
             location=self.location,
             http_options=types.HttpOptions(
                 timeout=self.config.client_timeout_ms,
+                httpx_async_client=httpx.AsyncClient(http2=True),
                 retry_options=types.HttpRetryOptions(
                     attempts=self.config.retry_attempts,
                     initial_delay=self.config.retry_initial_delay,
