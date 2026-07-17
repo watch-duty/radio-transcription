@@ -2105,6 +2105,56 @@ class TestIcecastTimelineManager(unittest.TestCase):
             manager.process_chunk(chunk2, 16000 * 30, process_done=False)
         self.assertIn("Non-monotonic chunk start time", str(ctx.exception))
 
+    def test_microsecond_rounding_coalesced(self) -> None:
+        """Verify that microsecond-level rounding errors in chunk start times are coalesced."""
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=datetime.datetime.now(datetime.UTC),
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        now = datetime.datetime.now(datetime.UTC)
+        chunk1 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now,
+            chunk_end_time=now + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+        )
+        manager.in_burst = False
+        manager.process_chunk(chunk1, 16000 * 15, process_done=False)
+
+        # Test overlap of 1 microsecond
+        chunk2 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now
+            + datetime.timedelta(seconds=15)
+            - datetime.timedelta(microseconds=1),
+            chunk_end_time=now + datetime.timedelta(seconds=30),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=15),
+        )
+        res = manager.process_chunk(chunk2, 16000 * 30, process_done=False)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(
+            res[0].chunk_start_time, now + datetime.timedelta(seconds=15)
+        )
+
+        # Test gap of 1 microsecond
+        chunk3 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now
+            + datetime.timedelta(seconds=30)
+            + datetime.timedelta(microseconds=1),
+            chunk_end_time=now + datetime.timedelta(seconds=45),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=30),
+        )
+        res2 = manager.process_chunk(chunk3, 16000 * 45, process_done=False)
+        self.assertEqual(len(res2), 1)
+        self.assertEqual(
+            res2[0].chunk_start_time, now + datetime.timedelta(seconds=30)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

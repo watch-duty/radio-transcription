@@ -753,6 +753,14 @@ class IcecastTimelineManager:
             )
             raise ValueError(msg)
         if self._last_yielded_end_time is not None:
+            # Coalesce tiny floating-point rounding discrepancies (up to 2 microseconds)
+            # between successive chunks to ensure perfect contiguity.
+            time_diff = chunk.chunk_start_time - self._last_yielded_end_time
+            if abs(time_diff) <= datetime.timedelta(microseconds=2):
+                chunk = dataclasses.replace(
+                    chunk, chunk_start_time=self._last_yielded_end_time
+                )
+
             if chunk.chunk_start_time < self._last_yielded_end_time:
                 msg = (
                     f"Feed {self.feed_id} ({self.feed_name}): "
