@@ -222,14 +222,10 @@ def derive_bcfy_calls_authority(
         A validated frozen profile with both claim authorities derived.
 
     Raises:
-        TypeError: If ``mode`` is not a ``BcfyCallsAuthorityMode``.
         ValueError: If the topology cannot host the selected authority or the
             derived enabled capacity exceeds the process envelope.
     """
     validated = validate_worker_profile(profile)
-    if not isinstance(mode, BcfyCallsAuthorityMode):
-        msg = "mode must be a BcfyCallsAuthorityMode"
-        raise TypeError(msg)
 
     feed_allocation = allocation_for_domain(
         validated,
@@ -288,7 +284,7 @@ def resolve_worker_profile(
     """
     if selector is None:
         preset = LEGACY_PROFILE
-    elif not isinstance(selector, str) or not selector.strip():
+    elif not selector.strip():
         msg = "WORKER_PROFILE must not be blank"
         raise ValueError(msg)
     else:

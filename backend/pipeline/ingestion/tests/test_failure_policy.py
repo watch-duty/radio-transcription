@@ -164,14 +164,6 @@ class TestFailurePlanning(unittest.TestCase):
         with self.assertRaises(ValueError):
             failure_policy.RetryWithoutBudget(_NOW.replace(tzinfo=None))
 
-        with self.assertRaises(TypeError):
-            failure_policy.plan_failure(
-                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
-                None,
-                budgeted=_BUDGETED,
-                non_budgeted=mock.Mock(return_value=object()),
-            )
-
 
 if __name__ == "__main__":
     unittest.main()

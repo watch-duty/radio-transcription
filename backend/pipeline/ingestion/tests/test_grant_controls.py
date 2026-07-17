@@ -404,7 +404,6 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             (first_result, first_result),
             (second_result, first_result),
             (unknown_result, second_result),
-            (mock.Mock(), second_result),
         )
 
         for case_index, results in enumerate(cases):
@@ -863,7 +862,6 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         cases = (
             ("excess", (first, second), 1),
             ("duplicate", (first, first), 2),
-            ("invalid_type", (mock.Mock(),), 1),
             ("wrong_source", (wrong_source,), 1),
             ("wrong_owner", (wrong_owner,), 1),
         )
@@ -937,7 +935,6 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             (first_result, first_result),
             (second_result, first_result),
             (unknown_result, second_result),
-            (mock.Mock(), second_result),
         )
 
         for case_index, results in enumerate(cases):

@@ -81,32 +81,19 @@ class FeedGrantControl:
     ) -> None:
         caps: dict[feed_store.SourceType, int] = {}
         for source_type, cap in source_caps.items():
-            if not isinstance(source_type, feed_store.SourceType):
-                msg = "source cap keys must be SourceType values"
-                raise TypeError(msg)
-            if isinstance(cap, bool) or not isinstance(cap, int):
+            if isinstance(cap, bool):
                 msg = "source caps must be integers"
                 raise TypeError(msg)
             if cap < 0:
                 msg = "source caps must be nonnegative"
                 raise ValueError(msg)
             caps[source_type] = cap
-        if not isinstance(abandonment_window, datetime.timedelta):
-            msg = "abandonment_window must be a timedelta"
-            raise TypeError(msg)
         if abandonment_window <= datetime.timedelta(0):
             msg = "abandonment_window must be positive"
             raise ValueError(msg)
-        if not isinstance(actor_id, str):
-            msg = "actor_id must be a string"
-            raise TypeError(msg)
         if not actor_id.strip():
             msg = "actor_id must not be empty"
             raise ValueError(msg)
-        if on_quarantined is not None and not callable(on_quarantined):
-            msg = "on_quarantined must be callable"
-            raise TypeError(msg)
-
         self._data_store = data_store
         self._heartbeat_store = heartbeat_store
         self._source_caps = types.MappingProxyType(caps)
@@ -241,7 +228,7 @@ class FeedGrantControl:
 
         Raises:
             grant_control.GrantControlIntegrityError: Results have invalid
-                cardinality, type, identity, order, or disposition.
+                cardinality, identity, order, or disposition.
         """
         grants = tuple(grants)
         results = await self._heartbeat_store.renew_grant_heartbeats(grants)
@@ -252,9 +239,6 @@ class FeedGrantControl:
         translated = []
         seen: set[feed_store.FeedGrant] = set()
         for index, result in enumerate(results):
-            if not isinstance(result, feed_store.FeedGrantHeartbeatResult):
-                msg = "Feed heartbeat returned an invalid result type"
-                raise grant_control.GrantControlIntegrityError(msg)
             if result.grant in seen or result.grant != grants[index]:
                 msg = "Feed heartbeat result identity or order mismatch"
                 raise grant_control.GrantControlIntegrityError(msg)

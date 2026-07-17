@@ -139,14 +139,9 @@ def plan_failure(
     Returns:
         Canonical failure evidence with one materialized treatment.
 
-    Raises:
-        TypeError: ``non_budgeted`` returns an invalid treatment.
     """
     if consumes_failure_budget(status_reason):
         treatment: FailureTreatment = budgeted
     else:
         treatment = non_budgeted()
-        if not isinstance(treatment, RetryWithoutBudget):
-            msg = "non_budgeted must return RetryWithoutBudget"
-            raise TypeError(msg)
     return FailurePersistencePlan(status_reason, reason, treatment)

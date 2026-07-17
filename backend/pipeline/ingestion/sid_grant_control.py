@@ -55,18 +55,9 @@ class SidGrantControl:
         *,
         actor_id: str,
     ) -> None:
-        if not isinstance(source_type, feed_store.SourceType):
-            msg = "source_type must be a SourceType"
-            raise TypeError(msg)
-        if not isinstance(abandonment_window, datetime.timedelta):
-            msg = "abandonment_window must be a timedelta"
-            raise TypeError(msg)
         if abandonment_window <= datetime.timedelta(0):
             msg = "abandonment_window must be positive"
             raise ValueError(msg)
-        if not isinstance(actor_id, str):
-            msg = "actor_id must be a string"
-            raise TypeError(msg)
         if not actor_id.strip():
             msg = "actor_id must not be empty"
             raise ValueError(msg)
@@ -134,9 +125,6 @@ class SidGrantControl:
         translated = []
         seen: set[ingestion_lease_store.LeaseGrant] = set()
         for claim in claims:
-            if not isinstance(claim, ingestion_lease_store.LeaseClaim):
-                msg = "SID claim returned an invalid result type"
-                raise grant_control.GrantControlIntegrityError(msg)
             if claim.grant in seen:
                 msg = "SID claim returned a duplicate authority"
                 raise grant_control.GrantControlIntegrityError(msg)
@@ -172,7 +160,7 @@ class SidGrantControl:
 
         Raises:
             grant_control.GrantControlIntegrityError: Results have invalid
-                cardinality, type, identity, order, or disposition.
+                cardinality, identity, order, or disposition.
         """
         grants = tuple(grants)
         results = await self._heartbeat_store.renew_heartbeats(grants)
@@ -183,11 +171,6 @@ class SidGrantControl:
         translated = []
         seen: set[ingestion_lease_store.LeaseGrant] = set()
         for index, result in enumerate(results):
-            if not isinstance(
-                result, ingestion_lease_store.LeaseHeartbeatResult
-            ):
-                msg = "SID heartbeat returned an invalid result type"
-                raise grant_control.GrantControlIntegrityError(msg)
             if result.grant in seen or result.grant != grants[index]:
                 msg = "SID heartbeat result identity or order mismatch"
                 raise grant_control.GrantControlIntegrityError(msg)
@@ -240,11 +223,6 @@ class SidGrantControl:
         """
         if isinstance(terminal, grant_control.NeutralRelease):
             result = await self._data_store.release(grant)
-            if not isinstance(
-                result, ingestion_lease_store.LeaseOperationResult
-            ):
-                msg = "SID release returned an invalid result type"
-                raise grant_control.GrantControlIntegrityError(msg)
             disposition = _finalize_disposition(result.disposition)
             return grant_control.FinalizeResult(grant, disposition)
 
@@ -272,9 +250,6 @@ class SidGrantControl:
             actor_id=self._actor_id,
             reason=terminal.reason,
         )
-        if not isinstance(result, ingestion_lease_store.LeaseFailureResult):
-            msg = "SID failure returned an invalid result type"
-            raise grant_control.GrantControlIntegrityError(msg)
         if isinstance(treatment, failure_policy.RetryWithoutBudget) and (
             result.final_status is feed_store.FeedStatus.QUARANTINED
         ):
