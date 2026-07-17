@@ -48,6 +48,7 @@ from backend.pipeline.ingestion import (
     failure_policy,
     feed_grant_control,
     grant_control,
+    grant_supervisor,
     sid_grant_control,
     worker_profiles,
 )
@@ -67,6 +68,19 @@ grant_control.GrantControl.finalize
 grant_control.GrantRunner
 worker_profiles.derive_bcfy_calls_authority
 worker_profiles.resolve_worker_profile
+
+# The generic supervisor lands before CollectorRuntime delegates its legacy
+# Feed lifecycle to it. Vulture excludes the focused contract tests, so retain
+# only the public handoff surface until the next runtime-migration PR.
+grant_supervisor.GrantSupervisor
+grant_supervisor.GrantSupervisor.admission_enabled
+grant_supervisor.GrantSupervisor.integrity_failure_event
+grant_supervisor.GrantSupervisor.integrity_failure
+grant_supervisor.GrantSupervisor.admit_cycle
+grant_supervisor.GrantSupervisor.heartbeat_cycle
+grant_supervisor.SupervisorSnapshot.counts_by_domain
+grant_supervisor.ShutdownResult.finalized
+grant_supervisor.ShutdownResult.abandoned
 
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation
 # and schema reflection, which Vulture cannot trace through direct Python
