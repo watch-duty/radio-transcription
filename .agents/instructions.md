@@ -50,12 +50,25 @@ annotation, such as `isinstance()` wrappers around enums, UUIDs, or validated
 dataclasses.
 
 - Validate a value once, at the earliest real trust seam.
+- Treat an annotation as trusted only when CI's static checker covers both the
+  implementation and its legitimate callers. Annotations in excluded or
+  untyped subtrees, library or notebook entry points, and untyped callback or
+  plugin seams do not by themselves justify removing runtime validation.
 - Before adding or removing a runtime check, inspect the repository's callers
   and identify the untrusted input or invariant that the check protects.
+- When one condition combines type and domain validation, remove only the
+  redundant type arm. Keep semantic subtype exclusions such as rejecting
+  `bool` where an integer is required, along with nonempty, range, and
+  cross-field checks.
 - Keep constructor validation that establishes a trustworthy domain object.
 - Keep runtime validation for external or untyped inputs, database rows,
   deserialized data, value ranges, cross-field invariants, canonical identity
   relationships, authorization, ownership, and fencing.
+- Keep runtime union or variant discrimination that selects behavior; it is
+  dispatch, not duplicate validation.
+- Remove tests that use `Any`, casts, or fabricated wrong-type objects only to
+  exercise a redundant guard at a trusted seam. Keep tests for real trust seams
+  and substantive invariants.
 - Do not remove substantive domain or authority validation merely because a
   parameter has a type annotation.
 
