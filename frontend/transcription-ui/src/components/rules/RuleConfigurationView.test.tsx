@@ -591,6 +591,7 @@ describe('RuleConfigurationView', () => {
         expect(dryRunRule).toHaveBeenCalledTimes(1);
         expect(dryRunRule).toHaveBeenCalledWith(
           {
+            daysLookback: 1,
             rule: {
               ruleName: 'Evacuation Test Rule',
               description: undefined,
@@ -609,9 +610,11 @@ describe('RuleConfigurationView', () => {
 
         // The modal should display the results
         expect(
-          screen.getByText('Tested against 5,000 recent transcripts.')
+          screen.getByText(
+            /Rule matched 45 of 5,000 transcripts evaluated from the past 1 day/i
+          )
         ).toBeInTheDocument();
-        expect(screen.getByText('Found 45 matches.')).toBeInTheDocument();
+        expect(screen.getByText('Matched examples')).toBeInTheDocument();
         expect(screen.getByText('evacuate')).toBeInTheDocument();
       });
     });
