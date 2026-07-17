@@ -119,10 +119,15 @@ resource "google_alloydb_user" "worker" {
 # -----------------------------------------------------------------------------
 
 locals {
-  schema_sql_files    = var.apply_schema ? sort(fileset("${path.module}/sql/ingestion", "*.sql")) : []
-  privilege_sql_files = var.apply_schema ? ["000_ingestion_runtime_bootstrap.sql", "999_ingestion_runtime_reconcile.sql"] : []
+  schema_sql_files = var.apply_schema ? sort(fileset("${path.module}/sql/ingestion", "*.sql")) : []
+  privilege_sql_files = var.apply_schema ? [
+    "000_ingestion_runtime_bootstrap.sql",
+    "100_ingestion_runtime_hardening.sql",
+    "999_ingestion_runtime_reconcile.sql",
+  ] : []
   schema_sql_combined = join("\n", concat(
     [for f in local.privilege_sql_files : file("${path.module}/sql/privileges/${f}") if f == "000_ingestion_runtime_bootstrap.sql"],
+    [for f in local.privilege_sql_files : file("${path.module}/sql/privileges/${f}") if f == "100_ingestion_runtime_hardening.sql"],
     [for f in local.schema_sql_files : file("${path.module}/sql/ingestion/${f}")],
     [for f in local.privilege_sql_files : file("${path.module}/sql/privileges/${f}") if f == "999_ingestion_runtime_reconcile.sql"],
   ))
@@ -219,7 +224,7 @@ resource "google_cloud_run_v2_job" "schema_migration" {
         command = ["/bin/sh"]
         args = [
           "-c",
-          "set -eu; export LC_ALL=C; echo 'Applying ingestion privilege bootstrap...'; psql -X -v ON_ERROR_STOP=1 -f /sql/privileges/000_ingestion_runtime_bootstrap.sql -h \"$DB_HOST\" -p \"$DB_PORT\" -U \"$DB_USER\" -d \"$DB_NAME\"; for f in /sql/ingestion/*.sql; do echo \"Applying $f...\"; psql -X -v ON_ERROR_STOP=1 -f \"$f\" -h \"$DB_HOST\" -p \"$DB_PORT\" -U \"$DB_USER\" -d \"$DB_NAME\"; done; echo 'Reconciling ingestion runtime privileges...'; psql -X -v ON_ERROR_STOP=1 -f /sql/privileges/999_ingestion_runtime_reconcile.sql -h \"$DB_HOST\" -p \"$DB_PORT\" -U \"$DB_USER\" -d \"$DB_NAME\"; echo 'Schema and privileges applied successfully.'"
+          "set -eu; export LC_ALL=C; echo 'Applying ingestion privilege bootstrap...'; psql -X -v ON_ERROR_STOP=1 -v legacy_role=\"$DB_LEGACY_ROLE\" -f /sql/privileges/000_ingestion_runtime_bootstrap.sql -h \"$DB_HOST\" -p \"$DB_PORT\" -U \"$DB_USER\" -d \"$DB_NAME\"; for f in /sql/ingestion/*.sql; do echo \"Applying $f...\"; psql -X -v ON_ERROR_STOP=1 -f \"$f\" -h \"$DB_HOST\" -p \"$DB_PORT\" -U \"$DB_USER\" -d \"$DB_NAME\"; done; echo 'Reconciling ingestion runtime privileges...'; psql -X -v ON_ERROR_STOP=1 -v legacy_role=\"$DB_LEGACY_ROLE\" -f /sql/privileges/999_ingestion_runtime_reconcile.sql -h \"$DB_HOST\" -p \"$DB_PORT\" -U \"$DB_USER\" -d \"$DB_NAME\"; echo 'Schema and privileges applied successfully.'"
         ]
 
         env {
@@ -239,6 +244,10 @@ resource "google_cloud_run_v2_job" "schema_migration" {
         env {
           name  = "DB_NAME"
           value = var.schema_database_name
+        }
+        env {
+          name  = "DB_LEGACY_ROLE"
+          value = var.create_worker_user ? var.worker_user_id : ""
         }
         env {
           name = "PGPASSWORD"
@@ -275,6 +284,7 @@ resource "google_cloud_run_v2_job" "schema_migration" {
 
   depends_on = [
     google_alloydb_instance.primary,
+    google_alloydb_user.worker,
     google_secret_manager_secret_iam_member.schema_migrator,
     google_storage_bucket_iam_member.schema_migrator,
   ]
@@ -289,7 +299,9 @@ resource "null_resource" "execute_schema_migration" {
   count = var.apply_schema ? 1 : 0
 
   triggers = {
-    schema_hash = local.schema_sql_hash
+    schema_hash           = local.schema_sql_hash
+    legacy_role           = var.create_worker_user ? var.worker_user_id : ""
+    legacy_database_roles = jsonencode(sort(var.worker_database_roles))
   }
 
   provisioner "local-exec" {
@@ -298,6 +310,7 @@ resource "null_resource" "execute_schema_migration" {
 
   depends_on = [
     google_cloud_run_v2_job.schema_migration,
+    google_alloydb_user.worker,
     google_storage_bucket_object.privilege_sql,
     google_storage_bucket_object.sql,
   ]
