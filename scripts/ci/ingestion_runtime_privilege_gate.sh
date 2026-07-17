@@ -104,15 +104,17 @@ apply_schema_gate() (
   trap cleanup_schema_large_object_fixture EXIT
 
   psql_gate -v legacy_role= -f "$bootstrap_sql"
-  for migration in "$ingestion_dir"/*.sql; do
-    case "$migration" in
-      *pg_cron*)
-        echo "Skipping $migration (pg_cron extension unavailable)"
-        continue
-        ;;
-    esac
-    echo "Applying $migration..."
-    psql_gate -f "$migration"
+  for pass in 1 2; do
+    for migration in "$ingestion_dir"/*.sql; do
+      case "$migration" in
+        *pg_cron*)
+          echo "Pass $pass: skipping $migration (pg_cron unavailable)"
+          continue
+          ;;
+      esac
+      echo "Pass $pass: applying $migration..."
+      psql_gate -f "$migration"
+    done
   done
   psql_gate -v legacy_role= -f "$reconcile_sql"
 
