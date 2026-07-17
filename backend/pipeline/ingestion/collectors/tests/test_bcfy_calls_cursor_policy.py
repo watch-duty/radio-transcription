@@ -757,12 +757,18 @@ class TestLeaseCursor(unittest.TestCase):
 
         with self.assertRaises(cursor_policy.CursorIntegrityError):
             self.cursor.accept(
-                cursor_policy._issue_no_progress_page(no_progress)
+                typing.cast(
+                    "cursor_policy._CoveredPage",
+                    cursor_policy._issue_no_progress_page(no_progress),
+                )
             )
         self.assertEqual(_cursor_state(self.cursor), before)
         with self.assertRaises(cursor_policy.CursorIntegrityError):
             self.cursor.accept_no_progress(
-                cursor_policy._issue_covered_page(progress)
+                typing.cast(
+                    "cursor_policy._NoProgressPageSettled",
+                    cursor_policy._issue_covered_page(progress),
+                )
             )
         self.assertEqual(_cursor_state(self.cursor), before)
         with self.assertRaises(cursor_policy.CursorIntegrityError):
