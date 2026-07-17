@@ -31,6 +31,7 @@ import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import type {
+  DryRunRequest,
   DryRunResponse,
   EvaluationType,
   Feed,
@@ -821,7 +822,7 @@ function DryRunResultsModal({
                 borderRadius: 1,
               }}
             >
-              <Typography variant="subtitle1" fontWeight={600}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
                 Rule matched {(result.hitCount ?? 0).toLocaleString()} of{' '}
                 {(result.totalEvaluated ?? 0).toLocaleString()} transcripts
                 evaluated from the past {daysLookback} day

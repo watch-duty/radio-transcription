@@ -559,7 +559,9 @@ describe('RuleConfigurationView', () => {
             feedId: '1',
             audioSegmentId: '123',
             text: 'This is an evacuate test transcript.',
-            matchedSpans: [{ startIndex: 11, endIndex: 19 }],
+            matchedSpans: [
+              { startIndex: 11, endIndex: 19, matchedText: 'evacuate' },
+            ],
           },
         ],
       });
