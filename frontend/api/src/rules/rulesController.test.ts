@@ -282,4 +282,122 @@ describe('RulesController', () => {
       ).rejects.toThrow(/Not Found/);
     });
   });
+  describe('dryRunRule', () => {
+    it('should map start/end to startIndex/endIndex on success', async () => {
+      const mockBackendResponse = {
+        hit_count: 5,
+        total_evaluated: 10,
+        examples: [
+          {
+            audio_segment_id: 'seg_1',
+            feed_id: 'feed_1',
+            text: 'this is a test text',
+            matched_spans: [
+              {
+                start: 10,
+                end: 14,
+                matched_text: 'test',
+              },
+            ],
+          },
+        ],
+      };
+
+      mockRequest.mockResolvedValueOnce({ data: mockBackendResponse });
+
+      const controller = new RulesController();
+      const payload = {
+        rule: {
+          ruleName: 'Test Rule',
+          scope: { level: 'GLOBAL' as const, targetFeeds: [] },
+          conditions: {
+            evaluationType: 'KEYWORD_MATCH' as const,
+            operator: 'ANY' as const,
+            keywords: ['test'],
+            caseSensitive: false,
+          },
+        },
+      };
+
+      const result = await controller.dryRunRule(mockAdminRequest, payload);
+
+      expect(result).toEqual({
+        hitCount: 5,
+        totalEvaluated: 10,
+        examples: [
+          {
+            audioSegmentId: 'seg_1',
+            feedId: 'feed_1',
+            text: 'this is a test text',
+            matchedSpans: [
+              {
+                startIndex: 10,
+                endIndex: 14,
+                matchedText: 'test',
+              },
+            ],
+          },
+        ],
+      });
+
+      expect(mockRequest).toHaveBeenCalledWith({
+        url: 'http://rules-api.example.com/dry-run',
+        method: 'POST',
+        data: {
+          rule: {
+            rule_name: 'Test Rule',
+            description: undefined,
+            is_active: undefined,
+            scope: { level: 'GLOBAL', target_feeds: [] },
+            conditions: {
+              evaluation_type: 'KEYWORD_MATCH',
+              operator: 'ANY',
+              keywords: ['test'],
+              case_sensitive: false,
+            },
+          },
+        },
+      });
+    });
+
+    it('should throw 403 Forbidden if user is not an admin', async () => {
+      const controller = new RulesController();
+      const payload = {
+        rule: {
+          ruleName: 'Test Rule',
+          scope: { level: 'GLOBAL' as const, targetFeeds: [] },
+          conditions: {
+            evaluationType: 'KEYWORD_MATCH' as const,
+            operator: 'ANY' as const,
+            keywords: ['test'],
+            caseSensitive: false,
+          },
+        },
+      };
+      await expect(
+        controller.dryRunRule(mockNonAdminRequest, payload)
+      ).rejects.toThrow('Forbidden');
+    });
+
+    it('should throw on backend error', async () => {
+      mockRequest.mockRejectedValueOnce(new Error('Network Error'));
+      const controller = new RulesController();
+      const payload = {
+        rule: {
+          ruleName: 'Test Rule',
+          scope: { level: 'GLOBAL' as const, targetFeeds: [] },
+          conditions: {
+            evaluationType: 'KEYWORD_MATCH' as const,
+            operator: 'ANY' as const,
+            keywords: ['test'],
+            caseSensitive: false,
+          },
+        },
+      };
+
+      await expect(
+        controller.dryRunRule(mockAdminRequest, payload)
+      ).rejects.toThrow(/Network Error/);
+    });
+  });
 });

@@ -3,6 +3,7 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import httpx
 import requests
 from google.api_core.retry_async import AsyncRetry
 from google.genai import types
@@ -1344,12 +1345,17 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(kwargs.get("project"), "test-project")
             self.assertEqual(kwargs.get("location"), "us-test")
 
-            # Verify retry options are explicitly set to 5 attempts and timeout is default
+            # Verify retry options are set to 3 attempts and default timeout.
             http_options = kwargs.get("http_options")
             self.assertIsNotNone(http_options)
-            self.assertEqual(http_options.timeout, 120000)
+            self.assertEqual(http_options.timeout, 60000)
             self.assertIsNotNone(http_options.retry_options)
-            self.assertEqual(http_options.retry_options.attempts, 5)
+            self.assertEqual(http_options.retry_options.attempts, 3)
+            self.assertIsNotNone(http_options.httpx_async_client)
+            self.assertIsInstance(
+                http_options.httpx_async_client,
+                httpx.AsyncClient,
+            )
 
     def test_gemini_transcriber_setup_custom_retry(self) -> None:
         """Verifies that the Gemini transcriber initializes the GenAI client with custom retry options."""
