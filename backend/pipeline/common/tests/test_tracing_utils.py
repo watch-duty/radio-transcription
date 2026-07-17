@@ -1,3 +1,4 @@
+import os
 import unittest
 from unittest.mock import ANY, MagicMock, patch
 
@@ -347,6 +348,48 @@ class TestTracingUtils(unittest.TestCase):
 
         # Clean up
         tracing_utils._state.custom_provider = None
+
+
+class TestTracingForkSafety(unittest.TestCase):
+    def setUp(self) -> None:
+        # Reset state before each test
+        tracing_utils._state.custom_provider = None
+        tracing_utils._state.pid = None
+
+    def tearDown(self) -> None:
+        # Clean up state
+        if tracing_utils._state.custom_provider is not None:
+            tracing_utils._state.custom_provider = None
+        tracing_utils._state.pid = None
+
+    @patch(
+        "backend.pipeline.common.tracing_utils.is_gcp_env", return_value=True
+    )
+    @patch("backend.pipeline.common.tracing_utils.CloudTraceSpanExporter")
+    def test_fork_reinitializes_custom_provider(
+        self, mock_exporter, mock_is_gcp
+    ) -> None:
+        """Verifies that setup_tracing reinitializes the provider when PID changes (fork)."""
+        with patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}):
+            setup_tracing(service_name="test_service", use_batch=False)
+
+        first_provider = tracing_utils._state.custom_provider
+        self.assertIsNotNone(first_provider)
+        self.assertEqual(tracing_utils._state.pid, os.getpid())
+
+        # Simulate fork by patching os.getpid to return a different PID
+        new_pid = os.getpid() + 100
+        with (
+            patch("os.getpid", return_value=new_pid),
+            patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}),
+        ):
+            # Verify setup_tracing re-initializes
+            setup_tracing(service_name="test_service", use_batch=False)
+
+        second_provider = tracing_utils._state.custom_provider
+        self.assertIsNotNone(second_provider)
+        self.assertNotEqual(first_provider, second_provider)
+        self.assertEqual(tracing_utils._state.pid, new_pid)
 
 
 class TestTracedToThread(unittest.IsolatedAsyncioTestCase):
