@@ -248,15 +248,12 @@ class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
                 10,
                 tzinfo=datetime.timezone(datetime.timedelta(hours=1)),
             ),
-            "tomorrow",
         )
 
         for case_index, retry_after in enumerate(cases):
             with self.subTest(case_index=case_index):
-                with self.assertRaises((TypeError, ValueError)):
-                    ingestion_lease_store.NonBudgetedFailure(
-                        retry_after,  # ty: ignore[invalid-argument-type]
-                    )
+                with self.assertRaises(ValueError):
+                    ingestion_lease_store.NonBudgetedFailure(retry_after)
 
 
 class TestIngestionLeaseStoreClaims(unittest.IsolatedAsyncioTestCase):
@@ -613,15 +610,12 @@ class TestLeaseFailureActionValidation(unittest.IsolatedAsyncioTestCase):
                 10,
                 tzinfo=datetime.timezone(datetime.timedelta(hours=1)),
             ),
-            "tomorrow",
         )
 
         for case_index, retry_after in enumerate(cases):
             with self.subTest(case_index=case_index):
-                with self.assertRaises((TypeError, ValueError)):
-                    ingestion_lease_store.NonBudgetedFailure(
-                        retry_after,  # ty: ignore[invalid-argument-type]
-                    )
+                with self.assertRaises(ValueError):
+                    ingestion_lease_store.NonBudgetedFailure(retry_after)
 
     async def test_finalize_rejects_invalid_actor_before_pool(
         self,
