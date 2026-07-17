@@ -101,15 +101,16 @@ resource "google_alloydb_user" "worker" {
 # -----------------------------------------------------------------------------
 # Schema Application via Cloud Run Job (gated behind var.apply_schema)
 #
-# Applies the ingestion DDL (sql/ingestion/*.sql) to the AlloyDB instance after
-# it is provisioned. A Cloud Run Job was chosen over a null_resource + psql
-# because AlloyDB uses private IP only — the job runs inside the VPC with
-# Direct VPC egress, eliminating the need for a self-hosted runner or VPN.
+# Applies the privilege bootstrap, ordered ingestion DDL, and privilege
+# reconciliation to the AlloyDB instance after it is provisioned. A Cloud Run
+# Job was chosen over a null_resource + psql because AlloyDB uses private IP
+# only — the job runs inside the VPC with Direct VPC egress, eliminating the
+# need for a self-hosted runner or VPN.
 #
 # Flow: SQL files are uploaded to GCS, mounted into a postgres:16-alpine
-# container via GCS FUSE, and executed in filename order via psql. The job is
-# triggered by a null_resource whose trigger hash changes whenever the SQL
-# content changes, ensuring re-application on schema updates. All SQL is
+# container via GCS FUSE, and executed through one psql process per file. The
+# job is triggered by a null_resource whose trigger hash changes whenever the
+# SQL content changes, ensuring re-application on schema updates. All SQL is
 # idempotent (IF NOT EXISTS / ON CONFLICT) so re-runs are safe.
 #
 # All resources in this section are conditionally created; setting
@@ -118,10 +119,13 @@ resource "google_alloydb_user" "worker" {
 # -----------------------------------------------------------------------------
 
 locals {
-  schema_sql_files = var.apply_schema ? sort(fileset("${path.module}/sql/ingestion", "*.sql")) : []
-  schema_sql_combined = join("\n", [
-    for f in local.schema_sql_files : file("${path.module}/sql/ingestion/${f}")
-  ])
+  schema_sql_files    = var.apply_schema ? sort(fileset("${path.module}/sql/ingestion", "*.sql")) : []
+  privilege_sql_files = var.apply_schema ? ["000_ingestion_runtime_bootstrap.sql", "999_ingestion_runtime_reconcile.sql"] : []
+  schema_sql_combined = join("\n", concat(
+    [for f in local.privilege_sql_files : file("${path.module}/sql/privileges/${f}") if f == "000_ingestion_runtime_bootstrap.sql"],
+    [for f in local.schema_sql_files : file("${path.module}/sql/ingestion/${f}")],
+    [for f in local.privilege_sql_files : file("${path.module}/sql/privileges/${f}") if f == "999_ingestion_runtime_reconcile.sql"],
+  ))
   schema_sql_hash = var.apply_schema ? sha256(local.schema_sql_combined) : ""
 }
 
@@ -141,9 +145,17 @@ resource "google_storage_bucket" "schema" {
 resource "google_storage_bucket_object" "sql" {
   for_each = var.apply_schema ? toset(local.schema_sql_files) : toset([])
 
-  name   = each.value
+  name   = "ingestion/${each.value}"
   bucket = google_storage_bucket.schema[0].name
   source = "${path.module}/sql/ingestion/${each.value}"
+}
+
+resource "google_storage_bucket_object" "privilege_sql" {
+  for_each = var.apply_schema ? toset(local.privilege_sql_files) : toset([])
+
+  name   = "privileges/${each.value}"
+  bucket = google_storage_bucket.schema[0].name
+  source = "${path.module}/sql/privileges/${each.value}"
 }
 
 # Dedicated service account for the Cloud Run Job, scoped to only the
@@ -207,7 +219,7 @@ resource "google_cloud_run_v2_job" "schema_migration" {
         command = ["/bin/sh"]
         args = [
           "-c",
-          "for f in /sql/*.sql; do echo \"Applying $f...\"; PGPASSWORD=\"$PGPASSWORD\" psql -h \"$DB_HOST\" -p \"$DB_PORT\" -U \"$DB_USER\" -d \"$DB_NAME\" -v ON_ERROR_STOP=1 -f \"$f\" || exit 1; done; echo 'Schema applied successfully.'"
+          "set -eu; export LC_ALL=C; echo 'Applying ingestion privilege bootstrap...'; psql -X -v ON_ERROR_STOP=1 -f /sql/privileges/000_ingestion_runtime_bootstrap.sql -h \"$DB_HOST\" -p \"$DB_PORT\" -U \"$DB_USER\" -d \"$DB_NAME\"; for f in /sql/ingestion/*.sql; do echo \"Applying $f...\"; psql -X -v ON_ERROR_STOP=1 -f \"$f\" -h \"$DB_HOST\" -p \"$DB_PORT\" -U \"$DB_USER\" -d \"$DB_NAME\"; done; echo 'Reconciling ingestion runtime privileges...'; psql -X -v ON_ERROR_STOP=1 -f /sql/privileges/999_ingestion_runtime_reconcile.sql -h \"$DB_HOST\" -p \"$DB_PORT\" -U \"$DB_USER\" -d \"$DB_NAME\"; echo 'Schema and privileges applied successfully.'"
         ]
 
         env {
@@ -286,6 +298,7 @@ resource "null_resource" "execute_schema_migration" {
 
   depends_on = [
     google_cloud_run_v2_job.schema_migration,
+    google_storage_bucket_object.privilege_sql,
     google_storage_bucket_object.sql,
   ]
 }
