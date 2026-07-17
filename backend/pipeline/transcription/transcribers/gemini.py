@@ -75,6 +75,14 @@ class GeminiTransientTranscriptionError(GeminiTranscriptionError):
     """
 
 
+class GeminiOtherFinishReasonError(GeminiTranscriptionError):
+    """Raised on OTHER finish reason, indicating GCS/internal failure."""
+
+
+class GeminiNoCandidatesError(GeminiTranscriptionError):
+    """Raised when Gemini returns a response with zero candidates."""
+
+
 @dataclasses.dataclass(frozen=True)
 class SafetySetting:
     """Safety setting category and threshold."""
@@ -246,32 +254,110 @@ class GeminiTranscriber(base.Transcriber):
             else None,
         )
 
-        # Note: Retry policy is configured globally on the client in setup()
-        try:
-            primary_location = self._resolve_location(
-                self.config.model, self.location
-            )
-            primary_client = self._get_client(primary_location)
-            response = await primary_client.aio.models.generate_content(
-                model=self.config.model,
-                contents=contents,
-                config=generation_config,
-            )
-            transcript = self._parse_response(response)
-            if not transcript.strip():
-                return await self._fallback_transcribe(
+        return await self._transcribe_tuned(contents, generation_config)
+
+    async def _execute_transcribe_attempt(
+        self,
+        client: genai.Client,
+        contents: types.Content,
+        generation_config: types.GenerateContentConfig,
+        *,
+        is_sft_model: bool,
+    ) -> str:
+        """Executes a single transcription attempt and parses results."""
+        response = await client.aio.models.generate_content(
+            model=self.config.model,
+            contents=contents,
+            config=generation_config,
+        )
+        transcript = self._parse_response(response)
+
+        # If we get a valid transcript, or if this is the foundation
+        # model (which returns empty transcripts legitimately for
+        # silent audio), we return the result immediately.
+        if transcript.strip() or not is_sft_model:
+            return transcript
+
+        # SFT model returned empty transcript: treat as transient.
+        msg = "Tuned model returned empty transcript"
+        raise GeminiTransientTranscriptionError(msg)
+
+    async def _transcribe_tuned(
+        self,
+        contents: types.Content,
+        generation_config: types.GenerateContentConfig,
+    ) -> str:
+        primary_location = self._resolve_location(
+            self.config.model, self.location
+        )
+        primary_client = self._get_client(primary_location)
+
+        # Tuned/SFT models reside in projects/.../endpoints/... resource paths.
+        # Default foundation models use string names (e.g. gemini-3.1-flash).
+        is_sft_model = "projects/" in self.config.model
+
+        # We only run in-situ retries for SFT models because they occasionally
+        # fail to process valid audio and return empty responses or NONE.
+        # Foundation models do not need these retry policies or fallbacks.
+        attempts = self.config.retry_attempts if is_sft_model else 1
+        last_exception = None
+
+        for attempt in range(1, attempts + 1):
+            try:
+                return await self._execute_transcribe_attempt(
+                    primary_client,
                     contents,
                     generation_config,
-                    "Tuned model returned empty transcript",
+                    is_sft_model=is_sft_model,
                 )
-        except GeminiTransientTranscriptionError as e:
+            except (
+                GeminiTransientTranscriptionError,
+                GeminiNoCandidatesError,
+            ) as e:
+                # Caught finish_reason=None, empty candidates, or SFT-empty:
+                # these are transient model issues we want to retry.
+                last_exception = e
+            except GeminiOtherFinishReasonError as e:
+                # OTHER represents a GCS/internal prediction gateway error.
+                # We want to retry these against SFT (since they are
+                # transient) but MUST NOT fall back to foundation model.
+                last_exception = e
+                # On the final attempt, raise to the worker so it can retry
+                # the original model later, bypassing fallback.
+                if attempt == attempts:
+                    raise
+
+            if attempt < attempts:
+                logger.warning(
+                    "Tuned model transcription failed (attempt %d/%d): %s. "
+                    "Retrying in 1s...",
+                    attempt,
+                    attempts,
+                    str(last_exception),
+                )
+                await asyncio.sleep(1)
+
+        # Fallback to foundation model on SFT-specific empty transcript /
+        # NONE / no-candidates outcomes, whether the primary model is the
+        # tuned SFT model or the foundation model itself.
+        fallback_model = self.config.fallback_model or DEFAULT_GEMINI_MODEL
+        is_fallback_eligible_error = isinstance(
+            last_exception,
+            (GeminiTransientTranscriptionError, GeminiNoCandidatesError),
+        )
+        if is_fallback_eligible_error and (
+            is_sft_model or self.config.model == fallback_model
+        ):
             return await self._fallback_transcribe(
                 contents,
                 generation_config,
-                str(e),
+                str(last_exception),
             )
-        else:
-            return transcript
+
+        if last_exception:
+            # Raised outside except block, specify name to re-raise.
+            raise last_exception
+        return ""
 
     async def _fallback_transcribe(
         self,
@@ -412,7 +498,7 @@ class GeminiTranscriber(base.Transcriber):
                 "Gemini response returned no candidates. "
                 f"(Response ID: {response_id})"
             )
-            raise GeminiTransientTranscriptionError(msg)
+            raise GeminiNoCandidatesError(msg)
 
         candidate = response.candidates[0]
         reason_str = (
@@ -449,6 +535,17 @@ class GeminiTranscriber(base.Transcriber):
                 f"(Response ID: {response_id})"
             )
             raise GeminiTransientTranscriptionError(msg)
+
+        if reason_str == types.FinishReason.OTHER.name:
+            finish_msg = candidate.finish_message or "No finish message"
+            msg = (
+                "Incomplete response from Gemini due to internal error "
+                "(finish_reason: OTHER). "
+                f"Finish Message: {finish_msg}. (Response ID: {response_id})"
+            )
+            raise GeminiOtherFinishReasonError(
+                msg, finish_reason=candidate.finish_reason
+            )
 
         if reason_str not in _VALID_FINISH_REASONS:
             finish_msg = candidate.finish_message or "No finish message"

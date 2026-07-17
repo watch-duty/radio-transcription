@@ -21,6 +21,7 @@ from backend.pipeline.transcription.transcribers.factory import get_transcriber
 from backend.pipeline.transcription.transcribers.gemini import (
     DEFAULT_GEMINI_MODEL,
     GeminiConfig,
+    GeminiOtherFinishReasonError,
     GeminiTranscriber,
     GeminiTranscriptionError,
 )
@@ -919,6 +920,40 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(result, "")
 
+    async def test_gemini_transcriber_transient_other_reason(self) -> None:
+        """Verifies that an empty response with OTHER finish reason raises GeminiTransientTranscriptionError and falls back."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            mock_response = MagicMock()
+            mock_candidate = MagicMock()
+            mock_candidate.finish_reason = types.FinishReason.OTHER
+            mock_candidate.finish_message = "Internal error occurred."
+            mock_candidate.content = None
+            mock_response.candidates = [mock_candidate]
+            mock_response.response_id = "test-id"
+            mock_response.sdk_http_response = None
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                return_value=mock_response
+            )
+
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                '{"location": "us-central1"}',
+            )
+            transcriber.setup()
+
+            with self.assertRaises(GeminiOtherFinishReasonError):
+                await transcriber.transcribe(
+                    audio_data=b"\x00" * 100,
+                    duration_ms=1000,
+                )
+
     async def test_gemini_transcriber_finish_reason_none_safety_block(
         self,
     ) -> None:
@@ -997,9 +1032,14 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             mock_response_2.candidates = [mock_candidate_2]
             mock_response_2.response_id = "fallback-success-id"
 
-            # AsyncMock to return response 1 on first call, response 2 on second
+            # AsyncMock to return response 1 on first three calls, response 2 on fourth
             mock_client_instance.aio.models.generate_content = AsyncMock(
-                side_effect=[mock_response_1, mock_response_2]
+                side_effect=[
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_2,
+                ]
             )
 
             # Initialize transcriber with a tuned model config
@@ -1023,7 +1063,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             # Asserts
             self.assertEqual(result, "Fallback succeeded text")
             self.assertEqual(
-                mock_client_instance.aio.models.generate_content.call_count, 2
+                mock_client_instance.aio.models.generate_content.call_count, 4
             )
 
             # Check arguments of the first call (tuned endpoint)
@@ -1037,14 +1077,14 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 "projects/123/locations/us/endpoints/456",
             )
 
-            # Check arguments of the second call (foundation fallback model)
-            second_call_args = (
+            # Check arguments of the fourth call (foundation fallback model)
+            fourth_call_args = (
                 mock_client_instance.aio.models.generate_content.call_args_list[
-                    1
+                    3
                 ]
             )
             self.assertEqual(
-                second_call_args.kwargs["model"], DEFAULT_GEMINI_MODEL
+                fourth_call_args.kwargs["model"], DEFAULT_GEMINI_MODEL
             )
 
     async def test_gemini_transcriber_tuned_model_fallback_on_empty_string(
@@ -1077,9 +1117,14 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             mock_response_2.candidates = [mock_candidate_2]
             mock_response_2.response_id = "fallback-success-id"
 
-            # AsyncMock to return response 1 on first call, response 2 on second
+            # AsyncMock to return response 1 on first three calls, response 2 on fourth
             mock_client_instance.aio.models.generate_content = AsyncMock(
-                side_effect=[mock_response_1, mock_response_2]
+                side_effect=[
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_2,
+                ]
             )
 
             # Initialize transcriber with a tuned model config
@@ -1102,7 +1147,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             # Asserts
             self.assertEqual(result, "Fallback succeeded on empty")
             self.assertEqual(
-                mock_client_instance.aio.models.generate_content.call_count, 2
+                mock_client_instance.aio.models.generate_content.call_count, 4
             )
 
     async def test_gemini_transcriber_tuned_model_fallback_both_fail(
@@ -1144,9 +1189,15 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             mock_response_3.candidates = [mock_candidate_3]
             mock_response_3.response_id = "fallback-failed-2"
 
-            # AsyncMock to return resp 1, resp 2, resp 3 sequentially
+            # AsyncMock to return resp 1 (3 times), resp 2, resp 3 sequentially
             mock_client_instance.aio.models.generate_content = AsyncMock(
-                side_effect=[mock_response_1, mock_response_2, mock_response_3]
+                side_effect=[
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_2,
+                    mock_response_3,
+                ]
             )
 
             # Initialize transcriber with a tuned model config
@@ -1166,12 +1217,86 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 duration_ms=1000,
             )
 
-            # Asserts: all 3 attempts made, result is empty transcript
+            # Asserts: all 3 tuned + 2 fallback attempts made, result is empty transcript
             self.assertEqual(result, "")
             self.assertEqual(
-                mock_client_instance.aio.models.generate_content.call_count, 3
+                mock_client_instance.aio.models.generate_content.call_count, 5
             )
-            mock_sleep.assert_called_once_with(1)
+            self.assertEqual(mock_sleep.call_count, 3)
+
+    async def test_gemini_transcriber_tuned_model_fallback_on_no_candidates(
+        self,
+    ) -> None:
+        """Verifies that SFT model with zero candidates retries against SFT, then falls back to the foundation model."""
+        with (
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+            ) as mock_client_cls,
+            patch(
+                "backend.pipeline.transcription.transcribers.gemini.asyncio.sleep"
+            ) as mock_sleep,
+        ):
+            mock_client_instance = MagicMock()
+            mock_client_cls.return_value = mock_client_instance
+
+            # Mock SFT response: empty candidates
+            mock_response_1 = MagicMock()
+            mock_response_1.candidates = []
+            mock_response_1.prompt_feedback = None
+            mock_response_1.response_id = "tuned-no-candidates-id"
+            mock_response_1.sdk_http_response = None
+
+            # Mock fallback response: foundation model succeeds
+            mock_response_2 = MagicMock()
+            mock_candidate_2 = MagicMock()
+            mock_candidate_2.finish_reason = types.FinishReason.STOP
+            mock_part = MagicMock()
+            mock_part.text = "Fallback succeeded on no candidates"
+            mock_candidate_2.content.parts = [mock_part]
+            mock_response_2.candidates = [mock_candidate_2]
+            mock_response_2.response_id = "fallback-success-id"
+
+            mock_client_instance.aio.models.generate_content = AsyncMock(
+                side_effect=[
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_2,
+                ]
+            )
+
+            config_json = (
+                '{"model": "projects/123/locations/us/endpoints/456", '
+                '"location": "us-central1"}'
+            )
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                config_json,
+            )
+            transcriber.setup()
+
+            result = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
+            )
+
+            # Asserts: 3 attempts made against SFT model, then falls back
+            # and succeeds against the foundation model.
+            self.assertEqual(result, "Fallback succeeded on no candidates")
+            self.assertEqual(
+                mock_client_instance.aio.models.generate_content.call_count, 4
+            )
+            self.assertEqual(mock_sleep.call_count, 2)
+
+            fourth_call_args = (
+                mock_client_instance.aio.models.generate_content.call_args_list[
+                    3
+                ]
+            )
+            self.assertEqual(
+                fourth_call_args.kwargs["model"], DEFAULT_GEMINI_MODEL
+            )
 
     async def test_gemini_transcriber_tuned_model_fallback_on_empty_string_both_fail(
         self,
@@ -1212,9 +1337,15 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             mock_response_3.candidates = [mock_candidate_3]
             mock_response_3.response_id = "fallback-empty-2"
 
-            # AsyncMock to return resp 1, resp 2, resp 3 sequentially
+            # AsyncMock to return resp 1 (3 times), resp 2, resp 3 sequentially
             mock_client_instance.aio.models.generate_content = AsyncMock(
-                side_effect=[mock_response_1, mock_response_2, mock_response_3]
+                side_effect=[
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_2,
+                    mock_response_3,
+                ]
             )
 
             # Initialize transcriber with a tuned model config
@@ -1234,12 +1365,12 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 duration_ms=1000,
             )
 
-            # Asserts: all 3 attempts made, result is empty transcript
+            # Asserts: all 3 tuned + 2 fallback attempts made, result is empty transcript
             self.assertEqual(result, "")
             self.assertEqual(
-                mock_client_instance.aio.models.generate_content.call_count, 3
+                mock_client_instance.aio.models.generate_content.call_count, 5
             )
-            mock_sleep.assert_called_once_with(1)
+            self.assertEqual(mock_sleep.call_count, 3)
 
     @patch("asyncio.sleep", new_callable=AsyncMock)
     async def test_gemini_transcriber_custom_fallback_settings(
@@ -1280,7 +1411,13 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
 
             # If we configure 3 attempts, it should call all 3 times
             mock_client_instance.aio.models.generate_content = AsyncMock(
-                side_effect=[mock_response_1, mock_response_2, mock_response_3]
+                side_effect=[
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_2,
+                    mock_response_3,
+                ]
             )
 
             # Initialize transcriber with a tuned model config, custom fallback model and 3 attempts
@@ -1304,14 +1441,14 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertEqual(result, "Custom fallback success")
-            # 1 tuned call + 2 fallback calls = 3 calls total
+            # 3 tuned calls + 2 fallback calls = 5 calls total
             self.assertEqual(
-                mock_client_instance.aio.models.generate_content.call_count, 3
+                mock_client_instance.aio.models.generate_content.call_count, 5
             )
             # Checked fallback calls use custom model
             fallback_call_1 = (
                 mock_client_instance.aio.models.generate_content.call_args_list[
-                    1
+                    3
                 ]
             )
             self.assertEqual(
@@ -1319,15 +1456,15 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             fallback_call_2 = (
                 mock_client_instance.aio.models.generate_content.call_args_list[
-                    2
+                    4
                 ]
             )
             self.assertEqual(
                 fallback_call_2.kwargs.get("model"), "gemini-custom-fallback"
             )
 
-            # Sleep called 1 time (between fallback attempt 1 and 2)
-            self.assertEqual(mock_sleep.call_count, 1)
+            # Sleep called 3 times (2 between tuned attempts, 1 between fallback attempts)
+            self.assertEqual(mock_sleep.call_count, 3)
 
     @patch("asyncio.sleep", new_callable=AsyncMock)
     async def test_gemini_transcriber_multi_region_fallback(
@@ -1410,7 +1547,9 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(transcriber._clients["us-east4"], fallback_client)
 
             # Verify correct clients were called
-            primary_client.aio.models.generate_content.assert_called_once()
+            self.assertEqual(
+                primary_client.aio.models.generate_content.call_count, 3
+            )
             fallback_client.aio.models.generate_content.assert_called_once()
 
     @patch("asyncio.sleep", new_callable=AsyncMock)
@@ -1455,11 +1594,11 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
                 return_value=mock_response_fallback
             )
 
-            # Config: primary model (no region in name, defaults to location), fallback model (no region in name, defaults to fallback_location)
+            # Config: primary model (tuned), fallback model (tuned)
             config_json = (
-                '{"model": "gemini-3.1-flash-lite", '
+                '{"model": "projects/123/locations/us-central1/endpoints/456", '
                 '"location": "us-central1", '
-                '"fallback_model": "gemini-3.5-flash", '
+                '"fallback_model": "projects/123/locations/us-west2/endpoints/789", '
                 '"fallback_location": "us-west2", '
                 '"fallback_retry_attempts": 1}'
             )
@@ -1524,9 +1663,9 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
 
             # Config: location is us-central1, fallback_location is not configured (defaults to DEFAULT_GEMINI_LOCATION = "us")
             config_json = (
-                '{"model": "gemini-3.1-flash-lite", '
+                '{"model": "projects/123/locations/us-central1/endpoints/456", '
                 '"location": "us-central1", '
-                '"fallback_model": "gemini-3.5-flash", '
+                '"fallback_model": "projects/123/locations/us/endpoints/789", '
                 '"fallback_retry_attempts": 1}'
             )
             transcriber = get_transcriber(
@@ -1589,7 +1728,7 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
 
             config = GeminiConfig(
-                model="gemini-3.1-flash-lite",
+                model="projects/123/locations/us-central1/endpoints/456",
                 location="us-central1",
                 fallback_model="gemini-3.5-flash",
                 fallback_location="us-west2",
