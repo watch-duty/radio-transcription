@@ -223,7 +223,11 @@ describe('useAudioTimelineWindow', () => {
   });
 
   it('recenters when advancing to a raw segment inside a silence bundle outside the window', () => {
-    const rawSilence = seg('silence-raw-2', '2026-04-20T08:00:00Z', '2026-04-20T08:00:05Z');
+    const rawSilence = seg(
+      'silence-raw-2',
+      '2026-04-20T08:00:00Z',
+      '2026-04-20T08:00:05Z'
+    );
     const { result, rerender } = renderHook(
       (props) =>
         useAudioTimelineWindow({
