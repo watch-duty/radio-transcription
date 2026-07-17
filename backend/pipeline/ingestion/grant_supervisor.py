@@ -25,11 +25,6 @@ class FeedAuthority:
 
     feed_id: uuid.UUID
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.feed_id, uuid.UUID):
-            msg = "feed_id must be a UUID"
-            raise TypeError(msg)
-
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class SidAuthority:
@@ -39,15 +34,9 @@ class SidAuthority:
     lease_key: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.source_type, str):
-            msg = "source_type must be a string"
-            raise TypeError(msg)
         if not self.source_type.strip():
             msg = "source_type must not be empty"
             raise ValueError(msg)
-        if not isinstance(self.lease_key, str):
-            msg = "lease_key must be a string"
-            raise TypeError(msg)
         if not self.lease_key.strip():
             msg = "lease_key must not be empty"
             raise ValueError(msg)
@@ -357,10 +346,7 @@ class GrantSupervisor:
         failure_planner: FailurePlanner,
     ) -> None:
         validated_profile = worker_profiles.validate_worker_profile(profile)
-        if isinstance(finalize_concurrency, bool) or not isinstance(
-            finalize_concurrency,
-            int,
-        ):
+        if isinstance(finalize_concurrency, bool):
             msg = "finalize_concurrency must be an integer"
             raise TypeError(msg)
         if finalize_concurrency <= 0:
