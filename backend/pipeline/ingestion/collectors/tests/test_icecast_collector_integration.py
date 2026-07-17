@@ -432,14 +432,27 @@ class TestIcecastCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["last_bookmark_time"], chunk_timestamps[-1])
 
     @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector.IcecastBurstDetector"
+    )
+    @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
     async def test_shutdown_stops_capture_after_partial_upload(
         self,
         mock_create_ffmpeg,
+        mock_burst_detector_class,
     ) -> None:
         """Shutdown after 1st chunk: generator stops, only 1 GCS object exists."""
+        # Mock IcecastBurstDetector to yield immediately without buffering in this test
+        mock_detector = MagicMock()
+        mock_detector.stream_anchor_time = icecast_collector._now_utc()
+        mock_detector.process_chunk.side_effect = (
+            lambda chunk, *args, **kwargs: [chunk]
+        )
+        mock_detector.flush.return_value = []
+        mock_burst_detector_class.return_value = mock_detector
+
         feed = await self._lease_feed("shutdown-feed")
 
         # Mock ffmpeg: 3 finalized segments; shutdown is checked between yields
