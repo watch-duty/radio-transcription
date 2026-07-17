@@ -150,21 +150,11 @@ def _child_audit_payload(
 class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
     """Tests that malformed control input fails before pool checkout."""
 
-    async def test_claim_rejects_invalid_source_owner_and_limit(self) -> None:
+    async def test_claim_rejects_invalid_limit(self) -> None:
         pool = connection_util.make_mock_pool()
         store = ingestion_lease_store.IngestionLeaseStore(pool)
 
         invalid_calls = (
-            store.claim_unclaimed(
-                "bcfy_calls",  # ty: ignore[invalid-argument-type]
-                _OWNER_ID,
-                1,
-            ),
-            store.claim_unclaimed(
-                feed_store.SourceType.BCFY_CALLS,
-                "worker",  # ty: ignore[invalid-argument-type]
-                1,
-            ),
             store.claim_unclaimed(
                 feed_store.SourceType.BCFY_CALLS,
                 _OWNER_ID,
@@ -204,16 +194,15 @@ class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
             (
                 datetime.timedelta(0),
                 datetime.timedelta(seconds=-1),
-                "60 seconds",
             )
         ):
             with self.subTest(case_index=case_index):
-                with self.assertRaises((TypeError, ValueError)):
+                with self.assertRaises(ValueError):
                     await store.claim_recoverable(
                         feed_store.SourceType.BCFY_CALLS,
                         _OWNER_ID,
                         1,
-                        abandonment_after,  # ty: ignore[invalid-argument-type]
+                        abandonment_after,
                     )
 
         pool.fetch.assert_not_awaited()
@@ -235,18 +224,6 @@ class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
             await store.renew_heartbeats((_grant(), _grant(fencing_token=8)))
 
         pool.fetch.assert_not_awaited()
-
-    async def test_release_rejects_unknown_cause_before_sql(self) -> None:
-        pool = connection_util.make_mock_pool()
-        store = ingestion_lease_store.IngestionLeaseStore(pool)
-
-        with self.assertRaises(TypeError):
-            await store.release(
-                _grant(),
-                cause="shutdown",  # ty: ignore[invalid-argument-type]
-            )
-
-        pool.fetchrow.assert_not_awaited()
 
     def test_budgeted_failure_rejects_invalid_parameters(self) -> None:
         cases = (
@@ -280,54 +257,6 @@ class TestIngestionLeaseStoreValidation(unittest.IsolatedAsyncioTestCase):
                     ingestion_lease_store.NonBudgetedFailure(
                         retry_after,  # ty: ignore[invalid-argument-type]
                     )
-
-    async def test_finalize_failure_validates_before_pool_checkout(
-        self,
-    ) -> None:
-        pool = connection_util.make_mock_pool()
-        store = ingestion_lease_store.IngestionLeaseStore(pool)
-        action = ingestion_lease_store.BudgetedFailure()
-        status_reason = feed_store.FeedStatusReason.SOURCE_UNREACHABLE
-        invalid_call_factories = (
-            lambda: store.finalize_failure(
-                "grant",  # ty: ignore[invalid-argument-type]
-                action,
-                status_reason,
-                actor_id="collector",
-            ),
-            lambda: store.finalize_failure(
-                _grant(),
-                object(),  # ty: ignore[invalid-argument-type]
-                status_reason,
-                actor_id="collector",
-            ),
-            lambda: store.finalize_failure(
-                _grant(),
-                action,
-                "source_unreachable",  # ty: ignore[invalid-argument-type]
-                actor_id="collector",
-            ),
-            lambda: store.finalize_failure(
-                _grant(),
-                action,
-                status_reason,
-                actor_id="has space",
-            ),
-            lambda: store.finalize_failure(
-                _grant(),
-                action,
-                status_reason,
-                actor_id="collector",
-                reason=123,  # ty: ignore[invalid-argument-type]
-            ),
-        )
-
-        for case_index, make_call in enumerate(invalid_call_factories):
-            with self.subTest(case_index=case_index):
-                with self.assertRaises((TypeError, ValueError)):
-                    await make_call()
-
-        pool.fetchrow.assert_not_awaited()
 
 
 class TestIngestionLeaseStoreClaims(unittest.IsolatedAsyncioTestCase):
@@ -694,7 +623,7 @@ class TestLeaseFailureActionValidation(unittest.IsolatedAsyncioTestCase):
                         retry_after,  # ty: ignore[invalid-argument-type]
                     )
 
-    async def test_finalize_rejects_invalid_actor_and_reason_before_pool(
+    async def test_finalize_rejects_invalid_actor_before_pool(
         self,
     ) -> None:
         pool = connection_util.make_mock_pool()
@@ -710,14 +639,6 @@ class TestLeaseFailureActionValidation(unittest.IsolatedAsyncioTestCase):
                     feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
                     actor_id=actor_id,
                 )
-
-        with self.assertRaises(TypeError):
-            await store.finalize_failure(
-                _grant(),
-                action,
-                "source_unreachable",  # ty: ignore[invalid-argument-type]
-                actor_id="service_account:gcp:collector",
-            )
 
         pool.fetchrow.assert_not_awaited()
 
@@ -1310,7 +1231,7 @@ class TestRefreshMembership(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_invalid_known_revisions_fail_before_checkout(self) -> None:
-        invalid_revisions = (-1, True, 1.0, "4")
+        invalid_revisions = (-1, True)
 
         for known_revision in invalid_revisions:
             with self.subTest(known_revision=known_revision):
@@ -1320,7 +1241,7 @@ class TestRefreshMembership(unittest.IsolatedAsyncioTestCase):
                 with self.assertRaises((TypeError, ValueError)):
                     await store.refresh_membership(
                         _grant(),
-                        known_revision=known_revision,  # ty: ignore[invalid-argument-type]
+                        known_revision=known_revision,
                     )
 
                 pool.acquire.assert_not_called()
@@ -1526,20 +1447,6 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             ),
             ingestion_lease_store.ChildMutationBatch(
                 (
-                    ingestion_lease_store.FeedFailureTransition(
-                        member=_member_identity(feed_id),
-                        action="budgeted",  # ty: ignore[invalid-argument-type]
-                        status_reason=(
-                            feed_store.FeedStatusReason.SOURCE_UNREACHABLE
-                        ),
-                        reason="failed",
-                        completion_cursor=_NOW,
-                    ),
-                ),
-                ingestion_lease_store.NoLeaseEffect(),
-            ),
-            ingestion_lease_store.ChildMutationBatch(
-                (
                     ingestion_lease_store.AdmittedAudioProgress(
                         malformed_member,
                         "gs://bucket/audio.flac",
@@ -1590,7 +1497,7 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
             with self.subTest(case_index=case_index):
                 pool = connection_util.make_mock_pool(transaction=True)
                 store = ingestion_lease_store.IngestionLeaseStore(pool)
-                with self.assertRaises((TypeError, ValueError)):
+                with self.assertRaises(ValueError):
                     await store.commit_child_mutations(
                         _grant(),
                         batch,

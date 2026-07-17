@@ -1358,22 +1358,15 @@ class TestFeedGrantHeartbeats(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result, ())
         pool.fetch.assert_not_awaited()
 
-    async def test_invalid_and_duplicate_input_fail_before_checkout(
-        self,
-    ) -> None:
+    async def test_duplicate_input_fails_before_checkout(self) -> None:
         first = feed_store.FeedGrant(_FEED_ID, _WORKER_ID, 1)
         duplicate = feed_store.FeedGrant(_FEED_ID, uuid.uuid4(), 9)
 
-        for grants, expected_error in (
-            ((cast("feed_store.FeedGrant", object()),), TypeError),
-            ((first, duplicate), ValueError),
-        ):
-            with self.subTest(expected_error=expected_error.__name__):
-                pool = make_mock_pool()
-                store = FeedStore(pool)
-                with self.assertRaises(expected_error):
-                    await store.renew_grant_heartbeats(grants)
-                pool.fetch.assert_not_awaited()
+        pool = make_mock_pool()
+        store = FeedStore(pool)
+        with self.assertRaises(ValueError):
+            await store.renew_grant_heartbeats((first, duplicate))
+        pool.fetch.assert_not_awaited()
 
     async def test_sorted_lock_arrays_retain_original_caller_ordinals(
         self,

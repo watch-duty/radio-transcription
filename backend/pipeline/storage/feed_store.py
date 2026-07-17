@@ -278,13 +278,6 @@ def _require_actor_id(actor_id: str | None) -> str:
     return actor_id
 
 
-def _require_feed_grant(value: object) -> FeedGrant:
-    if not isinstance(value, FeedGrant):
-        msg = "grant must be a FeedGrant"
-        raise TypeError(msg)
-    return value
-
-
 class FeedStore:
     """
     Storage layer for feed lifecycle operations against AlloyDB.
@@ -576,14 +569,12 @@ class FeedStore:
             One exact, caller-correlated result for every input grant.
 
         Raises:
-            TypeError: If an input is not a ``FeedGrant``.
             ValueError: If inputs repeat or results are malformed or
                 miscorrelated.
         """
         grants = tuple(grants)
         feed_ids: set[uuid.UUID] = set()
-        for candidate in grants:
-            grant = _require_feed_grant(candidate)
+        for grant in grants:
             if grant.feed_id in feed_ids:
                 msg = f"duplicate Feed identity {grant.feed_id}"
                 raise ValueError(msg)
