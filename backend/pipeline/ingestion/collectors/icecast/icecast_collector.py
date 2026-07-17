@@ -741,6 +741,7 @@ class IcecastTimelineManager:
         self.in_burst = True
         self.burst_buffer: list[CapturedChunk] = []
         self._last_yielded_end_time: datetime.datetime | None = None
+        self.last_receipt_time: datetime.datetime | None = None
 
     def _validate_and_track_chunk(self, chunk: CapturedChunk) -> CapturedChunk:
         if chunk.chunk_end_time < chunk.chunk_start_time:
@@ -772,17 +773,37 @@ class IcecastTimelineManager:
             for c in self.burst_buffer
         )
         if total_burst_duration_sec > 0:
+            last_chunk = self.burst_buffer[-1]
+            last_receipt = last_chunk.receipt_time or _now_utc()
+            end_offset_sec = (
+                last_chunk.chunk_end_time - self.stream_anchor_time
+            ).total_seconds()
+
+            old_anchor = self.stream_anchor_time
+            # Re-anchor the stream timeline so the burst ends exactly at the last burst chunk's receipt time
+            self.stream_anchor_time = last_receipt - datetime.timedelta(
+                seconds=end_offset_sec
+            )
+
             logger.info(
-                "Feed %s (%s): Adjusting timeline anchor backward by %s "
-                "seconds for connection burst.",
+                "Feed %s (%s): Adjusting timeline anchor for connection burst: "
+                "old_anchor=%s, new_anchor=%s (net adjustment: %.2fs)",
                 self.feed_id,
                 self.feed_name,
-                total_burst_duration_sec,
+                old_anchor.isoformat(),
+                self.stream_anchor_time.isoformat(),
+                (self.stream_anchor_time - old_anchor).total_seconds(),
             )
-            self.stream_anchor_time -= datetime.timedelta(
-                seconds=total_burst_duration_sec
+
+            # Start offset of the first chunk in buffer is:
+            first_chunk_start_offset = (
+                self.burst_buffer[0].chunk_start_time
+                - last_chunk.chunk_end_time
+            ).total_seconds() + end_offset_sec
+            last_end = self.stream_anchor_time + datetime.timedelta(
+                seconds=first_chunk_start_offset
             )
-            last_end = self.stream_anchor_time
+
             for idx, buffered_chunk in enumerate(self.burst_buffer):
                 c_duration = (
                     buffered_chunk.chunk_end_time
@@ -813,8 +834,9 @@ class IcecastTimelineManager:
 
         Returns a list of chunks that are ready to be yielded.
         """
+        chunk_receipt = chunk.receipt_time or _now_utc()
+
         if self.in_burst:
-            chunk_receipt = chunk.receipt_time or _now_utc()
             if not self.burst_buffer:
                 arrival_time = (
                     chunk_receipt - self.stream_anchor_time
@@ -851,15 +873,60 @@ class IcecastTimelineManager:
                     chunk_duration_sec=chunk_duration_sec,
                 )
                 res.append(self._validate_and_track_chunk(chunk))
+                self.last_receipt_time = chunk_receipt
                 return res
 
             if process_done:
                 self.in_burst = False
                 self.burst_buffer.append(chunk)
-                return self._adjust_and_yield_burst_buffer()
+                res = self._adjust_and_yield_burst_buffer()
+                self.last_receipt_time = chunk_receipt
+                return res
 
             self.burst_buffer.append(chunk)
+            self.last_receipt_time = chunk_receipt
             return []
+
+        chunk_duration_sec = (
+            chunk.chunk_end_time - chunk.chunk_start_time
+        ).total_seconds()
+
+        is_fast = False
+        is_late = False
+        if self.last_receipt_time is not None:
+            arrival_time = (
+                chunk_receipt - self.last_receipt_time
+            ).total_seconds()
+            is_fast = arrival_time < chunk_duration_sec * 0.8
+
+        if chunk.stream_interval_lag_sec is not None:
+            is_late = chunk.stream_interval_lag_sec > MAX_STREAM_DRIFT_SECS
+
+        if is_fast or is_late:
+            if is_fast:
+                logger.info(
+                    "Feed %s (%s): Catch-up burst detected (arrival %.2fs < %.2fs). "
+                    "Entering burst buffering mode.",
+                    self.feed_id,
+                    self.feed_name,
+                    arrival_time,
+                    chunk_duration_sec * 0.8,
+                )
+            else:
+                logger.info(
+                    "Feed %s (%s): Late chunk detected (lag %.2fs > %.2fs). "
+                    "Entering burst buffering mode.",
+                    self.feed_id,
+                    self.feed_name,
+                    chunk.stream_interval_lag_sec,
+                    MAX_STREAM_DRIFT_SECS,
+                )
+            self.in_burst = True
+            self.burst_buffer.append(chunk)
+            self.last_receipt_time = chunk_receipt
+            return []
+
+        self.last_receipt_time = chunk_receipt
 
         chunk_duration_sec = (
             chunk.chunk_end_time - chunk.chunk_start_time

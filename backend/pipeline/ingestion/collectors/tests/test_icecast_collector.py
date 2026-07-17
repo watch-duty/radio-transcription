@@ -34,6 +34,32 @@ MOCK_ENV_VARS = {
 TEST_FEED_ID = uuid.UUID("12345678-1234-5678-1234-567812345678")
 
 
+class IncrementalClock:
+    def __init__(
+        self, start_time: datetime.datetime, steps: float | list[float] = 15.0
+    ) -> None:
+        self.current = start_time
+        if isinstance(steps, list):
+            self.steps = [datetime.timedelta(seconds=s) for s in steps]
+            self.step = None
+        else:
+            self.steps = None
+            self.step = datetime.timedelta(seconds=steps)
+        self.idx = 0
+
+    def __call__(self) -> datetime.datetime:
+        ret = self.current
+        if self.step is not None:
+            self.current += self.step
+        elif self.steps is not None:
+            if self.idx < len(self.steps):
+                self.current += self.steps[self.idx]
+                self.idx += 1
+            else:
+                self.current += datetime.timedelta(seconds=1.0)
+        return ret
+
+
 def _make_feed(name: str, source_feed_id: str | None) -> LeasedFeed:
     return LeasedFeed(
         id=TEST_FEED_ID,
@@ -1308,10 +1334,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         # after every chunk's natural end so min() picks chunk_end_time even if
         # wait_task.done() flips before an intermediate segment.
         t0 = fixed_anchor
-        after_all_chunks_done = t0 + datetime.timedelta(
-            seconds=CHUNK_DURATION_SECONDS * 4 + 1
+        mock_now_utc.side_effect = IncrementalClock(
+            t0, steps=[15.0, 15.0, 15.0, 0.0, 0.0]
         )
-        mock_now_utc.side_effect = [t0] + [after_all_chunks_done] * 10
 
         mock_create_ffmpeg.side_effect = _make_process_factory(
             pid=3333,
@@ -1320,7 +1345,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
                 _make_pcm_segment(CHUNK_DURATION_SECONDS),
                 _make_pcm_segment(CHUNK_DURATION_SECONDS),
             ],
-            wait_delay=0.0,
+            wait_delay=0.1,
             wait_result=0,
         )
 
@@ -1368,8 +1393,9 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         fixed_anchor = datetime.datetime(
             2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
         )
-        far_future = fixed_anchor + datetime.timedelta(seconds=3600)
-        mock_now_utc.side_effect = [fixed_anchor] + [far_future] * 10
+        mock_now_utc.side_effect = IncrementalClock(
+            fixed_anchor, steps=[12.5, 18.25, 0.0, 0.0]
+        )
 
         # Segments of exact lengths: 12.5 seconds and 18.25 seconds
         mock_create_ffmpeg.side_effect = _make_process_factory(
@@ -1378,7 +1404,7 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
                 _make_pcm_segment(12.5),
                 _make_pcm_segment(18.25),
             ],
-            wait_delay=0.0,
+            wait_delay=0.1,
             wait_result=0,
         )
 
@@ -1523,13 +1549,13 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(
             results[0].chunk_start_time,
-            fixed_anchor - datetime.timedelta(seconds=burst_duration),
+            fixed_anchor - datetime.timedelta(seconds=burst_duration - 3),
         )
         self.assertEqual(
             results[0].chunk_end_time,
             fixed_anchor
             - datetime.timedelta(
-                seconds=burst_duration - CHUNK_DURATION_SECONDS
+                seconds=burst_duration - CHUNK_DURATION_SECONDS - 3
             ),
         )
 
@@ -1537,14 +1563,14 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             results[1].chunk_start_time,
             fixed_anchor
             - datetime.timedelta(
-                seconds=burst_duration - CHUNK_DURATION_SECONDS
+                seconds=burst_duration - CHUNK_DURATION_SECONDS - 3
             ),
         )
         self.assertEqual(
             results[1].chunk_end_time,
             fixed_anchor
             - datetime.timedelta(
-                seconds=burst_duration - CHUNK_DURATION_SECONDS * 2
+                seconds=burst_duration - CHUNK_DURATION_SECONDS * 2 - 3
             ),
         )
 
@@ -1552,25 +1578,33 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
             results[2].chunk_start_time,
             fixed_anchor
             - datetime.timedelta(
-                seconds=burst_duration - CHUNK_DURATION_SECONDS * 2
+                seconds=burst_duration - CHUNK_DURATION_SECONDS * 2 - 3
             ),
         )
-        self.assertEqual(results[2].chunk_end_time, fixed_anchor)
+        self.assertEqual(
+            results[2].chunk_end_time,
+            fixed_anchor + datetime.timedelta(seconds=3),
+        )
 
-        self.assertEqual(results[3].chunk_start_time, fixed_anchor)
+        self.assertEqual(
+            results[3].chunk_start_time,
+            fixed_anchor + datetime.timedelta(seconds=3),
+        )
         self.assertEqual(
             results[3].chunk_end_time,
-            fixed_anchor + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS),
+            fixed_anchor
+            + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS + 3),
         )
 
         self.assertEqual(
             results[4].chunk_start_time,
-            fixed_anchor + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS),
+            fixed_anchor
+            + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS + 3),
         )
         self.assertEqual(
             results[4].chunk_end_time,
             fixed_anchor
-            + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS * 2),
+            + datetime.timedelta(seconds=CHUNK_DURATION_SECONDS * 2 + 3),
         )
 
     @patch(
@@ -1955,7 +1989,7 @@ class TestIcecastTimelineManager(unittest.TestCase):
             chunk_start_time=now + datetime.timedelta(seconds=10),
             chunk_end_time=now + datetime.timedelta(seconds=25),
             session_id="session",
-            receipt_time=now,
+            receipt_time=now + datetime.timedelta(seconds=15),
         )
         with self.assertRaises(ValueError) as ctx:
             manager.process_chunk(chunk2, 16000 * 30, process_done=False)
