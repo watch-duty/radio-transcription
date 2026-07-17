@@ -7,9 +7,8 @@ import { AnnouncementBanner } from './AnnouncementBanner';
 
 const TEST_START_DATE = new Date('2026-07-20T00:00:00');
 const TEST_END_DATE = new Date('2026-07-29T23:59:59');
-const TEST_LINK_URL = 'https://forms.gle/KocdXk8qWXyw7UCw9';
-const TEST_MESSAGE =
-  'Please share your experience of this transcription tool by Wed, July 29!';
+const TEST_LINK_URL = 'https://test-form';
+const TEST_MESSAGE = 'Please share your experience by Wed, July 29!';
 
 afterEach(() => {
   cleanup();
