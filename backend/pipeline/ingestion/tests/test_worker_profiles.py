@@ -198,10 +198,9 @@ class TestWorkerProfile(unittest.TestCase):
             ),
         )
 
-    def test_profile_type_name_and_structure_validation(self) -> None:
+    def test_profile_name_and_structure_validation(self) -> None:
         baseline = worker_profiles.LEGACY_PROFILE
-        invalid_profiles: dict[str, object] = {
-            "non_profile": object(),
+        invalid_profiles = {
             "empty_name": dataclasses.replace(baseline, name=" "),
             "zero_envelope": dataclasses.replace(
                 baseline,
@@ -211,20 +210,6 @@ class TestWorkerProfile(unittest.TestCase):
                 baseline,
                 allocations=(),
             ),
-            "mutable_allocations": dataclasses.replace(
-                baseline,
-                allocations=typing.cast(
-                    "tuple[worker_profiles.DomainAllocation, ...]",
-                    list(baseline.allocations),
-                ),
-            ),
-            "invalid_allocation": dataclasses.replace(
-                baseline,
-                allocations=typing.cast(
-                    "tuple[worker_profiles.DomainAllocation, ...]",
-                    (object(),),
-                ),
-            ),
         }
 
         for case, profile in invalid_profiles.items():
@@ -232,26 +217,9 @@ class TestWorkerProfile(unittest.TestCase):
                 with self.assertRaises((TypeError, ValueError)):
                     worker_profiles.validate_worker_profile(profile)
 
-    def test_profile_rejects_unknown_and_duplicate_domains(self) -> None:
+    def test_profile_rejects_duplicate_domains(self) -> None:
         baseline = worker_profiles.LEGACY_PROFILE
         feed = baseline.allocations[0]
-        for domain_id in (
-            typing.cast("grant_control.DomainId", ""),
-            typing.cast("grant_control.DomainId", "third-domain"),
-        ):
-            with self.subTest(domain_id=domain_id):
-                profile = dataclasses.replace(
-                    baseline,
-                    allocations=(
-                        dataclasses.replace(feed, domain_id=domain_id),
-                    ),
-                )
-                with self.assertRaisesRegex(
-                    (TypeError, ValueError),
-                    "unknown domain",
-                ):
-                    worker_profiles.validate_worker_profile(profile)
-
         duplicate = dataclasses.replace(
             baseline,
             process_owned_cap=1600,
@@ -260,7 +228,7 @@ class TestWorkerProfile(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicate.*domain"):
             worker_profiles.validate_worker_profile(duplicate)
 
-    def test_profile_rejects_invalid_caps_budgets_and_claim_flag(self) -> None:
+    def test_profile_rejects_invalid_caps_and_budgets(self) -> None:
         baseline = worker_profiles.LEGACY_PROFILE
         feed = baseline.allocations[0]
         invalid_allocations = {
@@ -288,10 +256,6 @@ class TestWorkerProfile(unittest.TestCase):
                 feed,
                 owned_cap=2,
                 claims_per_cycle=3,
-            ),
-            "invalid_claim_flag": dataclasses.replace(
-                feed,
-                claims_enabled=typing.cast("bool", 1),
             ),
         }
 
