@@ -3,6 +3,7 @@ import { Route, Routes } from 'react-router';
 
 import { decodeJwt } from 'jose';
 
+import RateReviewIcon from '@mui/icons-material/RateReview';
 import {
   CssBaseline,
   ThemeProvider,
@@ -17,6 +18,7 @@ import { ApiError } from '@transcription/common';
 
 import AppContainer from './components/AppContainer';
 import Login from './components/Login';
+import { AnnouncementBanner } from './components/common/AnnouncementBanner';
 import LoginModal from './components/common/LoginModal';
 import { RequireAdmin } from './components/common/RequireAdmin';
 import FeedConfigurationView from './components/feeds/FeedConfigurationView';
@@ -29,6 +31,10 @@ import { useAuth } from './context/AuthContext';
 import './App.css';
 
 const DocsView = lazy(() => import('./components/docs/DocsView'));
+
+const CSAT_SURVEY_START_DATE = new Date('2026-07-20T00:00:00');
+const CSAT_SURVEY_END_DATE = new Date('2026-07-29T23:59:59');
+const CSAT_SURVEY_FORM_URL = 'https://forms.gle/KocdXk8qWXyw7UCw9';
 
 function App() {
   const { token } = useAuth();
@@ -175,6 +181,15 @@ function App() {
             autoHideDuration={3000}
             onClose={() => setSnackbarMessage(null)}
             message={snackbarMessage}
+          />
+          <AnnouncementBanner
+            startDate={CSAT_SURVEY_START_DATE}
+            endDate={CSAT_SURVEY_END_DATE}
+            title="CSAT Survey:"
+            message="Your feedback will help us improve this transcription tool. Please share your experience by Wednesday, July 29th!"
+            linkUrl={CSAT_SURVEY_FORM_URL}
+            linkText={`${CSAT_SURVEY_FORM_URL} (2 min survey)`}
+            icon={<RateReviewIcon />}
           />
           {alerts.length > 0 && (
             <Stack sx={{ width: '100%', marginBottom: 1 }} spacing={1}>

@@ -8,16 +8,12 @@ if TYPE_CHECKING:
 
 import httpx
 import requests.auth
-from tenacity import (
-    AsyncRetrying,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-)
+from tenacity import AsyncRetrying
 
 from backend.pipeline.common.auth_client import get_id_token
 from backend.pipeline.common.clients.session_helper import (
     create_resilient_session,
+    get_httpx_retry_config,
 )
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.tracing_utils import get_current_traceparent
@@ -134,13 +130,6 @@ class GCPMetadataAsyncAuth(httpx.Auth):
         yield request
 
 
-def is_transient_error(e: BaseException) -> bool:
-    """Retries on all network errors and transient 429/5xx status codes."""
-    if isinstance(e, httpx.HTTPStatusError):
-        return e.response.status_code in {429, 500, 502, 503, 504}
-    return isinstance(e, (httpx.TransportError, httpx.TimeoutException))
-
-
 class AsyncAudioSegmentsClient:
     """
     Resilient asynchronous client for interacting with the Audio Segments API.
@@ -192,10 +181,12 @@ class AsyncAudioSegmentsClient:
         }
 
         async for attempt in AsyncRetrying(
-            retry=retry_if_exception(is_transient_error),
-            stop=stop_after_attempt(self.max_retries),
-            wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
-            reraise=True,
+            **get_httpx_retry_config(
+                total_attempts=self.max_retries,
+                multiplier=0.5,
+                min_seconds=0.5,
+                max_seconds=2.0,
+            )
         ):
             with attempt:
                 response = await self.client.post(
@@ -222,10 +213,12 @@ class AsyncAudioSegmentsClient:
             headers["traceparent"] = traceparent
 
         async for attempt in AsyncRetrying(
-            retry=retry_if_exception(is_transient_error),
-            stop=stop_after_attempt(self.max_retries),
-            wait=wait_exponential(multiplier=0.5, min=0.5, max=2.0),
-            reraise=True,
+            **get_httpx_retry_config(
+                total_attempts=self.max_retries,
+                multiplier=0.5,
+                min_seconds=0.5,
+                max_seconds=2.0,
+            )
         ):
             with attempt:
                 response = await self.client.post(
