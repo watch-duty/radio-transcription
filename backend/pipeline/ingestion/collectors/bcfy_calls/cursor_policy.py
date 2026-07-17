@@ -8,10 +8,10 @@ import enum
 import math
 import typing
 
-from backend.pipeline.storage import ingestion_lease_store
-
 if typing.TYPE_CHECKING:
     import collections.abc
+
+    from backend.pipeline.storage import ingestion_lease_store
 
 
 __all__ = [
@@ -54,9 +54,6 @@ class ReplayFloorReached:
     lost_duration_seconds: float
 
     def __post_init__(self) -> None:
-        if not isinstance(self.cause, ReplayFloorCause):
-            msg = "cause must be a ReplayFloorCause"
-            raise TypeError(msg)
         requested_start = _require_utc_datetime(
             self.requested_start,
             field_name="requested_start",
@@ -82,10 +79,7 @@ class ReplayFloorReached:
                 "floor_start"
             )
             raise ValueError(msg)
-        if isinstance(self.lost_duration_seconds, bool) or not isinstance(
-            self.lost_duration_seconds,
-            (int, float),
-        ):
+        if isinstance(self.lost_duration_seconds, bool):
             msg = "lost_duration_seconds must be a number"
             raise TypeError(msg)
         duration = float(self.lost_duration_seconds)
@@ -152,7 +146,6 @@ class PageCursorCandidate:
         if _construction_key is not _CONSTRUCTION_KEY:
             msg = "Page cursor candidates must be prepared by LeaseCursor"
             raise CursorIntegrityError(msg)
-        _require_grant(self.grant)
         _require_page_sequence(self.page_sequence)
         _require_integrity_utc_datetime(
             self.last_pos,
@@ -176,7 +169,6 @@ class NoProgressPageCandidate:
         if _construction_key is not _CONSTRUCTION_KEY:
             msg = "No-progress candidates must be prepared by LeaseCursor"
             raise CursorIntegrityError(msg)
-        _require_grant(self.grant)
         _require_page_sequence(self.page_sequence)
         if type(self._seal) is not _CandidateSeal:
             msg = "No-progress candidate seal is invalid"
@@ -197,7 +189,6 @@ class _CoveredPage:
         if _construction_key is not _CONSTRUCTION_KEY:
             msg = "Covered page receipts require the private issuer"
             raise CursorIntegrityError(msg)
-        _require_grant(self.grant)
         _require_page_sequence(self.page_sequence)
         _require_integrity_utc_datetime(
             self.last_pos,
@@ -222,7 +213,6 @@ class _ReplayablePageSettled:
         if _construction_key is not _CONSTRUCTION_KEY:
             msg = "Replayable page settlements require the private issuer"
             raise CursorIntegrityError(msg)
-        _require_grant(self.grant)
         _require_page_sequence(self.page_sequence)
         _require_integrity_utc_datetime(
             self.last_pos,
@@ -246,7 +236,6 @@ class _NoProgressPageSettled:
         if _construction_key is not _CONSTRUCTION_KEY:
             msg = "No-progress settlements require the private issuer"
             raise CursorIntegrityError(msg)
-        _require_grant(self.grant)
         _require_page_sequence(self.page_sequence)
         if type(self._seal) is not _CandidateSeal:
             msg = "No-progress settlement seal is invalid"
@@ -267,13 +256,10 @@ def _read_seal(
 
 
 def _require_utc_datetime(
-    value: object,
+    value: datetime.datetime,
     *,
     field_name: str,
 ) -> datetime.datetime:
-    if not isinstance(value, datetime.datetime):
-        msg = f"{field_name} must be a datetime"
-        raise TypeError(msg)
     if value.utcoffset() != datetime.timedelta(0):
         msg = f"{field_name} must be UTC-aware"
         raise ValueError(msg)
@@ -281,25 +267,18 @@ def _require_utc_datetime(
 
 
 def _require_integrity_utc_datetime(
-    value: object,
+    value: datetime.datetime,
     *,
     field_name: str,
 ) -> datetime.datetime:
     try:
         return _require_utc_datetime(value, field_name=field_name)
-    except (TypeError, ValueError) as exc:
+    except ValueError as exc:
         raise CursorIntegrityError(str(exc)) from exc
 
 
-def _require_grant(value: object) -> ingestion_lease_store.LeaseGrant:
-    if not isinstance(value, ingestion_lease_store.LeaseGrant):
-        msg = "grant must be a LeaseGrant"
-        raise CursorIntegrityError(msg)
-    return value
-
-
-def _require_page_sequence(value: object) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+def _require_page_sequence(value: int) -> int:
+    if isinstance(value, bool):
         msg = "page_sequence must be an integer"
         raise CursorIntegrityError(msg)
     if value < 0:
@@ -373,7 +352,6 @@ def bootstrap_cursor(
         Immutable bootstrap evidence with the selected replay position.
 
     Raises:
-        TypeError: ``now`` or a non-null Feed cursor is not a datetime.
         ValueError: ``now`` or a non-null Feed cursor is not UTC-aware.
     """
     validated_now = _require_utc_datetime(now, field_name="now")
@@ -510,7 +488,7 @@ class LeaseCursor:
         Raises:
             CursorIntegrityError: The grant or position is invalid.
         """
-        self._grant = _require_grant(grant)
+        self._grant = grant
         self._pos = (
             None
             if pos is None
