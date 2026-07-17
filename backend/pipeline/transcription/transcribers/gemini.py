@@ -330,22 +330,16 @@ class GeminiTranscriber(base.Transcriber):
                 )
                 await asyncio.sleep(1)
 
-        # Fallback to foundation model:
-        # - For SFT: only SFT-specific empty transcript / NONE outcomes
-        # - For foundation-only configs: on transient or no-candidates
+        # Fallback to foundation model on SFT-specific empty transcript /
+        # NONE / no-candidates outcomes, whether the primary model is the
+        # tuned SFT model or the foundation model itself.
         fallback_model = self.config.fallback_model or DEFAULT_GEMINI_MODEL
-        if (
-            is_sft_model
-            and isinstance(last_exception, GeminiTransientTranscriptionError)
-        ) or (
-            self.config.model == fallback_model
-            and isinstance(
-                last_exception,
-                (
-                    GeminiTransientTranscriptionError,
-                    GeminiNoCandidatesError,
-                ),
-            )
+        is_fallback_eligible_error = isinstance(
+            last_exception,
+            (GeminiTransientTranscriptionError, GeminiNoCandidatesError),
+        )
+        if is_fallback_eligible_error and (
+            is_sft_model or self.config.model == fallback_model
         ):
             return await self._fallback_transcribe(
                 contents,

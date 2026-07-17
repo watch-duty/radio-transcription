@@ -20,7 +20,6 @@ from backend.pipeline.transcription.transcribers.factory import get_transcriber
 from backend.pipeline.transcription.transcribers.gemini import (
     DEFAULT_GEMINI_MODEL,
     GeminiConfig,
-    GeminiNoCandidatesError,
     GeminiOtherFinishReasonError,
     GeminiTranscriber,
     GeminiTranscriptionError,
@@ -1224,10 +1223,10 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(mock_sleep.call_count, 3)
 
-    async def test_gemini_transcriber_tuned_model_no_fallback_on_no_candidates(
+    async def test_gemini_transcriber_tuned_model_fallback_on_no_candidates(
         self,
     ) -> None:
-        """Verifies that SFT model with zero candidates bypasses fallback and raises GeminiNoCandidatesError."""
+        """Verifies that SFT model with zero candidates retries against SFT, then falls back to the foundation model."""
         with (
             patch(
                 "backend.pipeline.transcription.transcribers.gemini.genai.Client"
@@ -1240,14 +1239,29 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             mock_client_cls.return_value = mock_client_instance
 
             # Mock SFT response: empty candidates
-            mock_response = MagicMock()
-            mock_response.candidates = []
-            mock_response.prompt_feedback = None
-            mock_response.response_id = "tuned-no-candidates-id"
-            mock_response.sdk_http_response = None
+            mock_response_1 = MagicMock()
+            mock_response_1.candidates = []
+            mock_response_1.prompt_feedback = None
+            mock_response_1.response_id = "tuned-no-candidates-id"
+            mock_response_1.sdk_http_response = None
+
+            # Mock fallback response: foundation model succeeds
+            mock_response_2 = MagicMock()
+            mock_candidate_2 = MagicMock()
+            mock_candidate_2.finish_reason = types.FinishReason.STOP
+            mock_part = MagicMock()
+            mock_part.text = "Fallback succeeded on no candidates"
+            mock_candidate_2.content.parts = [mock_part]
+            mock_response_2.candidates = [mock_candidate_2]
+            mock_response_2.response_id = "fallback-success-id"
 
             mock_client_instance.aio.models.generate_content = AsyncMock(
-                return_value=mock_response
+                side_effect=[
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_1,
+                    mock_response_2,
+                ]
             )
 
             config_json = (
@@ -1261,17 +1275,27 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             )
             transcriber.setup()
 
-            with self.assertRaises(GeminiNoCandidatesError):
-                await transcriber.transcribe(
-                    audio_data=b"\x00" * 100,
-                    duration_ms=1000,
-                )
+            result = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
+            )
 
-            # Asserts: 3 attempts made against SFT model, bypasses fallback
+            # Asserts: 3 attempts made against SFT model, then falls back
+            # and succeeds against the foundation model.
+            self.assertEqual(result, "Fallback succeeded on no candidates")
             self.assertEqual(
-                mock_client_instance.aio.models.generate_content.call_count, 3
+                mock_client_instance.aio.models.generate_content.call_count, 4
             )
             self.assertEqual(mock_sleep.call_count, 2)
+
+            fourth_call_args = (
+                mock_client_instance.aio.models.generate_content.call_args_list[
+                    3
+                ]
+            )
+            self.assertEqual(
+                fourth_call_args.kwargs["model"], DEFAULT_GEMINI_MODEL
+            )
 
     async def test_gemini_transcriber_tuned_model_fallback_on_empty_string_both_fail(
         self,
