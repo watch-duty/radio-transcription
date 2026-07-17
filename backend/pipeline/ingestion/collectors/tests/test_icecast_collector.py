@@ -1605,6 +1605,73 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0].session_id, results[1].session_id)
         self.assertEqual(results[1].session_id, results[2].session_id)
 
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc"
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_reconnect_lag_decoupled_from_consumer_backpressure(
+        self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Verify that consumer-side delays do not corrupt receipt_time stamps of subsequent chunks."""
+        fixed_anchor = datetime.datetime(
+            2026, 1, 1, 0, 0, 0, tzinfo=datetime.UTC
+        )
+
+        t0_conn = fixed_anchor
+        t0_seg0 = fixed_anchor + datetime.timedelta(seconds=15)
+        t0_seg1 = fixed_anchor + datetime.timedelta(seconds=30)
+        t0_seg2 = fixed_anchor + datetime.timedelta(seconds=45)
+
+        mock_now_utc.side_effect = [
+            t0_conn,
+            t0_seg0,
+            t0_seg1,
+            t0_seg2,
+            t0_seg2 + datetime.timedelta(seconds=10),
+        ]
+
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=777,
+            segments=[
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),
+            ],
+            wait_delay=0.1,
+            wait_result=0,
+        )
+
+        feed = _make_feed("backpressure-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+
+        chunks = []
+        async for chunk in gen:
+            chunks.append(chunk)
+            if len(chunks) == 1:
+                await asyncio.sleep(0.5)
+
+        self.assertEqual(len(chunks), 3)
+        self.assertEqual(chunks[0].receipt_time, t0_seg0)
+        self.assertEqual(chunks[1].receipt_time, t0_seg1)
+        self.assertEqual(chunks[2].receipt_time, t0_seg2)
+
+        self.assertEqual(chunks[0].chunk_start_time, t0_conn)
+        self.assertEqual(chunks[0].chunk_end_time, t0_seg0)
+        self.assertEqual(chunks[1].chunk_start_time, t0_seg0)
+        self.assertEqual(chunks[1].chunk_end_time, t0_seg1)
+        self.assertEqual(chunks[2].chunk_start_time, t0_seg1)
+        self.assertEqual(chunks[2].chunk_end_time, t0_seg2)
+
     # NOTE: stream lag is no longer reported via a threshold-based warning
     # log against a fixed session-start anchor (see
     # test_stream_interval_lag_measures_gap_past_chunk_duration above) —
@@ -1841,6 +1908,58 @@ class TestBuildAuthAndUrl(unittest.TestCase):
                 source_feed_id="12345",
             )
         self.assertIn("missing_broadcastify_credentials", str(ctx.exception))
+
+
+class TestIcecastTimelineManager(unittest.TestCase):
+    """Tests for IcecastTimelineManager validation constraints."""
+
+    def test_negative_duration_raises_value_error(self) -> None:
+        """Verify that negative chunk durations raise ValueError."""
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=datetime.datetime.now(datetime.UTC),
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        now = datetime.datetime.now(datetime.UTC)
+        chunk = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now,
+            chunk_end_time=now - datetime.timedelta(seconds=5),
+            session_id="session",
+            receipt_time=now,
+        )
+        with self.assertRaises(ValueError) as ctx:
+            manager.process_chunk(chunk, 16000 * 15, process_done=False)
+        self.assertIn("Negative chunk duration", str(ctx.exception))
+
+    def test_non_monotonic_start_time_raises_value_error(self) -> None:
+        """Verify that non-monotonic chunk start times raise ValueError."""
+        manager = icecast_collector.IcecastTimelineManager(
+            stream_anchor_time=datetime.datetime.now(datetime.UTC),
+            feed_id=uuid.uuid4(),
+            feed_name="test-feed",
+        )
+        now = datetime.datetime.now(datetime.UTC)
+        chunk1 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now,
+            chunk_end_time=now + datetime.timedelta(seconds=15),
+            session_id="session",
+            receipt_time=now,
+        )
+        manager.in_burst = False
+        manager.process_chunk(chunk1, 16000 * 15, process_done=False)
+
+        chunk2 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now + datetime.timedelta(seconds=10),
+            chunk_end_time=now + datetime.timedelta(seconds=25),
+            session_id="session",
+            receipt_time=now,
+        )
+        with self.assertRaises(ValueError) as ctx:
+            manager.process_chunk(chunk2, 16000 * 30, process_done=False)
+        self.assertIn("Non-monotonic chunk start time", str(ctx.exception))
 
 
 if __name__ == "__main__":
