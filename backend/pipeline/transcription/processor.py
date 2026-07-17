@@ -38,6 +38,8 @@ from backend.pipeline.schema_types.transcribed_audio_pb2 import (
 from backend.pipeline.transcription.enums import TranscriptionStatus
 from backend.pipeline.transcription.transcribers.base import Transcriber
 from backend.pipeline.transcription.transcribers.gemini import (
+    GeminiNoCandidatesError,
+    GeminiOtherFinishReasonError,
     GeminiTranscriptionError,
     GeminiTransientTranscriptionError,
 )
@@ -367,7 +369,11 @@ def _is_http_transient(e: requests.exceptions.HTTPError) -> bool:
 def is_transient_exception(e: Exception) -> bool:
     """Determines if an exception is transient and should be retried."""
     match e:
-        case GeminiTransientTranscriptionError():
+        case (
+            GeminiTransientTranscriptionError()
+            | GeminiOtherFinishReasonError()
+            | GeminiNoCandidatesError()
+        ):
             result = True
         case exceptions.RetryError():
             cause = e.cause or e.__cause__
