@@ -778,10 +778,7 @@ function DryRunResultsModal({
           key={`match-${idx}`}
           sx={{
             fontWeight: 'bold',
-            bgcolor: 'warning.light',
-            color: 'warning.contrastText',
-            px: 0.5,
-            borderRadius: 0.5,
+            color: 'warning.main',
           }}
         >
           {text.substring(span.startIndex, span.endIndex)}
@@ -852,11 +849,9 @@ function DryRunResultsModal({
               }}
             >
               <Typography variant="subtitle1" fontWeight={600}>
-                Tested against {(result.totalEvaluated ?? 0).toLocaleString()}{' '}
-                recent transcripts.
-              </Typography>
-              <Typography variant="body1">
-                Found {(result.hitCount ?? 0).toLocaleString()} matches.
+                Rule matched {(result.hitCount ?? 0).toLocaleString()} of{' '}
+                {(result.totalEvaluated ?? 0).toLocaleString()} recent
+                transcripts
               </Typography>
             </Box>
 
@@ -866,7 +861,7 @@ function DryRunResultsModal({
                   variant="subtitle2"
                   sx={{ mb: 1.5, fontWeight: 600 }}
                 >
-                  Match Examples (up to {result.examples.length})
+                  Matched examples
                 </Typography>
                 <Stack spacing={2}>
                   {result.examples.map((example, i) => (
