@@ -7,12 +7,10 @@ import asyncio  # noqa: TC003
 import dataclasses
 import enum
 import typing
+import uuid  # noqa: TC003
 
 from backend.pipeline.ingestion import failure_policy
 from backend.pipeline.storage import feed_store  # noqa: TC001
-
-if typing.TYPE_CHECKING:
-    import uuid
 
 
 class DomainId(enum.StrEnum):
@@ -46,6 +44,25 @@ class FinalizeDisposition(enum.StrEnum):
 
 class GrantControlIntegrityError(RuntimeError):
     """Raised when a typed store response cannot be correlated exactly."""
+
+
+class ExactGrant[UnitKeyT: typing.Hashable](typing.Protocol):
+    """Complete immutable authority for one ownership generation."""
+
+    @property
+    def unit_key(self) -> UnitKeyT:
+        """Return the permanent identity within the ownership domain."""
+        ...
+
+    @property
+    def owner_worker_id(self) -> uuid.UUID:
+        """Return the worker authorized for this generation."""
+        ...
+
+    @property
+    def fencing_token(self) -> int:
+        """Return the monotonic generation that rejects stale workers."""
+        ...
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
