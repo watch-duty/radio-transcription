@@ -221,4 +221,38 @@ describe('useAudioTimelineWindow', () => {
     expect(result.current.windowEndTime).toBeNull();
     expect(result.current.isLatestTimeWindow).toBe(true);
   });
+
+  it('recenters when advancing to a raw segment inside a silence bundle outside the window', () => {
+    const rawSilence = seg('silence-raw-2', '2026-04-20T08:00:00Z', '2026-04-20T08:00:05Z');
+    const { result, rerender } = renderHook(
+      (props) =>
+        useAudioTimelineWindow({
+          audioSegments: props.audioSegments,
+          rawAudioSegments: props.rawAudioSegments,
+          currentlyPlayingSegmentId: null,
+          highlightedSegmentId: props.highlightedSegmentId,
+          resetKey: 'feed-1',
+        }),
+      {
+        initialProps: {
+          audioSegments: [NEWEST],
+          rawAudioSegments: [NEWEST, rawSilence],
+          highlightedSegmentId: null as string | null,
+        },
+      }
+    );
+
+    expect(result.current.isLatestTimeWindow).toBe(true);
+
+    rerender({
+      audioSegments: [NEWEST],
+      rawAudioSegments: [NEWEST, rawSilence],
+      highlightedSegmentId: 'silence-raw-2',
+    });
+
+    expect(result.current.isLatestTimeWindow).toBe(false);
+    expect(result.current.windowEndTime).toBeLessThan(
+      new Date(NEWEST.endTimestamp).getTime()
+    );
+  });
 });
