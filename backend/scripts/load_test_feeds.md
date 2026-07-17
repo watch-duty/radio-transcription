@@ -83,49 +83,49 @@ python3 backend/scripts/load_test_feeds.py \
 ```bash
 python3 backend/scripts/load_test_feeds.py \
   --server "$SERVER_URL" --token "$TOKEN" --prefix "$LOAD_PREFIX" \
-  activate --target-total 500 --csv backend/scripts/test_data/load_test_feeds_15k.csv
+  create --target 500 --csv backend/scripts/test_data/load_test_feeds_15k.csv
 ```
 
 ### Phase 2 (1,000 Feeds)
 ```bash
 python3 backend/scripts/load_test_feeds.py \
   --server "$SERVER_URL" --token "$TOKEN" --prefix "$LOAD_PREFIX" \
-  activate --target-total 1000 --csv backend/scripts/test_data/load_test_feeds_15k.csv
+  create --target 1000 --csv backend/scripts/test_data/load_test_feeds_15k.csv
 ```
 
 ### Phase 3 (2,500 Feeds)
 ```bash
 python3 backend/scripts/load_test_feeds.py \
   --server "$SERVER_URL" --token "$TOKEN" --prefix "$LOAD_PREFIX" \
-  activate --target-total 2500 --csv backend/scripts/test_data/load_test_feeds_15k.csv
+  create --target 2500 --csv backend/scripts/test_data/load_test_feeds_15k.csv
 ```
 
 ### Phase 4 (5,000 Feeds)
 ```bash
 python3 backend/scripts/load_test_feeds.py \
   --server "$SERVER_URL" --token "$TOKEN" --prefix "$LOAD_PREFIX" \
-  activate --target-total 5000 --csv backend/scripts/test_data/load_test_feeds_15k.csv
+  create --target 5000 --csv backend/scripts/test_data/load_test_feeds_15k.csv
 ```
 
 ### Phase 5 (8,000 Feeds)
 ```bash
 python3 backend/scripts/load_test_feeds.py \
   --server "$SERVER_URL" --token "$TOKEN" --prefix "$LOAD_PREFIX" \
-  activate --target-total 8000 --csv backend/scripts/test_data/load_test_feeds_15k.csv
+  create --target 8000 --csv backend/scripts/test_data/load_test_feeds_15k.csv
 ```
 
 ### Phase 6 (10,000 Target Feeds)
 ```bash
 python3 backend/scripts/load_test_feeds.py \
   --server "$SERVER_URL" --token "$TOKEN" --prefix "$LOAD_PREFIX" \
-  activate --target-total 10000 --csv backend/scripts/test_data/load_test_feeds_15k.csv
+  create --target 10000 --csv backend/scripts/test_data/load_test_feeds_15k.csv
 ```
 
 ### Phase 7+ (15,000 Feeds Upper Stress Test)
 ```bash
 python3 backend/scripts/load_test_feeds.py \
   --server "$SERVER_URL" --token "$TOKEN" --prefix "$LOAD_PREFIX" \
-  activate --target-total 15000 --csv backend/scripts/test_data/load_test_feeds_15k.csv
+  create --target 15000 --csv backend/scripts/test_data/load_test_feeds_15k.csv
 ```
 
 
