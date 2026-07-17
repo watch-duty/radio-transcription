@@ -5,11 +5,15 @@ from abc import ABC, abstractmethod
 from typing import TypedDict
 
 import cachetools
+import httpx
+from tenacity import (
+    Retrying,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from backend.pipeline.common.auth_client import get_id_token
-from backend.pipeline.common.clients.session_helper import (
-    create_resilient_session,
-)
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.evaluation.annotations import (
     RuleAnnotation,
@@ -271,18 +275,18 @@ class RemoteTextEvaluator(BaseTextEvaluator):
             raise ValueError(msg)
 
         self.api_url = api_url.rstrip("/")
-        self.session = create_resilient_session(
-            max_retries=3,
-            backoff_factor=1.0,
-            status_forcelist=[429, 500, 502, 503, 504],
-            raise_on_status=True,
-        )
+        transport = httpx.HTTPTransport(retries=3, http2=True)
+        self.client = httpx.Client(transport=transport)
 
         self._cache_ttl_seconds = cache_ttl_seconds
         self._cache = cachetools.TTLCache(
             maxsize=1,
             ttl=cache_ttl_seconds,
         )
+
+    def close(self) -> None:
+        """Closes the underlying HTTP client session connection pool."""
+        self.client.close()
 
     def evaluate(self, text: str, feed_id: str) -> EvaluationResult:
         """
@@ -333,15 +337,26 @@ class RemoteTextEvaluator(BaseTextEvaluator):
         # When running on Cloud Run, use the metadata server to get an ID token
         if is_gcp_env():
             token = get_id_token(self.api_url)
-            self.session.headers.update({"Authorization": f"Bearer {token}"})
+            self.client.headers.update({"Authorization": f"Bearer {token}"})
 
-        response = self.session.get(
-            f"{self.api_url}/v1/rules",
-            headers=headers,
-            timeout=10,
-        )
+        def is_transient_error(e: BaseException) -> bool:
+            if isinstance(e, httpx.HTTPStatusError):
+                return e.response.status_code in {429, 500, 502, 503, 504}
+            return isinstance(e, (httpx.TransportError, httpx.TimeoutException))
 
-        response.raise_for_status()
+        for attempt in Retrying(
+            stop=stop_after_attempt(4),
+            wait=wait_exponential(multiplier=1.0, min=1.0, max=10.0),
+            retry=retry_if_exception(is_transient_error),
+            reraise=True,
+        ):
+            with attempt:
+                response = self.client.get(
+                    f"{self.api_url}/v1/rules",
+                    headers=headers,
+                    timeout=10,
+                )
+                response.raise_for_status()
 
         rules_data = response.json()
         rules = [models.Rule.model_validate(rule) for rule in rules_data]
