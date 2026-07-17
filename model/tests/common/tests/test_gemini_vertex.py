@@ -402,15 +402,24 @@ class TestBuildRequest(unittest.TestCase):
         )
         self.assertNotIn("extra_key", self.default_gen_config)
 
-    def test_default_safety_settings_four_block_none(self) -> None:
-        """Default safety_settings has 4 BLOCK_NONE entries."""
+    def test_default_safety_settings_match_production_categories(self) -> None:
+        """Default safety settings disable every production harm filter."""
         result = self.build_request(
             "gs://bucket/audio.flac",
             system_prompt="S",
             user_prompt="U",
         )
         safety = result["request"]["safetySettings"]
-        self.assertEqual(len(safety), 4)
+        self.assertEqual(
+            {entry["category"] for entry in safety},
+            {
+                "HARM_CATEGORY_HATE_SPEECH",
+                "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "HARM_CATEGORY_DANGEROUS_CONTENT",
+                "HARM_CATEGORY_HARASSMENT",
+                "HARM_CATEGORY_CIVIC_INTEGRITY",
+            },
+        )
         for entry in safety:
             self.assertEqual(entry["threshold"], "BLOCK_NONE")
 
@@ -423,7 +432,7 @@ class TestBuildRequest(unittest.TestCase):
         )
         result["request"]["safetySettings"].pop()
         result["request"]["safetySettings"][0]["threshold"] = "CHANGED"
-        self.assertEqual(len(self.default_safety), 4)
+        self.assertEqual(len(self.default_safety), 5)
         self.assertEqual(self.default_safety[0]["threshold"], "BLOCK_NONE")
 
     def test_system_prompt_preserved_exactly(self) -> None:
@@ -594,6 +603,92 @@ class TestBuildRequest(unittest.TestCase):
         self.assertEqual(contents[2]["parts"][0]["text"], user_prompt)
         self.assertEqual(contents[3]["parts"][0]["text"], "second")
         self.assertEqual(contents[4]["parts"][0]["text"], user_prompt)
+
+
+class TestBuildEvaluationRequest(unittest.TestCase):
+    """Tests for the prediction-only evaluation provider boundary."""
+
+    def test_return_shape_and_default_generation_config(self) -> None:
+        result = vertex.build_evaluation_request(
+            "gs://bucket/current.flac",
+            system_prompt="System.",
+            user_prompt="Transcribe.",
+        )
+
+        request = result["request"]
+        self.assertEqual(
+            request["generationConfig"],
+            {"temperature": 0.0, "max_output_tokens": 512},
+        )
+        self.assertEqual(
+            request["contents"][0]["parts"][1]["fileData"]["fileUri"],
+            "gs://bucket/current.flac",
+        )
+
+    def test_prediction_history_contains_exactly_current_audio(self) -> None:
+        result = vertex.build_evaluation_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt="U",
+            history=[
+                context.PredictedHistoryTurn(
+                    "gs://bucket/prior.flac",
+                    "PREDICTION_SECRET",
+                )
+            ],
+        )
+
+        payload = json.dumps(result, sort_keys=True)
+        self.assertIn("PREDICTION_SECRET", payload)
+        self.assertNotIn("gs://bucket/prior.flac", payload)
+        self.assertEqual(payload.count("gs://bucket/current.flac"), 1)
+
+    def test_compact_history_modes_keep_exactly_current_audio(self) -> None:
+        history = [
+            context.PredictedHistoryTurn(
+                "gs://bucket/prior.flac",
+                "prior prediction",
+            )
+        ]
+        for history_mode in ("transcript", "guarded_transcript_block"):
+            with self.subTest(history_mode=history_mode):
+                result = vertex.build_evaluation_request(
+                    "gs://bucket/current.flac",
+                    system_prompt="S",
+                    user_prompt="U",
+                    history=history,
+                    history_mode=history_mode,
+                )
+                payload = json.dumps(result, sort_keys=True)
+                self.assertEqual(
+                    payload.count("gs://bucket/current.flac"),
+                    1,
+                )
+                self.assertNotIn("gs://bucket/prior.flac", payload)
+
+    def test_provider_boundary_rejects_training_reference(self) -> None:
+        history = [context.TrainingReferenceTurn("REFERENCE_SECRET")]
+
+        with self.assertRaisesRegex(TypeError, "TrainingReferenceTurn"):
+            vertex.build_evaluation_request(
+                "gs://bucket/current.flac",
+                system_prompt="S",
+                user_prompt="U",
+                history=history,
+            )
+
+    def test_default_safety_settings_include_five_categories(self) -> None:
+        result = vertex.build_evaluation_request(
+            "gs://bucket/current.flac",
+            system_prompt="S",
+            user_prompt="U",
+        )
+
+        safety = result["request"]["safetySettings"]
+        self.assertEqual(len(safety), 5)
+        self.assertTrue(
+            all(entry["threshold"] == "BLOCK_NONE" for entry in safety)
+        )
 
 
 class TestParseBatchOutput(unittest.TestCase):

@@ -396,7 +396,7 @@ def write_gemini_jsonl(
         ValueError: If context settings or a generated example are invalid.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    histories = context.build_context_histories(
+    histories = context.build_training_reference_histories(
         rows,
         max_turns=prior_context_count,
     )

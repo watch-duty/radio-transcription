@@ -27,9 +27,10 @@ publisher model. A training-only prepare may omit `[eval.model]`, but that round
 cannot be passed to `gemini-sft eval`. After tuning produces an endpoint, prepare
 a separate eval-only round for that endpoint as described below.
 
-## Prior Context Modes
+## Prior Context Contract
 
-Use `[context]` to control prior same-source transcripts:
+Use `[context]` to control the number and representation of prior same-source
+transcripts:
 
 ```toml
 [context]
@@ -37,13 +38,31 @@ prior_turn_count = 8
 prior_context_mode = "text_turns"
 ```
 
-Supported SFT/eval modes:
+The representation is shared, but transcript provenance is deliberately
+different:
+
+- During SFT preparation, prior reference transcripts are supervised training
+  data.
+- During evaluation, references are never provider input. History may contain
+  only finalized predictions from the evaluated target model for eligible
+  earlier rows. References are joined only after inference for scoring.
+
+Supported context representations:
 
 | Mode | Shape | Use |
 | --- | --- | --- |
 | `text_turns` | Prior `user(text prompt) -> model(prior transcript)` turns, then the current user turn with audio. | Recommended default for SFT prior context. |
 | `transcript` | One current user turn with a simple numbered prior-transcript block plus current audio. | Compact one-turn context. |
 | `guarded_transcript_block` | One current user turn with a guarded numbered prior-transcript block plus current audio. | Compact context with explicit "do not re-transcribe or continue prior turns" instructions. |
+
+Rolling evaluation groups rows by split and source. A candidate must start
+strictly before the current segment and finish no later than the current start.
+Contextual rows therefore require one complete source-provenance tuple: either
+original source URI plus original offset, or a complete `source_audio`
+URI/offset/duration tuple. The configured K is applied to those structural
+candidates before unusable predictions are omitted. Every provider request
+contains transcript-only predicted history and exactly one audio input: the
+current clip.
 
 ## Eval Target Snippets
 
