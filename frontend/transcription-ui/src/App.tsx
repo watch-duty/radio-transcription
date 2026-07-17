@@ -32,7 +32,7 @@ import './App.css';
 
 const DocsView = lazy(() => import('./components/docs/DocsView'));
 
-const CSAT_SURVEY_START_DATE = new Date('2026-07-10T00:00:00');
+const CSAT_SURVEY_START_DATE = new Date('2026-07-20T00:00:00');
 const CSAT_SURVEY_END_DATE = new Date('2026-07-29T23:59:59');
 const CSAT_SURVEY_FORM_URL = 'https://forms.gle/KocdXk8qWXyw7UCw9';
 
