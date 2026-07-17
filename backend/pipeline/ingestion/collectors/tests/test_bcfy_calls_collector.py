@@ -330,6 +330,29 @@ class TestFetchCalls(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(res, {"call": 1})
 
+    async def test_non_object_payload_raises_at_fetch_boundary(self) -> None:
+        resp = AsyncMock(status=200)
+        resp.json.return_value = [{"url": "http://1"}]
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=resp)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        self.session.get.return_value = cm
+
+        with self.assertRaises(FeedFailure) as ctx:
+            await bcfy_calls_collector._fetch_calls(
+                self.session, "url", {}, {}, "fid", self.shutdown
+            )
+
+        self.assertIs(
+            ctx.exception.status_reason,
+            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
+        )
+        self.assertEqual(
+            str(ctx.exception),
+            "calls_api_response_invalid: TypeError: payload must be an object",
+        )
+        self.assertEqual(self.session.get.call_count, 1)
+
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
@@ -659,17 +682,6 @@ class TestExtractCallsFromResponse(unittest.TestCase):
     def test_none_input(self) -> None:
         res = bcfy_calls_collector._extract_calls_from_response(None)
         self.assertEqual(res, [])
-
-    def test_non_dict_input(self) -> None:
-        with self.assertRaises(FeedFailure) as ctx:
-            bcfy_calls_collector._extract_calls_from_response(
-                [{"url": "http://1"}]  # type: ignore
-            )
-        self.assertIs(
-            ctx.exception.status_reason,
-            FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID,
-        )
-        self.assertEqual(ctx.exception.reason, "calls_api_payload_malformed")
 
     def test_missing_calls_key(self) -> None:
         res = bcfy_calls_collector._extract_calls_from_response(
