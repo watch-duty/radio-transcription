@@ -3,6 +3,7 @@
 import unittest
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import httpx
 import requests
 from google.api_core.retry_async import AsyncRetry
 from google.genai import types
@@ -1774,7 +1775,11 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(http_options.timeout, 60000)
             self.assertIsNotNone(http_options.retry_options)
             self.assertEqual(http_options.retry_options.attempts, 3)
-            self.assertIsNone(http_options.httpx_async_client)
+            self.assertIsNotNone(http_options.httpx_async_client)
+            self.assertIsInstance(
+                http_options.httpx_async_client,
+                httpx.AsyncClient,
+            )
 
     def test_gemini_transcriber_setup_custom_retry(self) -> None:
         """Verifies that the Gemini transcriber initializes the GenAI client with custom retry options."""

@@ -5,6 +5,7 @@ import dataclasses
 import mimetypes
 import re
 
+import httpx
 import pydantic
 from google import genai
 from google.genai import types
@@ -158,6 +159,12 @@ class GeminiTranscriber(base.Transcriber):
                 location=location,
                 http_options=types.HttpOptions(
                     timeout=self.config.client_timeout_ms,
+                    httpx_async_client=httpx.AsyncClient(
+                        limits=httpx.Limits(
+                            max_connections=500,
+                            max_keepalive_connections=100,
+                        ),
+                    ),
                     retry_options=types.HttpRetryOptions(
                         attempts=self.config.retry_attempts,
                         initial_delay=self.config.retry_initial_delay,
