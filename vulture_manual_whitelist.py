@@ -79,8 +79,6 @@ grant_supervisor.GrantSupervisor.integrity_failure
 grant_supervisor.GrantSupervisor.admit_cycle
 grant_supervisor.GrantSupervisor.heartbeat_cycle
 grant_supervisor.SupervisorSnapshot.counts_by_domain
-grant_supervisor.ShutdownResult.finalized
-grant_supervisor.ShutdownResult.abandoned
 
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation
 # and schema reflection, which Vulture cannot trace through direct Python

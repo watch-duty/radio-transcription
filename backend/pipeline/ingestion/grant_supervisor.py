@@ -64,13 +64,8 @@ class SupervisorSnapshot:
     counts_by_domain: typing.Mapping[grant_control.DomainId, GrantCount]
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class ShutdownResult:
-    """Bounded outcome of an ordered supervisor shutdown."""
-
-    finalized: int
-    abandoned: int
-    undrained: int
+class SupervisorNotDrainedError(RuntimeError):
+    """Supervisor-owned work may still use shared runtime resources."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -412,7 +407,6 @@ class GrantSupervisor:
         self._integrity_failure_event = asyncio.Event()
         self._claim_tasks: set[asyncio.Task[int]] = set()
         self._terminal_tasks: set[asyncio.Task[_FinalizeEffect]] = set()
-        self._abandoned_total = 0
 
     @property
     def admission_enabled(self) -> bool:
@@ -713,8 +707,6 @@ class GrantSupervisor:
         if managed is None or not managed.runner_closed.is_set():
             return
         if managed.administrative_stop or managed.lost or managed.uncertain:
-            if managed.uncertain:
-                self._abandoned_total += 1
             self._discard_exact_generation(key)
             return
         if self._shutting_down:
@@ -738,7 +730,6 @@ class GrantSupervisor:
             terminal = self._terminal_decision(managed)
         except Exception as exc:
             managed.uncertain = True
-            self._abandoned_total += 1
             failure = grant_control.GrantControlIntegrityError(
                 "failure planner did not produce a terminal decision"
             )
@@ -780,7 +771,6 @@ class GrantSupervisor:
                 )
         except asyncio.CancelledError as exc:
             managed.uncertain = True
-            self._abandoned_total += 1
             failure = grant_control.GrantControlIntegrityError(
                 "finalization outcome is unknown after cancellation"
             )
@@ -790,7 +780,6 @@ class GrantSupervisor:
             raise
         except Exception as exc:
             managed.uncertain = True
-            self._abandoned_total += 1
             failure = (
                 exc
                 if isinstance(
@@ -818,7 +807,6 @@ class GrantSupervisor:
         failure = grant_control.GrantControlIntegrityError(msg)
         self._surface_integrity_failure(failure)
         managed.uncertain = True
-        self._abandoned_total += 1
         self._discard_exact_generation(key)
         return _FinalizeEffect.ABANDONED
 
@@ -933,6 +921,25 @@ class GrantSupervisor:
             counts_by_domain=types.MappingProxyType(counts),
         )
 
+    async def _claim_shutdown_blocker(
+        self,
+        wait_timeout_sec: float,
+    ) -> bool:
+        """Wait for known claim mutations and report whether any remain."""
+        claim_tasks = tuple(self._claim_tasks)
+        if not claim_tasks:
+            return False
+        _done, pending_claims = await asyncio.wait(
+            claim_tasks,
+            timeout=wait_timeout_sec,
+        )
+        if not pending_claims:
+            return False
+        for managed in tuple(self._registry.values()):
+            if self._current_exact(managed.key) is managed:
+                managed.context.stop_requested.set()
+        return True
+
     async def shutdown(  # noqa: PLR0912
         self,
         *,
@@ -942,7 +949,7 @@ class GrantSupervisor:
             [],
             typing.Awaitable[None],
         ],
-    ) -> ShutdownResult:
+    ) -> None:
         """Drain runners, stop heartbeats, then finalize closed grants."""
         self._validate_timeout(
             cooperative_grace_sec,
@@ -954,26 +961,8 @@ class GrantSupervisor:
         )
         self._admission_enabled = False
         self._shutting_down = True
-        abandoned_before = self._abandoned_total
-
-        claim_tasks = tuple(self._claim_tasks)
-        pending_claims = await self._wait_tasks(
-            claim_tasks,
-            external_stop_deadline_sec,
-        )
-        for task in pending_claims:
-            task.cancel()
-        if pending_claims:
-            pending_claims = await self._wait_tasks(
-                pending_claims,
-                external_stop_deadline_sec,
-            )
-        if pending_claims:
-            return ShutdownResult(
-                finalized=0,
-                abandoned=0,
-                undrained=len(pending_claims),
-            )
+        if await self._claim_shutdown_blocker(external_stop_deadline_sec):
+            raise SupervisorNotDrainedError
 
         initial = tuple(self._registry.values())
         for managed in initial:
@@ -1006,7 +995,6 @@ class GrantSupervisor:
                 managed.uncertain = True
                 managed.context.grant_lost.set()
                 undrained += 1
-                self._abandoned_total += 1
 
         await stop_heartbeat_supervision()
 
@@ -1040,18 +1028,8 @@ class GrantSupervisor:
                 *pending_terminals,
                 return_exceptions=True,
             )
-        effects = tuple(
-            task.result()
-            for task in terminal_tasks
-            if task.done() and not task.cancelled()
-        )
-        return ShutdownResult(
-            finalized=sum(
-                effect is _FinalizeEffect.APPLIED for effect in effects
-            ),
-            abandoned=self._abandoned_total - abandoned_before,
-            undrained=undrained,
-        )
+        if undrained:
+            raise SupervisorNotDrainedError
 
     def _validate_timeout(self, value: float, field_name: str) -> None:
         if isinstance(value, bool):

@@ -311,6 +311,38 @@ class _Runner[GrantT, PayloadT]:
             self.finished_event(grant).set()
 
 
+class _CancellationResistantRunner[GrantT, PayloadT](
+    _Runner[GrantT, PayloadT]
+):
+    """Controlled runner that acknowledges cancellation without closing."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancellation_seen = asyncio.Event()
+
+    async def run(
+        self,
+        grant: GrantT,
+        payload: PayloadT,
+        context: grant_control.RunContext,
+    ) -> grant_control.RunOutcome:
+        self.contexts[grant] = context
+        self.payloads[grant] = payload
+        self.started_event(grant).set()
+        try:
+            while True:
+                try:
+                    await self.release.wait()
+                    return self.outcomes.get(
+                        grant,
+                        grant_control.RunCompleted(),
+                    )
+                except asyncio.CancelledError:
+                    self.cancellation_seen.set()
+        finally:
+            self.finished_event(grant).set()
+
+
 def _feed_registration(
     control: _Control[feed_store.FeedGrant, feed_store.LeasedFeed],
     runner: _Runner[feed_store.FeedGrant, feed_store.LeasedFeed],
@@ -898,9 +930,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         result = await shutdown_task
         self.supervisors.remove(supervisor)
 
-        self.assertEqual(result.finalized, 1)
-        self.assertEqual(result.abandoned, 0)
-        self.assertEqual(result.undrained, 0)
+        self.assertIsNone(result)
         self.assertEqual(len(control.finalize_calls), 1)
 
     async def test_shutdown_waits_for_already_in_flight_finalization(
@@ -947,9 +977,84 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         result = await shutdown_task
         self.supervisors.remove(supervisor)
 
-        self.assertEqual(result.finalized, 1)
-        self.assertEqual(result.abandoned, 0)
-        self.assertEqual(result.undrained, 0)
+        self.assertIsNone(result)
+
+    async def test_shutdown_rejects_unsettled_claim_mutation(self) -> None:
+        control: _Control[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Control()
+        runner: _Runner[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Runner()
+        control.claim_gate = asyncio.Event()
+        supervisor = self._supervisor(
+            worker_profiles.LEGACY_PROFILE,
+            _feed_registration(control, runner),
+        )
+        admission = asyncio.create_task(supervisor.admit_cycle(_OWNER))
+        await _wait(control.claim_started[grant_control.ClaimMode.PRIMARY])
+        heartbeat_stopped = asyncio.Event()
+
+        async def stop_heartbeats() -> None:
+            heartbeat_stopped.set()
+
+        with self.assertRaises(
+            grant_supervisor.SupervisorNotDrainedError
+        ):
+            await supervisor.shutdown(
+                cooperative_grace_sec=0,
+                external_stop_deadline_sec=0,
+                stop_heartbeat_supervision=stop_heartbeats,
+            )
+
+        self.assertFalse(heartbeat_stopped.is_set())
+        control.claim_gate.set()
+        await admission
+
+    async def test_shutdown_rejects_cancellation_resistant_runner(
+        self,
+    ) -> None:
+        control: _Control[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Control()
+        runner: _CancellationResistantRunner[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _CancellationResistantRunner()
+        grant = _feed_grant(uuid.uuid4(), 1)
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(grant, _feed_payload(grant)),
+        )
+        supervisor = self._supervisor(
+            worker_profiles.LEGACY_PROFILE,
+            _feed_registration(control, runner),
+        )
+        await supervisor.admit_cycle(_OWNER)
+        await _wait(runner.started_event(grant))
+        heartbeat_stopped = asyncio.Event()
+
+        async def stop_heartbeats() -> None:
+            heartbeat_stopped.set()
+
+        with self.assertRaises(
+            grant_supervisor.SupervisorNotDrainedError
+        ):
+            await supervisor.shutdown(
+                cooperative_grace_sec=0,
+                external_stop_deadline_sec=0,
+                stop_heartbeat_supervision=stop_heartbeats,
+            )
+
+        self.assertTrue(heartbeat_stopped.is_set())
+        self.assertEqual(control.finalize_calls, [])
+        await _wait(runner.cancellation_seen)
+        runner.release.set()
+        await _wait(runner.finished_event(grant))
+        self.assertEqual(supervisor._registry, {})
 
     async def test_stale_generation_key_cannot_remove_successor(
         self,
