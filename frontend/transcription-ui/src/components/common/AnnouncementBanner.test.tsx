@@ -7,7 +7,7 @@ import { AnnouncementBanner } from './AnnouncementBanner';
 
 const TEST_START_DATE = new Date('2026-07-20T00:00:00');
 const TEST_END_DATE = new Date('2026-07-29T23:59:59');
-const TEST_LINK_URL = 'https://test-form';
+const TEST_LINK_URL = 'https://forms.gle/test';
 const TEST_MESSAGE = 'Please share your experience by Wed, July 29!';
 
 afterEach(() => {
@@ -65,7 +65,7 @@ describe('AnnouncementBanner', () => {
     expect(screen.getByText('CSAT Survey:')).toBeTruthy();
     expect(screen.getByText(/Please share your experience/i)).toBeTruthy();
     const link = screen.getByRole('link', {
-      name: /https:\/\/forms\.gle\/KocdXk8qWXyw7UCw9 \(2 min survey\)/i,
+      name: /https:\/\/forms\.gle\/test \(2 min survey\)/i,
     });
     expect(link.getAttribute('href')).toBe(TEST_LINK_URL);
   });
