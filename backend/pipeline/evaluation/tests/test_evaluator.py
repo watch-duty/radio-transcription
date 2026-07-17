@@ -268,6 +268,17 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         self.api_url = "http://localhost:8080"
         self.remote_evaluator = evaluator.RemoteTextEvaluator(self.api_url)
 
+    def tearDown(self) -> None:
+        self.remote_evaluator.close()
+
+    def test_init_initializes_without_http2(self) -> None:
+        transport = self.remote_evaluator.client._transport
+        self.assertIsNotNone(transport)
+        self.assertIsInstance(transport, httpx.HTTPTransport)
+        self.assertFalse(
+            getattr(getattr(transport, "_pool", None), "_http2", False)
+        )
+
     @patch(
         "backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token"
     )

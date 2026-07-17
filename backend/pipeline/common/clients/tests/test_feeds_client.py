@@ -14,11 +14,11 @@ class TestFeedsClient(unittest.TestCase):
     def tearDown(self) -> None:
         self.client.close()
 
-    def test_init_initializes_with_http2(self) -> None:
+    def test_init_initializes_without_http2(self) -> None:
         transport = self.client.client._transport
         self.assertIsNotNone(transport)
         self.assertIsInstance(transport, httpx.HTTPTransport)
-        self.assertTrue(
+        self.assertFalse(
             getattr(getattr(transport, "_pool", None), "_http2", False)
         )
 
