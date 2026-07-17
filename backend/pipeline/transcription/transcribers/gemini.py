@@ -302,7 +302,8 @@ class GeminiTranscriber(base.Transcriber):
         )
 
         fallback_location = self._resolve_location(
-            fallback_model, self.config.fallback_location or self.location
+            fallback_model,
+            self.config.fallback_location or DEFAULT_GEMINI_LOCATION,
         )
         fallback_client = self._get_client(fallback_location)
 

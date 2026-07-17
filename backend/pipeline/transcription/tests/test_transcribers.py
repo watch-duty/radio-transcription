@@ -1479,6 +1479,72 @@ class TestGeminiTranscriber(unittest.IsolatedAsyncioTestCase):
             self.assertIn("us-central1", transcriber._clients)
             self.assertIn("us-west2", transcriber._clients)
 
+    @patch("asyncio.sleep", new_callable=AsyncMock)
+    async def test_gemini_transcriber_multi_region_fallback_default_location(
+        self, mock_sleep
+    ) -> None:
+        """Verifies that the fallback model defaults to DEFAULT_GEMINI_LOCATION when no fallback location is configured."""
+        with patch(
+            "backend.pipeline.transcription.transcribers.gemini.genai.Client"
+        ) as mock_client_cls:
+            primary_client = MagicMock()
+            fallback_client = MagicMock()
+
+            def get_mock_client(**kwargs):
+                loc = kwargs.get("location")
+                if loc == "us-central1":
+                    return primary_client
+                if loc == "us":
+                    return fallback_client
+                raise ValueError
+
+            mock_client_cls.side_effect = get_mock_client
+
+            # Mock responses
+            mock_response_primary = MagicMock()
+            mock_candidate_primary = MagicMock()
+            mock_candidate_primary.finish_reason = None
+            mock_candidate_primary.content = None
+            mock_response_primary.candidates = [mock_candidate_primary]
+            primary_client.aio.models.generate_content = AsyncMock(
+                return_value=mock_response_primary
+            )
+
+            mock_response_fallback = MagicMock()
+            mock_candidate_fallback = MagicMock()
+            mock_candidate_fallback.finish_reason = types.FinishReason.STOP
+            mock_part = MagicMock()
+            mock_part.text = "Default fallback success"
+            mock_candidate_fallback.content.parts = [mock_part]
+            mock_response_fallback.candidates = [mock_candidate_fallback]
+            fallback_client.aio.models.generate_content = AsyncMock(
+                return_value=mock_response_fallback
+            )
+
+            # Config: location is us-central1, fallback_location is not configured (defaults to DEFAULT_GEMINI_LOCATION = "us")
+            config_json = (
+                '{"model": "gemini-3.1-flash-lite", '
+                '"location": "us-central1", '
+                '"fallback_model": "gemini-3.5-flash", '
+                '"fallback_retry_attempts": 1}'
+            )
+            transcriber = get_transcriber(
+                TranscriberType.GEMINI,
+                "test-project",
+                config_json,
+            )
+
+            transcriber.setup()
+            assert isinstance(transcriber, GeminiTranscriber)
+            result = await transcriber.transcribe(
+                audio_data=b"\x00" * 100,
+                duration_ms=1000,
+            )
+
+            self.assertEqual(result, "Default fallback success")
+            self.assertIn("us-central1", transcriber._clients)
+            self.assertIn("us", transcriber._clients)
+
     def test_gemini_transcriber_setup(self) -> None:
         """Verifies that the Gemini transcriber initializes the GenAI client with correct options."""
         with patch(
