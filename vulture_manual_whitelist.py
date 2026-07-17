@@ -52,6 +52,7 @@ from backend.pipeline.ingestion import (
     sid_grant_control,
     worker_profiles,
 )
+from backend.pipeline.storage import feed_store, ingestion_lease_contracts
 failure_policy.plan_failure
 feed_grant_control.FeedGrantControl
 feed_grant_control.FeedGrantControl.heartbeat
@@ -66,6 +67,10 @@ grant_control.GrantControl
 grant_control.GrantControl.heartbeat
 grant_control.GrantControl.finalize
 grant_control.GrantRunner
+grant_control.ExactGrant
+grant_control.ExactGrant.unit_key
+feed_store.FeedGrant.unit_key
+ingestion_lease_contracts.LeaseGrant.unit_key
 worker_profiles.derive_bcfy_calls_authority
 worker_profiles.resolve_worker_profile
 
