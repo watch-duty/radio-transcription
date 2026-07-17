@@ -1139,16 +1139,15 @@ class TestProcessFeedSideEffectOrdering(unittest.IsolatedAsyncioTestCase):
             async def stop_heartbeat() -> None:
                 return None
 
-            result = await supervisor.shutdown(
-                cooperative_grace_sec=0,
-                external_stop_deadline_sec=0,
-                stop_heartbeat_supervision=stop_heartbeat,
-            )
+            with self.assertRaises(
+                grant_supervisor.SupervisorNotDrainedError
+            ):
+                await supervisor.shutdown(
+                    cooperative_grace_sec=0,
+                    external_stop_deadline_sec=0,
+                    stop_heartbeat_supervision=stop_heartbeat,
+                )
 
-            self.assertEqual(
-                result,
-                grant_supervisor.ShutdownResult(0, 1, 1),
-            )
             control.finalize.assert_not_awaited()
             release_publish.set()
             managed = next(iter(supervisor._registry.values()))
@@ -2944,12 +2943,10 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
     """Runtime shutdown delegates exact grant drain before resource close."""
 
     @staticmethod
-    def _configure_shutdown_runtime(
-        result: grant_supervisor.ShutdownResult,
-    ) -> CollectorRuntime:
+    def _configure_shutdown_runtime() -> CollectorRuntime:
         rt = _make_runtime()
         rt._supervisor = mock.AsyncMock()
-        rt._supervisor.shutdown.return_value = result
+        rt._supervisor.shutdown.return_value = None
         rt._heartbeat_thread = None
         rt._memory_watchdog.join = mock.AsyncMock()
         rt._store = mock.AsyncMock()
@@ -2962,21 +2959,15 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
 
     async def test_drained_shutdown_closes_shared_resources(self) -> None:
         order: list[str] = []
-        result = grant_supervisor.ShutdownResult(
-            finalized=1,
-            abandoned=0,
-            undrained=0,
-        )
-        rt = self._configure_shutdown_runtime(result)
+        rt = self._configure_shutdown_runtime()
         scheduler = _ControlledProcessScheduler(order=order)
         rt._feed_work_scheduler = cast(
             "feed_work_scheduler.FeedWorkScheduler",
             scheduler,
         )
 
-        async def shutdown(**_kwargs):
+        async def shutdown(**_kwargs: object) -> None:
             order.append("supervisor_shutdown")
-            return result
 
         cast("Any", rt._supervisor.shutdown).side_effect = shutdown
         cast("Any", rt._pubsub_client.close).side_effect = lambda: order.append(
@@ -3012,14 +3003,13 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
             order.index("pubsub_close"),
         )
 
-    async def test_undrained_shutdown_logs_bounded_count(
+    async def test_supervisor_not_drained_preserves_shared_resources(
         self,
     ) -> None:
-        rt = self._configure_shutdown_runtime(
-            grant_supervisor.ShutdownResult(
-                finalized=0,
-                abandoned=800,
-                undrained=800,
+        rt = self._configure_shutdown_runtime()
+        rt._supervisor.shutdown.side_effect = (
+            grant_supervisor.SupervisorNotDrainedError(
+                "supervisor-owned work remains live"
             )
         )
         scheduler = _ControlledProcessScheduler()
@@ -3041,8 +3031,38 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
             await rt._shutdown_sequence()
 
         self.assertEqual(len(logs.records), 1)
-        self.assertEqual(logs.records[0].args, (800,))
         self.assertLess(len(logs.records[0].getMessage().encode("utf-8")), 1024)
+        rt._memory_watchdog.join.assert_awaited_once_with(timeout_sec=3)
+        rt._pubsub_client.close.assert_not_awaited()
+        rt._gcs_client.close.assert_not_awaited()
+        rt._http_session.close.assert_not_awaited()
+        rt._heartbeat_pool.close.assert_not_awaited()
+        close_data_pool.assert_not_awaited()
+        self.assertEqual(scheduler.close_calls, 0)
+
+    async def test_supervisor_shutdown_error_propagates_before_resource_close(
+        self,
+    ) -> None:
+        rt = self._configure_shutdown_runtime()
+        rt._supervisor.shutdown.side_effect = RuntimeError(
+            "heartbeat stop failed"
+        )
+        scheduler = _ControlledProcessScheduler()
+        rt._feed_work_scheduler = cast(
+            "feed_work_scheduler.FeedWorkScheduler",
+            scheduler,
+        )
+
+        with (
+            self.assertRaisesRegex(RuntimeError, "heartbeat stop failed"),
+            mock.patch(
+                "backend.pipeline.ingestion.collector_runtime.close_pool",
+                new=mock.AsyncMock(),
+            ) as close_data_pool,
+        ):
+            await rt._shutdown_sequence()
+
+        rt._memory_watchdog.join.assert_awaited_once_with(timeout_sec=3)
         rt._pubsub_client.close.assert_not_awaited()
         rt._gcs_client.close.assert_not_awaited()
         rt._http_session.close.assert_not_awaited()
@@ -3053,13 +3073,7 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_undrained_preserves_shared_resources(
         self,
     ) -> None:
-        rt = self._configure_shutdown_runtime(
-            grant_supervisor.ShutdownResult(
-                finalized=1,
-                abandoned=0,
-                undrained=0,
-            )
-        )
+        rt = self._configure_shutdown_runtime()
         scheduler = _ControlledProcessScheduler(
             close_result=feed_work_scheduler.Undrained(
                 None,
@@ -3093,13 +3107,7 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
     async def test_live_heartbeat_thread_fails_closed_before_resource_close(
         self,
     ) -> None:
-        rt = self._configure_shutdown_runtime(
-            grant_supervisor.ShutdownResult(
-                finalized=0,
-                abandoned=0,
-                undrained=0,
-            )
-        )
+        rt = self._configure_shutdown_runtime()
         heartbeat_thread = mock.Mock()
         heartbeat_thread.is_alive.return_value = True
         rt._heartbeat_thread = heartbeat_thread
@@ -3134,13 +3142,7 @@ class TestShutdownSequence(unittest.IsolatedAsyncioTestCase):
     async def test_health_cleanup_failure_does_not_skip_supervisor(
         self,
     ) -> None:
-        rt = self._configure_shutdown_runtime(
-            grant_supervisor.ShutdownResult(
-                finalized=0,
-                abandoned=0,
-                undrained=0,
-            )
-        )
+        rt = self._configure_shutdown_runtime()
         rt._health_runner = mock.AsyncMock()
         rt._health_runner.cleanup.side_effect = RuntimeError("boom")
 
@@ -3954,13 +3956,7 @@ class TestWatchdogLifecycle(unittest.IsolatedAsyncioTestCase):
     """The sole runtime shutdown owner also joins the memory watchdog."""
 
     async def test_shutdown_joins_watchdog(self) -> None:
-        rt = TestShutdownSequence._configure_shutdown_runtime(
-            grant_supervisor.ShutdownResult(
-                finalized=0,
-                abandoned=0,
-                undrained=0,
-            )
-        )
+        rt = TestShutdownSequence._configure_shutdown_runtime()
 
         with (
             mock.patch(

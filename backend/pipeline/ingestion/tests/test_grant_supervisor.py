@@ -954,7 +954,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
 
         async def observed_claim_wait(
             wait_timeout_sec: float,
-        ) -> grant_supervisor.ShutdownResult | None:
+        ) -> bool:
             claim_wait_entered.set()
             return await wait_for_claims(wait_timeout_sec)
 
@@ -976,7 +976,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             await admission
             result = await shutdown
 
-        self.assertEqual(result, grant_supervisor.ShutdownResult(1, 0, 0))
+        self.assertIsNone(result)
         self.assertEqual(supervisor._registry, {})
         self.assertEqual(supervisor._process_reserved, 0)
         self.assertEqual(feed_runner.calls, [])
@@ -986,6 +986,45 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             feed_control.finalize_calls[0][1],
             grant_control.NeutralRelease(grant_control.TerminalCause.SHUTDOWN),
         )
+
+    async def test_shutdown_rejects_unsettled_claim_mutation(self) -> None:
+        profile = _profile(
+            process_cap=1,
+            feed_cap=1,
+            feed_budget=1,
+            domains=(grant_control.DomainId.FEED,),
+        )
+        (
+            supervisor,
+            feed_control,
+            _feed_runner,
+            _sid_control,
+            _sid_runner,
+        ) = self._mixed(profile)
+        feed_control.blocked_modes.add(grant_control.ClaimMode.PRIMARY)
+        admission = asyncio.create_task(supervisor.admit_cycle(_OWNER_ID))
+        await asyncio.wait_for(
+            feed_control.claim_entered[grant_control.ClaimMode.PRIMARY].wait(),
+            timeout=1,
+        )
+        heartbeat_stopped = asyncio.Event()
+
+        async def stop_heartbeat() -> None:
+            heartbeat_stopped.set()
+
+        with self.assertRaises(
+            grant_supervisor.SupervisorNotDrainedError
+        ):
+            await supervisor.shutdown(
+                cooperative_grace_sec=0,
+                external_stop_deadline_sec=0,
+                stop_heartbeat_supervision=stop_heartbeat,
+            )
+
+        self.assertFalse(heartbeat_stopped.is_set())
+        feed_control.release_claim.set()
+        await admission
+        self.assertEqual(supervisor._process_reserved, 0)
 
     async def test_claim_exception_is_unknown_and_disables_admission(
         self,
@@ -1512,10 +1551,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                     kind_after_heartbeat,
                     grant_supervisor._ReservationKind.UNCERTAIN,
                 )
-                self.assertEqual(
-                    result,
-                    grant_supervisor.ShutdownResult(0, 1, 0),
-                )
+                self.assertIsNone(result)
                 self.assertEqual(feed_control.finalize_calls, [])
                 self.assertEqual(supervisor._process_owned, 1)
                 self.assertTrue(supervisor.integrity_failure_event.is_set())
@@ -1580,7 +1616,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             managed.terminal_kind,
             grant_supervisor._ReservationKind.UNCERTAIN,
         )
-        self.assertEqual(result, grant_supervisor.ShutdownResult(0, 1, 0))
+        self.assertIsNone(result)
         self.assertEqual(feed_control.finalize_calls, [])
         self.assertEqual(supervisor._process_owned, 1)
         self.assertTrue(supervisor.integrity_failure_event.is_set())
@@ -1914,22 +1950,13 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             results = await asyncio.gather(*shutdowns)
 
         self.assertEqual(len(feed_control.finalize_calls), 1)
-        self.assertEqual(
-            results,
-            [
-                grant_supervisor.ShutdownResult(1, 0, 0),
-                grant_supervisor.ShutdownResult(1, 0, 0),
-            ],
-        )
+        self.assertEqual(results, [None, None])
         repeated = await supervisor.shutdown(
             cooperative_grace_sec=0,
             external_stop_deadline_sec=0,
             stop_heartbeat_supervision=stop_heartbeat,
         )
-        self.assertEqual(
-            repeated,
-            grant_supervisor.ShutdownResult(0, 0, 0),
-        )
+        self.assertIsNone(repeated)
         self.assertEqual(len(feed_control.finalize_calls), 1)
 
     async def test_cancelled_terminal_write_is_uncertain_and_never_retried(
@@ -1993,7 +2020,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             stop_heartbeat_supervision=stop_heartbeat,
         )
 
-        self.assertEqual(result, grant_supervisor.ShutdownResult(0, 1, 0))
+        self.assertIsNone(result)
         self.assertEqual(len(feed_control.finalize_calls), 1)
         self.assertEqual(supervisor._process_owned, 1)
 
@@ -2055,7 +2082,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         allow_stop.set()
         result = await shutdown
 
-        self.assertEqual(result, grant_supervisor.ShutdownResult(1, 0, 0))
+        self.assertIsNone(result)
         self.assertEqual(len(sid_control.finalize_calls), 1)
         self.assertIsInstance(
             sid_control.finalize_calls[0][1],
@@ -2137,13 +2164,15 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         async def stop_heartbeat() -> None:
             return None
 
-        result = await supervisor.shutdown(
-            cooperative_grace_sec=0,
-            external_stop_deadline_sec=0,
-            stop_heartbeat_supervision=stop_heartbeat,
-        )
+        with self.assertRaises(
+            grant_supervisor.SupervisorNotDrainedError
+        ):
+            await supervisor.shutdown(
+                cooperative_grace_sec=0,
+                external_stop_deadline_sec=0,
+                stop_heartbeat_supervision=stop_heartbeat,
+            )
 
-        self.assertEqual(result, grant_supervisor.ShutdownResult(0, 1, 1))
         self.assertEqual(sid_control.finalize_calls, [])
         self.assertEqual(supervisor._process_owned, 1)
         managed = next(iter(supervisor._registry.values()))
@@ -2199,13 +2228,15 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         async def stop_heartbeat() -> None:
             return None
 
-        result = await supervisor.shutdown(
-            cooperative_grace_sec=0,
-            external_stop_deadline_sec=0,
-            stop_heartbeat_supervision=stop_heartbeat,
-        )
+        with self.assertRaises(
+            grant_supervisor.SupervisorNotDrainedError
+        ):
+            await supervisor.shutdown(
+                cooperative_grace_sec=0,
+                external_stop_deadline_sec=0,
+                stop_heartbeat_supervision=stop_heartbeat,
+            )
 
-        self.assertEqual(result, grant_supervisor.ShutdownResult(0, 1, 1))
         self.assertEqual(feed_control.finalize_calls, [])
         self.assertEqual(supervisor._process_owned, 1)
         managed = next(iter(supervisor._registry.values()))
@@ -2260,7 +2291,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         feed_control.release_finalize.set()
         result = await shutdown
 
-        self.assertEqual(result.finalized, 3)
+        self.assertIsNone(result)
         self.assertEqual(feed_control.max_finalize_active, 2)
         self.assertEqual(len(feed_control.finalize_calls), 3)
 
@@ -2417,7 +2448,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         feed_runner.release_child.set()
         result = await shutdown
 
-        self.assertEqual(result.finalized, 1)
+        self.assertIsNone(result)
         self.assertEqual(len(feed_control.finalize_calls), 1)
         self.assertIsInstance(
             feed_control.finalize_calls[0][1],
@@ -2471,7 +2502,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                 stop_heartbeat_supervision=stop_heartbeat,
             )
 
-        self.assertEqual(result.finalized, 2)
+        self.assertIsNone(result)
         self.assertEqual(snapshot.profile, profile.name)
         self.assertEqual(
             snapshot.profile_digest,
@@ -2557,10 +2588,15 @@ class TestGrantSupervisorStructure(unittest.TestCase):
             grant_supervisor._ErasedRegisteredDomain,
             grant_supervisor.GrantCount,
             grant_supervisor.SupervisorSnapshot,
-            grant_supervisor.ShutdownResult,
         ):
             with self.subTest(value_type=value_type.__name__):
                 self.assertTrue(value_type.__dataclass_params__.frozen)
+        self.assertTrue(
+            issubclass(
+                grant_supervisor.SupervisorNotDrainedError,
+                RuntimeError,
+            )
+        )
         self.assertEqual(
             {state.value for state in grant_supervisor.TerminalState},
             {"open", "reserved", "finalized", "abandoned"},

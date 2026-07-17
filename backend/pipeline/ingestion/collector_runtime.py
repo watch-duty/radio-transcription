@@ -1713,7 +1713,7 @@ class CollectorRuntime:
                 msg = "heartbeat thread did not stop"
                 raise RuntimeError(msg)
 
-    async def _shutdown_sequence(self) -> None:
+    async def _shutdown_sequence(self) -> None:  # noqa: PLR0912
         """Drain exact grants before finalization and shared-resource close."""
         if self._health_runner is not None:
             try:
@@ -1724,32 +1724,32 @@ class CollectorRuntime:
                     exc_info=True,
                 )
 
-        shutdown_result: grant_supervisor.ShutdownResult | None = None
-        if self._supervisor is not None:
-            external_wait_sec = max(
-                0.0,
-                self._collector_settings.graceful_shutdown_timeout_sec
-                - self._collector_settings.task_cancel_budget_sec,
-            )
-            shutdown_result = await self._supervisor.shutdown(
-                cooperative_grace_sec=(
-                    self._collector_settings.task_cancel_budget_sec
-                ),
-                external_stop_deadline_sec=external_wait_sec,
-                stop_heartbeat_supervision=(self._stop_heartbeat_supervision),
-            )
-        else:
-            await self._stop_heartbeat_supervision()
-
-        await self._memory_watchdog.join(timeout_sec=3)
-
-        if shutdown_result is not None and shutdown_result.undrained:
+        try:
+            if self._supervisor is not None:
+                external_wait_sec = max(
+                    0.0,
+                    self._collector_settings.graceful_shutdown_timeout_sec
+                    - self._collector_settings.task_cancel_budget_sec,
+                )
+                await self._supervisor.shutdown(
+                    cooperative_grace_sec=(
+                        self._collector_settings.task_cancel_budget_sec
+                    ),
+                    external_stop_deadline_sec=external_wait_sec,
+                    stop_heartbeat_supervision=(
+                        self._stop_heartbeat_supervision
+                    ),
+                )
+            else:
+                await self._stop_heartbeat_supervision()
+        except grant_supervisor.SupervisorNotDrainedError:
             logger.critical(
-                "Shutdown left %d mutation-capable grant runner(s); "
-                "leaving grants and shared resources for stale recovery",
-                shutdown_result.undrained,
+                "Supervisor shutdown left resource-using work undrained; "
+                "preserving grants and shared resources for process exit"
             )
             return
+        finally:
+            await self._memory_watchdog.join(timeout_sec=3)
 
         scheduler = self._feed_work_scheduler
         if scheduler is not None:

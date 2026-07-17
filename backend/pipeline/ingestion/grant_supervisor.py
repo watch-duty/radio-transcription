@@ -61,13 +61,8 @@ class SupervisorSnapshot:
     counts_by_domain: typing.Mapping[grant_control.DomainId, GrantCount]
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class ShutdownResult:
-    """Bounded result counts for one completed supervisor shutdown."""
-
-    finalized: int
-    abandoned: int
-    undrained: int
+class SupervisorNotDrainedError(RuntimeError):
+    """Supervisor-owned work may still use shared runtime resources."""
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1421,17 +1416,17 @@ class GrantSupervisor:
     async def _claim_shutdown_blocker(
         self,
         wait_timeout_sec: float,
-    ) -> ShutdownResult | None:
-        """Wait for known claim mutations or report a fail-closed drain."""
+    ) -> bool:
+        """Wait for known claim mutations and report whether any remain."""
         claim_tasks = tuple(self._claim_tasks)
         if not claim_tasks:
-            return None
+            return False
         _done, pending_claims = await asyncio.wait(
             claim_tasks,
             timeout=wait_timeout_sec,
         )
         if not pending_claims:
-            return None
+            return False
         current = tuple(
             managed
             for managed in self._registry.values()
@@ -1439,15 +1434,7 @@ class GrantSupervisor:
         )
         for managed in current:
             managed.stop_requested.set()
-        return ShutdownResult(
-            finalized=0,
-            abandoned=sum(
-                managed.terminal_state is TerminalState.ABANDONED
-                for managed in current
-            ),
-            undrained=len(pending_claims)
-            + sum(not managed.runner_closed.is_set() for managed in current),
-        )
+        return True
 
     def _refine_shutdown_failure(self, managed: _ManagedGrant) -> None:
         """Resolve one provisional shutdown reservation to real failure."""
@@ -1471,7 +1458,7 @@ class GrantSupervisor:
         for managed in tuple(self._registry.values()):
             self._refine_shutdown_failure(managed)
 
-    async def shutdown(
+    async def shutdown(  # noqa: PLR0912
         self,
         *,
         cooperative_grace_sec: float,
@@ -1480,7 +1467,7 @@ class GrantSupervisor:
             [],
             typing.Awaitable[None],
         ],
-    ) -> ShutdownResult:
+    ) -> None:
         """Drain runners, stop heartbeats, then exact-finalize closed grants."""
         self._validate_shutdown_timeout(
             cooperative_grace_sec,
@@ -1495,9 +1482,8 @@ class GrantSupervisor:
             raise TypeError(msg)
 
         self._admission_enabled = False
-        blocked = await self._claim_shutdown_blocker(external_stop_deadline_sec)
-        if blocked is not None:
-            return blocked
+        if await self._claim_shutdown_blocker(external_stop_deadline_sec):
+            raise SupervisorNotDrainedError
         initial = tuple(self._registry.values())
         for managed in initial:
             if self._current_exact(managed.key) is managed:
@@ -1562,28 +1548,17 @@ class GrantSupervisor:
             and managed.terminal_kind
             in (_ReservationKind.SHUTDOWN, _ReservationKind.STORAGE)
         )
-        effects = (
-            await asyncio.gather(*shutdown_tasks) if shutdown_tasks else ()
-        )
+        if shutdown_tasks:
+            await asyncio.gather(*shutdown_tasks)
         await self._settle_terminal_tasks()
-        finalized = sum(
-            effect is _FinalizeEffect.FINALIZED for effect in effects
-        )
-        abandoned = sum(
-            managed.terminal_state is TerminalState.ABANDONED
-            for managed in self._registry.values()
-        )
         for domain in self._domains:
             self._emit_lifecycle(
                 _LifecycleEvent.SHUTDOWN,
                 domain,
                 outcome="complete",
             )
-        return ShutdownResult(
-            finalized=finalized,
-            abandoned=abandoned,
-            undrained=undrained,
-        )
+        if undrained:
+            raise SupervisorNotDrainedError
 
     def _validate_shutdown_timeout(self, value: float, name: str) -> None:
         if isinstance(value, bool):
