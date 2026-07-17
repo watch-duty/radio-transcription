@@ -6,14 +6,12 @@ from typing import TypedDict
 
 import cachetools
 import httpx
-from tenacity import (
-    Retrying,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-)
+from tenacity import Retrying
 
 from backend.pipeline.common.auth_client import get_id_token
+from backend.pipeline.common.clients.session_helper import (
+    get_httpx_retry_config,
+)
 from backend.pipeline.common.env import is_gcp_env
 from backend.pipeline.common.evaluation.annotations import (
     RuleAnnotation,
@@ -339,16 +337,13 @@ class RemoteTextEvaluator(BaseTextEvaluator):
             token = get_id_token(self.api_url)
             self.client.headers.update({"Authorization": f"Bearer {token}"})
 
-        def is_transient_error(e: BaseException) -> bool:
-            if isinstance(e, httpx.HTTPStatusError):
-                return e.response.status_code in {429, 500, 502, 503, 504}
-            return isinstance(e, (httpx.TransportError, httpx.TimeoutException))
-
         for attempt in Retrying(
-            stop=stop_after_attempt(4),
-            wait=wait_exponential(multiplier=1.0, min=1.0, max=10.0),
-            retry=retry_if_exception(is_transient_error),
-            reraise=True,
+            **get_httpx_retry_config(
+                total_attempts=4,
+                multiplier=1.0,
+                min_seconds=1.0,
+                max_seconds=10.0,
+            )
         ):
             with attempt:
                 response = self.client.get(

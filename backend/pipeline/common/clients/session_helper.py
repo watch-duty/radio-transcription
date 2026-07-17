@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import httpx
 import requests
 from requests.adapters import HTTPAdapter
+from tenacity import retry_if_exception, stop_after_attempt, wait_exponential
 from urllib3.util import Retry
 
 DEFAULT_STATUS_FORCELIST = [429, 500, 502, 503, 504]
@@ -42,3 +44,27 @@ def create_resilient_session(
         session.mount("http://", adapter)
         session.mount("https://", adapter)
     return session
+
+
+def is_transient_httpx_error(e: BaseException) -> bool:
+    """Checks if an exception is a transient HTTP/transport error suitable for retries."""
+    if isinstance(e, httpx.HTTPStatusError):
+        return e.response.status_code in {429, 500, 502, 503, 504}
+    return isinstance(e, (httpx.TransportError, httpx.TimeoutException))
+
+
+def get_httpx_retry_config(
+    total_attempts: int = 4,
+    multiplier: float = 0.5,
+    min_seconds: float = 0.5,
+    max_seconds: float = 10.0,
+) -> dict:
+    """Returns tenacity retry configuration arguments."""
+    return {
+        "stop": stop_after_attempt(total_attempts),
+        "wait": wait_exponential(
+            multiplier=multiplier, min=min_seconds, max=max_seconds
+        ),
+        "retry": retry_if_exception(is_transient_httpx_error),
+        "reraise": True,
+    }
