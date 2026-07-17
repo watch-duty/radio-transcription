@@ -2155,6 +2155,36 @@ class TestIcecastTimelineManager(unittest.TestCase):
             res2[0].chunk_start_time, now + datetime.timedelta(seconds=30)
         )
 
+        # Test overlap of exactly 2 microseconds (boundary value - should coalesce)
+        chunk4 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now
+            + datetime.timedelta(seconds=45)
+            - datetime.timedelta(microseconds=2),
+            chunk_end_time=now + datetime.timedelta(seconds=60),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=45),
+        )
+        res3 = manager.process_chunk(chunk4, 16000 * 60, process_done=False)
+        self.assertEqual(len(res3), 1)
+        self.assertEqual(
+            res3[0].chunk_start_time, now + datetime.timedelta(seconds=45)
+        )
+
+        # Test overlap of 3 microseconds (above boundary - should raise ValueError)
+        chunk5 = CapturedChunk(
+            audio_bytes=b"data",
+            chunk_start_time=now
+            + datetime.timedelta(seconds=60)
+            - datetime.timedelta(microseconds=3),
+            chunk_end_time=now + datetime.timedelta(seconds=75),
+            session_id="session",
+            receipt_time=now + datetime.timedelta(seconds=60),
+        )
+        with self.assertRaises(ValueError) as ctx:
+            manager.process_chunk(chunk5, 16000 * 75, process_done=False)
+        self.assertIn("Non-monotonic chunk start time", str(ctx.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
