@@ -52,6 +52,7 @@ import {
   validateTags,
 } from '../../utils/validationUtils';
 import { type TagRow, nextTagRowId, toTagRows } from '../feeds/tagRows';
+import { HighlightedTranscript } from '../transcripts/HighlightedTranscript';
 
 const EVALUATION_TYPE_OPTIONS: {
   value: EvaluationType;
@@ -774,59 +775,6 @@ function DryRunResultsModal({
   feeds,
   daysLookback,
 }: DryRunResultsModalProps) {
-  // Helper to render matched text with bolding
-  const renderHighlightedText = (
-    text: string,
-    spans: { startIndex: number; endIndex: number }[]
-  ) => {
-    if (!spans || spans.length === 0)
-      return <Typography variant="body2">{text}</Typography>;
-
-    // Sort spans by start index
-    const sortedSpans = [...spans].sort((a, b) => a.startIndex - b.startIndex);
-    const parts = [];
-    let lastIndex = 0;
-
-    sortedSpans.forEach((span, idx) => {
-      // Add text before the match
-      if (span.startIndex > lastIndex) {
-        parts.push(
-          <span key={`text-${idx}`}>
-            {text.substring(lastIndex, span.startIndex)}
-          </span>
-        );
-      }
-      // Add the matched text (bolded and highlighted)
-      parts.push(
-        <Box
-          component="span"
-          key={`match-${idx}`}
-          sx={{
-            fontWeight: 'bold',
-            color: 'warning.main',
-          }}
-        >
-          {text.substring(span.startIndex, span.endIndex)}
-        </Box>
-      );
-      lastIndex = span.endIndex;
-    });
-
-    // Add remaining text
-    if (lastIndex < text.length) {
-      parts.push(<span key={`text-end`}>{text.substring(lastIndex)}</span>);
-    }
-
-    return (
-      <Typography
-        variant="body2"
-        sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}
-      >
-        {parts}
-      </Typography>
-    );
-  };
-
   return (
     <Dialog open={isOpen} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>Test Rule Results</DialogTitle>
@@ -906,10 +854,22 @@ function DryRunResultsModal({
                             example.feedId}{' '}
                           • Segment: {example.audioSegmentId}
                         </Typography>
-                        {renderHighlightedText(
-                          example.text,
-                          example.matchedSpans
-                        )}
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                          }}
+                        >
+                          <HighlightedTranscript
+                            text={example.text}
+                            ruleAnnotations={{
+                              'dry-run-rule': {
+                                textMatch: example.matchedSpans,
+                              },
+                            }}
+                          />
+                        </Typography>
                       </CardContent>
                     </Card>
                   ))}
