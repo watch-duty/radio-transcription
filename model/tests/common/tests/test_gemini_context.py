@@ -510,47 +510,5 @@ class TestStrictCausalSchedule(unittest.TestCase):
             )
 
 
-class TestTemporaryLegacyBridge(unittest.TestCase):
-    def test_context_turn_history_remains_available_to_main_callers(
-        self,
-    ) -> None:
-        rows = [
-            {
-                "audio_filepath": "gs://audio/first.flac",
-                "original_audio_uri": "gs://audio/source.flac",
-                "original_offset": 0.0,
-                "text": "first",
-            },
-            {
-                "audio_filepath": "gs://audio/second.flac",
-                "original_audio_uri": "gs://audio/source.flac",
-                "original_offset": 1.0,
-                "text": "second",
-            },
-        ]
-
-        histories = context.build_context_histories(rows, max_turns=1)
-
-        self.assertEqual(
-            histories,
-            [[], [context.ContextTurn("gs://audio/first.flac", "first")]],
-        )
-
-    def test_generic_content_builder_accepts_legacy_context_turn(self) -> None:
-        contents = context.build_transcription_contents(
-            audio_uri="gs://audio/current.flac",
-            user_prompt="Transcribe.",
-            history=[
-                context.ContextTurn(
-                    "gs://audio/prior.flac",
-                    "prior transcript",
-                )
-            ],
-        )
-
-        self.assertEqual(contents[-1]["role"], "user")
-        self.assertIn("prior transcript", json.dumps(contents))
-
-
 if __name__ == "__main__":
     unittest.main()

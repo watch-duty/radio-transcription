@@ -16,6 +16,8 @@ class EvalTargetArtifactPaths:
         batch_job_metadata_uri: Submitted batch-job identity sidecar URI.
         online_predictions_uri: Online prediction JSONL URI.
         online_metadata_uri: Online request-identity sidecar URI.
+        rolling_history_index_uri: Index of rolling-eval wave artifacts.
+        rolling_history_audit_uri: Transcript-free per-row history audit URI.
     """
 
     input_uri: str
@@ -24,6 +26,8 @@ class EvalTargetArtifactPaths:
     batch_job_metadata_uri: str
     online_predictions_uri: str
     online_metadata_uri: str
+    rolling_history_index_uri: str
+    rolling_history_audit_uri: str
 
 
 def evals_prefix(run_gcs_prefix: str) -> str:
@@ -72,6 +76,12 @@ def eval_target_artifact_paths(
         batch_job_metadata_uri=f"{target_prefix}/batch_job.meta.json",
         online_predictions_uri=f"{target_prefix}/online_predictions.jsonl",
         online_metadata_uri=f"{target_prefix}/online_predictions.meta.json",
+        rolling_history_index_uri=(
+            f"{target_prefix}/rolling_history_index.json"
+        ),
+        rolling_history_audit_uri=(
+            f"{target_prefix}/rolling_history_audit.jsonl"
+        ),
     )
 
 

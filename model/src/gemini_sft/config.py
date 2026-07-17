@@ -379,20 +379,20 @@ def _load_run_config(
     learning_rate_multiplier = _required_lr_multiplier(
         sft, "sft.learning_rate_multiplier"
     )
-    context = data.get("context", {})
-    if context is None:
-        context = {}
-    if not isinstance(context, dict):
-        msg = "context must be a TOML table"
-        raise RunConfigError(msg)
+    context_table = _context_table(data)
     prior_context_count = _optional_nonnegative_int(
-        context,
+        context_table,
         "context.prior_turn_count",
         default=0,
     )
     prior_context_mode = _optional_prior_context_mode(
-        context,
+        context_table,
         "context.prior_context_mode",
+    )
+    prior_context_mode = _validated_evaluation_context(
+        prior_context_count=prior_context_count,
+        prior_context_mode=prior_context_mode,
+        eval_execution=eval_execution,
     )
 
     prompts = data.get("prompts", {})
@@ -438,6 +438,42 @@ def _load_run_config(
         user_prompt=user_prompt,
         paths=paths,
     )
+
+
+def _validated_evaluation_context(
+    *,
+    prior_context_count: int,
+    prior_context_mode: str,
+    eval_execution: EvalExecutionConfig,
+) -> str:
+    """Validate context settings against the configured eval backend.
+
+    Args:
+        prior_context_count: Maximum number of causal history turns.
+        prior_context_mode: Representation used for prior transcripts.
+        eval_execution: Requested evaluation execution controls.
+
+    Returns:
+        The normalized prior-context mode.
+
+    Raises:
+        RunConfigError: If context settings are invalid or require an online
+            backend while batch execution is explicitly configured.
+    """
+    try:
+        mode = context.validate_evaluation_context_contract(
+            prior_context_count,
+            prior_context_mode,
+        )
+    except (TypeError, ValueError) as exc:
+        raise RunConfigError(str(exc)) from None
+    if prior_context_count and eval_execution.backend == "batch":
+        msg = (
+            "predicted-history evaluation requires the online backend; "
+            "batch cannot construct causal prior predictions"
+        )
+        raise RunConfigError(msg)
+    return mode
 
 
 def require_config_str(config: dict[str, typing.Any], key: str) -> str:
@@ -541,8 +577,7 @@ def require_config_eval_execution(
         config: Parsed durable config record.
 
     Returns:
-        Validated execution controls, using defaults when ``eval_execution`` is
-        absent.
+        Validated execution controls.
 
     Raises:
         TypeError: If the execution record or one of its values has the wrong
@@ -551,15 +586,13 @@ def require_config_eval_execution(
             values.
     """
     raw_execution = config.get("eval_execution")
-    if raw_execution is None:
-        return EvalExecutionConfig()
     if not isinstance(raw_execution, dict):
         msg = "config.json field eval_execution must be an object"
         raise TypeError(msg)
     return _config_eval_execution_config(raw_execution)
 
 
-def optional_config_prior_context_mode(
+def require_config_prior_context_mode(
     config: dict[str, typing.Any], key: str
 ) -> str:
     """Return a validated durable prior-context mode.
@@ -569,13 +602,13 @@ def optional_config_prior_context_mode(
         key: Top-level context-mode field to retrieve.
 
     Returns:
-        The normalized configured mode, or ``text_turns`` when absent.
+        The normalized configured mode.
 
     Raises:
         TypeError: If the configured value is not a string.
         ValueError: If the normalized mode is unsupported.
     """
-    value = config.get(key, "text_turns")
+    value = config.get(key)
     if not isinstance(value, str):
         msg = (
             f"config.json field must be one of "
@@ -619,6 +652,33 @@ def _eval_table(data: dict[str, typing.Any]) -> dict[str, typing.Any] | None:
         )
         raise RunConfigError(msg)
     return eval_table
+
+
+def _context_table(data: dict[str, typing.Any]) -> dict[str, typing.Any]:
+    """Return the validated optional context configuration table.
+
+    Args:
+        data: Parsed top-level TOML mapping.
+
+    Returns:
+        The context table, or an empty mapping when it is absent.
+
+    Raises:
+        RunConfigError: If context is not a table or has unsupported fields.
+    """
+    context_table = data.get("context", {})
+    if context_table is None:
+        context_table = {}
+    if not isinstance(context_table, dict):
+        msg = "context must be a TOML table"
+        raise RunConfigError(msg)
+    _reject_unsupported_fields(
+        context_table,
+        allowed=frozenset({"prior_turn_count", "prior_context_mode"}),
+        context="context",
+        error_cls=RunConfigError,
+    )
+    return context_table
 
 
 def _eval_model_target(
@@ -770,21 +830,13 @@ def _config_eval_execution_config(
             "limit",
             default=None,
         ),
-        concurrency=typing.cast(
-            "int",
-            _optional_config_positive_int(
-                raw_execution,
-                "concurrency",
-                default=16,
-            ),
+        concurrency=_required_config_positive_int(
+            raw_execution,
+            "concurrency",
         ),
-        max_retries=typing.cast(
-            "int",
-            _optional_config_positive_int(
-                raw_execution,
-                "max_retries",
-                default=3,
-            ),
+        max_retries=_required_config_positive_int(
+            raw_execution,
+            "max_retries",
         ),
     )
 
@@ -868,17 +920,6 @@ def _required_gcs_uri(data: dict[str, typing.Any], key: str) -> str:
     return value
 
 
-def _optional_stripped_str(data: dict[str, typing.Any], key: str) -> str | None:
-    value = _lookup(data, key)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        msg = f"{key} must be a string"
-        raise RunConfigError(msg)
-    text = value.strip()
-    return text or None
-
-
 def _optional_gcs_uri(data: dict[str, typing.Any], key: str) -> str | None:
     value = _lookup(data, key)
     if value is None:
@@ -953,6 +994,18 @@ def _optional_config_positive_int(
     if value <= 0:
         msg = f"{field} must be a positive integer"
         raise ValueError(msg)
+    return value
+
+
+def _required_config_positive_int(
+    data: dict[str, typing.Any],
+    key: str,
+) -> int:
+    value = _optional_config_positive_int(data, key, default=None)
+    if value is None:
+        field = f"config.json field eval_execution.{key}"
+        msg = f"{field} must be a positive integer"
+        raise TypeError(msg)
     return value
 
 

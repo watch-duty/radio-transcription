@@ -20,7 +20,7 @@ def _identity(
     audio_uris: list[str] | None = None,
     system_prompt: str = "system",
     user_prompt: str = "user",
-    histories: list[list[context.ContextTurn]] | None = None,
+    histories: list[list[context.PredictedHistoryTurn]] | None = None,
 ) -> dict:
     kwargs = {
         "target_label": "checkpoint_6",
@@ -103,6 +103,37 @@ class TestTargetBackendResolver(unittest.TestCase):
             "batch",
         )
 
+    def test_nonzero_history_forces_online_for_publisher_model(self) -> None:
+        target = config.EvalModelTarget(
+            label="base",
+            model="gemini-3.1-flash-lite",
+        )
+
+        self.assertEqual(
+            target_execution.resolve_target_backend(
+                target,
+                config.EvalExecutionConfig(),
+                prior_context_count=8,
+            ),
+            "online",
+        )
+
+    def test_nonzero_history_rejects_explicit_batch_backend(self) -> None:
+        target = config.EvalModelTarget(
+            label="base",
+            model="gemini-3.1-flash-lite",
+        )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "predicted-history evaluation requires the online backend",
+        ):
+            target_execution.resolve_target_backend(
+                target,
+                config.EvalExecutionConfig(backend="batch"),
+                prior_context_count=1,
+            )
+
 
 class TestOnlineRequestIdentity(unittest.TestCase):
     def test_prediction_uris_are_under_eval_label(self) -> None:
@@ -155,11 +186,11 @@ class TestOnlineRequestIdentity(unittest.TestCase):
 
     def test_hash_changes_when_prior_transcript_changes(self) -> None:
         first = [
-            [context.ContextTurn("gs://audio/prior.flac", "alpha")],
+            [context.PredictedHistoryTurn("gs://audio/prior.flac", "alpha")],
             [],
         ]
         second = [
-            [context.ContextTurn("gs://audio/prior.flac", "bravo")],
+            [context.PredictedHistoryTurn("gs://audio/prior.flac", "bravo")],
             [],
         ]
 
@@ -168,7 +199,7 @@ class TestOnlineRequestIdentity(unittest.TestCase):
             request_identity.request_identity_hash(_identity(histories=second)),
         )
 
-    def test_prefix_identity_rejects_changed_existing_request(self) -> None:
+    def test_exact_identity_rejects_changed_existing_request(self) -> None:
         stored = _identity(
             audio_uris=["gs://audio/1.flac"],
             histories=[[]],
@@ -177,7 +208,7 @@ class TestOnlineRequestIdentity(unittest.TestCase):
             audio_uris=["gs://audio/1.flac", "gs://audio/2.flac"],
             histories=[
                 [
-                    context.ContextTurn(
+                    context.PredictedHistoryTurn(
                         "gs://audio/new-prior.flac",
                         "changed transcript",
                     )
@@ -187,7 +218,7 @@ class TestOnlineRequestIdentity(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "request identity mismatch"):
-            request_identity.validate_prefix_identity(
+            request_identity.validate_exact_identity(
                 stored,
                 requested,
                 "request identity mismatch",
@@ -222,7 +253,7 @@ class TestOnlinePredictionResume(unittest.TestCase):
             request_identity=identity,
         )
 
-    def test_exact_resume_returns_successful_rows_and_error_count(self) -> None:
+    def test_exact_resume_returns_successful_and_attempt_rows(self) -> None:
         identity = _identity()
         self.storage.put(
             self.predictions_uri,
@@ -238,7 +269,10 @@ class TestOnlinePredictionResume(unittest.TestCase):
         state = self._load(identity)
 
         self.assertEqual(set(state.rows_by_audio_uri), {"gs://audio/1.flac"})
-        self.assertEqual(state.error_count, 1)
+        self.assertEqual(
+            set(state.attempt_rows_by_audio_uri),
+            {"gs://audio/1.flac", "gs://audio/2.flac"},
+        )
 
     def test_prediction_without_metadata_fails_before_paid_calls(self) -> None:
         self.storage.put(
@@ -250,6 +284,20 @@ class TestOnlinePredictionResume(unittest.TestCase):
             ValueError, "online prediction metadata missing"
         ):
             self._load(_identity())
+
+    def test_metadata_without_request_identity_hash_is_rejected(self) -> None:
+        identity = _identity()
+        self.storage.put(
+            self.predictions_uri,
+            '{"audio_filepath":"gs://audio/1.flac","pred_text":"one"}\n',
+        )
+        self.storage.put(
+            self.metadata_uri,
+            json.dumps({"request_identity": identity}),
+        )
+
+        with self.assertRaisesRegex(TypeError, "request_identity_hash"):
+            self._load(identity)
 
     def test_prompt_mismatch_fails(self) -> None:
         self.storage.put(
@@ -278,8 +326,8 @@ class TestOnlinePredictionResume(unittest.TestCase):
         ):
             self._load(_identity())
 
-    def test_smoke_prefix_reuse_returns_existing_prefix_rows(self) -> None:
-        smoke_identity = _identity(audio_uris=["gs://audio/1.flac"])
+    def test_shorter_request_identity_is_rejected(self) -> None:
+        shorter_identity = _identity(audio_uris=["gs://audio/1.flac"])
         full_identity = _identity(
             audio_uris=[
                 "gs://audio/1.flac",
@@ -291,11 +339,12 @@ class TestOnlinePredictionResume(unittest.TestCase):
             self.predictions_uri,
             '{"audio_filepath":"gs://audio/1.flac","pred_text":"one"}\n',
         )
-        self.storage.put(self.metadata_uri, _metadata(smoke_identity))
+        self.storage.put(self.metadata_uri, _metadata(shorter_identity))
 
-        state = self._load(full_identity)
-
-        self.assertEqual(list(state.rows_by_audio_uri), ["gs://audio/1.flac"])
+        with self.assertRaisesRegex(
+            ValueError, "online prediction request identity mismatch"
+        ):
+            self._load(full_identity)
 
     def test_malformed_prediction_row_is_skipped_on_resume(self) -> None:
         identity = _identity()
@@ -360,24 +409,39 @@ class TestOnlinePredictionResume(unittest.TestCase):
         self.assertEqual(state.rows_by_audio_uri, {})
         self.assertFalse(local_predictions.exists())
 
-    def test_smoke_metadata_rejects_rows_outside_stored_identity(self) -> None:
-        smoke_identity = _identity(audio_uris=["gs://audio/1.flac"])
-        full_identity = _identity(
-            audio_uris=["gs://audio/1.flac", "gs://audio/2.flac"]
-        )
-        self.storage.put(
-            self.predictions_uri,
-            '{"audio_filepath":"gs://audio/2.flac","pred_text":"two"}\n',
-        )
-        self.storage.put(self.metadata_uri, _metadata(smoke_identity))
 
-        with self.assertRaisesRegex(
-            ValueError, "online prediction request identity mismatch"
-        ):
-            self._load(full_identity)
+class TestBoundedOnlineWorkers(unittest.TestCase):
+    def test_worker_failure_cancels_and_joins_siblings(self) -> None:
+        async def run_scenario() -> None:
+            sibling_started = asyncio.Event()
+            sibling_cancelled = asyncio.Event()
+            block_sibling = asyncio.Event()
+
+            async def process_one(_index: int, audio_uri: str) -> None:
+                if audio_uri == "fail":
+                    await sibling_started.wait()
+                    msg = "worker failed"
+                    raise RuntimeError(msg)
+                sibling_started.set()
+                try:
+                    await block_sibling.wait()
+                except asyncio.CancelledError:
+                    sibling_cancelled.set()
+                    raise
+
+            with self.assertRaisesRegex(RuntimeError, "worker failed"):
+                await target_execution._run_bounded_online_workers(
+                    pending_items=[(0, "fail"), (1, "sibling")],
+                    worker_count=2,
+                    process_one=process_one,
+                )
+
+            self.assertTrue(sibling_cancelled.is_set())
+
+        asyncio.run(run_scenario())
 
 
-class TestRunOnlineTargetInference(unittest.TestCase):
+class TestRunOnlineWave(unittest.TestCase):
     def setUp(self) -> None:
         self.storage = fake_gcs.FakeStorageClient()
         self.local_dir = pathlib.Path(self.id().replace(".", "_"))
@@ -392,11 +456,10 @@ class TestRunOnlineTargetInference(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "duplicate audio_uri"):
             asyncio.run(
-                target_execution.run_online_target_inference(
+                target_execution._run_online_wave(
                     storage_client=self.storage,
                     run_gcs_prefix="gs://bucket/run",
                     project="project",
-                    default_location="us-central1",
                     target_label="checkpoint_6",
                     target_model=(
                         "projects/p/locations/us-central1/endpoints/123"
@@ -442,17 +505,16 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
 
         result = asyncio.run(
-            target_execution.run_online_target_inference(
+            target_execution._run_online_wave(
                 storage_client=self.storage,
                 run_gcs_prefix="gs://bucket/run",
                 project="project",
-                default_location="us-central1",
                 target_label="checkpoint_6",
                 target_model="projects/p/locations/us-central1/endpoints/123",
                 audio_uris=["gs://audio/1.flac", "gs://audio/2.flac"],
                 histories=[
                     [
-                        context.ContextTurn(
+                        context.PredictedHistoryTurn(
                             audio_uri="gs://audio/0.flac", text="prior"
                         )
                     ],
@@ -500,6 +562,110 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         )
         self.assertIn(
             '"error": null', self.storage.get(result.online_predictions_uri)
+        )
+
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
+    def test_locationless_publisher_models_use_us_multi_region(
+        self, mock_genai, mock_types
+    ) -> None:
+        class Response:
+            text = "recognized"
+
+        async def generate_content(**_kwargs):
+            return Response()
+
+        mock_client = unittest.mock.MagicMock()
+        mock_client.aio.models.generate_content = generate_content
+        mock_genai.Client.return_value = mock_client
+        mock_types.HttpRetryOptions.side_effect = lambda **kwargs: kwargs
+        mock_types.HttpOptions.side_effect = lambda **kwargs: kwargs
+        mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
+
+        for index, model in enumerate(
+            ("gemini-3.1-flash-lite", "gemini-2.5-flash")
+        ):
+            asyncio.run(
+                target_execution._run_online_wave(
+                    storage_client=self.storage,
+                    run_gcs_prefix="gs://bucket/run",
+                    project="project",
+                    target_label=f"base_{index}",
+                    target_model=model,
+                    audio_uris=[f"gs://audio/{index}.flac"],
+                    histories=[[]],
+                    system_prompt="system",
+                    user_prompt="user",
+                    prior_context_count=1,
+                    prior_context_mode="text_turns",
+                    eval_manifest_uri="gs://data/eval.jsonl",
+                    local_dir=self.local_dir,
+                    concurrency=1,
+                    max_retries=1,
+                )
+            )
+
+        self.assertEqual(
+            mock_genai.Client.call_args_list,
+            [
+                unittest.mock.call(
+                    enterprise=True,
+                    project="project",
+                    location="us",
+                ),
+                unittest.mock.call(
+                    enterprise=True,
+                    project="project",
+                    location="us",
+                ),
+            ],
+        )
+
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
+    @unittest.mock.patch("gemini_sft.target_execution.vertex.genai")
+    def test_full_publisher_resource_uses_embedded_location(
+        self, mock_genai, mock_types
+    ) -> None:
+        class Response:
+            text = "recognized"
+
+        async def generate_content(**_kwargs):
+            return Response()
+
+        mock_client = unittest.mock.MagicMock()
+        mock_client.aio.models.generate_content = generate_content
+        mock_genai.Client.return_value = mock_client
+        mock_types.HttpRetryOptions.side_effect = lambda **kwargs: kwargs
+        mock_types.HttpOptions.side_effect = lambda **kwargs: kwargs
+        mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
+
+        asyncio.run(
+            target_execution._run_online_wave(
+                storage_client=self.storage,
+                run_gcs_prefix="gs://bucket/run",
+                project="project",
+                target_label="base",
+                target_model=(
+                    "projects/p/locations/us-central1/publishers/google/models/"
+                    "gemini-3.1-flash-lite"
+                ),
+                audio_uris=["gs://audio/1.flac"],
+                histories=[[]],
+                system_prompt="system",
+                user_prompt="user",
+                prior_context_count=1,
+                prior_context_mode="text_turns",
+                eval_manifest_uri="gs://data/eval.jsonl",
+                local_dir=self.local_dir,
+                concurrency=1,
+                max_retries=1,
+            )
+        )
+
+        mock_genai.Client.assert_called_once_with(
+            enterprise=True,
+            project="project",
+            location="us-central1",
         )
 
     @unittest.mock.patch("gemini_sft.target_execution.vertex.types")
@@ -597,11 +763,10 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             side_effect=build_request,
         ):
             asyncio.run(
-                target_execution.run_online_target_inference(
+                target_execution._run_online_wave(
                     storage_client=self.storage,
                     run_gcs_prefix="gs://bucket/run",
                     project="project",
-                    default_location="us-central1",
                     target_label="checkpoint_6",
                     target_model=(
                         "projects/p/locations/us-central1/endpoints/123"
@@ -666,11 +831,10 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             tracking_gather,
         ):
             asyncio.run(
-                target_execution.run_online_target_inference(
+                target_execution._run_online_wave(
                     storage_client=self.storage,
                     run_gcs_prefix="gs://bucket/run",
                     project="project",
-                    default_location="us-central1",
                     target_label="checkpoint_6",
                     target_model=(
                         "projects/p/locations/us-central1/endpoints/123"
@@ -737,11 +901,10 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                     release_slow.set()
 
             _, third_started_before_release = await asyncio.gather(
-                target_execution.run_online_target_inference(
+                target_execution._run_online_wave(
                     storage_client=self.storage,
                     run_gcs_prefix="gs://bucket/run",
                     project="project",
-                    default_location="us-central1",
                     target_label="checkpoint_6",
                     target_model=(
                         "projects/p/locations/us-central1/endpoints/123"
@@ -790,11 +953,10 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             fake_to_thread,
         ):
             asyncio.run(
-                target_execution.run_online_target_inference(
+                target_execution._run_online_wave(
                     storage_client=self.storage,
                     run_gcs_prefix="gs://bucket/run",
                     project="project",
-                    default_location="us-central1",
                     target_label="checkpoint_6",
                     target_model=(
                         "projects/p/locations/us-central1/endpoints/123"
@@ -861,11 +1023,10 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             ),
         ):
             asyncio.run(
-                target_execution.run_online_target_inference(
+                target_execution._run_online_wave(
                     storage_client=self.storage,
                     run_gcs_prefix="gs://bucket/run",
                     project="project",
-                    default_location="us-central1",
                     target_label="checkpoint_6",
                     target_model=(
                         "projects/p/locations/us-central1/endpoints/123"
@@ -950,11 +1111,10 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                 ),
             ):
                 task = asyncio.create_task(
-                    target_execution.run_online_target_inference(
+                    target_execution._run_online_wave(
                         storage_client=self.storage,
                         run_gcs_prefix="gs://bucket/run",
                         project="project",
-                        default_location="us-central1",
                         target_label="checkpoint_6",
                         target_model=(
                             "projects/p/locations/us-central1/endpoints/123"
@@ -1034,11 +1194,10 @@ class TestRunOnlineTargetInference(unittest.TestCase):
             ) as logs,
         ):
             result = asyncio.run(
-                target_execution.run_online_target_inference(
+                target_execution._run_online_wave(
                     storage_client=self.storage,
                     run_gcs_prefix="gs://bucket/run",
                     project="project",
-                    default_location="us-central1",
                     target_label="checkpoint_6",
                     target_model=(
                         "projects/p/locations/us-central1/endpoints/123"
@@ -1081,11 +1240,10 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         self.storage.put(metadata_uri, _metadata(identity))
 
         result = asyncio.run(
-            target_execution.run_online_target_inference(
+            target_execution._run_online_wave(
                 storage_client=self.storage,
                 run_gcs_prefix="gs://bucket/run",
                 project="project",
-                default_location="us-central1",
                 target_label="checkpoint_6",
                 target_model="projects/p/locations/us-central1/endpoints/123",
                 audio_uris=["gs://audio/1.flac", "gs://audio/2.flac"],
@@ -1150,11 +1308,10 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
 
         result = asyncio.run(
-            target_execution.run_online_target_inference(
+            target_execution._run_online_wave(
                 storage_client=self.storage,
                 run_gcs_prefix="gs://bucket/run",
                 project="project",
-                default_location="us-central1",
                 target_label="checkpoint_6",
                 target_model="projects/p/locations/us-central1/endpoints/123",
                 audio_uris=["gs://audio/1.flac", "gs://audio/2.flac"],
@@ -1203,11 +1360,10 @@ class TestRunOnlineTargetInference(unittest.TestCase):
         mock_types.GenerateContentConfig.side_effect = lambda **kwargs: kwargs
 
         result = asyncio.run(
-            target_execution.run_online_target_inference(
+            target_execution._run_online_wave(
                 storage_client=self.storage,
                 run_gcs_prefix="gs://bucket/run",
                 project="project",
-                default_location="us-central1",
                 target_label="checkpoint_6",
                 target_model="projects/p/locations/us-central1/endpoints/123",
                 audio_uris=["gs://audio/1.flac", "gs://audio/2.flac"],
@@ -1241,6 +1397,353 @@ class TestRunOnlineTargetInference(unittest.TestCase):
                 for row in raw_rows
             )
         )
+
+
+class TestRunOnlineTargetInference(unittest.TestCase):
+    def test_zero_context_uses_one_stateless_wave(self) -> None:
+        """K=0 dispatches one wave with empty history."""
+        segment = context.EvaluationSegment(
+            audio_uri="gs://audio/current.flac",
+            split="eval",
+            source_key="source-a",
+            start_seconds=0.0,
+            end_seconds=1.0,
+            manifest_index=0,
+        )
+        wave_result = target_execution._OnlineWavePredictionMap(
+            {segment.audio_uri: "current"},
+            online_predictions_uri="gs://bucket/run/evals/base.jsonl",
+            metadata_uri="gs://bucket/run/evals/base.meta.json",
+            error_count=0,
+            request_identity_hash="request-hash",
+            attempt_rows_by_audio_uri={
+                segment.audio_uri: {
+                    "audio_filepath": segment.audio_uri,
+                    "pred_text": "current",
+                    "error": None,
+                }
+            },
+        )
+
+        with unittest.mock.patch.object(
+            target_execution,
+            "_run_online_wave",
+            unittest.mock.AsyncMock(return_value=wave_result),
+        ) as run_wave:
+            result = asyncio.run(
+                target_execution.run_online_target_inference(
+                    storage_client=unittest.mock.MagicMock(),
+                    run_gcs_prefix="gs://bucket/run",
+                    project="project",
+                    target_label="base",
+                    target_model="gemini-3.1-flash-lite",
+                    segments=[segment],
+                    system_prompt="system",
+                    user_prompt="user",
+                    prior_context_count=0,
+                    prior_context_mode="text_turns",
+                    eval_manifest_uri="gs://data/eval.jsonl",
+                    local_dir=pathlib.Path("results"),
+                    concurrency=2,
+                    max_retries=1,
+                )
+            )
+
+        self.assertIs(result, wave_result)
+        run_wave.assert_awaited_once()
+        self.assertEqual(
+            run_wave.call_args.kwargs["audio_uris"],
+            [segment.audio_uri],
+        )
+        self.assertEqual(run_wave.call_args.kwargs["histories"], [[]])
+
+
+class TestPredictedHistoryOnlineTargetInference(unittest.TestCase):
+    def setUp(self) -> None:
+        self.storage = fake_gcs.FakeStorageClient()
+        self.local_dir = pathlib.Path(self.id().replace(".", "_"))
+        self.addCleanup(shutil.rmtree, self.local_dir, ignore_errors=True)
+
+    def _wave_result(
+        self,
+        label: str,
+        predictions: dict[str, str],
+        *,
+        attempt_rows: dict[str, dict] | None = None,
+    ) -> target_execution._OnlineWavePredictionMap:
+        if attempt_rows is None:
+            attempt_rows = {
+                audio_uri: {
+                    "audio_filepath": audio_uri,
+                    "pred_text": prediction,
+                    "error": None,
+                }
+                for audio_uri, prediction in predictions.items()
+            }
+        return target_execution._OnlineWavePredictionMap(
+            predictions,
+            online_predictions_uri=f"gs://bucket/run/evals/{label}.jsonl",
+            metadata_uri=f"gs://bucket/run/evals/{label}.meta.json",
+            error_count=sum(
+                bool(row.get("error")) for row in attempt_rows.values()
+            ),
+            request_identity_hash=f"hash-{label}",
+            attempt_rows_by_audio_uri=attempt_rows,
+        )
+
+    def test_uses_only_usable_immediate_dependency_predictions(self) -> None:
+        segments = (
+            context.EvaluationSegment(
+                audio_uri="gs://audio/a.flac",
+                split="eval",
+                source_key="source-a",
+                start_seconds=0.0,
+                end_seconds=1.0,
+                manifest_index=0,
+            ),
+            context.EvaluationSegment(
+                audio_uri="gs://audio/b.flac",
+                split="eval",
+                source_key="source-a",
+                start_seconds=2.0,
+                end_seconds=3.0,
+                manifest_index=1,
+            ),
+            context.EvaluationSegment(
+                audio_uri="gs://audio/c.flac",
+                split="eval",
+                source_key="source-a",
+                start_seconds=4.0,
+                end_seconds=5.0,
+                manifest_index=2,
+            ),
+        )
+        calls: list[dict] = []
+
+        async def run_wave(**kwargs):
+            calls.append(kwargs)
+            call_number = len(calls)
+            label = kwargs["target_label"]
+            if call_number == 1:
+                return self._wave_result(
+                    label,
+                    {"gs://audio/a.flac": "PREDICTION_SECRET"},
+                )
+            if call_number == 2:
+                return self._wave_result(
+                    label,
+                    {"gs://audio/b.flac": "[UNINTELLIGIBLE]"},
+                )
+            return self._wave_result(
+                label,
+                {"gs://audio/c.flac": "current"},
+            )
+
+        with unittest.mock.patch.object(
+            target_execution,
+            "_run_online_wave",
+            side_effect=run_wave,
+        ):
+            result = asyncio.run(
+                target_execution.run_online_target_inference(
+                    storage_client=self.storage,
+                    run_gcs_prefix="gs://bucket/run",
+                    project="project",
+                    target_label="checkpoint_6",
+                    target_model=(
+                        "projects/p/locations/us-central1/endpoints/123"
+                    ),
+                    segments=segments,
+                    system_prompt="system",
+                    user_prompt="user",
+                    prior_context_count=1,
+                    prior_context_mode="text_turns",
+                    eval_manifest_uri="gs://data/eval.jsonl",
+                    local_dir=self.local_dir,
+                    concurrency=2,
+                    max_retries=1,
+                )
+            )
+
+        self.assertEqual(len(calls), 3)
+        second_history = calls[1]["histories"][0]
+        self.assertEqual(
+            second_history,
+            [
+                context.PredictedHistoryTurn(
+                    audio_uri="gs://audio/a.flac",
+                    text="PREDICTION_SECRET",
+                )
+            ],
+        )
+        self.assertEqual(calls[2]["histories"], [[]])
+        self.assertEqual(result["gs://audio/c.flac"], "current")
+        audit_rows = [
+            json.loads(line)
+            for line in self.storage.get(
+                result.rolling_history_audit_uri
+            ).splitlines()
+        ]
+        self.assertEqual(audit_rows[1]["supplied_count"], 1)
+        self.assertEqual(audit_rows[2]["candidate_count"], 1)
+        self.assertEqual(audit_rows[2]["supplied_count"], 0)
+        self.assertEqual(audit_rows[2]["omitted_unintelligible_count"], 1)
+        audit_payload = json.dumps(audit_rows)
+        self.assertNotIn("PREDICTION_SECRET", audit_payload)
+        self.assertNotIn("[UNINTELLIGIBLE]", audit_payload)
+        self.assertTrue(self.storage.has(result.rolling_history_index_uri))
+
+    def test_unusable_candidates_are_omitted_without_refill(self) -> None:
+        current = context.EvaluationSegment(
+            audio_uri="gs://audio/current.flac",
+            split="eval",
+            source_key="source-a",
+            start_seconds=10.0,
+            end_seconds=11.0,
+            manifest_index=4,
+        )
+        schedule_row = context.RollingHistoryScheduleRow(
+            segment=current,
+            dependency_audio_uris=(
+                "gs://audio/error.flac",
+                "gs://audio/blank.flac",
+                "gs://audio/unintelligible.flac",
+                "gs://audio/missing.flac",
+            ),
+            wave=1,
+        )
+        attempts = {
+            "gs://audio/error.flac": {
+                "pred_text": "provider partial text",
+                "error": "provider error",
+            },
+            "gs://audio/blank.flac": {
+                "pred_text": "   ",
+                "error": None,
+            },
+            "gs://audio/unintelligible.flac": {
+                "pred_text": "[Unintelligible]",
+                "error": None,
+            },
+            # An older usable prediction is intentionally outside the frozen
+            # dependency set and must never refill an unusable slot.
+            "gs://audio/older.flac": {
+                "pred_text": "REFERENCE_SECRET",
+                "error": None,
+            },
+        }
+
+        history, audit = target_execution._predicted_history_for_schedule_row(
+            schedule_row,
+            attempts,
+        )
+
+        self.assertEqual(history, [])
+        self.assertEqual(audit["candidate_count"], 4)
+        self.assertEqual(audit["supplied_count"], 0)
+        self.assertEqual(audit["omitted_error_count"], 1)
+        self.assertEqual(audit["omitted_blank_count"], 1)
+        self.assertEqual(audit["omitted_unintelligible_count"], 1)
+        self.assertEqual(audit["omitted_missing_count"], 1)
+        self.assertNotIn("REFERENCE_SECRET", json.dumps(audit))
+
+    def test_recovered_upstream_prediction_versions_downstream_wave(
+        self,
+    ) -> None:
+        segments = (
+            context.EvaluationSegment(
+                audio_uri="gs://audio/a.flac",
+                split="eval",
+                source_key="source-a",
+                start_seconds=0.0,
+                end_seconds=1.0,
+                manifest_index=0,
+            ),
+            context.EvaluationSegment(
+                audio_uri="gs://audio/b.flac",
+                split="eval",
+                source_key="source-a",
+                start_seconds=2.0,
+                end_seconds=3.0,
+                manifest_index=1,
+            ),
+        )
+        calls: list[dict] = []
+
+        async def run_wave(**kwargs):
+            calls.append(kwargs)
+            label = kwargs["target_label"]
+            if len(calls) == 1:
+                return self._wave_result(
+                    label,
+                    {},
+                    attempt_rows={
+                        "gs://audio/a.flac": {
+                            "audio_filepath": "gs://audio/a.flac",
+                            "pred_text": None,
+                            "error": "temporary provider error",
+                        }
+                    },
+                )
+            if len(calls) == 2:
+                self.assertEqual(kwargs["histories"], [[]])
+                return self._wave_result(
+                    label,
+                    {"gs://audio/b.flac": "without history"},
+                )
+            if len(calls) == 3:
+                return self._wave_result(
+                    label,
+                    {"gs://audio/a.flac": "recovered prediction"},
+                )
+            self.assertEqual(
+                kwargs["histories"],
+                [
+                    [
+                        context.PredictedHistoryTurn(
+                            audio_uri="gs://audio/a.flac",
+                            text="recovered prediction",
+                        )
+                    ]
+                ],
+            )
+            return self._wave_result(
+                label,
+                {"gs://audio/b.flac": "with history"},
+            )
+
+        invocation = {
+            "storage_client": self.storage,
+            "run_gcs_prefix": "gs://bucket/run",
+            "project": "project",
+            "target_label": "checkpoint_6",
+            "target_model": "projects/p/locations/us-central1/endpoints/123",
+            "segments": segments,
+            "system_prompt": "system",
+            "user_prompt": "user",
+            "prior_context_count": 1,
+            "prior_context_mode": "text_turns",
+            "eval_manifest_uri": "gs://data/eval.jsonl",
+            "local_dir": self.local_dir,
+            "concurrency": 2,
+            "max_retries": 1,
+        }
+        with unittest.mock.patch.object(
+            target_execution,
+            "_run_online_wave",
+            side_effect=run_wave,
+        ):
+            first = asyncio.run(
+                target_execution.run_online_target_inference(**invocation)
+            )
+            second = asyncio.run(
+                target_execution.run_online_target_inference(**invocation)
+            )
+
+        self.assertEqual(first["gs://audio/b.flac"], "without history")
+        self.assertEqual(second["gs://audio/b.flac"], "with history")
+        self.assertEqual(calls[0]["target_label"], calls[2]["target_label"])
+        self.assertNotEqual(calls[1]["target_label"], calls[3]["target_label"])
 
 
 class TestGenerateResponse(unittest.TestCase):
