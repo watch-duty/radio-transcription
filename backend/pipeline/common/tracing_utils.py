@@ -45,6 +45,7 @@ from backend.pipeline.common.env import is_gcp_env
 
 class _TracingState:
     custom_provider: TracerProvider | None = None
+    pid: int | None = None
 
 
 _setup_lock = threading.Lock()
@@ -134,13 +135,25 @@ def setup_tracing(
     # from automatic metric collection (we only use OTel for tracing).
     os.environ.setdefault("OTEL_METRICS_EXPORTER", "none")
 
-    if _state.custom_provider is not None:
+    current_pid = os.getpid()
+    if _state.custom_provider is not None and _state.pid == current_pid:
         return
 
     with _setup_lock:
         # Double check locking pattern after acquiring lock
-        if _state.custom_provider is not None:
+        if _state.custom_provider is not None and _state.pid == current_pid:
             return
+
+        # If we have an inherited provider from a parent process (after a fork),
+        # shut it down to release connection pool resources and thread allocations.
+        if _state.custom_provider is not None:
+            try:
+                _state.custom_provider.shutdown()
+            except Exception:
+                telemetry_logger.exception(
+                    "Failed to shutdown inherited tracer provider on fork reset"
+                )
+            _state.custom_provider = None
 
         # Resolve service metadata from environment if not explicitly provided
         if service_name is None:
@@ -186,6 +199,7 @@ def setup_tracing(
             provider.add_span_processor(SimpleSpanProcessor(exporter))
 
         _state.custom_provider = provider
+        _state.pid = current_pid
         # Try to set as global provider for auto-instrumentation / standard libraries.
         # This will log a warning if a global provider was already set, but that is fine.
         try:
