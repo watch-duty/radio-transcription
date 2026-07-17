@@ -273,8 +273,7 @@ class RemoteTextEvaluator(BaseTextEvaluator):
             raise ValueError(msg)
 
         self.api_url = api_url.rstrip("/")
-        transport = httpx.HTTPTransport(retries=3, http2=True)
-        self.client = httpx.Client(transport=transport)
+        self.client = httpx.Client(http2=True)
 
         self._cache_ttl_seconds = cache_ttl_seconds
         self._cache = cachetools.TTLCache(

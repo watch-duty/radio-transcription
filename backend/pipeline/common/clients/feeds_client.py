@@ -1,8 +1,12 @@
 import logging
 
 import httpx
+from tenacity import Retrying
 
 from backend.pipeline.common import auth_client, env
+from backend.pipeline.common.clients.session_helper import (
+    get_httpx_retry_config,
+)
 from backend.pipeline.common.tracing_utils import get_current_traceparent
 from backend.services.feeds.models import Tag
 
@@ -17,8 +21,7 @@ class FeedsClient:
             msg = "Feeds API base URL must be provided."
             raise ValueError(msg)
         self.base_url = base_url.rstrip("/")
-        transport = httpx.HTTPTransport(retries=3, http2=True)
-        self.client = httpx.Client(transport=transport)
+        self.client = httpx.Client(http2=True)
 
     def close(self) -> None:
         """Closes the underlying HTTP client session connection pool."""
@@ -45,8 +48,17 @@ class FeedsClient:
             headers["Authorization"] = f"Bearer {token}"
 
         try:
-            response = self.client.get(url, headers=headers, timeout=5)
-            response.raise_for_status()
+            for attempt in Retrying(
+                **get_httpx_retry_config(
+                    total_attempts=4,
+                    multiplier=0.5,
+                    min_seconds=0.5,
+                    max_seconds=2.0,
+                )
+            ):
+                with attempt:
+                    response = self.client.get(url, headers=headers, timeout=5)
+                    response.raise_for_status()
         except httpx.HTTPError:
             logger.exception("Error fetching feed %s from feeds API", feed_id)
             return None
