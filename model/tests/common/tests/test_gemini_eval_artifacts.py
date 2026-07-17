@@ -1,8 +1,31 @@
 """Tests for Gemini evaluation artifact paths."""
 
+import dataclasses
 import unittest
 
-from common.gemini import eval_artifacts
+from common.gemini import context, eval_artifacts
+from gemini_sft import artifacts as sft_artifacts
+
+
+def _eval_row(
+    audio_uri: str,
+    text: str,
+    *,
+    example_id: str,
+    segment_id: str,
+    offset: float,
+    duration: float = 1.0,
+) -> dict[str, object]:
+    return {
+        "audio_filepath": audio_uri,
+        "text": text,
+        "example_id": example_id,
+        "segment_id": segment_id,
+        "offset": offset,
+        "duration": duration,
+        "split": "eval",
+        "dataset": {"name": "radio", "family": "radio"},
+    }
 
 
 class TestGeminiEvalArtifacts(unittest.TestCase):
@@ -70,6 +93,279 @@ class TestGeminiEvalArtifacts(unittest.TestCase):
                 "gs://bucket/sft/runs/run-a/evals/wer_summary.json",
                 "gs://bucket/sft/runs/run-a/evals/wer_summary.md",
             ),
+        )
+
+    def test_eval_provider_segments_use_complete_original_provenance(
+        self,
+    ) -> None:
+        rows = [
+            {
+                **_eval_row(
+                    "gs://bucket/audio/001.flac",
+                    "reference must remain scoring-only",
+                    example_id="fallback-example",
+                    segment_id="001",
+                    offset=2.0,
+                ),
+                "original_audio_uri": "gs://bucket/source/original.wav",
+                "original_offset": 12.5,
+                "source_audio": {
+                    "audio_filepath": "gs://bucket/source/secondary.wav",
+                    "offset": 7.0,
+                    "duration": 1.25,
+                },
+            }
+        ]
+
+        prepared = sft_artifacts.eval_rows_for_inference_from_entries(
+            rows,
+            source="test",
+            prior_context_count=8,
+        )
+
+        self.assertEqual(prepared.source_rows[0]["text"], rows[0]["text"])
+        self.assertEqual(prepared.eval_rows[0].text, rows[0]["text"])
+        segment = prepared.segments[0]
+        self.assertNotIn("text", dataclasses.asdict(segment))
+        self.assertEqual(segment.audio_uri, rows[0]["audio_filepath"])
+        self.assertEqual(
+            segment.source_key,
+            "gs://bucket/source/original.wav",
+        )
+        self.assertEqual(segment.start_seconds, 12.5)
+        self.assertEqual(segment.end_seconds, 13.5)
+
+    def test_eval_segment_source_key_uses_source_audio_identity(
+        self,
+    ) -> None:
+        rows = [
+            {
+                **_eval_row(
+                    "gs://bucket/audio/001.flac",
+                    "one",
+                    example_id="example-a",
+                    segment_id="001",
+                    offset=2.0,
+                ),
+                "source_audio": {
+                    "audio_filepath": "gs://bucket/source/source-a.wav",
+                    "offset": 8.0,
+                    "duration": 1.0,
+                },
+            },
+        ]
+
+        prepared = sft_artifacts.eval_rows_for_inference_from_entries(
+            rows,
+            source="test",
+            prior_context_count=8,
+        )
+
+        self.assertEqual(
+            [segment.source_key for segment in prepared.segments],
+            ["gs://bucket/source/source-a.wav"],
+        )
+        self.assertEqual(
+            [segment.start_seconds for segment in prepared.segments],
+            [8.0],
+        )
+
+    def test_contextual_eval_rejects_example_id_as_source_identity(
+        self,
+    ) -> None:
+        row = _eval_row(
+            "gs://bucket/audio/001.flac",
+            "reference remains scoring-only",
+            example_id="not-a-durable-source-identity",
+            segment_id="001",
+            offset=3.0,
+        )
+
+        with self.assertRaisesRegex(ValueError, "durable source identity"):
+            sft_artifacts.eval_rows_for_inference_from_entries(
+                [row],
+                source="test",
+                prior_context_count=8,
+            )
+
+    def test_eval_limit_is_applied_before_provider_segments_are_built(
+        self,
+    ) -> None:
+        rows = [
+            {
+                **_eval_row(
+                    "gs://bucket/audio/001.flac",
+                    "one",
+                    example_id="example",
+                    segment_id="001",
+                    offset=0.0,
+                ),
+                "original_audio_uri": "gs://bucket/source/original.wav",
+                "original_offset": 0.0,
+            },
+            {
+                **_eval_row(
+                    "gs://bucket/audio/002.flac",
+                    "two",
+                    example_id="example",
+                    segment_id="002",
+                    offset=2.0,
+                ),
+                "original_audio_uri": "gs://bucket/source/original.wav",
+                "original_offset": 2.0,
+            },
+        ]
+
+        prepared = sft_artifacts.eval_rows_for_inference_from_entries(
+            rows,
+            source="test",
+            limit=1,
+            prior_context_count=8,
+        )
+
+        self.assertEqual(len(prepared.source_rows), 1)
+        self.assertEqual(len(prepared.eval_rows), 1)
+        self.assertEqual(len(prepared.segments), 1)
+        self.assertEqual(prepared.segments[0].manifest_index, 0)
+
+    def test_eval_segment_rejects_malformed_preferred_source_metadata(
+        self,
+    ) -> None:
+        row = {
+            **_eval_row(
+                "gs://bucket/audio/001.flac",
+                "one",
+                example_id="example",
+                segment_id="001",
+                offset=0.0,
+            ),
+            "original_audio_uri": " ",
+        }
+
+        with self.assertRaisesRegex(ValueError, "original_audio_uri"):
+            sft_artifacts.eval_rows_for_inference_from_entries(
+                [row],
+                source="test",
+                prior_context_count=8,
+            )
+
+    def test_eval_segment_rejects_partial_original_provenance(self) -> None:
+        row = {
+            **_eval_row(
+                "gs://bucket/audio/001.flac",
+                "one",
+                example_id="example",
+                segment_id="001",
+                offset=0.0,
+            ),
+            "original_audio_uri": "gs://bucket/source/original.wav",
+            "source_audio": {
+                "audio_filepath": "gs://bucket/source/secondary.wav",
+                "offset": 7.0,
+                "duration": 1.25,
+            },
+        }
+
+        with self.assertRaisesRegex(ValueError, "complete original provenance"):
+            sft_artifacts.eval_rows_for_inference_from_entries(
+                [row],
+                source="test",
+                prior_context_count=8,
+            )
+
+    def test_eval_segment_rejects_partial_source_audio_provenance(self) -> None:
+        row = {
+            **_eval_row(
+                "gs://bucket/audio/001.flac",
+                "one",
+                example_id="example",
+                segment_id="001",
+                offset=0.0,
+            ),
+            "source_audio": {
+                "audio_filepath": "gs://bucket/source/source.wav",
+                "offset": 7.0,
+            },
+        }
+
+        with self.assertRaisesRegex(ValueError, "complete source_audio"):
+            sft_artifacts.eval_rows_for_inference_from_entries(
+                [row],
+                source="test",
+                prior_context_count=8,
+            )
+
+    def test_stateless_provider_view_ignores_optional_causal_metadata(
+        self,
+    ) -> None:
+        row = {
+            **_eval_row(
+                "gs://bucket/audio/001.flac",
+                "reference remains scoring-only",
+                example_id="example",
+                segment_id="001",
+                offset=3.0,
+            ),
+            "original_audio_uri": " ",
+            "original_offset": "not-a-number",
+        }
+
+        prepared = sft_artifacts.eval_rows_for_inference_from_entries(
+            [row],
+            source="test",
+            prior_context_count=0,
+        )
+
+        segment = prepared.segments[0]
+        self.assertNotIn("text", dataclasses.asdict(segment))
+        self.assertEqual(segment.source_key, "example")
+        self.assertEqual(segment.start_seconds, 3.0)
+
+    def test_legacy_history_loader_remains_available_to_main_callers(
+        self,
+    ) -> None:
+        rows = [
+            {
+                **_eval_row(
+                    "gs://bucket/audio/001.flac",
+                    "first",
+                    example_id="example",
+                    segment_id="001",
+                    offset=0.0,
+                ),
+                "original_audio_uri": "gs://bucket/source/original.wav",
+                "original_offset": 0.0,
+            },
+            {
+                **_eval_row(
+                    "gs://bucket/audio/002.flac",
+                    "second",
+                    example_id="example",
+                    segment_id="002",
+                    offset=1.0,
+                ),
+                "original_audio_uri": "gs://bucket/source/original.wav",
+                "original_offset": 1.0,
+            },
+        ]
+
+        prepared = sft_artifacts.eval_rows_with_histories_from_entries(
+            rows,
+            source="test",
+            prior_context_count=1,
+        )
+
+        self.assertEqual(
+            prepared.histories,
+            [
+                [],
+                [
+                    context.ContextTurn(
+                        "gs://bucket/audio/001.flac",
+                        "first",
+                    )
+                ],
+            ],
         )
 
 

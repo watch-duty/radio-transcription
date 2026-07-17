@@ -5,6 +5,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import json
+import math
 import pathlib
 import typing
 
@@ -71,19 +72,73 @@ class PreparedEvalArtifacts:
 
 
 @dataclasses.dataclass(frozen=True)
+class EvalRowsForInference:
+    """Reference-bearing scoring rows plus transcript-free provider inputs.
+
+    Attributes:
+        source_rows: Validated raw rows retained only for scoring and output.
+        eval_rows: Typed canonical rows retained only for scoring.
+        segments: Transcript-free rows that may cross the inference boundary.
+    """
+
+    source_rows: list[dict[str, typing.Any]]
+    eval_rows: list[manifest.CanonicalRow]
+    segments: list[context.EvaluationSegment]
+
+
+# Temporary stacked-PR bridge for latest-main evaluation. PR #1003 removes
+# this history-bearing loader when evaluate.py consumes transcript-free rows.
+@dataclasses.dataclass(frozen=True)
 class EvalRowsWithHistory:
-    """Canonical eval rows plus aligned prior-context histories.
+    """Canonical eval rows plus aligned generic prior-context histories.
 
     Attributes:
         source_rows: Validated raw eval rows preserved for normalized output.
         eval_rows: Typed canonical rows aligned with ``source_rows``.
-        histories: Prior same-source transcript turns aligned with each eval
-            row.
+        histories: Generic prior turns aligned with each evaluation row.
     """
 
     source_rows: list[dict[str, typing.Any]]
     eval_rows: list[manifest.CanonicalRow]
     histories: list[list[context.ContextTurn]]
+
+
+def eval_rows_with_histories_from_entries(
+    entries: list[dict[str, typing.Any]],
+    *,
+    source: str,
+    prior_context_count: int,
+    limit: int | None = None,
+) -> EvalRowsWithHistory:
+    """Return legacy scoring rows and aligned generic histories.
+
+    Args:
+        entries: Raw canonical eval manifest dictionaries.
+        source: Human-readable manifest source used in validation errors.
+        prior_context_count: Maximum prior same-source turns per eval row.
+        limit: Optional maximum number of aligned eval rows to return.
+
+    Returns:
+        Validated rows and legacy histories in matching order.
+    """
+    source_rows, eval_rows = canonical_rows_from_entries(
+        entries,
+        split="eval",
+        source=source,
+    )
+    histories = context.build_context_histories(
+        source_rows,
+        max_turns=prior_context_count,
+    )
+    if limit is not None:
+        source_rows = source_rows[:limit]
+        eval_rows = eval_rows[:limit]
+        histories = histories[:limit]
+    return EvalRowsWithHistory(
+        source_rows=source_rows,
+        eval_rows=eval_rows,
+        histories=histories,
+    )
 
 
 def utc_now() -> str:
@@ -184,47 +239,274 @@ def canonical_rows_from_entries(
     )
 
 
-def eval_rows_with_histories_from_entries(
+def eval_rows_for_inference_from_entries(
     entries: list[dict[str, typing.Any]],
     *,
     source: str,
-    prior_context_count: int,
     limit: int | None = None,
-) -> EvalRowsWithHistory:
-    """Return eval source rows, canonical rows, and aligned histories.
+    prior_context_count: int = 0,
+) -> EvalRowsForInference:
+    """Return scoring rows and a transcript-free evaluation provider view.
+
+    The complete manifest is validated first. The optional row limit is then
+    applied before any rolling-history schedule is constructed by the caller.
+    Reference transcripts remain present only in ``source_rows`` and
+    ``eval_rows``; ``segments`` intentionally cannot carry them.
 
     Args:
         entries: Raw canonical eval manifest dictionaries.
         source: Human-readable manifest source used in validation errors.
-        prior_context_count: Maximum prior same-source turns per eval row.
-        limit: Optional maximum number of aligned eval rows to return.
+        limit: Optional maximum number of aligned rows to return before
+            scheduling.
+        prior_context_count: Maximum number of prior predicted turns. Positive
+            values require causal source and timing metadata; zero preserves
+            the stateless evaluator's canonical-row contract.
 
     Returns:
-        Validated source rows, canonical rows, and prior-context histories in
+        Validated scoring rows and transcript-free inference segments in
         matching order.
 
     Raises:
-        ValueError: If the eval manifest is empty or invalid, or if
-            ``prior_context_count`` is negative.
+        TypeError: If ``limit`` or ``prior_context_count`` is a boolean or
+            non-integer.
+        ValueError: If the eval manifest is empty or invalid, ``limit`` is not
+            positive, the context count is negative, or required causal
+            source/timing metadata is malformed.
     """
     source_rows, eval_rows = canonical_rows_from_entries(
         entries,
         split="eval",
         source=source,
     )
-    histories = context.build_context_histories(
-        source_rows,
-        max_turns=prior_context_count,
-    )
     if limit is not None:
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            msg = "eval limit must be a positive integer"
+            raise TypeError(msg)
+        if limit <= 0:
+            msg = "eval limit must be a positive integer"
+            raise ValueError(msg)
         source_rows = source_rows[:limit]
         eval_rows = eval_rows[:limit]
-        histories = histories[:limit]
-    return EvalRowsWithHistory(
+    if isinstance(prior_context_count, bool) or not isinstance(
+        prior_context_count, int
+    ):
+        msg = "prior_context_count must be a non-negative integer"
+        raise TypeError(msg)
+    if prior_context_count < 0:
+        msg = "prior_context_count must be a non-negative integer"
+        raise ValueError(msg)
+    if prior_context_count > 0:
+        segments = [
+            _causal_evaluation_segment(source_row, eval_row, manifest_index)
+            for manifest_index, (source_row, eval_row) in enumerate(
+                zip(source_rows, eval_rows, strict=True)
+            )
+        ]
+    else:
+        segments = [
+            _stateless_evaluation_segment(eval_row, manifest_index)
+            for manifest_index, eval_row in enumerate(eval_rows)
+        ]
+    return EvalRowsForInference(
         source_rows=source_rows,
         eval_rows=eval_rows,
-        histories=histories,
+        segments=segments,
     )
+
+
+def _stateless_evaluation_segment(
+    eval_row: manifest.CanonicalRow,
+    manifest_index: int,
+) -> context.EvaluationSegment:
+    """Build a provider-safe descriptor without rolling metadata.
+
+    Args:
+        eval_row: Validated canonical row for the current segment.
+        manifest_index: Authoritative position in the evaluation manifest.
+
+    Returns:
+        A transcript-free descriptor for stateless provider inference.
+    """
+    start_seconds = float(eval_row.offset)
+    return context.EvaluationSegment(
+        audio_uri=eval_row.audio_filepath,
+        split=eval_row.split or "eval",
+        source_key=eval_row.example_id,
+        start_seconds=start_seconds,
+        end_seconds=start_seconds + float(eval_row.duration),
+        manifest_index=manifest_index,
+    )
+
+
+def _causal_evaluation_segment(
+    source_row: dict[str, typing.Any],
+    eval_row: manifest.CanonicalRow,
+    manifest_index: int,
+) -> context.EvaluationSegment:
+    """Build a transcript-free segment with strict causal metadata.
+
+    Args:
+        source_row: Raw manifest row containing optional source-level timing.
+        eval_row: Validated canonical row supplying current-audio identity.
+        manifest_index: Authoritative position after any evaluation limit.
+
+    Returns:
+        A descriptor suitable for strict-causal rolling scheduling.
+
+    Raises:
+        TypeError: If preferred source or timing metadata has an invalid type.
+        ValueError: If source identity or derived timing is invalid.
+    """
+    source_key, start_seconds, duration_seconds = _evaluation_provenance(
+        source_row,
+        eval_row,
+    )
+    end_seconds = start_seconds + duration_seconds
+    if not math.isfinite(end_seconds) or end_seconds <= start_seconds:
+        msg = (
+            "eval row has invalid derived end time at manifest index "
+            f"{manifest_index}"
+        )
+        raise ValueError(msg)
+    return context.EvaluationSegment(
+        audio_uri=eval_row.audio_filepath,
+        split=eval_row.split or "eval",
+        source_key=source_key,
+        start_seconds=start_seconds,
+        end_seconds=end_seconds,
+        manifest_index=manifest_index,
+    )
+
+
+def _evaluation_provenance(
+    source_row: dict[str, typing.Any],
+    eval_row: manifest.CanonicalRow,
+) -> tuple[str, float, float]:
+    """Return one atomic source, offset, and duration provenance tuple.
+
+    Args:
+        source_row: Raw manifest row with optional original-audio identity.
+        eval_row: Validated row with optional canonical source-audio metadata.
+
+    Returns:
+        Source URI, start seconds, and duration seconds from one complete
+        provenance representation.
+
+    Raises:
+        ValueError: If original or canonical source metadata is partial,
+            malformed, or absent. ``example_id`` is intentionally not a
+            fallback because it identifies an example, not a conversation.
+    """
+    original_audio_uri = source_row.get("original_audio_uri")
+    original_offset = source_row.get("original_offset")
+    if original_audio_uri is not None:
+        if not isinstance(original_audio_uri, str) or not (
+            source_key := original_audio_uri.strip()
+        ):
+            msg = "eval row original_audio_uri must be a non-empty string"
+            raise ValueError(msg)
+        if original_offset is None:
+            msg = (
+                "contextual eval row requires complete original provenance: "
+                "original_audio_uri and original_offset"
+            )
+            raise ValueError(msg)
+        return (
+            source_key,
+            _finite_nonnegative_number(original_offset, "original_offset"),
+            _finite_positive_number(eval_row.duration, "duration"),
+        )
+    if original_offset is not None:
+        msg = (
+            "contextual eval row requires complete original provenance: "
+            "original_audio_uri and original_offset"
+        )
+        raise ValueError(msg)
+
+    source_audio = eval_row.source_audio
+    if source_audio is not None:
+        source_audio_uri = source_audio.get("audio_filepath")
+        source_audio_offset = source_audio.get("offset")
+        source_audio_duration = source_audio.get("duration")
+        if (
+            source_audio_uri is None
+            or source_audio_offset is None
+            or source_audio_duration is None
+        ):
+            msg = (
+                "contextual eval row requires complete source_audio "
+                "provenance: audio_filepath, offset, and duration"
+            )
+            raise ValueError(msg)
+        if not isinstance(source_audio_uri, str) or not (
+            source_key := source_audio_uri.strip()
+        ):
+            msg = (
+                "eval row source_audio.audio_filepath must be a "
+                "non-empty string"
+            )
+            raise ValueError(msg)
+        return (
+            source_key,
+            _finite_nonnegative_number(
+                source_audio_offset,
+                "source_audio.offset",
+            ),
+            _finite_positive_number(
+                source_audio_duration,
+                "source_audio.duration",
+            ),
+        )
+    msg = (
+        "contextual eval row requires a complete durable source identity and "
+        "timing provenance tuple via original or source_audio metadata; "
+        "example_id is not a conversation key"
+    )
+    raise ValueError(msg)
+
+
+def _finite_nonnegative_number(value: typing.Any, field: str) -> float:
+    number = _finite_number(value, field)
+    if number < 0:
+        msg = f"eval row {field} must be non-negative"
+        raise ValueError(msg)
+    return number
+
+
+def _finite_positive_number(value: typing.Any, field: str) -> float:
+    number = _finite_number(value, field)
+    if number <= 0:
+        msg = f"eval row {field} must be greater than zero"
+        raise ValueError(msg)
+    return number
+
+
+def _finite_number(value: typing.Any, field: str) -> float:
+    """Convert one manifest value to a finite floating-point number.
+
+    Args:
+        value: Candidate numeric value.
+        field: Manifest field name included in validation errors.
+
+    Returns:
+        The finite floating-point representation of ``value``.
+
+    Raises:
+        TypeError: If ``value`` is a boolean.
+        ValueError: If ``value`` cannot be converted or is not finite.
+    """
+    if isinstance(value, bool):
+        msg = f"eval row {field} must be a finite number"
+        raise TypeError(msg)
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        msg = f"eval row {field} must be a finite number"
+        raise ValueError(msg) from exc
+    if not math.isfinite(number):
+        msg = f"eval row {field} must be a finite number"
+        raise ValueError(msg)
+    return number
 
 
 def reject_split_overlap(
