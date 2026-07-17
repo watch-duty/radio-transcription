@@ -775,15 +775,14 @@ class IcecastTimelineManager:
         if total_burst_duration_sec > 0:
             last_chunk = self.burst_buffer[-1]
             last_receipt = last_chunk.receipt_time or _now_utc()
-            end_offset_sec = (
-                last_chunk.chunk_end_time - self.stream_anchor_time
+
+            # The net shift needed to align the last chunk's end with its receipt time is:
+            shift_seconds = (
+                last_receipt - last_chunk.chunk_end_time
             ).total_seconds()
 
             old_anchor = self.stream_anchor_time
-            # Re-anchor the stream timeline so the burst ends exactly at the last burst chunk's receipt time
-            self.stream_anchor_time = last_receipt - datetime.timedelta(
-                seconds=end_offset_sec
-            )
+            self.stream_anchor_time += datetime.timedelta(seconds=shift_seconds)
 
             logger.info(
                 "Feed %s (%s): Adjusting timeline anchor for connection burst: "
@@ -792,25 +791,18 @@ class IcecastTimelineManager:
                 self.feed_name,
                 old_anchor.isoformat(),
                 self.stream_anchor_time.isoformat(),
-                (self.stream_anchor_time - old_anchor).total_seconds(),
+                shift_seconds,
             )
 
-            # Start offset of the first chunk in buffer is:
-            first_chunk_start_offset = (
-                self.burst_buffer[0].chunk_start_time
-                - last_chunk.chunk_end_time
-            ).total_seconds() + end_offset_sec
-            last_end = self.stream_anchor_time + datetime.timedelta(
-                seconds=first_chunk_start_offset
-            )
-
+            # Apply the identical shift to all buffered chunks to preserve their relative timelines
             for idx, buffered_chunk in enumerate(self.burst_buffer):
-                c_duration = (
-                    buffered_chunk.chunk_end_time
-                    - buffered_chunk.chunk_start_time
-                ).total_seconds()
-                new_start = last_end
-                new_end = new_start + datetime.timedelta(seconds=c_duration)
+                new_start = (
+                    buffered_chunk.chunk_start_time
+                    + datetime.timedelta(seconds=shift_seconds)
+                )
+                new_end = buffered_chunk.chunk_end_time + datetime.timedelta(
+                    seconds=shift_seconds
+                )
                 self.burst_buffer[idx] = self._validate_and_track_chunk(
                     dataclasses.replace(
                         buffered_chunk,
@@ -818,7 +810,7 @@ class IcecastTimelineManager:
                         chunk_end_time=new_end,
                     )
                 )
-                last_end = new_end
+
         res = list(self.burst_buffer)
         self.burst_buffer.clear()
         return res
@@ -928,9 +920,6 @@ class IcecastTimelineManager:
 
         self.last_receipt_time = chunk_receipt
 
-        chunk_duration_sec = (
-            chunk.chunk_end_time - chunk.chunk_start_time
-        ).total_seconds()
         chunk = self._check_and_apply_drift_correction(
             chunk=chunk,
             cumulative_pcm_samples=cumulative_pcm_samples,

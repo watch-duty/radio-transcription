@@ -1608,6 +1608,116 @@ class TestCaptureIcecastStream(unittest.IsolatedAsyncioTestCase):
         )
 
     @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._now_utc",
+    )
+    @patch(
+        "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
+        new_callable=AsyncMock,
+    )
+    async def test_timestamps_mid_stream_disconnect_and_catchup(
+        self, mock_create_ffmpeg: AsyncMock, mock_now_utc: MagicMock
+    ) -> None:
+        """Verify timeline manager handles a mid-stream disconnect followed by
+        a catch-up burst and return to normal cadence.
+        """
+        fixed_anchor = datetime.datetime(
+            2026, 1, 1, 12, 0, 0, tzinfo=datetime.UTC
+        )
+        mock_now_utc.side_effect = IncrementalClock(
+            fixed_anchor,
+            steps=[1.0, 1.0, 1.0, 15.0, 315.0, 1.0, 1.0, 15.0, 0.0, 0.0],
+        )
+
+        # 8 segments of 15 seconds each
+        mock_create_ffmpeg.side_effect = _make_process_factory(
+            pid=4446,
+            segments=[
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 1 (burst)
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 2 (burst)
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 3 (burst)
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 4 (steady)
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 5 (late/burst)
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 6 (burst)
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 7 (burst)
+                _make_pcm_segment(CHUNK_DURATION_SECONDS),  # Seg 8 (steady)
+            ],
+            wait_delay=0.1,
+            wait_result=0,
+        )
+
+        feed = _make_feed("midstream-feed", "http://example.com/stream")
+        shutdown_event = asyncio.Event()
+
+        gen = icecast_collector.capture_icecast_stream(
+            feed,
+            shutdown_event,
+            url_base="https://mock.example.com/",
+            resources=_default_resources(),
+        )
+        results = await _collect_chunks_with_timestamps(gen)
+
+        self.assertEqual(len(results), 8)
+
+        # Start-up burst (Seg 1-3) adjusted anchor backward
+        # Last burst chunk (Seg 3) received at 12:00:03
+        # Start-up anchor: 12:00:03 - 45s = 11:59:18
+        self.assertEqual(
+            results[0].chunk_start_time,
+            fixed_anchor - datetime.timedelta(seconds=42),
+        )
+        self.assertEqual(
+            results[2].chunk_end_time,
+            fixed_anchor + datetime.timedelta(seconds=3),
+        )
+
+        # Seg 4 (steady) starts at 12:00:03, ends at 12:00:18 (received at 12:00:18)
+        self.assertEqual(
+            results[3].chunk_start_time,
+            fixed_anchor + datetime.timedelta(seconds=3),
+        )
+        self.assertEqual(
+            results[3].chunk_end_time,
+            fixed_anchor + datetime.timedelta(seconds=18),
+        )
+
+        # Seg 5-7 is a mid-stream catch-up burst after a 5 minute disconnect gap.
+        # Last catch-up chunk (Seg 7) received at 12:05:35.
+        # Cumulative duration before Seg 7 = 6 segments = 90s.
+        # Original Segment 7 end = 11:59:18 + 90s + 15s = 12:01:03.
+        # Net shift = 12:05:35 - 12:01:03 = 272s.
+        # Adjusted anchor: 11:59:18 + 272s = 12:03:50.
+
+        # Seg 5 (first catch-up chunk): starts at 12:00:18 + 272s = 12:04:50
+        self.assertEqual(
+            results[4].chunk_start_time,
+            fixed_anchor + datetime.timedelta(seconds=290),
+        )
+        self.assertEqual(
+            results[4].chunk_end_time,
+            fixed_anchor + datetime.timedelta(seconds=305),
+        )
+
+        # Seg 7 (last catch-up chunk): starts at 12:05:20, ends at 12:05:35 (receipt_time)
+        self.assertEqual(
+            results[6].chunk_start_time,
+            fixed_anchor + datetime.timedelta(seconds=320),
+        )
+        self.assertEqual(
+            results[6].chunk_end_time,
+            fixed_anchor + datetime.timedelta(seconds=335),
+        )
+
+        # Seg 8 (first steady chunk after disconnect) ends at receipt_time 12:05:50
+        self.assertEqual(
+            results[7].chunk_start_time,
+            fixed_anchor + datetime.timedelta(seconds=335),
+        )
+        self.assertEqual(
+            results[7].chunk_end_time,
+            fixed_anchor + datetime.timedelta(seconds=350),
+        )
+
+    @patch(
         "backend.pipeline.ingestion.collectors.icecast.icecast_collector._create_ffmpeg_process",
         new_callable=AsyncMock,
     )
