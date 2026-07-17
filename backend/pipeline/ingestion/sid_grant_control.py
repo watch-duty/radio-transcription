@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import datetime
 import typing
-import uuid
 
 from backend.pipeline.ingestion import failure_policy, grant_control
 from backend.pipeline.storage import feed_store, ingestion_lease_store
+
+if typing.TYPE_CHECKING:
+    import uuid
 
 _STATUS_INELIGIBLE = (
     ingestion_lease_store.LeaseOperationDisposition.STATUS_INELIGIBLE
@@ -97,19 +99,13 @@ class SidGrantControl:
             Store-ordered exact Lease grants paired with ``mode``.
 
         Raises:
-            TypeError: An argument has an invalid type.
+            TypeError: ``limit`` is a boolean.
             ValueError: ``limit`` is negative.
             grant_control.GrantControlIntegrityError: Claims exceed ``limit``,
                 repeat authority, have an invalid type, or do not match the
                 configured source and requested owner.
         """
-        if not isinstance(mode, grant_control.ClaimMode):
-            msg = "mode must be a ClaimMode"
-            raise TypeError(msg)
-        if not isinstance(owner_worker_id, uuid.UUID):
-            msg = "owner_worker_id must be a UUID"
-            raise TypeError(msg)
-        if isinstance(limit, bool) or not isinstance(limit, int):
+        if isinstance(limit, bool):
             msg = "limit must be an integer"
             raise TypeError(msg)
         if limit < 0:
@@ -239,27 +235,9 @@ class SidGrantControl:
             Applied or lost exact-grant disposition.
 
         Raises:
-            TypeError: ``grant``, ``payload``, or ``terminal`` has an invalid
-                type.
             grant_control.GrantControlIntegrityError: Storage returns an
                 invalid result or a non-budgeted failure quarantines.
         """
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            msg = "grant must be a LeaseGrant"
-            raise TypeError(msg)
-        if not isinstance(payload, grant_control.ClaimMode):
-            msg = "payload must be a ClaimMode"
-            raise TypeError(msg)
-        if not isinstance(
-            terminal,
-            (
-                grant_control.NeutralRelease,
-                failure_policy.FailurePersistencePlan,
-            ),
-        ):
-            msg = "terminal must be a closed TerminalDecision"
-            raise TypeError(msg)
-
         if isinstance(terminal, grant_control.NeutralRelease):
             result = await self._data_store.release(grant)
             if not isinstance(

@@ -882,27 +882,6 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
                         limit,
                     )
 
-    async def test_finalize_rejects_non_claim_mode_before_io(
-        self,
-    ) -> None:
-        grant = _lease_grant("exact", fencing_token=9)
-        terminal = grant_control.NeutralRelease()
-
-        for candidate_payload in (None, 7, "primary"):
-            with self.subTest(payload=candidate_payload):
-                with self.assertRaises(TypeError):
-                    await self.control.finalize(
-                        grant,
-                        typing.cast(
-                            "grant_control.ClaimMode",
-                            candidate_payload,
-                        ),
-                        terminal,
-                    )
-
-        self.data_store.release.assert_not_awaited()
-        self.data_store.finalize_failure.assert_not_awaited()
-
     async def test_heartbeat_maps_every_disposition_in_caller_order(
         self,
     ) -> None:

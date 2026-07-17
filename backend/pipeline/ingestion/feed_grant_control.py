@@ -7,10 +7,12 @@ import datetime
 import logging
 import types
 import typing
-import uuid
 
 from backend.pipeline.ingestion import failure_policy, grant_control
 from backend.pipeline.storage import feed_store
+
+if typing.TYPE_CHECKING:
+    import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -173,18 +175,12 @@ class FeedGrantControl:
             Store-ordered exact Feed grants and unchanged leased payloads.
 
         Raises:
-            TypeError: An argument has an invalid type.
+            TypeError: ``limit`` is a boolean.
             ValueError: ``limit`` is negative.
             grant_control.GrantControlIntegrityError: The store returns too
                 many claims or repeats a Feed authority.
         """
-        if not isinstance(mode, grant_control.ClaimMode):
-            msg = "mode must be a ClaimMode"
-            raise TypeError(msg)
-        if not isinstance(owner_worker_id, uuid.UUID):
-            msg = "owner_worker_id must be a UUID"
-            raise TypeError(msg)
-        if isinstance(limit, bool) or not isinstance(limit, int):
+        if isinstance(limit, bool):
             msg = "limit must be an integer"
             raise TypeError(msg)
         if limit < 0:
@@ -309,15 +305,11 @@ class FeedGrantControl:
             Applied or lost exact-grant disposition.
 
         Raises:
-            TypeError: ``grant`` or ``terminal`` has an invalid type.
             grant_control.GrantControlIntegrityError: The payload does not
                 match the grant, or storage returns an invalid outcome.
             asyncio.CancelledError: Quarantine observation is cancelled after
                 durable failure finalization.
         """
-        if not isinstance(grant, feed_store.FeedGrant):
-            msg = "grant must be a FeedGrant"
-            raise TypeError(msg)
         if (
             payload["id"] != grant.feed_id
             or payload["fencing_token"] != grant.fencing_token
@@ -337,10 +329,6 @@ class FeedGrantControl:
                 else grant_control.FinalizeDisposition.LOST
             )
             return grant_control.FinalizeResult(grant, disposition)
-
-        if not isinstance(terminal, failure_policy.FailurePersistencePlan):
-            msg = "terminal must be a closed TerminalDecision"
-            raise TypeError(msg)
 
         treatment = terminal.treatment
         if isinstance(treatment, failure_policy.ConsumeFailureBudget):

@@ -117,12 +117,7 @@ def consumes_failure_budget(
     Returns:
         ``True`` only for configuration-invalid reasons.
 
-    Raises:
-        TypeError: ``status_reason`` is not a ``FeedStatusReason``.
     """
-    if not isinstance(status_reason, feed_store.FeedStatusReason):
-        msg = "status_reason must be a FeedStatusReason"
-        raise TypeError(msg)
     return status_reason in _BUDGETED_REASONS
 
 
@@ -145,22 +140,8 @@ def plan_failure(
         Canonical failure evidence with one materialized treatment.
 
     Raises:
-        TypeError: An input has an invalid type, or ``non_budgeted`` returns an
-            invalid treatment.
+        TypeError: ``non_budgeted`` returns an invalid treatment.
     """
-    if not isinstance(status_reason, feed_store.FeedStatusReason):
-        msg = "status_reason must be a FeedStatusReason"
-        raise TypeError(msg)
-    if reason is not None and not isinstance(reason, str):
-        msg = "reason must be a string or None"
-        raise TypeError(msg)
-    if not isinstance(budgeted, ConsumeFailureBudget):
-        msg = "budgeted must be a ConsumeFailureBudget"
-        raise TypeError(msg)
-    if not callable(non_budgeted):
-        msg = "non_budgeted must be callable"
-        raise TypeError(msg)
-
     if consumes_failure_budget(status_reason):
         treatment: FailureTreatment = budgeted
     else:

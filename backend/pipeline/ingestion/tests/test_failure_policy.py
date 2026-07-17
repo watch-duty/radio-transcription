@@ -156,30 +156,6 @@ class TestFailurePlanning(unittest.TestCase):
 
         self.assertIs(plan.treatment, retry)
 
-    def test_plan_rejects_invalid_inputs_before_persistence(self) -> None:
-        cases = (
-            ("status_reason", "source_unreachable"),
-            ("reason", object()),
-            ("budgeted", object()),
-            ("non_budgeted", object()),
-        )
-
-        for field, value in cases:
-            with self.subTest(field=field):
-                kwargs: dict[str, object] = {
-                    "status_reason": (
-                        feed_store.FeedStatusReason.SOURCE_UNREACHABLE
-                    ),
-                    "reason": "provider unavailable",
-                    "budgeted": _BUDGETED,
-                    "non_budgeted": lambda: failure_policy.RetryWithoutBudget(
-                        _NOW
-                    ),
-                }
-                kwargs[field] = value
-                with self.assertRaises(TypeError):
-                    failure_policy.plan_failure(**kwargs)
-
     def test_treatment_values_validate_durable_inputs(self) -> None:
         with self.assertRaises(ValueError):
             failure_policy.ConsumeFailureBudget(0, 15, 600)
