@@ -2,21 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio  # noqa: TC003
 import dataclasses
 import enum
 import typing
+import uuid  # noqa: TC003
 
 from backend.pipeline.ingestion import failure_policy
-
-if typing.TYPE_CHECKING:
-    import asyncio
-    import uuid
-
-    from backend.pipeline.storage import feed_store
+from backend.pipeline.storage import feed_store  # noqa: TC001
 
 
 class DomainId(enum.StrEnum):
-    """Static durable-authority domains understood by the runtime."""
+    """Static ownership domains understood by the runtime."""
 
     FEED = "feed"
     SID = "sid"
@@ -58,6 +55,31 @@ class TerminalCause(enum.StrEnum):
 
 class GrantControlIntegrityError(RuntimeError):
     """Raised when a typed store response cannot be correlated exactly."""
+
+
+class ExactGrant[UnitKeyT: typing.Hashable](typing.Protocol):
+    """Complete immutable authority for one ownership generation.
+
+    Attributes:
+        unit_key: Permanent identity within the ownership domain.
+        owner_worker_id: Worker authorized for this generation.
+        fencing_token: Monotonic generation that rejects stale workers.
+    """
+
+    @property
+    def unit_key(self) -> UnitKeyT:
+        """Return the permanent identity within the ownership domain."""
+        ...
+
+    @property
+    def owner_worker_id(self) -> uuid.UUID:
+        """Return the worker authorized for this generation."""
+        ...
+
+    @property
+    def fencing_token(self) -> int:
+        """Return the monotonic generation that rejects stale workers."""
+        ...
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -137,6 +159,8 @@ class RunContext:
 
 class GrantControl[GrantT, PayloadT](typing.Protocol):
     """Small typed storage-control seam shared by registered domains."""
+
+    domain_id: DomainId
 
     async def claim(
         self,

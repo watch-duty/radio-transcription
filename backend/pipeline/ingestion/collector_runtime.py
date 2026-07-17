@@ -11,10 +11,9 @@ import signal
 import socket
 import threading
 import time
-import types
 import typing
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 
 import aiohttp
@@ -190,69 +189,6 @@ class _PipelineFailure(Exception):
         self.status_reason = status_reason
 
 
-def _is_leased_feed_payload(
-    value: object,
-) -> typing.TypeGuard[LeasedFeed]:
-    """Validate every runtime field required by the legacy Feed runner."""
-    if not isinstance(value, Mapping):
-        return False
-    payload = typing.cast("Mapping[str, object]", value)
-    required_fields = {
-        "id",
-        "name",
-        "source_type",
-        "last_processed_filename",
-        "last_bookmark_time",
-        "fencing_token",
-        "failure_count",
-        "status_reason",
-        "source_feed_id",
-    }
-    if not required_fields.issubset(payload):
-        return False
-    fencing_token = payload["fencing_token"]
-    failure_count = payload["failure_count"]
-    tags = payload.get("tags")
-    if tags is not None:
-        if not isinstance(tags, list):
-            return False
-        for tag in tags:
-            if not isinstance(tag, dict):
-                return False
-            if not all(
-                isinstance(key, str) and isinstance(item, str)
-                for key, item in tag.items()
-            ):
-                return False
-    return (
-        isinstance(payload["id"], uuid.UUID)
-        and isinstance(payload["name"], str)
-        and isinstance(payload["source_type"], SourceType)
-        and (
-            payload["last_processed_filename"] is None
-            or isinstance(payload["last_processed_filename"], str)
-        )
-        and (
-            payload["last_bookmark_time"] is None
-            or isinstance(payload["last_bookmark_time"], datetime.datetime)
-        )
-        and not isinstance(fencing_token, bool)
-        and isinstance(fencing_token, int)
-        and fencing_token >= 0
-        and not isinstance(failure_count, bool)
-        and isinstance(failure_count, int)
-        and failure_count >= 0
-        and (
-            payload["status_reason"] is None
-            or isinstance(payload["status_reason"], FeedStatusReason)
-        )
-        and (
-            payload["source_feed_id"] is None
-            or isinstance(payload["source_feed_id"], str)
-        )
-    )
-
-
 class _FeedRunner:
     """Typed compatibility shell around the unchanged Feed data plane."""
 
@@ -281,41 +217,6 @@ class _FeedRunner:
         finally:
             loss_bridge.cancel()
             await asyncio.gather(loss_bridge, return_exceptions=True)
-
-
-def _feed_authority(grant: FeedGrant) -> grant_supervisor.FeedAuthority:
-    return grant_supervisor.FeedAuthority(grant.feed_id)
-
-
-def _feed_owner(grant: FeedGrant) -> uuid.UUID:
-    return grant.owner_worker_id
-
-
-def _feed_fencing_token(grant: FeedGrant) -> int:
-    return grant.fencing_token
-
-
-def _is_sid_claim_payload(
-    value: object,
-) -> typing.TypeGuard[sid_grant_control.SidClaimPayload]:
-    return type(value) is sid_grant_control.SidClaimPayload
-
-
-def _sid_authority(
-    grant: ingestion_lease_store.LeaseGrant,
-) -> grant_supervisor.SidAuthority:
-    return grant_supervisor.SidAuthority(
-        source_type=grant.source_type.value,
-        lease_key=grant.lease_key,
-    )
-
-
-def _sid_owner(grant: ingestion_lease_store.LeaseGrant) -> uuid.UUID:
-    return grant.owner_worker_id
-
-
-def _sid_fencing_token(grant: ingestion_lease_store.LeaseGrant) -> int:
-    return grant.fencing_token
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -548,27 +449,15 @@ class CollectorRuntime:
         )
         self._pubsub_client = pubsub_client.PubSubClient()
         self._health_state = HealthState(
-            snapshot_provider=self._health_snapshot,
+            active_feed_count=self._active_feed_count,
         )
         self._health_runner: web.AppRunner | None = None
 
-    def _health_snapshot(self) -> grant_supervisor.SupervisorSnapshot:
-        """Return one immutable local snapshot without control or DB I/O."""
+    def _active_feed_count(self) -> int:
+        """Return the local active Feed count without control or DB I/O."""
         if self._supervisor is not None:
-            return self._supervisor.snapshot()
-        profile = self._collector_settings.worker_profile
-        return grant_supervisor.SupervisorSnapshot(
-            profile=profile.name,
-            profile_digest=self._profile_digest,
-            counts_by_domain=types.MappingProxyType(
-                {
-                    allocation.domain_id: grant_supervisor.GrantCount(
-                        active=0,
-                    )
-                    for allocation in profile.allocations
-                }
-            ),
-        )
+            return self._supervisor.active_count(grant_control.DomainId.FEED)
+        return 0
 
     # -- Entry point ------------------------------------------------------
 
@@ -687,15 +576,8 @@ class CollectorRuntime:
                 registrations.append(
                     grant_supervisor.RegisteredDomain(
                         domain_id=grant_control.DomainId.FEED,
-                        authority_kind=worker_profiles.AuthorityKind.FEED,
-                        grant_type=FeedGrant,
-                        payload_validator=_is_leased_feed_payload,
-                        authority_of=_feed_authority,
-                        owner_of=_feed_owner,
-                        fencing_token_of=_feed_fencing_token,
                         control=feed_control,
                         runner=self._feed_runner,
-                        allocation=allocation,
                     )
                 )
                 continue
@@ -774,15 +656,8 @@ class CollectorRuntime:
             registrations.append(
                 grant_supervisor.RegisteredDomain(
                     domain_id=grant_control.DomainId.SID,
-                    authority_kind=(worker_profiles.AuthorityKind.SID_LEASE),
-                    grant_type=ingestion_lease_store.LeaseGrant,
-                    payload_validator=_is_sid_claim_payload,
-                    authority_of=_sid_authority,
-                    owner_of=_sid_owner,
-                    fencing_token_of=_sid_fencing_token,
                     control=sid_control,
                     runner=sid_runner,
-                    allocation=allocation,
                 )
             )
 

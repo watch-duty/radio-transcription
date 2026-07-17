@@ -7,12 +7,6 @@ from typing import TYPE_CHECKING
 
 from aiohttp import web
 
-from backend.pipeline.ingestion import (
-    grant_control,
-    grant_supervisor,
-    worker_profiles,
-)
-
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -27,8 +21,8 @@ class HealthState:
     Shared state between the worker runtime and the /healthz handler.
 
     Lives on the event-loop thread; all reads/writes happen there, so no lock
-    is required. The snapshot provider reads only the supervisor's immutable
-    process-local projection and performs no request-time control or DB I/O.
+    is required. The active-count provider reads only process-local state and
+    performs no request-time control or DB I/O.
 
     ``last_heartbeat_tick`` is stamped at the *beginning* of every
     ``_heartbeat_cycle`` invocation — before any DB I/O — so the stamp
@@ -39,26 +33,9 @@ class HealthState:
     on recovery).
     """
 
-    snapshot_provider: Callable[[], grant_supervisor.SupervisorSnapshot]
+    active_feed_count: Callable[[], int]
     startup_time: float = field(default_factory=time.monotonic)
     last_heartbeat_tick: float | None = None
-
-
-def _snapshot_payload(
-    snapshot: grant_supervisor.SupervisorSnapshot,
-) -> tuple[int, dict[str, dict[str, object]]]:
-    """Render one bounded immutable supervisor snapshot for HTTP health."""
-    grant_counts: dict[str, dict[str, object]] = {}
-    active_feeds = 0
-    for domain_id, count in snapshot.counts_by_domain.items():
-        catalog_entry = worker_profiles.DOMAIN_CATALOG[domain_id]
-        grant_counts[domain_id.value] = {
-            "authority_kind": catalog_entry.authority_kind.value,
-            "active": count.active,
-        }
-        if domain_id is grant_control.DomainId.FEED:
-            active_feeds = count.active
-    return active_feeds, grant_counts
 
 
 def _response_payload(
@@ -67,15 +44,10 @@ def _response_payload(
     status: str,
     heartbeat_age_sec: float | None,
 ) -> dict[str, object]:
-    snapshot = state.snapshot_provider()
-    active_feeds, grant_counts = _snapshot_payload(snapshot)
     return {
         "status": status,
-        "active_feeds": active_feeds,
+        "active_feeds": state.active_feed_count(),
         "last_heartbeat_age_sec": heartbeat_age_sec,
-        "profile": snapshot.profile,
-        "profile_digest": snapshot.profile_digest,
-        "grant_counts": grant_counts,
     }
 
 

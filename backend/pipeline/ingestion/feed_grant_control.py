@@ -60,6 +60,8 @@ def _calculate_branch_limits(
 class FeedGrantControl:
     """Translate generic grant operations to two authoritative Feed stores."""
 
+    domain_id = grant_control.DomainId.FEED
+
     def __init__(
         self,
         data_store: feed_store.FeedStore,

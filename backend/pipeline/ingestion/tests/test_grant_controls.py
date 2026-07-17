@@ -162,6 +162,16 @@ class TestGrantControlVocabulary(unittest.TestCase):
                     expected,
                 )
 
+    def test_exact_grants_expose_permanent_unit_keys(self) -> None:
+        feed_grant = _feed_grant()
+        sid_grant = _lease_grant()
+
+        self.assertEqual(feed_grant.unit_key, feed_grant.feed_id)
+        self.assertEqual(
+            sid_grant.unit_key,
+            (sid_grant.source_type, sid_grant.lease_key),
+        )
+
     def test_protocol_signatures_are_only_claim_heartbeat_finalize_run(
         self,
     ) -> None:

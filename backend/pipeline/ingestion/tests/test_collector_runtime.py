@@ -821,147 +821,6 @@ class TestSupervisorAdmissionDelegation(unittest.IsolatedAsyncioTestCase):
         supervisor.admit_cycle.assert_awaited_once_with(_WORKER_ID)
 
 
-class TestLeasedFeedPayloadValidator(unittest.TestCase):
-    """The registered Feed payload boundary validates concrete mappings."""
-
-    def test_accepts_valid_mapping(self) -> None:
-        self.assertTrue(collector_runtime._is_leased_feed_payload(_FEED))
-
-    def test_rejects_missing_wrong_and_malformed_fields(self) -> None:
-        missing = dict(_FEED)
-        del missing["name"]
-        wrong_type = {**_FEED, "source_type": "bcfy_feeds"}
-        malformed_tags = {**_FEED, "tags": [{"name": 1}]}
-
-        for case_index, payload in enumerate(
-            (missing, wrong_type, malformed_tags)
-        ):
-            with self.subTest(case_index=case_index):
-                self.assertFalse(
-                    collector_runtime._is_leased_feed_payload(payload)
-                )
-
-    def test_typed_dict_is_not_used_as_runtime_class(self) -> None:
-        source = Path(collector_runtime.__file__).read_text()
-        self.assertNotIn("isinstance(value, LeasedFeed)", source)
-
-
-class TestSidClaimPayloadValidator(unittest.TestCase):
-    """The SID runtime accepts only the exact source provenance type."""
-
-    def test_sid_claim_payload_type_is_exact(self) -> None:
-        payload = sid_grant_control.SidClaimPayload(
-            grant_control.ClaimMode.RECOVERY,
-        )
-
-        self.assertTrue(collector_runtime._is_sid_claim_payload(payload))
-        self.assertFalse(collector_runtime._is_sid_claim_payload(object()))
-        self.assertFalse(collector_runtime._is_sid_claim_payload(None))
-
-
-class TestLeasedFeedPayloadSupervisorBoundary(unittest.IsolatedAsyncioTestCase):
-    """Malformed Feed claims fail before runner or registry admission."""
-
-    @staticmethod
-    def _build_supervisor(
-        payload: object,
-    ) -> tuple[
-        grant_supervisor.GrantSupervisor,
-        mock.AsyncMock,
-        mock.AsyncMock,
-    ]:
-        settings = _make_settings(
-            max_feeds_per_worker=1,
-            lease_admission_cycle_budget=1,
-        )
-        allocation = worker_profiles.allocation_for_domain(
-            settings.worker_profile,
-            grant_control.DomainId.FEED,
-        )
-        assert allocation is not None
-        grant = _make_feed_grant()
-        claimed = False
-        control = mock.AsyncMock()
-
-        async def claim(mode, owner_worker_id, limit):
-            nonlocal claimed
-            if mode is grant_control.ClaimMode.RECOVERY or claimed:
-                return ()
-            claimed = True
-            return (
-                grant_control.ClaimedGrant(
-                    grant=grant,
-                    payload=payload,
-                ),
-            )
-
-        async def finalize(finalized_grant, finalized_payload, terminal):
-            assert finalized_payload is payload
-            return grant_control.FinalizeResult(
-                finalized_grant,
-                grant_control.FinalizeDisposition.APPLIED,
-            )
-
-        control.claim.side_effect = claim
-        control.finalize.side_effect = finalize
-        runner = mock.AsyncMock()
-        runner.run.return_value = grant_control.RunCompleted()
-        registration = grant_supervisor.RegisteredDomain(
-            domain_id=grant_control.DomainId.FEED,
-            authority_kind=worker_profiles.AuthorityKind.FEED,
-            grant_type=FeedGrant,
-            payload_validator=collector_runtime._is_leased_feed_payload,
-            authority_of=collector_runtime._feed_authority,
-            owner_of=collector_runtime._feed_owner,
-            fencing_token_of=collector_runtime._feed_fencing_token,
-            control=control,
-            runner=runner,
-            allocation=allocation,
-        )
-        supervisor = grant_supervisor.GrantSupervisor(
-            settings.worker_profile,
-            (registration,),
-            finalize_concurrency=1,
-            failure_planner=_plan_test_failure,
-        )
-        return supervisor, runner, control
-
-    async def test_valid_payload_reaches_runner_unchanged(self) -> None:
-        supervisor, runner, control = self._build_supervisor(_FEED)
-
-        await supervisor.admit_cycle(_WORKER_ID)
-        for _ in range(3):
-            await asyncio.sleep(0)
-
-        runner.run.assert_awaited_once()
-        self.assertIs(runner.run.await_args.args[1], _FEED)
-        control.finalize.assert_awaited_once()
-
-    async def test_malformed_payloads_never_reach_runner(self) -> None:
-        missing = dict(_FEED)
-        del missing["name"]
-        payloads = (
-            missing,
-            {**_FEED, "source_type": "bcfy_feeds"},
-            {**_FEED, "tags": [{"name": 1}]},
-        )
-
-        for case_index, payload in enumerate(payloads):
-            with self.subTest(case_index=case_index):
-                supervisor, runner, control = self._build_supervisor(payload)
-                await supervisor.admit_cycle(_WORKER_ID)
-
-                self.assertTrue(supervisor.integrity_failure_event.is_set())
-                self.assertEqual(
-                    supervisor.snapshot()
-                    .counts_by_domain[grant_control.DomainId.FEED]
-                    .active,
-                    0,
-                )
-                runner.run.assert_not_awaited()
-                control.finalize.assert_not_awaited()
-
-
 class TestProcessFeedSideEffectOrdering(unittest.IsolatedAsyncioTestCase):
     """Tests for post-capture side-effect ordering in _process_feed."""
 
@@ -1084,12 +943,8 @@ class TestProcessFeedSideEffectOrdering(unittest.IsolatedAsyncioTestCase):
         rt._capture_resources = _default_resources()
         rt._store = mock.AsyncMock()
         rt._store.update_feed_progress.return_value = True
-        allocation = worker_profiles.allocation_for_domain(
-            rt._collector_settings.worker_profile,
-            grant_control.DomainId.FEED,
-        )
-        assert allocation is not None
         control = mock.AsyncMock()
+        control.domain_id = grant_control.DomainId.FEED
         claimed = False
 
         async def claim(mode, owner_worker_id, limit):
@@ -1110,15 +965,8 @@ class TestProcessFeedSideEffectOrdering(unittest.IsolatedAsyncioTestCase):
             (
                 grant_supervisor.RegisteredDomain(
                     domain_id=grant_control.DomainId.FEED,
-                    authority_kind=worker_profiles.AuthorityKind.FEED,
-                    grant_type=FeedGrant,
-                    payload_validator=collector_runtime._is_leased_feed_payload,
-                    authority_of=collector_runtime._feed_authority,
-                    owner_of=collector_runtime._feed_owner,
-                    fencing_token_of=collector_runtime._feed_fencing_token,
                     control=control,
                     runner=collector_runtime._FeedRunner(rt),
-                    allocation=allocation,
                 ),
             ),
             finalize_concurrency=1,
@@ -1139,9 +987,7 @@ class TestProcessFeedSideEffectOrdering(unittest.IsolatedAsyncioTestCase):
             async def stop_heartbeat() -> None:
                 return None
 
-            with self.assertRaises(
-                grant_supervisor.SupervisorNotDrainedError
-            ):
+            with self.assertRaises(grant_supervisor.SupervisorNotDrainedError):
                 await supervisor.shutdown(
                     cooperative_grace_sec=0,
                     external_stop_deadline_sec=0,
@@ -2325,10 +2171,6 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         scheduler_factory.assert_not_called()
         self.assertIsNone(rt._sid_calls_provider)
         self.assertIsNone(rt._feed_work_scheduler)
-        self.assertEqual(
-            set(rt._supervisor.snapshot().counts_by_domain),
-            {grant_control.DomainId.FEED},
-        )
         self.assertIn(SourceType.BCFY_CALLS, rt._store._claim_types)
         self.assertIn(SourceType.BCFY_CALLS, rt._heartbeat_store._claim_types)
 
@@ -2441,10 +2283,6 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         data_store.claim_unclaimed.assert_not_awaited()
         data_store.claim_recoverable.assert_not_awaited()
         self.assertEqual(scheduler.open_lane_calls, 0)
-        self.assertEqual(
-            set(rt._supervisor.snapshot().counts_by_domain),
-            {grant_control.DomainId.SID},
-        )
 
     async def test_mixed_dormant_uses_one_supervisor_and_resource_set(
         self,
@@ -2487,10 +2325,6 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         self.assertIs(resources.heartbeat_store, heartbeat_store)
         self.assertIs(resources.calls_provider, calls_provider)
         self.assertIs(resources.feed_work_scheduler, scheduler)
-        self.assertEqual(
-            set(rt._supervisor.snapshot().counts_by_domain),
-            {grant_control.DomainId.FEED, grant_control.DomainId.SID},
-        )
         self.assertIn(SourceType.BCFY_CALLS, rt._store._claim_types)
         self.assertIs(
             rt._capture_resources.http_session,
@@ -2521,10 +2355,6 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         }
         self.assertEqual(set(rt._store._claim_types), expected)
         self.assertEqual(set(rt._heartbeat_store._claim_types), expected)
-        self.assertEqual(
-            set(rt._supervisor.snapshot().counts_by_domain),
-            {grant_control.DomainId.FEED, grant_control.DomainId.SID},
-        )
         sid_allocation = worker_profiles.allocation_for_domain(
             profile,
             grant_control.DomainId.SID,
@@ -2554,10 +2384,6 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(
             rt._sid_calls_provider,
             bcfy_calls_provider.CallsProviderClient,
-        )
-        self.assertEqual(
-            set(rt._supervisor.snapshot().counts_by_domain),
-            {grant_control.DomainId.SID},
         )
 
     async def test_invalid_scheduler_is_rejected_after_shared_sid_resources(
@@ -2862,11 +2688,11 @@ class TestSelectedDomainComposition(unittest.IsolatedAsyncioTestCase):
 
         scheduler_snapshot = await scheduler._snapshot()
         self.assertEqual(scheduler_snapshot.lane_count, 1)
-        snapshot = rt._health_state.snapshot_provider()
         self.assertEqual(
-            snapshot.counts_by_domain[grant_control.DomainId.SID].active,
+            rt._supervisor.active_count(grant_control.DomainId.SID),
             1,
         )
+        self.assertEqual(rt._health_state.active_feed_count(), 0)
         heartbeat_store.renew_heartbeats.assert_awaited_once_with((grant,))
         self.assertIs(rt._sid_data_store, data_store)
         self.assertIs(rt._sid_heartbeat_store, heartbeat_store)

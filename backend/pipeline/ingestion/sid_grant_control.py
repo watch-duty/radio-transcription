@@ -89,6 +89,8 @@ def _finalize_disposition(
 class SidGrantControl:
     """Translate generic grant operations to authoritative SID Lease stores."""
 
+    domain_id = grant_control.DomainId.SID
+
     def __init__(
         self,
         data_store: ingestion_lease_store.IngestionLeaseStore,

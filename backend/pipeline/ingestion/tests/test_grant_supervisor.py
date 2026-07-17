@@ -73,58 +73,6 @@ def _sid_payload(
     return sid_grant_control.SidClaimPayload(mode)
 
 
-def _valid_leased_feed(
-    value: object,
-) -> typing.TypeGuard[feed_store.LeasedFeed]:
-    if not isinstance(value, dict):
-        return False
-    mapping = typing.cast("dict[str, object]", value)
-    required = {
-        "id",
-        "name",
-        "source_type",
-        "last_processed_filename",
-        "last_bookmark_time",
-        "fencing_token",
-        "failure_count",
-        "status_reason",
-        "source_feed_id",
-    }
-    if not required.issubset(mapping):
-        return False
-    return (
-        isinstance(mapping["id"], uuid.UUID)
-        and isinstance(mapping["name"], str)
-        and isinstance(mapping["source_type"], feed_store.SourceType)
-        and (
-            mapping["last_processed_filename"] is None
-            or isinstance(mapping["last_processed_filename"], str)
-        )
-        and (
-            mapping["last_bookmark_time"] is None
-            or isinstance(mapping["last_bookmark_time"], datetime.datetime)
-        )
-        and not isinstance(mapping["fencing_token"], bool)
-        and isinstance(mapping["fencing_token"], int)
-        and not isinstance(mapping["failure_count"], bool)
-        and isinstance(mapping["failure_count"], int)
-        and (
-            mapping["status_reason"] is None
-            or isinstance(mapping["status_reason"], feed_store.FeedStatusReason)
-        )
-        and (
-            mapping["source_feed_id"] is None
-            or isinstance(mapping["source_feed_id"], str)
-        )
-    )
-
-
-def _valid_sid_payload(
-    value: object,
-) -> typing.TypeGuard[sid_grant_control.SidClaimPayload]:
-    return type(value) is sid_grant_control.SidClaimPayload
-
-
 _FAILURE_BUDGET = failure_policy.ConsumeFailureBudget(5, 15, 600)
 
 
@@ -141,6 +89,7 @@ def _plan_failure(
 
 class _ControlledControl[GrantT, PayloadT]:
     def __init__(self) -> None:
+        self.domain_id = grant_control.DomainId.FEED
         self.results: dict[
             grant_control.ClaimMode,
             tuple[grant_control.ClaimedGrant[GrantT, PayloadT], ...],
@@ -172,6 +121,7 @@ class _ControlledControl[GrantT, PayloadT]:
         self.finalize_result: grant_control.FinalizeResult[GrantT] | None = None
         self.finalize_error: Exception | None = None
         self.block_finalize = False
+        self.swallow_finalize_cancellation = False
         self.finalize_entered = asyncio.Event()
         self.two_finalizers_entered = asyncio.Event()
         self.release_finalize = asyncio.Event()
@@ -234,7 +184,15 @@ class _ControlledControl[GrantT, PayloadT]:
             self.two_finalizers_entered.set()
         try:
             if self.block_finalize:
-                await self.release_finalize.wait()
+                try:
+                    await self.release_finalize.wait()
+                except asyncio.CancelledError:
+                    if not self.swallow_finalize_cancellation:
+                        raise
+                    current = asyncio.current_task()
+                    assert current is not None
+                    current.uncancel()
+                    await self.release_finalize.wait()
             if self.finalize_error is not None:
                 raise self.finalize_error
             if self.finalize_result is not None:
@@ -338,29 +296,15 @@ def _feed_registration(
         feed_store.FeedGrant,
         feed_store.LeasedFeed,
     ],
-    allocation: worker_profiles.DomainAllocation,
-    *,
-    validator: typing.Callable[
-        [object],
-        typing.TypeGuard[feed_store.LeasedFeed],
-    ] = _valid_leased_feed,
 ) -> grant_supervisor.RegisteredDomain[
     feed_store.FeedGrant,
     feed_store.LeasedFeed,
 ]:
+    control.domain_id = grant_control.DomainId.FEED
     return grant_supervisor.RegisteredDomain(
         domain_id=grant_control.DomainId.FEED,
-        authority_kind=worker_profiles.AuthorityKind.FEED,
-        grant_type=feed_store.FeedGrant,
-        payload_validator=validator,
-        authority_of=lambda grant: grant_supervisor.FeedAuthority(
-            grant.feed_id
-        ),
-        owner_of=lambda grant: grant.owner_worker_id,
-        fencing_token_of=lambda grant: grant.fencing_token,
         control=control,
         runner=runner,
-        allocation=allocation,
     )
 
 
@@ -373,25 +317,15 @@ def _sid_registration(
         ingestion_lease_store.LeaseGrant,
         sid_grant_control.SidClaimPayload,
     ],
-    allocation: worker_profiles.DomainAllocation,
 ) -> grant_supervisor.RegisteredDomain[
     ingestion_lease_store.LeaseGrant,
     sid_grant_control.SidClaimPayload,
 ]:
+    control.domain_id = grant_control.DomainId.SID
     return grant_supervisor.RegisteredDomain(
         domain_id=grant_control.DomainId.SID,
-        authority_kind=worker_profiles.AuthorityKind.SID_LEASE,
-        grant_type=ingestion_lease_store.LeaseGrant,
-        payload_validator=_valid_sid_payload,
-        authority_of=lambda grant: grant_supervisor.SidAuthority(
-            grant.source_type.value,
-            grant.lease_key,
-        ),
-        owner_of=lambda grant: grant.owner_worker_id,
-        fencing_token_of=lambda grant: grant.fencing_token,
         control=control,
         runner=runner,
-        allocation=allocation,
     )
 
 
@@ -405,8 +339,44 @@ def _claim[GrantT, PayloadT](
     )
 
 
+async def _settle_terminal_tasks(
+    supervisor: grant_supervisor.GrantSupervisor,
+) -> None:
+    while supervisor._terminal_tasks:
+        tasks = tuple(supervisor._terminal_tasks)
+        await asyncio.gather(*tasks, return_exceptions=True)
+        supervisor._terminal_tasks.difference_update(tasks)
+
+
 class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
     """Controlled reservation, admission, and exact-generation proofs."""
+
+    def test_registration_rejects_cross_wired_control_domain(self) -> None:
+        control: _ControlledControl[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _ControlledControl()
+        runner: _ControlledRunner[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _ControlledRunner()
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "does not match control domain",
+        ):
+            grant_supervisor.RegisteredDomain(
+                domain_id=grant_control.DomainId.SID,
+                control=control,
+                runner=runner,
+            )
+
+    def test_public_annotations_resolve_at_runtime(self) -> None:
+        hints = typing.get_type_hints(
+            grant_supervisor.GrantSupervisor.admit_cycle
+        )
+
+        self.assertIs(hints["owner_worker_id"], uuid.UUID)
 
     def _mixed(
         self,
@@ -460,7 +430,6 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                 _feed_registration(
                     feed_control,
                     feed_runner,
-                    allocations[grant_control.DomainId.FEED],
                 )
             )
         if grant_control.DomainId.SID in allocations:
@@ -468,7 +437,6 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                 _sid_registration(
                     sid_control,
                     sid_runner,
-                    allocations[grant_control.DomainId.SID],
                 )
             )
         supervisor = grant_supervisor.GrantSupervisor(
@@ -525,7 +493,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         managed = next(iter(supervisor._registry.values()))
         assert managed.root_task is not None
         await asyncio.wait_for(managed.root_task, timeout=1)
-        await supervisor._settle_terminal_tasks()
+        await _settle_terminal_tasks(supervisor)
 
         planner.assert_called_once_with(outcome)
         self.assertEqual(len(feed_control.finalize_calls), 1)
@@ -567,12 +535,12 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             feed_runner.finish.set()
             assert managed.root_task is not None
             await asyncio.wait_for(managed.root_task, timeout=1)
-            self.assertTrue(supervisor._discard_exact_generation(managed.key))
+            self.assertTrue(supervisor._discard_current(managed))
             planner.assert_not_called()
         finally:
             supervisor._finalize_semaphore.release()
             supervisor._finalize_semaphore.release()
-        await supervisor._settle_terminal_tasks()
+        await _settle_terminal_tasks(supervisor)
 
         planner.assert_not_called()
         self.assertEqual(feed_control.finalize_calls, [])
@@ -591,7 +559,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             task = managed.root_task
             if task is not None:
                 await asyncio.wait_for(task, timeout=1)
-        await supervisor._settle_terminal_tasks()
+        await _settle_terminal_tasks(supervisor)
 
     async def test_feed_and_sid_share_admission_and_generation_contract(
         self,
@@ -627,11 +595,20 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(supervisor._registry), 2)
             self.assertEqual(supervisor._process_owned, 2)
             self.assertEqual(supervisor._process_reserved, 0)
-            authorities = {key.authority for key in supervisor._registry}
-            self.assertIn(grant_supervisor.FeedAuthority(feed_id), authorities)
+            slots = set(supervisor._registry)
             self.assertIn(
-                grant_supervisor.SidAuthority("bcfy_calls", "123"),
-                authorities,
+                grant_supervisor._UnitSlot(
+                    grant_control.DomainId.FEED,
+                    feed_id,
+                ),
+                slots,
+            )
+            self.assertIn(
+                grant_supervisor._UnitSlot(
+                    grant_control.DomainId.SID,
+                    (feed_store.SourceType.BCFY_CALLS, "123"),
+                ),
+                slots,
             )
             self.assertIs(feed_runner.calls[0][0], feed_grant)
             self.assertIs(sid_runner.calls[0][0], sid_grant)
@@ -676,7 +653,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         managed = next(iter(supervisor._registry.values()))
         assert managed.root_task is not None
         await managed.root_task
-        await supervisor._settle_terminal_tasks()
+        await _settle_terminal_tasks(supervisor)
 
         self.assertEqual(len(sid_control.finalize_payloads), 1)
         self.assertIs(sid_control.finalize_payloads[0], payload)
@@ -727,7 +704,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                 assert root_task is not None
                 sid_runner.finish.set()
                 await asyncio.wait_for(root_task, timeout=1)
-                await supervisor._settle_terminal_tasks()
+                await _settle_terminal_tasks(supervisor)
 
                 self.assertEqual(
                     sid_control.finalize_calls,
@@ -1012,9 +989,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         async def stop_heartbeat() -> None:
             heartbeat_stopped.set()
 
-        with self.assertRaises(
-            grant_supervisor.SupervisorNotDrainedError
-        ):
+        with self.assertRaises(grant_supervisor.SupervisorNotDrainedError):
             await supervisor.shutdown(
                 cooperative_grace_sec=0,
                 external_stop_deadline_sec=0,
@@ -1123,106 +1098,6 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             typing.cast("_ControlledRunner[object, object]", sid_runner),
         )
 
-    async def test_malformed_feed_payloads_fail_before_registration_or_run(
-        self,
-    ) -> None:
-        profile = _profile(
-            process_cap=1,
-            feed_cap=1,
-            feed_budget=1,
-            domains=(grant_control.DomainId.FEED,),
-        )
-        malformed = (
-            {"id": uuid.UUID(int=1)},
-            {**_leased_feed(uuid.UUID(int=2)), "name": 7},
-        )
-        for case_index, payload in enumerate(malformed):
-            with self.subTest(case_index=case_index):
-                (
-                    supervisor,
-                    feed_control,
-                    feed_runner,
-                    _sid_control,
-                    _sid_runner,
-                ) = self._mixed(profile)
-                feed_id = typing.cast(
-                    "uuid.UUID",
-                    typing.cast("dict[str, object]", payload)["id"],
-                )
-                grant = feed_store.FeedGrant(
-                    feed_id,
-                    _OWNER_ID,
-                    1,
-                )
-                feed_control.results[grant_control.ClaimMode.PRIMARY] = (
-                    typing.cast(
-                        "grant_control.ClaimedGrant[feed_store.FeedGrant, feed_store.LeasedFeed]",
-                        _claim(grant, payload),
-                    ),
-                )
-
-                await supervisor.admit_cycle(_OWNER_ID)
-
-                self.assertFalse(supervisor.admission_enabled)
-                self.assertTrue(supervisor.integrity_failure_event.is_set())
-                self.assertEqual(supervisor._registry, {})
-                self.assertEqual(feed_runner.calls, [])
-                self.assertEqual(supervisor._process_reserved, 0)
-
-    async def test_validator_exception_is_a_visible_integrity_failure(
-        self,
-    ) -> None:
-        profile = _profile(
-            process_cap=1,
-            feed_cap=1,
-            feed_budget=1,
-            domains=(grant_control.DomainId.FEED,),
-        )
-        feed_control = _ControlledControl[
-            feed_store.FeedGrant,
-            feed_store.LeasedFeed,
-        ]()
-        feed_runner = _ControlledRunner[
-            feed_store.FeedGrant,
-            feed_store.LeasedFeed,
-        ]()
-
-        def raising_validator(
-            _value: object,
-        ) -> typing.TypeGuard[feed_store.LeasedFeed]:
-            msg = "validator bug"
-            raise RuntimeError(msg)
-
-        registration = _feed_registration(
-            feed_control,
-            feed_runner,
-            profile.allocations[0],
-            validator=raising_validator,
-        )
-        supervisor = grant_supervisor.GrantSupervisor(
-            profile,
-            (registration,),
-            finalize_concurrency=1,
-            failure_planner=_plan_failure,
-        )
-        feed_id = uuid.UUID(int=3)
-        feed_control.results[grant_control.ClaimMode.PRIMARY] = (
-            _claim(
-                feed_store.FeedGrant(feed_id, _OWNER_ID, 1),
-                _leased_feed(feed_id),
-            ),
-        )
-
-        await supervisor.admit_cycle(_OWNER_ID)
-
-        self.assertFalse(supervisor.admission_enabled)
-        self.assertIsInstance(
-            supervisor.integrity_failure,
-            grant_control.GrantControlIntegrityError,
-        )
-        self.assertEqual(supervisor._registry, {})
-        self.assertEqual(feed_runner.calls, [])
-
     async def test_overreturn_wrong_owner_and_duplicate_stop_admission(
         self,
     ) -> None:
@@ -1265,7 +1140,17 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                         ),
                     )
                 elif case == "duplicate":
-                    claims = (first, first)
+                    claims = (
+                        first,
+                        _claim(
+                            feed_store.FeedGrant(
+                                first_id,
+                                _OWNER_ID,
+                                2,
+                            ),
+                            _leased_feed(first_id, fencing_token=2),
+                        ),
+                    )
                 else:
                     claims = (first,)
                 feed_control.results[grant_control.ClaimMode.PRIMARY] = claims
@@ -1299,11 +1184,11 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             _claim(old_grant, _leased_feed(feed_id)),
         )
         await supervisor.admit_cycle(_OWNER_ID)
-        old_key = next(iter(supervisor._registry))
-        old_managed = supervisor._registry[old_key]
+        old_slot = next(iter(supervisor._registry))
+        old_managed = supervisor._registry[old_slot]
         self.assertTrue(
             supervisor._reserve_terminal(
-                old_key,
+                old_managed,
                 grant_supervisor._ConfirmedLoss(),
             )
         )
@@ -1313,7 +1198,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(old_task)
         assert old_task is not None
         await old_task
-        self.assertNotIn(old_key, supervisor._registry)
+        self.assertNotIn(old_slot, supervisor._registry)
 
         successor = feed_store.FeedGrant(feed_id, _OWNER_ID, 2)
         feed_control.results[grant_control.ClaimMode.PRIMARY] = (
@@ -1321,12 +1206,15 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         )
         feed_runner.finish.clear()
         await supervisor.admit_cycle(_OWNER_ID)
-        successor_key = next(iter(supervisor._registry))
+        successor_slot = next(iter(supervisor._registry))
 
-        supervisor._root_done(old_key, old_task)
+        supervisor._root_done(old_managed, old_task)
 
-        self.assertIn(successor_key, supervisor._registry)
-        self.assertEqual(successor_key.fencing_token, 2)
+        self.assertIn(successor_slot, supervisor._registry)
+        self.assertEqual(
+            supervisor._registry[successor_slot].grant.fencing_token,
+            2,
+        )
         self.assertEqual(supervisor._process_owned, 1)
         self.assertEqual(feed_control.finalize_calls, [])
         await self._close(
@@ -1666,7 +1554,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             sid_managed = next(
                 managed
                 for managed in supervisor._registry.values()
-                if managed.key.domain_id is grant_control.DomainId.SID
+                if managed.slot.domain_id is grant_control.DomainId.SID
             )
             self.assertIs(
                 sid_managed.terminal_kind,
@@ -1801,10 +1689,9 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         try:
             await supervisor.admit_cycle(_OWNER_ID)
             await asyncio.wait_for(feed_runner.started.wait(), timeout=1)
-            snapshot = supervisor.snapshot()
             self.assertEqual(
-                snapshot.counts_by_domain[grant_control.DomainId.FEED],
-                grant_supervisor.GrantCount(1),
+                supervisor.active_count(grant_control.DomainId.FEED),
+                1,
             )
             await supervisor.heartbeat_cycle(lambda: None)
             self.assertEqual(len(feed_control.heartbeat_calls), 1)
@@ -1913,9 +1800,9 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         start_terminal = supervisor._start_terminal_task
 
         def observed_start(
-            key: grant_supervisor._GenerationKey,
+            managed: grant_supervisor._ManagedGrant,
         ) -> asyncio.Task[grant_supervisor._FinalizeEffect]:
-            task = start_terminal(key)
+            task = start_terminal(managed)
             terminal_tasks.append(task)
             if len(terminal_tasks) == 2:
                 both_started.set()
@@ -2023,6 +1910,51 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(result)
         self.assertEqual(len(feed_control.finalize_calls), 1)
         self.assertEqual(supervisor._process_owned, 1)
+
+    async def test_shutdown_is_bounded_when_finalizer_resists_cancellation(
+        self,
+    ) -> None:
+        profile = _profile(
+            process_cap=1,
+            feed_cap=1,
+            feed_budget=1,
+            domains=(grant_control.DomainId.FEED,),
+        )
+        (
+            supervisor,
+            feed_control,
+            feed_runner,
+            _sid_control,
+            _sid_runner,
+        ) = self._mixed(profile)
+        feed_id = uuid.UUID(int=143)
+        grant = feed_store.FeedGrant(feed_id, _OWNER_ID, 1)
+        feed_control.results[grant_control.ClaimMode.PRIMARY] = (
+            _claim(grant, _leased_feed(feed_id)),
+        )
+        feed_control.block_finalize = True
+        feed_control.swallow_finalize_cancellation = True
+        await supervisor.admit_cycle(_OWNER_ID)
+        feed_runner.finish.set()
+        await asyncio.wait_for(feed_control.finalize_entered.wait(), timeout=1)
+
+        async def stop_heartbeat() -> None:
+            return None
+
+        with self.assertRaises(grant_supervisor.SupervisorNotDrainedError):
+            await asyncio.wait_for(
+                supervisor.shutdown(
+                    cooperative_grace_sec=0,
+                    external_stop_deadline_sec=0,
+                    stop_heartbeat_supervision=stop_heartbeat,
+                ),
+                timeout=1,
+            )
+
+        self.assertEqual(len(supervisor._terminal_tasks), 1)
+        feed_control.release_finalize.set()
+        await _settle_terminal_tasks(supervisor)
+        self.assertEqual(supervisor._registry, {})
 
     async def test_shutdown_waits_for_child_and_heartbeat_stop_before_release(
         self,
@@ -2164,9 +2096,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         async def stop_heartbeat() -> None:
             return None
 
-        with self.assertRaises(
-            grant_supervisor.SupervisorNotDrainedError
-        ):
+        with self.assertRaises(grant_supervisor.SupervisorNotDrainedError):
             await supervisor.shutdown(
                 cooperative_grace_sec=0,
                 external_stop_deadline_sec=0,
@@ -2228,9 +2158,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         async def stop_heartbeat() -> None:
             return None
 
-        with self.assertRaises(
-            grant_supervisor.SupervisorNotDrainedError
-        ):
+        with self.assertRaises(grant_supervisor.SupervisorNotDrainedError):
             await supervisor.shutdown(
                 cooperative_grace_sec=0,
                 external_stop_deadline_sec=0,
@@ -2295,12 +2223,12 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(feed_control.max_finalize_active, 2)
         self.assertEqual(len(feed_control.finalize_calls), 3)
 
-    async def test_old_generation_heartbeat_result_cannot_touch_successor(
+    async def test_stale_heartbeat_failure_cannot_poison_successor(
         self,
     ) -> None:
         profile = _profile(
-            process_cap=1,
-            feed_cap=1,
+            process_cap=2,
+            feed_cap=2,
             feed_budget=1,
             domains=(grant_control.DomainId.FEED,),
         )
@@ -2317,27 +2245,10 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             _claim(old_grant, _leased_feed(feed_id)),
         )
         await supervisor.admit_cycle(_OWNER_ID)
-        old_key = next(iter(supervisor._registry))
-        feed_control.heartbeat_results = (
-            grant_control.GrantHeartbeat(
-                old_grant,
-                grant_control.HeartbeatDisposition.RETAINED,
-            ),
-        )
         feed_control.block_heartbeat = True
+        feed_control.heartbeat_error = RuntimeError("stale heartbeat failed")
         cycle = asyncio.create_task(supervisor.heartbeat_cycle(lambda: None))
         await asyncio.wait_for(feed_control.heartbeat_entered.wait(), timeout=1)
-        self.assertTrue(
-            supervisor._reserve_terminal(
-                old_key,
-                grant_supervisor._ConfirmedLoss(),
-            )
-        )
-        feed_runner.finish.set()
-        old_managed = supervisor._registry[old_key]
-        await asyncio.wait_for(old_managed.runner_closed.wait(), timeout=1)
-        self.assertNotIn(old_key, supervisor._registry)
-        feed_runner.finish.clear()
 
         successor = feed_store.FeedGrant(feed_id, _OWNER_ID, 2)
         feed_control.results[grant_control.ClaimMode.PRIMARY] = (
@@ -2348,7 +2259,9 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         feed_control.release_heartbeat.set()
         await cycle
 
-        self.assertEqual(successor_managed.key.fencing_token, 2)
+        self.assertEqual(successor_managed.grant.fencing_token, 2)
+        self.assertTrue(supervisor.admission_enabled)
+        self.assertIsNone(supervisor.integrity_failure)
         self.assertIs(
             successor_managed.terminal_state,
             grant_supervisor.TerminalState.OPEN,
@@ -2455,7 +2368,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             failure_policy.FailurePersistencePlan,
         )
 
-    async def test_snapshot_and_lifecycle_records_are_low_cardinality(
+    async def test_lifecycle_records_are_low_cardinality(
         self,
     ) -> None:
         profile = _profile()
@@ -2490,7 +2403,14 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             await supervisor.admit_cycle(_OWNER_ID)
             await asyncio.wait_for(feed_runner.started.wait(), timeout=1)
             await asyncio.wait_for(sid_runner.started.wait(), timeout=1)
-            snapshot = supervisor.snapshot()
+            self.assertEqual(
+                supervisor.active_count(grant_control.DomainId.FEED),
+                1,
+            )
+            self.assertEqual(
+                supervisor.active_count(grant_control.DomainId.SID),
+                1,
+            )
             await supervisor.heartbeat_cycle(lambda: None)
 
             async def stop_heartbeat() -> None:
@@ -2503,24 +2423,6 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertIsNone(result)
-        self.assertEqual(snapshot.profile, profile.name)
-        self.assertEqual(
-            snapshot.profile_digest,
-            worker_profiles.profile_digest(profile),
-        )
-        self.assertEqual(
-            snapshot.counts_by_domain[grant_control.DomainId.FEED],
-            grant_supervisor.GrantCount(1),
-        )
-        self.assertEqual(
-            snapshot.counts_by_domain[grant_control.DomainId.SID],
-            grant_supervisor.GrantCount(1),
-        )
-        with self.assertRaises(TypeError):
-            typing.cast(
-                "dict[grant_control.DomainId, grant_supervisor.GrantCount]",
-                snapshot.counts_by_domain,
-            )[grant_control.DomainId.FEED] = grant_supervisor.GrantCount(0)
 
         records = [
             call.kwargs["extra"]["json_fields"]
@@ -2531,7 +2433,6 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             {
                 "admission",
                 "heartbeat",
-                "count_snapshot",
                 "shutdown",
                 "finalization",
             }.issubset({record["event_type"] for record in records})
@@ -2581,13 +2482,8 @@ class TestGrantSupervisorStructure(unittest.TestCase):
     ) -> None:
         for value_type in (
             grant_supervisor.RegisteredDomain,
-            grant_supervisor.FeedAuthority,
-            grant_supervisor.SidAuthority,
-            grant_supervisor._AuthoritySlot,
-            grant_supervisor._GenerationKey,
+            grant_supervisor._UnitSlot,
             grant_supervisor._ErasedRegisteredDomain,
-            grant_supervisor.GrantCount,
-            grant_supervisor.SupervisorSnapshot,
         ):
             with self.subTest(value_type=value_type.__name__):
                 self.assertTrue(value_type.__dataclass_params__.frozen)
@@ -2620,13 +2516,13 @@ class TestGrantSupervisorStructure(unittest.TestCase):
             "_register_claim",
             "_run_managed",
             "_root_done",
-            "_discard_exact_generation",
+            "_discard_current",
             "heartbeat_cycle",
             "_validate_heartbeat_results",
             "_fail_heartbeat_domain",
             "_reserve_terminal",
             "_finalize_reserved",
-            "snapshot",
+            "active_count",
             "shutdown",
         }
         class_node = typing.cast("ast.ClassDef", tree.body[0])
@@ -2649,7 +2545,6 @@ class TestGrantSupervisorStructure(unittest.TestCase):
         source = pathlib.Path(grant_supervisor.__file__).read_text()
 
         self.assertNotIn("typing.Any", source)
-        self.assertNotIn("typing.cast", source)
         self.assertNotIn("LeasedFeed", source)
         for forbidden in (
             "feed_grant_control",
@@ -2670,18 +2565,6 @@ class TestGrantSupervisorStructure(unittest.TestCase):
             with self.subTest(forbidden=forbidden):
                 self.assertNotIn(f"import {forbidden}", source)
 
-    def test_feed_validator_checks_mapping_shape_not_typed_dict_runtime(
-        self,
-    ) -> None:
-        source = inspect.getsource(_valid_leased_feed)
-
-        self.assertNotIn("isinstance(value, feed_store.LeasedFeed)", source)
-        self.assertTrue(_valid_leased_feed(_leased_feed(uuid.UUID(int=30))))
-        self.assertFalse(_valid_leased_feed({"id": uuid.UUID(int=30)}))
-        malformed = _leased_feed(uuid.UUID(int=31))
-        malformed["fencing_token"] = typing.cast("int", "wrong")
-        self.assertFalse(_valid_leased_feed(malformed))
-
     def test_future_domain_requires_catalog_profile_and_registration(
         self,
     ) -> None:
@@ -2697,18 +2580,7 @@ class TestGrantSupervisorStructure(unittest.TestCase):
             tuple(
                 inspect.signature(grant_supervisor.RegisteredDomain).parameters
             ),
-            (
-                "domain_id",
-                "authority_kind",
-                "grant_type",
-                "payload_validator",
-                "authority_of",
-                "owner_of",
-                "fencing_token_of",
-                "control",
-                "runner",
-                "allocation",
-            ),
+            ("domain_id", "control", "runner"),
         )
 
     def test_supervisor_has_no_client_pool_or_sleep_owned_api(self) -> None:
@@ -2719,7 +2591,7 @@ class TestGrantSupervisorStructure(unittest.TestCase):
         }
         self.assertEqual(
             public_methods,
-            {"admit_cycle", "heartbeat_cycle", "snapshot", "shutdown"},
+            {"active_count", "admit_cycle", "heartbeat_cycle", "shutdown"},
         )
         source = pathlib.Path(grant_supervisor.__file__).read_text()
         test_source = pathlib.Path(__file__).read_text()
