@@ -9,10 +9,13 @@ import asyncio
 import collections
 import dataclasses
 import typing
-import uuid
 
 from backend.pipeline.ingestion.feed_work_scheduler import _types
-from backend.pipeline.storage import ingestion_lease_store
+
+if typing.TYPE_CHECKING:
+    import uuid
+
+    from backend.pipeline.storage import ingestion_lease_store
 
 
 class _ShardClosedError(RuntimeError):
@@ -315,7 +318,7 @@ class _Shard:
             for slot in self._workers:
                 self._spawn_worker_locked(slot)
 
-    async def admit_cohort(  # noqa: PLR0912, PLR0915
+    async def admit_cohort(
         self,
         submission: _types.CohortSubmission,
         works: tuple[_types._CallWork, ...],
@@ -324,31 +327,15 @@ class _Shard:
         abort_event: asyncio.Event | None = None,
     ) -> _types._CohortRecord:
         """Atomically register one N-record Feed FIFO cohort."""
-        if type(submission) is not _types.CohortSubmission:
-            message = "submission must be an exact CohortSubmission"
-            raise TypeError(message)
-        if not isinstance(works, tuple) or not works:
+        if not works:
             message = "works must be a nonempty immutable tuple"
             raise ValueError(message)
-        if any(type(work) is not _types._CallWork for work in works):
-            message = "works must contain exact _CallWork values"
-            raise TypeError(message)
         if len(works) != len(submission.calls):
             message = "work cardinality does not match cohort submission"
             raise ValueError(message)
         if len(works) > self._limits.capacity:
             message = "cohort exceeds the hard shard capacity"
             raise ValueError(message)
-        if type(signals) is not _types.LaneSignalView:
-            message = "signals must be an exact LaneSignalView"
-            raise TypeError(message)
-        if abort_event is not None and not isinstance(
-            abort_event,
-            asyncio.Event,
-        ):
-            message = "abort_event must be an asyncio.Event"
-            raise TypeError(message)
-
         async with self._capacity_changed:
             while True:
                 self._raise_admission_error_locked(works[0], abort_event)
@@ -420,7 +407,7 @@ class _Shard:
                 finally:
                     self._capacity_waiters -= 1
 
-    async def admit_boundary(  # noqa: PLR0912
+    async def admit_boundary(
         self,
         boundary_input: _types._BoundaryInput,
         *,
@@ -431,16 +418,6 @@ class _Shard:
         ],
     ) -> _types._BoundaryRecord:
         """Count or coalesce one current trailing boundary incrementally."""
-        if not isinstance(boundary_input, _types._BoundaryInput):
-            message = "boundary_input must be a _BoundaryInput"
-            raise TypeError(message)
-        if not isinstance(abort_event, asyncio.Event):
-            message = "abort_event must be an asyncio.Event"
-            raise TypeError(message)
-        if not callable(pressure_relief):
-            message = "pressure_relief must be callable"
-            raise TypeError(message)
-
         relief_requested = False
         while True:
             request_relief = False
@@ -511,13 +488,7 @@ class _Shard:
         feed_id: uuid.UUID,
     ) -> bool:
         """Return whether one complete Feed/page/grant barrier exists."""
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
         _types._require_nonnegative_integer(page_sequence, "page_sequence")
-        if not isinstance(feed_id, uuid.UUID):
-            message = "feed_id must be a UUID"
-            raise TypeError(message)
         async with self._lock:
             return (grant, page_sequence, feed_id) in self._replay_blocks
 
@@ -529,13 +500,7 @@ class _Shard:
         include_suspended: bool = False,
     ) -> tuple[_types._BoundaryRecord, ...]:
         """Detach a bounded ready exact-grant prefix under the shard lock."""
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
         _types._require_positive_integer(limit, "limit")
-        if not isinstance(include_suspended, bool):
-            message = "include_suspended must be a boolean"
-            raise TypeError(message)
         async with self._lock:
             self._raise_fatal_locked()
             selected = []
@@ -1053,7 +1018,7 @@ class _Shard:
         ):
             self._outcome_observer(cohort.records[0], outcome, retirement)
 
-    async def purge_exact(  # noqa: PLR0912, PLR0915
+    async def purge_exact(  # noqa: PLR0912
         self,
         grant: ingestion_lease_store.LeaseGrant,
         *,
@@ -1061,14 +1026,8 @@ class _Shard:
         preserve_final_pending_pages: frozenset[int] = frozenset(),
     ) -> _types._PurgeResult:
         """Release queued records matching the complete grant only."""
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
-        if not isinstance(settlement, _types.CallSettlement):
-            message = "settlement must be a CallSettlement"
-            raise TypeError(message)
-        if not isinstance(preserve_final_pending_pages, frozenset) or any(
-            isinstance(page, bool) or not isinstance(page, int) or page < 0
+        if any(
+            isinstance(page, bool) or page < 0
             for page in preserve_final_pending_pages
         ):
             message = "preserve_final_pending_pages must be page integers"
@@ -1170,13 +1129,7 @@ class _Shard:
         preserve_final_pending: bool = False,
     ) -> _types._PurgeResult:
         """Release only queued calls from one exact grant and page."""
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
         _types._require_nonnegative_integer(page_sequence, "page_sequence")
-        if not isinstance(preserve_final_pending, bool):
-            message = "preserve_final_pending must be a boolean"
-            raise TypeError(message)
         released_records = []
         final_pending_records = []
         async with self._lock:
@@ -1301,12 +1254,6 @@ class _Shard:
         feed_id: uuid.UUID,
     ) -> _types._RetireFeedResult:
         """Reject one exact grant/Feed and purge only its queued calls."""
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
-        if not isinstance(feed_id, uuid.UUID):
-            message = "feed_id must be a UUID"
-            raise TypeError(message)
         async with self._lock:
             result = self._retire_feed_locked(grant, feed_id)
         await self._notify_settlements(
@@ -1330,9 +1277,6 @@ class _Shard:
         grant: ingestion_lease_store.LeaseGrant,
     ) -> None:
         """Drop Feed-removal history after exact mutation closure."""
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
         async with self._lock:
             self._retired_scopes = {
                 scope for scope in self._retired_scopes if scope[0] != grant
@@ -1439,9 +1383,6 @@ class _Shard:
         grant: ingestion_lease_store.LeaseGrant,
     ) -> tuple[_CancellationRequest, ...]:
         """Mark exact active ownership before cancelling fixed workers."""
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
         async with self._lock:
             requests = []
             abandonment = self._abandonment_failure(grant)
@@ -1509,9 +1450,6 @@ class _Shard:
         failure: BaseException,
     ) -> None:
         """Fail closed when an intentionally cancelled worker stays live."""
-        if not isinstance(failure, BaseException):
-            message = "failure must be a BaseException"
-            raise TypeError(message)
         slot = self._require_slot(slot_id)
         async with self._lock:
             if (
@@ -1531,12 +1469,6 @@ class _Shard:
         failure: BaseException,
     ) -> int:
         """Fail closed for every live unsettled cancellation of a grant."""
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
-        if not isinstance(failure, BaseException):
-            message = "failure must be a BaseException"
-            raise TypeError(message)
         abandoned = 0
         async with self._lock:
             for slot in self._workers:
@@ -1559,7 +1491,7 @@ class _Shard:
 
     async def wait_for_capacity_waiters(self, minimum: int) -> None:
         """Wait for a bounded producer-wait count in deterministic tests."""
-        if isinstance(minimum, bool) or not isinstance(minimum, int):
+        if isinstance(minimum, bool):
             message = "minimum must be an integer"
             raise TypeError(message)
         if minimum < 0:
@@ -1575,7 +1507,7 @@ class _Shard:
 
     async def wait_for_held(self, expected: int) -> None:
         """Wait for an exact held count without polling or wall-clock sleeps."""
-        if isinstance(expected, bool) or not isinstance(expected, int):
+        if isinstance(expected, bool):
             message = "expected must be an integer"
             raise TypeError(message)
         if expected < 0 or expected > self._limits.capacity:
@@ -1592,9 +1524,6 @@ class _Shard:
         grant: ingestion_lease_store.LeaseGrant,
     ) -> None:
         """Wait until no counted record retains one complete grant."""
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
         async with self._capacity_changed:
             await self._capacity_changed.wait_for(
                 lambda: (
@@ -1635,9 +1564,6 @@ class _Shard:
 
     async def propagate_fatal(self, failure: BaseException) -> None:
         """Fail this shard from scheduler-global integrity evidence."""
-        if not isinstance(failure, BaseException):
-            message = "failure must be a BaseException"
-            raise TypeError(message)
         async with self._lock:
             self._mark_fatal_locked(failure, observe=False)
 
@@ -2269,12 +2195,6 @@ class _Shard:
         resolutions: tuple[_types.FinalRecordClosureResolution, ...],
     ) -> int:
         """Validate then consume this shard's exact final resolutions."""
-        if not isinstance(resolutions, tuple) or any(
-            type(value) is not _types.FinalRecordClosureResolution
-            for value in resolutions
-        ):
-            message = "resolutions must contain exact final values"
-            raise TypeError(message)
         notifications = []
         async with self._lock:
             self._require_final_pending_resolutions_locked(resolutions)
@@ -2300,12 +2220,6 @@ class _Shard:
         resolutions: tuple[_types.FinalRecordClosureResolution, ...],
     ) -> None:
         """Validate this shard's resolution subset without mutation."""
-        if not isinstance(resolutions, tuple) or any(
-            type(value) is not _types.FinalRecordClosureResolution
-            for value in resolutions
-        ):
-            message = "resolutions must contain exact final values"
-            raise TypeError(message)
         async with self._lock:
             self._require_final_pending_resolutions_locked(resolutions)
 
@@ -2328,9 +2242,6 @@ class _Shard:
         uncertainty: _types._FinalPageUncertainty,
     ) -> None:
         """Retain exact page uncertainty until process reconstruction."""
-        if not isinstance(uncertainty, _types._FinalPageUncertainty):
-            message = "uncertainty must be a _FinalPageUncertainty"
-            raise TypeError(message)
         async with self._lock:
             key = (grant, page_sequence)
             retained = self._uncertain_final_pages.get(key)
@@ -2665,9 +2576,6 @@ class _Shard:
         settlement: _types.CallSettlement,
     ) -> None:
         """Invoke every released record callback outside the shard lock."""
-        if not isinstance(settlement, _types.CallSettlement):
-            message = "settlement must be a CallSettlement"
-            raise TypeError(message)
         failure: BaseException | None = None
         for record in records:
             observer = record.work.settlement_observer
@@ -2788,7 +2696,7 @@ class _Shard:
         return self._abandonment_for(grant)
 
     def _require_slot(self, slot_id: int) -> _WorkerSlot:
-        if isinstance(slot_id, bool) or not isinstance(slot_id, int):
+        if isinstance(slot_id, bool):
             message = "slot_id must be an integer"
             raise TypeError(message)
         if slot_id < 0 or slot_id >= len(self._workers):

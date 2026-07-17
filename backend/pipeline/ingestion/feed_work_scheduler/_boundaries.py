@@ -265,9 +265,6 @@ class _BoundaryCoordinator:
 
     async def abandon(self, failure: BaseException) -> None:
         """Fail closed without waiting forever on an unsettled mutation."""
-        if not isinstance(failure, BaseException):
-            message = "failure must be a BaseException"
-            raise TypeError(message)
         if self._task.done():
             return
         self._abandoned = True

@@ -171,9 +171,6 @@ class MissingCallLedger:
     ) -> MissingCallObligation:
         """Create one unbound draft before scheduler admission."""
         self._require_open()
-        if not isinstance(member, ingestion_lease_store.LeaseMember):
-            message = "member must be a LeaseMember"
-            raise TypeError(message)
         try:
             ingestion_lease_store._require_member_binding(  # noqa: SLF001
                 self._grant,
@@ -235,23 +232,15 @@ class MissingCallLedger:
     ) -> None:
         """Atomically bind one admitted cohort's exact ordered identities."""
         self._require_open()
-        if not isinstance(obligations, tuple) or not obligations:
+        if not obligations:
             message = "obligations must be a nonempty immutable tuple"
             raise ValueError(message)
-        if not isinstance(identities, tuple) or len(identities) != len(
-            obligations
-        ):
+        if len(identities) != len(obligations):
             message = "admission identities must exactly cover obligations"
             raise MissingCallIntegrityError(message)
         if len({id(value) for value in obligations}) != len(obligations):
             message = "admission repeats an obligation handle"
             raise MissingCallIntegrityError(message)
-        if any(
-            type(value) is not feed_work_scheduler.CohortRecordIdentity
-            for value in identities
-        ):
-            message = "admission requires exact record identities"
-            raise TypeError(message)
         if len({id(value) for value in identities}) != len(identities):
             message = "admission repeats a record identity object"
             raise MissingCallIntegrityError(message)
@@ -320,9 +309,6 @@ class MissingCallLedger:
         """Hold one terminal source/audio skip until exact durable closure."""
         record = self._require_admitted_record(obligation, identity)
         self._require_state(record, MissingCallState.ADMITTED)
-        if type(failure) is not feed_work_scheduler.CohortItemFailureFact:
-            message = "failure must be an exact CohortItemFailureFact"
-            raise TypeError(message)
         _require_attempt_count(attempt_count, require_attempt=True)
         reason = _require_bounded_string(
             failure.detail,
@@ -365,9 +351,6 @@ class MissingCallLedger:
         """Emit one immediate post-bookmark publication gap."""
         record = self._require_admitted_record(obligation, identity)
         self._require_state(record, MissingCallState.ADMITTED)
-        if type(failure) is not feed_work_scheduler.CohortDirectFailureFact:
-            message = "failure must be an exact CohortDirectFailureFact"
-            raise TypeError(message)
         _require_attempt_count(attempt_count, require_attempt=True)
         reason = _require_bounded_string(
             failure.detail,
@@ -427,9 +410,6 @@ class MissingCallLedger:
     ) -> None:
         """Apply one exact scheduler release callback without side channels."""
         record = self._require_record(obligation)
-        if not isinstance(settlement, feed_work_scheduler.CallSettlement):
-            message = "settlement must be a CallSettlement"
-            raise TypeError(message)
         if record.settlement_observed is not None:
             message = "scheduler settlement was already observed"
             raise MissingCallIntegrityError(message)
@@ -491,9 +471,6 @@ class MissingCallLedger:
         settled_page: feed_work_scheduler.SettledPage,
     ) -> runtime_adapters.PageFinalizationEvidence:
         """Validate the exact page, source, and scheduler conservation proof."""
-        if type(settled_page) is not feed_work_scheduler.SettledPage:
-            message = "settled_page must be an exact SettledPage"
-            raise TypeError(message)
         if (
             settled_page.grant != self._grant
             or settled_page.page_sequence != self._page_sequence
@@ -511,11 +488,6 @@ class MissingCallLedger:
             or source_evidence.verdict.page_sequence != self._page_sequence
         ):
             message = "Calls source evidence crossed ledger grant or page"
-            raise MissingCallIntegrityError(message)
-        if type(settled_page.scheduler_evidence) is not (
-            feed_work_scheduler.SchedulerPageEvidence
-        ):
-            message = "settled page lacks exact scheduler evidence"
             raise MissingCallIntegrityError(message)
         scheduler_evidence = settled_page.scheduler_evidence
         admitted_record_count = sum(
@@ -661,9 +633,6 @@ class MissingCallLedger:
         settled_page: feed_work_scheduler.SettledPage,
         caps: tuple[object, ...],
     ) -> dict[uuid.UUID, object]:
-        if not isinstance(caps, tuple):
-            message = "closure caps must be an immutable tuple"
-            raise TypeError(message)
         candidate = settled_page.candidate
         if type(candidate) is cursor_policy.NoProgressPageCandidate:
             if caps:
@@ -708,11 +677,6 @@ class MissingCallLedger:
         *,
         has_cap: bool,
     ) -> None:
-        if type(resolution) is not (
-            feed_work_scheduler.FinalRecordClosureResolution
-        ):
-            message = "resolution must be an exact final-record value"
-            raise TypeError(message)
         closure = feed_work_scheduler.CohortRecordClosureState
         basis = feed_work_scheduler.FinalRecordReleaseBasis
         if resolution.closure_state is closure.DURABLY_CLOSED:

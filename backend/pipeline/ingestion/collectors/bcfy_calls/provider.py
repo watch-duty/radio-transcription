@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import collections.abc
 import dataclasses
-import datetime
 import logging
 import os
 import typing
@@ -29,6 +28,7 @@ from backend.pipeline.ingestion.slo_contract import (
 from backend.pipeline.storage import feed_store
 
 if typing.TYPE_CHECKING:
+    import datetime
     import types
 
 logger = logging.getLogger(__name__)
@@ -529,15 +529,16 @@ def _calls_page_envelope(
     response_byte_count: int,
 ) -> CallsPageEnvelope:
     validated = _validate_calls_api_payload(payload, subject_id)
-    calls = validated.get("calls", [])
-    if not isinstance(calls, list):
-        msg = "validated calls field changed type"
-        raise TypeError(msg)
+    calls = typing.cast("list[object]", validated.get("calls", []))
     distinct_audio_urls: set[str] = set()
     for call in calls:
         if not isinstance(call, collections.abc.Mapping):
             continue
-        audio_url = call.get("url")
+        call_mapping = typing.cast(
+            "collections.abc.Mapping[str, object]",
+            call,
+        )
+        audio_url = call_mapping.get("url")
         if isinstance(audio_url, str) and audio_url:
             distinct_audio_urls.add(audio_url)
     return CallsPageEnvelope(
@@ -585,7 +586,7 @@ class CallsProviderClient:
         shutdown_event: asyncio.Event,
     ) -> CallsPageEnvelope:
         """Fetch one legacy inclusive groups page."""
-        if not isinstance(group_id, str) or not group_id:
+        if not group_id:
             msg = "group_id must be a nonempty string"
             raise ValueError(msg)
         return await self._fetch_page(
@@ -606,12 +607,9 @@ class CallsProviderClient:
         attempt_observer: aiohttp_requests.HttpAttemptObserver | None = None,
     ) -> CallsPageEnvelope:
         """Fetch one SID page with an integer timestamp position."""
-        if not isinstance(sid, str) or not sid:
+        if not sid:
             msg = "sid must be a nonempty string"
             raise ValueError(msg)
-        if pos is not None and not isinstance(pos, datetime.datetime):
-            msg = "SID pos must be a datetime or None"
-            raise TypeError(msg)
         timestamp = int(pos.timestamp()) if pos is not None else None
         return await self._fetch_page(
             group_id=None,

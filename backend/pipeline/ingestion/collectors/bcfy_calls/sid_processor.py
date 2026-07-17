@@ -109,12 +109,6 @@ class ProcessorCancellationHandoff:
         cancelled_error: asyncio.CancelledError,
     ) -> None:
         """Record the first value; only the source runner invokes this."""
-        if not isinstance(cause, RunnerCancellationCause):
-            message = "cause must be a RunnerCancellationCause"
-            raise TypeError(message)
-        if not isinstance(cancelled_error, asyncio.CancelledError):
-            message = "cancelled_error must be a CancelledError"
-            raise TypeError(message)
         if self._cause is None:
             self._cause = cause
             self._cancelled_error = cancelled_error
@@ -369,9 +363,6 @@ class _SidPollAccumulator:
         observed_at: datetime.datetime,
     ) -> None:
         """Capture revision and bounded Cursor lag from one exact snapshot."""
-        if not isinstance(snapshot, ingestion_lease_store.MembershipSnapshot):
-            message = "snapshot must be a MembershipSnapshot"
-            raise TypeError(message)
         if snapshot.grant != self.grant:
             message = "poll membership crossed complete grant"
             raise feed_work_scheduler.CohortIntegrityError(message)
@@ -408,15 +399,12 @@ class _SidPollAccumulator:
         """Capture actual JSON attempt ordinals from the transport owner."""
         if kind is not aiohttp_requests.HttpAttemptKind.JSON:
             return
-        if isinstance(ordinal, bool) or not isinstance(ordinal, int):
+        if isinstance(ordinal, bool):
             return
         self.http_attempt_count = max(self.http_attempt_count, ordinal)
 
     def observe_provider(self, page: provider.CallsPageEnvelope) -> None:
         """Capture immutable accepted-response evidence from the provider."""
-        if not isinstance(page, provider.CallsPageEnvelope):
-            message = "page must be a CallsPageEnvelope"
-            raise TypeError(message)
         self.provider_observed = True
         self.http_attempt_count = page.http_attempt_count
         self.response_row_count = page.response_row_count
@@ -431,9 +419,6 @@ class _SidPollAccumulator:
         value: datetime.datetime | None,
     ) -> None:
         """Capture one normalized boundary state, never its malformed input."""
-        if not isinstance(state, telemetry.SidPollResponseLastPosState):
-            message = "state must be a SidPollResponseLastPosState"
-            raise TypeError(message)
         self.response_last_pos_state = state
         self.response_last_pos = (
             int(value.timestamp())
@@ -457,9 +442,6 @@ class _SidPollAccumulator:
         evidence: feed_work_scheduler.SchedulerPageEvidence,
     ) -> None:
         """Capture the exact page-local scheduler evidence once."""
-        if type(evidence) is not feed_work_scheduler.SchedulerPageEvidence:
-            message = "evidence must be exact SchedulerPageEvidence"
-            raise TypeError(message)
         if self.scheduler_evidence is not None and (
             self.scheduler_evidence is not evidence
             and self.scheduler_evidence != evidence
@@ -473,9 +455,6 @@ class _SidPollAccumulator:
         evidence: runtime_adapters.PageFinalizationEvidence,
     ) -> None:
         """Copy only finalizer-owned counts, scope, and canonical reason."""
-        if type(evidence) is not runtime_adapters.PageFinalizationEvidence:
-            message = "evidence must be exact PageFinalizationEvidence"
-            raise TypeError(message)
         verdict = evidence.verdict
         self.participating_feed_count = verdict.participating_feed_count
         self.successful_feed_count = verdict.successful_feed_count
@@ -518,19 +497,12 @@ class _SidPollAccumulator:
 
         Raises:
             CohortIntegrityError: The accumulator was already closed.
-            TypeError: The outcome or emitter is outside the closed contract.
             ValueError: The owner monotonic clock moved backwards.
         """
         if self._closed:
             message = "SID poll accumulator already closed"
             raise feed_work_scheduler.CohortIntegrityError(message)
         self._closed = True
-        if not isinstance(outcome, telemetry.SidPollOutcome):
-            message = "outcome must be a SidPollOutcome"
-            raise TypeError(message)
-        if not callable(emitter):
-            message = "emitter must be callable"
-            raise TypeError(message)
         if (
             isinstance(finished_monotonic, bool)
             or not isinstance(finished_monotonic, (int, float))
@@ -840,26 +812,17 @@ class BcfyCallsSidProcessor:
         cancellation_handoff: ProcessorCancellationHandoff | None = None,
     ) -> None:
         """Run completion-paced logical polls with exact terminal controls."""
-        if not isinstance(stop_requested, asyncio.Event):
-            message = "stop_requested must be an asyncio.Event"
-            raise TypeError(message)
         if signals is None:
             signals = feed_work_scheduler.LaneSignalView(
                 self._grant,
                 stop_requested,
                 asyncio.Event(),
             )
-        if type(signals) is not feed_work_scheduler.LaneSignalView:
-            message = "signals must be an exact LaneSignalView"
-            raise TypeError(message)
         if signals.grant != self._grant:
             message = "lane signals crossed processor grant"
             raise feed_work_scheduler.CohortIntegrityError(message)
         if cancellation_handoff is None:
             cancellation_handoff = ProcessorCancellationHandoff(self._grant)
-        if type(cancellation_handoff) is not ProcessorCancellationHandoff:
-            message = "cancellation_handoff has an unknown type"
-            raise TypeError(message)
         if cancellation_handoff.grant != self._grant:
             message = "cancellation handoff crossed processor grant"
             raise feed_work_scheduler.CohortIntegrityError(message)
@@ -1400,7 +1363,7 @@ class BcfyCallsSidProcessor:
             # Operational evidence cannot mutate request or cursor authority.
             return
 
-    async def _settle_page(  # noqa: PLR0912, PLR0915
+    async def _settle_page(  # noqa: PLR0912
         self,
         page: provider.CallsPageEnvelope,
         *,
@@ -1412,12 +1375,6 @@ class BcfyCallsSidProcessor:
         if lease_cursor is None:
             message = "membership must be loaded before page settlement"
             raise RuntimeError(message)
-        if not isinstance(page, provider.CallsPageEnvelope):
-            message = "page must be a CallsPageEnvelope"
-            raise TypeError(message)
-        if not isinstance(request, _PageRequest):
-            message = "request must be a frozen page request"
-            raise TypeError(message)
         if poll is None:
             # Preserve the narrow private test/diagnostic seam used to settle
             # an already-fetched page outside the logical polling loop. Such
@@ -1685,17 +1642,21 @@ class BcfyCallsSidProcessor:
         """Validate one provider item without poisoning its siblings."""
         if not isinstance(raw_call, collections.abc.Mapping):
             return None
-        group_id = raw_call.get("groupId")
+        call_mapping = typing.cast(
+            "collections.abc.Mapping[str, object]",
+            raw_call,
+        )
+        group_id = call_mapping.get("groupId")
         if not isinstance(group_id, str) or not group_id:
             return None
         state = frozen_routes.get(group_id)
         if state is None:
             return None
-        audio_url = raw_call.get("url")
+        audio_url = call_mapping.get("url")
         if not isinstance(audio_url, str) or not audio_url:
             return None
 
-        timestamp_value = raw_call.get("ts", _MISSING)
+        timestamp_value = call_mapping.get("ts", _MISSING)
         source_timestamp: datetime.datetime | None
         sort_timestamp = 0.0
         if timestamp_value is _MISSING:
@@ -1726,7 +1687,7 @@ class BcfyCallsSidProcessor:
             audio_url=audio_url,
             source_timestamp=source_timestamp,
             sort_timestamp=sort_timestamp,
-            raw_call=types.MappingProxyType(dict(raw_call)),
+            raw_call=types.MappingProxyType(dict(call_mapping)),
         )
 
     def _settlement_observer(
@@ -1741,12 +1702,6 @@ class BcfyCallsSidProcessor:
         audio_url = entry.audio_url
 
         def observe(settlement: feed_work_scheduler.CallSettlement) -> None:
-            if not isinstance(
-                settlement,
-                feed_work_scheduler.CallSettlement,
-            ):
-                message = "settlement must be a CallSettlement"
-                raise TypeError(message)
             ledger_observer(settlement)
             if self._pending_by_url.get(audio_url) != feed_id:
                 return
@@ -2049,7 +2004,7 @@ def _last_pos_to_datetime(
         _log_invalid_last_pos()
         return None, telemetry.SidPollResponseLastPosState.INVALID
     try:
-        numeric_value = float(value)
+        numeric_value = float(typing.cast("typing.Any", value))
     except (TypeError, ValueError):
         _log_invalid_last_pos()
         return None, telemetry.SidPollResponseLastPosState.INVALID

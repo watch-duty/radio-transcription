@@ -328,15 +328,6 @@ class TestReplayFloor(unittest.TestCase):
             "requested_start must be UTC-aware",
         ):
             cursor_policy.apply_replay_floor(naive, now=_NOW, cause=cause)
-        with self.assertRaisesRegex(TypeError, "ReplayFloorCause"):
-            cursor_policy.apply_replay_floor(
-                _NOW,
-                now=_NOW,
-                cause=typing.cast(
-                    "cursor_policy.ReplayFloorCause",
-                    "recovery",
-                ),
-            )
 
 
 class TestPageCursorCapability(unittest.TestCase):

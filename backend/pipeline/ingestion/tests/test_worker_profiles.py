@@ -248,15 +248,6 @@ class TestWorkerProfile(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "requires.*domain"):
                     worker_profiles.derive_bcfy_calls_authority(profile, mode)
 
-        with self.assertRaisesRegex(TypeError, "BcfyCallsAuthorityMode"):
-            worker_profiles.derive_bcfy_calls_authority(
-                worker_profiles.MIXED_DORMANT_PROFILE,
-                typing.cast(
-                    "worker_profiles.BcfyCallsAuthorityMode",
-                    "sid_lease",
-                ),
-            )
-
     def test_authority_derivation_revalidates_process_envelope(self) -> None:
         profile = dataclasses.replace(
             worker_profiles.MIXED_DORMANT_PROFILE,

@@ -321,9 +321,6 @@ def apply_replay_floor(
     zero. ``None`` remains an omitted request position and never invents loss.
     """
     validated_now = _require_utc_datetime(now, field_name="now")
-    if not isinstance(cause, ReplayFloorCause):
-        msg = "cause must be a ReplayFloorCause"
-        raise TypeError(msg)
     floor_start = validated_now - datetime.timedelta(minutes=5)
     if requested_start is None:
         return ReplayFloorDecision(

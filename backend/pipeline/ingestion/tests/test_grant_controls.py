@@ -586,7 +586,7 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
         )
         self.data_store.report_feed_failure.assert_awaited_once()
 
-    async def test_quarantine_observer_cancellation_is_non_authoritative(
+    async def test_quarantine_observer_cancellation_propagates_after_commit(
         self,
     ) -> None:
         observer = mock.AsyncMock(side_effect=asyncio.CancelledError)
@@ -603,16 +603,14 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
         assert isinstance(payload, dict)
         self.data_store.report_feed_failure.return_value = "quarantined"
 
-        result = await control.finalize(
-            grant,
-            payload,
-            _budgeted_plan(),
-        )
+        with self.assertRaises(asyncio.CancelledError):
+            await control.finalize(
+                grant,
+                payload,
+                _budgeted_plan(),
+            )
 
-        self.assertIs(
-            result.disposition,
-            grant_control.FinalizeDisposition.APPLIED,
-        )
+        self.data_store.report_feed_failure.assert_awaited_once()
         observer.assert_awaited_once()
 
     async def test_quarantine_observer_timeout_is_non_authoritative(

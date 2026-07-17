@@ -105,9 +105,6 @@ def _validate_calls_authority_configuration(
 ) -> None:
     """Prove one and only one effective Calls claim authority."""
     mode = collector_settings.bcfy_calls_authority_mode
-    if not isinstance(mode, worker_profiles.BcfyCallsAuthorityMode):
-        msg = "CollectorSettings has an invalid Calls authority mode"
-        raise TypeError(msg)
     feed_allocation = worker_profiles.allocation_for_domain(
         profile,
         grant_control.DomainId.FEED,

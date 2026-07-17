@@ -1600,7 +1600,7 @@ class GrantSupervisor:
         )
 
     def _validate_shutdown_timeout(self, value: float, name: str) -> None:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if isinstance(value, bool):
             msg = f"{name} must be a number"
             raise TypeError(msg)
         if value < 0:

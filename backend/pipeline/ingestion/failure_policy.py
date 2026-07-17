@@ -88,9 +88,6 @@ def consumes_failure_budget(
     status_reason: feed_store.FeedStatusReason,
 ) -> bool:
     """Return whether one canonical reason consumes the failure budget."""
-    if not isinstance(status_reason, feed_store.FeedStatusReason):
-        msg = "status_reason must be a FeedStatusReason"
-        raise TypeError(msg)
     return status_reason in _BUDGETED_REASONS
 
 
@@ -102,24 +99,8 @@ def plan_failure(
     non_budgeted: NonBudgetedTreatmentProvider,
 ) -> FailurePersistencePlan:
     """Select one immutable persistence treatment from the shared policy."""
-    if not isinstance(status_reason, feed_store.FeedStatusReason):
-        msg = "status_reason must be a FeedStatusReason"
-        raise TypeError(msg)
-    if reason is not None and not isinstance(reason, str):
-        msg = "reason must be a string or None"
-        raise TypeError(msg)
-    if not isinstance(budgeted, ConsumeFailureBudget):
-        msg = "budgeted must be a ConsumeFailureBudget"
-        raise TypeError(msg)
-    if not callable(non_budgeted):
-        msg = "non_budgeted must be callable"
-        raise TypeError(msg)
-
     if consumes_failure_budget(status_reason):
         treatment: FailureTreatment = budgeted
     else:
         treatment = non_budgeted()
-        if not isinstance(treatment, RetryWithoutBudget):
-            msg = "non_budgeted must return RetryWithoutBudget"
-            raise TypeError(msg)
     return FailurePersistencePlan(status_reason, reason, treatment)

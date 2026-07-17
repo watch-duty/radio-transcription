@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import collections.abc
 import dataclasses
 import datetime
 import enum
@@ -340,11 +339,10 @@ class PageFinalizationEvidence:
             raise BoundaryAdapterIntegrityError(message)
 
 
-def _require_neutral_lease_result(value: object) -> None:
+def _require_neutral_lease_result(
+    value: ingestion_lease_store.LeaseLifecycleResult,
+) -> None:
     """Reject malformed or contradictory lifecycle-neutral evidence."""
-    if type(value) is not ingestion_lease_store.LeaseLifecycleResult:
-        message = "neutral storage batch returned an invalid Lease result"
-        raise BoundaryAdapterIntegrityError(message)
     if value.effect is not ingestion_lease_store.LeaseLifecycleEffect.NONE:
         message = "neutral storage batch returned contradictory evidence"
         raise BoundaryAdapterIntegrityError(message)
@@ -398,20 +396,6 @@ class FencedBoundaryCommitter:
         | feed_work_scheduler.BoundaryGrantRejected
     ):
         """Make one fenced mutation attempt and return closed batch evidence."""
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
-        if not isinstance(boundaries, tuple):
-            message = "boundaries must be an immutable tuple"
-            raise TypeError(message)
-        for boundary in boundaries:
-            if type(boundary) is not feed_work_scheduler.BoundaryWork:
-                message = "boundaries must contain exact BoundaryWork values"
-                raise TypeError(message)
-        if not isinstance(final_logical, bool):
-            message = "final_logical must be a bool"
-            raise TypeError(message)
-
         mutations = tuple(
             ingestion_lease_store.ClosedCohortProgress(
                 member=boundary.member,
@@ -457,16 +441,6 @@ class FencedBoundaryCommitter:
         final_logical: bool,
     ) -> PhysicalCohortCommitResult:
         """Make one lifecycle-neutral attempt for a direct physical cohort."""
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
-        if type(commit) is not PhysicalCohortCommit:
-            message = "commit must be an exact PhysicalCohortCommit"
-            raise TypeError(message)
-        if not isinstance(final_logical, bool):
-            message = "final_logical must be a bool"
-            raise TypeError(message)
-
         mutation = ingestion_lease_store.ClosedCohortProgress(
             member=commit.member,
             last_processed_filename=commit.last_processed_filename,
@@ -513,10 +487,6 @@ class FencedBoundaryCommitter:
             )
         except BoundaryCommitNotStarted:
             return feed_work_scheduler.BoundaryBatchRetryable()
-        if not isinstance(attempt, collections.abc.Awaitable):
-            message = "storage did not return an awaitable child attempt"
-            raise BoundaryAdapterIntegrityError(message)
-
         result = await attempt
         if type(result) is ingestion_lease_store.GrantRejected:
             return feed_work_scheduler.BoundaryGrantRejected()
@@ -524,9 +494,6 @@ class FencedBoundaryCommitter:
             message = "storage returned outside the closed batch vocabulary"
             raise BoundaryAdapterIntegrityError(message)
         _require_neutral_lease_result(result.lease_effect)
-        if type(result.children) is not tuple:
-            message = "storage child results must be an immutable tuple"
-            raise BoundaryAdapterIntegrityError(message)
         if len(result.children) != len(expected_feed_ids):
             message = "storage child result count does not match commands"
             raise BoundaryAdapterIntegrityError(message)
@@ -536,17 +503,8 @@ class FencedBoundaryCommitter:
             result.children,
             strict=True,
         ):
-            if type(child) is not ingestion_lease_store.ChildMutationResult:
-                message = "storage returned an unknown child result"
-                raise BoundaryAdapterIntegrityError(message)
             if child.feed_id != expected_feed_id:
                 message = "storage child result order or Feed does not match"
-                raise BoundaryAdapterIntegrityError(message)
-            if not isinstance(
-                child.cursor_effect,
-                ingestion_lease_store.CursorEffect,
-            ):
-                message = "storage returned an unknown cursor effect"
                 raise BoundaryAdapterIntegrityError(message)
             if (
                 child.lifecycle_effect
@@ -558,14 +516,8 @@ class FencedBoundaryCommitter:
 
     @staticmethod
     def _map_disposition(
-        disposition: object,
+        disposition: ingestion_lease_store.ChildDisposition,
     ) -> feed_work_scheduler.BoundaryDisposition:
-        if not isinstance(
-            disposition,
-            ingestion_lease_store.ChildDisposition,
-        ):
-            message = "storage returned an unsupported child disposition"
-            raise BoundaryAdapterIntegrityError(message)
         if disposition in _COMMITTED_CHILD_DISPOSITIONS:
             return feed_work_scheduler.BoundaryDisposition.COMMITTED
         if disposition in _REJECTED_CHILD_DISPOSITIONS:
@@ -684,17 +636,8 @@ def _final_child_cursor(
 
 def _require_final_lease_result(
     plan: boundary_verdict.FinalMutationPlan,
-    value: object,
+    value: ingestion_lease_store.LeaseLifecycleResult,
 ) -> ingestion_lease_store.LeaseLifecycleResult:
-    if type(value) is not ingestion_lease_store.LeaseLifecycleResult:
-        message = "final storage batch returned an invalid Lease result"
-        raise BoundaryAdapterIntegrityError(message)
-    if not isinstance(
-        value.effect,
-        ingestion_lease_store.LeaseLifecycleEffect,
-    ):
-        message = "final storage batch returned malformed Lease evidence"
-        raise BoundaryAdapterIntegrityError(message)
     if type(plan.lease_effect) is ingestion_lease_store.NoLeaseEffect and (
         value.effect is not ingestion_lease_store.LeaseLifecycleEffect.NONE
     ):
@@ -713,27 +656,10 @@ def _require_final_lease_result(
 
 def _require_final_child_result(
     command: boundary_verdict.FinalMutationCommand,
-    value: object,
+    value: ingestion_lease_store.ChildMutationResult,
 ) -> ingestion_lease_store.ChildMutationResult:
-    if type(value) is not ingestion_lease_store.ChildMutationResult:
-        message = "final storage batch returned an unknown child result"
-        raise BoundaryAdapterIntegrityError(message)
     if value.feed_id != command.mutation.member.feed_id:
         message = "final storage child result crossed Feed or order"
-        raise BoundaryAdapterIntegrityError(message)
-    if not isinstance(
-        value.disposition, ingestion_lease_store.ChildDisposition
-    ):
-        message = "final storage child disposition is invalid"
-        raise BoundaryAdapterIntegrityError(message)
-    if not isinstance(value.cursor_effect, ingestion_lease_store.CursorEffect):
-        message = "final storage child cursor effect is invalid"
-        raise BoundaryAdapterIntegrityError(message)
-    if not isinstance(
-        value.lifecycle_effect,
-        ingestion_lease_store.LifecycleEffect,
-    ):
-        message = "final storage child lifecycle effect is invalid"
         raise BoundaryAdapterIntegrityError(message)
     accepted = value.disposition in _COMMITTED_CHILD_DISPOSITIONS
     rejected = value.disposition in _REJECTED_CHILD_DISPOSITIONS
@@ -946,13 +872,10 @@ async def _commit_final_batch_once(
         )
     except Exception:
         return _final_outcome_unknown(context)
-
-    committed: object = None
-    if isinstance(attempt, collections.abc.Awaitable):
-        try:
-            committed = await attempt
-        except Exception:
-            committed = None
+    try:
+        committed = await attempt
+    except Exception:
+        return _final_outcome_unknown(context)
     if type(committed) is ingestion_lease_store.GrantRejected:
         return feed_work_scheduler.FinalPageGrantRejected(
             context.grant,
@@ -1024,9 +947,6 @@ class FencedPageFinalizer:
         context: feed_work_scheduler.PageFinalizationContext,
     ) -> _FinalPageResult:
         """Attempt one exact final child transaction without resubmission."""
-        if type(context) is not feed_work_scheduler.PageFinalizationContext:
-            message = "context must be exact PageFinalizationContext"
-            raise TypeError(message)
         settled_utc = _require_boundary_settled_utc(
             self._boundary_settled_utc()
         )
@@ -1066,9 +986,7 @@ class FencedPageFinalizer:
         committed: ingestion_lease_store.BatchCommitted,
     ) -> _FinalPageResult:
         _require_final_lease_result(plan, committed.lease_effect)
-        if type(committed.children) is not tuple or len(
-            committed.children
-        ) != len(plan.commands):
+        if len(committed.children) != len(plan.commands):
             message = "final child result cardinality changed"
             raise BoundaryAdapterIntegrityError(message)
         results = tuple(

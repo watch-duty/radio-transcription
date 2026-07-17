@@ -679,8 +679,7 @@ class BcfyCallsCohortExecutor:
                 record_state: _RecordState = state,
             ) -> None:
                 if (
-                    isinstance(ordinal, int)
-                    and not isinstance(ordinal, bool)
+                    not isinstance(ordinal, bool)
                     and ordinal > record_state.content_attempt_count
                 ):
                     record_state.content_attempt_count = ordinal
@@ -918,8 +917,7 @@ class BcfyCallsCohortExecutor:
                 record_state: _RecordState = state,
             ) -> None:
                 if (
-                    isinstance(ordinal, int)
-                    and not isinstance(ordinal, bool)
+                    not isinstance(ordinal, bool)
                     and ordinal > record_state.publication_attempt_count
                 ):
                     record_state.publication_attempt_count = ordinal
@@ -1036,9 +1034,6 @@ class BcfyCallsCohortExecutor:
         self,
         execution: feed_work_scheduler.CohortExecution,
     ) -> tuple[ScheduledCohortPayload, list[_RecordState]]:
-        if type(execution) is not feed_work_scheduler.CohortExecution:
-            message = "execution must be an exact CohortExecution"
-            raise feed_work_scheduler.CohortIntegrityError(message)
         first_payload = execution.calls[0].payload
         if type(first_payload) is not ScheduledCohortPayload:
             message = "cohort payload must be an exact ScheduledCohortPayload"

@@ -98,12 +98,6 @@ def _shard_index(
     limits: _SchedulerLimits = _PRODUCTION_LIMITS,
 ) -> int:
     """Return stable UUID affinity for production or validated test limits."""
-    if not isinstance(feed_id, uuid.UUID):
-        message = "feed_id must be a UUID"
-        raise TypeError(message)
-    if not isinstance(limits, _SchedulerLimits):
-        message = "limits must be _SchedulerLimits"
-        raise TypeError(message)
     return feed_id.int % limits.shard_count
 
 

@@ -6,11 +6,13 @@ import asyncio
 import datetime
 import logging
 import typing
-import uuid
 from types import MappingProxyType
 
 from backend.pipeline.ingestion import failure_policy, grant_control
 from backend.pipeline.storage import feed_store
+
+if typing.TYPE_CHECKING:
+    import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -70,31 +72,19 @@ class FeedGrantControl:
     ) -> None:
         caps: dict[feed_store.SourceType, int] = {}
         for source_type, cap in source_caps.items():
-            if not isinstance(source_type, feed_store.SourceType):
-                msg = "source cap keys must be SourceType values"
-                raise TypeError(msg)
-            if isinstance(cap, bool) or not isinstance(cap, int):
+            if isinstance(cap, bool):
                 msg = "source caps must be integers"
                 raise TypeError(msg)
             if cap < 0:
                 msg = "source caps must be nonnegative"
                 raise ValueError(msg)
             caps[source_type] = cap
-        if not isinstance(abandonment_window, datetime.timedelta):
-            msg = "abandonment_window must be a timedelta"
-            raise TypeError(msg)
         if abandonment_window <= datetime.timedelta(0):
             msg = "abandonment_window must be positive"
             raise ValueError(msg)
-        if not isinstance(actor_id, str):
-            msg = "actor_id must be a string"
-            raise TypeError(msg)
         if not actor_id.strip():
             msg = "actor_id must not be empty"
             raise ValueError(msg)
-        if on_quarantined is not None and not callable(on_quarantined):
-            msg = "on_quarantined must be callable"
-            raise TypeError(msg)
 
         self._data_store = data_store
         self._heartbeat_store = heartbeat_store
@@ -122,6 +112,7 @@ class FeedGrantControl:
             logger.warning(
                 "Quarantine observer cancelled after exact Feed finalization"
             )
+            raise
         except TimeoutError:
             logger.warning(
                 "Quarantine observer timed out after exact Feed finalization"
@@ -144,13 +135,7 @@ class FeedGrantControl:
         ...,
     ]:
         """Claim primary or recoverable Feeds through legacy water filling."""
-        if not isinstance(mode, grant_control.ClaimMode):
-            msg = "mode must be a ClaimMode"
-            raise TypeError(msg)
-        if not isinstance(owner_worker_id, uuid.UUID):
-            msg = "owner_worker_id must be a UUID"
-            raise TypeError(msg)
-        if isinstance(limit, bool) or not isinstance(limit, int):
+        if isinstance(limit, bool):
             msg = "limit must be an integer"
             raise TypeError(msg)
         if limit < 0:
@@ -211,9 +196,6 @@ class FeedGrantControl:
         translated = []
         seen: set[feed_store.FeedGrant] = set()
         for index, result in enumerate(results):
-            if not isinstance(result, feed_store.FeedGrantHeartbeatResult):
-                msg = "Feed heartbeat returned an invalid result type"
-                raise grant_control.GrantControlIntegrityError(msg)
             if result.grant in seen or result.grant != grants[index]:
                 msg = "Feed heartbeat result identity or order mismatch"
                 raise grant_control.GrantControlIntegrityError(msg)
@@ -256,9 +238,6 @@ class FeedGrantControl:
         terminal: grant_control.TerminalDecision,
     ) -> grant_control.FinalizeResult[feed_store.FeedGrant]:
         """Execute one exact Feed release or selected failure action."""
-        if not isinstance(grant, feed_store.FeedGrant):
-            msg = "grant must be a FeedGrant"
-            raise TypeError(msg)
         if (
             payload["id"] != grant.feed_id
             or payload["fencing_token"] != grant.fencing_token
@@ -278,10 +257,6 @@ class FeedGrantControl:
                 else grant_control.FinalizeDisposition.LOST
             )
             return grant_control.FinalizeResult(grant, disposition)
-
-        if not isinstance(terminal, failure_policy.FailurePersistencePlan):
-            msg = "terminal must be a closed TerminalDecision"
-            raise TypeError(msg)
 
         treatment = terminal.treatment
         if isinstance(treatment, failure_policy.ConsumeFailureBudget):

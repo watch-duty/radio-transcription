@@ -12,7 +12,6 @@ import enum
 import math
 import time
 import typing
-import uuid
 
 from backend.pipeline.ingestion.collectors.bcfy_calls import cursor_policy
 from backend.pipeline.ingestion.feed_work_scheduler import (
@@ -21,6 +20,9 @@ from backend.pipeline.ingestion.feed_work_scheduler import (
     _types,
 )
 from backend.pipeline.storage import feed_store, ingestion_lease_store
+
+if typing.TYPE_CHECKING:
+    import uuid
 
 _T = typing.TypeVar("_T")
 _MAX_FINITE_SECONDS = float.fromhex("0x1.fffffffffffffp+1023")
@@ -784,19 +786,9 @@ class FeedWorkScheduler:
             Fresh lane scoped to ``grant``.
 
         Raises:
-            TypeError: ``grant`` is not a complete ``LeaseGrant``.
             RuntimeError: The scheduler is not open for new lanes.
             ValueError: The exact grant already owns a live lane.
         """
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
-        if not isinstance(stop_requested, asyncio.Event):
-            message = "stop_requested must be an asyncio.Event"
-            raise TypeError(message)
-        if not isinstance(grant_lost, asyncio.Event):
-            message = "grant_lost must be an asyncio.Event"
-            raise TypeError(message)
         self._raise_fatal()
         if not self._started:
             message = "scheduler must be started before opening a lane"
@@ -1444,9 +1436,6 @@ class GrantLane:
 
     async def remove_feed(self, feed_id: uuid.UUID) -> _types.FeedRemoved:
         """Retire one Feed only from this lane's complete grant."""
-        if not isinstance(feed_id, uuid.UUID):
-            message = "feed_id must be a UUID"
-            raise TypeError(message)
         self._raise_closed_locked()
         try:
             result = await self._scheduler._retire_feed(
@@ -1473,12 +1462,7 @@ class GrantLane:
         Returns:
             Whether that Feed is locally retired from scheduler admission.
 
-        Raises:
-            TypeError: ``feed_id`` is not a UUID.
         """
-        if not isinstance(feed_id, uuid.UUID):
-            message = "feed_id must be a UUID"
-            raise TypeError(message)
         return await self._scheduler._is_feed_retired(self._grant, feed_id)
 
     async def close(
@@ -2914,9 +2898,6 @@ class GrantLane:
         reason: _types.LaneCloseReason,
     ) -> asyncio.Task[_types.LaneClosed | _types.Undrained]:
         """Publish/strengthen close before returning an awaitable task."""
-        if not isinstance(reason, _types.LaneCloseReason):
-            message = "reason must be a LaneCloseReason"
-            raise TypeError(message)
         requested = (
             _CloseStrength.DRAINING
             if reason is _types.LaneCloseReason.PLANNED_DRAIN

@@ -269,19 +269,6 @@ class _NoStartStore:
         raise runtime_adapters.BoundaryCommitNotStarted
 
 
-class _NonAwaitableStore:
-    """Malformed fake returning without creating an async attempt."""
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def commit_child_mutations(
-        self, *_args: object, **_kwargs: object
-    ) -> object:
-        self.calls += 1
-        return object()
-
-
 class _AcknowledgementLost(RuntimeError):
     """Test-only signal for a result lost after a commit may have happened."""
 
@@ -552,19 +539,6 @@ class TestFencedBoundaryCommitter(unittest.IsolatedAsyncioTestCase):
         )
         malformed = (
             object(),
-            dataclasses.replace(
-                _batch_committed(
-                    _child_result(boundaries[0].feed_id),
-                    _child_result(boundaries[1].feed_id),
-                ),
-                children=typing.cast(
-                    "tuple[ingestion_lease_store.ChildMutationResult, ...]",
-                    [
-                        _child_result(boundaries[0].feed_id),
-                        _child_result(boundaries[1].feed_id),
-                    ],
-                ),
-            ),
             _batch_committed(_child_result(boundaries[0].feed_id)),
             _batch_committed(
                 _child_result(boundaries[1].feed_id),
@@ -578,18 +552,6 @@ class TestFencedBoundaryCommitter(unittest.IsolatedAsyncioTestCase):
                         object(),
                     ),
                     cursor_effect=ingestion_lease_store.CursorEffect.ADVANCED,
-                    lifecycle_effect=ingestion_lease_store.LifecycleEffect.NONE,
-                ),
-                _child_result(boundaries[1].feed_id),
-            ),
-            _batch_committed(
-                ingestion_lease_store.ChildMutationResult(
-                    feed_id=boundaries[0].feed_id,
-                    disposition=ingestion_lease_store.ChildDisposition.APPLIED,
-                    cursor_effect=typing.cast(
-                        "ingestion_lease_store.CursorEffect",
-                        object(),
-                    ),
                     lifecycle_effect=ingestion_lease_store.LifecycleEffect.NONE,
                 ),
                 _child_result(boundaries[1].feed_id),
@@ -637,49 +599,6 @@ class TestFencedBoundaryCommitter(unittest.IsolatedAsyncioTestCase):
                     )
 
                 store.commit_child_mutations.assert_awaited_once()
-
-        store = _NonAwaitableStore()
-        committer = runtime_adapters.FencedBoundaryCommitter(
-            typing.cast("ingestion_lease_store.IngestionLeaseStore", store),
-            actor_id=_ACTOR_ID,
-        )
-        with self.assertRaises(runtime_adapters.BoundaryAdapterIntegrityError):
-            await committer.commit(grant, boundaries, final_logical=False)
-        self.assertEqual(store.calls, 1)
-
-    async def test_boundary_committer_inputs_fail_before_mutation(self) -> None:
-        store = _store_with_result(_batch_committed())
-        committer = runtime_adapters.FencedBoundaryCommitter(
-            store,
-            actor_id=_ACTOR_ID,
-        )
-
-        with self.assertRaises(TypeError):
-            await committer.commit(
-                _grant(),
-                typing.cast(
-                    "tuple[feed_work_scheduler.BoundaryWork, ...]",
-                    [],
-                ),
-                final_logical=True,
-            )
-        with self.assertRaises(TypeError):
-            await committer.commit(
-                _grant(),
-                typing.cast(
-                    "tuple[feed_work_scheduler.BoundaryWork, ...]",
-                    (object(),),
-                ),
-                final_logical=True,
-            )
-        with self.assertRaises(TypeError):
-            await committer.commit(
-                _grant(),
-                (),
-                final_logical=typing.cast("bool", 1),
-            )
-
-        store.commit_child_mutations.assert_not_awaited()
 
 
 class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):

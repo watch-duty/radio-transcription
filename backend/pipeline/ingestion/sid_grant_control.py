@@ -8,10 +8,12 @@ import hmac
 import json
 import secrets
 import typing
-import uuid
 
 from backend.pipeline.ingestion import failure_policy, grant_control
 from backend.pipeline.storage import feed_store, ingestion_lease_store
+
+if typing.TYPE_CHECKING:
+    import uuid
 
 _STATUS_INELIGIBLE = (
     ingestion_lease_store.LeaseOperationDisposition.STATUS_INELIGIBLE
@@ -101,18 +103,9 @@ class SidGrantControl:
         *,
         actor_id: str,
     ) -> None:
-        if not isinstance(source_type, feed_store.SourceType):
-            msg = "source_type must be a SourceType"
-            raise TypeError(msg)
-        if not isinstance(abandonment_window, datetime.timedelta):
-            msg = "abandonment_window must be a timedelta"
-            raise TypeError(msg)
         if abandonment_window <= datetime.timedelta(0):
             msg = "abandonment_window must be positive"
             raise ValueError(msg)
-        if not isinstance(actor_id, str):
-            msg = "actor_id must be a string"
-            raise TypeError(msg)
         if not actor_id.strip():
             msg = "actor_id must not be empty"
             raise ValueError(msg)
@@ -149,18 +142,14 @@ class SidGrantControl:
         ...,
     ]:
         """Map primary or recovery admission directly to the Lease store."""
-        if not isinstance(mode, grant_control.ClaimMode):
-            msg = "mode must be a ClaimMode"
-            raise TypeError(msg)
-        if not isinstance(owner_worker_id, uuid.UUID):
-            msg = "owner_worker_id must be a UUID"
-            raise TypeError(msg)
-        if isinstance(limit, bool) or not isinstance(limit, int):
+        if isinstance(limit, bool):
             msg = "limit must be an integer"
             raise TypeError(msg)
         if limit < 0:
             msg = "limit must be nonnegative"
             raise ValueError(msg)
+        if limit == 0:
+            return ()
 
         if mode is grant_control.ClaimMode.PRIMARY:
             claims = await self._data_store.claim_unclaimed(
@@ -182,9 +171,6 @@ class SidGrantControl:
         translated = []
         seen: set[ingestion_lease_store.LeaseGrant] = set()
         for claim in claims:
-            if not isinstance(claim, ingestion_lease_store.LeaseClaim):
-                msg = "SID claim returned an invalid result type"
-                raise grant_control.GrantControlIntegrityError(msg)
             if claim.grant in seen:
                 msg = "SID claim returned a duplicate authority"
                 raise grant_control.GrantControlIntegrityError(msg)
@@ -240,11 +226,6 @@ class SidGrantControl:
         translated = []
         seen: set[ingestion_lease_store.LeaseGrant] = set()
         for index, result in enumerate(results):
-            if not isinstance(
-                result, ingestion_lease_store.LeaseHeartbeatResult
-            ):
-                msg = "SID heartbeat returned an invalid result type"
-                raise grant_control.GrantControlIntegrityError(msg)
             if result.grant in seen or result.grant != grants[index]:
                 msg = "SID heartbeat result identity or order mismatch"
                 raise grant_control.GrantControlIntegrityError(msg)
@@ -284,9 +265,6 @@ class SidGrantControl:
         terminal: grant_control.TerminalDecision,
     ) -> grant_control.FinalizeResult[ingestion_lease_store.LeaseGrant]:
         """Execute one exact Lease release or selected failure action."""
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            msg = "grant must be a LeaseGrant"
-            raise TypeError(msg)
         if type(payload) is not SidClaimPayload:
             msg = "payload must be an exact SidClaimPayload"
             raise TypeError(msg)
@@ -306,11 +284,6 @@ class SidGrantControl:
                 grant,
                 cause=_RELEASE_CAUSES[terminal.cause],
             )
-            if not isinstance(
-                result, ingestion_lease_store.LeaseOperationResult
-            ):
-                msg = "SID release returned an invalid result type"
-                raise grant_control.GrantControlIntegrityError(msg)
             disposition = _finalize_disposition(result.disposition)
             return grant_control.FinalizeResult(grant, disposition)
 
@@ -338,9 +311,6 @@ class SidGrantControl:
             actor_id=self._actor_id,
             reason=terminal.reason,
         )
-        if not isinstance(result, ingestion_lease_store.LeaseFailureResult):
-            msg = "SID failure returned an invalid result type"
-            raise grant_control.GrantControlIntegrityError(msg)
         if isinstance(treatment, failure_policy.RetryWithoutBudget) and (
             result.final_status is feed_store.FeedStatus.QUARANTINED
         ):
