@@ -1068,7 +1068,7 @@ class GrantSupervisor:
         )
 
     def _validate_timeout(self, value: float, field_name: str) -> None:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if isinstance(value, bool):
             msg = f"{field_name} must be a number"
             raise TypeError(msg)
         if value < 0:
