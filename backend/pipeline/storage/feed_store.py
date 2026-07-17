@@ -142,6 +142,11 @@ class FeedGrant:
     owner_worker_id: uuid.UUID
     fencing_token: int
 
+    @property
+    def unit_key(self) -> uuid.UUID:
+        """Return the permanent identity within the Feed domain."""
+        return self.feed_id
+
     def __post_init__(self) -> None:
         if not isinstance(self.feed_id, uuid.UUID):
             msg = "feed_id must be a UUID"

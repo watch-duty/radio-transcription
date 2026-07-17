@@ -59,6 +59,11 @@ class LeaseGrant:
     owner_worker_id: uuid.UUID
     fencing_token: int
 
+    @property
+    def unit_key(self) -> tuple[feed_store.SourceType, str]:
+        """Return the permanent identity within the Lease domain."""
+        return (self.source_type, self.lease_key)
+
     def __post_init__(self) -> None:
         if not isinstance(self.source_type, feed_store.SourceType):
             msg = "source_type must be a SourceType"

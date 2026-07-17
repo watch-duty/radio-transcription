@@ -205,6 +205,16 @@ class TestGrantControlVocabulary(unittest.TestCase):
             },
         )
 
+    def test_exact_grants_expose_permanent_unit_keys(self) -> None:
+        feed_grant = _feed_grant()
+        sid_grant = _lease_grant()
+
+        self.assertEqual(feed_grant.unit_key, feed_grant.feed_id)
+        self.assertEqual(
+            sid_grant.unit_key,
+            (sid_grant.source_type, sid_grant.lease_key),
+        )
+
     def test_dataclass_annotations_resolve_at_runtime(self) -> None:
         failed_hints = typing.get_type_hints(grant_control.RunFailed)
         context_hints = typing.get_type_hints(grant_control.RunContext)
