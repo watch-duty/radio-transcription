@@ -6,9 +6,8 @@ import asyncio
 import dataclasses
 import enum
 import logging
-import types
 import typing
-import uuid
+import uuid  # noqa: TC003
 
 from backend.pipeline.ingestion import (
     failure_policy,
@@ -19,49 +18,10 @@ from backend.pipeline.ingestion import (
 logger = logging.getLogger(__name__)
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class FeedAuthority:
-    """Permanent authority identity for one Feed."""
-
-    feed_id: uuid.UUID
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class SidAuthority:
-    """Permanent authority identity for one source-defined SID."""
-
-    source_type: str
-    lease_key: str
-
-    def __post_init__(self) -> None:
-        if not self.source_type.strip():
-            msg = "source_type must not be empty"
-            raise ValueError(msg)
-        if not self.lease_key.strip():
-            msg = "lease_key must not be empty"
-            raise ValueError(msg)
-
-
-type Authority = FeedAuthority | SidAuthority
 type FailurePlanner = typing.Callable[
     [grant_control.RunFailed],
     failure_policy.FailurePersistencePlan,
 ]
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class GrantCount:
-    """Local count for one selected authority domain."""
-
-    active: int
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class SupervisorSnapshot:
-    """Store-free local supervisor state."""
-
-    profile: str
-    counts_by_domain: typing.Mapping[grant_control.DomainId, GrantCount]
 
 
 class SupervisorNotDrainedError(RuntimeError):
@@ -69,55 +29,48 @@ class SupervisorNotDrainedError(RuntimeError):
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class RegisteredDomain[GrantT, PayloadT]:
-    """Typed control and runner for one selected authority domain.
+class RegisteredDomain[
+    GrantT: grant_control.ExactGrant[typing.Hashable],
+    PayloadT,
+]:
+    """Typed control and runner for one selected ownership domain.
 
     The registration is the sole type-erasure boundary. The supervisor owns
     the lifecycle algorithm; controls own storage translation and runners own
     source work.
 
     Attributes:
-        domain_id: Static authority domain selected by the worker profile.
-        grant_type: Concrete immutable grant class.
-        payload_validator: Runtime narrowing for the erased runner payload.
-        authority_of: Extracts the permanent typed authority identity.
-        owner_of: Extracts the runtime-epoch worker identity.
-        fencing_token_of: Extracts the exact ownership generation.
+        domain_id: Static ownership domain selected by the worker profile.
         control: Authoritative claim, heartbeat, and finalization adapter.
         runner: Source-specific work under one exact grant.
     """
 
     domain_id: grant_control.DomainId
-    grant_type: type[GrantT]
-    payload_validator: typing.Callable[[object], typing.TypeGuard[PayloadT]]
-    authority_of: typing.Callable[[GrantT], Authority]
-    owner_of: typing.Callable[[GrantT], uuid.UUID]
-    fencing_token_of: typing.Callable[[GrantT], int]
     control: grant_control.GrantControl[GrantT, PayloadT]
     runner: grant_control.GrantRunner[GrantT, PayloadT]
 
+    def __post_init__(self) -> None:
+        if self.control.domain_id is not self.domain_id:
+            msg = "registered domain does not match control domain"
+            raise ValueError(msg)
+
+
+type _AnyRegisteredDomain = RegisteredDomain[
+    grant_control.ExactGrant[typing.Hashable],
+    object,
+]
+
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class _AuthoritySlot:
+class _UnitSlot:
     domain_id: grant_control.DomainId
-    authority: Authority
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _GenerationKey:
-    domain_id: grant_control.DomainId
-    authority: Authority
-    owner_worker_id: uuid.UUID
-    fencing_token: int
+    unit_key: typing.Hashable
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _ErasedClaim:
-    grant: object
+    grant: grant_control.ExactGrant[typing.Hashable]
     payload: object
-    authority: Authority
-    owner_worker_id: uuid.UUID
-    fencing_token: int
     run: typing.Callable[
         [grant_control.RunContext],
         typing.Awaitable[grant_control.RunOutcome],
@@ -152,7 +105,7 @@ class _ErasedRegisteredDomain:
 class _ManagedGrant:
     domain: _ErasedRegisteredDomain
     claim: _ErasedClaim
-    key: _GenerationKey
+    slot: _UnitSlot
     context: grant_control.RunContext
     runner_closed: asyncio.Event
     root_task: asyncio.Task[None] | None = None
@@ -170,66 +123,20 @@ class _FinalizeEffect(enum.StrEnum):
     ABANDONED = "abandoned"
 
 
-_AUTHORITY_TYPES: typing.Mapping[
-    grant_control.DomainId,
-    type[Authority],
-] = types.MappingProxyType(
-    {
-        grant_control.DomainId.FEED: FeedAuthority,
-        grant_control.DomainId.SID: SidAuthority,
-    }
-)
-
-
-def _erase_registered_domain[GrantT, PayloadT](  # noqa: PLR0915
+def _erase_registered_domain[
+    GrantT: grant_control.ExactGrant[typing.Hashable],
+    PayloadT,
+](
     registered: RegisteredDomain[GrantT, PayloadT],
     allocation: worker_profiles.DomainAllocation,
 ) -> _ErasedRegisteredDomain:
-    """Build the one checked heterogeneous boundary."""
-    expected_authority_type = _AUTHORITY_TYPES[registered.domain_id]
+    """Build the one statically checked heterogeneous boundary."""
 
     def erase_claim(
         candidate: grant_control.ClaimedGrant[GrantT, PayloadT],
     ) -> _ErasedClaim:
-        grant_value: object = candidate.grant
-        if not isinstance(grant_value, registered.grant_type):
-            msg = "claim returned the wrong grant type"
-            raise grant_control.GrantControlIntegrityError(msg)
-        grant = grant_value
-
-        payload_value: object = candidate.payload
-        try:
-            payload_valid = registered.payload_validator(payload_value)
-        except Exception as exc:
-            msg = "claim payload validator failed"
-            raise grant_control.GrantControlIntegrityError(msg) from exc
-        if not payload_valid:
-            msg = "claim returned an invalid runner payload"
-            raise grant_control.GrantControlIntegrityError(msg)
-        payload = payload_value
-
-        try:
-            authority = registered.authority_of(grant)
-            owner_worker_id = registered.owner_of(grant)
-            fencing_token = registered.fencing_token_of(grant)
-        except Exception as exc:
-            msg = "claim grant extraction failed"
-            raise grant_control.GrantControlIntegrityError(msg) from exc
-        if not isinstance(authority, expected_authority_type):
-            msg = "claim returned the wrong authority type"
-            raise grant_control.GrantControlIntegrityError(msg)
-        if not isinstance(owner_worker_id, uuid.UUID):
-            msg = "claim returned an invalid owner"
-            raise grant_control.GrantControlIntegrityError(msg)
-        if isinstance(fencing_token, bool) or not isinstance(
-            fencing_token,
-            int,
-        ):
-            msg = "claim returned an invalid fencing token"
-            raise grant_control.GrantControlIntegrityError(msg)
-        if fencing_token < 0:
-            msg = "claim returned a negative fencing token"
-            raise grant_control.GrantControlIntegrityError(msg)
+        grant = candidate.grant
+        payload = candidate.payload
 
         async def run(
             context: grant_control.RunContext,
@@ -239,9 +146,6 @@ def _erase_registered_domain[GrantT, PayloadT](  # noqa: PLR0915
         return _ErasedClaim(
             grant=grant,
             payload=payload,
-            authority=authority,
-            owner_worker_id=owner_worker_id,
-            fencing_token=fencing_token,
             run=run,
         )
 
@@ -260,12 +164,7 @@ def _erase_registered_domain[GrantT, PayloadT](  # noqa: PLR0915
     async def heartbeat(
         grants: typing.Sequence[object],
     ) -> tuple[_ErasedHeartbeat, ...]:
-        typed_grants: list[GrantT] = []
-        for grant_value in grants:
-            if not isinstance(grant_value, registered.grant_type):
-                msg = "heartbeat received the wrong grant type"
-                raise grant_control.GrantControlIntegrityError(msg)
-            typed_grants.append(grant_value)
+        typed_grants = typing.cast("typing.Sequence[GrantT]", grants)
         results = await registered.control.heartbeat(typed_grants)
         if len(results) != len(typed_grants):
             msg = "heartbeat result cardinality mismatch"
@@ -288,18 +187,14 @@ def _erase_registered_domain[GrantT, PayloadT](  # noqa: PLR0915
         payload_value: object,
         terminal: grant_control.TerminalDecision,
     ) -> grant_control.FinalizeDisposition:
-        if not isinstance(grant_value, registered.grant_type):
-            msg = "finalization received the wrong grant type"
-            raise grant_control.GrantControlIntegrityError(msg)
-        if not registered.payload_validator(payload_value):
-            msg = "finalization received an invalid runner payload"
-            raise grant_control.GrantControlIntegrityError(msg)
+        grant = typing.cast("GrantT", grant_value)
+        payload = typing.cast("PayloadT", payload_value)
         result = await registered.control.finalize(
-            grant_value,
-            payload_value,
+            grant,
+            payload,
             terminal,
         )
-        if result.grant != grant_value:
+        if result.grant != grant:
             msg = "finalization result grant mismatch"
             raise grant_control.GrantControlIntegrityError(msg)
         return result.disposition
@@ -382,7 +277,7 @@ class GrantSupervisor:
         domains = tuple(
             _erase_registered_domain(
                 typing.cast(
-                    "RegisteredDomain[object, object]",
+                    "_AnyRegisteredDomain",
                     registrations_by_id[allocation.domain_id],
                 ),
                 allocation,
@@ -394,8 +289,7 @@ class GrantSupervisor:
         self._domains_by_id = {domain.domain_id: domain for domain in domains}
         self._failure_planner = failure_planner
         self._finalize_semaphore = asyncio.Semaphore(finalize_concurrency)
-        self._registry: dict[_GenerationKey, _ManagedGrant] = {}
-        self._current_by_slot: dict[_AuthoritySlot, _GenerationKey] = {}
+        self._registry: dict[_UnitSlot, _ManagedGrant] = {}
         self._owned_by_domain = dict.fromkeys(self._domains_by_id, 0)
         self._reserved_by_domain = dict.fromkeys(self._domains_by_id, 0)
         self._process_owned = 0
@@ -406,6 +300,7 @@ class GrantSupervisor:
         self._integrity_failure: BaseException | None = None
         self._integrity_failure_event = asyncio.Event()
         self._claim_tasks: set[asyncio.Task[int]] = set()
+        self._runner_tasks: set[asyncio.Task[None]] = set()
         self._terminal_tasks: set[asyncio.Task[_FinalizeEffect]] = set()
 
     @property
@@ -584,29 +479,38 @@ class GrantSupervisor:
         owner_worker_id: uuid.UUID,
         claims: tuple[_ErasedClaim, ...],
     ) -> None:
-        seen_slots: set[_AuthoritySlot] = set()
-        seen_keys: set[_GenerationKey] = set()
+        seen_slots: set[_UnitSlot] = set()
         for claim in claims:
-            if claim.owner_worker_id != owner_worker_id:
+            grant = claim.grant
+            if grant.owner_worker_id != owner_worker_id:
                 msg = "claim owner does not match admission owner"
                 raise grant_control.GrantControlIntegrityError(msg)
-            slot = _AuthoritySlot(domain.domain_id, claim.authority)
-            key = _GenerationKey(
-                domain.domain_id,
-                claim.authority,
-                claim.owner_worker_id,
-                claim.fencing_token,
-            )
-            if (
-                slot in seen_slots
-                or slot in self._current_by_slot
-                or key in seen_keys
-                or key in self._registry
+            slot = _UnitSlot(domain.domain_id, grant.unit_key)
+            if slot in seen_slots:
+                msg = "claim batch contains a duplicate unit"
+                raise grant_control.GrantControlIntegrityError(msg)
+            current = self._registry.get(slot)
+            if current is not None and not self._is_valid_successor(
+                current,
+                grant,
+                owner_worker_id,
             ):
-                msg = "claim collides with an owned authority generation"
+                msg = "claim collides with a current unit generation"
                 raise grant_control.GrantControlIntegrityError(msg)
             seen_slots.add(slot)
-            seen_keys.add(key)
+
+    def _is_valid_successor(
+        self,
+        current: _ManagedGrant,
+        successor: grant_control.ExactGrant[typing.Hashable],
+        owner_worker_id: uuid.UUID,
+    ) -> bool:
+        current_grant = current.claim.grant
+        return (
+            current_grant.owner_worker_id == owner_worker_id
+            and successor.owner_worker_id == owner_worker_id
+            and successor.fencing_token > current_grant.fencing_token
+        )
 
     def _consume_reservation(
         self,
@@ -628,13 +532,8 @@ class GrantSupervisor:
         domain: _ErasedRegisteredDomain,
         claim: _ErasedClaim,
     ) -> None:
-        key = _GenerationKey(
-            domain.domain_id,
-            claim.authority,
-            claim.owner_worker_id,
-            claim.fencing_token,
-        )
-        slot = _AuthoritySlot(domain.domain_id, claim.authority)
+        slot = _UnitSlot(domain.domain_id, claim.grant.unit_key)
+        superseded = self._registry.get(slot)
         context = grant_control.RunContext(
             stop_requested=asyncio.Event(),
             grant_lost=asyncio.Event(),
@@ -642,33 +541,44 @@ class GrantSupervisor:
         managed = _ManagedGrant(
             domain=domain,
             claim=claim,
-            key=key,
+            slot=slot,
             context=context,
             runner_closed=asyncio.Event(),
         )
-        self._registry[key] = managed
-        self._current_by_slot[slot] = key
-        self._owned_by_domain[domain.domain_id] += 1
-        self._process_owned += 1
-        task = asyncio.create_task(self._run_managed(key))
+        self._registry[slot] = managed
+        if superseded is None:
+            self._owned_by_domain[domain.domain_id] += 1
+            self._process_owned += 1
+        else:
+            superseded.lost = True
+            superseded.context.grant_lost.set()
+            superseded.context.stop_requested.set()
+            if (
+                superseded.root_task is not None
+                and not superseded.root_task.done()
+            ):
+                superseded.root_task.cancel()
+        task = asyncio.create_task(self._run_managed(managed))
         managed.root_task = task
+        self._runner_tasks.add(task)
         task.add_done_callback(self._root_task_done)
 
-    async def _run_managed(self, key: _GenerationKey) -> None:
-        managed = self._current_exact(key)
-        if managed is None:
-            return
+    async def _run_managed(self, managed: _ManagedGrant) -> None:
         try:
             outcome = _require_run_outcome(
                 await managed.claim.run(managed.context)
             )
-            managed.outcome = outcome
-            if isinstance(outcome, grant_control.RunLost):
+            if self._is_current(managed):
+                managed.outcome = outcome
+            if self._is_current(managed) and isinstance(
+                outcome,
+                grant_control.RunLost,
+            ):
                 managed.lost = True
                 managed.context.grant_lost.set()
         except asyncio.CancelledError:
             managed.cancelled = True
-            if not self._shutting_down:
+            if self._is_current(managed) and not self._shutting_down:
                 managed.uncertain = True
                 failure = grant_control.GrantControlIntegrityError(
                     "runner was cancelled outside ordered shutdown"
@@ -676,25 +586,27 @@ class GrantSupervisor:
                 self._surface_integrity_failure(failure)
             raise
         except Exception as exc:
-            managed.uncertain = True
-            failure = (
-                exc
-                if isinstance(
-                    exc,
-                    grant_control.GrantControlIntegrityError,
+            if self._is_current(managed):
+                managed.uncertain = True
+                failure = (
+                    exc
+                    if isinstance(
+                        exc,
+                        grant_control.GrantControlIntegrityError,
+                    )
+                    else grant_control.GrantControlIntegrityError(
+                        "runner exited without a closed outcome"
+                    )
                 )
-                else grant_control.GrantControlIntegrityError(
-                    "runner exited without a closed outcome"
-                )
-            )
-            if failure is not exc:
-                failure.__cause__ = exc
-            self._surface_integrity_failure(failure)
+                if failure is not exc:
+                    failure.__cause__ = exc
+                self._surface_integrity_failure(failure)
         finally:
             managed.runner_closed.set()
-            self._handle_runner_closed(key)
+            self._handle_runner_closed(managed)
 
     def _root_task_done(self, task: asyncio.Task[None]) -> None:
+        self._runner_tasks.discard(task)
         if task.cancelled():
             return
         try:
@@ -702,12 +614,11 @@ class GrantSupervisor:
         except Exception:
             logger.exception("Managed grant task escaped its isolation point")
 
-    def _handle_runner_closed(self, key: _GenerationKey) -> None:
-        managed = self._current_exact(key)
-        if managed is None or not managed.runner_closed.is_set():
+    def _handle_runner_closed(self, managed: _ManagedGrant) -> None:
+        if not self._is_current(managed) or not managed.runner_closed.is_set():
             return
         if managed.administrative_stop or managed.lost or managed.uncertain:
-            self._discard_exact_generation(key)
+            self._discard_current(managed)
             return
         if self._shutting_down:
             return
@@ -718,7 +629,7 @@ class GrantSupervisor:
         managed: _ManagedGrant,
     ) -> asyncio.Task[_FinalizeEffect] | None:
         if (
-            self._current_exact(managed.key) is not managed
+            not self._is_current(managed)
             or not managed.runner_closed.is_set()
             or managed.terminal_task is not None
             or managed.administrative_stop
@@ -735,9 +646,9 @@ class GrantSupervisor:
             )
             failure.__cause__ = exc
             self._surface_integrity_failure(failure)
-            self._discard_exact_generation(managed.key)
+            self._discard_current(managed)
             return None
-        task = asyncio.create_task(self._finalize_exact(managed.key, terminal))
+        task = asyncio.create_task(self._finalize_exact(managed, terminal))
         managed.terminal_task = task
         self._terminal_tasks.add(task)
         task.add_done_callback(self._terminal_task_done)
@@ -752,17 +663,16 @@ class GrantSupervisor:
             return self._failure_planner(outcome)
         return grant_control.NeutralRelease()
 
-    async def _finalize_exact(
+    async def _finalize_exact(  # noqa: PLR0911
         self,
-        key: _GenerationKey,
+        managed: _ManagedGrant,
         terminal: grant_control.TerminalDecision,
     ) -> _FinalizeEffect:
-        managed = self._current_exact(key)
-        if managed is None:
+        if not self._is_current(managed):
             return _FinalizeEffect.LOST
         try:
             async with self._finalize_semaphore:
-                if self._current_exact(key) is not managed:
+                if not self._is_current(managed):
                     return _FinalizeEffect.LOST
                 disposition = await managed.domain.finalize(
                     managed.claim.grant,
@@ -770,15 +680,18 @@ class GrantSupervisor:
                     terminal,
                 )
         except asyncio.CancelledError as exc:
-            managed.uncertain = True
-            failure = grant_control.GrantControlIntegrityError(
-                "finalization outcome is unknown after cancellation"
-            )
-            failure.__cause__ = exc
-            self._surface_integrity_failure(failure)
-            self._discard_exact_generation(key)
+            if self._is_current(managed):
+                managed.uncertain = True
+                failure = grant_control.GrantControlIntegrityError(
+                    "finalization outcome is unknown after cancellation"
+                )
+                failure.__cause__ = exc
+                self._surface_integrity_failure(failure)
+                self._discard_current(managed)
             raise
         except Exception as exc:
+            if not self._is_current(managed):
+                return _FinalizeEffect.LOST
             managed.uncertain = True
             failure = (
                 exc
@@ -793,21 +706,23 @@ class GrantSupervisor:
             if failure is not exc:
                 failure.__cause__ = exc
             self._surface_integrity_failure(failure)
-            self._discard_exact_generation(key)
+            self._discard_current(managed)
             return _FinalizeEffect.ABANDONED
 
+        if not self._is_current(managed):
+            return _FinalizeEffect.LOST
         if disposition is grant_control.FinalizeDisposition.APPLIED:
-            self._discard_exact_generation(key)
+            self._discard_current(managed)
             return _FinalizeEffect.APPLIED
         if disposition is grant_control.FinalizeDisposition.LOST:
             managed.context.grant_lost.set()
-            self._discard_exact_generation(key)
+            self._discard_current(managed)
             return _FinalizeEffect.LOST
         msg = "finalization returned an unknown disposition"
         failure = grant_control.GrantControlIntegrityError(msg)
         self._surface_integrity_failure(failure)
         managed.uncertain = True
-        self._discard_exact_generation(key)
+        self._discard_current(managed)
         return _FinalizeEffect.ABANDONED
 
     def _terminal_task_done(
@@ -837,7 +752,6 @@ class GrantSupervisor:
                 and not managed.administrative_stop
                 and not managed.lost
                 and not managed.uncertain
-                and self._current_exact(managed.key) is managed
             )
             if not expected:
                 continue
@@ -858,7 +772,7 @@ class GrantSupervisor:
 
             for managed, result in zip(expected, results, strict=True):
                 if (
-                    self._current_exact(managed.key) is not managed
+                    not self._is_current(managed)
                     or managed.terminal_task is not None
                 ):
                     continue
@@ -887,38 +801,41 @@ class GrantSupervisor:
                     self._fail_heartbeat_domain((managed,), failure)
                     continue
                 if managed.runner_closed.is_set():
-                    self._handle_runner_closed(managed.key)
+                    self._handle_runner_closed(managed)
 
     def _fail_heartbeat_domain(
         self,
         expected: typing.Sequence[_ManagedGrant],
         failure: BaseException,
     ) -> None:
+        current = tuple(
+            managed for managed in expected if self._is_current(managed)
+        )
+        if not current:
+            return
         self._surface_integrity_failure(failure)
-        for managed in expected:
-            if self._current_exact(managed.key) is not managed:
-                continue
+        for managed in current:
             managed.uncertain = True
             managed.context.grant_lost.set()
             managed.context.stop_requested.set()
             if managed.runner_closed.is_set():
-                self._handle_runner_closed(managed.key)
+                self._handle_runner_closed(managed)
 
-    def snapshot(self) -> SupervisorSnapshot:
-        """Return immutable local counts without storage access."""
-        counts = {
-            domain.domain_id: GrantCount(
-                active=sum(
-                    managed.domain is domain
-                    and self._current_exact(managed.key) is managed
-                    for managed in self._registry.values()
-                )
-            )
-            for domain in self._domains
-        }
-        return SupervisorSnapshot(
-            profile=self._profile.name,
-            counts_by_domain=types.MappingProxyType(counts),
+    def active_count(self, domain_id: grant_control.DomainId) -> int:
+        """Return the local count of running grants in one domain.
+
+        Args:
+            domain_id: Ownership domain to count.
+
+        Returns:
+            Current grants whose runners have not closed.
+        """
+        domain = self._domains_by_id.get(domain_id)
+        if domain is None:
+            return 0
+        return sum(
+            managed.domain is domain and not managed.runner_closed.is_set()
+            for managed in self._registry.values()
         )
 
     async def _claim_shutdown_blocker(
@@ -936,11 +853,10 @@ class GrantSupervisor:
         if not pending_claims:
             return False
         for managed in tuple(self._registry.values()):
-            if self._current_exact(managed.key) is managed:
-                managed.context.stop_requested.set()
+            managed.context.stop_requested.set()
         return True
 
-    async def shutdown(  # noqa: PLR0912
+    async def shutdown(
         self,
         *,
         cooperative_grace_sec: float,
@@ -966,14 +882,9 @@ class GrantSupervisor:
 
         initial = tuple(self._registry.values())
         for managed in initial:
-            if self._current_exact(managed.key) is managed:
-                managed.context.stop_requested.set()
+            managed.context.stop_requested.set()
 
-        root_tasks = tuple(
-            managed.root_task
-            for managed in initial
-            if managed.root_task is not None and not managed.root_task.done()
-        )
+        root_tasks = tuple(self._runner_tasks)
         remaining = await self._wait_tasks(
             root_tasks,
             cooperative_grace_sec,
@@ -986,50 +897,45 @@ class GrantSupervisor:
                 external_stop_deadline_sec,
             )
 
-        undrained = 0
         for managed in initial:
-            if (
-                self._current_exact(managed.key) is managed
-                and not managed.runner_closed.is_set()
-            ):
+            if self._is_current(managed) and not managed.runner_closed.is_set():
                 managed.uncertain = True
                 managed.context.grant_lost.set()
-                undrained += 1
+        undrained = len(remaining)
 
         await stop_heartbeat_supervision()
 
-        terminal_tasks: list[asyncio.Task[_FinalizeEffect]] = []
         for managed in tuple(self._registry.values()):
-            if (
-                self._current_exact(managed.key) is managed
-                and managed.runner_closed.is_set()
-            ):
-                if managed.terminal_task is not None:
-                    terminal_tasks.append(managed.terminal_task)
-                elif (
+            if managed.runner_closed.is_set():
+                if managed.terminal_task is None and (
                     managed.administrative_stop
                     or managed.lost
                     or managed.uncertain
                 ):
-                    self._handle_runner_closed(managed.key)
-                else:
-                    task = self._start_terminal_task(managed)
-                    if task is not None:
-                        terminal_tasks.append(task)
+                    self._handle_runner_closed(managed)
+                elif managed.terminal_task is None:
+                    self._start_terminal_task(managed)
 
-        pending_terminals = await self._wait_tasks(
-            terminal_tasks,
-            external_stop_deadline_sec,
+        undrained += await self._finalize_closed_grants(
+            external_stop_deadline_sec
         )
-        for task in pending_terminals:
-            task.cancel()
-        if pending_terminals:
-            await asyncio.gather(
-                *pending_terminals,
-                return_exceptions=True,
-            )
         if undrained:
             raise SupervisorNotDrainedError
+
+    async def _finalize_closed_grants(
+        self,
+        wait_timeout_sec: float,
+    ) -> int:
+        """Bound cleanup for current and superseded finalizer tasks."""
+        pending = await self._wait_tasks(
+            self._terminal_tasks,
+            wait_timeout_sec,
+        )
+        for task in pending:
+            task.cancel()
+        if pending:
+            _done, pending = await asyncio.wait(pending, timeout=0)
+        return len(pending)
 
     def _validate_timeout(self, value: float, field_name: str) -> None:
         if isinstance(value, bool):
@@ -1053,26 +959,14 @@ class GrantSupervisor:
         )
         return pending
 
-    def _current_exact(
-        self,
-        key: _GenerationKey,
-    ) -> _ManagedGrant | None:
-        managed = self._registry.get(key)
-        if managed is None:
-            return None
-        slot = _AuthoritySlot(key.domain_id, key.authority)
-        if self._current_by_slot.get(slot) != key:
-            return None
-        return managed
+    def _is_current(self, managed: _ManagedGrant) -> bool:
+        return self._registry.get(managed.slot) is managed
 
-    def _discard_exact_generation(self, key: _GenerationKey) -> bool:
-        managed = self._current_exact(key)
-        if managed is None:
+    def _discard_current(self, managed: _ManagedGrant) -> bool:
+        if not self._is_current(managed):
             return False
-        slot = _AuthoritySlot(key.domain_id, key.authority)
-        del self._registry[key]
-        del self._current_by_slot[slot]
-        self._owned_by_domain[key.domain_id] -= 1
+        del self._registry[managed.slot]
+        self._owned_by_domain[managed.slot.domain_id] -= 1
         self._process_owned -= 1
         return True
 

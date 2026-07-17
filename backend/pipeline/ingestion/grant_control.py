@@ -47,7 +47,13 @@ class GrantControlIntegrityError(RuntimeError):
 
 
 class ExactGrant[UnitKeyT: typing.Hashable](typing.Protocol):
-    """Complete immutable authority for one ownership generation."""
+    """Complete immutable authority for one ownership generation.
+
+    Attributes:
+        unit_key: Permanent identity within the ownership domain.
+        owner_worker_id: Worker authorized for this generation.
+        fencing_token: Monotonic generation that rejects stale workers.
+    """
 
     @property
     def unit_key(self) -> UnitKeyT:
@@ -154,6 +160,8 @@ class RunContext:
 
 class GrantControl[GrantT, PayloadT](typing.Protocol):
     """Small typed storage-control seam shared by registered domains."""
+
+    domain_id: DomainId
 
     async def claim(
         self,

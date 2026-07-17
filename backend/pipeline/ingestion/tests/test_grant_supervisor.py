@@ -7,7 +7,6 @@ import asyncio
 import datetime
 import inspect
 import textwrap
-import types
 import typing
 import unittest
 import uuid
@@ -57,59 +56,6 @@ def _feed_payload(
         "status_reason": None,
         "source_feed_id": "123-456",
     }
-
-
-def _is_feed_payload(value: object) -> typing.TypeGuard[feed_store.LeasedFeed]:
-    if not isinstance(value, dict):
-        return False
-    mapping = typing.cast("dict[str, object]", value)
-    required = {
-        "id",
-        "name",
-        "source_type",
-        "last_processed_filename",
-        "last_bookmark_time",
-        "fencing_token",
-        "failure_count",
-        "status_reason",
-        "source_feed_id",
-    }
-    if set(mapping) < required:
-        return False
-    return (
-        isinstance(mapping["id"], uuid.UUID)
-        and isinstance(mapping["name"], str)
-        and isinstance(mapping["source_type"], feed_store.SourceType)
-        and (
-            mapping["last_processed_filename"] is None
-            or isinstance(mapping["last_processed_filename"], str)
-        )
-        and (
-            mapping["last_bookmark_time"] is None
-            or isinstance(mapping["last_bookmark_time"], datetime.datetime)
-        )
-        and not isinstance(mapping["fencing_token"], bool)
-        and isinstance(mapping["fencing_token"], int)
-        and not isinstance(mapping["failure_count"], bool)
-        and isinstance(mapping["failure_count"], int)
-        and (
-            mapping["status_reason"] is None
-            or isinstance(
-                mapping["status_reason"],
-                feed_store.FeedStatusReason,
-            )
-        )
-        and (
-            mapping["source_feed_id"] is None
-            or isinstance(mapping["source_feed_id"], str)
-        )
-    )
-
-
-def _is_claim_mode(
-    value: object,
-) -> typing.TypeGuard[grant_control.ClaimMode]:
-    return isinstance(value, grant_control.ClaimMode)
 
 
 def _failure_plan(
@@ -178,6 +124,7 @@ class _Control[GrantT, PayloadT]:
     """Deterministic typed control with explicit I/O barriers."""
 
     def __init__(self) -> None:
+        self.domain_id = grant_control.DomainId.FEED
         self.claim_batches: dict[
             grant_control.ClaimMode,
             list[
@@ -203,6 +150,8 @@ class _Control[GrantT, PayloadT]:
             grant_control.HeartbeatDisposition,
         ] = {}
         self.heartbeat_calls: list[tuple[GrantT, ...]] = []
+        self.heartbeat_started = asyncio.Event()
+        self.heartbeat_gate: asyncio.Event | None = None
         self.heartbeat_error: BaseException | None = None
         self.finalize_disposition = grant_control.FinalizeDisposition.APPLIED
         self.finalize_calls: list[
@@ -214,6 +163,7 @@ class _Control[GrantT, PayloadT]:
         ] = []
         self.finalize_started = asyncio.Event()
         self.finalize_gate: asyncio.Event | None = None
+        self.resist_finalize_cancellation = False
         self.before_finalize: typing.Callable[[], None] | None = None
         self.finalize_error: BaseException | None = None
 
@@ -245,6 +195,9 @@ class _Control[GrantT, PayloadT]:
     ) -> tuple[grant_control.GrantHeartbeat[GrantT], ...]:
         grants = tuple(grants)
         self.heartbeat_calls.append(grants)
+        self.heartbeat_started.set()
+        if self.heartbeat_gate is not None:
+            await self.heartbeat_gate.wait()
         if self.heartbeat_error is not None:
             raise self.heartbeat_error
         return tuple(
@@ -269,7 +222,15 @@ class _Control[GrantT, PayloadT]:
         if self.before_finalize is not None:
             self.before_finalize()
         if self.finalize_gate is not None:
-            await self.finalize_gate.wait()
+            try:
+                await self.finalize_gate.wait()
+            except asyncio.CancelledError:
+                if not self.resist_finalize_cancellation:
+                    raise
+                current = asyncio.current_task()
+                assert current is not None
+                current.uncancel()
+                await self.finalize_gate.wait()
         if self.finalize_error is not None:
             raise self.finalize_error
         return grant_control.FinalizeResult(
@@ -311,9 +272,7 @@ class _Runner[GrantT, PayloadT]:
             self.finished_event(grant).set()
 
 
-class _CancellationResistantRunner[GrantT, PayloadT](
-    _Runner[GrantT, PayloadT]
-):
+class _CancellationResistantRunner[GrantT, PayloadT](_Runner[GrantT, PayloadT]):
     """Controlled runner that acknowledges cancellation without closing."""
 
     def __init__(self) -> None:
@@ -350,15 +309,9 @@ def _feed_registration(
     feed_store.FeedGrant,
     feed_store.LeasedFeed,
 ]:
+    control.domain_id = grant_control.DomainId.FEED
     return grant_supervisor.RegisteredDomain(
         domain_id=grant_control.DomainId.FEED,
-        grant_type=feed_store.FeedGrant,
-        payload_validator=_is_feed_payload,
-        authority_of=lambda grant: grant_supervisor.FeedAuthority(
-            grant.feed_id
-        ),
-        owner_of=lambda grant: grant.owner_worker_id,
-        fencing_token_of=lambda grant: grant.fencing_token,
         control=control,
         runner=runner,
     )
@@ -377,16 +330,9 @@ def _sid_registration(
     ingestion_lease_store.LeaseGrant,
     grant_control.ClaimMode,
 ]:
+    control.domain_id = grant_control.DomainId.SID
     return grant_supervisor.RegisteredDomain(
         domain_id=grant_control.DomainId.SID,
-        grant_type=ingestion_lease_store.LeaseGrant,
-        payload_validator=_is_claim_mode,
-        authority_of=lambda grant: grant_supervisor.SidAuthority(
-            grant.source_type.value,
-            grant.lease_key,
-        ),
-        owner_of=lambda grant: grant.owner_worker_id,
-        fencing_token_of=lambda grant: grant.fencing_token,
         control=control,
         runner=runner,
     )
@@ -394,19 +340,6 @@ def _sid_registration(
 
 async def _wait(event: asyncio.Event) -> None:
     await asyncio.wait_for(event.wait(), timeout=1)
-
-
-def _assign_snapshot_count(
-    mapping: typing.Mapping[
-        grant_control.DomainId,
-        grant_supervisor.GrantCount,
-    ],
-) -> None:
-    writable = typing.cast(
-        "dict[grant_control.DomainId, grant_supervisor.GrantCount]",
-        mapping,
-    )
-    writable[grant_control.DomainId.SID] = grant_supervisor.GrantCount(active=0)
 
 
 class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
@@ -467,6 +400,33 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                 finalize_concurrency=1,
                 failure_planner=_failure_plan,
             )
+
+    def test_registration_rejects_cross_wired_control_domain(self) -> None:
+        feed_control: _Control[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Control()
+        feed_runner: _Runner[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Runner()
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "does not match control domain",
+        ):
+            grant_supervisor.RegisteredDomain(
+                domain_id=grant_control.DomainId.SID,
+                control=feed_control,
+                runner=feed_runner,
+            )
+
+    def test_public_annotations_resolve_at_runtime(self) -> None:
+        hints = typing.get_type_hints(
+            grant_supervisor.GrantSupervisor.admit_cycle
+        )
+
+        self.assertIs(hints["owner_worker_id"], uuid.UUID)
 
     async def test_primary_then_recovery_share_each_domain_budget(
         self,
@@ -530,15 +490,11 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             [2, 2],
         )
         self.assertEqual(
-            supervisor.snapshot()
-            .counts_by_domain[grant_control.DomainId.FEED]
-            .active,
+            supervisor.active_count(grant_control.DomainId.FEED),
             1,
         )
         self.assertEqual(
-            supervisor.snapshot()
-            .counts_by_domain[grant_control.DomainId.SID]
-            .active,
+            supervisor.active_count(grant_control.DomainId.SID),
             1,
         )
 
@@ -579,44 +535,6 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(feed_control.claim_calls[0][2], 1)
         feed_control.claim_gate.set()
         await first
-
-    async def test_invalid_erased_payload_fails_closed_before_runner(
-        self,
-    ) -> None:
-        feed_control: _Control[
-            feed_store.FeedGrant,
-            feed_store.LeasedFeed,
-        ] = _Control()
-        feed_runner: _Runner[
-            feed_store.FeedGrant,
-            feed_store.LeasedFeed,
-        ] = _Runner()
-        grant = _feed_grant(uuid.uuid4(), 1)
-        invalid = typing.cast("feed_store.LeasedFeed", {"id": grant.feed_id})
-        feed_control.queue_claims(
-            grant_control.ClaimMode.PRIMARY,
-            grant_control.ClaimedGrant(grant, invalid),
-        )
-        supervisor = self._supervisor(
-            worker_profiles.LEGACY_PROFILE,
-            _feed_registration(feed_control, feed_runner),
-        )
-
-        with self.assertRaisesRegex(
-            grant_control.GrantControlIntegrityError,
-            "invalid runner payload",
-        ):
-            await supervisor.admit_cycle(_OWNER)
-
-        self.assertFalse(supervisor.admission_enabled)
-        self.assertTrue(supervisor.integrity_failure_event.is_set())
-        self.assertNotIn(grant, feed_runner.contexts)
-        self.assertEqual(
-            supervisor.snapshot()
-            .counts_by_domain[grant_control.DomainId.FEED]
-            .active,
-            0,
-        )
 
     async def test_heartbeat_ineligible_stops_only_one_runner_without_write(
         self,
@@ -740,6 +658,58 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         runner.release.set()
         await _wait(runner.finished_event(grant))
         self.assertEqual(control.finalize_calls, [])
+
+    async def test_stale_heartbeat_failure_cannot_poison_successor(
+        self,
+    ) -> None:
+        control: _Control[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Control()
+        runner: _CancellationResistantRunner[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _CancellationResistantRunner()
+        feed_id = uuid.uuid4()
+        first = _feed_grant(feed_id, 1)
+        second = _feed_grant(feed_id, 2)
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(first, _feed_payload(first)),
+        )
+        supervisor = self._supervisor(
+            worker_profiles.LEGACY_PROFILE,
+            _feed_registration(control, runner),
+        )
+        await supervisor.admit_cycle(_OWNER)
+        await _wait(runner.started_event(first))
+
+        control.heartbeat_gate = asyncio.Event()
+        control.heartbeat_error = RuntimeError("stale heartbeat failed")
+        heartbeat = asyncio.create_task(
+            supervisor.heartbeat_cycle(lambda: None)
+        )
+        await _wait(control.heartbeat_started)
+
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(second, _feed_payload(second)),
+        )
+        await supervisor.admit_cycle(_OWNER)
+        await _wait(runner.started_event(second))
+        control.heartbeat_gate.set()
+        await heartbeat
+
+        self.assertTrue(supervisor.admission_enabled)
+        self.assertIsNone(supervisor.integrity_failure)
+        self.assertFalse(runner.contexts[second].stop_requested.is_set())
+        self.assertEqual(
+            next(iter(supervisor._registry.values())).claim.grant,
+            second,
+        )
+        runner.release.set()
+        await _wait(runner.finished_event(first))
+        await _wait(runner.finished_event(second))
 
     async def test_completed_runner_finalizes_exactly_once(
         self,
@@ -979,6 +949,111 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
 
+    async def test_shutdown_is_bounded_when_finalizer_resists_cancellation(
+        self,
+    ) -> None:
+        control: _Control[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Control()
+        runner: _Runner[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Runner()
+        grant = _feed_grant(uuid.uuid4(), 1)
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(grant, _feed_payload(grant)),
+        )
+        control.finalize_gate = asyncio.Event()
+        control.resist_finalize_cancellation = True
+        supervisor = self._supervisor(
+            worker_profiles.LEGACY_PROFILE,
+            _feed_registration(control, runner),
+        )
+        await supervisor.admit_cycle(_OWNER)
+        await _wait(runner.started_event(grant))
+        runner.release.set()
+        await _wait(control.finalize_started)
+
+        async def stop_heartbeats() -> None:
+            return
+
+        with self.assertRaises(grant_supervisor.SupervisorNotDrainedError):
+            await asyncio.wait_for(
+                supervisor.shutdown(
+                    cooperative_grace_sec=0,
+                    external_stop_deadline_sec=0,
+                    stop_heartbeat_supervision=stop_heartbeats,
+                ),
+                timeout=1,
+            )
+
+        terminal_tasks = tuple(supervisor._terminal_tasks)
+        self.assertEqual(len(terminal_tasks), 1)
+        control.finalize_gate.set()
+        await asyncio.gather(*terminal_tasks)
+        self.assertEqual(supervisor._registry, {})
+
+    async def test_shutdown_tracks_superseded_in_flight_finalizer(
+        self,
+    ) -> None:
+        control: _Control[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Control()
+        runner: _Runner[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Runner()
+        feed_id = uuid.uuid4()
+        first = _feed_grant(feed_id, 1)
+        second = _feed_grant(feed_id, 2)
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(first, _feed_payload(first)),
+        )
+        control.finalize_gate = asyncio.Event()
+        control.resist_finalize_cancellation = True
+        supervisor = self._supervisor(
+            worker_profiles.LEGACY_PROFILE,
+            _feed_registration(control, runner),
+        )
+        await supervisor.admit_cycle(_OWNER)
+        await _wait(runner.started_event(first))
+        runner.release.set()
+        await _wait(control.finalize_started)
+
+        runner.release.clear()
+        runner.outcomes[second] = grant_control.RunLost()
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(second, _feed_payload(second)),
+        )
+        await supervisor.admit_cycle(_OWNER)
+        await _wait(runner.started_event(second))
+        runner.release.set()
+        await _wait(runner.finished_event(second))
+        self.assertEqual(supervisor._registry, {})
+
+        async def stop_heartbeats() -> None:
+            return
+
+        with self.assertRaises(grant_supervisor.SupervisorNotDrainedError):
+            await asyncio.wait_for(
+                supervisor.shutdown(
+                    cooperative_grace_sec=0,
+                    external_stop_deadline_sec=0,
+                    stop_heartbeat_supervision=stop_heartbeats,
+                ),
+                timeout=1,
+            )
+
+        terminal_tasks = tuple(supervisor._terminal_tasks)
+        self.assertEqual(len(terminal_tasks), 1)
+        control.finalize_gate.set()
+        await asyncio.gather(*terminal_tasks)
+
     async def test_shutdown_rejects_unsettled_claim_mutation(self) -> None:
         control: _Control[
             feed_store.FeedGrant,
@@ -1000,9 +1075,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         async def stop_heartbeats() -> None:
             heartbeat_stopped.set()
 
-        with self.assertRaises(
-            grant_supervisor.SupervisorNotDrainedError
-        ):
+        with self.assertRaises(grant_supervisor.SupervisorNotDrainedError):
             await supervisor.shutdown(
                 cooperative_grace_sec=0,
                 external_stop_deadline_sec=0,
@@ -1040,9 +1113,7 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         async def stop_heartbeats() -> None:
             heartbeat_stopped.set()
 
-        with self.assertRaises(
-            grant_supervisor.SupervisorNotDrainedError
-        ):
+        with self.assertRaises(grant_supervisor.SupervisorNotDrainedError):
             await supervisor.shutdown(
                 cooperative_grace_sec=0,
                 external_stop_deadline_sec=0,
@@ -1056,7 +1127,103 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         await _wait(runner.finished_event(grant))
         self.assertEqual(supervisor._registry, {})
 
-    async def test_stale_generation_key_cannot_remove_successor(
+    async def test_higher_fence_successor_uses_one_ownership_slot(
+        self,
+    ) -> None:
+        control: _Control[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Control()
+        runner: _CancellationResistantRunner[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _CancellationResistantRunner()
+        feed_id = uuid.uuid4()
+        first = _feed_grant(feed_id, 1)
+        second = _feed_grant(feed_id, 2)
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(first, _feed_payload(first)),
+        )
+        control.finalize_disposition = grant_control.FinalizeDisposition.LOST
+        supervisor = self._supervisor(
+            worker_profiles.LEGACY_PROFILE,
+            _feed_registration(control, runner),
+        )
+        await supervisor.admit_cycle(_OWNER)
+        await _wait(runner.started_event(first))
+
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(second, _feed_payload(second)),
+        )
+        await supervisor.admit_cycle(_OWNER)
+        await _wait(runner.started_event(second))
+        await _wait(runner.cancellation_seen)
+
+        self.assertTrue(runner.contexts[first].stop_requested.is_set())
+        self.assertTrue(runner.contexts[first].grant_lost.is_set())
+        self.assertEqual(
+            supervisor.active_count(grant_control.DomainId.FEED),
+            1,
+        )
+        self.assertEqual(supervisor._process_owned, 1)
+        self.assertEqual(
+            supervisor._owned_by_domain[grant_control.DomainId.FEED],
+            1,
+        )
+        self.assertFalse(runner.contexts[second].stop_requested.is_set())
+        self.assertEqual(
+            next(iter(supervisor._registry.values())).claim.grant,
+            second,
+        )
+
+        runner.release.set()
+        await _wait(runner.finished_event(first))
+        await _wait(runner.finished_event(second))
+        await _wait(control.finalize_started)
+        self.assertEqual([call[0] for call in control.finalize_calls], [second])
+
+    async def test_equal_fence_collision_fails_closed(self) -> None:
+        control: _Control[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Control()
+        runner: _Runner[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Runner()
+        feed_id = uuid.uuid4()
+        first = _feed_grant(feed_id, 1)
+        duplicate = _feed_grant(feed_id, 1)
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(first, _feed_payload(first)),
+        )
+        supervisor = self._supervisor(
+            worker_profiles.LEGACY_PROFILE,
+            _feed_registration(control, runner),
+        )
+        await supervisor.admit_cycle(_OWNER)
+        await _wait(runner.started_event(first))
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(
+                duplicate,
+                _feed_payload(duplicate),
+            ),
+        )
+
+        with self.assertRaises(grant_control.GrantControlIntegrityError):
+            await supervisor.admit_cycle(_OWNER)
+
+        self.assertFalse(supervisor.admission_enabled)
+        self.assertEqual(
+            next(iter(supervisor._registry.values())).claim.grant,
+            first,
+        )
+
+    async def test_same_unit_generations_in_one_batch_fail_atomically(
         self,
     ) -> None:
         control: _Control[
@@ -1073,40 +1240,72 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         control.queue_claims(
             grant_control.ClaimMode.PRIMARY,
             grant_control.ClaimedGrant(first, _feed_payload(first)),
+            grant_control.ClaimedGrant(second, _feed_payload(second)),
         )
-        control.finalize_disposition = grant_control.FinalizeDisposition.LOST
+        supervisor = self._supervisor(
+            worker_profiles.LEGACY_PROFILE,
+            _feed_registration(control, runner),
+        )
+
+        with self.assertRaises(grant_control.GrantControlIntegrityError):
+            await supervisor.admit_cycle(_OWNER)
+
+        self.assertFalse(supervisor.admission_enabled)
+        self.assertEqual(supervisor._registry, {})
+        self.assertEqual(runner.contexts, {})
+        self.assertEqual(supervisor._process_owned, 0)
+        self.assertEqual(supervisor._process_reserved, 0)
+
+    async def test_superseded_finalization_cannot_remove_successor(
+        self,
+    ) -> None:
+        control: _Control[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Control()
+        runner: _Runner[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Runner()
+        feed_id = uuid.uuid4()
+        first = _feed_grant(feed_id, 1)
+        second = _feed_grant(feed_id, 2)
+        control.finalize_gate = asyncio.Event()
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(first, _feed_payload(first)),
+        )
         supervisor = self._supervisor(
             worker_profiles.LEGACY_PROFILE,
             _feed_registration(control, runner),
         )
         await supervisor.admit_cycle(_OWNER)
         await _wait(runner.started_event(first))
-        old_key = next(iter(supervisor._registry))
+        first_managed = next(iter(supervisor._registry.values()))
         runner.release.set()
         await _wait(control.finalize_started)
-        await _wait(runner.finished_event(first))
+        first_terminal = first_managed.terminal_task
+        self.assertIsNotNone(first_terminal)
 
         runner.release = asyncio.Event()
-        control.finalize_started = asyncio.Event()
-        control.finalize_disposition = grant_control.FinalizeDisposition.APPLIED
         control.queue_claims(
             grant_control.ClaimMode.PRIMARY,
             grant_control.ClaimedGrant(second, _feed_payload(second)),
         )
         await supervisor.admit_cycle(_OWNER)
         await _wait(runner.started_event(second))
+        control.finalize_gate.set()
+        assert first_terminal is not None
+        await first_terminal
 
-        supervisor._handle_runner_closed(old_key)
-
+        self.assertTrue(supervisor.admission_enabled)
         self.assertEqual(
-            supervisor.snapshot()
-            .counts_by_domain[grant_control.DomainId.FEED]
-            .active,
-            1,
+            next(iter(supervisor._registry.values())).claim.grant,
+            second,
         )
         self.assertFalse(runner.contexts[second].stop_requested.is_set())
 
-    async def test_snapshot_is_immutable_and_store_free(self) -> None:
+    async def test_active_count_is_store_free_and_domain_scoped(self) -> None:
         control: _Control[
             ingestion_lease_store.LeaseGrant,
             grant_control.ClaimMode,
@@ -1130,16 +1329,14 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         await supervisor.admit_cycle(_OWNER)
         await _wait(runner.started_event(grant))
 
-        snapshot = supervisor.snapshot()
-
-        self.assertEqual(snapshot.profile, "test-sid")
-        self.assertIsInstance(snapshot.counts_by_domain, types.MappingProxyType)
         self.assertEqual(
-            snapshot.counts_by_domain[grant_control.DomainId.SID],
-            grant_supervisor.GrantCount(active=1),
+            supervisor.active_count(grant_control.DomainId.SID),
+            1,
         )
-        with self.assertRaises(TypeError):
-            _assign_snapshot_count(snapshot.counts_by_domain)
+        self.assertEqual(
+            supervisor.active_count(grant_control.DomainId.FEED),
+            0,
+        )
 
     def test_lifecycle_algorithm_has_no_feed_or_sid_dispatch(self) -> None:
         for method_name in (
