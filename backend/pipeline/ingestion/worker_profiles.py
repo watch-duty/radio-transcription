@@ -93,36 +93,26 @@ WORKER_PROFILE_PRESETS: typing.Mapping[str, WorkerProfile] = (
 )
 
 
-def _positive_int(value: object, field_name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+def _positive_int(value: int, field_name: str) -> int:
+    if isinstance(value, bool) or value <= 0:
         msg = f"{field_name} must be a positive integer"
         raise ValueError(msg)
     return value
 
 
 def _validate_profile_shape(profile: WorkerProfile) -> None:
-    if not isinstance(profile.name, str) or not profile.name.strip():
+    if not profile.name.strip():
         msg = "Worker profile name must not be empty"
         raise ValueError(msg)
     _positive_int(profile.process_owned_cap, "Worker profile process_owned_cap")
-    if not isinstance(profile.allocations, tuple):
-        msg = "Worker profile allocations must be an immutable tuple"
-        raise TypeError(msg)
     if not profile.allocations:
         msg = "Worker profile must select at least one domain"
         raise ValueError(msg)
 
 
 def _validate_allocation(
-    allocation: object,
+    allocation: DomainAllocation,
 ) -> tuple[DomainAllocation, int]:
-    if not isinstance(allocation, DomainAllocation):
-        msg = "Worker profile allocation is invalid"
-        raise TypeError(msg)
-    if not isinstance(allocation.domain_id, grant_control.DomainId):
-        msg = "Worker profile contains an empty or unknown domain"
-        raise TypeError(msg)
-
     owned_cap = _positive_int(
         allocation.owned_cap,
         f"Domain {allocation.domain_id.value} owned_cap",
@@ -137,15 +127,10 @@ def _validate_allocation(
             "must not exceed owned_cap"
         )
         raise ValueError(msg)
-    if not isinstance(allocation.claims_enabled, bool):
-        msg = (
-            f"Domain {allocation.domain_id.value} claims_enabled must be a bool"
-        )
-        raise TypeError(msg)
     return allocation, owned_cap
 
 
-def validate_worker_profile(profile: object) -> WorkerProfile:
+def validate_worker_profile(profile: WorkerProfile) -> WorkerProfile:
     """Validate and return one closed immutable worker profile.
 
     Args:
@@ -155,12 +140,8 @@ def validate_worker_profile(profile: object) -> WorkerProfile:
         The validated immutable profile.
 
     Raises:
-        TypeError: If ``profile`` is not a ``WorkerProfile``.
         ValueError: If profile structure or allocation is invalid.
     """
-    if not isinstance(profile, WorkerProfile):
-        msg = "profile must be a WorkerProfile"
-        raise TypeError(msg)
     _validate_profile_shape(profile)
 
     seen_domains: set[grant_control.DomainId] = set()
@@ -242,18 +223,22 @@ def derive_bcfy_calls_authority(
         msg = "sid_lease authority requires a selected SID domain"
         raise ValueError(msg)
 
-    allocations = tuple(
-        dataclasses.replace(
-            allocation,
-            claims_enabled=(
-                allocation.domain_id is grant_control.DomainId.FEED
-                or mode is BcfyCallsAuthorityMode.SID_LEASE
-            ),
+    allocations: list[DomainAllocation] = []
+    for allocation in validated.allocations:
+        if allocation.domain_id is grant_control.DomainId.FEED:
+            claims_enabled = True
+        elif allocation.domain_id is grant_control.DomainId.SID:
+            claims_enabled = mode is BcfyCallsAuthorityMode.SID_LEASE
+        else:
+            claims_enabled = allocation.claims_enabled
+        allocations.append(
+            dataclasses.replace(
+                allocation,
+                claims_enabled=claims_enabled,
+            )
         )
-        for allocation in validated.allocations
-    )
     return validate_worker_profile(
-        dataclasses.replace(validated, allocations=allocations)
+        dataclasses.replace(validated, allocations=tuple(allocations))
     )
 
 
@@ -303,7 +288,7 @@ def resolve_worker_profile(
                     claims_per_cycle=feed_claims_per_cycle,
                 )
             )
-        else:
+        elif allocation.domain_id is grant_control.DomainId.SID:
             allocations.append(
                 dataclasses.replace(
                     allocation,
@@ -311,6 +296,8 @@ def resolve_worker_profile(
                     claims_per_cycle=sid_claims_per_cycle,
                 )
             )
+        else:
+            allocations.append(allocation)
 
     process_owned_cap = sum(allocation.owned_cap for allocation in allocations)
     profile = dataclasses.replace(
