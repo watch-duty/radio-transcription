@@ -108,7 +108,7 @@ class GeminiConfig(utils.ConfigBase):
     client_timeout_ms: int = DEFAULT_GEMINI_CLIENT_TIMEOUT_MS
 
     fallback_model: str | None = DEFAULT_GEMINI_MODEL
-    fallback_location: str | None = None
+    fallback_location: str = DEFAULT_GEMINI_LOCATION
     fallback_retry_attempts: int = 2
 
 
@@ -302,8 +302,7 @@ class GeminiTranscriber(base.Transcriber):
         )
 
         fallback_location = self._resolve_location(
-            fallback_model,
-            self.config.fallback_location or DEFAULT_GEMINI_LOCATION,
+            fallback_model, self.config.fallback_location
         )
         fallback_client = self._get_client(fallback_location)
 
