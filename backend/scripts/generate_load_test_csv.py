@@ -44,18 +44,25 @@ class FeedSpec(NamedTuple):
     tags: str
 
 
-def calculate_mix_counts(total: int) -> dict[str, int]:
+def calculate_mix_counts(
+    total: int, max_echo: int | None = None
+) -> dict[str, int]:
     """Calculate feed count distribution based on implementation plan mix.
 
     Mix:
-      50% fire_notifications
-      25% echo
+      25% echo (capped at max_echo unique feeds)
       25% bcfy_feeds
+      50% + echo shortfall for fire_notifications
       0% openmhz
     """
-    fn_count = int(total * 0.50)
-    echo_count = int(total * 0.25)
-    bcfy_count = total - fn_count - echo_count
+    target_echo = int(total * 0.25)
+    bcfy_count = int(total * 0.25)
+    if max_echo is not None and target_echo > max_echo:
+        echo_count = max_echo
+    else:
+        echo_count = target_echo
+
+    fn_count = total - echo_count - bcfy_count
     return {
         "fire_notifications": fn_count,
         "echo": echo_count,
@@ -128,7 +135,8 @@ def generate_csv(
     categorized = load_authentic_templates(
         echo_bucket=echo_bucket, gcp_project=gcp_project
     )
-    counts = calculate_mix_counts(total)
+    max_echo = len(categorized.get("echo", []))
+    counts = calculate_mix_counts(total, max_echo=max_echo)
     rows: list[FeedSpec] = []
 
     for source_type, target_count in counts.items():

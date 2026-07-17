@@ -185,11 +185,18 @@ class FeedsApiClient:
         resp.raise_for_status()
 
 
-def allocate_target_mix(total: int) -> dict[str, int]:
-    """Calculate mix counts: 50% FN, 25% Echo, 25% BCFY."""
-    fn_count = int(total * 0.50)
-    echo_count = int(total * 0.25)
-    bcfy_count = total - fn_count - echo_count
+def allocate_target_mix(
+    total: int, max_echo: int | None = None
+) -> dict[str, int]:
+    """Calculate mix counts: 25% Echo, 25% BCFY, 50%+shortfall FN."""
+    target_echo = int(total * 0.25)
+    bcfy_count = int(total * 0.25)
+    if max_echo is not None and target_echo > max_echo:
+        echo_count = max_echo
+    else:
+        echo_count = target_echo
+
+    fn_count = total - echo_count - bcfy_count
     return {
         "fire_notifications": fn_count,
         "echo": echo_count,
@@ -226,15 +233,10 @@ def _group_existing_feeds(
     return active_by_type, total_registered_by_type
 
 
-def cmd_activate(args: argparse.Namespace) -> int:
+def cmd_create(args: argparse.Namespace) -> int:
     """Ramp up feed activation on-demand without spec overlap."""
     client = FeedsApiClient(args.server, args.token)
     existing_feeds = client.list_feeds(args.prefix)
-
-    target_counts = allocate_target_mix(args.target_total)
-    print(f"Cumulative activation target (Total {args.target_total}):")
-    for st, count in sorted(target_counts.items()):
-        print(f"  {st}: {count}")
 
     active_by_type, total_registered_by_type = _group_existing_feeds(
         existing_feeds
@@ -251,6 +253,12 @@ def cmd_activate(args: argparse.Namespace) -> int:
     for entry in csv_entries:
         if entry.source_type in csv_by_type:
             csv_by_type[entry.source_type].append(entry)
+
+    max_echo = len(csv_by_type["echo"]) if csv_by_type.get("echo") else None
+    target_counts = allocate_target_mix(args.target_total, max_echo=max_echo)
+    print(f"Cumulative activation target (Total {args.target_total}):")
+    for st, count in sorted(target_counts.items()):
+        print(f"  {st}: {count}")
 
     total_created = 0
 
@@ -302,6 +310,51 @@ def cmd_activate(args: argparse.Namespace) -> int:
         )
 
     print(f"Phase execution complete: registered {total_created} new feeds.")
+    return 0
+
+
+def cmd_activate(args: argparse.Namespace) -> int:
+    """Bulk activate existing feeds matching prefix via /reset endpoint."""
+    client = FeedsApiClient(args.server, args.token)
+    feeds = client.list_feeds(args.prefix)
+    total_feeds = len(feeds)
+
+    target = args.target if args.target is not None else total_feeds
+    feeds_to_activate = feeds[:target]
+    total_to_activate = len(feeds_to_activate)
+
+    print(
+        f"Found {total_feeds} feed(s) matching prefix {args.prefix!r}."
+        f" Bulk activating {total_to_activate} feed(s) via /reset..."
+    )
+
+    if not feeds_to_activate:
+        print("No feeds found to activate.")
+        return 0
+
+    activated = 0
+    for idx, feed in enumerate(feeds_to_activate, 1):
+        feed_id = feed["id"]
+        try:
+            client.reset_feed(feed_id)
+            activated += 1
+        except Exception as err:
+            print(
+                f"Error resetting feed {feed_id}: {err}",
+                file=sys.stderr,
+            )
+
+        if idx % 500 == 0 and idx < total_to_activate:
+            print(
+                f"Activated batch {idx // 500} ({idx}/{total_to_activate})."
+                " Waiting 5s..."
+            )
+            time.sleep(5)
+
+    print(
+        f"Bulk activation complete: activated {activated}/"
+        f"{total_to_activate} feed(s)."
+    )
     return 0
 
 
@@ -427,20 +480,40 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    # Activate command
-    act_p = subparsers.add_parser(
-        "activate", help="Ramp activation up to target total"
+    # Create command
+    create_p = subparsers.add_parser(
+        "create", help="Create feeds on-demand up to target total"
     )
-    act_p.add_argument(
+    create_p.add_argument(
+        "--target",
         "--target-total",
         type=int,
         required=True,
-        help="Target total active feeds",
+        dest="target_total",
+        help="Target total feeds to create",
     )
-    act_p.add_argument(
+    create_p.add_argument(
         "--csv",
         default="backend/scripts/test_data/load_test_feeds_15k.csv",
         help="Path to feeds CSV for on-demand feed creation",
+    )
+    create_p.set_defaults(func=cmd_create)
+
+    # Activate command (bulk activate via /reset)
+    act_p = subparsers.add_parser(
+        "activate", help="Bulk activate existing feeds via /reset endpoint"
+    )
+    act_p.add_argument(
+        "--target",
+        "--target-total",
+        type=int,
+        required=False,
+        default=None,
+        dest="target",
+        help=(
+            "Target total feeds to activate via /reset "
+            "(defaults to all matching feeds)"
+        ),
     )
     act_p.set_defaults(func=cmd_activate)
 

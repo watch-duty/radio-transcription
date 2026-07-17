@@ -76,7 +76,7 @@ Feeds are registered and enabled on-demand from the CSV catalog at the exact mom
 ```bash
 python3 backend/scripts/load_test_feeds.py \
   --server "$SERVER_URL" --token "$TOKEN" --prefix "$LOAD_PREFIX" \
-  activate --target-total 100 --csv backend/scripts/test_data/load_test_feeds_15k.csv
+  create --target 100 --csv backend/scripts/test_data/load_test_feeds_15k.csv
 ```
 
 ### Phase 1 (500 Feeds)
@@ -154,6 +154,31 @@ During each 1-hour soak window, observe and record the following metrics:
 
 After completion of the load test:
 
+### Hard Delete Load Test Feeds
+This will deactivate feeds before deleting them.
+
+```bash
+python3 backend/scripts/load_test_feeds.py \
+  --server "$SERVER_URL" \
+  --token "$TOKEN" \
+  --prefix "$LOAD_PREFIX" \
+  delete
+```
+
+## Optional: Feed Management
+
+### Activate Load Test Feeds
+Bulk reset/activate existing feeds up to `--target` via the `/reset` API endpoint.
+Exclude the target if you want to activate all feeds.
+
+```bash
+python3 backend/scripts/load_test_feeds.py \
+  --server "$SERVER_URL" \
+  --token "$TOKEN" \
+  --prefix "$LOAD_PREFIX" \
+  activate
+```
+
 ### Deactivate Load Test Feeds
 ```bash
 python3 backend/scripts/load_test_feeds.py \
@@ -161,13 +186,4 @@ python3 backend/scripts/load_test_feeds.py \
   --token "$TOKEN" \
   --prefix "$LOAD_PREFIX" \
   deactivate
-```
-
-### Hard Delete Load Test Feeds
-```bash
-python3 backend/scripts/load_test_feeds.py \
-  --server "$SERVER_URL" \
-  --token "$TOKEN" \
-  --prefix "$LOAD_PREFIX" \
-  delete
 ```
