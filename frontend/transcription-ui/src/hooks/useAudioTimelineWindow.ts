@@ -4,6 +4,7 @@ import { type AudioSegment } from '@transcription/common';
 
 import { isWithinSegment } from '../utils/playbackUtils';
 import { MAX_WINDOW_DURATION_MS } from '../utils/timeUtils';
+import { type RenderableAudioSegment } from './useConsolidatedAudioSegments';
 
 // A window end within this of the live edge still counts as "live".
 const LIVE_EDGE_EPS_MS = 1000;
@@ -46,7 +47,7 @@ export interface AudioTimelineWindow {
 
 interface UseAudioTimelineWindowParams {
   // The consolidated (rendered) segments the timeline displays, newest-first.
-  audioSegments: AudioSegment[];
+  audioSegments: RenderableAudioSegment[];
   rawAudioSegments?: AudioSegment[];
   currentlyPlayingSegmentId: string | null;
   highlightedSegmentId: string | null;
@@ -134,7 +135,7 @@ export function useAudioTimelineWindow({
       const targetId = highlightedSegmentId || currentlyPlayingSegmentId;
       const target = targetId
         ? rawAudioSegments.find((s) => s.id === targetId) ||
-          audioSegments.find((t) => isWithinSegment(t as any, targetId))
+          audioSegments.find((t) => isWithinSegment(t, targetId))
         : undefined;
       if (target) {
         const tStart = new Date(target.startTimestamp).getTime();
@@ -162,14 +163,14 @@ export function useAudioTimelineWindow({
 
   const jumpToLive = useCallback(() => {
     setWindowEndTime(null);
-  }, []);
+  }, [setWindowEndTime]);
 
   const centerWindowOn = useCallback(
     (centerMs: number) => {
       const target = centerMs + windowDurationMs / 2;
       setWindowEndTime(liveEnd != null ? Math.min(target, liveEnd) : target);
     },
-    [windowDurationMs, liveEnd]
+    [windowDurationMs, liveEnd, setWindowEndTime]
   );
 
   return {
