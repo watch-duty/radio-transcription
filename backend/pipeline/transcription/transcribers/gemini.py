@@ -3,8 +3,8 @@
 import asyncio
 import dataclasses
 import mimetypes
+import re
 
-import httpx
 import pydantic
 from google import genai
 from google.genai import types
@@ -107,6 +107,7 @@ class GeminiConfig(utils.ConfigBase):
     client_timeout_ms: int = DEFAULT_GEMINI_CLIENT_TIMEOUT_MS
 
     fallback_model: str | None = DEFAULT_GEMINI_MODEL
+    fallback_location: str = DEFAULT_GEMINI_LOCATION
     fallback_retry_attempts: int = 2
 
 
@@ -118,30 +119,54 @@ class GeminiTranscriber(base.Transcriber):
         project_id: str,
         config: GeminiConfig,
         location: str | None = None,
+        fallback_location: str | None = None,
     ) -> None:
         """Binds the GCP Project ID and parsed configuration."""
         self.project_id = project_id
         self.config = config
         self.client: genai.Client | None = None
         self.location = location or config.location
+        self.fallback_location = fallback_location or config.fallback_location
+        self._clients: dict[str, genai.Client] = {}
+
+    def _resolve_location(self, model: str, default_location: str) -> str:
+        """Resolves the location/region for a model.
+
+        If the model is a full Vertex resource name containing a location path,
+        extracts and returns that location; otherwise returns default_location.
+        """
+        match = re.search(r"/locations/([^/]+)/", model)
+        if match:
+            return match.group(1)
+        return default_location
+
+    def _get_client(self, location: str) -> genai.Client:
+        """Gets or creates a cached genai.Client for the given location."""
+        if location not in self._clients:
+            logger.info("Initializing genai.Client for location %s", location)
+            self._clients[location] = genai.Client(
+                enterprise=True,
+                project=self.project_id,
+                location=location,
+                http_options=types.HttpOptions(
+                    timeout=self.config.client_timeout_ms,
+                    retry_options=types.HttpRetryOptions(
+                        attempts=self.config.retry_attempts,
+                        initial_delay=self.config.retry_initial_delay,
+                        max_delay=self.config.retry_max_delay,
+                        exp_base=self.config.retry_multiplier,
+                    ),
+                ),
+            )
+        return self._clients[location]
 
     def setup(self) -> None:
-        """Instantiate the GenAI API client with a robust retry policy."""
-        self.client = genai.Client(
-            enterprise=True,
-            project=self.project_id,
-            location=self.location,
-            http_options=types.HttpOptions(
-                timeout=self.config.client_timeout_ms,
-                httpx_async_client=httpx.AsyncClient(http2=True),
-                retry_options=types.HttpRetryOptions(
-                    attempts=self.config.retry_attempts,
-                    initial_delay=self.config.retry_initial_delay,
-                    max_delay=self.config.retry_max_delay,
-                    exp_base=self.config.retry_multiplier,
-                ),
-            ),
+        """Instantiates client caching and warms up the primary client."""
+        self._clients.clear()
+        primary_location = self._resolve_location(
+            self.config.model, self.location
         )
+        self.client = self._get_client(primary_location)
 
     async def transcribe(
         self,
@@ -216,7 +241,11 @@ class GeminiTranscriber(base.Transcriber):
 
         # Note: Retry policy is configured globally on the client in setup()
         try:
-            response = await self.client.aio.models.generate_content(
+            primary_location = self._resolve_location(
+                self.config.model, self.location
+            )
+            primary_client = self._get_client(primary_location)
+            response = await primary_client.aio.models.generate_content(
                 model=self.config.model,
                 contents=contents,
                 config=generation_config,
@@ -249,7 +278,7 @@ class GeminiTranscriber(base.Transcriber):
         fallback call also fails with a transient empty response, returns an
         empty string ("") to prevent infinite retries.
         """
-        if self.client is None:
+        if not self._clients:
             msg = "Client not initialized"
             raise RuntimeError(msg)
 
@@ -272,11 +301,16 @@ class GeminiTranscriber(base.Transcriber):
             fallback_model,
         )
 
+        fallback_location = self._resolve_location(
+            fallback_model, self.fallback_location
+        )
+        fallback_client = self._get_client(fallback_location)
+
         attempts = self.config.fallback_retry_attempts
         for attempt in range(1, attempts + 1):
             try:
                 fallback_response = (
-                    await self.client.aio.models.generate_content(
+                    await fallback_client.aio.models.generate_content(
                         model=fallback_model,
                         contents=contents,
                         config=generation_config,
