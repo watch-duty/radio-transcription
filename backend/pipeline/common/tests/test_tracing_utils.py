@@ -366,8 +366,9 @@ class TestTracingForkSafety(unittest.TestCase):
         "backend.pipeline.common.tracing_utils.is_gcp_env", return_value=True
     )
     @patch("backend.pipeline.common.tracing_utils.CloudTraceSpanExporter")
+    @patch("backend.pipeline.common.tracing_utils.set_tracer_provider")
     def test_fork_reinitializes_custom_provider(
-        self, mock_exporter, mock_is_gcp
+        self, mock_set_global, mock_exporter, mock_is_gcp
     ) -> None:
         """Verifies that setup_tracing reinitializes the provider when PID changes (fork)."""
         with patch.dict("os.environ", {"GOOGLE_CLOUD_PROJECT": "test-project"}):
