@@ -60,7 +60,13 @@ dataclasses.
   redundant type arm. Keep semantic subtype exclusions such as rejecting
   `bool` where an integer is required, along with nonempty, range, and
   cross-field checks.
-- Keep constructor validation that establishes a trustworthy domain object.
+- A constructor is not automatically a trust seam. Keep constructor
+  validation only when that constructor is the earliest real boundary on a
+  supported production path, including external data, database or adapter
+  results, and untyped callback or plugin outputs.
+- Do not retain duplicate type or nonempty checks in derived internal values
+  constructed exclusively from already-validated domain objects through
+  statically checked callers.
 - Keep runtime validation for external or untyped inputs, database rows,
   deserialized data, value ranges, cross-field invariants, canonical identity
   relationships, authorization, ownership, and fencing.
