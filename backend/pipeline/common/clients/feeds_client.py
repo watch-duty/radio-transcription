@@ -21,7 +21,7 @@ class FeedsClient:
             msg = "Feeds API base URL must be provided."
             raise ValueError(msg)
         self.base_url = base_url.rstrip("/")
-        self.client = httpx.Client(http2=True)
+        self.client = httpx.Client()
 
     def close(self) -> None:
         """Closes the underlying HTTP client session connection pool."""
