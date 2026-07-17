@@ -173,6 +173,7 @@ export function RuleConfigurationEdit({
   const [dryRunResult, setDryRunResult] = useState<DryRunResponse | null>(null);
   const [dryRunError, setDryRunError] = useState<string | null>(null);
   const [isDryRunModalOpen, setIsDryRunModalOpen] = useState(false);
+  const [daysLookback, setDaysLookback] = useState(1);
 
   const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
     setMenuAnchorEl(event.currentTarget);
@@ -322,7 +323,7 @@ export function RuleConfigurationEdit({
     setIsDryRunModalOpen(true);
 
     try {
-      const dryRunPayload: DryRunRequest = { rule: payload };
+      const dryRunPayload: DryRunRequest = { rule: payload, daysLookback };
       if (
         payload.scope.level === 'FEED_SPECIFIC' &&
         payload.scope.targetFeeds.length > 0
@@ -444,15 +445,36 @@ export function RuleConfigurationEdit({
                 gap: 2,
               }}
             >
-              <Button
-                variant="outlined"
-                color="info"
-                onClick={handleTestRule}
-                disabled={isSubmitting || isDryRunning}
-                sx={{ textTransform: 'none', mr: 'auto' }}
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1,
+                  mr: 'auto',
+                }}
               >
-                Test Rule
-              </Button>
+                <Button
+                  variant="outlined"
+                  color="info"
+                  onClick={handleTestRule}
+                  disabled={isSubmitting || isDryRunning}
+                  sx={{ textTransform: 'none' }}
+                >
+                  Test Rule
+                </Button>
+                <Select
+                  size="small"
+                  value={daysLookback}
+                  onChange={(e) => setDaysLookback(Number(e.target.value))}
+                  disabled={isSubmitting || isDryRunning}
+                  sx={{ minWidth: 140 }}
+                >
+                  <MenuItem value={1}>Past 24 hours</MenuItem>
+                  <MenuItem value={2}>Past 2 days</MenuItem>
+                  <MenuItem value={3}>Past 3 days</MenuItem>
+                  <MenuItem value={7}>Past 7 days</MenuItem>
+                </Select>
+              </Box>
 
               {isEditing && (
                 <Button
@@ -569,6 +591,7 @@ export function RuleConfigurationEdit({
         result={dryRunResult}
         error={dryRunError}
         feeds={feeds}
+        daysLookback={daysLookback}
       />
     </Card>
   );
@@ -739,6 +762,7 @@ interface DryRunResultsModalProps {
   result: DryRunResponse | null;
   error: string | null;
   feeds: Feed[];
+  daysLookback: number;
 }
 
 function DryRunResultsModal({
@@ -748,6 +772,7 @@ function DryRunResultsModal({
   result,
   error,
   feeds,
+  daysLookback,
 }: DryRunResultsModalProps) {
   // Helper to render matched text with bolding
   const renderHighlightedText = (
@@ -850,8 +875,9 @@ function DryRunResultsModal({
             >
               <Typography variant="subtitle1" fontWeight={600}>
                 Rule matched {(result.hitCount ?? 0).toLocaleString()} of{' '}
-                {(result.totalEvaluated ?? 0).toLocaleString()} recent
-                transcripts{' '}
+                {(result.totalEvaluated ?? 0).toLocaleString()} transcripts
+                evaluated from the past {daysLookback} day
+                {daysLookback > 1 ? 's' : ''}{' '}
                 {result.totalEvaluated > 0
                   ? `(${((result.hitCount / result.totalEvaluated) * 100).toFixed(2)}%)`
                   : ''}
