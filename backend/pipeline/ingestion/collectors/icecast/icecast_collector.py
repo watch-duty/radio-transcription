@@ -14,7 +14,7 @@ import time
 import uuid
 from enum import Enum, auto
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Final
 from urllib.parse import urlencode, urljoin
 
 import aiohttp
@@ -62,6 +62,7 @@ STDERR_TAIL_LINES = 30  # Ring buffer size for ffmpeg stderr diagnostics
 
 _STREAM_PROBE_TIMEOUT_SEC = 10
 FFMPEG_TIMEOUT_SEC = 15  # Network socket timeout for ffmpeg (in seconds)
+MAX_STREAM_DRIFT_SECS: Final = 5.0  # Timeline drift threshold (in seconds)
 
 
 # Stream endpoint semantics differ from item/API endpoints: a stream 404 means
@@ -507,6 +508,12 @@ async def _process_finalized_segment(
             updated_cumulative_samples,
         )
 
+    stream_interval_lag_sec = None
+    if previous_receipt_time is not None:
+        stream_interval_lag_sec = (
+            receipt_time - previous_receipt_time
+        ).total_seconds() - chunk_duration_sec
+
     chunk_start_offset_sec = cumulative_pcm_samples / SAMPLE_RATE_HZ
     chunk_start_time = stream_anchor_time + datetime.timedelta(
         seconds=chunk_start_offset_sec
@@ -516,12 +523,6 @@ async def _process_finalized_segment(
     )
     if process_done:
         chunk_end_time = min(chunk_end_time, _now_utc())
-
-    stream_interval_lag_sec = None
-    if previous_receipt_time is not None:
-        stream_interval_lag_sec = (
-            receipt_time - previous_receipt_time
-        ).total_seconds() - chunk_duration_sec
 
     chunk = CapturedChunk(
         audio_bytes=segment_bytes,
@@ -720,8 +721,13 @@ async def _check_read_timeout(
     raise failure
 
 
-class IcecastBurstDetector:
-    """Detects and adjusts initial connection bursts for Icecast streams."""
+class IcecastTimelineManager:
+    """Manages the stream timeline and anchor for Icecast collector.
+
+    Handles:
+    1. Connection burst detection and backward timeline adjustment.
+    2. Reconnect latency drift detection and forward timeline re-anchoring.
+    """
 
     def __init__(
         self,
@@ -734,6 +740,29 @@ class IcecastBurstDetector:
         self.feed_name = feed_name
         self.in_burst = True
         self.burst_buffer: list[CapturedChunk] = []
+        self._last_yielded_end_time: datetime.datetime | None = None
+
+    def _validate_and_track_chunk(self, chunk: CapturedChunk) -> CapturedChunk:
+        if chunk.chunk_end_time < chunk.chunk_start_time:
+            msg = (
+                f"Feed {self.feed_id} ({self.feed_name}): "
+                f"Negative chunk duration: "
+                f"start={chunk.chunk_start_time.isoformat()}, "
+                f"end={chunk.chunk_end_time.isoformat()}"
+            )
+            raise ValueError(msg)
+        if self._last_yielded_end_time is not None:
+            if chunk.chunk_start_time < self._last_yielded_end_time:
+                msg = (
+                    f"Feed {self.feed_id} ({self.feed_name}): "
+                    f"Non-monotonic chunk start time: "
+                    f"start={chunk.chunk_start_time.isoformat()} "
+                    f"is before last_end="
+                    f"{self._last_yielded_end_time.isoformat()}"
+                )
+                raise ValueError(msg)
+        self._last_yielded_end_time = chunk.chunk_end_time
+        return chunk
 
     def _adjust_and_yield_burst_buffer(self) -> list[CapturedChunk]:
         if not self.burst_buffer:
@@ -744,7 +773,8 @@ class IcecastBurstDetector:
         )
         if total_burst_duration_sec > 0:
             logger.info(
-                "Feed %s (%s): Adjusting timeline anchor backward by %s seconds for connection burst.",
+                "Feed %s (%s): Adjusting timeline anchor backward by %s "
+                "seconds for connection burst.",
                 self.feed_id,
                 self.feed_name,
                 total_burst_duration_sec,
@@ -752,22 +782,22 @@ class IcecastBurstDetector:
             self.stream_anchor_time -= datetime.timedelta(
                 seconds=total_burst_duration_sec
             )
-            temp_cumulative = 0.0
+            last_end = self.stream_anchor_time
             for idx, buffered_chunk in enumerate(self.burst_buffer):
                 c_duration = (
                     buffered_chunk.chunk_end_time
                     - buffered_chunk.chunk_start_time
                 ).total_seconds()
-                new_start = self.stream_anchor_time + datetime.timedelta(
-                    seconds=temp_cumulative
-                )
+                new_start = last_end
                 new_end = new_start + datetime.timedelta(seconds=c_duration)
-                self.burst_buffer[idx] = dataclasses.replace(
-                    buffered_chunk,
-                    chunk_start_time=new_start,
-                    chunk_end_time=new_end,
+                self.burst_buffer[idx] = self._validate_and_track_chunk(
+                    dataclasses.replace(
+                        buffered_chunk,
+                        chunk_start_time=new_start,
+                        chunk_end_time=new_end,
+                    )
                 )
-                temp_cumulative += c_duration
+                last_end = new_end
         res = list(self.burst_buffer)
         self.burst_buffer.clear()
         return res
@@ -783,60 +813,120 @@ class IcecastBurstDetector:
 
         Returns a list of chunks that are ready to be yielded.
         """
-        if not self.in_burst:
-            return [chunk]
+        if self.in_burst:
+            chunk_receipt = chunk.receipt_time or _now_utc()
+            if not self.burst_buffer:
+                arrival_time = (
+                    chunk_receipt - self.stream_anchor_time
+                ).total_seconds()
+            else:
+                prev_receipt = self.burst_buffer[-1].receipt_time or _now_utc()
+                arrival_time = (chunk_receipt - prev_receipt).total_seconds()
 
-        if process_done:
-            # If the process is done but we are still in_burst, just flush the buffer without adjusting
-            self.in_burst = False
-            res = list(self.burst_buffer)
-            self.burst_buffer.clear()
-            res.append(chunk)
-            return res
-
-        # Calculate arrival time since previous segment
-        chunk_receipt = chunk.receipt_time or _now_utc()
-        if not self.burst_buffer:
-            arrival_time = (
-                chunk_receipt - self.stream_anchor_time
+            chunk_duration_sec = (
+                chunk.chunk_end_time - chunk.chunk_start_time
             ).total_seconds()
-        else:
-            prev_receipt = self.burst_buffer[-1].receipt_time or _now_utc()
-            arrival_time = (chunk_receipt - prev_receipt).total_seconds()
+
+            is_fast = arrival_time < chunk_duration_sec * 0.8
+
+            if not is_fast:
+                self.in_burst = False
+                res = self._adjust_and_yield_burst_buffer()
+                # Re-calculate current chunk's timestamps using updated stream_anchor_time
+                new_start = (
+                    self._last_yielded_end_time or self.stream_anchor_time
+                )
+                new_end = new_start + datetime.timedelta(
+                    seconds=chunk_duration_sec
+                )
+                chunk = dataclasses.replace(
+                    chunk,
+                    chunk_start_time=new_start,
+                    chunk_end_time=new_end,
+                )
+                # Check reconnect lag on this chunk even if we just exited burst
+                chunk = self._check_and_apply_drift_correction(
+                    chunk=chunk,
+                    cumulative_pcm_samples=cumulative_pcm_samples,
+                    chunk_duration_sec=chunk_duration_sec,
+                )
+                res.append(self._validate_and_track_chunk(chunk))
+                return res
+
+            if process_done:
+                self.in_burst = False
+                self.burst_buffer.append(chunk)
+                return self._adjust_and_yield_burst_buffer()
+
+            self.burst_buffer.append(chunk)
+            return []
 
         chunk_duration_sec = (
             chunk.chunk_end_time - chunk.chunk_start_time
         ).total_seconds()
-        if arrival_time >= chunk_duration_sec * 0.8:
-            self.in_burst = False
-            res = self._adjust_and_yield_burst_buffer()
-            # Re-calculate current chunk's timestamps using updated stream_anchor_time
-            start_offset_sec = (
-                cumulative_pcm_samples / SAMPLE_RATE_HZ - chunk_duration_sec
-            )
-            new_start = self.stream_anchor_time + datetime.timedelta(
-                seconds=start_offset_sec
-            )
-            new_end = new_start + datetime.timedelta(seconds=chunk_duration_sec)
-            chunk = dataclasses.replace(
-                chunk,
-                chunk_start_time=new_start,
-                chunk_end_time=new_end,
-            )
-            res.append(chunk)
-            return res
+        chunk = self._check_and_apply_drift_correction(
+            chunk=chunk,
+            cumulative_pcm_samples=cumulative_pcm_samples,
+            chunk_duration_sec=chunk_duration_sec,
+        )
+        return [self._validate_and_track_chunk(chunk)]
 
-        self.burst_buffer.append(chunk)
-        return []
+    def _check_and_apply_drift_correction(
+        self,
+        chunk: CapturedChunk,
+        cumulative_pcm_samples: int,
+        chunk_duration_sec: float,
+    ) -> CapturedChunk:
+        if chunk.stream_interval_lag_sec is not None:
+            if chunk.stream_interval_lag_sec > MAX_STREAM_DRIFT_SECS:
+                old_anchor = self.stream_anchor_time
+                # Re-anchor the stream timeline to align chunk_end_time with receipt_time
+                self.stream_anchor_time = (
+                    chunk.receipt_time or _now_utc()
+                ) - datetime.timedelta(
+                    seconds=(cumulative_pcm_samples / SAMPLE_RATE_HZ)
+                )
+                logger.warning(
+                    "Feed %s (%s): Stream interval lag %.2fs exceeds threshold "
+                    "%.2fs. Re-anchoring timeline: "
+                    "old_anchor=%s, new_anchor=%s",
+                    self.feed_id,
+                    self.feed_name,
+                    chunk.stream_interval_lag_sec,
+                    MAX_STREAM_DRIFT_SECS,
+                    old_anchor.isoformat(),
+                    self.stream_anchor_time.isoformat(),
+                )
+                # Recalculate current chunk's timestamps using the new anchor
+                start_offset_sec = (
+                    cumulative_pcm_samples / SAMPLE_RATE_HZ - chunk_duration_sec
+                )
+                new_start = self.stream_anchor_time + datetime.timedelta(
+                    seconds=start_offset_sec
+                )
+                new_end = new_start + datetime.timedelta(
+                    seconds=chunk_duration_sec
+                )
+                chunk = dataclasses.replace(
+                    chunk,
+                    chunk_start_time=new_start,
+                    chunk_end_time=new_end,
+                )
+        return chunk
 
     def flush(self) -> list[CapturedChunk]:
-        """Flush any remaining buffered chunks without adjusting."""
-        res = list(self.burst_buffer)
+        """Flush any remaining buffered chunks, adjusting if still in burst."""
+        if self.in_burst:
+            self.in_burst = False
+            return self._adjust_and_yield_burst_buffer()
+        res = []
+        for c in self.burst_buffer:
+            res.append(self._validate_and_track_chunk(c))
         self.burst_buffer.clear()
         return res
 
 
-async def capture_icecast_stream(
+async def capture_icecast_stream(  # noqa: PLR0915
     feed: LeasedFeed,
     shutdown_event: asyncio.Event,
     url_base: str,
@@ -903,120 +993,140 @@ async def capture_icecast_stream(
             process.pid,
         )
 
-        next_index = 0
-        cumulative_pcm_samples = 0
-        last_activity_time = time.monotonic()
         wait_task = asyncio.create_task(process.wait())
+        queue = asyncio.Queue()
 
-        # Anchor the stream timeline to the exact moment ffmpeg starts
-        stream_anchor_time = _now_utc()
-        # Tracks receipt_time of the previously yielded segment so lag can be
-        # measured as a per-interval delta rather than accumulated against a
-        # fixed anchor, which would conflate real backlog with ordinary
-        # long-session source-clock drift.
-        previous_receipt_time: datetime.datetime | None = None
+        async def producer() -> None:  # noqa: PLR0912
+            next_index = 0
+            cumulative_pcm_samples = 0
+            last_activity_time = time.monotonic()
+            # Anchor the stream timeline to the exact moment ffmpeg starts
+            stream_anchor_time = _now_utc()
+            previous_receipt_time: datetime.datetime | None = None
+            timeline_manager = IcecastTimelineManager(
+                stream_anchor_time=stream_anchor_time,
+                feed_id=feed_id,
+                feed_name=feed_name,
+            )
 
-        burst_detector = IcecastBurstDetector(
-            stream_anchor_time=stream_anchor_time,
-            feed_id=feed_id,
-            feed_name=feed_name,
-        )
+            try:
+                while True:
+                    if shutdown_event.is_set():
+                        logger.info(
+                            "Feed %s (%s): Shutdown requested, stopping capture",
+                            feed_id,
+                            feed_name,
+                        )
+                        for buffered_chunk in timeline_manager.flush():
+                            await queue.put(buffered_chunk)
+                        return
+
+                    current_segment_pcm = _segment_path(
+                        segment_dir, next_index, "pcm"
+                    )
+                    next_segment_pcm = _segment_path(
+                        segment_dir, next_index + 1, "pcm"
+                    )
+                    process_done = wait_task.done()
+
+                    # Run file checks in threadpool to prevent event loop stalls on disk latency
+                    current_exists = await asyncio.to_thread(
+                        current_segment_pcm.exists
+                    )
+                    next_exists = await asyncio.to_thread(
+                        next_segment_pcm.exists
+                    )
+
+                    if current_exists and (next_exists or process_done):
+                        last_activity_time = time.monotonic()
+                        (
+                            chunk,
+                            previous_receipt_time,
+                            cumulative_pcm_samples,
+                        ) = await _process_finalized_segment(
+                            current_segment_pcm=current_segment_pcm,
+                            next_index=next_index,
+                            stream_anchor_time=timeline_manager.stream_anchor_time,
+                            process_done=process_done,
+                            previous_receipt_time=previous_receipt_time,
+                            cumulative_pcm_samples=cumulative_pcm_samples,
+                            session_id=session_id,
+                            feed_id=feed_id,
+                            feed_name=feed_name,
+                        )
+                        next_index += 1
+                        if chunk is not None:
+                            for ready_chunk in timeline_manager.process_chunk(
+                                chunk=chunk,
+                                cumulative_pcm_samples=cumulative_pcm_samples,
+                                process_done=process_done,
+                            ):
+                                await queue.put(ready_chunk)
+                        continue
+
+                    if await _handle_process_done_no_segment(
+                        process_done=process_done,
+                        current_exists=current_exists,
+                        wait_task=wait_task,
+                        resources=resources,
+                        url=url,
+                        auth_header=auth_header,
+                        feed_id=feed_id,
+                        feed_name=feed_name,
+                        stderr_tail=stderr_tail,
+                        stderr_http_status_lines=stderr_http_status_lines,
+                    ):
+                        for buffered_chunk in timeline_manager.flush():
+                            await queue.put(buffered_chunk)
+                        return
+
+                    last_activity_age_sec = (
+                        time.monotonic() - last_activity_time
+                    )
+                    try:
+                        await _check_read_timeout(
+                            last_activity_age_sec=last_activity_age_sec,
+                            segment_dir=segment_dir,
+                            next_index=next_index,
+                            current_exists=current_exists,
+                            next_exists=next_exists,
+                            process=process,
+                            resources=resources,
+                            url=url,
+                            auth_header=auth_header,
+                            feed_id=feed_id,
+                            feed_name=feed_name,
+                            stderr_tail=stderr_tail,
+                            stderr_http_status_lines=stderr_http_status_lines,
+                        )
+                    except FeedFailure as e:
+                        for buffered_chunk in timeline_manager.flush():
+                            await queue.put(buffered_chunk)
+                        await queue.put(e)
+                        return
+
+                    await asyncio.sleep(POLL_INTERVAL_SEC)
+            except Exception as e:
+                for buffered_chunk in timeline_manager.flush():
+                    await queue.put(buffered_chunk)
+                await queue.put(e)
+            finally:
+                await queue.put(None)
+
+        producer_task = asyncio.create_task(producer())
 
         try:
             while True:
-                if shutdown_event.is_set():
-                    logger.info(
-                        "Feed %s (%s): Shutdown requested, stopping capture",
-                        feed_id,
-                        feed_name,
-                    )
-                    for buffered_chunk in burst_detector.flush():
-                        yield buffered_chunk
-                    return
-
-                current_segment_pcm = _segment_path(
-                    segment_dir, next_index, "pcm"
-                )
-                next_segment_pcm = _segment_path(
-                    segment_dir, next_index + 1, "pcm"
-                )
-                process_done = wait_task.done()
-
-                # Run file checks in threadpool to prevent event loop stalls on disk latency
-                current_exists = await asyncio.to_thread(
-                    current_segment_pcm.exists
-                )
-                next_exists = await asyncio.to_thread(next_segment_pcm.exists)
-
-                # Read a segment only once we know ffmpeg finished writing it.
-                # A segment is considered finalized when either:
-                # - the next segment exists, or
-                # - ffmpeg has exited.
-                if current_exists and (next_exists or process_done):
-                    last_activity_time = time.monotonic()
-                    (
-                        chunk,
-                        previous_receipt_time,
-                        cumulative_pcm_samples,
-                    ) = await _process_finalized_segment(
-                        current_segment_pcm=current_segment_pcm,
-                        next_index=next_index,
-                        stream_anchor_time=burst_detector.stream_anchor_time,
-                        process_done=process_done,
-                        previous_receipt_time=previous_receipt_time,
-                        cumulative_pcm_samples=cumulative_pcm_samples,
-                        session_id=session_id,
-                        feed_id=feed_id,
-                        feed_name=feed_name,
-                    )
-                    next_index += 1
-                    if chunk is not None:
-                        for ready_chunk in burst_detector.process_chunk(
-                            chunk=chunk,
-                            cumulative_pcm_samples=cumulative_pcm_samples,
-                            process_done=process_done,
-                        ):
-                            yield ready_chunk
-                    continue
-
-                # If ffmpeg is done and there is no pending finalized segment,
-                # we are finished.
-                if await _handle_process_done_no_segment(
-                    process_done=process_done,
-                    current_exists=current_exists,
-                    wait_task=wait_task,
-                    resources=resources,
-                    url=url,
-                    auth_header=auth_header,
-                    feed_id=feed_id,
-                    feed_name=feed_name,
-                    stderr_tail=stderr_tail,
-                    stderr_http_status_lines=stderr_http_status_lines,
-                ):
-                    for buffered_chunk in burst_detector.flush():
-                        yield buffered_chunk
-                    return
-
-                last_activity_age_sec = time.monotonic() - last_activity_time
-                await _check_read_timeout(
-                    last_activity_age_sec=last_activity_age_sec,
-                    segment_dir=segment_dir,
-                    next_index=next_index,
-                    current_exists=current_exists,
-                    next_exists=next_exists,
-                    process=process,
-                    resources=resources,
-                    url=url,
-                    auth_header=auth_header,
-                    feed_id=feed_id,
-                    feed_name=feed_name,
-                    stderr_tail=stderr_tail,
-                    stderr_http_status_lines=stderr_http_status_lines,
-                )
-
-                await asyncio.sleep(POLL_INTERVAL_SEC)
-
+                item = await queue.get()
+                if item is None:
+                    break
+                if isinstance(item, Exception):
+                    raise item
+                yield item
         finally:
+            producer_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await producer_task
             await _cleanup_capture_tasks(
                 drain_task=drain_task,
                 wait_task=wait_task,

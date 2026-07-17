@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import contextlib
 import datetime
 import logging
 import os
@@ -989,8 +990,11 @@ class CollectorRuntime:
         topic_path: str,
         chunk_extension: str,
         chunk_content_type: str,
+        shutdown: asyncio.Event | None = None,
     ) -> None:
         """Run post-capture upload, bookmark, publish, and SLO logging."""
+        if shutdown is None:
+            shutdown = self._shutdown
         settings = self._collector_settings
         try:
             gcs_uri = await retry_with_lease_check(
@@ -1004,7 +1008,7 @@ class CollectorRuntime:
                 chunk_extension,
                 chunk_content_type,
                 lease_lost=self._lease_lost,
-                shutdown=self._shutdown,
+                shutdown=shutdown,
                 max_retries=settings.gcs_upload_max_retries,
                 base_delay_sec=settings.gcs_upload_retry_base_delay_sec,
                 max_delay_sec=settings.gcs_upload_retry_max_delay_sec,
@@ -1048,7 +1052,7 @@ class CollectorRuntime:
             ok = await retry_with_lease_check(
                 _update_progress,
                 lease_lost=self._lease_lost,
-                shutdown=self._shutdown,
+                shutdown=shutdown,
                 max_retries=settings.bookmark_max_retries,
                 base_delay_sec=settings.bookmark_retry_base_delay_sec,
                 max_delay_sec=settings.bookmark_retry_max_delay_sec,
@@ -1100,7 +1104,7 @@ class CollectorRuntime:
                 feed["source_type"],
                 captured_chunk.external_audio_segment_id,
                 lease_lost=self._lease_lost,
-                shutdown=self._shutdown,
+                shutdown=shutdown,
                 max_retries=settings.pubsub_publish_max_retries,
                 base_delay_sec=settings.pubsub_publish_retry_base_delay_sec,
                 max_delay_sec=settings.pubsub_publish_retry_max_delay_sec,
@@ -1548,6 +1552,10 @@ class CollectorRuntime:
                     # chunk's metadata pointing at the previous chunk's audio bytes.
                     seq_for_chunk = chunk_seq
                     chunk_seq += 1
+                    is_draining = self._shutdown.is_set()
+                    chunk_shutdown = (
+                        asyncio.Event() if is_draining else self._shutdown
+                    )
                     await self._process_captured_chunk(
                         feed,
                         captured_chunk,
@@ -1557,6 +1565,7 @@ class CollectorRuntime:
                         topic_path,
                         chunk_extension,
                         chunk_content_type,
+                        shutdown=chunk_shutdown,
                     )
 
                     if self._shutdown.is_set():
@@ -1876,7 +1885,7 @@ class CollectorRuntime:
 
     # -- Shutdown sequence ------------------------------------------------
 
-    async def _shutdown_sequence(self) -> None:
+    async def _shutdown_sequence(self) -> None:  # noqa: PLR0912
         """
         Orderly teardown: stop /healthz HTTP server, cancel feed tasks,
         stop heartbeat thread, close GCS client and database pools.
@@ -1926,14 +1935,17 @@ class CollectorRuntime:
         # rare enough that 3s is generous.
         await self._memory_watchdog.join(timeout_sec=3)
 
-        # Cancel all feed tasks
-        for task in self._feed_tasks.values():
-            task.cancel()
+        # Wait for feed tasks to finish on their own first, up to task_cancel_budget_sec
         if self._feed_tasks:
             _done, pending = await asyncio.wait(
                 self._feed_tasks.values(),
                 timeout=self._collector_settings.task_cancel_budget_sec,
             )
+            for task in pending:
+                task.cancel()
+            if pending:
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait(pending, timeout=2.0)
             if pending:
                 # PITFALLS.md Pitfall 9: asyncio.wait does NOT cancel
                 # pending tasks at timeout. The task.cancel() loop above
