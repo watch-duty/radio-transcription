@@ -119,7 +119,7 @@ wheels = [
 
 [[package]]
 name = "apache-beam"
-version = "2.74.0"
+version = "2.75.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "beartype" },
@@ -147,13 +147,13 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "zstandard" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bb/9e/7f0f451aa9ecae924aa1ca31bf68b1cad13f1ce4f56d69a7d62bc0ff7d83/apache_beam-2.74.0.tar.gz", hash = "sha256:c685b2db8330ad220ae39815dcfa5a0493ceb471f872568e746f34f7a04fe1a4", size = 3065517, upload-time = "2026-06-02T17:26:49.611Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b7/fd/5a677003112c5c218ac5050dd36e850c89b9e12c9b29870fe36504714bff/apache_beam-2.75.0.tar.gz", hash = "sha256:e8d5964b5a0dd706f0e50ed1af971219390ed7477cf644268aed058cd7d1e820", size = 3036710, upload-time = "2026-07-08T06:22:03.769Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e6/64/3076e14f103f8703135c00f677c09b0e7eaafd10dcadd3cb795e38c7f95e/apache_beam-2.74.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:eb9fd400b0bce1a78e50d9bea383eef5bc960cc1876346a2c68ed22789dc4f83", size = 6101135, upload-time = "2026-06-02T17:26:27.477Z" },
-    { url = "https://files.pythonhosted.org/packages/23/db/54f20cda0c1e279d65a5fcf7e36111c3d1cf347849bee9cb4bc8aa92d3cc/apache_beam-2.74.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:2bab02d6ca488372c4063e003b068a0918dd55aa094a3102493ba3ff258e7938", size = 17671647, upload-time = "2026-06-02T17:26:30.402Z" },
-    { url = "https://files.pythonhosted.org/packages/8a/15/18416b49e82aba1d2b35c6a619a14e182af48716c4e68285c2b9b66629ab/apache_beam-2.74.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:325d53db346ebc15eb907ae9627a0d7ff685b81ee0c7d6a33bd775b182f4a499", size = 17858081, upload-time = "2026-06-02T17:26:33.164Z" },
-    { url = "https://files.pythonhosted.org/packages/73/80/8a0c2109e020b4616d25023b9079c50280d8de6f3586d34f99bf7087a83f/apache_beam-2.74.0-cp313-cp313-win32.whl", hash = "sha256:5bdd896383288564749709023b3dd80268bab0a5f3a66ec2d83a63aa34190801", size = 5518113, upload-time = "2026-06-02T17:26:35.658Z" },
-    { url = "https://files.pythonhosted.org/packages/0b/53/f93b186e2b3d7f88ea7ca09c68338c6e595aef9a277560fd693c2cc22837/apache_beam-2.74.0-cp313-cp313-win_amd64.whl", hash = "sha256:5c907f9746f23b60773f3fc84108b35900e2881d6c58d59dbe82e6e645f0c36f", size = 5760689, upload-time = "2026-06-02T17:26:37.684Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/e5/9b7466fd9785e562f122ac76235dd21f20d578f2bd2fd9d1dc67c3670549/apache_beam-2.75.0-cp313-cp313-macosx_11_0_arm64.whl", hash = "sha256:0cdd7fc9f8a66060aae32076c252efb90befda3643adb4505d4b521171d1d333", size = 6093794, upload-time = "2026-07-08T06:21:43.681Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/17/513fe94f553e405a42f2e1caca9634264e76144046dcf7cd53ba329e97bb/apache_beam-2.75.0-cp313-cp313-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:690d95ddd980f8cb8b96280a8cc75d4108819ce7356b8705f6ad42bd58380c0d", size = 17740683, upload-time = "2026-07-08T06:21:45.45Z" },
+    { url = "https://files.pythonhosted.org/packages/d3/6e/5affdd4ecd4ffd95452e5c74f96da4637480a76b2ea4238e99febf5611cd/apache_beam-2.75.0-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:45035dfa22b465d48ac6088e780d2bb20d665c501d7357eb9f8ed3ab60fd28af", size = 17931202, upload-time = "2026-07-08T06:21:47.98Z" },
+    { url = "https://files.pythonhosted.org/packages/0d/d6/d7fa8e33a1302a45ec59e7d1e8bee4136a50931848a864a96825fff623bb/apache_beam-2.75.0-cp313-cp313-win32.whl", hash = "sha256:799d5a272113f44904b02d1e1600b8b825eda53dc62a9f8f19e45f8515259cdc", size = 5507170, upload-time = "2026-07-08T06:21:50.699Z" },
+    { url = "https://files.pythonhosted.org/packages/9e/c2/0f3c61d59b19ed2732e78787730d1dc0d7517262354e9c0d358d71c4dd03/apache_beam-2.75.0-cp313-cp313-win_amd64.whl", hash = "sha256:8f2e14fd77a98e2a0f552ef02bbe46b1b754d29b174bde28d1320f15a67466af", size = 5752332, upload-time = "2026-07-08T06:21:52.551Z" },
 ]
 
 [package.optional-dependencies]
@@ -170,12 +170,14 @@ gcp = [
     { name = "google-cloud-bigtable" },
     { name = "google-cloud-build" },
     { name = "google-cloud-core" },
+    { name = "google-cloud-dataflow-client" },
     { name = "google-cloud-datastore" },
     { name = "google-cloud-dlp" },
     { name = "google-cloud-kms" },
     { name = "google-cloud-language" },
     { name = "google-cloud-pubsub" },
     { name = "google-cloud-recommendations-ai" },
+    { name = "google-cloud-resource-manager" },
     { name = "google-cloud-secret-manager" },
     { name = "google-cloud-spanner" },
     { name = "google-cloud-storage" },
@@ -1178,6 +1180,22 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/dc/24/6ca08b0a03c7b0c620427503ab00353a4ae806b848b93bcea18b6b76fde6/google_cloud_core-2.5.1.tar.gz", hash = "sha256:3dc94bdec9d05a31d9f355045ed0f369fbc0d8c665076c734f065d729800f811", size = 36078, upload-time = "2026-03-30T22:50:08.057Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/73/d9/5bb050cb32826466aa9b25f79e2ca2879fe66cb76782d4ed798dd7506151/google_cloud_core-2.5.1-py3-none-any.whl", hash = "sha256:ea62cdf502c20e3e14be8a32c05ed02113d7bef454e40ff3fab6fe1ec9f1f4e7", size = 29452, upload-time = "2026-03-30T22:48:31.567Z" },
+]
+
+[[package]]
+name = "google-cloud-dataflow-client"
+version = "0.13.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "google-api-core", extra = ["grpc"] },
+    { name = "google-auth" },
+    { name = "grpcio" },
+    { name = "proto-plus" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/03/ed/7fcf48944143854934533b9e6f11018b8d8640c4dbef5ee661c021af8c10/google_cloud_dataflow_client-0.13.0.tar.gz", hash = "sha256:ee3bd6eaae0732b38d93e7c246d3580fd81809462d8dfa2e87550a5bd1fa2936", size = 280313, upload-time = "2026-04-02T21:23:43.476Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b8/c3/41730eaef64e617a644cf9fb4b83d25c9af65d4a0c573fa752d49aa9f9ad/google_cloud_dataflow_client-0.13.0-py3-none-any.whl", hash = "sha256:854e0d5f1a438742d0bc3185562a09b9f3ec0ffa993f71a2a8b4ff61bc8ee2c3", size = 291689, upload-time = "2026-04-02T21:23:15.59Z" },
 ]
 
 [[package]]
@@ -3122,6 +3140,7 @@ version = "0.1.0"
 source = { editable = "backend/services/rules" }
 dependencies = [
     { name = "asyncpg" },
+    { name = "cachetools" },
     { name = "fastapi" },
     { name = "pydantic" },
     { name = "radio-transcription-common" },
@@ -3133,6 +3152,7 @@ dependencies = [
 [package.metadata]
 requires-dist = [
     { name = "asyncpg", specifier = ">=0.29.0" },
+    { name = "cachetools", specifier = ">=5.5.0" },
     { name = "fastapi", specifier = ">=0.110.0" },
     { name = "pydantic", specifier = ">=2.10.6" },
     { name = "radio-transcription-common", editable = "backend/pipeline/common" },
@@ -3203,7 +3223,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "apache-beam", extras = ["gcp"], specifier = ">=2.74.0" },
+    { name = "apache-beam", extras = ["gcp"], specifier = ">=2.75.0" },
     { name = "av", specifier = ">=17.1.0" },
     { name = "betterproto", specifier = ">=2.0.0b6" },
     { name = "crcmod", specifier = ">=1.7" },
@@ -3334,6 +3354,7 @@ dependencies = [
     { name = "google-cloud-pubsub" },
     { name = "google-cloud-speech" },
     { name = "google-genai" },
+    { name = "h2" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-gcp-trace" },
     { name = "opentelemetry-sdk" },
@@ -3353,6 +3374,7 @@ requires-dist = [
     { name = "google-cloud-pubsub", specifier = ">=2.35.0" },
     { name = "google-cloud-speech", specifier = ">=2.37.0" },
     { name = "google-genai", specifier = ">=2.10.0" },
+    { name = "h2", specifier = ">=4.1.0" },
     { name = "opentelemetry-api", specifier = ">=1.41.1" },
     { name = "opentelemetry-exporter-gcp-trace", specifier = ">=1.12.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.41.1" },

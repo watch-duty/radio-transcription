@@ -1,15 +1,20 @@
 import { useState } from 'react';
 
+import { saveAs } from 'file-saver';
+
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
+import DonwloadIcon from '@mui/icons-material/Download';
 import LinkIcon from '@mui/icons-material/Link';
-import WarningAmberIcon from '@mui/icons-material/WarningAmber';
 import Box from '@mui/material/Box';
 import IconButton from '@mui/material/IconButton';
 import ListItem from '@mui/material/ListItem';
 import Tooltip from '@mui/material/Tooltip';
 import Typography from '@mui/material/Typography';
 import { useTheme } from '@mui/material/styles';
-import { type TranscriptAnnotationData } from '@transcription/common';
+import {
+  AudioClassification,
+  type TranscriptAnnotationData,
+} from '@transcription/common';
 
 import { useAuth } from '../../context/AuthContext';
 import type { RenderableAudioSegment } from '../../hooks/useConsolidatedAudioSegments';
@@ -17,6 +22,7 @@ import {
   findEvaluationAnnotationData,
   findTranscriptAnnotationData,
 } from '../../utils/annotationUtils';
+import { getAudioUrl } from '../../utils/audioUtils';
 import { formatDuration } from '../../utils/timeUtils';
 import TranscriptPlayControl from '../audio/TranscriptPlayControl';
 import AlertTooltip from './AlertTooltip';
@@ -68,6 +74,39 @@ export function TranscriptRow({
   const isSilence = !!audioSegment.isSilenceBundle;
   const isOutage = !!audioSegment.isOutageBundle;
 
+  const transcriptAnnotation = findTranscriptAnnotationData(
+    audioSegment.annotations
+  );
+
+  const hasErrors = transcriptAnnotation
+    ? transcriptAnnotation.errors.length > 0 && !transcriptAnnotation.text
+    : false;
+  const hasErrorsWithText = transcriptAnnotation
+    ? transcriptAnnotation.errors.length > 0 && !!transcriptAnnotation.text
+    : false;
+  const isWaiting = !isSilence && !isOutage && !transcriptAnnotation;
+  const isMissingTextButSpeech =
+    !!transcriptAnnotation &&
+    !transcriptAnnotation.text &&
+    audioSegment.classification === AudioClassification.SPEECH &&
+    !hasErrors;
+  const isPlaceholder =
+    isSilence || isWaiting || hasErrors || isOutage || isMissingTextButSpeech;
+
+  const degradationReasons: string[] = [];
+  if (audioSegment.missingPriorContext && audioSegment.missingPostContext) {
+    degradationReasons.push(
+      'Audio recording was cut off at the beginning and end'
+    );
+  } else if (audioSegment.missingPriorContext) {
+    degradationReasons.push('Audio recording was cut off at the beginning');
+  } else if (audioSegment.missingPostContext) {
+    degradationReasons.push('Audio recording was cut off at the end');
+  }
+  if (hasErrorsWithText && transcriptAnnotation) {
+    degradationReasons.push(...transcriptAnnotation.errors);
+  }
+
   function renderTranscriptionText(
     transcriptAnnotation: TranscriptAnnotationData | null
   ): string {
@@ -83,22 +122,16 @@ export function TranscriptRow({
       return '[Waiting on transcript]';
     }
 
-    if (transcriptAnnotation.errors.length > 0) {
+    if (transcriptAnnotation.errors.length > 0 && !transcriptAnnotation.text) {
       return '[Transcription failed]';
+    }
+
+    if (isMissingTextButSpeech) {
+      return '[Possible speech detected. No transcription available]';
     }
 
     return transcriptAnnotation.text;
   }
-
-  const transcriptAnnotation = findTranscriptAnnotationData(
-    audioSegment.annotations
-  );
-
-  const hasErrors = transcriptAnnotation
-    ? transcriptAnnotation.errors.length > 0
-    : false;
-  const isWaiting = !isSilence && !isOutage && !transcriptAnnotation;
-  const isPlaceholder = isSilence || isWaiting || hasErrors || isOutage;
 
   const evaluationAnnotation = findEvaluationAnnotationData(
     audioSegment.annotations
@@ -338,43 +371,34 @@ export function TranscriptRow({
               transition: 'filter 0.3s ease, opacity 0.3s ease',
               filter: redactTranscripts ? 'blur(6px)' : 'none',
               opacity: redactTranscripts ? 0.6 : 1,
-              fontStyle:
-                isSilence || isWaiting || hasErrors || isOutage
-                  ? 'italic'
-                  : 'normal',
+              fontStyle: isPlaceholder ? 'italic' : 'normal',
             }}
           >
             {isPlaceholder ? (
               renderTranscriptionText(transcriptAnnotation)
             ) : (
-              <HighlightedTranscript
-                text={transcriptAnnotation?.text ?? ''}
-                ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
-              />
+              <>
+                {hasErrorsWithText && (
+                  <Box
+                    component="span"
+                    sx={{
+                      display: 'block',
+                      typography: 'caption',
+                      fontStyle: 'italic',
+                      color: 'error.main',
+                      mb: 1,
+                    }}
+                  >
+                    [Transcript may be incomplete]
+                  </Box>
+                )}
+                <HighlightedTranscript
+                  text={transcriptAnnotation?.text ?? ''}
+                  ruleAnnotations={evaluationAnnotation?.ruleAnnotations}
+                />
+              </>
             )}
           </Typography>
-          {!isSilence &&
-            !isOutage &&
-            (audioSegment.missingPriorContext ||
-              audioSegment.missingPostContext) && (
-              <Tooltip
-                title={`Transcription may be degraded: missing ${[
-                  audioSegment.missingPriorContext && 'prior',
-                  audioSegment.missingPostContext && 'post',
-                ]
-                  .filter(Boolean)
-                  .join(' and ')} audio context.`}
-              >
-                <WarningAmberIcon
-                  color="warning"
-                  fontSize="small"
-                  sx={{
-                    flexShrink: 0,
-                    mt: 0.25, // Align slightly down to match text baseline
-                  }}
-                />
-              </Tooltip>
-            )}
         </Box>
         <Box
           sx={{
@@ -401,10 +425,7 @@ export function TranscriptRow({
                     }
                   }}
                   sx={{ cursor: 'copy' }}
-                  disabled={
-                    !transcriptAnnotation ||
-                    transcriptAnnotation.errors.length > 0
-                  }
+                  disabled={!transcriptAnnotation || hasErrors}
                 >
                   <ContentCopyIcon fontSize="small" />
                 </IconButton>
@@ -434,9 +455,46 @@ export function TranscriptRow({
               <LinkIcon fontSize="small" />
             </IconButton>
           </Tooltip>
+          <Tooltip title="Download audio">
+            <IconButton
+              size="small"
+              aria-label="download audio"
+              disabled={!audioSegment.playbackAudioUri}
+              onClick={async (e) => {
+                e.stopPropagation();
+
+                // Button will be disabled, but need this for type safety.
+                if (!audioSegment.playbackAudioUri) {
+                  return;
+                }
+
+                try {
+                  const url = getAudioUrl(audioSegment.playbackAudioUri);
+                  const response = await fetch(url);
+                  if (!response.ok) {
+                    throw new Error(
+                      `Failed to fetch audio: ${response.statusText}`
+                    );
+                  }
+                  const blob = await response.blob();
+                  const fileName =
+                    audioSegment.playbackAudioUri.split('/').pop() ||
+                    audioSegment.playbackAudioUri;
+                  saveAs(blob, fileName);
+                  triggerSnackbar('Audio downloaded');
+                } catch (err) {
+                  console.error('Failed to download audio:', err);
+                  triggerSnackbar('Failed to download audio');
+                }
+              }}
+            >
+              <DonwloadIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
           {isAdmin && (
             <SegmentInfoPopover
               audioSegment={audioSegment}
+              degradationReasons={degradationReasons}
               triggerSnackbar={triggerSnackbar}
             />
           )}

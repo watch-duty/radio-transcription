@@ -187,7 +187,7 @@ class BaseTextEvaluator(ABC):
             + organized_rules.feed_specific_rules.get(feed_id, [])
         )
 
-    def _evaluate_ruleset(
+    def evaluate_ruleset(
         self, rules: list[models.Rule], text: str, feed_id: str
     ) -> EvaluationResult:
         if not text:
@@ -248,7 +248,7 @@ class StaticTextEvaluator(BaseTextEvaluator):
         Returns:
             An EvaluationResult containing flagging status and triggered rules.
         """
-        return self._evaluate_ruleset(self._RULES, text, feed_id)
+        return self.evaluate_ruleset(self._RULES, text, feed_id)
 
 
 class RemoteTextEvaluator(BaseTextEvaluator):
@@ -313,7 +313,7 @@ class RemoteTextEvaluator(BaseTextEvaluator):
                 "errors": [EvaluationErrorType.ERROR_RULES_FETCH_FAILED],
             }
 
-        return self._evaluate_ruleset(rules, text, feed_id)
+        return self.evaluate_ruleset(rules, text, feed_id)
 
     def _fetch_rules(self) -> list[models.Rule]:
         """
