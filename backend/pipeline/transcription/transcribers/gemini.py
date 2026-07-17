@@ -120,12 +120,14 @@ class GeminiTranscriber(base.Transcriber):
         project_id: str,
         config: GeminiConfig,
         location: str | None = None,
+        fallback_location: str | None = None,
     ) -> None:
         """Binds the GCP Project ID and parsed configuration."""
         self.project_id = project_id
         self.config = config
         self.client: genai.Client | None = None
         self.location = location or config.location
+        self.fallback_location = fallback_location or config.fallback_location
         self._clients: dict[str, genai.Client] = {}
 
     def _resolve_location(self, model: str, default_location: str) -> str:
@@ -302,7 +304,7 @@ class GeminiTranscriber(base.Transcriber):
         )
 
         fallback_location = self._resolve_location(
-            fallback_model, self.config.fallback_location
+            fallback_model, self.fallback_location
         )
         fallback_client = self._get_client(fallback_location)
 
