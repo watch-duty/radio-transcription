@@ -327,12 +327,12 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
         first = _leased_feed(uuid.UUID(int=1))
         second = _leased_feed(uuid.UUID(int=2))
         cases = (
-            ([first, second], 1),
-            ([first, first], 2),
+            ("excess", [first, second], 1),
+            ("duplicate", [first, first], 2),
         )
 
-        for payloads, limit in cases:
-            with self.subTest(payloads=payloads, limit=limit):
+        for case_name, payloads, limit in cases:
+            with self.subTest(case_name=case_name, limit=limit):
                 self.data_store.reset_mock()
                 self.data_store.count_held_by_type.return_value = dict.fromkeys(
                     feed_store.SourceType,
@@ -861,15 +861,15 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             )
         )
         cases = (
-            ((first, second), 1),
-            ((first, first), 2),
-            ((mock.Mock(),), 1),
-            ((wrong_source,), 1),
-            ((wrong_owner,), 1),
+            ("excess", (first, second), 1),
+            ("duplicate", (first, first), 2),
+            ("invalid_type", (mock.Mock(),), 1),
+            ("wrong_source", (wrong_source,), 1),
+            ("wrong_owner", (wrong_owner,), 1),
         )
 
-        for claims, limit in cases:
-            with self.subTest(claims=claims, limit=limit):
+        for case_name, claims, limit in cases:
+            with self.subTest(case_name=case_name, limit=limit):
                 self.data_store.reset_mock()
                 self.data_store.claim_unclaimed.return_value = claims
 
