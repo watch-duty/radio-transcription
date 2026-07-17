@@ -48,11 +48,6 @@ class SidClaimPayload:
         compare=False,
     )
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.claim_mode, grant_control.ClaimMode):
-            msg = "claim_mode must be a ClaimMode"
-            raise TypeError(msg)
-
 
 def _sid_claim_binding_proof(
     grant: ingestion_lease_store.LeaseGrant,

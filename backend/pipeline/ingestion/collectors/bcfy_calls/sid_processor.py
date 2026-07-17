@@ -88,11 +88,6 @@ class ProcessorCancellationHandoff:
         repr=False,
     )
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
-
     @property
     def cause(self) -> RunnerCancellationCause | None:
         """Return the runner-selected cause without mutation authority."""
@@ -141,10 +136,7 @@ class SidProcessorFailure(RuntimeError):
         status_reason: feed_store.FeedStatusReason,
         reason: str,
     ) -> None:
-        if not isinstance(status_reason, feed_store.FeedStatusReason):
-            message = "status_reason must be a FeedStatusReason"
-            raise TypeError(message)
-        if not isinstance(reason, str) or not reason:
+        if not reason:
             message = "reason must be a nonempty string"
             raise ValueError(message)
         self.status_reason = status_reason
@@ -159,9 +151,6 @@ class SidProcessorAuthorityLost(RuntimeError):
         self,
         rejection: ingestion_lease_store.GrantRejected,
     ) -> None:
-        if not isinstance(rejection, ingestion_lease_store.GrantRejected):
-            message = "rejection must be a GrantRejected"
-            raise TypeError(message)
         self.rejection = rejection
         super().__init__(f"bcfy_calls_sid_authority_lost:{rejection.reason}")
 
@@ -170,9 +159,6 @@ class SidProcessorPlannedDrain(RuntimeError):
     """A retired Feed UUID reappeared and requires a successor lane."""
 
     def __init__(self, feed_id: uuid.UUID) -> None:
-        if not isinstance(feed_id, uuid.UUID):
-            message = "feed_id must be a UUID"
-            raise TypeError(message)
         self.feed_id = feed_id
         super().__init__("bcfy_calls_sid_member_reactivated")
 
@@ -185,9 +171,6 @@ class SidProcessorUndrained(RuntimeError):
     """
 
     def __init__(self, result: feed_work_scheduler.Undrained) -> None:
-        if not isinstance(result, feed_work_scheduler.Undrained):
-            message = "result must be an Undrained"
-            raise TypeError(message)
         self.result = result
         super().__init__("bcfy_calls_sid_page_undrained")
 
@@ -339,13 +322,8 @@ class _SidPollAccumulator:
     _closed: bool = dataclasses.field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
-        if (
-            isinstance(self.started_monotonic, bool)
-            or not isinstance(self.started_monotonic, (int, float))
-            or not math.isfinite(self.started_monotonic)
+        if isinstance(self.started_monotonic, bool) or not math.isfinite(
+            self.started_monotonic
         ):
             message = "started_monotonic must be finite"
             raise ValueError(message)
@@ -505,7 +483,6 @@ class _SidPollAccumulator:
         self._closed = True
         if (
             isinstance(finished_monotonic, bool)
-            or not isinstance(finished_monotonic, (int, float))
             or not math.isfinite(finished_monotonic)
             or finished_monotonic < self.started_monotonic
         ):
@@ -748,15 +725,9 @@ class BcfyCallsSidProcessor:
         wait: _Wait = control_flow.sleep_or_cancel,
         session_id_factory: _SessionIdFactory = _new_session_id,
     ) -> None:
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
         if grant.source_type is not feed_store.SourceType.BCFY_CALLS:
             message = "SID processor supports only bcfy_calls grants"
             raise ValueError(message)
-        if type(claim_payload) is not sid_grant_control.SidClaimPayload:
-            message = "claim_payload must be an exact SidClaimPayload"
-            raise TypeError(message)
         for name, value in (
             ("now", now),
             ("monotonic", monotonic),

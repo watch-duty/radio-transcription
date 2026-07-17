@@ -1541,24 +1541,6 @@ class TestFinalizableFactValidation(unittest.TestCase):
         ):
             _page(grant, (forged,), ())
 
-    def test_implication_invalid_terminal_fact_is_rejected(self) -> None:
-        grant = _grant()
-        member = _member(grant, 1)
-        record = _record(
-            _identity(grant, member, 0),
-            feed_work_scheduler.CohortRecordTerminalReason.TERMINAL_ITEM_SKIP,
-        )
-        object.__setattr__(record, "item_failure", None)
-        cohorts = (
-            _facts(
-                (record,),
-                feed_work_scheduler.CohortTerminalDisposition.SETTLED,
-            ),
-        )
-
-        with self.assertRaises(boundary_verdict.BoundaryVerdictIntegrityError):
-            _page(grant, (member,), cohorts)
-
     def test_disposition_mismatched_terminal_fact_is_rejected(self) -> None:
         grant = _grant()
         member = _member(grant, 1)
@@ -1702,24 +1684,6 @@ class TestFinalizableFactValidation(unittest.TestCase):
             ),
             (0, 1),
         )
-
-    def test_fieldless_outcome_object_cannot_enter_decision_function(
-        self,
-    ) -> None:
-        grant = _grant()
-        member = _member(grant, 1)
-        facts = _one_record_feed(
-            grant,
-            member,
-            0,
-            feed_work_scheduler.CohortRecordTerminalReason.FULL_PIPELINE,
-        )
-        outcome = feed_work_scheduler.CallCompleted(facts)
-
-        with self.assertRaisesRegex(TypeError, "exact PageVerdictInput"):
-            boundary_verdict.decide_page_verdict(
-                typing.cast("boundary_verdict.PageVerdictInput", outcome)
-            )
 
 
 class TestPureVerdictContract(unittest.TestCase):

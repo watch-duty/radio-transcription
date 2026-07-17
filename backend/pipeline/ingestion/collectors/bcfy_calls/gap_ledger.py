@@ -137,9 +137,6 @@ class MissingCallLedger:
         grant: ingestion_lease_store.LeaseGrant,
         page_sequence: int,
     ) -> None:
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
         _require_nonnegative_integer(page_sequence, "page_sequence")
         if grant.source_type is not feed_store.SourceType.BCFY_CALLS:
             message = "missing-call ledger requires a Calls grant"
@@ -755,9 +752,6 @@ class MissingCallLedger:
         *,
         admitted: bool,
     ) -> None:
-        if type(identity) is not feed_work_scheduler.CohortRecordIdentity:
-            message = "identity must be an exact CohortRecordIdentity"
-            raise TypeError(message)
         try:
             ingestion_lease_store._require_member_binding(  # noqa: SLF001
                 self._grant,
@@ -879,8 +873,8 @@ def _validate_admitted_entry(
     return owner
 
 
-def _require_nonnegative_integer(value: object, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+def _require_nonnegative_integer(value: int, name: str) -> int:
+    if isinstance(value, bool):
         message = f"{name} must be an integer"
         raise TypeError(message)
     if value < 0:
@@ -890,38 +884,34 @@ def _require_nonnegative_integer(value: object, name: str) -> int:
 
 
 def _require_bounded_string(
-    value: object,
+    value: str,
     name: str,
     maximum: int,
 ) -> str:
-    if not isinstance(value, str):
-        message = f"{name} must be a string"
-        raise TypeError(message)
     if not value or len(value) > maximum:
         message = f"{name} must be nonempty and at most {maximum} chars"
         raise ValueError(message)
     return value
 
 
-def _require_utc_timestamp(value: object, name: str) -> None:
+def _require_utc_timestamp(
+    value: datetime.datetime | None,
+    name: str,
+) -> None:
     if value is None:
         return
-    if not isinstance(value, datetime.datetime):
-        message = f"{name} must be a datetime or None"
-        raise TypeError(message)
     if value.utcoffset() != datetime.timedelta(0):
         message = f"{name} must be UTC-aware"
         raise ValueError(message)
 
 
 def _require_attempt_count(
-    value: object,
+    value: int,
     *,
     require_attempt: bool,
 ) -> int:
     if (
         isinstance(value, bool)
-        or not isinstance(value, int)
         or value < int(require_attempt)
         or value > MISSING_CALL_ATTEMPT_COUNT_MAX
     ):

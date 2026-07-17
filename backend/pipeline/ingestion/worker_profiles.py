@@ -151,8 +151,8 @@ WORKER_PROFILE_PRESETS: typing.Mapping[str, WorkerProfile] = (
 )
 
 
-def _positive_int(value: object, field_name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+def _positive_int(value: int, field_name: str) -> int:
+    if isinstance(value, bool) or value <= 0:
         msg = f"{field_name} must be a positive integer"
         raise ValueError(msg)
     return value
@@ -166,34 +166,18 @@ def _validated_catalog_entry(
     ],
 ) -> DomainCatalogEntry:
     entry = catalog.get(domain_id)
-    if not isinstance(entry, DomainCatalogEntry):
+    if entry is None:
         msg = f"Unknown worker profile domain: {domain_id.value}"
-        raise TypeError(msg)
+        raise ValueError(msg)
     if entry.domain_id is not domain_id:
         msg = f"Catalog entry key does not match domain: {domain_id.value}"
         raise ValueError(msg)
-    if not isinstance(entry.authority_kind, AuthorityKind):
-        msg = f"Domain {domain_id.value} has an invalid authority kind"
-        raise TypeError(msg)
-    if not isinstance(entry.logical_authority, str):
-        msg = f"Domain {domain_id.value} logical authority must be a string"
-        raise TypeError(msg)
     if not entry.logical_authority.strip():
         msg = f"Domain {domain_id.value} has no logical authority"
         raise ValueError(msg)
-    if (
-        not isinstance(entry.compatible_resource_classes, frozenset)
-        or not entry.compatible_resource_classes
-        or any(
-            not isinstance(resource_class, ResourceClass)
-            for resource_class in entry.compatible_resource_classes
-        )
-    ):
+    if not entry.compatible_resource_classes:
         msg = f"Domain {domain_id.value} has invalid resource classes"
         raise ValueError(msg)
-    if not isinstance(entry.required_config_group, str):
-        msg = f"Domain {domain_id.value} config group must be a string"
-        raise TypeError(msg)
     if not entry.required_config_group.strip():
         msg = f"Domain {domain_id.value} has no required config group"
         raise ValueError(msg)
@@ -201,17 +185,11 @@ def _validated_catalog_entry(
 
 
 def _validate_profile_shape(profile: WorkerProfile) -> None:
-    if not isinstance(profile.name, str) or not profile.name.strip():
+    if not profile.name.strip():
         msg = "Worker profile name must not be empty"
         raise ValueError(msg)
     _positive_int(profile.version, "Worker profile version")
-    if not isinstance(profile.resource_class, ResourceClass):
-        msg = "Worker profile resource_class is invalid"
-        raise TypeError(msg)
     _positive_int(profile.process_owned_cap, "Worker profile process_owned_cap")
-    if not isinstance(profile.allocations, tuple):
-        msg = "Worker profile allocations must be an immutable tuple"
-        raise TypeError(msg)
     if not profile.allocations:
         msg = "Worker profile must select at least one domain"
         raise ValueError(msg)
@@ -219,19 +197,12 @@ def _validate_profile_shape(profile: WorkerProfile) -> None:
 
 def _validate_allocation(
     profile: WorkerProfile,
-    allocation: object,
+    allocation: DomainAllocation,
     catalog: typing.Mapping[
         grant_control.DomainId,
         DomainCatalogEntry,
     ],
 ) -> tuple[DomainAllocation, DomainCatalogEntry, int]:
-    if not isinstance(allocation, DomainAllocation):
-        msg = "Worker profile allocation is invalid"
-        raise TypeError(msg)
-    if not isinstance(allocation.domain_id, grant_control.DomainId):
-        msg = "Worker profile contains an empty or unknown domain"
-        raise TypeError(msg)
-
     entry = _validated_catalog_entry(allocation.domain_id, catalog)
     if profile.resource_class not in entry.compatible_resource_classes:
         msg = (
@@ -253,16 +224,11 @@ def _validate_allocation(
             "must not exceed owned_cap"
         )
         raise ValueError(msg)
-    if not isinstance(allocation.claims_enabled, bool):
-        msg = (
-            f"Domain {allocation.domain_id.value} claims_enabled must be a bool"
-        )
-        raise TypeError(msg)
     return allocation, entry, owned_cap
 
 
 def validate_worker_profile(
-    profile: object,
+    profile: WorkerProfile,
     catalog: typing.Mapping[
         grant_control.DomainId,
         DomainCatalogEntry,
@@ -278,13 +244,9 @@ def validate_worker_profile(
         The validated immutable profile.
 
     Raises:
-        TypeError: If ``profile`` is not a ``WorkerProfile``.
         ValueError: If profile structure, allocation, or catalog metadata is
             invalid.
     """
-    if not isinstance(profile, WorkerProfile):
-        msg = "profile must be a WorkerProfile"
-        raise TypeError(msg)
     _validate_profile_shape(profile)
 
     seen_domains: set[grant_control.DomainId] = set()
@@ -370,18 +332,22 @@ def derive_bcfy_calls_authority(
         msg = "sid_lease authority requires a selected SID domain"
         raise ValueError(msg)
 
-    allocations = tuple(
-        dataclasses.replace(
-            allocation,
-            claims_enabled=(
-                allocation.domain_id is grant_control.DomainId.FEED
-                or mode is BcfyCallsAuthorityMode.SID_LEASE
-            ),
+    allocations: list[DomainAllocation] = []
+    for allocation in validated.allocations:
+        if allocation.domain_id is grant_control.DomainId.FEED:
+            claims_enabled = True
+        elif allocation.domain_id is grant_control.DomainId.SID:
+            claims_enabled = mode is BcfyCallsAuthorityMode.SID_LEASE
+        else:
+            claims_enabled = allocation.claims_enabled
+        allocations.append(
+            dataclasses.replace(
+                allocation,
+                claims_enabled=claims_enabled,
+            )
         )
-        for allocation in validated.allocations
-    )
     return validate_worker_profile(
-        dataclasses.replace(validated, allocations=allocations)
+        dataclasses.replace(validated, allocations=tuple(allocations))
     )
 
 
@@ -415,7 +381,7 @@ def resolve_worker_profile(
                     claims_per_cycle=feed_claims_per_cycle,
                 )
             )
-        else:
+        elif allocation.domain_id is grant_control.DomainId.SID:
             allocations.append(
                 dataclasses.replace(
                     allocation,
@@ -423,6 +389,8 @@ def resolve_worker_profile(
                     claims_per_cycle=sid_claims_per_cycle,
                 )
             )
+        else:
+            allocations.append(allocation)
 
     process_owned_cap = sum(allocation.owned_cap for allocation in allocations)
     profile = dataclasses.replace(

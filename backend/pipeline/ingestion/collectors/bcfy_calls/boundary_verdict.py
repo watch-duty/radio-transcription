@@ -6,11 +6,13 @@ import dataclasses
 import datetime
 import enum
 import typing
-import uuid
 
 from backend.pipeline.ingestion import failure_policy, feed_work_scheduler
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.storage import feed_store, ingestion_lease_store
+
+if typing.TYPE_CHECKING:
+    import uuid
 
 MIXED_DIRECT_FAILURE_REASON = "mixed_direct_failures"
 MIXED_FEED_FAILURE_REASON = "mixed_feed_failures"
@@ -49,14 +51,6 @@ class BoundaryFailure:
     status_reason: feed_store.FeedStatusReason
     detail: str
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.status_reason, feed_store.FeedStatusReason):
-            message = "status_reason must be a FeedStatusReason"
-            raise TypeError(message)
-        if not isinstance(self.detail, str):
-            message = "detail must be a string"
-            raise TypeError(message)
-
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class DirectFailureEvidence:
@@ -67,18 +61,12 @@ class DirectFailureEvidence:
     failure: BoundaryFailure
 
     def __post_init__(self) -> None:
-        if type(self.identity) is not feed_work_scheduler.CohortRecordIdentity:
-            message = "identity must be an exact CohortRecordIdentity"
-            raise TypeError(message)
         if self.stage not in {
             feed_work_scheduler.CohortRecordTerminalReason.REPLAYABLE_DIRECT,
             feed_work_scheduler.CohortRecordTerminalReason.PUBLICATION_EXHAUSTED,
         }:
             message = "direct failure stage is not a direct terminal reason"
             raise BoundaryVerdictIntegrityError(message)
-        if type(self.failure) is not BoundaryFailure:
-            message = "failure must be an exact BoundaryFailure"
-            raise TypeError(message)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -103,27 +91,7 @@ class FeedBoundaryFacts:
     item_to_feed_promoted: bool
 
     def __post_init__(self) -> None:
-        if not isinstance(
-            self.member,
-            ingestion_lease_store.LeaseMemberIdentity,
-        ):
-            message = "member must be a LeaseMemberIdentity"
-            raise TypeError(message)
-        if not isinstance(self.record_facts, tuple):
-            message = "record_facts must be an immutable tuple"
-            raise TypeError(message)
         _require_nonnegative_integer(self.attempted_count, "attempted_count")
-        for name, value in (
-            ("participated", self.participated),
-            ("usable_audio_observed", self.usable_audio_observed),
-            ("full_pipeline_completed", self.full_pipeline_completed),
-            ("all_records_durably_closed", self.all_records_durably_closed),
-            ("replayable_record_observed", self.replayable_record_observed),
-            ("item_to_feed_promoted", self.item_to_feed_promoted),
-        ):
-            if not isinstance(value, bool):
-                message = f"{name} must be a bool"
-                raise TypeError(message)
         if self.participated != (self.attempted_count > 0):
             message = "participation and attempted count disagree"
             raise BoundaryVerdictIntegrityError(message)
@@ -150,20 +118,6 @@ class FeedFailureDecision:
     member: ingestion_lease_store.LeaseMemberIdentity
     failure: BoundaryFailure
     origin: FeedFailureOrigin
-
-    def __post_init__(self) -> None:
-        if not isinstance(
-            self.member,
-            ingestion_lease_store.LeaseMemberIdentity,
-        ):
-            message = "member must be a LeaseMemberIdentity"
-            raise TypeError(message)
-        if type(self.failure) is not BoundaryFailure:
-            message = "failure must be an exact BoundaryFailure"
-            raise TypeError(message)
-        if not isinstance(self.origin, FeedFailureOrigin):
-            message = "origin must be a FeedFailureOrigin"
-            raise TypeError(message)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -299,11 +253,6 @@ class FinalMutationCommand:
         }:
             message = "final mutation command has an unsupported exact type"
             raise TypeError(message)
-        if self.boundary is not None and (
-            type(self.boundary) is not feed_work_scheduler.BoundaryWork
-        ):
-            message = "boundary must be exact BoundaryWork or None"
-            raise TypeError(message)
         if (
             self.boundary is not None
             and self.boundary.member is not self.mutation.member
@@ -323,15 +272,6 @@ class FinalMutationPlan:
     requested_target: datetime.datetime | None
 
     def __post_init__(self) -> None:
-        if type(self.verdict) is not PageVerdict:
-            message = "verdict must be an exact PageVerdict"
-            raise TypeError(message)
-        if not isinstance(self.commands, tuple) or any(
-            type(command) is not FinalMutationCommand
-            for command in self.commands
-        ):
-            message = "commands must contain exact FinalMutationCommand"
-            raise TypeError(message)
         _require_nonnegative_integer(
             self.boundary_command_count,
             "boundary_command_count",
@@ -354,20 +294,14 @@ class FinalMutationPlan:
         if len(set(feed_ids)) != len(feed_ids):
             message = "final mutation plan repeats a Feed"
             raise BoundaryVerdictIntegrityError(message)
-        if type(self.lease_effect) not in {
-            ingestion_lease_store.NoLeaseEffect,
-            ingestion_lease_store.FinalizeLeaseRecovery,
-        }:
-            message = "lease_effect has an unsupported exact type"
-            raise TypeError(message)
         _require_optional_utc_datetime(
             self.requested_target,
             "requested_target",
         )
 
 
-def _require_nonnegative_integer(value: object, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+def _require_nonnegative_integer(value: int, name: str) -> int:
+    if isinstance(value, bool):
         message = f"{name} must be an integer"
         raise TypeError(message)
     if value < 0:
@@ -411,17 +345,10 @@ def _require_member_binding(
 
 
 def _validate_page_input(page: PageVerdictInput) -> None:
-    if not isinstance(page.grant, ingestion_lease_store.LeaseGrant):
-        message = "grant must be a LeaseGrant"
-        raise TypeError(message)
     if page.grant.source_type is not feed_store.SourceType.BCFY_CALLS:
         message = "page verdict requires a Broadcastify Calls Lease"
         raise BoundaryVerdictIntegrityError(message)
     _require_nonnegative_integer(page.page_sequence, "page_sequence")
-    if not isinstance(page.lease_recovery_candidate, bool):
-        message = "lease_recovery_candidate must be a bool"
-        raise TypeError(message)
-
     members_by_feed = _validate_members(page)
     _validate_record_identities(page, members_by_feed)
     _validate_terminal_facts(page, members_by_feed)
@@ -431,9 +358,6 @@ def _validate_page_input(page: PageVerdictInput) -> None:
 def _validate_members(
     page: PageVerdictInput,
 ) -> dict[uuid.UUID, ingestion_lease_store.LeaseMemberIdentity]:
-    if not isinstance(page.members, tuple):
-        message = "members must be an immutable tuple"
-        raise TypeError(message)
     members_by_feed: dict[
         uuid.UUID,
         ingestion_lease_store.LeaseMemberIdentity,
@@ -454,18 +378,12 @@ def _validate_record_identities(
         ingestion_lease_store.LeaseMemberIdentity,
     ],
 ) -> None:
-    if not isinstance(page.record_identities, tuple):
-        message = "record_identities must be an immutable tuple"
-        raise TypeError(message)
     if len(set(page.record_identities)) != len(page.record_identities):
         message = "record_identities contains duplicates"
         raise BoundaryVerdictIntegrityError(message)
     keys: list[tuple[int, int, int]] = []
     source_orders: set[int] = set()
     for identity in page.record_identities:
-        if type(identity) is not feed_work_scheduler.CohortRecordIdentity:
-            message = "record identity must be exact CohortRecordIdentity"
-            raise TypeError(message)
         member = members_by_feed.get(identity.feed_id)
         if member is None:
             message = "record identity Feed is outside the page member set"
@@ -494,20 +412,12 @@ def _validate_terminal_facts(
         ingestion_lease_store.LeaseMemberIdentity,
     ],
 ) -> None:
-    if not isinstance(page.cohort_terminal_facts, tuple):
-        message = "cohort_terminal_facts must be an immutable tuple"
-        raise TypeError(message)
-
     cohort_keys: list[tuple[int, int, int]] = []
     cohort_identities: set[tuple[uuid.UUID, datetime.datetime | None, int]] = (
         set()
     )
     flattened_identities: list[feed_work_scheduler.CohortRecordIdentity] = []
     for facts in page.cohort_terminal_facts:
-        if type(facts) is not feed_work_scheduler.CohortTerminalFacts:
-            message = "terminal facts must be exact CohortTerminalFacts"
-            raise TypeError(message)
-        _revalidate_terminal_facts_value(facts)
         if facts.disposition not in _FINALIZABLE_DISPOSITIONS:
             message = (
                 f"{facts.disposition.value} facts are not finalizable verdict "
@@ -567,86 +477,15 @@ def _validate_terminal_facts(
         raise BoundaryVerdictIntegrityError(message)
 
 
-def _revalidate_terminal_facts_value(
-    facts: feed_work_scheduler.CohortTerminalFacts,
-) -> None:
-    try:
-        validated = feed_work_scheduler.CohortTerminalFacts(
-            records=facts.records,
-            disposition=facts.disposition,
-        )
-    except (
-        TypeError,
-        ValueError,
-        feed_work_scheduler.CohortIntegrityError,
-    ) as error:
-        raise BoundaryVerdictIntegrityError(str(error)) from error
-    if validated != facts:
-        message = "terminal facts changed after predecessor validation"
-        raise BoundaryVerdictIntegrityError(message)
-
-
 def _validate_record_fact(
     record: feed_work_scheduler.CohortRecordTerminalFact,
 ) -> None:
-    if type(record) is not feed_work_scheduler.CohortRecordTerminalFact:
-        message = "record fact must be exact CohortRecordTerminalFact"
-        raise TypeError(message)
-    try:
-        validated = feed_work_scheduler.CohortRecordTerminalFact(
-            identity=record.identity,
-            participated=record.participated,
-            closure_state=record.closure_state,
-            full_pipeline_completed=record.full_pipeline_completed,
-            terminal_reason=record.terminal_reason,
-            item_failure=record.item_failure,
-            direct_failure=record.direct_failure,
-        )
-    except (
-        TypeError,
-        ValueError,
-        feed_work_scheduler.CohortIntegrityError,
-    ) as error:
-        raise BoundaryVerdictIntegrityError(str(error)) from error
-    if validated != record:
-        message = "record fact changed after predecessor validation"
-        raise BoundaryVerdictIntegrityError(message)
     if (
         record.full_pipeline_completed
         or record.item_failure is not None
         or record.direct_failure is not None
     ) and not record.participated:
         message = "selected work evidence requires participation"
-        raise BoundaryVerdictIntegrityError(message)
-    _revalidate_failure_fact(record.item_failure)
-    _revalidate_failure_fact(record.direct_failure)
-
-
-def _revalidate_failure_fact(
-    fact: (
-        feed_work_scheduler.CohortItemFailureFact
-        | feed_work_scheduler.CohortDirectFailureFact
-        | None
-    ),
-) -> None:
-    if fact is None:
-        return
-    fact_type = type(fact)
-    if fact_type is feed_work_scheduler.CohortItemFailureFact:
-        validated = feed_work_scheduler.CohortItemFailureFact(
-            fact.status_reason,
-            fact.detail,
-        )
-    elif fact_type is feed_work_scheduler.CohortDirectFailureFact:
-        validated = feed_work_scheduler.CohortDirectFailureFact(
-            fact.status_reason,
-            fact.detail,
-        )
-    else:
-        message = "failure evidence has an unsupported exact type"
-        raise TypeError(message)
-    if validated != fact:
-        message = "failure evidence changed after predecessor validation"
         raise BoundaryVerdictIntegrityError(message)
 
 
@@ -728,17 +567,8 @@ def _validate_recovery_candidates(
         ingestion_lease_store.LeaseMemberIdentity,
     ],
 ) -> None:
-    if not isinstance(page.child_recovery_candidates, tuple):
-        message = "child_recovery_candidates must be an immutable tuple"
-        raise TypeError(message)
     seen: set[uuid.UUID] = set()
     for candidate in page.child_recovery_candidates:
-        if not isinstance(
-            candidate,
-            ingestion_lease_store.LeaseMemberIdentity,
-        ):
-            message = "child recovery candidate must be a LeaseMemberIdentity"
-            raise TypeError(message)
         member = members_by_feed.get(candidate.feed_id)
         if member is None or candidate is not member:
             message = "child recovery candidate crossed the page member set"
@@ -936,14 +766,11 @@ def _aggregate_lease_failure(
 
 
 def _require_optional_utc_datetime(
-    value: object,
+    value: datetime.datetime | None,
     name: str,
 ) -> datetime.datetime | None:
     if value is None:
         return None
-    if not isinstance(value, datetime.datetime):
-        message = f"{name} must be a datetime or None"
-        raise TypeError(message)
     if value.utcoffset() != datetime.timedelta(0):
         message = f"{name} must be UTC-aware"
         raise ValueError(message)
@@ -973,71 +800,25 @@ def _failure_action(
     return ingestion_lease_store.NonBudgetedFailure(plan.treatment.retry_after)
 
 
-def _require_identity_tuple(
-    value: object,
+def _require_uuid_tuple(
+    value: tuple[uuid.UUID, ...],
     name: str,
-) -> tuple[object, ...]:
-    if not isinstance(value, tuple):
-        message = f"{name} must be an immutable tuple"
-        raise TypeError(message)
+) -> tuple[uuid.UUID, ...]:
+    if len(set(value)) != len(value):
+        message = f"{name} must not contain duplicates"
+        raise BoundaryVerdictIntegrityError(message)
+    if value != tuple(sorted(value, key=lambda item: item.int)):
+        message = f"{name} must be in deterministic UUID order"
+        raise BoundaryVerdictIntegrityError(message)
     return value
 
 
-def _require_uuid_tuple(
-    value: object,
-    name: str,
-) -> tuple[uuid.UUID, ...]:
-    items = _require_identity_tuple(value, name)
-    if any(not isinstance(item, uuid.UUID) for item in items):
-        message = f"{name} must contain UUID values"
-        raise TypeError(message)
-    typed = typing.cast("tuple[uuid.UUID, ...]", items)
-    if len(set(typed)) != len(typed):
-        message = f"{name} must not contain duplicates"
-        raise BoundaryVerdictIntegrityError(message)
-    if typed != tuple(sorted(typed, key=lambda item: item.int)):
-        message = f"{name} must be in deterministic UUID order"
-        raise BoundaryVerdictIntegrityError(message)
-    return typed
-
-
 def _require_retired_member_tuple(
-    value: object,
+    value: tuple[ingestion_lease_store.LeaseMemberIdentity, ...],
 ) -> tuple[ingestion_lease_store.LeaseMemberIdentity, ...]:
-    items = _require_identity_tuple(value, "locally_retired_members")
-    if any(
-        not isinstance(item, ingestion_lease_store.LeaseMemberIdentity)
-        for item in items
-    ):
-        message = "locally_retired_members must contain issued members"
-        raise TypeError(message)
-    typed = typing.cast(
-        "tuple[ingestion_lease_store.LeaseMemberIdentity, ...]",
-        items,
-    )
-    feed_ids = tuple(member.feed_id for member in typed)
+    feed_ids = tuple(member.feed_id for member in value)
     if len(set(feed_ids)) != len(feed_ids):
         message = "locally_retired_members must not repeat a Feed"
-        raise BoundaryVerdictIntegrityError(message)
-    return typed
-
-
-def _require_final_plan_policy(
-    value: object,
-) -> failure_policy.ConsumeFailureBudget:
-    if type(value) is not failure_policy.ConsumeFailureBudget:
-        message = "budgeted_failure must be an exact ConsumeFailureBudget"
-        raise TypeError(message)
-    try:
-        validated = failure_policy.ConsumeFailureBudget(
-            value.failure_threshold,
-            value.backoff_base_sec,
-            value.backoff_max_sec,
-        )
-    except (TypeError, ValueError) as error:
-        raise BoundaryVerdictIntegrityError(str(error)) from error
-    if validated != value:
-        message = "budgeted_failure changed after validation"
         raise BoundaryVerdictIntegrityError(message)
     return value
 
@@ -1055,16 +836,16 @@ class _FinalPlanIndexes:
 
 def _prepare_final_plan_indexes(
     verdict: PageVerdict,
-    candidate_boundaries: object,
-    unresolved_replay_feed_ids: object,
-    replay_blocked_feed_ids: object,
-    locally_retired_members: object,
+    candidate_boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
+    unresolved_replay_feed_ids: tuple[uuid.UUID, ...],
+    replay_blocked_feed_ids: tuple[uuid.UUID, ...],
+    locally_retired_members: tuple[
+        ingestion_lease_store.LeaseMemberIdentity,
+        ...,
+    ],
     target: datetime.datetime | None,
 ) -> _FinalPlanIndexes:
-    boundaries = _require_identity_tuple(
-        candidate_boundaries,
-        "candidate_boundaries",
-    )
+    boundaries = candidate_boundaries
     unresolved = frozenset(
         _require_uuid_tuple(
             unresolved_replay_feed_ids,
@@ -1083,9 +864,6 @@ def _prepare_final_plan_indexes(
     }
     boundaries_by_id: dict[uuid.UUID, feed_work_scheduler.BoundaryWork] = {}
     for boundary in boundaries:
-        if type(boundary) is not feed_work_scheduler.BoundaryWork:
-            message = "candidate boundaries must contain exact BoundaryWork"
-            raise TypeError(message)
         feed = feed_facts_by_id.get(boundary.feed_id)
         if feed is None or boundary.member is not feed.member:
             message = "candidate boundary crossed verdict membership"
@@ -1232,12 +1010,8 @@ def plan_final_mutations(
         Exact caller-ordered commands and parent recovery effect.
 
     Raises:
-        TypeError: An input uses an unsupported type.
         BoundaryVerdictIntegrityError: Authority or ordering crosses.
     """
-    if type(verdict) is not PageVerdict:
-        message = "verdict must be an exact PageVerdict"
-        raise TypeError(message)
     target = _require_optional_utc_datetime(
         requested_target,
         "requested_target",
@@ -1249,7 +1023,6 @@ def plan_final_mutations(
     if settled_utc is None:
         message = "boundary_settled_utc must not be None"
         raise ValueError(message)
-    policy = _require_final_plan_policy(budgeted_failure)
     indexes = _prepare_final_plan_indexes(
         verdict,
         candidate_boundaries,
@@ -1269,7 +1042,7 @@ def plan_final_mutations(
             indexes,
             promoted=promoted,
             target=target,
-            policy=policy,
+            policy=budgeted_failure,
             settled_utc=settled_utc,
         )
         if mutation is not None:
@@ -1304,15 +1077,9 @@ def decide_page_verdict(page: PageVerdictInput) -> PageVerdict:
         An immutable deterministic page verdict.
 
     Raises:
-        TypeError: ``page`` is not an exact ``PageVerdictInput``.
         BoundaryVerdictIntegrityError: Facts are missing, crossed, neutral,
             unknown, or otherwise structurally inconsistent.
     """
-    if type(page) is not PageVerdictInput:
-        message = "page must be an exact PageVerdictInput"
-        raise TypeError(message)
-    _validate_page_input(page)
-
     feeds = _normalize_feed_facts(page)
     participating = tuple(feed for feed in feeds if feed.participated)
     successful = tuple(

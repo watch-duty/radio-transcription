@@ -140,6 +140,30 @@ class TestFailurePlanning(unittest.TestCase):
         with self.assertRaises(ValueError):
             failure_policy.RetryWithoutBudget(_NOW.replace(tzinfo=None))
 
+    def test_plan_rejects_treatment_outside_reason_classification(self) -> None:
+        cases = (
+            (
+                feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
+                failure_policy.RetryWithoutBudget(_NOW),
+            ),
+            (
+                feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+                _BUDGETED,
+            ),
+        )
+
+        for status_reason, treatment in cases:
+            with self.subTest(status_reason=status_reason.value):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "classification must match",
+                ):
+                    failure_policy.FailurePersistencePlan(
+                        status_reason,
+                        None,
+                        treatment,
+                    )
+
 
 if __name__ == "__main__":
     unittest.main()

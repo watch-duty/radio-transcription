@@ -12,7 +12,9 @@ import math
 import typing
 
 from backend.pipeline.ingestion.feed_work_scheduler import _shard, _types
-from backend.pipeline.storage import ingestion_lease_store
+
+if typing.TYPE_CHECKING:
+    from backend.pipeline.storage import ingestion_lease_store
 
 _BOUNDARY_BATCH_SIZE = 100
 _MAX_FINITE_SECONDS = float.fromhex("0x1.fffffffffffffp+1023")
@@ -129,9 +131,6 @@ class _BoundaryCoordinator:
         ],
         batch_size: int = _BOUNDARY_BATCH_SIZE,
     ) -> None:
-        if not isinstance(grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
         if not shards:
             message = "boundary coordinator requires at least one shard"
             raise ValueError(message)

@@ -9,11 +9,12 @@ import math
 import typing
 
 from backend.pipeline.ingestion import slo_contract
-from backend.pipeline.ingestion.collectors.bcfy_calls import cursor_policy
 from backend.pipeline.storage import feed_store, ingestion_lease_store
 
 if typing.TYPE_CHECKING:
     import datetime
+
+    from backend.pipeline.ingestion.collectors.bcfy_calls import cursor_policy
 
 __all__ = [
     "MissingCallEvent",
@@ -64,8 +65,8 @@ class SidPollLifecycleScope(enum.StrEnum):
     LEASE_ONLY = "lease_only"
 
 
-def _require_nonnegative_integer(value: object, *, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+def _require_nonnegative_integer(value: int, *, name: str) -> int:
+    if isinstance(value, bool):
         message = f"{name} must be an integer"
         raise TypeError(message)
     if not 0 <= value <= slo_contract.BCFY_CALLS_SID_POLL_COUNT_MAX:
@@ -75,7 +76,7 @@ def _require_nonnegative_integer(value: object, *, name: str) -> int:
 
 
 def _require_optional_nonnegative_integer(
-    value: object,
+    value: int | None,
     *,
     name: str,
 ) -> int | None:
@@ -84,8 +85,12 @@ def _require_optional_nonnegative_integer(
     return _require_nonnegative_integer(value, name=name)
 
 
-def _require_nonnegative_seconds(value: object, *, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+def _require_nonnegative_seconds(
+    value: float,
+    *,
+    name: str,
+) -> float:
+    if isinstance(value, bool):
         message = f"{name} must be a number"
         raise TypeError(message)
     numeric = float(value)
@@ -99,7 +104,7 @@ def _require_nonnegative_seconds(value: object, *, name: str) -> float:
 
 
 def _require_optional_nonnegative_seconds(
-    value: object,
+    value: float | None,
     *,
     name: str,
 ) -> float | None:
@@ -246,24 +251,6 @@ class SidPollEvidence:
             ),
         ):
             _require_optional_nonnegative_seconds(value, name=name)
-        if not isinstance(self.outcome, SidPollOutcome):
-            message = "outcome must be a SidPollOutcome"
-            raise TypeError(message)
-        if not isinstance(
-            self.response_last_pos_state,
-            SidPollResponseLastPosState,
-        ):
-            message = "response_last_pos_state has an unknown value"
-            raise TypeError(message)
-        if not isinstance(self.lifecycle_scope, SidPollLifecycleScope):
-            message = "lifecycle_scope has an unknown value"
-            raise TypeError(message)
-        if type(self.provider_observed) is not bool:
-            message = "provider_observed must be a bool"
-            raise TypeError(message)
-        if type(self.pressure_encountered) is not bool:
-            message = "pressure_encountered must be a bool"
-            raise TypeError(message)
         self._validate_provider_fields()
         self._validate_scheduler_fields()
         self._validate_verdict_fields()
@@ -412,15 +399,9 @@ class ReplayWindowTruncatedEvent:
     floor_reached: cursor_policy.ReplayFloorReached
 
     def __post_init__(self) -> None:
-        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
         if self.grant.source_type is not feed_store.SourceType.BCFY_CALLS:
             message = "replay-window telemetry requires a bcfy_calls grant"
             raise ValueError(message)
-        if type(self.floor_reached) is not cursor_policy.ReplayFloorReached:
-            message = "floor_reached must be exact ReplayFloorReached evidence"
-            raise TypeError(message)
 
 
 def _replay_timestamp(value: datetime.datetime) -> str:
@@ -459,7 +440,7 @@ def replay_window_truncated_json_fields(
         raise ValueError(message)
     for name in ("sid", "source_type", "owner_worker_id", "cause"):
         _require_bounded_string(
-            fields[name],
+            typing.cast("str", fields[name]),
             name=name,
             maximum=(
                 slo_contract.BCFY_CALLS_REPLAY_WINDOW_TRUNCATED_STRING_MAX_LENGTH
@@ -500,14 +481,11 @@ class MissingCallStage(enum.StrEnum):
 
 
 def _require_bounded_string(
-    value: object,
+    value: str,
     *,
     name: str,
     maximum: int,
 ) -> str:
-    if not isinstance(value, str):
-        message = f"{name} must be a string"
-        raise TypeError(message)
     if not value or len(value) > maximum:
         message = f"{name} must be nonempty and at most {maximum} chars"
         raise ValueError(message)
@@ -561,9 +539,6 @@ class MissingCallEvent:
                     slo_contract.BCFY_CALLS_MISSING_CALL_IDENTITY_MAX_LENGTH
                 ),
             )
-        if not isinstance(self.gap_stage, MissingCallStage):
-            message = "gap_stage must be a MissingCallStage"
-            raise TypeError(message)
         _require_bounded_string(
             self.reason,
             name="reason",
@@ -571,7 +546,6 @@ class MissingCallEvent:
         )
         if (
             isinstance(self.attempt_count, bool)
-            or not isinstance(self.attempt_count, int)
             or not 0
             <= self.attempt_count
             <= slo_contract.BCFY_CALLS_MISSING_CALL_ATTEMPT_COUNT_MAX

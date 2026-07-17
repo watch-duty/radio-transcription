@@ -319,26 +319,6 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
         for lane in scheduler.opened:
             self.assertEqual(lane.active_closers, 0)
 
-    async def test_crossed_payload_type_fails_before_lane_open(self) -> None:
-        sid_runner = _sid_runner_module()
-        scheduler = _ControlledScheduler()
-        runner, factory = _runner(sid_runner, scheduler)
-        context, _stop, _loss = _context()
-        wrong_payload = object()
-
-        with self.assertRaises(TypeError):
-            await runner.run(
-                _grant(),
-                typing.cast(
-                    "sid_grant_control.SidClaimPayload",
-                    wrong_payload,
-                ),
-                context,
-            )
-
-        self.assertEqual(scheduler.opened, [])
-        self.assertEqual(factory.calls, [])
-
     async def test_concurrent_runs_open_distinct_invocation_local_lanes(
         self,
     ) -> None:
@@ -392,6 +372,7 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
         )
         for lane in scheduler.opened:
             processor = factory.processors[scheduler.opened.index(lane)]
+            assert processor.work_stop is not None
             self.assertTrue(processor.work_stop.is_set())
             self.assertTrue(processor.cancelled)
             self.assertTrue(processor.settled.is_set())
@@ -452,6 +433,7 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
 
                 self.assertFalse(task.done())
                 self.assertEqual(lane.close_reasons, [reason])
+                assert processor.work_stop is not None
                 self.assertTrue(processor.work_stop.is_set())
                 self.assertTrue(processor.cancelled)
                 self.assertTrue(processor.settled.is_set())
@@ -603,6 +585,7 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
                 lane = scheduler.opened[0]
                 await asyncio.wait_for(lane.close_entered.wait(), timeout=1)
 
+                assert processor.work_stop is not None
                 self.assertTrue(processor.work_stop.is_set())
                 self.assertTrue(processor.settled.is_set())
                 self.assertFalse(processor.cancelled)
@@ -796,6 +779,7 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
             lane.close_reasons,
             [feed_work_scheduler.LaneCloseReason.SCHEDULER_SHUTDOWN],
         )
+        assert processor.work_stop is not None
         self.assertTrue(processor.work_stop.is_set())
         self.assertTrue(processor.cancelled)
         self.assertTrue(processor.settled.is_set())

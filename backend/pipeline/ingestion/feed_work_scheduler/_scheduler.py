@@ -54,11 +54,6 @@ class _ReadOnlySignal:
 
     _event: asyncio.Event
 
-    def __post_init__(self) -> None:
-        if not isinstance(self._event, asyncio.Event):
-            message = "lane signals must be asyncio.Event values"
-            raise TypeError(message)
-
     def is_set(self) -> bool:
         return self._event.is_set()
 
@@ -234,9 +229,6 @@ class _PageEvidenceAccumulator:
 
     def close_boundary_capture(self, *, complete: bool) -> None:
         """Close this page to new boundary evidence after quiescence."""
-        if type(complete) is not bool:
-            message = "boundary capture completeness must be a bool"
-            raise TypeError(message)
         if not self._boundary_capture_open:
             return
         self._boundary_capture_open = False
@@ -674,9 +666,6 @@ class FeedWorkScheduler:
                 use the fixed default.
             _monotonic: Monotonic clock seam for deterministic evidence tests.
         """
-        if not isinstance(_limits, _types._SchedulerLimits):
-            message = "_limits must be _SchedulerLimits"
-            raise TypeError(message)
         if not callable(getattr(executor, "execute", None)):
             message = "executor must provide async execute(record)"
             raise TypeError(message)

@@ -7,7 +7,6 @@ import datetime
 import enum
 import math
 import typing
-import uuid
 
 from backend.pipeline.ingestion.collectors.bcfy_calls import cursor_policy
 from backend.pipeline.storage import (
@@ -16,6 +15,9 @@ from backend.pipeline.storage import (
     status_reason_detail,
 )
 
+if typing.TYPE_CHECKING:
+    import uuid
+
 PRODUCTION_SHARD_COUNT = 8
 PRODUCTION_SHARD_CAPACITY = 500
 PRODUCTION_WORKERS_PER_SHARD = 4
@@ -23,8 +25,8 @@ PRODUCTION_HIGH_WATER = 400
 PRODUCTION_RESUME_AT = 299
 
 
-def _require_positive_integer(value: object, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+def _require_positive_integer(value: int, name: str) -> int:
+    if isinstance(value, bool):
         message = f"{name} must be an integer"
         raise TypeError(message)
     if value <= 0:
@@ -33,8 +35,8 @@ def _require_positive_integer(value: object, name: str) -> int:
     return value
 
 
-def _require_nonnegative_integer(value: object, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+def _require_nonnegative_integer(value: int, name: str) -> int:
+    if isinstance(value, bool):
         message = f"{name} must be an integer"
         raise TypeError(message)
     if value < 0:
@@ -43,8 +45,11 @@ def _require_nonnegative_integer(value: object, name: str) -> int:
     return value
 
 
-def _require_nonnegative_finite_number(value: object, name: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+def _require_nonnegative_finite_number(
+    value: float,
+    name: str,
+) -> float:
+    if isinstance(value, bool):
         message = f"{name} must be a number"
         raise TypeError(message)
     try:
@@ -125,20 +130,6 @@ class LaneSignalView:
     stop_requested: ExecutionSignal
     grant_lost: ExecutionSignal
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
-        for name, signal in (
-            ("stop_requested", self.stop_requested),
-            ("grant_lost", self.grant_lost),
-        ):
-            if not callable(getattr(signal, "is_set", None)) or not callable(
-                getattr(signal, "wait", None)
-            ):
-                message = f"{name} must be a read-only execution signal"
-                raise TypeError(message)
-
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class CohortRecordIdentity:
@@ -153,18 +144,6 @@ class CohortRecordIdentity:
     local_sequence: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
-        if not isinstance(
-            self.member,
-            ingestion_lease_store.LeaseMemberIdentity,
-        ):
-            message = "member must be a LeaseMemberIdentity"
-            raise TypeError(message)
-        if not isinstance(self.feed_id, uuid.UUID):
-            message = "feed_id must be a UUID"
-            raise TypeError(message)
         if self.member.feed_id != self.feed_id:
             message = "member Feed does not match record Feed"
             raise ValueError(message)
@@ -180,11 +159,6 @@ class CallExecution:
 
     identity: CohortRecordIdentity
     payload: object
-
-    def __post_init__(self) -> None:
-        if type(self.identity) is not CohortRecordIdentity:
-            message = "identity must be an exact CohortRecordIdentity"
-            raise TypeError(message)
 
     @property
     def grant(self) -> ingestion_lease_store.LeaseGrant:
@@ -230,21 +204,7 @@ class CallSubmission:
     settlement_observer: typing.Callable[[CallSettlement], None] | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.feed_id, uuid.UUID):
-            message = "feed_id must be a UUID"
-            raise TypeError(message)
-        if self.source_timestamp is not None and not isinstance(
-            self.source_timestamp,
-            datetime.datetime,
-        ):
-            message = "source_timestamp must be a datetime or None"
-            raise TypeError(message)
         _require_utc_timestamp(self.source_timestamp, "source_timestamp")
-        if self.settlement_observer is not None and not callable(
-            self.settlement_observer
-        ):
-            message = "settlement_observer must be callable or None"
-            raise TypeError(message)
 
 
 class _AdmissionStatus(enum.StrEnum):
@@ -279,31 +239,16 @@ class CohortSubmission:
     )
 
     def __post_init__(self) -> None:
-        if not isinstance(
-            self.member,
-            ingestion_lease_store.LeaseMemberIdentity,
-        ):
-            message = "member must be a LeaseMemberIdentity"
-            raise TypeError(message)
-        if not isinstance(self.feed_id, uuid.UUID):
-            message = "feed_id must be a UUID"
-            raise TypeError(message)
         if self.member.feed_id != self.feed_id:
             message = "cohort member Feed does not match cohort Feed"
             raise ValueError(message)
         _require_utc_timestamp(self.cohort_timestamp, "cohort_timestamp")
-        if not isinstance(self.calls, tuple) or not self.calls:
+        if not self.calls:
             message = "calls must be a nonempty immutable tuple"
             raise ValueError(message)
-        if any(type(call) is not CallSubmission for call in self.calls):
-            message = "calls must contain exact CallSubmission values"
-            raise TypeError(message)
         if self.cohort_timestamp is None and len(self.calls) != 1:
             message = "a missing-timestamp cohort must be a singleton"
             raise ValueError(message)
-        if not callable(self.admission_hook):
-            message = "admission_hook must be callable"
-            raise TypeError(message)
 
     def _begin_admission(self) -> None:
         if self._admission_state.status is not _AdmissionStatus.UNUSED:
@@ -321,12 +266,12 @@ class CohortSubmission:
         self._admission_state.status = _AdmissionStatus.FAILED
 
 
-def _require_utc_timestamp(value: object, name: str) -> None:
+def _require_utc_timestamp(
+    value: datetime.datetime | None,
+    name: str,
+) -> None:
     if value is None:
         return
-    if not isinstance(value, datetime.datetime):
-        message = f"{name} must be a datetime or None"
-        raise TypeError(message)
     if value.utcoffset() != datetime.timedelta(0):
         message = f"{name} must be UTC-aware"
         raise ValueError(message)
@@ -345,15 +290,6 @@ class BoundaryWork:
     target: datetime.datetime
 
     def __post_init__(self) -> None:
-        if not isinstance(
-            self.member,
-            ingestion_lease_store.LeaseMemberIdentity,
-        ):
-            message = "member must be a LeaseMemberIdentity"
-            raise TypeError(message)
-        if not isinstance(self.target, datetime.datetime):
-            message = "target must be a datetime"
-            raise TypeError(message)
         if self.target.utcoffset() != datetime.timedelta(0):
             message = "target must be UTC-aware"
             raise ValueError(message)
@@ -379,25 +315,12 @@ class BoundaryResult:
     boundary: BoundaryWork
     disposition: BoundaryDisposition
 
-    def __post_init__(self) -> None:
-        if type(self.boundary) is not BoundaryWork:
-            message = "boundary must be an exact BoundaryWork"
-            raise TypeError(message)
-        if not isinstance(self.disposition, BoundaryDisposition):
-            message = "disposition must be a BoundaryDisposition"
-            raise TypeError(message)
-
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class BoundaryBatchCommitted:
     """Caller-ordered settled results beneath an accepted exact grant."""
 
     results: tuple[BoundaryResult, ...]
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.results, tuple):
-            message = "results must be an immutable tuple"
-            raise TypeError(message)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -443,29 +366,12 @@ class _CallWork:
     settlement_observer: typing.Callable[[CallSettlement], None] | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.feed_id, uuid.UUID):
-            message = "feed_id must be a UUID"
-            raise TypeError(message)
-        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
-        if not isinstance(
-            self.member,
-            ingestion_lease_store.LeaseMemberIdentity,
-        ):
-            message = "member must be a LeaseMemberIdentity"
-            raise TypeError(message)
         if self.member.feed_id != self.feed_id:
             message = "member Feed does not match work Feed"
             raise ValueError(message)
         _require_nonnegative_integer(self.source_order, "source_order")
         _require_utc_timestamp(self.cohort_timestamp, "cohort_timestamp")
         _require_nonnegative_integer(self.page_sequence, "page_sequence")
-        if self.settlement_observer is not None and not callable(
-            self.settlement_observer
-        ):
-            message = "settlement_observer must be callable or None"
-            raise TypeError(message)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -476,12 +382,6 @@ class _CallRecord:
     identity: CohortRecordIdentity
 
     def __post_init__(self) -> None:
-        if not isinstance(self.work, _CallWork):
-            message = "work must be _CallWork"
-            raise TypeError(message)
-        if type(self.identity) is not CohortRecordIdentity:
-            message = "identity must be an exact CohortRecordIdentity"
-            raise TypeError(message)
         expected = (
             self.work.grant,
             self.work.member,
@@ -543,20 +443,14 @@ class _CohortRecord:
     signals: LaneSignalView
 
     def __post_init__(self) -> None:
-        if not isinstance(self.records, tuple) or not self.records:
+        if not self.records:
             message = "records must be a nonempty immutable tuple"
             raise ValueError(message)
-        if any(type(record) is not _CallRecord for record in self.records):
-            message = "records must contain exact _CallRecord values"
-            raise TypeError(message)
         first = self.records[0]
         identities = tuple(record.identity for record in self.records)
         if self.control.identities != identities:
             message = "cohort control identities do not match records"
             raise ValueError(message)
-        if type(self.signals) is not LaneSignalView:
-            message = "signals must be an exact LaneSignalView"
-            raise TypeError(message)
         if self.signals.grant != first.grant:
             message = "cohort signals crossed grant identity"
             raise ValueError(message)
@@ -609,12 +503,6 @@ class _BoundaryInput:
     page_sequence: int
 
     def __post_init__(self) -> None:
-        if type(self.boundary) is not BoundaryWork:
-            message = "boundary must be an exact BoundaryWork"
-            raise TypeError(message)
-        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
         _require_nonnegative_integer(self.source_order, "source_order")
         _require_nonnegative_integer(self.page_sequence, "page_sequence")
 
@@ -693,10 +581,7 @@ class CohortTerminalDisposition(enum.StrEnum):
     OUTCOME_UNKNOWN = "outcome_unknown"
 
 
-def _normalize_failure_detail(value: object) -> str:
-    if not isinstance(value, str):
-        message = "failure detail must be a string"
-        raise TypeError(message)
+def _normalize_failure_detail(value: str) -> str:
     normalized = " ".join(value.split())
     lowered = normalized.casefold()
     if any(
@@ -721,9 +606,6 @@ class CohortItemFailureFact:
     detail: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.status_reason, feed_store.FeedStatusReason):
-            message = "status_reason must be a FeedStatusReason"
-            raise TypeError(message)
         object.__setattr__(
             self,
             "detail",
@@ -739,9 +621,6 @@ class CohortDirectFailureFact:
     detail: str
 
     def __post_init__(self) -> None:
-        if not isinstance(self.status_reason, feed_store.FeedStatusReason):
-            message = "status_reason must be a FeedStatusReason"
-            raise TypeError(message)
         object.__setattr__(
             self,
             "detail",
@@ -762,33 +641,6 @@ class CohortRecordTerminalFact:
     direct_failure: CohortDirectFailureFact | None = None
 
     def __post_init__(self) -> None:
-        if type(self.identity) is not CohortRecordIdentity:
-            message = "identity must be an exact CohortRecordIdentity"
-            raise TypeError(message)
-        if not isinstance(self.participated, bool):
-            message = "participated must be a bool"
-            raise TypeError(message)
-        if not isinstance(self.closure_state, CohortRecordClosureState):
-            message = "closure_state must be a CohortRecordClosureState"
-            raise TypeError(message)
-        if not isinstance(self.full_pipeline_completed, bool):
-            message = "full_pipeline_completed must be a bool"
-            raise TypeError(message)
-        if not isinstance(self.terminal_reason, CohortRecordTerminalReason):
-            message = "terminal_reason must be a CohortRecordTerminalReason"
-            raise TypeError(message)
-        if (
-            self.item_failure is not None
-            and type(self.item_failure) is not CohortItemFailureFact
-        ):
-            message = "item_failure must be a CohortItemFailureFact or None"
-            raise TypeError(message)
-        if (
-            self.direct_failure is not None
-            and type(self.direct_failure) is not CohortDirectFailureFact
-        ):
-            message = "direct_failure must be a CohortDirectFailureFact or None"
-            raise TypeError(message)
         self._validate_implications()
 
     def _validate_implications(self) -> None:
@@ -861,20 +713,9 @@ class CohortTerminalFacts:
     disposition: CohortTerminalDisposition
 
     def __post_init__(self) -> None:
-        if not isinstance(self.records, tuple) or not self.records:
+        if not self.records:
             message = "records must be a nonempty immutable tuple"
             raise ValueError(message)
-        if any(
-            type(record) is not CohortRecordTerminalFact
-            for record in self.records
-        ):
-            message = (
-                "records must contain exact CohortRecordTerminalFact values"
-            )
-            raise TypeError(message)
-        if not isinstance(self.disposition, CohortTerminalDisposition):
-            message = "disposition must be a CohortTerminalDisposition"
-            raise TypeError(message)
         identities = tuple(record.identity for record in self.records)
         if len(set(identities)) != len(identities):
             message = "terminal facts contain duplicate record identities"
@@ -914,18 +755,12 @@ class FinalRecordClosureResolution:
     release_basis: FinalRecordReleaseBasis
 
     def __post_init__(self) -> None:
-        if type(self.identity) is not CohortRecordIdentity:
-            message = "identity must be an exact CohortRecordIdentity"
-            raise TypeError(message)
         if self.closure_state not in {
             CohortRecordClosureState.DURABLY_CLOSED,
             CohortRecordClosureState.REPLAY_SAFE_RELEASE,
         }:
             message = "final closure must be durable or replay-safe"
             raise CohortIntegrityError(message)
-        if not isinstance(self.release_basis, FinalRecordReleaseBasis):
-            message = "release_basis must be a FinalRecordReleaseBasis"
-            raise TypeError(message)
         if (self.closure_state is CohortRecordClosureState.DURABLY_CLOSED) != (
             self.release_basis is FinalRecordReleaseBasis.DURABLE_SOURCE_CLOSURE
         ):
@@ -933,36 +768,25 @@ class FinalRecordClosureResolution:
             raise CohortIntegrityError(message)
 
 
-def _require_uuid_tuple(value: object, name: str) -> tuple[uuid.UUID, ...]:
-    if not isinstance(value, tuple) or any(
-        not isinstance(item, uuid.UUID) for item in value
-    ):
-        message = f"{name} must be an immutable UUID tuple"
-        raise TypeError(message)
+def _require_uuid_tuple(
+    value: tuple[uuid.UUID, ...],
+    name: str,
+) -> tuple[uuid.UUID, ...]:
     if len(set(value)) != len(value):
         message = f"{name} must not contain duplicates"
         raise CohortIntegrityError(message)
     if value != tuple(sorted(value, key=lambda item: item.int)):
         message = f"{name} must be in deterministic UUID order"
         raise CohortIntegrityError(message)
-    return typing.cast("tuple[uuid.UUID, ...]", value)
+    return value
 
 
 def _require_member_retirement_tuple(
     grant: ingestion_lease_store.LeaseGrant,
-    value: object,
+    value: tuple[ingestion_lease_store.LeaseMemberIdentity, ...],
 ) -> tuple[ingestion_lease_store.LeaseMemberIdentity, ...]:
     """Validate deterministic accepted retirement authority for one grant."""
-    if not isinstance(value, tuple) or any(
-        not isinstance(item, ingestion_lease_store.LeaseMemberIdentity)
-        for item in value
-    ):
-        message = "member_retirements must contain issued members"
-        raise TypeError(message)
-    members = typing.cast(
-        "tuple[ingestion_lease_store.LeaseMemberIdentity, ...]",
-        value,
-    )
+    members = value
     if len({id(member) for member in members}) != len(members) or len(
         {member.feed_id for member in members}
     ) != len(members):
@@ -1009,9 +833,6 @@ class PageFinalizationContext:
     candidate_boundaries: tuple[BoundaryWork, ...]
 
     def __post_init__(self) -> None:
-        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
         _require_nonnegative_integer(self.page_sequence, "page_sequence")
         if type(self.candidate) not in {
             cursor_policy.PageCursorCandidate,
@@ -1025,12 +846,6 @@ class PageFinalizationContext:
         ):
             message = "candidate crossed finalization context"
             raise CohortIntegrityError(message)
-        if not isinstance(self.cohort_terminal_facts, tuple) or any(
-            type(facts) is not CohortTerminalFacts
-            for facts in self.cohort_terminal_facts
-        ):
-            message = "cohort_terminal_facts must contain exact facts"
-            raise TypeError(message)
         self._validate_facts()
         replay = _require_uuid_tuple(
             self.unresolved_replay_feed_ids,
@@ -1050,15 +865,6 @@ class PageFinalizationContext:
         if set(replay) != replay_facts:
             message = "unresolved replay Feeds crossed terminal facts"
             raise CohortIntegrityError(message)
-        if not isinstance(self.locally_retired_members, tuple) or any(
-            not isinstance(
-                member,
-                ingestion_lease_store.LeaseMemberIdentity,
-            )
-            for member in self.locally_retired_members
-        ):
-            message = "locally_retired_members must be issued members"
-            raise TypeError(message)
         if len({id(member) for member in self.locally_retired_members}) != len(
             self.locally_retired_members
         ):
@@ -1073,12 +879,6 @@ class PageFinalizationContext:
             except (TypeError, ValueError) as exc:
                 message = "locally retired member crossed complete grant"
                 raise CohortIntegrityError(message) from exc
-        if not isinstance(self.candidate_boundaries, tuple) or any(
-            type(boundary) is not BoundaryWork
-            for boundary in self.candidate_boundaries
-        ):
-            message = "candidate_boundaries must contain exact boundaries"
-            raise TypeError(message)
         for boundary in self.candidate_boundaries:
             try:
                 ingestion_lease_store._require_member_binding(  # noqa: SLF001
@@ -1150,18 +950,6 @@ class _AcceptedFinalPage:
             self.page_sequence,
             self.candidate,
         )
-        if not isinstance(self.boundary_results, tuple) or any(
-            type(result) is not BoundaryResult
-            for result in self.boundary_results
-        ):
-            message = "boundary_results must contain exact BoundaryResult"
-            raise TypeError(message)
-        if not isinstance(self.final_closure_resolutions, tuple) or any(
-            type(resolution) is not FinalRecordClosureResolution
-            for resolution in self.final_closure_resolutions
-        ):
-            message = "final_closure_resolutions must contain exact values"
-            raise TypeError(message)
         _require_member_retirement_tuple(self.grant, self.member_retirements)
 
 
@@ -1187,6 +975,9 @@ def _require_final_result_identity(
 ) -> None:
     if not isinstance(grant, ingestion_lease_store.LeaseGrant):
         message = "grant must be a LeaseGrant"
+        raise TypeError(message)
+    if isinstance(page_sequence, bool) or not isinstance(page_sequence, int):
+        message = "page_sequence must be an integer"
         raise TypeError(message)
     exact_sequence = _require_nonnegative_integer(
         page_sequence,
@@ -1223,11 +1014,6 @@ class FinalPageRetryable:
             self.page_sequence,
             self.candidate,
         )
-        if not isinstance(self.commit_child_mutations_started, bool) or not (
-            isinstance(self.mutation_could_have_committed, bool)
-        ):
-            message = "no-commit proof fields must be booleans"
-            raise TypeError(message)
         if (
             self.commit_child_mutations_started
             or self.mutation_could_have_committed
@@ -1381,9 +1167,6 @@ class SchedulerPageEvidence:
         )
         for name, value in duration_fields:
             _require_nonnegative_finite_number(value, name)
-        if type(self.pressure_encountered) is not bool:
-            message = "pressure_encountered must be a bool"
-            raise TypeError(message)
         if self.admitted_cohort_count > self.admitted_record_count:
             message = "admitted cohorts cannot exceed admitted records"
             raise ValueError(message)
@@ -1488,15 +1271,6 @@ class SettledPage:
         ):
             message = "settled page crossed exact candidate identity"
             raise CohortIntegrityError(message)
-        if not isinstance(self.final_closure_resolutions, tuple) or any(
-            type(value) is not FinalRecordClosureResolution
-            for value in self.final_closure_resolutions
-        ):
-            message = "final_closure_resolutions must contain exact values"
-            raise TypeError(message)
-        if type(self.scheduler_evidence) is not SchedulerPageEvidence:
-            message = "scheduler_evidence must be exact SchedulerPageEvidence"
-            raise TypeError(message)
 
     @property
     def grant(self) -> ingestion_lease_store.LeaseGrant:
@@ -1525,12 +1299,6 @@ class OutcomeUnknownRetentionRequest:
     failure: BaseException | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.cause, OutcomeUnknownCause):
-            message = "cause must be an OutcomeUnknownCause"
-            raise TypeError(message)
-        if type(self.terminal_facts) is not CohortTerminalFacts:
-            message = "terminal_facts must be exact CohortTerminalFacts"
-            raise TypeError(message)
         disposition = self.terminal_facts.disposition
         if disposition not in {
             CohortTerminalDisposition.INTEGRITY_FAILURE,
@@ -1610,15 +1378,9 @@ class CohortExecution:
     cancellation_handoff: CohortCancellationHandoff
 
     def __post_init__(self) -> None:
-        if not isinstance(self.calls, tuple) or not self.calls:
+        if not self.calls:
             message = "calls must be a nonempty immutable tuple"
             raise ValueError(message)
-        if any(type(call) is not CallExecution for call in self.calls):
-            message = "calls must contain exact CallExecution values"
-            raise TypeError(message)
-        if type(self.signals) is not LaneSignalView:
-            message = "signals must be an exact LaneSignalView"
-            raise TypeError(message)
         identities = tuple(call.identity for call in self.calls)
         if identities != self.retention.identities or identities != (
             self.cancellation_handoff.identities
@@ -1628,12 +1390,9 @@ class CohortExecution:
 
 
 def _require_outcome_facts(
-    facts: object,
+    facts: CohortTerminalFacts,
     disposition: CohortTerminalDisposition,
 ) -> CohortTerminalFacts:
-    if type(facts) is not CohortTerminalFacts:
-        message = "facts must be exact CohortTerminalFacts"
-        raise TypeError(message)
     if facts.disposition is not disposition:
         message = "outcome and terminal disposition disagree"
         raise CohortIntegrityError(message)
@@ -1879,14 +1638,6 @@ class LaneClosed:
     grant: ingestion_lease_store.LeaseGrant
     reason: LaneCloseReason
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
-        if not isinstance(self.reason, LaneCloseReason):
-            message = "reason must be a LaneCloseReason"
-            raise TypeError(message)
-
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class Undrained:
@@ -1900,17 +1651,6 @@ class Undrained:
 
     grant: ingestion_lease_store.LeaseGrant | None
     reason: LaneCloseReason
-
-    def __post_init__(self) -> None:
-        if self.grant is not None and not isinstance(
-            self.grant,
-            ingestion_lease_store.LeaseGrant,
-        ):
-            message = "grant must be a LeaseGrant or None"
-            raise TypeError(message)
-        if not isinstance(self.reason, LaneCloseReason):
-            message = "reason must be a LaneCloseReason"
-            raise TypeError(message)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -1930,16 +1670,7 @@ class FeedRemoved:
     active_retained: bool
 
     def __post_init__(self) -> None:
-        if not isinstance(self.grant, ingestion_lease_store.LeaseGrant):
-            message = "grant must be a LeaseGrant"
-            raise TypeError(message)
-        if not isinstance(self.feed_id, uuid.UUID):
-            message = "feed_id must be a UUID"
-            raise TypeError(message)
         _require_nonnegative_integer(self.released_count, "released_count")
-        if not isinstance(self.active_retained, bool):
-            message = "active_retained must be a bool"
-            raise TypeError(message)
 
 
 _ExecutorCompleted = CallCompleted

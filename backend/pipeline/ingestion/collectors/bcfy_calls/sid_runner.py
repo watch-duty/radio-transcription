@@ -111,9 +111,6 @@ class BcfyCallsSidRunner:
         context: grant_control.RunContext,
     ) -> grant_control.RunOutcome:
         """Supervise one processor and acknowledge only a settled exact lane."""
-        if type(payload) is not sid_grant_control.SidClaimPayload:
-            message = "payload must be an exact SidClaimPayload"
-            raise TypeError(message)
         try:
             lane = self._scheduler.open_lane(
                 grant,

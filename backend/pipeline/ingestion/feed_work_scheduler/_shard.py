@@ -113,7 +113,7 @@ class _PageNeutralizationObserver(typing.Protocol):
 class _Shard:
     """One lock-protected held-token state machine with fixed workers."""
 
-    def __init__(  # noqa: PLR0912, PLR0915
+    def __init__(  # noqa: PLR0915
         self,
         shard_id: int,
         executor: _types.CallExecutor,
@@ -187,11 +187,8 @@ class _Shard:
             TypeError: An identifier, limit, or injected seam has wrong type.
             ValueError: ``shard_id`` is outside the configured shard count.
         """
-        if isinstance(shard_id, bool) or not isinstance(shard_id, int):
+        if isinstance(shard_id, bool):
             message = "shard_id must be an integer"
-            raise TypeError(message)
-        if not isinstance(limits, _types._SchedulerLimits):
-            message = "limits must be _SchedulerLimits"
             raise TypeError(message)
         if shard_id < 0 or shard_id >= limits.shard_count:
             message = "shard_id is outside configured shard_count"

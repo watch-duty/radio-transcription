@@ -422,6 +422,8 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
         self.data_store.release_feed.return_value = True
         self.data_store.report_feed_failure.return_value = "quarantined"
         self.data_store.release_non_budgeted_failure.return_value = "failing"
+        budgeted_plan = _budgeted_plan()
+        non_budgeted_plan = _non_budgeted_plan()
         policy_mock = mock.Mock(side_effect=AssertionError("policy called"))
         retry_mock = mock.AsyncMock(side_effect=AssertionError("retry called"))
 
@@ -443,12 +445,12 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             budgeted = await self.control.finalize(
                 grant,
                 _payload_for_grant(grant),
-                _budgeted_plan(),
+                budgeted_plan,
             )
             non_budgeted = await self.control.finalize(
                 grant,
                 _payload_for_grant(grant),
-                _non_budgeted_plan(),
+                non_budgeted_plan,
             )
 
         self.assertIs(
@@ -468,10 +470,9 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             grant.owner_worker_id,
             grant.fencing_token,
         )
-        plan = _budgeted_plan()
         treatment = typing.cast(
             "failure_policy.ConsumeFailureBudget",
-            plan.treatment,
+            budgeted_plan.treatment,
         )
         self.data_store.report_feed_failure.assert_awaited_once_with(
             grant.feed_id,
@@ -481,10 +482,9 @@ class TestFeedGrantControl(unittest.IsolatedAsyncioTestCase):
             treatment.backoff_base_sec,
             treatment.backoff_max_sec,
             actor_id=_ACTOR_ID,
-            reason=plan.reason,
-            status_reason=plan.status_reason,
+            reason=budgeted_plan.reason,
+            status_reason=budgeted_plan.status_reason,
         )
-        non_budgeted_plan = _non_budgeted_plan()
         retry_treatment = typing.cast(
             "failure_policy.RetryWithoutBudget",
             non_budgeted_plan.treatment,
@@ -1011,6 +1011,8 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
                 feed_store.FeedStatus.FAILING,
             )
         )
+        budgeted_plan = _budgeted_plan()
+        non_budgeted_plan = _non_budgeted_plan()
         policy_mock = mock.Mock(side_effect=AssertionError("policy called"))
         retry_mock = mock.AsyncMock(side_effect=AssertionError("retry called"))
 
@@ -1025,14 +1027,14 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             budgeted = await self.control.finalize(
                 grant,
                 self._sid_payload(grant),
-                _budgeted_plan(),
+                budgeted_plan,
             )
             budgeted_call = self.data_store.finalize_failure.await_args
             self.data_store.finalize_failure.reset_mock()
             non_budgeted = await self.control.finalize(
                 grant,
                 self._sid_payload(grant),
-                _non_budgeted_plan(),
+                non_budgeted_plan,
             )
             non_budgeted_call = self.data_store.finalize_failure.await_args
 
@@ -1045,7 +1047,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(budgeted_call.args[0], grant)
         self.assertEqual(
             budgeted_call.args[2],
-            _budgeted_plan().status_reason,
+            budgeted_plan.status_reason,
         )
         self.assertEqual(budgeted_call.kwargs["actor_id"], _ACTOR_ID)
         self.assertIsInstance(
@@ -1056,7 +1058,7 @@ class TestSidGrantControl(unittest.IsolatedAsyncioTestCase):
             non_budgeted_call.args[1].retry_after,
             typing.cast(
                 "failure_policy.RetryWithoutBudget",
-                _non_budgeted_plan().treatment,
+                non_budgeted_plan.treatment,
             ).retry_after,
         )
         self.assertIs(

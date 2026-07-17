@@ -604,24 +604,12 @@ class TestFencedBoundaryCommitter(unittest.IsolatedAsyncioTestCase):
 class TestFencedPageFinalizer(unittest.IsolatedAsyncioTestCase):
     """Prove source lifecycle finalization is exact and once-only."""
 
-    def test_finalizer_requires_an_explicit_exact_budgeted_policy(self) -> None:
+    def test_finalizer_requires_explicit_policy_and_clock(self) -> None:
         signature = inspect.signature(runtime_adapters.FencedPageFinalizer)
         policy_parameter = signature.parameters["budgeted_failure"]
         self.assertIs(policy_parameter.default, inspect.Parameter.empty)
         settled_parameter = signature.parameters["boundary_settled_utc"]
         self.assertIs(settled_parameter.default, inspect.Parameter.empty)
-
-        store = _store_with_result(_batch_committed())
-        with self.assertRaisesRegex(TypeError, "exact ConsumeFailureBudget"):
-            runtime_adapters.FencedPageFinalizer(
-                store,
-                actor_id=_ACTOR_ID,
-                budgeted_failure=typing.cast(
-                    "failure_policy.ConsumeFailureBudget",
-                    object(),
-                ),
-                boundary_settled_utc=lambda: _NOW,
-            )
 
     async def test_mixed_success_and_replayable_feed_is_one_transaction(
         self,
@@ -1913,14 +1901,6 @@ class TestPhysicalCohortCommitter(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(dataclasses.FrozenInstanceError):
             setattr(commit, cursor_field, None)
 
-        with self.assertRaises(TypeError):
-            runtime_adapters.PhysicalCohortResult(
-                commit,
-                typing.cast(
-                    "feed_work_scheduler.BoundaryDisposition",
-                    "committed",
-                ),
-            )
         with self.assertRaises(ValueError):
             runtime_adapters.PhysicalCohortResult(
                 commit,

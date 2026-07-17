@@ -23,7 +23,7 @@ class ConsumeFailureBudget:
             ("backoff_base_sec", self.backoff_base_sec),
             ("backoff_max_sec", self.backoff_max_sec),
         ):
-            if isinstance(value, bool) or not isinstance(value, int):
+            if isinstance(value, bool):
                 msg = f"{name} must be an integer"
                 raise TypeError(msg)
             if value <= 0:
@@ -41,9 +41,6 @@ class RetryWithoutBudget:
     retry_after: datetime.datetime
 
     def __post_init__(self) -> None:
-        if not isinstance(self.retry_after, datetime.datetime):
-            msg = "retry_after must be a datetime"
-            raise TypeError(msg)
         if self.retry_after.utcoffset() != datetime.timedelta(0):
             msg = "retry_after must be UTC-aware"
             raise ValueError(msg)
@@ -62,18 +59,12 @@ class FailurePersistencePlan:
     treatment: FailureTreatment
 
     def __post_init__(self) -> None:
-        if not isinstance(self.status_reason, feed_store.FeedStatusReason):
-            msg = "status_reason must be a FeedStatusReason"
-            raise TypeError(msg)
-        if self.reason is not None and not isinstance(self.reason, str):
-            msg = "reason must be a string or None"
-            raise TypeError(msg)
-        if not isinstance(
+        if consumes_failure_budget(self.status_reason) != isinstance(
             self.treatment,
-            (ConsumeFailureBudget, RetryWithoutBudget),
+            ConsumeFailureBudget,
         ):
-            msg = "treatment must be a closed FailureTreatment"
-            raise TypeError(msg)
+            msg = "status_reason classification must match treatment"
+            raise ValueError(msg)
 
 
 _BUDGETED_REASONS = frozenset(

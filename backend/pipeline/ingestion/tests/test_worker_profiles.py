@@ -383,10 +383,9 @@ class TestWorkerProfile(unittest.TestCase):
         self.assertNotIn("credential", source)
         self.assertNotIn("grant", source)
 
-    def test_profile_type_name_version_and_structure_validation(self) -> None:
+    def test_profile_name_version_and_structure_validation(self) -> None:
         baseline = worker_profiles.LEGACY_PROFILE
-        invalid_profiles: dict[str, object] = {
-            "non_profile": object(),
+        invalid_profiles = {
             "empty_name": dataclasses.replace(baseline, name=" "),
             "zero_version": dataclasses.replace(baseline, version=0),
             "bool_version": dataclasses.replace(baseline, version=True),
@@ -398,27 +397,6 @@ class TestWorkerProfile(unittest.TestCase):
                 baseline,
                 allocations=(),
             ),
-            "mutable_allocations": dataclasses.replace(
-                baseline,
-                allocations=typing.cast(
-                    "tuple[worker_profiles.DomainAllocation, ...]",
-                    list(baseline.allocations),
-                ),
-            ),
-            "invalid_allocation": dataclasses.replace(
-                baseline,
-                allocations=typing.cast(
-                    "tuple[worker_profiles.DomainAllocation, ...]",
-                    (object(),),
-                ),
-            ),
-            "invalid_resource_class": dataclasses.replace(
-                baseline,
-                resource_class=typing.cast(
-                    "worker_profiles.ResourceClass",
-                    "unknown",
-                ),
-            ),
         }
 
         for case, profile in invalid_profiles.items():
@@ -426,27 +404,9 @@ class TestWorkerProfile(unittest.TestCase):
                 with self.assertRaises((TypeError, ValueError)):
                     worker_profiles.validate_worker_profile(profile)
 
-    def test_profile_rejects_empty_unknown_and_duplicate_domains(self) -> None:
+    def test_profile_rejects_missing_and_duplicate_domains(self) -> None:
         baseline = worker_profiles.LEGACY_PROFILE
         feed = baseline.allocations[0]
-        invalid_domain_allocations = (
-            typing.cast("grant_control.DomainId", ""),
-            typing.cast("grant_control.DomainId", "third-domain"),
-        )
-        for domain_id in invalid_domain_allocations:
-            with self.subTest(domain_id=domain_id):
-                profile = dataclasses.replace(
-                    baseline,
-                    allocations=(
-                        dataclasses.replace(feed, domain_id=domain_id),
-                    ),
-                )
-                with self.assertRaisesRegex(
-                    (TypeError, ValueError),
-                    "unknown domain",
-                ):
-                    worker_profiles.validate_worker_profile(profile)
-
         duplicate = dataclasses.replace(
             baseline,
             process_owned_cap=1600,
@@ -489,46 +449,17 @@ class TestWorkerProfile(unittest.TestCase):
                 feed_entry,
                 domain_id=grant_control.DomainId.SID,
             ),
-            "authority_kind": dataclasses.replace(
-                feed_entry,
-                authority_kind=typing.cast(
-                    "worker_profiles.AuthorityKind",
-                    "unknown",
-                ),
-            ),
             "logical_authority": dataclasses.replace(
                 feed_entry,
                 logical_authority="",
-            ),
-            "logical_authority_type": dataclasses.replace(
-                feed_entry,
-                logical_authority=typing.cast("str", 1),
             ),
             "empty_resource_classes": dataclasses.replace(
                 feed_entry,
                 compatible_resource_classes=frozenset(),
             ),
-            "mutable_resource_classes": dataclasses.replace(
-                feed_entry,
-                compatible_resource_classes=typing.cast(
-                    "frozenset[worker_profiles.ResourceClass]",
-                    {worker_profiles.ResourceClass.SHARED},
-                ),
-            ),
-            "invalid_resource_class": dataclasses.replace(
-                feed_entry,
-                compatible_resource_classes=typing.cast(
-                    "frozenset[worker_profiles.ResourceClass]",
-                    frozenset(("unknown",)),
-                ),
-            ),
             "required_config_group": dataclasses.replace(
                 feed_entry,
                 required_config_group=" ",
-            ),
-            "required_config_group_type": dataclasses.replace(
-                feed_entry,
-                required_config_group=typing.cast("str", None),
             ),
         }
 
@@ -555,7 +486,7 @@ class TestWorkerProfile(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "incompatible"):
                     worker_profiles.validate_worker_profile(profile)
 
-    def test_profile_rejects_invalid_caps_budgets_and_claim_flag(self) -> None:
+    def test_profile_rejects_invalid_caps_and_budgets(self) -> None:
         baseline = worker_profiles.LEGACY_PROFILE
         feed = baseline.allocations[0]
         invalid_allocations = {
@@ -583,10 +514,6 @@ class TestWorkerProfile(unittest.TestCase):
                 feed,
                 owned_cap=2,
                 claims_per_cycle=3,
-            ),
-            "invalid_claim_flag": dataclasses.replace(
-                feed,
-                claims_enabled=typing.cast("bool", 1),
             ),
         }
 

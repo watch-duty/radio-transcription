@@ -72,9 +72,6 @@ class LeaseClaim:
 
     grant: LeaseGrant
 
-    def __post_init__(self) -> None:
-        _require_grant(self.grant)
-
 
 class LeaseOperationDisposition(enum.StrEnum):
     """Closed outcome vocabulary for exact-grant control operations."""
@@ -91,11 +88,6 @@ class LeaseOperationResult:
     """Narrow result for one exact-grant Lease mutation."""
 
     disposition: LeaseOperationDisposition
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.disposition, LeaseOperationDisposition):
-            msg = "disposition must be a LeaseOperationDisposition"
-            raise TypeError(msg)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -131,11 +123,6 @@ class GrantRejected:
 
     reason: GrantRejectionReason
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.reason, GrantRejectionReason):
-            msg = "reason must be a GrantRejectionReason"
-            raise TypeError(msg)
-
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class BudgetedFailure:
@@ -157,7 +144,7 @@ class BudgetedFailure:
             ("backoff_base_sec", self.backoff_base_sec),
             ("backoff_max_sec", self.backoff_max_sec),
         ):
-            if isinstance(value, bool) or not isinstance(value, int):
+            if isinstance(value, bool):
                 msg = f"{name} must be an integer"
                 raise TypeError(msg)
             if value <= 0:
@@ -179,9 +166,6 @@ class NonBudgetedFailure:
     retry_after: datetime.datetime
 
     def __post_init__(self) -> None:
-        if not isinstance(self.retry_after, datetime.datetime):
-            msg = "retry_after must be a datetime"
-            raise TypeError(msg)
         if self.retry_after.utcoffset() != datetime.timedelta(0):
             msg = "retry_after must be UTC-aware"
             raise ValueError(msg)
@@ -206,10 +190,7 @@ class LeaseFailureResult:
     def __post_init__(self) -> None:
         applied = self.disposition is LeaseOperationDisposition.APPLIED
         if applied:
-            valid_final_status = isinstance(
-                self.final_status,
-                feed_store.FeedStatus,
-            ) and self.final_status in (
+            valid_final_status = self.final_status in (
                 feed_store.FeedStatus.FAILING,
                 feed_store.FeedStatus.QUARANTINED,
             )
@@ -424,11 +405,6 @@ class LeaseLifecycleResult:
     """Applied effect for the parent Lease lifecycle."""
 
     effect: LeaseLifecycleEffect
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.effect, LeaseLifecycleEffect):
-            msg = "effect must be a LeaseLifecycleEffect"
-            raise TypeError(msg)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

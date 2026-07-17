@@ -127,35 +127,20 @@ class ScheduledCohortEntry:
     obligation: gap_ledger.MissingCallObligation
 
     def __post_init__(self) -> None:
-        if isinstance(self.source_order, bool) or not isinstance(
-            self.source_order,
-            int,
-        ):
+        if isinstance(self.source_order, bool):
             message = "source_order must be an integer"
             raise TypeError(message)
         if self.source_order < 0:
             message = "source_order must be nonnegative"
             raise ValueError(message)
-        if not isinstance(self.audio_url, str):
-            message = "audio_url must be a string"
-            raise TypeError(message)
         if not self.audio_url:
             message = "audio_url must be nonempty"
             raise ValueError(message)
-        if not isinstance(self.raw_call, collections.abc.Mapping):
-            message = "raw_call must be a mapping"
-            raise TypeError(message)
         frozen = _freeze_provider_value(self.raw_call)
         object.__setattr__(self, "raw_call", frozen)
-        if not isinstance(self.receipt_time, datetime.datetime):
-            message = "receipt_time must be a datetime"
-            raise TypeError(message)
         if self.receipt_time.utcoffset() != datetime.timedelta(0):
             message = "receipt_time must be UTC-aware"
             raise ValueError(message)
-        if type(self.obligation) is not gap_ledger.MissingCallObligation:
-            message = "obligation must be an exact MissingCallObligation"
-            raise TypeError(message)
 
 
 def deduplicate_exact_url_entries(
@@ -165,9 +150,6 @@ def deduplicate_exact_url_entries(
     seen: set[str] = set()
     unique = []
     for entry in entries:
-        if type(entry) is not ScheduledCohortEntry:
-            message = "entries must contain exact ScheduledCohortEntry values"
-            raise TypeError(message)
         if entry.audio_url in seen:
             continue
         seen.add(entry.audio_url)
@@ -184,12 +166,6 @@ class ScheduledCohortPayload:
     entries: tuple[ScheduledCohortEntry, ...]
 
     def __post_init__(self) -> None:
-        if not isinstance(self.member, ingestion_lease_store.LeaseMember):
-            message = "member must be a LeaseMember"
-            raise TypeError(message)
-        if not isinstance(self.session_id, str):
-            message = "session_id must be a string"
-            raise TypeError(message)
         if (
             not self.session_id
             or len(self.session_id) > _SESSION_ID_MAX_LENGTH
@@ -200,14 +176,9 @@ class ScheduledCohortPayload:
                 "whitespace-free"
             )
             raise ValueError(message)
-        if not isinstance(self.entries, tuple) or not self.entries:
+        if not self.entries:
             message = "entries must be a nonempty immutable tuple"
             raise ValueError(message)
-        if any(
-            type(entry) is not ScheduledCohortEntry for entry in self.entries
-        ):
-            message = "entries must contain exact ScheduledCohortEntry values"
-            raise TypeError(message)
         urls = tuple(entry.audio_url for entry in self.entries)
         if len(set(urls)) != len(urls):
             message = "producer must deduplicate exact URLs before construction"
@@ -291,19 +262,10 @@ class StagedChunk:
     attempt_count: int
 
     def __post_init__(self) -> None:
-        if type(self.chunk) is not CapturedChunk:
-            message = "chunk must be an exact CapturedChunk"
-            raise TypeError(message)
-        if not isinstance(self.gcs_uri, str) or not self.gcs_uri.startswith(
-            "gs://"
-        ):
+        if not self.gcs_uri.startswith("gs://"):
             message = "gcs_uri must be a nonempty GCS URI"
             raise ValueError(message)
-        if (
-            isinstance(self.attempt_count, bool)
-            or not isinstance(self.attempt_count, int)
-            or self.attempt_count <= 0
-        ):
+        if isinstance(self.attempt_count, bool) or self.attempt_count <= 0:
             message = "attempt_count must be a positive integer"
             raise ValueError(message)
 
@@ -316,14 +278,10 @@ class PublishedChunk:
     attempt_count: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.message_id, str) or not self.message_id:
+        if not self.message_id:
             message = "message_id must be a nonempty string"
             raise ValueError(message)
-        if (
-            isinstance(self.attempt_count, bool)
-            or not isinstance(self.attempt_count, int)
-            or self.attempt_count <= 0
-        ):
+        if isinstance(self.attempt_count, bool) or self.attempt_count <= 0:
             message = "attempt_count must be a positive integer"
             raise ValueError(message)
 
@@ -630,7 +588,7 @@ class BcfyCallsCohortExecutor:
             bcfy_calls_collector._create_chunk_from_call  # noqa: SLF001
         ),
     ) -> None:
-        if not isinstance(topic_path, str) or not topic_path:
+        if not topic_path:
             message = "topic_path must be a nonempty string"
             raise ValueError(message)
         for name, operation in (

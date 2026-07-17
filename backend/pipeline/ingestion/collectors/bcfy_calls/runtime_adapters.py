@@ -52,26 +52,12 @@ class PhysicalCohortCommit:
     cursor: datetime.datetime | None
 
     def __post_init__(self) -> None:
-        if not isinstance(
-            self.member,
-            ingestion_lease_store.LeaseMemberIdentity,
-        ):
-            message = "member must be a LeaseMemberIdentity"
-            raise TypeError(message)
         path = self.last_processed_filename
-        if path is not None and not isinstance(path, str):
-            message = "last_processed_filename must be a string or None"
-            raise TypeError(message)
-        if isinstance(path, str) and not path.strip():
+        if path is not None and not path.strip():
             message = "last_processed_filename must be nonempty when present"
             raise ValueError(message)
         cursor = self.cursor
-        if cursor is not None and not isinstance(cursor, datetime.datetime):
-            message = "cursor must be a datetime or None"
-            raise TypeError(message)
-        if isinstance(
-            cursor, datetime.datetime
-        ) and cursor.utcoffset() != datetime.timedelta(0):
+        if cursor is not None and cursor.utcoffset() != datetime.timedelta(0):
             message = "cursor must be UTC-aware"
             raise ValueError(message)
         if path is None and cursor is None:
@@ -87,15 +73,6 @@ class PhysicalCohortResult:
     disposition: feed_work_scheduler.BoundaryDisposition
 
     def __post_init__(self) -> None:
-        if type(self.commit) is not PhysicalCohortCommit:
-            message = "commit must be an exact PhysicalCohortCommit"
-            raise TypeError(message)
-        if not isinstance(
-            self.disposition,
-            feed_work_scheduler.BoundaryDisposition,
-        ):
-            message = "disposition must be a BoundaryDisposition"
-            raise TypeError(message)
         if self.disposition not in (
             feed_work_scheduler.BoundaryDisposition.COMMITTED,
             feed_work_scheduler.BoundaryDisposition.MEMBER_REJECTED,
@@ -301,12 +278,6 @@ class PageFinalizationEvidence:
     item_to_feed_promotion_count: int
 
     def __post_init__(self) -> None:
-        if type(self.verdict) is not boundary_verdict.PageVerdict:
-            message = "verdict must be an exact PageVerdict"
-            raise TypeError(message)
-        if not isinstance(self.closure_caps, tuple):
-            message = "closure_caps must be an immutable tuple"
-            raise TypeError(message)
         caps = tuple(
             _require_feed_closure_cap(cap) for cap in self.closure_caps
         )
@@ -319,19 +290,13 @@ class PageFinalizationEvidence:
         ):
             message = "closure_caps must be in deterministic Feed order"
             raise BoundaryAdapterIntegrityError(message)
-        if not isinstance(self.quarantined_feed_ids, tuple) or any(
-            not isinstance(feed_id, uuid.UUID)
-            for feed_id in self.quarantined_feed_ids
-        ):
-            message = "quarantined_feed_ids must be an immutable UUID tuple"
-            raise TypeError(message)
         if self.quarantined_feed_ids != tuple(
             sorted(set(self.quarantined_feed_ids), key=lambda value: value.int)
         ):
             message = "quarantined_feed_ids must be unique and ordered"
             raise BoundaryAdapterIntegrityError(message)
         count = self.item_to_feed_promotion_count
-        if isinstance(count, bool) or not isinstance(count, int):
+        if isinstance(count, bool):
             message = "item_to_feed_promotion_count must be an integer"
             raise TypeError(message)
         if count != self.verdict.item_to_feed_promotion_count:
@@ -367,9 +332,6 @@ class FencedBoundaryCommitter:
         """
         if not callable(getattr(store, "commit_child_mutations", None)):
             message = "store must provide async commit_child_mutations"
-            raise TypeError(message)
-        if not isinstance(actor_id, str):
-            message = "actor_id must be a string"
             raise TypeError(message)
         if (
             not actor_id
@@ -588,23 +550,6 @@ def _require_boundary_settled_utc(value: object) -> datetime.datetime:
     if value.utcoffset() != datetime.timedelta(0):
         message = "boundary_settled_utc must return a UTC-aware datetime"
         raise ValueError(message)
-    return value
-
-
-def _require_finalizer_policy(
-    value: object,
-) -> failure_policy.ConsumeFailureBudget:
-    if type(value) is not failure_policy.ConsumeFailureBudget:
-        message = "budgeted_failure must be an exact ConsumeFailureBudget"
-        raise TypeError(message)
-    validated = failure_policy.ConsumeFailureBudget(
-        value.failure_threshold,
-        value.backoff_base_sec,
-        value.backoff_max_sec,
-    )
-    if validated != value:
-        message = "budgeted_failure changed after validation"
-        raise BoundaryAdapterIntegrityError(message)
     return value
 
 
@@ -916,9 +861,6 @@ class FencedPageFinalizer:
         if not callable(getattr(store, "commit_child_mutations", None)):
             message = "store must provide async commit_child_mutations"
             raise TypeError(message)
-        if not isinstance(actor_id, str):
-            message = "actor_id must be a string"
-            raise TypeError(message)
         if (
             not actor_id
             or len(actor_id) > 512
@@ -934,7 +876,7 @@ class FencedPageFinalizer:
             raise TypeError(message)
         self._store = store
         self._actor_id = actor_id
-        self._budgeted_failure = _require_finalizer_policy(budgeted_failure)
+        self._budgeted_failure = budgeted_failure
         self._boundary_settled_utc = boundary_settled_utc
 
     @property

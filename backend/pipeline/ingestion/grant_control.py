@@ -90,11 +90,6 @@ class NeutralRelease:
 
     cause: TerminalCause
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.cause, TerminalCause):
-            msg = "cause must be a TerminalCause"
-            raise TypeError(msg)
-
 
 type TerminalDecision = NeutralRelease | failure_policy.FailurePersistencePlan
 
