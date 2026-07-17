@@ -879,7 +879,8 @@ function DryRunResultsModal({
                         >
                           Feed:{' '}
                           {feeds.find((f) => f.id === example.feedId)?.name ||
-                            example.feedId}
+                            example.feedId}{' '}
+                          • Segment: {example.audioSegmentId}
                         </Typography>
                         {renderHighlightedText(
                           example.text,
