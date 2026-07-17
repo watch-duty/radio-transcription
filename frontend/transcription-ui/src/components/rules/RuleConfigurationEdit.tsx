@@ -851,7 +851,10 @@ function DryRunResultsModal({
               <Typography variant="subtitle1" fontWeight={600}>
                 Rule matched {(result.hitCount ?? 0).toLocaleString()} of{' '}
                 {(result.totalEvaluated ?? 0).toLocaleString()} recent
-                transcripts
+                transcripts{' '}
+                {result.totalEvaluated > 0
+                  ? `(${((result.hitCount / result.totalEvaluated) * 100).toFixed(2)}%)`
+                  : ''}
               </Typography>
             </Box>
 
