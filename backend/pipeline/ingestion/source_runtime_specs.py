@@ -74,9 +74,12 @@ SOURCE_RUNTIME_SPECS = MappingProxyType(
             source_type=feed_store.SourceType.FIRE_NOTIFICATIONS,
             topic_kind=TopicKind.SEGMENTED,
             claimable=True,
-            # Fire's lower-frequency shared-session polling supports parity
-            # with bcfy_calls; the global 800-task limit still bounds mixed
-            # source admission.
+            # Fire has no controlled mono-source benchmark yet. This is the
+            # existing bcfy_calls cap used as a provisional proxy; under the
+            # default 800-task ceiling it also prevents Fire from consuming
+            # the final 200 worker slots. See "Worker Cap Calibration" in
+            # collectors/README.md for the evidence, limitations, and update
+            # procedure.
             default_cap=600,
             url_base_env="FIRE_NOTIFICATIONS_URL_BASE",
         ),
