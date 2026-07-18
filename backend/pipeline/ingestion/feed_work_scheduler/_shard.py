@@ -22,10 +22,6 @@ class _ShardClosedError(RuntimeError):
     """Admission reached a shard that no longer accepts work."""
 
 
-class _FeedRetiredError(RuntimeError):
-    """Admission reached a Feed retired from this shard."""
-
-
 class _ShardFatalError(RuntimeError):
     """Admission or coordination observed persistent integrity failure."""
 
@@ -56,7 +52,6 @@ class _WorkerSlot:
     task: asyncio.Task[None] | None = None
     active_record: _types._CallRecord | None = None
     cancellation_sequence: int | None = None
-    cancel_expected: bool = False
     abandoned: bool = False
 
 
@@ -65,7 +60,6 @@ class _CancellationRequest:
     """Exact registered worker cancellation awaiting settlement."""
 
     slot_id: int
-    local_sequence: int
     task: asyncio.Task[None]
 
 
@@ -86,6 +80,7 @@ class _Shard:
         executor: _types.CallExecutor,
         *,
         limits: _types._SchedulerLimits = _types._PRODUCTION_LIMITS,
+        fatal_observer: typing.Callable[[BaseException], None] | None = None,
     ) -> None:
         if isinstance(shard_id, bool):
             message = "shard_id must be an integer"
@@ -97,10 +92,10 @@ class _Shard:
         self.shard_id = shard_id
         self._executor = executor
         self._limits = limits
+        self._fatal_observer = fatal_observer
         self._lock = asyncio.Lock()
         self._work_ready = asyncio.Condition(self._lock)
         self._capacity_changed = asyncio.Condition(self._lock)
-        self._fatal_event = asyncio.Event()
 
         self._held = 0
         self._pressure_paused = False
@@ -113,9 +108,6 @@ class _Shard:
         self._ready_members: set[uuid.UUID] = set()
         self._records: dict[int, _types._CallRecord] = {}
         self._active_by_feed: dict[uuid.UUID, _types._CallRecord] = {}
-        self._retired_feeds: set[uuid.UUID] = set()
-        self._pending_boundaries = 0
-        self._flushing_boundaries = 0
         self._capacity_waiters = 0
 
         self._workers = [
@@ -125,7 +117,6 @@ class _Shard:
         self._started = False
         self._stopping = False
         self._closed = False
-        self._admission_open = True
         self._fatal: BaseException | None = None
 
     @property
@@ -150,7 +141,7 @@ class _Shard:
         """Atomically register one capacity-owning source record."""
         async with self._capacity_changed:
             while True:
-                self._raise_admission_error_locked(work.feed_id)
+                self._raise_admission_error_locked()
                 if (
                     not self._pressure_paused
                     and self._held < self._limits.capacity
@@ -235,16 +226,17 @@ class _Shard:
                 held=self._held,
                 queued_calls=len(queued_sequences),
                 active_calls=len(self._active_by_feed),
-                pending_boundaries=self._pending_boundaries,
-                flushing_boundaries=self._flushing_boundaries,
                 pressure_paused=self._pressure_paused,
                 ready_feeds=tuple(self._ready),
                 ready_members=frozenset(self._ready_members),
                 active_feeds=frozenset(self._active_by_feed),
                 records=records,
                 workers=workers,
-                retired_feeds=frozenset(self._retired_feeds),
-                admission_open=self._admission_open,
+                admission_open=(
+                    not self._stopping
+                    and not self._closed
+                    and self._fatal is None
+                ),
                 fatal=self._fatal is not None,
             )
 
@@ -334,26 +326,6 @@ class _Shard:
                 active_sequences=active,
             )
 
-    async def retire_feed(self, feed_id: uuid.UUID) -> _types._RetireFeedResult:
-        """Reject one Feed and safely purge only its queued calls."""
-        async with self._lock:
-            self._retired_feeds.add(feed_id)
-            queue = self._feed_queues.pop(feed_id, collections.deque())
-            released = tuple(record.local_sequence for record in queue)
-            for record in queue:
-                del self._records[record.local_sequence]
-                self._held -= 1
-            self._remove_ready_locked(feed_id)
-            active = self._active_by_feed.get(feed_id)
-            self._after_release_locked(len(released))
-            self._check_conservation_locked()
-            return _types._RetireFeedResult(
-                released_sequences=released,
-                active_sequence=(
-                    active.local_sequence if active is not None else None
-                ),
-            )
-
     async def request_cancel_exact(
         self,
         grant: ingestion_lease_store.LeaseGrant,
@@ -371,12 +343,10 @@ class _Shard:
                     or task.done()
                 ):
                     continue
-                slot.cancel_expected = True
                 slot.cancellation_sequence = record.local_sequence
                 requests.append(
                     _CancellationRequest(
                         slot_id=slot.slot_id,
-                        local_sequence=record.local_sequence,
                         task=task,
                     )
                 )
@@ -409,8 +379,7 @@ class _Shard:
         slot = self._require_slot(slot_id)
         async with self._lock:
             if (
-                not slot.cancel_expected
-                or slot.cancellation_sequence is None
+                slot.cancellation_sequence is None
                 or slot.task is None
                 or slot.task.done()
             ):
@@ -449,10 +418,6 @@ class _Shard:
             )
             self._raise_fatal_locked()
 
-    async def wait_for_fatal(self) -> None:
-        """Wait until first persistent scheduler-integrity evidence exists."""
-        await self._fatal_event.wait()
-
     async def close(self) -> None:
         """Stop fixed workers only after the shard is provably quiescent."""
         async with self._lock:
@@ -462,7 +427,6 @@ class _Shard:
             if self._held != 0:
                 message = "cannot close a shard with held work"
                 raise _ShardUndrainedError(message)
-            self._admission_open = False
             self._stopping = True
             self._work_ready.notify_all()
             self._capacity_changed.notify_all()
@@ -579,11 +543,7 @@ class _Shard:
         del self._active_by_feed[record.feed_id]
         del self._records[record.local_sequence]
         self._held -= 1
-        if (
-            record.feed_id in self._feed_queues
-            and record.feed_id not in self._retired_feeds
-            and self._fatal is None
-        ):
+        if record.feed_id in self._feed_queues and self._fatal is None:
             self._ensure_ready_locked(record.feed_id)
         self._after_release_locked(1)
         self._check_conservation_locked()
@@ -606,7 +566,6 @@ class _Shard:
                 return
             if self._fatal is not None or self._stopping:
                 return
-            slot.cancel_expected = False
             slot.cancellation_sequence = None
             slot.abandoned = False
             self._spawn_worker_locked(slot)
@@ -617,10 +576,7 @@ class _Shard:
         record: _types._CallRecord,
     ) -> tuple[bool, bool]:
         async with self._lock:
-            expected = (
-                slot.cancel_expected
-                and slot.cancellation_sequence == record.local_sequence
-            )
+            expected = slot.cancellation_sequence == record.local_sequence
             return expected, slot.abandoned
 
     async def _slot_cancel_state(
@@ -628,17 +584,17 @@ class _Shard:
         slot: _WorkerSlot,
     ) -> tuple[bool, bool]:
         async with self._lock:
-            return slot.cancel_expected, slot.abandoned
+            return slot.cancellation_sequence is not None, slot.abandoned
 
     async def _mark_fatal(self, failure: BaseException) -> None:
         async with self._lock:
             self._mark_fatal_locked(failure)
 
     def _mark_fatal_locked(self, failure: BaseException) -> None:
-        self._admission_open = False
         if self._fatal is None:
             self._fatal = failure
-            self._fatal_event.set()
+            if self._fatal_observer is not None:
+                self._fatal_observer(failure)
         self._work_ready.notify_all()
         self._capacity_changed.notify_all()
 
@@ -678,14 +634,11 @@ class _Shard:
         self._capacity_changed.notify_all()
         self._work_ready.notify_all()
 
-    def _raise_admission_error_locked(self, feed_id: uuid.UUID) -> None:
+    def _raise_admission_error_locked(self) -> None:
         self._raise_fatal_locked()
-        if not self._admission_open or self._stopping or self._closed:
+        if self._stopping or self._closed:
             message = "shard admission is closed"
             raise _ShardClosedError(message)
-        if feed_id in self._retired_feeds:
-            message = "Feed is retired from this shard"
-            raise _FeedRetiredError(message)
 
     def _raise_fatal_locked(self) -> None:
         if self._fatal is not None:
@@ -703,12 +656,7 @@ class _Shard:
     def _check_conservation_locked(self) -> None:
         queued = sum(len(queue) for queue in self._feed_queues.values())
         active = len(self._active_by_feed)
-        conserved = (
-            queued
-            + active
-            + self._pending_boundaries
-            + self._flushing_boundaries
-        )
+        conserved = queued + active
         if self._held != conserved:
             message = "held conservation equation failed"
             raise RuntimeError(message)
@@ -734,4 +682,14 @@ class _Shard:
         }
         if active_sequences != slot_sequences:
             message = "Feed and fixed-worker ownership disagree"
+            raise RuntimeError(message)
+        if set(self._records) != (
+            {
+                record.local_sequence
+                for queue in self._feed_queues.values()
+                for record in queue
+            }
+            | active_sequences
+        ):
+            message = "record registry and ownership disagree"
             raise RuntimeError(message)

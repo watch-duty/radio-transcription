@@ -817,8 +817,8 @@ def _actual_model_projection(
         held=snapshot.held,
         queued_calls=snapshot.queued_calls,
         active_calls=snapshot.active_calls,
-        pending_boundaries=snapshot.pending_boundaries,
-        flushing_boundaries=snapshot.flushing_boundaries,
+        pending_boundaries=0,
+        flushing_boundaries=0,
         pressure_paused=snapshot.pressure_paused,
         ready_feeds=snapshot.ready_feeds,
         active_feeds=snapshot.active_feeds,
@@ -1211,7 +1211,13 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
             high_water=1,
             resume_at=0,
         )
-        shard = shard_module._Shard(0, executor, limits=limits)
+        fatal = asyncio.Event()
+        shard = shard_module._Shard(
+            0,
+            executor,
+            limits=limits,
+            fatal_observer=lambda _failure: fatal.set(),
+        )
         grant = _grant()
         await shard.start()
         await shard.admit(_call_work(_FEED_IDS[0], grant, 0))
@@ -1223,7 +1229,7 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
         worker_task = shard._workers[0].task
         self.assertIsNotNone(worker_task)
         typing.cast("asyncio.Task[None]", worker_task).cancel()
-        await shard.wait_for_fatal()
+        await fatal.wait()
 
         with self.assertRaises(shard_module._ShardFatalError):
             await blocked
@@ -1241,15 +1247,17 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         shard_module = _shard
         executor = _FailingExecutor()
+        fatal = asyncio.Event()
         shard = shard_module._Shard(
             0,
             executor,
             limits=self._limits(workers=1),
+            fatal_observer=lambda _failure: fatal.set(),
         )
         await shard.start()
         await shard.admit(_call_work(_FEED_IDS[0], _grant(), 0))
         await asyncio.wait_for(executor.entered.wait(), timeout=1)
-        await shard.wait_for_fatal()
+        await fatal.wait()
 
         snapshot = await shard.snapshot()
         self.assertTrue(snapshot.fatal)

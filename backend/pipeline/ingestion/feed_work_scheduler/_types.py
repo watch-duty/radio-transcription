@@ -167,8 +167,6 @@ class _RecordState(enum.StrEnum):
 
     QUEUED = "queued"
     ACTIVE = "active"
-    PENDING_BOUNDARY = "pending_boundary"
-    FLUSHING_BOUNDARY = "flushing_boundary"
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -202,15 +200,12 @@ class _ShardSnapshot:
     held: int
     queued_calls: int
     active_calls: int
-    pending_boundaries: int
-    flushing_boundaries: int
     pressure_paused: bool
     ready_feeds: tuple[uuid.UUID, ...]
     ready_members: frozenset[uuid.UUID]
     active_feeds: frozenset[uuid.UUID]
     records: tuple[_RecordSnapshot, ...]
     workers: tuple[_WorkerSnapshot, ...]
-    retired_feeds: frozenset[uuid.UUID]
     admission_open: bool
     fatal: bool
 
@@ -221,11 +216,3 @@ class _PurgeResult:
 
     released_sequences: tuple[int, ...]
     active_sequences: tuple[int, ...]
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _RetireFeedResult:
-    """Localized Feed retirement result for later lane coordination."""
-
-    released_sequences: tuple[int, ...]
-    active_sequence: int | None
