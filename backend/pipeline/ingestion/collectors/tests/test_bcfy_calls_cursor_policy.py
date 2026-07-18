@@ -328,6 +328,37 @@ class TestReplayFloor(unittest.TestCase):
                 1.0,
             )
 
+    def test_floor_evidence_requires_an_exact_numeric_duration(self) -> None:
+        requested = _NOW - datetime.timedelta(minutes=20)
+
+        for duration in (True, "900", None):
+            with self.subTest(duration=repr(duration)):
+                with self.assertRaisesRegex(
+                    TypeError,
+                    "lost_duration_seconds must be a number",
+                ):
+                    cursor_policy.ReplayFloorReached(
+                        cause=cursor_policy.ReplayFloorCause.RECOVERY,
+                        requested_start=requested,
+                        floor_start=_REPLAY_FLOOR,
+                        lost_span_start=requested,
+                        lost_span_end=_REPLAY_FLOOR,
+                        lost_duration_seconds=typing.cast("float", duration),
+                    )
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "lost_duration_seconds must exactly match the lost span",
+        ):
+            cursor_policy.ReplayFloorReached(
+                cause=cursor_policy.ReplayFloorCause.RECOVERY,
+                requested_start=requested,
+                floor_start=_REPLAY_FLOOR,
+                lost_span_start=requested,
+                lost_span_end=_REPLAY_FLOOR,
+                lost_duration_seconds=900.0000001,
+            )
+
     def test_replay_floor_validates_utc_now_and_requested_start(self) -> None:
         naive = datetime.datetime(2026, 7, 12, 12, 0)
         cause = cursor_policy.ReplayFloorCause.RECOVERY
@@ -339,6 +370,34 @@ class TestReplayFloor(unittest.TestCase):
             "requested_start must be UTC-aware",
         ):
             cursor_policy.apply_replay_floor(naive, now=_NOW, cause=cause)
+
+    def test_replay_floor_rejects_non_datetime_values(self) -> None:
+        cause = cursor_policy.ReplayFloorCause.RECOVERY
+
+        for value in ("invalid", 0):
+            with self.subTest(field_name="now", value=repr(value)):
+                with self.assertRaisesRegex(
+                    TypeError,
+                    "now must be a datetime object",
+                ):
+                    cursor_policy.apply_replay_floor(
+                        None,
+                        now=typing.cast("datetime.datetime", value),
+                        cause=cause,
+                    )
+            with self.subTest(
+                field_name="requested_start",
+                value=repr(value),
+            ):
+                with self.assertRaisesRegex(
+                    TypeError,
+                    "requested_start must be a datetime object",
+                ):
+                    cursor_policy.apply_replay_floor(
+                        typing.cast("datetime.datetime", value),
+                        now=_NOW,
+                        cause=cause,
+                    )
 
 
 class TestPageCursorCapability(unittest.TestCase):
@@ -467,6 +526,19 @@ class TestPageCursorCapability(unittest.TestCase):
                 typing.cast("cursor_policy.PageCursorCandidate", fake)
             )
 
+    def test_page_sequence_requires_an_exact_integer(self) -> None:
+        invalid_sequences: tuple[object, ...] = (True, 1.0, "1", None)
+
+        for sequence in invalid_sequences:
+            with self.subTest(sequence=repr(sequence)):
+                with self.assertRaisesRegex(
+                    cursor_policy.CursorIntegrityError,
+                    "page_sequence must be an integer",
+                ):
+                    cursor_policy._require_page_sequence(
+                        typing.cast("int", sequence)
+                    )
+
 
 class TestLeaseCursor(unittest.TestCase):
     """Tests for exact-next, grant-local Lease Cursor consumption."""
@@ -509,6 +581,27 @@ class TestLeaseCursor(unittest.TestCase):
                 before = _cursor_state(self.cursor)
                 with self.assertRaises(cursor_policy.CursorIntegrityError):
                     self.cursor.prepare(last_pos)
+                self.assertEqual(_cursor_state(self.cursor), before)
+
+    def test_non_datetime_positions_raise_integrity_error(self) -> None:
+        for value in ("invalid", 0):
+            with self.subTest(field_name="pos", value=repr(value)):
+                with self.assertRaisesRegex(
+                    cursor_policy.CursorIntegrityError,
+                    "pos must be a datetime object",
+                ):
+                    cursor_policy.LeaseCursor(
+                        self.grant,
+                        pos=typing.cast("datetime.datetime", value),
+                    )
+
+            with self.subTest(field_name="last_pos", value=repr(value)):
+                before = _cursor_state(self.cursor)
+                with self.assertRaisesRegex(
+                    cursor_policy.CursorIntegrityError,
+                    "last_pos must be a datetime object",
+                ):
+                    self.cursor.prepare(typing.cast("datetime.datetime", value))
                 self.assertEqual(_cursor_state(self.cursor), before)
 
     def test_prepare_allows_only_one_outstanding_candidate(self) -> None:

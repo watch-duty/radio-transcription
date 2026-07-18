@@ -95,7 +95,7 @@ class ReplayFloorReached:
                 "floor_start"
             )
             raise ValueError(msg)
-        if isinstance(self.lost_duration_seconds, bool):
+        if type(self.lost_duration_seconds) not in (int, float):
             msg = "lost_duration_seconds must be a number"
             raise TypeError(msg)
         duration = float(self.lost_duration_seconds)
@@ -287,6 +287,9 @@ def _require_utc_datetime(
     *,
     field_name: str,
 ) -> datetime.datetime:
+    if not isinstance(value, datetime.datetime):
+        msg = f"{field_name} must be a datetime object"
+        raise TypeError(msg)
     if value.utcoffset() != datetime.timedelta(0):
         msg = f"{field_name} must be UTC-aware"
         raise ValueError(msg)
@@ -300,12 +303,12 @@ def _require_integrity_utc_datetime(
 ) -> datetime.datetime:
     try:
         return _require_utc_datetime(value, field_name=field_name)
-    except ValueError as exc:
+    except (TypeError, ValueError) as exc:
         raise CursorIntegrityError(str(exc)) from exc
 
 
 def _require_page_sequence(value: int) -> int:
-    if isinstance(value, bool):
+    if type(value) is not int:
         msg = "page_sequence must be an integer"
         raise CursorIntegrityError(msg)
     if value < 0:
@@ -336,6 +339,7 @@ def apply_replay_floor(
         Immutable bounded request decision and any exact replay-loss evidence.
 
     Raises:
+        TypeError: ``now`` or ``requested_start`` is not a datetime.
         ValueError: ``now`` or ``requested_start`` is not UTC-aware.
     """
     validated_now = _require_utc_datetime(now, field_name="now")
@@ -391,6 +395,7 @@ def bootstrap_cursor(
         Immutable bootstrap evidence with the selected replay position.
 
     Raises:
+        TypeError: ``now`` or a non-null Feed cursor is not a datetime.
         ValueError: ``now`` or a non-null Feed cursor is not UTC-aware.
     """
     validated_now = _require_utc_datetime(now, field_name="now")
