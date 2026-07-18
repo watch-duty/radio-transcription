@@ -298,6 +298,17 @@ class TestReplayFloor(unittest.TestCase):
                 self.assertIsNone(decision.selected_start)
                 self.assertIsNone(decision.floor_reached)
 
+    def test_future_start_is_clamped_to_request_boundary(self) -> None:
+        decision = cursor_policy.apply_replay_floor(
+            _NOW + datetime.timedelta(seconds=1),
+            now=_NOW,
+            cause=cursor_policy.ReplayFloorCause.BOOTSTRAP,
+        )
+
+        self.assertEqual(decision.selected_start, _NOW)
+        self.assertEqual(decision.floor_start, _REPLAY_FLOOR)
+        self.assertIsNone(decision.floor_reached)
+
     def test_decision_and_evidence_are_frozen_slotted_values(self) -> None:
         decision = cursor_policy.apply_replay_floor(
             _REPLAY_FLOOR,

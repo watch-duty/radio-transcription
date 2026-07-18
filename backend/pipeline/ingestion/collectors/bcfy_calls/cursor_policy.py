@@ -34,7 +34,14 @@ class CursorIntegrityError(ValueError):
 
 
 class ReplayFloorCause(enum.StrEnum):
-    """Closed reason why one known request start met the replay floor."""
+    """Closed reason why one known request start met the replay floor.
+
+    Attributes:
+        BOOTSTRAP: Durable cursor bootstrap reached the replay floor.
+        RECOVERY: Recovery processing reached the replay floor.
+        REPLAY_OVERRIDE: An explicit replay override reached the replay floor.
+        OVERLOAD: Overload handling reached the replay floor.
+    """
 
     BOOTSTRAP = "bootstrap"
     RECOVERY = "recovery"
@@ -44,7 +51,16 @@ class ReplayFloorCause(enum.StrEnum):
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ReplayFloorReached:
-    """Exact known interval removed by one five-minute floor decision."""
+    """Exact known interval removed by one five-minute floor decision.
+
+    Attributes:
+        cause: Closed provenance for the floor decision.
+        requested_start: Original inclusive request start.
+        floor_start: Oldest request start accepted by the provider.
+        lost_span_start: Inclusive start of the known lost interval.
+        lost_span_end: Exclusive end of the known lost interval.
+        lost_duration_seconds: Exact duration of the known lost interval.
+    """
 
     cause: ReplayFloorCause
     requested_start: datetime.datetime
@@ -91,7 +107,13 @@ class ReplayFloorReached:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class ReplayFloorDecision:
-    """Pure selected start plus optional exact replay-loss evidence."""
+    """Pure selected start plus optional exact replay-loss evidence.
+
+    Attributes:
+        selected_start: Request start bounded to the live window, or ``None``.
+        floor_start: Oldest request start accepted by the provider.
+        floor_reached: Exact known loss evidence when the floor was reached.
+    """
 
     selected_start: datetime.datetime | None
     floor_start: datetime.datetime
@@ -158,7 +180,12 @@ class PageCursorCandidate:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class NoProgressPageCandidate:
-    """Immutable exact-next candidate carrying no cursor evidence."""
+    """Immutable exact-next candidate carrying no cursor evidence.
+
+    Attributes:
+        grant: Complete Lease ownership generation bound to the candidate.
+        page_sequence: Exact grant-local page sequence awaiting settlement.
+    """
 
     grant: ingestion_lease_store.LeaseGrant
     page_sequence: int
@@ -297,7 +324,19 @@ def apply_replay_floor(
 
     A known start exactly equal to the floor is intentionally evidence-bearing:
     the source window has been reached even though the known lost duration is
-    zero. ``None`` remains an omitted request position and never invents loss.
+    zero. A future start is bounded to ``now`` without inventing loss. ``None``
+    remains an omitted request position and never invents loss.
+
+    Args:
+        requested_start: Requested inclusive start, or ``None`` to omit it.
+        now: Explicit UTC upper boundary of the provider's live window.
+        cause: Closed provenance for any replay-floor evidence.
+
+    Returns:
+        Immutable bounded request decision and any exact replay-loss evidence.
+
+    Raises:
+        ValueError: ``now`` or ``requested_start`` is not UTC-aware.
     """
     validated_now = _require_utc_datetime(now, field_name="now")
     floor_start = validated_now - datetime.timedelta(minutes=5)
@@ -314,7 +353,7 @@ def apply_replay_floor(
     )
     if validated_start > floor_start:
         return ReplayFloorDecision(
-            selected_start=validated_start,
+            selected_start=min(validated_start, validated_now),
             floor_start=floor_start,
             floor_reached=None,
         )
@@ -552,7 +591,14 @@ class LeaseCursor:
         return candidate
 
     def prepare_no_progress(self) -> NoProgressPageCandidate:
-        """Prepare one exact-next candidate carrying no cursor evidence."""
+        """Prepare one exact-next candidate carrying no cursor evidence.
+
+        Returns:
+            Immutable candidate bound to this grant and next sequence.
+
+        Raises:
+            CursorIntegrityError: A candidate is already outstanding.
+        """
         if self._outstanding_candidate is not None:
             msg = "A page cursor candidate is already outstanding"
             raise CursorIntegrityError(msg)
@@ -621,7 +667,18 @@ class LeaseCursor:
         return validated_last_pos
 
     def accept_no_progress(self, settlement: _NoProgressPageSettled) -> None:
-        """Consume the exact no-progress settlement without moving ``pos``."""
+        """Consume the exact no-progress settlement without moving ``pos``.
+
+        Args:
+            settlement: Private scheduler-issued no-progress capability.
+
+        Returns:
+            None.
+
+        Raises:
+            CursorIntegrityError: The settlement is absent, forged, crossed,
+                skipped, duplicated, or for another candidate.
+        """
         if type(settlement) is not _NoProgressPageSettled:
             msg = "settlement must be a private no-progress capability"
             raise CursorIntegrityError(msg)
@@ -650,7 +707,18 @@ class LeaseCursor:
         self._outstanding_candidate = None
 
     def accept_replayable(self, settlement: _ReplayablePageSettled) -> None:
-        """Consume one replayable settlement without accepting ``last_pos``."""
+        """Consume one replayable settlement without accepting ``last_pos``.
+
+        Args:
+            settlement: Private scheduler-issued replayable capability.
+
+        Returns:
+            None.
+
+        Raises:
+            CursorIntegrityError: The settlement is absent, forged, crossed,
+                skipped, duplicated, invalid, or for another candidate.
+        """
         if type(settlement) is not _ReplayablePageSettled:
             msg = "settlement must be a private replayable capability"
             raise CursorIntegrityError(msg)
