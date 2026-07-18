@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import os
 import subprocess
 import sys
+import threading
+import time
 import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
@@ -16,6 +19,7 @@ from google.api_core.exceptions import NotFound, PreconditionFailed
 from backend.pipeline.ingestion.collectors import failure_classification
 from backend.pipeline.ingestion.collectors.echo.main import (
     SEGMENTED_PUBSUB_TOPIC_PATH,
+    _ensure_clients_initialized,
     _parse_timestamp,
     handle_notification,
 )
@@ -991,6 +995,49 @@ class TestHandleNotification:
         ingest_time_ms = int(baggage_dict["ingest_time_ms"])
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
         assert abs(now_ms - ingest_time_ms) < 10000
+
+
+# ---------------------------------------------------------------------------
+# Concurrent client initialization (max_instance_request_concurrency > 1)
+# ---------------------------------------------------------------------------
+class TestConcurrentInit:
+    """The shared clients are lazily built under a lock so that concurrent
+    requests to a single warm container cannot race to construct them twice.
+    """
+
+    def test_concurrent_calls_initialize_clients_once(self) -> None:
+        num_threads = 8
+        # Release all threads into the init path at once
+        start_barrier = threading.Barrier(num_threads)
+
+        def slow_gcs_client(*_args, **_kwargs) -> MagicMock:
+            time.sleep(0.05)
+            return MagicMock()
+
+        def invoke() -> None:
+            start_barrier.wait(timeout=5)
+            _ensure_clients_initialized()
+
+        module = "backend.pipeline.ingestion.collectors.echo.main"
+        with (
+            patch.multiple(
+                module,
+                gcs_client=None,
+                pubsub_client=None,
+                feed_store=None,
+            ),
+            patch(
+                f"{module}.storage.Client", side_effect=slow_gcs_client
+            ) as mock_client,
+        ):
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=num_threads
+            ) as executor:
+                futures = [executor.submit(invoke) for _ in range(num_threads)]
+                for future in futures:
+                    future.result(timeout=10)
+
+        assert mock_client.call_count == 1
 
 
 # ---------------------------------------------------------------------------
