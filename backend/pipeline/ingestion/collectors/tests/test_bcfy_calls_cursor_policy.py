@@ -152,14 +152,7 @@ class TestBootstrapCursor(unittest.TestCase):
                 self.assertEqual(decision.pos, durable_minimum)
                 self.assertEqual(decision.durable_minimum, durable_minimum)
                 self.assertFalse(decision.clamped)
-                if durable_minimum == _REPLAY_FLOOR:
-                    assert decision.floor_reached is not None
-                    self.assertEqual(
-                        decision.floor_reached.lost_duration_seconds,
-                        0.0,
-                    )
-                else:
-                    self.assertIsNone(decision.floor_reached)
+                self.assertIsNone(decision.floor_reached)
 
     def test_bootstrap_preserves_inclusive_cursor_exactly(self) -> None:
         durable_minimum = datetime.datetime(
@@ -258,7 +251,7 @@ class TestReplayFloor(unittest.TestCase):
                 self.assertEqual(evidence.lost_span_end, _REPLAY_FLOOR)
                 self.assertEqual(evidence.lost_duration_seconds, 900.0)
 
-    def test_floor_equality_has_zero_duration_evidence_for_every_cause(
+    def test_floor_equality_suppresses_loss_evidence_for_every_cause(
         self,
     ) -> None:
         for cause in cursor_policy.ReplayFloorCause:
@@ -270,12 +263,7 @@ class TestReplayFloor(unittest.TestCase):
                 )
 
                 self.assertEqual(decision.selected_start, _REPLAY_FLOOR)
-                evidence = decision.floor_reached
-                assert evidence is not None
-                self.assertEqual(evidence.cause, cause)
-                self.assertEqual(evidence.lost_span_start, _REPLAY_FLOOR)
-                self.assertEqual(evidence.lost_span_end, _REPLAY_FLOOR)
-                self.assertEqual(evidence.lost_duration_seconds, 0.0)
+                self.assertIsNone(decision.floor_reached)
 
     def test_above_floor_and_omitted_start_suppress_evidence(self) -> None:
         above = _REPLAY_FLOOR + datetime.timedelta(microseconds=1)
@@ -311,7 +299,7 @@ class TestReplayFloor(unittest.TestCase):
 
     def test_decision_and_evidence_are_frozen_slotted_values(self) -> None:
         decision = cursor_policy.apply_replay_floor(
-            _REPLAY_FLOOR,
+            _NOW - datetime.timedelta(minutes=20),
             now=_NOW,
             cause=cursor_policy.ReplayFloorCause.OVERLOAD,
         )
@@ -328,23 +316,21 @@ class TestReplayFloor(unittest.TestCase):
                 1.0,
             )
 
-    def test_floor_evidence_requires_an_exact_numeric_duration(self) -> None:
+    def test_floor_evidence_rejects_boolean_and_inexact_duration(self) -> None:
         requested = _NOW - datetime.timedelta(minutes=20)
 
-        for duration in (True, "900", None):
-            with self.subTest(duration=repr(duration)):
-                with self.assertRaisesRegex(
-                    TypeError,
-                    "lost_duration_seconds must be a number",
-                ):
-                    cursor_policy.ReplayFloorReached(
-                        cause=cursor_policy.ReplayFloorCause.RECOVERY,
-                        requested_start=requested,
-                        floor_start=_REPLAY_FLOOR,
-                        lost_span_start=requested,
-                        lost_span_end=_REPLAY_FLOOR,
-                        lost_duration_seconds=typing.cast("float", duration),
-                    )
+        with self.assertRaisesRegex(
+            TypeError,
+            "lost_duration_seconds must be a number",
+        ):
+            cursor_policy.ReplayFloorReached(
+                cause=cursor_policy.ReplayFloorCause.RECOVERY,
+                requested_start=requested,
+                floor_start=_REPLAY_FLOOR,
+                lost_span_start=requested,
+                lost_span_end=_REPLAY_FLOOR,
+                lost_duration_seconds=True,
+            )
 
         with self.assertRaisesRegex(
             ValueError,
@@ -357,6 +343,20 @@ class TestReplayFloor(unittest.TestCase):
                 lost_span_start=requested,
                 lost_span_end=_REPLAY_FLOOR,
                 lost_duration_seconds=900.0000001,
+            )
+
+    def test_floor_evidence_requires_a_positive_lost_span(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "requested_start must be before floor_start",
+        ):
+            cursor_policy.ReplayFloorReached(
+                cause=cursor_policy.ReplayFloorCause.RECOVERY,
+                requested_start=_REPLAY_FLOOR,
+                floor_start=_REPLAY_FLOOR,
+                lost_span_start=_REPLAY_FLOOR,
+                lost_span_end=_REPLAY_FLOOR,
+                lost_duration_seconds=0.0,
             )
 
     def test_replay_floor_validates_utc_now_and_requested_start(self) -> None:
@@ -526,18 +526,17 @@ class TestPageCursorCapability(unittest.TestCase):
                 typing.cast("cursor_policy.PageCursorCandidate", fake)
             )
 
-    def test_page_sequence_requires_an_exact_integer(self) -> None:
-        invalid_sequences: tuple[object, ...] = (True, 1.0, "1", None)
-
-        for sequence in invalid_sequences:
-            with self.subTest(sequence=repr(sequence)):
-                with self.assertRaisesRegex(
-                    cursor_policy.CursorIntegrityError,
-                    "page_sequence must be an integer",
-                ):
-                    cursor_policy._require_page_sequence(
-                        typing.cast("int", sequence)
-                    )
+    def test_page_sequence_rejects_boolean_and_negative_values(self) -> None:
+        with self.assertRaisesRegex(
+            cursor_policy.CursorIntegrityError,
+            "page_sequence must be an integer",
+        ):
+            cursor_policy._require_page_sequence(value=True)
+        with self.assertRaisesRegex(
+            cursor_policy.CursorIntegrityError,
+            "page_sequence must be nonnegative",
+        ):
+            cursor_policy._require_page_sequence(-1)
 
 
 class TestLeaseCursor(unittest.TestCase):

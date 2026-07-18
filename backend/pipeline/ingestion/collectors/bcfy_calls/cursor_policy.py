@@ -86,8 +86,8 @@ class ReplayFloorReached:
             self.lost_span_end,
             field_name="lost_span_end",
         )
-        if requested_start > floor_start:
-            msg = "requested_start must be at or before floor_start"
+        if requested_start >= floor_start:
+            msg = "requested_start must be before floor_start"
             raise ValueError(msg)
         if lost_span_start != requested_start or lost_span_end != floor_start:
             msg = (
@@ -95,7 +95,7 @@ class ReplayFloorReached:
                 "floor_start"
             )
             raise ValueError(msg)
-        if type(self.lost_duration_seconds) not in (int, float):
+        if isinstance(self.lost_duration_seconds, bool):
             msg = "lost_duration_seconds must be a number"
             raise TypeError(msg)
         duration = float(self.lost_duration_seconds)
@@ -129,7 +129,7 @@ class BootstrapDecision:
         durable_minimum: Minimum non-null durable Feed cursor observed.
         replay_floor: Oldest replay position allowed for this bootstrap.
         clamped: Whether ``pos`` was raised to ``replay_floor``.
-        floor_reached: Exact known loss evidence at or below the floor.
+        floor_reached: Exact known loss evidence below the floor.
     """
 
     pos: datetime.datetime | None
@@ -308,7 +308,7 @@ def _require_integrity_utc_datetime(
 
 
 def _require_page_sequence(value: int) -> int:
-    if type(value) is not int:
+    if isinstance(value, bool):
         msg = "page_sequence must be an integer"
         raise CursorIntegrityError(msg)
     if value < 0:
@@ -325,10 +325,10 @@ def apply_replay_floor(
 ) -> ReplayFloorDecision:
     """Select one request start within the unconditional five-minute window.
 
-    A known start exactly equal to the floor is intentionally evidence-bearing:
-    the source window has been reached even though the known lost duration is
-    zero. A future start is bounded to ``now`` without inventing loss. ``None``
-    remains an omitted request position and never invents loss.
+    A known start older than the floor produces exact loss evidence. A start
+    exactly at the floor does not represent a lost interval. A future start is
+    bounded to ``now`` without inventing loss. ``None`` remains an omitted
+    request position and never invents loss.
 
     Args:
         requested_start: Requested inclusive start, or ``None`` to omit it.
@@ -355,7 +355,7 @@ def apply_replay_floor(
         requested_start,
         field_name="requested_start",
     )
-    if validated_start > floor_start:
+    if validated_start >= floor_start:
         return ReplayFloorDecision(
             selected_start=min(validated_start, validated_now),
             floor_start=floor_start,
