@@ -537,6 +537,14 @@ function RuleTagsSection({
   validationErrors,
   isSubmitting,
 }: RuleTagsSectionProps) {
+  // Enter in a tag field should add the tag, not submit the whole rule form.
+  const handleTagInputKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleAddTag();
+    }
+  };
+
   return (
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
@@ -562,6 +570,7 @@ function RuleTagsSection({
           placeholder="geo_event_type"
           value={newTagKey}
           onChange={(e) => setNewTagKey(e.target.value)}
+          onKeyDown={handleTagInputKeyDown}
           error={!!validationErrors.tags}
           disabled={isSubmitting}
           sx={{ flex: 1 }}
@@ -572,6 +581,7 @@ function RuleTagsSection({
           placeholder="flooding"
           value={newTagValue}
           onChange={(e) => setNewTagValue(e.target.value)}
+          onKeyDown={handleTagInputKeyDown}
           error={!!validationErrors.tags}
           disabled={isSubmitting}
           sx={{ flex: 1 }}
@@ -631,6 +641,7 @@ function RuleTagsSection({
                 label="Key"
                 value={tag.key}
                 onChange={(e) => handleUpdateTag(tag.id, 'key', e.target.value)}
+                error={!!validationErrors.tags && !tag.key.trim()}
                 disabled={isSubmitting}
                 sx={{ flex: 1 }}
               />
@@ -641,6 +652,7 @@ function RuleTagsSection({
                 onChange={(e) =>
                   handleUpdateTag(tag.id, 'value', e.target.value)
                 }
+                error={!!validationErrors.tags && !tag.value.trim()}
                 disabled={isSubmitting}
                 sx={{ flex: 1 }}
               />

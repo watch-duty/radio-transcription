@@ -302,6 +302,31 @@ describe('RuleConfigurationView', () => {
       });
     });
 
+    it('adds a tag on Enter without submitting the form', async () => {
+      renderView();
+
+      const formCard = screen.getByTestId('rule-config-card');
+
+      fireEvent.change(within(formCard).getByLabelText('Rule Name'), {
+        target: { value: 'Dispatch Alerts' },
+      });
+      fireEvent.change(within(formCard).getByLabelText('Key'), {
+        target: { value: 'geo_event_type' },
+      });
+      const valueField = within(formCard).getByLabelText('Value');
+      fireEvent.change(valueField, { target: { value: 'flooding' } });
+      fireEvent.keyDown(valueField, { key: 'Enter', code: 'Enter' });
+
+      // The tag row was added (its value is now shown in a row field)...
+      await waitFor(() => {
+        expect(
+          within(formCard).getByDisplayValue('geo_event_type')
+        ).toBeInTheDocument();
+      });
+      // ...and the form was NOT submitted.
+      expect(createRule).not.toHaveBeenCalled();
+    });
+
     it("loads an existing rule's tags into the editor", async () => {
       vi.mocked(listRules).mockResolvedValue([
         {
