@@ -662,11 +662,7 @@ class LeaseCursor:
             msg = "Covered page receipt fields do not match its candidate"
             raise CursorIntegrityError(msg)
 
-        self._pos = (
-            validated_last_pos
-            if self._pos is None
-            else max(self._pos, validated_last_pos)
-        )
+        self._pos = validated_last_pos
         self._next_page_sequence += 1
         self._outstanding_candidate = None
         return validated_last_pos
