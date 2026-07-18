@@ -733,12 +733,6 @@ class GrantSupervisor:
             except Exception as exc:
                 self._fail_heartbeat_domain(expected, exc)
                 continue
-            if len(results) != len(expected):
-                failure = grant_control.GrantControlIntegrityError(
-                    "heartbeat result cardinality mismatch"
-                )
-                self._fail_heartbeat_domain(expected, failure)
-                continue
 
             for managed, result in zip(expected, results, strict=True):
                 if (
@@ -844,9 +838,15 @@ class GrantSupervisor:
             external_stop_deadline_sec,
             "external_stop_deadline_sec",
         )
+        loop = asyncio.get_running_loop()
+        external_stop_deadline = loop.time() + external_stop_deadline_sec
+
+        def remaining_external_time() -> float:
+            return max(0.0, external_stop_deadline - loop.time())
+
         self._admission_enabled = False
         self._shutting_down = True
-        if await self._claim_shutdown_blocker(external_stop_deadline_sec):
+        if await self._claim_shutdown_blocker(remaining_external_time()):
             raise SupervisorNotDrainedError
 
         initial = tuple(self._registry.values())
@@ -863,7 +863,7 @@ class GrantSupervisor:
         if remaining:
             remaining = await self._wait_tasks(
                 remaining,
-                external_stop_deadline_sec,
+                remaining_external_time(),
             )
 
         for managed in initial:
@@ -885,7 +885,7 @@ class GrantSupervisor:
                     self._start_finalization_task(managed)
 
         undrained += await self._finalize_closed_grants(
-            external_stop_deadline_sec
+            remaining_external_time()
         )
         if undrained:
             raise SupervisorNotDrainedError

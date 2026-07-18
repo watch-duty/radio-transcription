@@ -9,6 +9,7 @@ import inspect
 import textwrap
 import typing
 import unittest
+import unittest.mock
 import uuid
 
 from backend.pipeline.ingestion import (
@@ -896,6 +897,72 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
 
         self.assertIsNone(result)
         self.assertEqual(len(control.finalize_calls), 1)
+
+    async def test_shutdown_shares_external_deadline_across_waits(
+        self,
+    ) -> None:
+        control: _Control[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Control()
+        runner: _Runner[
+            feed_store.FeedGrant,
+            feed_store.LeasedFeed,
+        ] = _Runner()
+        supervisor = self._supervisor(
+            worker_profiles.LEGACY_PROFILE,
+            _feed_registration(control, runner),
+        )
+        runner_task = unittest.mock.Mock(spec=asyncio.Task)
+        loop = unittest.mock.Mock()
+        loop.time.side_effect = (100.0, 100.0, 105.0, 109.0)
+        claim_shutdown_blocker = unittest.mock.AsyncMock(return_value=False)
+        wait_tasks = unittest.mock.AsyncMock(side_effect=({runner_task}, set()))
+        finalize_closed_grants = unittest.mock.AsyncMock(return_value=0)
+
+        async def stop_heartbeats() -> None:
+            return
+
+        with (
+            unittest.mock.patch.object(
+                grant_supervisor.asyncio,
+                "get_running_loop",
+                return_value=loop,
+            ),
+            unittest.mock.patch.object(
+                supervisor,
+                "_claim_shutdown_blocker",
+                claim_shutdown_blocker,
+            ),
+            unittest.mock.patch.object(
+                supervisor,
+                "_wait_tasks",
+                wait_tasks,
+            ),
+            unittest.mock.patch.object(
+                supervisor,
+                "_finalize_closed_grants",
+                finalize_closed_grants,
+            ),
+        ):
+            await supervisor.shutdown(
+                cooperative_grace_sec=3,
+                external_stop_deadline_sec=10,
+                stop_heartbeat_supervision=stop_heartbeats,
+            )
+
+        self.assertEqual(
+            claim_shutdown_blocker.await_args_list,
+            [unittest.mock.call(10)],
+        )
+        self.assertEqual(
+            [call.args[1] for call in wait_tasks.await_args_list],
+            [3, 5],
+        )
+        self.assertEqual(
+            finalize_closed_grants.await_args_list,
+            [unittest.mock.call(1)],
+        )
 
     async def test_shutdown_waits_for_already_in_flight_finalization(
         self,
