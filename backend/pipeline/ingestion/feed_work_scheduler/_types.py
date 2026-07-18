@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import dataclasses
-import enum
 import typing
 
 if typing.TYPE_CHECKING:
@@ -85,17 +84,15 @@ def _shard_index(
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class _CallWork:
-    """One source-order call submission before local shard registration."""
+    """One call submission before local shard registration."""
 
     feed_id: uuid.UUID
     grant: ingestion_lease_store.LeaseGrant
-    source_order: int
-    source_timestamp: datetime.datetime
+    cohort_timestamp: datetime.datetime | None
     payload: object
     page_sequence: int
 
     def __post_init__(self) -> None:
-        _require_nonnegative_integer(self.source_order, "source_order")
         _require_nonnegative_integer(self.page_sequence, "page_sequence")
 
 
@@ -118,101 +115,9 @@ class _CallRecord:
         return self.work.grant
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class _ExecutorCompleted:
-    """The call pipeline settled in a scheduling-terminal state."""
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _ExecutorRetryable:
-    """The adapter settled with retryable evidence for an outer policy."""
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _ExecutorAuthorityLost:
-    """The adapter confirmed loss of the record's exact Lease authority."""
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _ExecutorMembershipRejected:
-    """The adapter rejected only the record's Feed membership."""
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _ExecutorIntegrityFailure:
-    """The adapter settled with scheduler-integrity failure evidence."""
-
-    failure: BaseException
-
-
-type _ExecutorOutcome = (
-    _ExecutorCompleted
-    | _ExecutorRetryable
-    | _ExecutorAuthorityLost
-    | _ExecutorMembershipRejected
-    | _ExecutorIntegrityFailure
-)
-
-
 class CallExecutor(typing.Protocol):
     """Narrow injected seam awaited only by an unlocked fixed worker."""
 
-    async def execute(self, record: _CallRecord) -> _ExecutorOutcome:
-        """Settle one already-registered call through a closed outcome."""
+    async def execute(self, record: _CallRecord) -> None:
+        """Settle one already-registered call or raise on integrity failure."""
         ...
-
-
-class _RecordState(enum.StrEnum):
-    """Counted locations in the shard conservation equation."""
-
-    QUEUED = "queued"
-    ACTIVE = "active"
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _RecordSnapshot:
-    """Payload-free bounded identity for one counted call record."""
-
-    local_sequence: int
-    feed_id: uuid.UUID
-    grant: ingestion_lease_store.LeaseGrant
-    source_order: int
-    page_sequence: int
-    state: _RecordState
-    worker_slot: int | None
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _WorkerSnapshot:
-    """Bounded ownership evidence for one fixed worker slot."""
-
-    slot_id: int
-    task_registered: bool
-    task_done: bool
-    active_sequence: int | None
-    cancellation_sequence: int | None
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _ShardSnapshot:
-    """Read-only bounded projection of authoritative shard state."""
-
-    held: int
-    queued_calls: int
-    active_calls: int
-    pressure_paused: bool
-    ready_feeds: tuple[uuid.UUID, ...]
-    ready_members: frozenset[uuid.UUID]
-    active_feeds: frozenset[uuid.UUID]
-    records: tuple[_RecordSnapshot, ...]
-    workers: tuple[_WorkerSnapshot, ...]
-    admission_open: bool
-    fatal: bool
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _PurgeResult:
-    """Exact bounded-scan result without retaining completed outcomes."""
-
-    released_sequences: tuple[int, ...]
-    active_sequences: tuple[int, ...]

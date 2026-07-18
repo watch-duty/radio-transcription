@@ -38,10 +38,6 @@ class _UnexpectedWorkerCancellation(RuntimeError):
     """A worker was cancelled without registered cancellation intent."""
 
 
-class _InvalidExecutorOutcome(RuntimeError):
-    """An executor returned outside the closed outcome vocabulary."""
-
-
 def _raise_cancelled() -> typing.Never:
     raise asyncio.CancelledError
 
@@ -61,14 +57,6 @@ class _CancellationRequest:
 
     slot_id: int
     task: asyncio.Task[None]
-
-
-_TERMINAL_EXECUTOR_OUTCOMES = (
-    _types._ExecutorCompleted,
-    _types._ExecutorRetryable,
-    _types._ExecutorAuthorityLost,
-    _types._ExecutorMembershipRejected,
-)
 
 
 class _Shard:
@@ -108,7 +96,6 @@ class _Shard:
         self._ready_members: set[uuid.UUID] = set()
         self._records: dict[int, _types._CallRecord] = {}
         self._active_by_feed: dict[uuid.UUID, _types._CallRecord] = {}
-        self._capacity_waiters = 0
 
         self._workers = [
             _WorkerSlot(slot_id)
@@ -166,79 +153,7 @@ class _Shard:
                     self._work_ready.notify_all()
                     return record
 
-                self._capacity_waiters += 1
-                self._capacity_changed.notify_all()
-                try:
-                    await self._capacity_changed.wait()
-                finally:
-                    self._capacity_waiters -= 1
-
-    async def snapshot(self) -> _types._ShardSnapshot:
-        """Return a payload-free bounded state projection."""
-        async with self._lock:
-            self._check_conservation_locked()
-            queued_sequences = {
-                record.local_sequence
-                for queue in self._feed_queues.values()
-                for record in queue
-            }
-            active_slots = {
-                slot.active_record.local_sequence: slot.slot_id
-                for slot in self._workers
-                if slot.active_record is not None
-            }
-            records = tuple(
-                _types._RecordSnapshot(
-                    local_sequence=record.local_sequence,
-                    feed_id=record.feed_id,
-                    grant=record.grant,
-                    source_order=record.work.source_order,
-                    page_sequence=record.work.page_sequence,
-                    state=(
-                        _types._RecordState.QUEUED
-                        if record.local_sequence in queued_sequences
-                        else _types._RecordState.ACTIVE
-                    ),
-                    worker_slot=active_slots.get(record.local_sequence),
-                )
-                for record in sorted(
-                    self._records.values(),
-                    key=lambda value: value.local_sequence,
-                )
-            )
-            workers = tuple(
-                _types._WorkerSnapshot(
-                    slot_id=slot.slot_id,
-                    task_registered=slot.task is not None,
-                    task_done=(
-                        slot.task.done() if slot.task is not None else False
-                    ),
-                    active_sequence=(
-                        slot.active_record.local_sequence
-                        if slot.active_record is not None
-                        else None
-                    ),
-                    cancellation_sequence=slot.cancellation_sequence,
-                )
-                for slot in self._workers
-            )
-            return _types._ShardSnapshot(
-                held=self._held,
-                queued_calls=len(queued_sequences),
-                active_calls=len(self._active_by_feed),
-                pressure_paused=self._pressure_paused,
-                ready_feeds=tuple(self._ready),
-                ready_members=frozenset(self._ready_members),
-                active_feeds=frozenset(self._active_by_feed),
-                records=records,
-                workers=workers,
-                admission_open=(
-                    not self._stopping
-                    and not self._closed
-                    and self._fatal is None
-                ),
-                fatal=self._fatal is not None,
-            )
+                await self._capacity_changed.wait()
 
     async def _take_next(
         self,
@@ -277,12 +192,8 @@ class _Shard:
         self,
         slot_id: int,
         record: _types._CallRecord,
-        outcome: _types._ExecutorOutcome,
     ) -> None:
-        """Release one settled active record without retaining its outcome."""
-        if not isinstance(outcome, _TERMINAL_EXECUTOR_OUTCOMES):
-            message = "outcome is not scheduling-terminal"
-            raise TypeError(message)
+        """Release one settled active record."""
         async with self._lock:
             released = self._terminalize_locked(slot_id, record)
             if not released:
@@ -292,19 +203,19 @@ class _Shard:
     async def purge_exact(
         self,
         grant: ingestion_lease_store.LeaseGrant,
-    ) -> _types._PurgeResult:
+    ) -> None:
         """Release queued records matching the complete grant only."""
         async with self._lock:
-            released: list[int] = []
+            released_count = 0
             for feed_id, queue in tuple(self._feed_queues.items()):
                 kept: collections.deque[_types._CallRecord] = (
                     collections.deque()
                 )
                 for record in queue:
                     if record.grant == grant:
-                        released.append(record.local_sequence)
                         del self._records[record.local_sequence]
                         self._held -= 1
+                        released_count += 1
                     else:
                         kept.append(record)
                 if kept:
@@ -312,19 +223,8 @@ class _Shard:
                 else:
                     del self._feed_queues[feed_id]
                     self._remove_ready_locked(feed_id)
-            active = tuple(
-                sorted(
-                    record.local_sequence
-                    for record in self._active_by_feed.values()
-                    if record.grant == grant
-                )
-            )
-            self._after_release_locked(len(released))
+            self._after_release_locked(released_count)
             self._check_conservation_locked()
-            return _types._PurgeResult(
-                released_sequences=tuple(sorted(released)),
-                active_sequences=active,
-            )
 
     async def request_cancel_exact(
         self,
@@ -388,22 +288,6 @@ class _Shard:
             slot.abandoned = True
             self._mark_fatal_locked(failure)
 
-    async def wait_for_capacity_waiters(self, minimum: int) -> None:
-        """Wait for a bounded producer-wait count in deterministic tests."""
-        if isinstance(minimum, bool):
-            message = "minimum must be an integer"
-            raise TypeError(message)
-        if minimum < 0:
-            message = "minimum must be nonnegative"
-            raise ValueError(message)
-        async with self._capacity_changed:
-            await self._capacity_changed.wait_for(
-                lambda: (
-                    self._capacity_waiters >= minimum or self._fatal is not None
-                )
-            )
-            self._raise_fatal_locked()
-
     async def wait_for_held(self, expected: int) -> None:
         """Wait for an exact held count without polling or wall-clock sleeps."""
         if isinstance(expected, bool):
@@ -455,7 +339,7 @@ class _Shard:
             )
         )
 
-    async def _worker_main(  # noqa: PLR0912
+    async def _worker_main(
         self,
         slot: _WorkerSlot,
     ) -> None:
@@ -465,26 +349,16 @@ class _Shard:
                 if record is None:
                     return
                 try:
-                    outcome = await self._executor.execute(record)
+                    await self._executor.execute(record)
                     expected, abandoned = await self._cancellation_state(
                         slot,
                         record,
                     )
                     if abandoned:
                         return
-                    if isinstance(outcome, _types._ExecutorIntegrityFailure):
-                        await self._mark_fatal(outcome.failure)
-                        return
-                    if not isinstance(outcome, _TERMINAL_EXECUTOR_OUTCOMES):
-                        failure = _InvalidExecutorOutcome(
-                            "executor returned an invalid outcome"
-                        )
-                        await self._mark_fatal(failure)
-                        return
                     await self._terminalize(
                         slot.slot_id,
                         record,
-                        outcome,
                     )
                     if expected:
                         _raise_cancelled()
