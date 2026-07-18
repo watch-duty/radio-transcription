@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import enum
 import logging
 import typing
 import uuid  # noqa: TC003
@@ -101,26 +100,17 @@ class _ErasedRegisteredDomain:
     ]
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, eq=False)
 class _ManagedGrant:
     domain: _ErasedRegisteredDomain
     claim: _ErasedClaim
     slot: _UnitSlot
     context: grant_control.RunContext
-    runner_closed: asyncio.Event
-    root_task: asyncio.Task[None] | None = None
-    terminal_task: asyncio.Task[_FinalizeEffect] | None = None
+    runner_closed: bool = False
+    runner_task: asyncio.Task[None] | None = None
+    finalization_task: asyncio.Task[None] | None = None
     outcome: grant_control.RunOutcome | None = None
-    administrative_stop: bool = False
-    lost: bool = False
-    uncertain: bool = False
-    cancelled: bool = False
-
-
-class _FinalizeEffect(enum.StrEnum):
-    APPLIED = "applied"
-    LOST = "lost"
-    ABANDONED = "abandoned"
+    discard_without_finalize: bool = False
 
 
 def _erase_registered_domain[
@@ -284,24 +274,23 @@ class GrantSupervisor:
             )
             for allocation in validated_profile.allocations
         )
-        self._profile = validated_profile
         self._domains = domains
-        self._domains_by_id = {domain.domain_id: domain for domain in domains}
         self._failure_planner = failure_planner
         self._finalize_semaphore = asyncio.Semaphore(finalize_concurrency)
         self._registry: dict[_UnitSlot, _ManagedGrant] = {}
-        self._owned_by_domain = dict.fromkeys(self._domains_by_id, 0)
-        self._reserved_by_domain = dict.fromkeys(self._domains_by_id, 0)
-        self._process_owned = 0
-        self._process_reserved = 0
-        self._domain_start_cursor = 0
+        self._owned_by_domain = {
+            domain.domain_id: 0 for domain in self._domains
+        }
+        self._reserved_by_domain = {
+            domain.domain_id: 0 for domain in self._domains
+        }
         self._admission_enabled = True
         self._shutting_down = False
         self._integrity_failure: BaseException | None = None
         self._integrity_failure_event = asyncio.Event()
         self._claim_tasks: set[asyncio.Task[int]] = set()
         self._runner_tasks: set[asyncio.Task[None]] = set()
-        self._terminal_tasks: set[asyncio.Task[_FinalizeEffect]] = set()
+        self._finalization_tasks: set[asyncio.Task[None]] = set()
 
     @property
     def admission_enabled(self) -> bool:
@@ -332,9 +321,6 @@ class GrantSupervisor:
         )
         if not enabled:
             return
-        start = self._domain_start_cursor % len(enabled)
-        ordered = enabled[start:] + enabled[:start]
-        self._domain_start_cursor = (start + 1) % len(enabled)
         remaining = {
             domain.domain_id: domain.allocation.claims_per_cycle
             for domain in enabled
@@ -347,7 +333,7 @@ class GrantSupervisor:
             if not self._admission_enabled:
                 return
             reservations: list[tuple[_ErasedRegisteredDomain, int]] = []
-            for domain in ordered:
+            for domain in enabled:
                 ask = self._reserve_admission(
                     domain,
                     remaining[domain.domain_id],
@@ -399,16 +385,10 @@ class GrantSupervisor:
             - self._owned_by_domain[domain_id]
             - self._reserved_by_domain[domain_id]
         )
-        process_headroom = (
-            self._profile.process_owned_cap
-            - self._process_owned
-            - self._process_reserved
-        )
-        ask = min(domain_headroom, remaining_cycle_budget, process_headroom)
+        ask = min(domain_headroom, remaining_cycle_budget)
         if ask <= 0:
             return 0
         self._reserved_by_domain[domain_id] += ask
-        self._process_reserved += ask
         return ask
 
     async def _claim_reserved(
@@ -517,7 +497,6 @@ class GrantSupervisor:
         domain_id: grant_control.DomainId,
     ) -> None:
         self._reserved_by_domain[domain_id] -= 1
-        self._process_reserved -= 1
 
     def _release_reservation(
         self,
@@ -525,7 +504,6 @@ class GrantSupervisor:
         count: int,
     ) -> None:
         self._reserved_by_domain[domain_id] -= count
-        self._process_reserved -= count
 
     def _register_claim(
         self,
@@ -543,25 +521,23 @@ class GrantSupervisor:
             claim=claim,
             slot=slot,
             context=context,
-            runner_closed=asyncio.Event(),
         )
         self._registry[slot] = managed
         if superseded is None:
             self._owned_by_domain[domain.domain_id] += 1
-            self._process_owned += 1
         else:
-            superseded.lost = True
+            superseded.discard_without_finalize = True
             superseded.context.grant_lost.set()
             superseded.context.stop_requested.set()
             if (
-                superseded.root_task is not None
-                and not superseded.root_task.done()
+                superseded.runner_task is not None
+                and not superseded.runner_task.done()
             ):
-                superseded.root_task.cancel()
+                superseded.runner_task.cancel()
         task = asyncio.create_task(self._run_managed(managed))
-        managed.root_task = task
+        managed.runner_task = task
         self._runner_tasks.add(task)
-        task.add_done_callback(self._root_task_done)
+        task.add_done_callback(self._runner_task_done)
 
     async def _run_managed(self, managed: _ManagedGrant) -> None:
         try:
@@ -574,12 +550,11 @@ class GrantSupervisor:
                 outcome,
                 grant_control.RunLost,
             ):
-                managed.lost = True
+                managed.discard_without_finalize = True
                 managed.context.grant_lost.set()
         except asyncio.CancelledError:
-            managed.cancelled = True
             if self._is_current(managed) and not self._shutting_down:
-                managed.uncertain = True
+                managed.discard_without_finalize = True
                 failure = grant_control.GrantControlIntegrityError(
                     "runner was cancelled outside ordered shutdown"
                 )
@@ -587,7 +562,7 @@ class GrantSupervisor:
             raise
         except Exception as exc:
             if self._is_current(managed):
-                managed.uncertain = True
+                managed.discard_without_finalize = True
                 failure = (
                     exc
                     if isinstance(
@@ -602,10 +577,10 @@ class GrantSupervisor:
                     failure.__cause__ = exc
                 self._surface_integrity_failure(failure)
         finally:
-            managed.runner_closed.set()
+            managed.runner_closed = True
             self._handle_runner_closed(managed)
 
-    def _root_task_done(self, task: asyncio.Task[None]) -> None:
+    def _runner_task_done(self, task: asyncio.Task[None]) -> None:
         self._runner_tasks.discard(task)
         if task.cancelled():
             return
@@ -615,32 +590,30 @@ class GrantSupervisor:
             logger.exception("Managed grant task escaped its isolation point")
 
     def _handle_runner_closed(self, managed: _ManagedGrant) -> None:
-        if not self._is_current(managed) or not managed.runner_closed.is_set():
+        if not self._is_current(managed) or not managed.runner_closed:
             return
-        if managed.administrative_stop or managed.lost or managed.uncertain:
+        if managed.discard_without_finalize:
             self._discard_current(managed)
             return
         if self._shutting_down:
             return
-        self._start_terminal_task(managed)
+        self._start_finalization_task(managed)
 
-    def _start_terminal_task(
+    def _start_finalization_task(
         self,
         managed: _ManagedGrant,
-    ) -> asyncio.Task[_FinalizeEffect] | None:
+    ) -> asyncio.Task[None] | None:
         if (
             not self._is_current(managed)
-            or not managed.runner_closed.is_set()
-            or managed.terminal_task is not None
-            or managed.administrative_stop
-            or managed.lost
-            or managed.uncertain
+            or not managed.runner_closed
+            or managed.finalization_task is not None
+            or managed.discard_without_finalize
         ):
             return None
         try:
             terminal = self._terminal_decision(managed)
         except Exception as exc:
-            managed.uncertain = True
+            managed.discard_without_finalize = True
             failure = grant_control.GrantControlIntegrityError(
                 "failure planner did not produce a terminal decision"
             )
@@ -649,9 +622,9 @@ class GrantSupervisor:
             self._discard_current(managed)
             return None
         task = asyncio.create_task(self._finalize_exact(managed, terminal))
-        managed.terminal_task = task
-        self._terminal_tasks.add(task)
-        task.add_done_callback(self._terminal_task_done)
+        managed.finalization_task = task
+        self._finalization_tasks.add(task)
+        task.add_done_callback(self._finalization_task_done)
         return task
 
     def _terminal_decision(
@@ -667,13 +640,13 @@ class GrantSupervisor:
         self,
         managed: _ManagedGrant,
         terminal: grant_control.TerminalDecision,
-    ) -> _FinalizeEffect:
+    ) -> None:
         if not self._is_current(managed):
-            return _FinalizeEffect.LOST
+            return
         try:
             async with self._finalize_semaphore:
                 if not self._is_current(managed):
-                    return _FinalizeEffect.LOST
+                    return
                 disposition = await managed.domain.finalize(
                     managed.claim.grant,
                     managed.claim.payload,
@@ -681,7 +654,7 @@ class GrantSupervisor:
                 )
         except asyncio.CancelledError as exc:
             if self._is_current(managed):
-                managed.uncertain = True
+                managed.discard_without_finalize = True
                 failure = grant_control.GrantControlIntegrityError(
                     "finalization outcome is unknown after cancellation"
                 )
@@ -691,8 +664,8 @@ class GrantSupervisor:
             raise
         except Exception as exc:
             if not self._is_current(managed):
-                return _FinalizeEffect.LOST
-            managed.uncertain = True
+                return
+            managed.discard_without_finalize = True
             failure = (
                 exc
                 if isinstance(
@@ -707,29 +680,28 @@ class GrantSupervisor:
                 failure.__cause__ = exc
             self._surface_integrity_failure(failure)
             self._discard_current(managed)
-            return _FinalizeEffect.ABANDONED
+            return
 
         if not self._is_current(managed):
-            return _FinalizeEffect.LOST
+            return
         if disposition is grant_control.FinalizeDisposition.APPLIED:
             self._discard_current(managed)
-            return _FinalizeEffect.APPLIED
+            return
         if disposition is grant_control.FinalizeDisposition.LOST:
             managed.context.grant_lost.set()
             self._discard_current(managed)
-            return _FinalizeEffect.LOST
+            return
         msg = "finalization returned an unknown disposition"
         failure = grant_control.GrantControlIntegrityError(msg)
         self._surface_integrity_failure(failure)
-        managed.uncertain = True
+        managed.discard_without_finalize = True
         self._discard_current(managed)
-        return _FinalizeEffect.ABANDONED
 
-    def _terminal_task_done(
+    def _finalization_task_done(
         self,
-        task: asyncio.Task[_FinalizeEffect],
+        task: asyncio.Task[None],
     ) -> None:
-        self._terminal_tasks.discard(task)
+        self._finalization_tasks.discard(task)
         if task.cancelled():
             return
         try:
@@ -748,10 +720,8 @@ class GrantSupervisor:
                 managed
                 for managed in self._registry.values()
                 if managed.domain is domain
-                and managed.terminal_task is None
-                and not managed.administrative_stop
-                and not managed.lost
-                and not managed.uncertain
+                and managed.finalization_task is None
+                and not managed.discard_without_finalize
             )
             if not expected:
                 continue
@@ -773,7 +743,7 @@ class GrantSupervisor:
             for managed, result in zip(expected, results, strict=True):
                 if (
                     not self._is_current(managed)
-                    or managed.terminal_task is not None
+                    or managed.finalization_task is not None
                 ):
                     continue
                 if (
@@ -785,13 +755,13 @@ class GrantSupervisor:
                     result.disposition
                     is grant_control.HeartbeatDisposition.INELIGIBLE
                 ):
-                    managed.administrative_stop = True
+                    managed.discard_without_finalize = True
                     managed.context.stop_requested.set()
                 elif (
                     result.disposition
                     is grant_control.HeartbeatDisposition.LOST
                 ):
-                    managed.lost = True
+                    managed.discard_without_finalize = True
                     managed.context.grant_lost.set()
                     managed.context.stop_requested.set()
                 else:
@@ -800,7 +770,7 @@ class GrantSupervisor:
                     )
                     self._fail_heartbeat_domain((managed,), failure)
                     continue
-                if managed.runner_closed.is_set():
+                if managed.runner_closed:
                     self._handle_runner_closed(managed)
 
     def _fail_heartbeat_domain(
@@ -815,10 +785,10 @@ class GrantSupervisor:
             return
         self._surface_integrity_failure(failure)
         for managed in current:
-            managed.uncertain = True
+            managed.discard_without_finalize = True
             managed.context.grant_lost.set()
             managed.context.stop_requested.set()
-            if managed.runner_closed.is_set():
+            if managed.runner_closed:
                 self._handle_runner_closed(managed)
 
     def active_count(self, domain_id: grant_control.DomainId) -> int:
@@ -830,11 +800,10 @@ class GrantSupervisor:
         Returns:
             Current grants whose runners have not closed.
         """
-        domain = self._domains_by_id.get(domain_id)
-        if domain is None:
+        if domain_id not in self._owned_by_domain:
             return 0
         return sum(
-            managed.domain is domain and not managed.runner_closed.is_set()
+            managed.slot.domain_id is domain_id and not managed.runner_closed
             for managed in self._registry.values()
         )
 
@@ -884,9 +853,9 @@ class GrantSupervisor:
         for managed in initial:
             managed.context.stop_requested.set()
 
-        root_tasks = tuple(self._runner_tasks)
+        runner_tasks = tuple(self._runner_tasks)
         remaining = await self._wait_tasks(
-            root_tasks,
+            runner_tasks,
             cooperative_grace_sec,
         )
         for task in remaining:
@@ -898,23 +867,22 @@ class GrantSupervisor:
             )
 
         for managed in initial:
-            if self._is_current(managed) and not managed.runner_closed.is_set():
-                managed.uncertain = True
+            if self._is_current(managed) and not managed.runner_closed:
+                managed.discard_without_finalize = True
                 managed.context.grant_lost.set()
         undrained = len(remaining)
 
         await stop_heartbeat_supervision()
 
         for managed in tuple(self._registry.values()):
-            if managed.runner_closed.is_set():
-                if managed.terminal_task is None and (
-                    managed.administrative_stop
-                    or managed.lost
-                    or managed.uncertain
+            if managed.runner_closed:
+                if (
+                    managed.finalization_task is None
+                    and managed.discard_without_finalize
                 ):
                     self._handle_runner_closed(managed)
-                elif managed.terminal_task is None:
-                    self._start_terminal_task(managed)
+                elif managed.finalization_task is None:
+                    self._start_finalization_task(managed)
 
         undrained += await self._finalize_closed_grants(
             external_stop_deadline_sec
@@ -928,7 +896,7 @@ class GrantSupervisor:
     ) -> int:
         """Bound cleanup for current and superseded finalizer tasks."""
         pending = await self._wait_tasks(
-            self._terminal_tasks,
+            self._finalization_tasks,
             wait_timeout_sec,
         )
         for task in pending:
@@ -967,7 +935,6 @@ class GrantSupervisor:
             return False
         del self._registry[managed.slot]
         self._owned_by_domain[managed.slot.domain_id] -= 1
-        self._process_owned -= 1
         return True
 
     def _surface_integrity_failure(self, failure: BaseException) -> None:

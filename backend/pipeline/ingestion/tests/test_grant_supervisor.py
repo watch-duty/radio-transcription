@@ -76,7 +76,6 @@ def _profile(
     feed_budget: int = 2,
     sid_cap: int = 2,
     sid_budget: int = 2,
-    process_cap: int | None = None,
 ) -> worker_profiles.WorkerProfile:
     allocations = (
         worker_profiles.DomainAllocation(
@@ -95,9 +94,6 @@ def _profile(
     return worker_profiles.validate_worker_profile(
         worker_profiles.WorkerProfile(
             name="test-mixed",
-            process_owned_cap=(
-                feed_cap + sid_cap if process_cap is None else process_cap
-            ),
             allocations=allocations,
         )
     )
@@ -107,7 +103,6 @@ def _sid_profile() -> worker_profiles.WorkerProfile:
     return worker_profiles.validate_worker_profile(
         worker_profiles.WorkerProfile(
             name="test-sid",
-            process_owned_cap=2,
             allocations=(
                 worker_profiles.DomainAllocation(
                     domain_id=grant_control.DomainId.SID,
@@ -512,7 +507,6 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         feed_control.claim_gate = asyncio.Event()
         profile = worker_profiles.WorkerProfile(
             name="feed-only-small",
-            process_owned_cap=1,
             allocations=(
                 worker_profiles.DomainAllocation(
                     domain_id=grant_control.DomainId.FEED,
@@ -989,10 +983,10 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                 timeout=1,
             )
 
-        terminal_tasks = tuple(supervisor._terminal_tasks)
-        self.assertEqual(len(terminal_tasks), 1)
+        finalization_tasks = tuple(supervisor._finalization_tasks)
+        self.assertEqual(len(finalization_tasks), 1)
         control.finalize_gate.set()
-        await asyncio.gather(*terminal_tasks)
+        await asyncio.gather(*finalization_tasks)
         self.assertEqual(supervisor._registry, {})
 
     async def test_shutdown_tracks_superseded_in_flight_finalizer(
@@ -1049,10 +1043,10 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
                 timeout=1,
             )
 
-        terminal_tasks = tuple(supervisor._terminal_tasks)
-        self.assertEqual(len(terminal_tasks), 1)
+        finalization_tasks = tuple(supervisor._finalization_tasks)
+        self.assertEqual(len(finalization_tasks), 1)
         control.finalize_gate.set()
-        await asyncio.gather(*terminal_tasks)
+        await asyncio.gather(*finalization_tasks)
 
     async def test_shutdown_rejects_unsettled_claim_mutation(self) -> None:
         control: _Control[
@@ -1167,7 +1161,6 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             supervisor.active_count(grant_control.DomainId.FEED),
             1,
         )
-        self.assertEqual(supervisor._process_owned, 1)
         self.assertEqual(
             supervisor._owned_by_domain[grant_control.DomainId.FEED],
             1,
@@ -1253,8 +1246,12 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(supervisor.admission_enabled)
         self.assertEqual(supervisor._registry, {})
         self.assertEqual(runner.contexts, {})
-        self.assertEqual(supervisor._process_owned, 0)
-        self.assertEqual(supervisor._process_reserved, 0)
+        self.assertTrue(
+            all(count == 0 for count in supervisor._owned_by_domain.values())
+        )
+        self.assertTrue(
+            all(count == 0 for count in supervisor._reserved_by_domain.values())
+        )
 
     async def test_superseded_finalization_cannot_remove_successor(
         self,
@@ -1284,8 +1281,8 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         first_managed = next(iter(supervisor._registry.values()))
         runner.release.set()
         await _wait(control.finalize_started)
-        first_terminal = first_managed.terminal_task
-        self.assertIsNotNone(first_terminal)
+        first_finalization = first_managed.finalization_task
+        self.assertIsNotNone(first_finalization)
 
         runner.release = asyncio.Event()
         control.queue_claims(
@@ -1295,8 +1292,8 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         await supervisor.admit_cycle(_OWNER)
         await _wait(runner.started_event(second))
         control.finalize_gate.set()
-        assert first_terminal is not None
-        await first_terminal
+        assert first_finalization is not None
+        await first_finalization
 
         self.assertTrue(supervisor.admission_enabled)
         self.assertEqual(
