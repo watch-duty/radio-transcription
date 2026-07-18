@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
-import types
 import typing
 import unittest
 import uuid
@@ -35,23 +34,6 @@ def _grant(
     )
 
 
-def _cursor_state(
-    cursor: cursor_policy.LeaseCursor,
-) -> tuple[
-    ingestion_lease_store.LeaseGrant,
-    datetime.datetime | None,
-    int,
-    cursor_policy.PageCandidate | None,
-]:
-    """Capture all four observable Lease Cursor fields for rejections."""
-    return (
-        cursor.grant,
-        cursor.pos,
-        cursor.next_page_sequence,
-        cursor.outstanding_candidate,
-    )
-
-
 def _assign_attribute(
     target: object,
     field_name: str,
@@ -61,33 +43,26 @@ def _assign_attribute(
     setattr(target, field_name, replacement)
 
 
-class TestBootstrapCursor(unittest.TestCase):
-    """Tests for durable Feed cursor bootstrap decisions."""
+class TestMinimumDurableCursor(unittest.TestCase):
+    """Tests for selecting the oldest durable Feed cursor."""
 
-    def test_bootstrap_decision_is_frozen_slotted_policy_evidence(
-        self,
-    ) -> None:
-        decision = cursor_policy.bootstrap_cursor([], now=_NOW)
-
-        self.assertEqual(
-            tuple(field.name for field in dataclasses.fields(decision)),
-            ("pos", "durable_minimum"),
-        )
-        self.assertFalse(hasattr(decision, "__dict__"))
-        with self.assertRaises(dataclasses.FrozenInstanceError):
-            _assign_attribute(decision, "pos", replacement=_NOW)
-
-    def test_bootstrap_empty_or_all_null_omits_pos(self) -> None:
+    def test_empty_or_all_null_input_omits_start(self) -> None:
         for cursors in ((), (None, None)):
             with self.subTest(cursors=cursors):
-                decision = cursor_policy.bootstrap_cursor(cursors, now=_NOW)
+                self.assertIsNone(cursor_policy.minimum_durable_cursor(cursors))
 
-                self.assertIsNone(decision.pos)
-                self.assertIsNone(decision.durable_minimum)
-
-    def test_bootstrap_generator_uses_minimum_non_null_once(self) -> None:
+    def test_generator_uses_minimum_non_null_once(self) -> None:
         newer = _NOW - datetime.timedelta(minutes=1)
-        oldest = _NOW - datetime.timedelta(minutes=3)
+        oldest = datetime.datetime(
+            2026,
+            7,
+            12,
+            11,
+            56,
+            59,
+            123456,
+            tzinfo=datetime.UTC,
+        )
         observed: list[datetime.datetime | None] = []
 
         def cursors() -> collections.abc.Iterator[datetime.datetime | None]:
@@ -96,85 +71,14 @@ class TestBootstrapCursor(unittest.TestCase):
                 yield cursor
 
         cursor_generator = cursors()
-        decision = cursor_policy.bootstrap_cursor(
-            cursor_generator,
-            now=_NOW,
-        )
 
+        selected = cursor_policy.minimum_durable_cursor(cursor_generator)
+
+        self.assertEqual(selected, oldest)
         self.assertEqual(observed, [None, newer, oldest, None])
-        self.assertEqual(decision.pos, oldest)
-        self.assertEqual(decision.durable_minimum, oldest)
         self.assertEqual(list(cursor_generator), [])
 
-    def test_bootstrap_clamps_minimum_older_than_live_window(self) -> None:
-        oldest = _NOW - datetime.timedelta(minutes=20)
-
-        decision = cursor_policy.bootstrap_cursor(
-            (oldest, _NOW - datetime.timedelta(minutes=1)),
-            now=_NOW,
-        )
-
-        self.assertEqual(decision.pos, _LIVE_WINDOW_START)
-        self.assertEqual(decision.durable_minimum, oldest)
-
-    def test_bootstrap_exact_floor_and_newer_minimum_are_not_clamped(
-        self,
-    ) -> None:
-        cases = (
-            _LIVE_WINDOW_START,
-            _NOW - datetime.timedelta(microseconds=1),
-        )
-
-        for durable_minimum in cases:
-            with self.subTest(durable_minimum=repr(durable_minimum)):
-                decision = cursor_policy.bootstrap_cursor(
-                    (durable_minimum,),
-                    now=_NOW,
-                )
-
-                self.assertEqual(decision.pos, durable_minimum)
-                self.assertEqual(decision.durable_minimum, durable_minimum)
-
-    def test_bootstrap_preserves_inclusive_cursor_exactly(self) -> None:
-        durable_minimum = datetime.datetime(
-            2026,
-            7,
-            12,
-            11,
-            59,
-            59,
-            123456,
-            tzinfo=datetime.UTC,
-        )
-
-        decision = cursor_policy.bootstrap_cursor(
-            (durable_minimum,),
-            now=_NOW,
-        )
-
-        self.assertEqual(decision.pos, durable_minimum)
-
-    def test_bootstrap_rejects_invalid_utc_now(self) -> None:
-        cases = (
-            datetime.datetime(2026, 7, 12, 12, 0),
-            datetime.datetime(
-                2026,
-                7,
-                12,
-                12,
-                0,
-                tzinfo=datetime.timezone(datetime.timedelta(hours=1)),
-            ),
-        )
-
-        for now in cases:
-            with self.subTest(now=repr(now)):
-                with self.assertRaisesRegex(
-                    ValueError, "now must be UTC-aware"
-                ):
-                    cursor_policy.bootstrap_cursor((), now=now)
-
-    def test_bootstrap_rejects_invalid_utc_feed_cursor(self) -> None:
+    def test_rejects_invalid_utc_feed_cursor(self) -> None:
         cases = (
             datetime.datetime(2026, 7, 12, 11, 59),
             datetime.datetime(
@@ -193,13 +97,13 @@ class TestBootstrapCursor(unittest.TestCase):
                     ValueError,
                     "Feed cursor must be UTC-aware",
                 ):
-                    cursor_policy.bootstrap_cursor((cursor,), now=_NOW)
+                    cursor_policy.minimum_durable_cursor((cursor,))
 
 
 class TestLiveRequestStart(unittest.TestCase):
     """Tests for Broadcastify's fixed five-minute live request window."""
 
-    def test_older_start_is_clamped_to_live_window(self) -> None:
+    def test_older_start_is_clamped_at_request_boundary(self) -> None:
         requested = _NOW - datetime.timedelta(minutes=20)
 
         selected = cursor_policy.clamp_live_request_start(
@@ -208,8 +112,6 @@ class TestLiveRequestStart(unittest.TestCase):
         )
 
         self.assertEqual(selected, _LIVE_WINDOW_START)
-        assert selected is not None
-        self.assertGreater(selected, requested)
 
     def test_exact_window_start_and_newer_start_are_unchanged(self) -> None:
         cases = (
@@ -231,7 +133,7 @@ class TestLiveRequestStart(unittest.TestCase):
             cursor_policy.clamp_live_request_start(None, now=_NOW)
         )
 
-    def test_live_window_validates_utc_now_and_requested_start(self) -> None:
+    def test_validates_utc_now_and_requested_start(self) -> None:
         naive = datetime.datetime(2026, 7, 12, 12, 0)
 
         with self.assertRaisesRegex(ValueError, "now must be UTC-aware"):
@@ -243,135 +145,77 @@ class TestLiveRequestStart(unittest.TestCase):
             cursor_policy.clamp_live_request_start(naive, now=_NOW)
 
 
-class TestPageCursorCapability(unittest.TestCase):
-    """Tests for the sealed page-candidate-to-receipt capability."""
+class TestPageCandidate(unittest.TestCase):
+    """Tests for the one immutable page correlation value."""
 
-    def test_candidate_and_receipt_are_frozen_slotted_o1_values(self) -> None:
-        cursor = cursor_policy.LeaseCursor(_grant(), pos=_START_POS)
-        candidate = cursor.prepare(_NEXT_POS)
-        receipt = cursor_policy._issue_covered_page(candidate)
+    def test_candidate_contains_only_behavior_driving_fields(self) -> None:
+        candidate = cursor_policy.LeaseCursor(
+            _grant(),
+            pos=_START_POS,
+        ).prepare(_NEXT_POS)
 
         self.assertEqual(
             tuple(field.name for field in dataclasses.fields(candidate)),
-            ("grant", "page_sequence", "last_pos", "_seal"),
-        )
-        self.assertEqual(
-            tuple(field.name for field in dataclasses.fields(receipt)),
-            ("grant", "page_sequence", "last_pos", "_seal"),
+            ("grant", "page_sequence", "last_pos"),
         )
         self.assertFalse(hasattr(candidate, "__dict__"))
-        self.assertFalse(hasattr(receipt, "__dict__"))
         with self.assertRaises(dataclasses.FrozenInstanceError):
             _assign_attribute(candidate, "page_sequence", 1)
-        with self.assertRaises(dataclasses.FrozenInstanceError):
-            _assign_attribute(receipt, "page_sequence", 1)
 
-    def test_no_progress_candidate_and_settlement_have_no_datetime(
-        self,
-    ) -> None:
-        cursor = cursor_policy.LeaseCursor(_grant(), pos=_START_POS)
-        candidate = cursor.prepare_no_progress()
-        settlement = cursor_policy._issue_no_progress_page(candidate)
+    def test_none_last_pos_represents_no_progress(self) -> None:
+        candidate = cursor_policy.LeaseCursor(
+            _grant(),
+            pos=_START_POS,
+        ).prepare(None)
 
+        self.assertIsNone(candidate.last_pos)
+
+    def test_constructor_enforces_sequence_and_utc_invariants(self) -> None:
+        for page_sequence in (True, -1):
+            with self.subTest(page_sequence=page_sequence):
+                with self.assertRaises(cursor_policy.CursorIntegrityError):
+                    cursor_policy.PageCandidate(
+                        _grant(),
+                        typing.cast("int", page_sequence),
+                        _NEXT_POS,
+                    )
+
+        with self.assertRaisesRegex(
+            cursor_policy.CursorIntegrityError,
+            "last_pos must be UTC-aware",
+        ):
+            cursor_policy.PageCandidate(
+                _grant(),
+                0,
+                datetime.datetime(2026, 7, 12, 12, 0),
+            )
+
+    def test_public_surface_has_one_candidate_and_one_outcome(self) -> None:
         self.assertEqual(
-            tuple(field.name for field in dataclasses.fields(candidate)),
-            ("grant", "page_sequence", "_seal"),
+            tuple(cursor_policy.__all__),
+            (
+                "CursorIntegrityError",
+                "CursorOutcome",
+                "LeaseCursor",
+                "PageCandidate",
+                "clamp_live_request_start",
+                "minimum_durable_cursor",
+            ),
         )
+
+    def test_outcome_vocabulary_is_exact(self) -> None:
         self.assertEqual(
-            tuple(field.name for field in dataclasses.fields(settlement)),
-            ("grant", "page_sequence", "_seal"),
+            tuple(cursor_policy.CursorOutcome),
+            (
+                cursor_policy.CursorOutcome.COVERED,
+                cursor_policy.CursorOutcome.REPLAYABLE,
+                cursor_policy.CursorOutcome.NO_PROGRESS,
+            ),
         )
-        self.assertFalse(hasattr(candidate, "last_pos"))
-        self.assertFalse(hasattr(settlement, "last_pos"))
-        self.assertFalse(hasattr(candidate, "__dict__"))
-        self.assertFalse(hasattr(settlement, "__dict__"))
-
-    def test_replayable_settlement_is_frozen_slotted_o1_value(self) -> None:
-        cursor = cursor_policy.LeaseCursor(_grant(), pos=_START_POS)
-        candidate = cursor.prepare(_NEXT_POS)
-        settlement = cursor_policy._issue_replayable_page(candidate)
-
-        self.assertEqual(
-            tuple(field.name for field in dataclasses.fields(settlement)),
-            ("grant", "page_sequence", "last_pos", "_seal"),
-        )
-        self.assertFalse(hasattr(settlement, "__dict__"))
-        with self.assertRaises(dataclasses.FrozenInstanceError):
-            _assign_attribute(settlement, "page_sequence", 1)
-
-    def test_private_receipt_surface_is_not_publicly_exported(self) -> None:
-        self.assertIn("PageCursorCandidate", cursor_policy.__all__)
-        self.assertIn("NoProgressPageCandidate", cursor_policy.__all__)
-        self.assertIn("PageCandidate", cursor_policy.__all__)
-        self.assertIn("LeaseCursor", cursor_policy.__all__)
-        self.assertNotIn("_CoveredPage", cursor_policy.__all__)
-        self.assertNotIn("_NoProgressPageSettled", cursor_policy.__all__)
-        self.assertNotIn("_ReplayablePageSettled", cursor_policy.__all__)
-        self.assertNotIn("_issue_covered_page", cursor_policy.__all__)
-        self.assertNotIn("_issue_no_progress_page", cursor_policy.__all__)
-        self.assertNotIn("_issue_replayable_page", cursor_policy.__all__)
-
-    def test_direct_candidate_and_receipt_construction_is_rejected(
-        self,
-    ) -> None:
-        grant = _grant()
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            cursor_policy.PageCursorCandidate(
-                grant=grant,
-                page_sequence=0,
-                last_pos=_NEXT_POS,
-                _seal=cursor_policy._CandidateSeal(),
-            )
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            cursor_policy._CoveredPage(
-                grant=grant,
-                page_sequence=0,
-                last_pos=_NEXT_POS,
-                _seal=cursor_policy._CandidateSeal(),
-            )
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            cursor_policy.NoProgressPageCandidate(
-                grant=grant,
-                page_sequence=0,
-                _seal=cursor_policy._CandidateSeal(),
-            )
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            cursor_policy._NoProgressPageSettled(
-                grant=grant,
-                page_sequence=0,
-                _seal=cursor_policy._CandidateSeal(),
-            )
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            cursor_policy._ReplayablePageSettled(
-                grant=grant,
-                page_sequence=0,
-                last_pos=_NEXT_POS,
-                _seal=cursor_policy._CandidateSeal(),
-            )
-
-    def test_private_issuer_rejects_structural_candidate(self) -> None:
-        fake = types.SimpleNamespace(
-            grant=_grant(),
-            page_sequence=0,
-            last_pos=_NEXT_POS,
-        )
-
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            cursor_policy._issue_covered_page(
-                typing.cast("cursor_policy.PageCursorCandidate", fake)
-            )
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            cursor_policy._issue_no_progress_page(
-                typing.cast("cursor_policy.NoProgressPageCandidate", fake)
-            )
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            cursor_policy._issue_replayable_page(
-                typing.cast("cursor_policy.PageCursorCandidate", fake)
-            )
 
 
 class TestLeaseCursor(unittest.TestCase):
-    """Tests for exact-next, grant-local Lease Cursor consumption."""
+    """Tests for exact-next, grant-local Lease Cursor settlement."""
 
     def setUp(self) -> None:
         self.grant = _grant()
@@ -380,15 +224,13 @@ class TestLeaseCursor(unittest.TestCase):
             pos=_START_POS,
         )
 
-    def test_prepare_binds_exact_grant_and_does_not_advance(self) -> None:
+    def test_prepare_binds_grant_and_sequence_without_advancing(self) -> None:
         candidate = self.cursor.prepare(_NEXT_POS)
 
         self.assertEqual(candidate.grant, self.grant)
         self.assertEqual(candidate.page_sequence, 0)
         self.assertEqual(candidate.last_pos, _NEXT_POS)
         self.assertEqual(self.cursor.pos, _START_POS)
-        self.assertEqual(self.cursor.next_page_sequence, 0)
-        self.assertIs(self.cursor.outstanding_candidate, candidate)
 
     def test_prepare_rejects_regression_and_invalid_utc_without_mutation(
         self,
@@ -408,396 +250,164 @@ class TestLeaseCursor(unittest.TestCase):
 
         for last_pos in cases:
             with self.subTest(last_pos=repr(last_pos)):
-                before = _cursor_state(self.cursor)
+                cursor = cursor_policy.LeaseCursor(
+                    self.grant,
+                    pos=_START_POS,
+                )
                 with self.assertRaises(cursor_policy.CursorIntegrityError):
-                    self.cursor.prepare(last_pos)
-                self.assertEqual(_cursor_state(self.cursor), before)
+                    cursor.prepare(last_pos)
+                self.assertEqual(cursor.pos, _START_POS)
+                self.assertEqual(cursor.prepare(_NEXT_POS).page_sequence, 0)
 
     def test_prepare_allows_only_one_outstanding_candidate(self) -> None:
         candidate = self.cursor.prepare(_NEXT_POS)
-        before = _cursor_state(self.cursor)
 
         with self.assertRaises(cursor_policy.CursorIntegrityError):
-            self.cursor.prepare(_NEXT_POS + datetime.timedelta(seconds=1))
+            self.cursor.prepare(None)
 
-        self.assertEqual(_cursor_state(self.cursor), before)
-        self.assertIs(self.cursor.outstanding_candidate, candidate)
+        self.cursor.settle(candidate, cursor_policy.CursorOutcome.COVERED)
+        self.assertEqual(
+            self.cursor.prepare(_NEXT_POS).page_sequence,
+            1,
+        )
 
-    def test_accept_advances_exact_candidate_once(self) -> None:
+    def test_covered_advances_exact_candidate_once(self) -> None:
         candidate = self.cursor.prepare(_NEXT_POS)
-        receipt = cursor_policy._issue_covered_page(candidate)
 
-        accepted_pos = self.cursor.accept(receipt)
+        result = self.cursor.settle(
+            candidate,
+            cursor_policy.CursorOutcome.COVERED,
+        )
 
-        self.assertEqual(accepted_pos, _NEXT_POS)
+        self.assertIsNone(result)
         self.assertEqual(self.cursor.pos, _NEXT_POS)
-        self.assertEqual(self.cursor.next_page_sequence, 1)
-        self.assertIsNone(self.cursor.outstanding_candidate)
 
-        before_duplicate = _cursor_state(self.cursor)
         with self.assertRaises(cursor_policy.CursorIntegrityError):
-            self.cursor.accept(receipt)
-        self.assertEqual(_cursor_state(self.cursor), before_duplicate)
+            self.cursor.settle(
+                candidate,
+                cursor_policy.CursorOutcome.COVERED,
+            )
+        self.assertEqual(self.cursor.pos, _NEXT_POS)
+        self.assertEqual(
+            self.cursor.prepare(_NEXT_POS).page_sequence,
+            1,
+        )
 
-    def test_equal_last_pos_is_consumed_once_without_regression(self) -> None:
+    def test_equal_last_pos_settles_without_regression(self) -> None:
         candidate = self.cursor.prepare(_START_POS)
-        receipt = cursor_policy._issue_covered_page(candidate)
 
-        self.cursor.accept(receipt)
+        self.cursor.settle(candidate, cursor_policy.CursorOutcome.COVERED)
 
         self.assertEqual(self.cursor.pos, _START_POS)
-        self.assertEqual(self.cursor.next_page_sequence, 1)
-        self.assertIsNone(self.cursor.outstanding_candidate)
 
-    def test_no_progress_consumes_sequence_without_moving_position(
-        self,
-    ) -> None:
-        candidate = self.cursor.prepare_no_progress()
-        settlement = cursor_policy._issue_no_progress_page(candidate)
-        original_pos = self.cursor.pos
-
-        result = self.cursor.accept_no_progress(settlement)
-
-        self.assertIsNone(result)
-        self.assertIs(self.cursor.pos, original_pos)
-        self.assertEqual(self.cursor.next_page_sequence, 1)
-        self.assertIsNone(self.cursor.outstanding_candidate)
-
-        before_duplicate = _cursor_state(self.cursor)
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            self.cursor.accept_no_progress(settlement)
-        self.assertEqual(_cursor_state(self.cursor), before_duplicate)
-
-    def test_replayable_consumes_sequence_without_moving_position(self) -> None:
+    def test_replayable_settles_without_advancing(self) -> None:
         candidate = self.cursor.prepare(_NEXT_POS)
-        settlement = cursor_policy._issue_replayable_page(candidate)
         old_pos = self.cursor.pos
 
-        result = self.cursor.accept_replayable(settlement)
+        self.cursor.settle(
+            candidate,
+            cursor_policy.CursorOutcome.REPLAYABLE,
+        )
 
-        self.assertIsNone(result)
-        self.assertEqual(self.cursor.pos, old_pos)
         self.assertIs(self.cursor.pos, old_pos)
-        self.assertEqual(self.cursor.next_page_sequence, 1)
-        self.assertIsNone(self.cursor.outstanding_candidate)
-
-        next_request_pos = self.cursor.pos
         next_candidate = self.cursor.prepare(
             _NEXT_POS + datetime.timedelta(seconds=10)
         )
-        self.assertIs(next_request_pos, old_pos)
-        self.assertIs(self.cursor.pos, old_pos)
         self.assertEqual(next_candidate.page_sequence, 1)
 
-    def test_replayable_rejects_forgery_and_changed_fields_non_mutating(
-        self,
-    ) -> None:
-        candidate = self.cursor.prepare(_NEXT_POS)
-        before = _cursor_state(self.cursor)
+    def test_no_progress_settles_without_advancing(self) -> None:
+        candidate = self.cursor.prepare(None)
+        old_pos = self.cursor.pos
 
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            cursor_policy._ReplayablePageSettled(
-                grant=candidate.grant,
-                page_sequence=candidate.page_sequence,
-                last_pos=candidate.last_pos,
-                _seal=cursor_policy._CandidateSeal(),
-            )
-        self.assertEqual(_cursor_state(self.cursor), before)
-
-        copied_fields_wrong_seal = cursor_policy._ReplayablePageSettled(
-            grant=candidate.grant,
-            page_sequence=candidate.page_sequence,
-            last_pos=candidate.last_pos,
-            _seal=cursor_policy._CandidateSeal(),
-            _construction_key=cursor_policy._CONSTRUCTION_KEY,
-        )
-        changed_last_pos = cursor_policy._ReplayablePageSettled(
-            grant=candidate.grant,
-            page_sequence=candidate.page_sequence,
-            last_pos=candidate.last_pos + datetime.timedelta(microseconds=1),
-            _seal=cursor_policy._read_seal(candidate),
-            _construction_key=cursor_policy._CONSTRUCTION_KEY,
+        self.cursor.settle(
+            candidate,
+            cursor_policy.CursorOutcome.NO_PROGRESS,
         )
 
-        for case_index, settlement in enumerate(
-            (copied_fields_wrong_seal, changed_last_pos)
-        ):
-            with self.subTest(case_index=case_index):
+        self.assertIs(self.cursor.pos, old_pos)
+        self.assertEqual(self.cursor.prepare(None).page_sequence, 1)
+
+    def test_candidate_and_outcome_must_agree(self) -> None:
+        cases = (
+            (_NEXT_POS, cursor_policy.CursorOutcome.NO_PROGRESS),
+            (None, cursor_policy.CursorOutcome.COVERED),
+            (None, cursor_policy.CursorOutcome.REPLAYABLE),
+        )
+
+        for last_pos, outcome in cases:
+            with self.subTest(last_pos=last_pos, outcome=outcome):
+                cursor = cursor_policy.LeaseCursor(
+                    self.grant,
+                    pos=_START_POS,
+                )
+                candidate = cursor.prepare(last_pos)
+
                 with self.assertRaises(cursor_policy.CursorIntegrityError):
-                    self.cursor.accept_replayable(settlement)
-                self.assertEqual(_cursor_state(self.cursor), before)
+                    cursor.settle(candidate, outcome)
 
-    def test_replayable_rejects_crossed_grant_cursor_and_sequence(
-        self,
-    ) -> None:
+                self.assertEqual(cursor.pos, _START_POS)
+                valid_outcome = (
+                    cursor_policy.CursorOutcome.COVERED
+                    if last_pos is not None
+                    else cursor_policy.CursorOutcome.NO_PROGRESS
+                )
+                cursor.settle(candidate, valid_outcome)
+                self.assertEqual(
+                    cursor.prepare(None).page_sequence,
+                    1,
+                )
+
+    def test_structurally_equal_candidate_cannot_cross_cursor(self) -> None:
         candidate = self.cursor.prepare(_NEXT_POS)
-        before = _cursor_state(self.cursor)
-
-        other_grant_cursor = cursor_policy.LeaseCursor(
-            _grant(fencing_token=2),
-            pos=_START_POS,
-        )
-        crossed_grant = cursor_policy._issue_replayable_page(
-            other_grant_cursor.prepare(_NEXT_POS)
-        )
         other_cursor = cursor_policy.LeaseCursor(
             self.grant,
             pos=_START_POS,
         )
-        crossed_candidate = cursor_policy._issue_replayable_page(
-            other_cursor.prepare(_NEXT_POS)
-        )
-        skipped_cursor = cursor_policy.LeaseCursor(
-            self.grant,
-            pos=_START_POS,
-        )
-        first = skipped_cursor.prepare(_NEXT_POS)
-        skipped_cursor.accept_replayable(
-            cursor_policy._issue_replayable_page(first)
-        )
-        skipped_sequence = cursor_policy._issue_replayable_page(
-            skipped_cursor.prepare(_NEXT_POS + datetime.timedelta(seconds=1))
-        )
+        other_candidate = other_cursor.prepare(_NEXT_POS)
+        self.assertEqual(candidate, other_candidate)
+        self.assertIsNot(candidate, other_candidate)
 
-        self.assertEqual(candidate, other_cursor.outstanding_candidate)
-        for case_index, settlement in enumerate(
-            (
-                crossed_grant,
-                crossed_candidate,
-                skipped_sequence,
+        with self.assertRaises(cursor_policy.CursorIntegrityError):
+            self.cursor.settle(
+                other_candidate,
+                cursor_policy.CursorOutcome.COVERED,
             )
-        ):
-            with self.subTest(case_index=case_index):
-                with self.assertRaises(cursor_policy.CursorIntegrityError):
-                    self.cursor.accept_replayable(settlement)
-                self.assertEqual(_cursor_state(self.cursor), before)
-                self.assertIs(self.cursor.outstanding_candidate, candidate)
-
-    def test_replayable_rejects_no_progress_and_wrong_settlement_types(
-        self,
-    ) -> None:
-        candidate = self.cursor.prepare(_NEXT_POS)
-        before = _cursor_state(self.cursor)
-        no_progress_cursor = cursor_policy.LeaseCursor(
-            self.grant,
-            pos=_START_POS,
-        )
-        no_progress = no_progress_cursor.prepare_no_progress()
-
-        wrong_settlements = (
-            cursor_policy._issue_no_progress_page(no_progress),
-            cursor_policy._issue_covered_page(candidate),
-            types.SimpleNamespace(
-                grant=candidate.grant,
-                page_sequence=candidate.page_sequence,
-                last_pos=candidate.last_pos,
-            ),
-        )
-        for case_index, settlement in enumerate(wrong_settlements):
-            with self.subTest(case_index=case_index):
-                with self.assertRaises(cursor_policy.CursorIntegrityError):
-                    self.cursor.accept_replayable(
-                        typing.cast(
-                            "cursor_policy._ReplayablePageSettled",
-                            settlement,
-                        )
-                    )
-                self.assertEqual(_cursor_state(self.cursor), before)
-                self.assertIs(self.cursor.outstanding_candidate, candidate)
-
-    def test_replayable_duplicate_use_is_non_mutating(self) -> None:
-        candidate = self.cursor.prepare(_NEXT_POS)
-        settlement = cursor_policy._issue_replayable_page(candidate)
-
-        self.cursor.accept_replayable(settlement)
-        before_duplicate = _cursor_state(self.cursor)
-
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            self.cursor.accept_replayable(settlement)
-        self.assertEqual(_cursor_state(self.cursor), before_duplicate)
-
-    def test_no_progress_rejects_crossed_and_wrong_settlements_non_mutating(
-        self,
-    ) -> None:
-        candidate = self.cursor.prepare_no_progress()
-        before = _cursor_state(self.cursor)
-        other_grant = cursor_policy.LeaseCursor(
-            _grant(fencing_token=2),
-            pos=_START_POS,
-        )
-        other_candidate = other_grant.prepare_no_progress()
-        crossed = cursor_policy._issue_no_progress_page(other_candidate)
-        same_grant = cursor_policy.LeaseCursor(self.grant, pos=_START_POS)
-        wrong_seal = cursor_policy._issue_no_progress_page(
-            same_grant.prepare_no_progress()
-        )
-        skipped_cursor = cursor_policy.LeaseCursor(self.grant, pos=_START_POS)
-        first = skipped_cursor.prepare_no_progress()
-        skipped_cursor.accept_no_progress(
-            cursor_policy._issue_no_progress_page(first)
-        )
-        skipped = cursor_policy._issue_no_progress_page(
-            skipped_cursor.prepare_no_progress()
-        )
-
-        for case_index, settlement in enumerate((crossed, wrong_seal, skipped)):
-            with self.subTest(case_index=case_index):
-                with self.assertRaises(cursor_policy.CursorIntegrityError):
-                    self.cursor.accept_no_progress(settlement)
-                self.assertEqual(_cursor_state(self.cursor), before)
-                self.assertIs(self.cursor.outstanding_candidate, candidate)
-
-    def test_progress_and_no_progress_settlement_types_cannot_cross(
-        self,
-    ) -> None:
-        no_progress = self.cursor.prepare_no_progress()
-        before = _cursor_state(self.cursor)
-        progress_cursor = cursor_policy.LeaseCursor(
-            self.grant,
-            pos=_START_POS,
-        )
-        progress = progress_cursor.prepare(_NEXT_POS)
-        progress_before = _cursor_state(progress_cursor)
-
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            self.cursor.accept(
-                typing.cast(
-                    "cursor_policy._CoveredPage",
-                    cursor_policy._issue_no_progress_page(no_progress),
-                )
-            )
-        self.assertEqual(_cursor_state(self.cursor), before)
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            self.cursor.accept_no_progress(
-                typing.cast(
-                    "cursor_policy._NoProgressPageSettled",
-                    cursor_policy._issue_covered_page(progress),
-                )
-            )
-        self.assertEqual(_cursor_state(self.cursor), before)
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            progress_cursor.accept_no_progress(
-                cursor_policy._issue_no_progress_page(no_progress)
-            )
-        self.assertEqual(_cursor_state(progress_cursor), progress_before)
-
-    def test_absent_or_structural_receipt_is_non_mutating(self) -> None:
-        candidate = self.cursor.prepare(_NEXT_POS)
-        before = _cursor_state(self.cursor)
-        fake = types.SimpleNamespace(
-            grant=self.grant,
-            page_sequence=candidate.page_sequence,
-            last_pos=candidate.last_pos,
-        )
-
-        for case_index, receipt in enumerate((None, fake)):
-            with self.subTest(case_index=case_index):
-                with self.assertRaises(cursor_policy.CursorIntegrityError):
-                    self.cursor.accept(
-                        typing.cast("cursor_policy._CoveredPage", receipt)
-                    )
-                self.assertEqual(_cursor_state(self.cursor), before)
-
-    def test_cross_grant_receipt_is_non_mutating(self) -> None:
-        self.cursor.prepare(_NEXT_POS)
-        other = cursor_policy.LeaseCursor(
-            _grant(fencing_token=2),
-            pos=_START_POS,
-        )
-        receipt = cursor_policy._issue_covered_page(other.prepare(_NEXT_POS))
-        before = _cursor_state(self.cursor)
-
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            self.cursor.accept(receipt)
-
-        self.assertEqual(_cursor_state(self.cursor), before)
-
-    def test_structurally_equal_wrong_candidate_is_non_mutating(self) -> None:
-        target_candidate = self.cursor.prepare(_NEXT_POS)
-        other = cursor_policy.LeaseCursor(self.grant, pos=_START_POS)
-        other_candidate = other.prepare(_NEXT_POS)
-        self.assertEqual(other_candidate, target_candidate)
-        receipt = cursor_policy._issue_covered_page(other_candidate)
-        before = _cursor_state(self.cursor)
-
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            self.cursor.accept(receipt)
-
-        self.assertEqual(_cursor_state(self.cursor), before)
-        self.assertIs(self.cursor.outstanding_candidate, target_candidate)
-
-    def test_skipped_sequence_receipt_is_non_mutating(self) -> None:
-        self.cursor.prepare(_NEXT_POS)
-        other = cursor_policy.LeaseCursor(self.grant, pos=_START_POS)
-        first = other.prepare(_NEXT_POS)
-        other.accept(cursor_policy._issue_covered_page(first))
-        skipped = other.prepare(_NEXT_POS + datetime.timedelta(seconds=1))
-        receipt = cursor_policy._issue_covered_page(skipped)
-        before = _cursor_state(self.cursor)
-
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            self.cursor.accept(receipt)
-
-        self.assertEqual(_cursor_state(self.cursor), before)
-
-    def test_regressive_receipt_is_non_mutating(self) -> None:
-        self.cursor.prepare(_NEXT_POS)
-        earlier = _START_POS - datetime.timedelta(minutes=2)
-        other = cursor_policy.LeaseCursor(self.grant, pos=earlier)
-        regressive = other.prepare(earlier + datetime.timedelta(minutes=1))
-        receipt = cursor_policy._issue_covered_page(regressive)
-        before = _cursor_state(self.cursor)
-
-        with self.assertRaises(cursor_policy.CursorIntegrityError):
-            self.cursor.accept(receipt)
-
-        self.assertEqual(_cursor_state(self.cursor), before)
-
-    def test_prepared_candidate_without_receipt_does_not_move_progress(
-        self,
-    ) -> None:
-        candidate = self.cursor.prepare(_NEXT_POS)
 
         self.assertEqual(self.cursor.pos, _START_POS)
-        self.assertEqual(self.cursor.next_page_sequence, 0)
-        self.assertIs(self.cursor.outstanding_candidate, candidate)
+        self.cursor.settle(
+            candidate,
+            cursor_policy.CursorOutcome.COVERED,
+        )
+        self.assertEqual(self.cursor.pos, _NEXT_POS)
 
     def test_restart_rebuilds_only_from_durable_feed_inputs(self) -> None:
         durable_feed_cursors = (
             _START_POS - datetime.timedelta(minutes=1),
             _START_POS,
         )
-        decision = cursor_policy.bootstrap_cursor(
-            durable_feed_cursors,
+        durable_minimum = cursor_policy.minimum_durable_cursor(
+            durable_feed_cursors
+        )
+        start = cursor_policy.clamp_live_request_start(
+            durable_minimum,
             now=_NOW,
         )
-        old = cursor_policy.LeaseCursor(self.grant, pos=decision.pos)
+        old = cursor_policy.LeaseCursor(self.grant, pos=start)
         candidate = old.prepare(_NEXT_POS)
-        old.accept(cursor_policy._issue_covered_page(candidate))
+        old.settle(candidate, cursor_policy.CursorOutcome.COVERED)
 
-        restarted_decision = cursor_policy.bootstrap_cursor(
-            durable_feed_cursors,
+        restarted_start = cursor_policy.clamp_live_request_start(
+            cursor_policy.minimum_durable_cursor(durable_feed_cursors),
             now=_NOW,
         )
         restarted = cursor_policy.LeaseCursor(
             _grant(fencing_token=2),
-            pos=restarted_decision.pos,
+            pos=restarted_start,
         )
 
-        self.assertEqual(restarted.pos, restarted_decision.pos)
+        self.assertEqual(restarted.pos, restarted_start)
         self.assertNotEqual(restarted.pos, old.pos)
-        self.assertEqual(restarted.next_page_sequence, 0)
-        self.assertIsNone(restarted.outstanding_candidate)
-        for persistence_name in (
-            "history",
-            "receipts",
-            "save",
-            "load",
-            "serialize",
-            "to_dict",
-        ):
-            with self.subTest(persistence_name=persistence_name):
-                self.assertFalse(hasattr(restarted, persistence_name))
+        self.assertEqual(restarted.prepare(None).page_sequence, 0)
 
 
 if __name__ == "__main__":

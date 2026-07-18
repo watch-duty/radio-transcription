@@ -69,19 +69,10 @@ worker_profiles.derive_bcfy_calls_authority
 worker_profiles.resolve_worker_profile
 
 # The pure Calls cursor policy lands before the scheduler and SID runner that
-# consume it. Vulture excludes its focused tests, including the private sealed
-# settlement issuers that the scheduler will use in the next review stack.
+# consume it. Vulture excludes its focused tests.
 from backend.pipeline.ingestion.collectors.bcfy_calls import cursor_policy
-cursor_policy._issue_covered_page
-cursor_policy._issue_replayable_page
-cursor_policy._issue_no_progress_page
-cursor_policy.LeaseCursor.next_page_sequence
-cursor_policy.LeaseCursor.outstanding_candidate
 cursor_policy.LeaseCursor.prepare
-cursor_policy.LeaseCursor.prepare_no_progress
-cursor_policy.LeaseCursor.accept
-cursor_policy.LeaseCursor.accept_no_progress
-cursor_policy.LeaseCursor.accept_replayable
+cursor_policy.LeaseCursor.settle
 
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation
 # and schema reflection, which Vulture cannot trace through direct Python

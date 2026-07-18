@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import enum
 import typing
 
 if typing.TYPE_CHECKING:
@@ -13,173 +14,49 @@ if typing.TYPE_CHECKING:
 
 
 __all__ = [
-    "BootstrapDecision",
     "CursorIntegrityError",
+    "CursorOutcome",
     "LeaseCursor",
-    "NoProgressPageCandidate",
     "PageCandidate",
-    "PageCursorCandidate",
-    "bootstrap_cursor",
     "clamp_live_request_start",
+    "minimum_durable_cursor",
 ]
 
 
 class CursorIntegrityError(ValueError):
-    """A Lease Cursor candidate or receipt violates its exact contract."""
+    """A Lease Cursor operation violates its exact page contract."""
+
+
+class CursorOutcome(enum.Enum):
+    """Behavior-driving result of settling one exact source page."""
+
+    COVERED = enum.auto()
+    REPLAYABLE = enum.auto()
+    NO_PROGRESS = enum.auto()
 
 
 _LIVE_REQUEST_WINDOW = datetime.timedelta(minutes=5)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
-class BootstrapDecision:
-    """Selected bounded position and its durable Feed cursor source.
+class PageCandidate:
+    """One proposed source-page position bound to exact Lease authority.
 
-    Attributes:
-        pos: Inclusive replay position, or ``None`` for all-null input.
-        durable_minimum: Minimum non-null durable Feed cursor observed.
-    """
-
-    pos: datetime.datetime | None
-    durable_minimum: datetime.datetime | None
-
-
-class _CandidateSeal:
-    """Unique process-local identity for one prepared page candidate."""
-
-    __slots__ = ()
-
-
-_CONSTRUCTION_KEY = object()
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class PageCursorCandidate:
-    """Immutable exact-next cursor candidate prepared for page coverage.
-
-    Attributes:
-        grant: Complete Lease ownership generation bound to the candidate.
-        page_sequence: Exact grant-local page sequence awaiting coverage.
-        last_pos: Validated monotonic page completion position.
+    ``last_pos=None`` represents a provider page without usable cursor
+    evidence. Preparing a candidate never advances the Lease Cursor.
     """
 
     grant: ingestion_lease_store.LeaseGrant
     page_sequence: int
-    last_pos: datetime.datetime
-    _seal: _CandidateSeal = dataclasses.field(repr=False, compare=False)
-    _construction_key: dataclasses.InitVar[object | None] = None
+    last_pos: datetime.datetime | None
 
-    def __post_init__(self, _construction_key: object | None) -> None:
-        if _construction_key is not _CONSTRUCTION_KEY:
-            msg = "Page cursor candidates must be prepared by LeaseCursor"
-            raise CursorIntegrityError(msg)
+    def __post_init__(self) -> None:
         _require_page_sequence(self.page_sequence)
-        _require_integrity_utc_datetime(
-            self.last_pos,
-            field_name="last_pos",
-        )
-        if type(self._seal) is not _CandidateSeal:
-            msg = "Page cursor candidate seal is invalid"
-            raise CursorIntegrityError(msg)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class NoProgressPageCandidate:
-    """Immutable exact-next candidate carrying no cursor evidence."""
-
-    grant: ingestion_lease_store.LeaseGrant
-    page_sequence: int
-    _seal: _CandidateSeal = dataclasses.field(repr=False, compare=False)
-    _construction_key: dataclasses.InitVar[object | None] = None
-
-    def __post_init__(self, _construction_key: object | None) -> None:
-        if _construction_key is not _CONSTRUCTION_KEY:
-            msg = "No-progress candidates must be prepared by LeaseCursor"
-            raise CursorIntegrityError(msg)
-        _require_page_sequence(self.page_sequence)
-        if type(self._seal) is not _CandidateSeal:
-            msg = "No-progress candidate seal is invalid"
-            raise CursorIntegrityError(msg)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _CoveredPage:
-    """Private proof that one exact page obtained bounded coverage."""
-
-    grant: ingestion_lease_store.LeaseGrant
-    page_sequence: int
-    last_pos: datetime.datetime
-    _seal: _CandidateSeal = dataclasses.field(repr=False, compare=False)
-    _construction_key: dataclasses.InitVar[object | None] = None
-
-    def __post_init__(self, _construction_key: object | None) -> None:
-        if _construction_key is not _CONSTRUCTION_KEY:
-            msg = "Covered page receipts require the private issuer"
-            raise CursorIntegrityError(msg)
-        _require_page_sequence(self.page_sequence)
-        _require_integrity_utc_datetime(
-            self.last_pos,
-            field_name="last_pos",
-        )
-        if type(self._seal) is not _CandidateSeal:
-            msg = "Covered page receipt seal is invalid"
-            raise CursorIntegrityError(msg)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _ReplayablePageSettled:
-    """Private proof that one progress page settled for replay."""
-
-    grant: ingestion_lease_store.LeaseGrant
-    page_sequence: int
-    last_pos: datetime.datetime
-    _seal: _CandidateSeal = dataclasses.field(repr=False, compare=False)
-    _construction_key: dataclasses.InitVar[object | None] = None
-
-    def __post_init__(self, _construction_key: object | None) -> None:
-        if _construction_key is not _CONSTRUCTION_KEY:
-            msg = "Replayable page settlements require the private issuer"
-            raise CursorIntegrityError(msg)
-        _require_page_sequence(self.page_sequence)
-        _require_integrity_utc_datetime(
-            self.last_pos,
-            field_name="last_pos",
-        )
-        if type(self._seal) is not _CandidateSeal:
-            msg = "Replayable page settlement seal is invalid"
-            raise CursorIntegrityError(msg)
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _NoProgressPageSettled:
-    """Private proof that one exact no-progress page settled safely."""
-
-    grant: ingestion_lease_store.LeaseGrant
-    page_sequence: int
-    _seal: _CandidateSeal = dataclasses.field(repr=False, compare=False)
-    _construction_key: dataclasses.InitVar[object | None] = None
-
-    def __post_init__(self, _construction_key: object | None) -> None:
-        if _construction_key is not _CONSTRUCTION_KEY:
-            msg = "No-progress settlements require the private issuer"
-            raise CursorIntegrityError(msg)
-        _require_page_sequence(self.page_sequence)
-        if type(self._seal) is not _CandidateSeal:
-            msg = "No-progress settlement seal is invalid"
-            raise CursorIntegrityError(msg)
-
-
-type PageCandidate = PageCursorCandidate | NoProgressPageCandidate
-type PageSettlement = (
-    _CoveredPage | _ReplayablePageSettled | _NoProgressPageSettled
-)
-
-
-def _read_seal(
-    value: PageCandidate | PageSettlement,
-) -> _CandidateSeal:
-    """Read the module-private capability without exposing public access."""
-    return object.__getattribute__(value, "_seal")
+        if self.last_pos is not None:
+            _require_integrity_utc_datetime(
+                self.last_pos,
+                field_name="last_pos",
+            )
 
 
 def _require_utc_datetime(
@@ -214,6 +91,36 @@ def _require_page_sequence(value: int) -> int:
     return value
 
 
+def minimum_durable_cursor(
+    cursors: collections.abc.Iterable[datetime.datetime | None],
+) -> datetime.datetime | None:
+    """Return the minimum non-null durable Feed cursor.
+
+    The result remains unclamped so callers can apply the provider's live
+    retrieval window at the actual request boundary.
+
+    Args:
+        cursors: Eligible independent durable Feed cursors.
+
+    Returns:
+        The minimum inclusive cursor, or ``None`` for all-null input.
+
+    Raises:
+        ValueError: A non-null Feed cursor is not UTC-aware.
+    """
+    durable_minimum: datetime.datetime | None = None
+    for cursor in cursors:
+        if cursor is None:
+            continue
+        validated_cursor = _require_utc_datetime(
+            cursor,
+            field_name="Feed cursor",
+        )
+        if durable_minimum is None or validated_cursor < durable_minimum:
+            durable_minimum = validated_cursor
+    return durable_minimum
+
+
 def clamp_live_request_start(
     requested_start: datetime.datetime | None,
     *,
@@ -243,121 +150,11 @@ def clamp_live_request_start(
     return max(validated_start, live_window_start)
 
 
-def bootstrap_cursor(
-    cursors: collections.abc.Iterable[datetime.datetime | None],
-    *,
-    now: datetime.datetime,
-) -> BootstrapDecision:
-    """Select one bounded inclusive replay position from Feed cursors.
-
-    Args:
-        cursors: Eligible independent durable Feed cursors.
-        now: Explicit UTC time used to calculate the live request window.
-
-    Returns:
-        Immutable bootstrap evidence with the selected replay position.
-
-    Raises:
-        ValueError: ``now`` or a non-null Feed cursor is not UTC-aware.
-    """
-    validated_now = _require_utc_datetime(now, field_name="now")
-    durable_minimum: datetime.datetime | None = None
-
-    for cursor in cursors:
-        if cursor is None:
-            continue
-        validated_cursor = _require_utc_datetime(
-            cursor,
-            field_name="Feed cursor",
-        )
-        if durable_minimum is None or validated_cursor < durable_minimum:
-            durable_minimum = validated_cursor
-
-    if durable_minimum is None:
-        return BootstrapDecision(
-            pos=None,
-            durable_minimum=None,
-        )
-
-    pos = clamp_live_request_start(
-        durable_minimum,
-        now=validated_now,
-    )
-    return BootstrapDecision(
-        pos=pos,
-        durable_minimum=durable_minimum,
-    )
-
-
-def _issue_covered_page(candidate: PageCursorCandidate) -> _CoveredPage:
-    """Issue a private receipt after the scheduler proves page coverage."""
-    if type(candidate) is not PageCursorCandidate:
-        msg = "candidate must be an exact PageCursorCandidate"
-        raise CursorIntegrityError(msg)
-    seal = _read_seal(candidate)
-    if type(seal) is not _CandidateSeal:
-        msg = "Page cursor candidate seal is invalid"
-        raise CursorIntegrityError(msg)
-    return _CoveredPage(
-        grant=candidate.grant,
-        page_sequence=candidate.page_sequence,
-        last_pos=candidate.last_pos,
-        _seal=seal,
-        _construction_key=_CONSTRUCTION_KEY,
-    )
-
-
-def _issue_replayable_page(
-    candidate: PageCursorCandidate,
-) -> _ReplayablePageSettled:
-    """Issue a private settlement after definitive replayable finalization."""
-    if type(candidate) is not PageCursorCandidate:
-        msg = "candidate must be an exact PageCursorCandidate"
-        raise CursorIntegrityError(msg)
-    seal = _read_seal(candidate)
-    if type(seal) is not _CandidateSeal:
-        msg = "Page cursor candidate seal is invalid"
-        raise CursorIntegrityError(msg)
-    return _ReplayablePageSettled(
-        grant=candidate.grant,
-        page_sequence=candidate.page_sequence,
-        last_pos=candidate.last_pos,
-        _seal=seal,
-        _construction_key=_CONSTRUCTION_KEY,
-    )
-
-
-def _issue_no_progress_page(
-    candidate: NoProgressPageCandidate,
-) -> _NoProgressPageSettled:
-    """Issue a private settlement after bounded no-progress coverage."""
-    if type(candidate) is not NoProgressPageCandidate:
-        msg = "candidate must be an exact NoProgressPageCandidate"
-        raise CursorIntegrityError(msg)
-    seal = _read_seal(candidate)
-    if type(seal) is not _CandidateSeal:
-        msg = "No-progress candidate seal is invalid"
-        raise CursorIntegrityError(msg)
-    return _NoProgressPageSettled(
-        grant=candidate.grant,
-        page_sequence=candidate.page_sequence,
-        _seal=seal,
-        _construction_key=_CONSTRUCTION_KEY,
-    )
-
-
 class LeaseCursor:
-    """Grant-local monotonic cursor advanced by exact covered receipts.
+    """Grant-local cursor advanced only by an exact covered page.
 
-    The cursor retains one outstanding candidate and no accepted receipt
-    history. Its state is process-local and must be reconstructed from durable
-    Feed cursor inputs after restart.
-
-    Attributes:
-        grant: Complete immutable Lease ownership generation.
-        pos: Current grant-local upstream cursor.
-        next_page_sequence: Exact sequence expected for the next receipt.
-        outstanding_candidate: Candidate currently awaiting coverage.
+    The cursor retains at most one outstanding candidate. Its state is
+    process-local and is reconstructed from durable Feed cursors after restart.
     """
 
     __slots__ = (
@@ -373,15 +170,7 @@ class LeaseCursor:
         *,
         pos: datetime.datetime | None,
     ) -> None:
-        """Create fresh in-memory state for one exact grant.
-
-        Args:
-            grant: Complete Lease ownership generation for this cursor.
-            pos: Bootstrap position selected from durable Feed cursors.
-
-        Raises:
-            CursorIntegrityError: The grant or position is invalid.
-        """
+        """Create fresh in-memory state for one exact Lease grant."""
         self._grant = grant
         self._pos = (
             None
@@ -392,188 +181,77 @@ class LeaseCursor:
         self._outstanding_candidate: PageCandidate | None = None
 
     @property
-    def grant(self) -> ingestion_lease_store.LeaseGrant:
-        """Return the complete grant bound to this cursor."""
-        return self._grant
-
-    @property
     def pos(self) -> datetime.datetime | None:
         """Return the current grant-local upstream cursor."""
         return self._pos
 
-    @property
-    def next_page_sequence(self) -> int:
-        """Return the exact sequence expected by the next receipt."""
-        return self._next_page_sequence
+    def prepare(
+        self,
+        last_pos: datetime.datetime | None,
+    ) -> PageCandidate:
+        """Prepare the exact next page without advancing progress.
 
-    @property
-    def outstanding_candidate(self) -> PageCandidate | None:
-        """Return the candidate currently awaiting scheduler coverage."""
-        return self._outstanding_candidate
-
-    def prepare(self, last_pos: datetime.datetime) -> PageCursorCandidate:
-        """Prepare one exact-next candidate without advancing progress.
-
-        Args:
-            last_pos: Valid UTC page completion position.
-
-        Returns:
-            Immutable candidate bound to this grant and next sequence.
+        ``last_pos=None`` represents a provider response without usable cursor
+        evidence.
 
         Raises:
-            CursorIntegrityError: The position regresses, is invalid, or a
-                candidate is already outstanding.
+            CursorIntegrityError: Another page is outstanding or ``last_pos``
+                is invalid or regressive.
         """
-        validated_last_pos = _require_integrity_utc_datetime(
-            last_pos,
-            field_name="last_pos",
-        )
         if self._outstanding_candidate is not None:
-            msg = "A page cursor candidate is already outstanding"
+            msg = "A page candidate is already outstanding"
             raise CursorIntegrityError(msg)
-        if self._pos is not None and validated_last_pos < self._pos:
+        candidate = PageCandidate(
+            grant=self._grant,
+            page_sequence=self._next_page_sequence,
+            last_pos=last_pos,
+        )
+        if (
+            candidate.last_pos is not None
+            and self._pos is not None
+            and candidate.last_pos < self._pos
+        ):
             msg = "last_pos must not regress the Lease Cursor"
             raise CursorIntegrityError(msg)
-
-        candidate = PageCursorCandidate(
-            grant=self._grant,
-            page_sequence=self._next_page_sequence,
-            last_pos=validated_last_pos,
-            _seal=_CandidateSeal(),
-            _construction_key=_CONSTRUCTION_KEY,
-        )
         self._outstanding_candidate = candidate
         return candidate
 
-    def prepare_no_progress(self) -> NoProgressPageCandidate:
-        """Prepare one exact-next candidate carrying no cursor evidence."""
-        if self._outstanding_candidate is not None:
-            msg = "A page cursor candidate is already outstanding"
-            raise CursorIntegrityError(msg)
-        candidate = NoProgressPageCandidate(
-            grant=self._grant,
-            page_sequence=self._next_page_sequence,
-            _seal=_CandidateSeal(),
-            _construction_key=_CONSTRUCTION_KEY,
-        )
-        self._outstanding_candidate = candidate
-        return candidate
+    def settle(
+        self,
+        candidate: PageCandidate,
+        outcome: CursorOutcome,
+    ) -> None:
+        """Settle the exact outstanding candidate once.
 
-    def accept(self, receipt: _CoveredPage) -> datetime.datetime:
-        """Consume the exact outstanding covered-page receipt once.
-
-        Args:
-            receipt: Private scheduler-issued proof of bounded page coverage.
-
-        Returns:
-            Current monotonic position after consuming the receipt.
+        ``COVERED`` accepts a candidate's position. ``REPLAYABLE`` and
+        ``NO_PROGRESS`` release the page while retaining the previous position.
 
         Raises:
-            CursorIntegrityError: The receipt is absent, forged, crossed,
-                skipped, duplicated, regressive, or for another candidate.
+            CursorIntegrityError: The candidate is crossed or already settled,
+                or its cursor evidence disagrees with the outcome.
         """
-        if type(receipt) is not _CoveredPage:
-            msg = "receipt must be a private covered-page capability"
+        if candidate is not self._outstanding_candidate:
+            msg = "candidate is not the exact outstanding page"
             raise CursorIntegrityError(msg)
 
-        candidate = self._outstanding_candidate
-        if type(candidate) is not PageCursorCandidate:
-            msg = "No progress cursor candidate is awaiting coverage"
-            raise CursorIntegrityError(msg)
-        if receipt.grant != self._grant:
-            msg = "Covered page receipt grant does not match"
-            raise CursorIntegrityError(msg)
-        if receipt.page_sequence != self._next_page_sequence:
-            msg = "Covered page receipt is not the exact next sequence"
-            raise CursorIntegrityError(msg)
+        last_pos = candidate.last_pos
+        next_pos = self._pos
+        if outcome is CursorOutcome.COVERED:
+            if last_pos is None:
+                msg = "covered outcome requires a page position"
+                raise CursorIntegrityError(msg)
+            next_pos = last_pos if next_pos is None else max(next_pos, last_pos)
+        elif outcome is CursorOutcome.REPLAYABLE:
+            if last_pos is None:
+                msg = "replayable outcome requires a page position"
+                raise CursorIntegrityError(msg)
+        elif outcome is CursorOutcome.NO_PROGRESS:
+            if last_pos is not None:
+                msg = "no-progress outcome requires an omitted page position"
+                raise CursorIntegrityError(msg)
+        else:
+            typing.assert_never(outcome)
 
-        validated_last_pos = _require_integrity_utc_datetime(
-            receipt.last_pos,
-            field_name="receipt.last_pos",
-        )
-        if self._pos is not None and validated_last_pos < self._pos:
-            msg = "Covered page receipt regresses the Lease Cursor"
-            raise CursorIntegrityError(msg)
-        if _read_seal(receipt) is not _read_seal(candidate):
-            msg = "Covered page receipt is for another candidate"
-            raise CursorIntegrityError(msg)
-        if (
-            receipt.grant != candidate.grant
-            or receipt.page_sequence != candidate.page_sequence
-            or validated_last_pos != candidate.last_pos
-        ):
-            msg = "Covered page receipt fields do not match its candidate"
-            raise CursorIntegrityError(msg)
-
-        self._pos = (
-            validated_last_pos
-            if self._pos is None
-            else max(self._pos, validated_last_pos)
-        )
-        self._next_page_sequence += 1
-        self._outstanding_candidate = None
-        return validated_last_pos
-
-    def accept_no_progress(self, settlement: _NoProgressPageSettled) -> None:
-        """Consume the exact no-progress settlement without moving ``pos``."""
-        if type(settlement) is not _NoProgressPageSettled:
-            msg = "settlement must be a private no-progress capability"
-            raise CursorIntegrityError(msg)
-
-        candidate = self._outstanding_candidate
-        if type(candidate) is not NoProgressPageCandidate:
-            msg = "No no-progress candidate is awaiting coverage"
-            raise CursorIntegrityError(msg)
-        if settlement.grant != self._grant:
-            msg = "No-progress settlement grant does not match"
-            raise CursorIntegrityError(msg)
-        if settlement.page_sequence != self._next_page_sequence:
-            msg = "No-progress settlement is not the exact next sequence"
-            raise CursorIntegrityError(msg)
-        if _read_seal(settlement) is not _read_seal(candidate):
-            msg = "No-progress settlement is for another candidate"
-            raise CursorIntegrityError(msg)
-        if (
-            settlement.grant != candidate.grant
-            or settlement.page_sequence != candidate.page_sequence
-        ):
-            msg = "No-progress settlement fields do not match its candidate"
-            raise CursorIntegrityError(msg)
-
-        self._next_page_sequence += 1
-        self._outstanding_candidate = None
-
-    def accept_replayable(self, settlement: _ReplayablePageSettled) -> None:
-        """Consume one replayable settlement without accepting ``last_pos``."""
-        if type(settlement) is not _ReplayablePageSettled:
-            msg = "settlement must be a private replayable capability"
-            raise CursorIntegrityError(msg)
-
-        candidate = self._outstanding_candidate
-        if type(candidate) is not PageCursorCandidate:
-            msg = "No progress cursor candidate is awaiting settlement"
-            raise CursorIntegrityError(msg)
-        if settlement.grant != self._grant:
-            msg = "Replayable page settlement grant does not match"
-            raise CursorIntegrityError(msg)
-        if settlement.page_sequence != self._next_page_sequence:
-            msg = "Replayable settlement is not the exact next sequence"
-            raise CursorIntegrityError(msg)
-
-        validated_last_pos = _require_integrity_utc_datetime(
-            settlement.last_pos,
-            field_name="settlement.last_pos",
-        )
-        if _read_seal(settlement) is not _read_seal(candidate):
-            msg = "Replayable settlement is for another candidate"
-            raise CursorIntegrityError(msg)
-        if (
-            settlement.grant != candidate.grant
-            or settlement.page_sequence != candidate.page_sequence
-            or validated_last_pos != candidate.last_pos
-        ):
-            msg = "Replayable settlement fields do not match its candidate"
-            raise CursorIntegrityError(msg)
-
+        self._pos = next_pos
         self._next_page_sequence += 1
         self._outstanding_candidate = None
