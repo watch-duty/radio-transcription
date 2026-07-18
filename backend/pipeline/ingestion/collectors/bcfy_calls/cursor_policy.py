@@ -32,7 +32,6 @@ class CursorOutcome(enum.Enum):
 
     COVERED = enum.auto()
     REPLAYABLE = enum.auto()
-    NO_PROGRESS = enum.auto()
 
 
 _LIVE_REQUEST_WINDOW = datetime.timedelta(minutes=5)
@@ -223,8 +222,9 @@ class LeaseCursor:
     ) -> None:
         """Settle the exact outstanding candidate once.
 
-        ``COVERED`` accepts a candidate's position. ``REPLAYABLE`` and
-        ``NO_PROGRESS`` release the page while retaining the previous position.
+        ``COVERED`` accepts a candidate's position when one exists.
+        ``REPLAYABLE`` releases a positioned page while retaining the previous
+        position.
 
         Raises:
             CursorIntegrityError: The candidate is crossed or already settled,
@@ -237,17 +237,13 @@ class LeaseCursor:
         last_pos = candidate.last_pos
         next_pos = self._pos
         if outcome is CursorOutcome.COVERED:
-            if last_pos is None:
-                msg = "covered outcome requires a page position"
-                raise CursorIntegrityError(msg)
-            next_pos = last_pos if next_pos is None else max(next_pos, last_pos)
+            if last_pos is not None:
+                next_pos = (
+                    last_pos if next_pos is None else max(next_pos, last_pos)
+                )
         elif outcome is CursorOutcome.REPLAYABLE:
             if last_pos is None:
                 msg = "replayable outcome requires a page position"
-                raise CursorIntegrityError(msg)
-        elif outcome is CursorOutcome.NO_PROGRESS:
-            if last_pos is not None:
-                msg = "no-progress outcome requires an omitted page position"
                 raise CursorIntegrityError(msg)
         else:
             typing.assert_never(outcome)

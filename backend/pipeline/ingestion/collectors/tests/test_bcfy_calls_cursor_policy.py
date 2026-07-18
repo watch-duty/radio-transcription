@@ -209,7 +209,6 @@ class TestPageCandidate(unittest.TestCase):
             (
                 cursor_policy.CursorOutcome.COVERED,
                 cursor_policy.CursorOutcome.REPLAYABLE,
-                cursor_policy.CursorOutcome.NO_PROGRESS,
             ),
         )
 
@@ -315,47 +314,39 @@ class TestLeaseCursor(unittest.TestCase):
         )
         self.assertEqual(next_candidate.page_sequence, 1)
 
-    def test_no_progress_settles_without_advancing(self) -> None:
+    def test_covered_page_without_position_settles_without_advancing(
+        self,
+    ) -> None:
         candidate = self.cursor.prepare(None)
         old_pos = self.cursor.pos
 
         self.cursor.settle(
             candidate,
-            cursor_policy.CursorOutcome.NO_PROGRESS,
+            cursor_policy.CursorOutcome.COVERED,
         )
 
         self.assertIs(self.cursor.pos, old_pos)
         self.assertEqual(self.cursor.prepare(None).page_sequence, 1)
 
     def test_candidate_and_outcome_must_agree(self) -> None:
-        cases = (
-            (_NEXT_POS, cursor_policy.CursorOutcome.NO_PROGRESS),
-            (None, cursor_policy.CursorOutcome.COVERED),
-            (None, cursor_policy.CursorOutcome.REPLAYABLE),
+        cursor = cursor_policy.LeaseCursor(
+            self.grant,
+            pos=_START_POS,
         )
+        candidate = cursor.prepare(None)
 
-        for last_pos, outcome in cases:
-            with self.subTest(last_pos=last_pos, outcome=outcome):
-                cursor = cursor_policy.LeaseCursor(
-                    self.grant,
-                    pos=_START_POS,
-                )
-                candidate = cursor.prepare(last_pos)
+        with self.assertRaises(cursor_policy.CursorIntegrityError):
+            cursor.settle(
+                candidate,
+                cursor_policy.CursorOutcome.REPLAYABLE,
+            )
 
-                with self.assertRaises(cursor_policy.CursorIntegrityError):
-                    cursor.settle(candidate, outcome)
-
-                self.assertEqual(cursor.pos, _START_POS)
-                valid_outcome = (
-                    cursor_policy.CursorOutcome.COVERED
-                    if last_pos is not None
-                    else cursor_policy.CursorOutcome.NO_PROGRESS
-                )
-                cursor.settle(candidate, valid_outcome)
-                self.assertEqual(
-                    cursor.prepare(None).page_sequence,
-                    1,
-                )
+        self.assertEqual(cursor.pos, _START_POS)
+        cursor.settle(candidate, cursor_policy.CursorOutcome.COVERED)
+        self.assertEqual(
+            cursor.prepare(None).page_sequence,
+            1,
+        )
 
     def test_structurally_equal_candidate_cannot_cross_cursor(self) -> None:
         candidate = self.cursor.prepare(_NEXT_POS)
