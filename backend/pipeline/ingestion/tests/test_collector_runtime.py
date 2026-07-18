@@ -813,6 +813,35 @@ class TestProcessFeedShutdown(unittest.IsolatedAsyncioTestCase):
 
         rt._store.release_feed.assert_not_called()
 
+    async def test_shutdown_drains_remaining_chunks_successfully(self) -> None:
+        """When shutdown is set, in-flight/flushed chunks from the generator are still uploaded and bookmarked."""
+
+        async def _drain_generator(feed, shutdown, _resources):
+            if shutdown.is_set():
+                yield _make_captured_chunk(b"drained_audio")
+
+        rt = CollectorRuntime(
+            capture_fn=_drain_generator,
+            settings=_make_settings(),
+            runtime_actor_id=_RUNTIME_ACTOR_ID,
+        )
+        rt._shutdown = asyncio.Event()
+        rt._shutdown.set()
+        rt._lease_lost = asyncio.Event()
+        rt._capture_resources = _default_resources()
+        rt._store = mock.AsyncMock()
+        rt._store.update_feed_progress.return_value = True
+        rt._releasing_feeds = set()
+
+        mock_upload = _mock_upload_audio()
+        mock_publish = _mock_pubsub_publish()
+        with mock_upload as upload_sp, mock_publish as publish_sp:
+            await rt._process_feed(_FEED)
+
+        upload_sp.assert_called_once()
+        rt._store.update_feed_progress.assert_called_once()
+        publish_sp.assert_called_once()
+
 
 class TestProcessFeedNormalCompletion(unittest.IsolatedAsyncioTestCase):
     """Tests for _process_feed normal completion."""

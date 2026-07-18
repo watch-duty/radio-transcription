@@ -140,7 +140,7 @@ function getSourceUrl(
     case SourceType.OPENMHZ:
       return `https://openmhz.com/system/${sourceFeedId}`;
     case SourceType.ECHO:
-      return undefined;
+      return `https://storage.googleapis.com/wd-echo-recordings-prod/index.html#${sourceFeedId}/`;
     case SourceType.FIRE_NOTIFICATIONS: {
       const cleanSourceId = sourceFeedId.startsWith('/')
         ? sourceFeedId.slice(1)
