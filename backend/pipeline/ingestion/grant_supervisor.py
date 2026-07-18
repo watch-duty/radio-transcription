@@ -120,7 +120,15 @@ def _erase_registered_domain[
     registered: RegisteredDomain[GrantT, PayloadT],
     allocation: worker_profiles.DomainAllocation,
 ) -> _ErasedRegisteredDomain:
-    """Build the one statically checked heterogeneous boundary."""
+    """Build the one statically checked heterogeneous boundary.
+
+    Args:
+        registered: Typed control and runner for one ownership domain.
+        allocation: Validated admission capacity for that domain.
+
+    Returns:
+        Erased callbacks that preserve the registered grant-payload pairing.
+    """
 
     def erase_claim(
         candidate: grant_control.ClaimedGrant[GrantT, PayloadT],
@@ -198,24 +206,14 @@ def _erase_registered_domain[
     )
 
 
-def _require_run_outcome(
-    value: object,
-) -> grant_control.RunOutcome:
-    if not isinstance(
-        value,
-        (
-            grant_control.RunCompleted,
-            grant_control.RunLost,
-            grant_control.RunFailed,
-        ),
-    ):
-        msg = "runner returned an invalid outcome"
-        raise grant_control.GrantControlIntegrityError(msg)
-    return value
-
-
 class GrantSupervisor:
-    """Own one lifecycle algorithm for every registered grant domain."""
+    """Own one lifecycle algorithm for every registered grant domain.
+
+    Attributes:
+        admission_enabled: Whether another admission cycle may begin.
+        integrity_failure_event: Monotonic first-integrity-failure signal.
+        integrity_failure: First fail-closed integrity outcome, if any.
+    """
 
     def __init__(
         self,
@@ -225,6 +223,22 @@ class GrantSupervisor:
         finalize_concurrency: int,
         failure_planner: FailurePlanner,
     ) -> None:
+        """Initialize one closed supervisor composition.
+
+        Args:
+            profile: Validated domain topology and admission capacities.
+            registered_domains: One typed registration for every profile domain.
+            finalize_concurrency: Maximum concurrent storage finalizations.
+            failure_planner: Pure mapping from runner failure to persistence.
+
+        Returns:
+            None.
+
+        Raises:
+            TypeError: A registration or finalization limit has an invalid type.
+            ValueError: Registrations do not exactly match the profile, or the
+                finalization limit is not positive.
+        """
         validated_profile = worker_profiles.validate_worker_profile(profile)
         if isinstance(finalize_concurrency, bool):
             msg = "finalize_concurrency must be an integer"
@@ -311,7 +325,19 @@ class GrantSupervisor:
         self,
         owner_worker_id: uuid.UUID,
     ) -> None:
-        """Run one capacity-safe primary-then-recovery admission cycle."""
+        """Run one capacity-safe primary-then-recovery admission cycle.
+
+        Args:
+            owner_worker_id: Worker that must own every returned exact grant.
+
+        Returns:
+            None after all reserved claim calls settle.
+
+        Raises:
+            GrantControlIntegrityError: A claim outcome is uncertain or violates
+                the exact-grant contract.
+            asyncio.CancelledError: The admission cycle is cancelled.
+        """
         if not self._admission_enabled:
             return
         enabled = tuple(
@@ -379,6 +405,15 @@ class GrantSupervisor:
         domain: _ErasedRegisteredDomain,
         remaining_cycle_budget: int,
     ) -> int:
+        """Reserve currently available domain capacity for one claim call.
+
+        Args:
+            domain: Domain whose owned cap constrains the reservation.
+            remaining_cycle_budget: Unspent claim budget for this cycle.
+
+        Returns:
+            Reserved claim count, or zero when no capacity remains.
+        """
         domain_id = domain.domain_id
         domain_headroom = (
             domain.allocation.owned_cap
@@ -398,6 +433,22 @@ class GrantSupervisor:
         owner_worker_id: uuid.UUID,
         reservation: int,
     ) -> int:
+        """Execute one reserved claim mutation and register its exact grants.
+
+        Args:
+            domain: Erased domain control receiving the claim call.
+            mode: Primary or recovery admission mode.
+            owner_worker_id: Required owner of every returned exact grant.
+            reservation: Maximum grants the call may return.
+
+        Returns:
+            Number of returned grants registered with the supervisor.
+
+        Raises:
+            GrantControlIntegrityError: The claim is uncertain or malformed.
+            asyncio.CancelledError: The claim task is cancelled after failing
+                the supervisor closed.
+        """
         remaining_reservation = reservation
         registered_count = 0
         try:
@@ -459,6 +510,20 @@ class GrantSupervisor:
         owner_worker_id: uuid.UUID,
         claims: tuple[_ErasedClaim, ...],
     ) -> None:
+        """Validate one claim batch atomically before starting any runners.
+
+        Args:
+            domain: Domain that returned the claims.
+            owner_worker_id: Owner requested by the admission cycle.
+            claims: Complete erased claim batch to validate.
+
+        Returns:
+            None when every claim is safe to register.
+
+        Raises:
+            GrantControlIntegrityError: Ownership, unit uniqueness, or
+                generation succession is invalid.
+        """
         seen_slots: set[_UnitSlot] = set()
         for claim in claims:
             grant = claim.grant
@@ -510,6 +575,19 @@ class GrantSupervisor:
         domain: _ErasedRegisteredDomain,
         claim: _ErasedClaim,
     ) -> None:
+        """Install one exact generation and start its isolated runner.
+
+        A strictly newer same-worker generation replaces the current registry
+        entry without increasing the domain ownership count. The superseded
+        runner remains task-tracked until it closes.
+
+        Args:
+            domain: Domain that produced the validated claim.
+            claim: Exact grant and bound runner payload to install.
+
+        Returns:
+            None.
+        """
         slot = _UnitSlot(domain.domain_id, claim.grant.unit_key)
         superseded = self._registry.get(slot)
         context = grant_control.RunContext(
@@ -540,10 +618,20 @@ class GrantSupervisor:
         task.add_done_callback(self._runner_task_done)
 
     async def _run_managed(self, managed: _ManagedGrant) -> None:
+        """Run one exact generation and linearize its terminal outcome.
+
+        Args:
+            managed: Current or superseded generation to execute.
+
+        Returns:
+            None after runner closure has been acknowledged.
+
+        Raises:
+            asyncio.CancelledError: The runner task is cancelled. Cancellation
+                outside ordered shutdown fails a current generation closed.
+        """
         try:
-            outcome = _require_run_outcome(
-                await managed.claim.run(managed.context)
-            )
+            outcome = await managed.claim.run(managed.context)
             if self._is_current(managed):
                 managed.outcome = outcome
             if self._is_current(managed) and isinstance(
@@ -603,6 +691,15 @@ class GrantSupervisor:
         self,
         managed: _ManagedGrant,
     ) -> asyncio.Task[None] | None:
+        """Start finalization once for one closed current generation.
+
+        Args:
+            managed: Closed generation eligible for terminal persistence.
+
+        Returns:
+            The tracked finalization task, or ``None`` when ineligible or when
+            failure planning itself fails closed.
+        """
         if (
             not self._is_current(managed)
             or not managed.runner_closed
@@ -641,6 +738,19 @@ class GrantSupervisor:
         managed: _ManagedGrant,
         terminal: grant_control.TerminalDecision,
     ) -> None:
+        """Finalize one exact current generation under bounded concurrency.
+
+        Args:
+            managed: Closed generation whose authority must remain current.
+            terminal: Preselected neutral release or failure persistence plan.
+
+        Returns:
+            None after applying, losing, abandoning, or becoming stale.
+
+        Raises:
+            asyncio.CancelledError: Finalization cancellation is surfaced after
+                the current generation fails closed.
+        """
         if not self._is_current(managed):
             return
         try:
@@ -713,7 +823,18 @@ class GrantSupervisor:
         self,
         on_dispatch: typing.Callable[[], None],
     ) -> None:
-        """Heartbeat exact current generations grouped by domain."""
+        """Heartbeat exact current generations grouped by domain.
+
+        Args:
+            on_dispatch: Synchronous health callback invoked before storage I/O.
+
+        Returns:
+            None after every selected domain heartbeat settles.
+
+        Raises:
+            asyncio.CancelledError: The cycle is cancelled. Outside ordered
+                shutdown, the affected current domain first fails closed.
+        """
         on_dispatch()
         for domain in self._domains:
             expected = tuple(
@@ -728,7 +849,13 @@ class GrantSupervisor:
             grants = tuple(managed.claim.grant for managed in expected)
             try:
                 results = await domain.heartbeat(grants)
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as exc:
+                if not self._shutting_down:
+                    failure = grant_control.GrantControlIntegrityError(
+                        "heartbeat outcome is unknown after cancellation"
+                    )
+                    failure.__cause__ = exc
+                    self._fail_heartbeat_domain(expected, failure)
                 raise
             except Exception as exc:
                 self._fail_heartbeat_domain(expected, exc)
@@ -772,6 +899,15 @@ class GrantSupervisor:
         expected: typing.Sequence[_ManagedGrant],
         failure: BaseException,
     ) -> None:
+        """Fail the still-current subset of one heartbeat request closed.
+
+        Args:
+            expected: Generations submitted in the failed heartbeat request.
+            failure: Uncertain or malformed heartbeat outcome to surface.
+
+        Returns:
+            None after current runners receive stop and grant-loss signals.
+        """
         current = tuple(
             managed for managed in expected if self._is_current(managed)
         )
@@ -805,7 +941,14 @@ class GrantSupervisor:
         self,
         wait_timeout_sec: float,
     ) -> bool:
-        """Wait for known claim mutations and report whether any remain."""
+        """Wait for known claim mutations and report whether any remain.
+
+        Args:
+            wait_timeout_sec: Maximum remaining shutdown time to wait.
+
+        Returns:
+            Whether a claim task remains capable of registering new work.
+        """
         claim_tasks = tuple(self._claim_tasks)
         if not claim_tasks:
             return False
@@ -829,7 +972,29 @@ class GrantSupervisor:
             typing.Awaitable[None],
         ],
     ) -> None:
-        """Drain runners, stop heartbeats, then finalize closed grants."""
+        """Drain runners, stop heartbeats, then finalize closed grants.
+
+        ``external_stop_deadline_sec`` is one absolute budget beginning when
+        this method starts. Claim settlement, cooperative and forced runner
+        drain, heartbeat supervision stop, and finalization all consume it.
+
+        Args:
+            cooperative_grace_sec: Preferred runner drain time, clamped to the
+                remaining external deadline.
+            external_stop_deadline_sec: Total shutdown deadline in seconds.
+            stop_heartbeat_supervision: Callback that stops dispatch and joins
+                any in-flight heartbeat cycle.
+
+        Returns:
+            None after all supervisor-owned work is proven quiescent.
+
+        Raises:
+            TypeError: A timeout is a boolean rather than a number.
+            ValueError: A timeout is negative.
+            SupervisorNotDrainedError: Claims, runners, heartbeat supervision,
+                or finalizers do not settle within the shared deadline.
+            asyncio.CancelledError: The enclosing shutdown is cancelled.
+        """
         self._validate_timeout(
             cooperative_grace_sec,
             "cooperative_grace_sec",
@@ -856,7 +1021,7 @@ class GrantSupervisor:
         runner_tasks = tuple(self._runner_tasks)
         remaining = await self._wait_tasks(
             runner_tasks,
-            cooperative_grace_sec,
+            min(cooperative_grace_sec, remaining_external_time()),
         )
         for task in remaining:
             task.cancel()
@@ -872,7 +1037,10 @@ class GrantSupervisor:
                 managed.context.grant_lost.set()
         undrained = len(remaining)
 
-        await stop_heartbeat_supervision()
+        await self._stop_heartbeat_supervision(
+            stop_heartbeat_supervision,
+            remaining_external_time(),
+        )
 
         for managed in tuple(self._registry.values()):
             if managed.runner_closed:
@@ -890,11 +1058,67 @@ class GrantSupervisor:
         if undrained:
             raise SupervisorNotDrainedError
 
+    async def _stop_heartbeat_supervision(
+        self,
+        stop: typing.Callable[[], typing.Awaitable[None]],
+        wait_timeout_sec: float,
+    ) -> None:
+        """Stop heartbeat dispatch without exceeding the shutdown deadline.
+
+        Args:
+            stop: Callback that stops and joins heartbeat supervision.
+            wait_timeout_sec: Maximum remaining shutdown time to wait.
+
+        Returns:
+            None after heartbeat supervision has stopped.
+
+        Raises:
+            SupervisorNotDrainedError: The callback times out, is cancelled, or
+                raises before proving heartbeat supervision stopped.
+            asyncio.CancelledError: The enclosing shutdown is cancelled.
+        """
+
+        async def stop_task() -> None:
+            await stop()
+
+        task = asyncio.create_task(stop_task())
+        try:
+            pending = await self._wait_tasks((task,), wait_timeout_sec)
+        except asyncio.CancelledError:
+            task.cancel()
+            task.add_done_callback(self._heartbeat_stop_task_done)
+            raise
+        if pending:
+            task.cancel()
+            task.add_done_callback(self._heartbeat_stop_task_done)
+            msg = "heartbeat supervision did not stop before the deadline"
+            raise SupervisorNotDrainedError(msg)
+        try:
+            task.result()
+        except asyncio.CancelledError as exc:
+            msg = "heartbeat supervision stop was cancelled"
+            raise SupervisorNotDrainedError(msg) from exc
+        except Exception as exc:
+            msg = "heartbeat supervision failed to stop"
+            raise SupervisorNotDrainedError(msg) from exc
+
+    def _heartbeat_stop_task_done(self, task: asyncio.Task[None]) -> None:
+        """Consume a late heartbeat-stop result after bounded shutdown."""
+        if not task.cancelled():
+            task.exception()
+
     async def _finalize_closed_grants(
         self,
         wait_timeout_sec: float,
     ) -> int:
-        """Bound cleanup for current and superseded finalizer tasks."""
+        """Bound cleanup for current and superseded finalizer tasks.
+
+        Args:
+            wait_timeout_sec: Maximum remaining shutdown time to wait.
+
+        Returns:
+            Number of finalizer tasks still running after cancellation.
+        """
         pending = await self._wait_tasks(
             self._finalization_tasks,
             wait_timeout_sec,
