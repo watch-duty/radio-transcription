@@ -29,7 +29,7 @@ class TestSourceRuntimeSpecs(unittest.TestCase):
         self.assertEqual(caps[feed_store.SourceType.BCFY_FEEDS], 240)
         self.assertEqual(caps[feed_store.SourceType.BCFY_CALLS], 600)
         self.assertEqual(caps[feed_store.SourceType.OPENMHZ], 900)
-        self.assertEqual(caps[feed_store.SourceType.FIRE_NOTIFICATIONS], 300)
+        self.assertEqual(caps[feed_store.SourceType.FIRE_NOTIFICATIONS], 600)
         self.assertNotIn(feed_store.SourceType.ECHO, caps)
 
     def test_url_base_uses_env_override(self) -> None:
