@@ -72,9 +72,6 @@ worker_profiles.resolve_worker_profile
 # consume it. Vulture excludes its focused tests, including the private sealed
 # settlement issuers that the scheduler will use in the next review stack.
 from backend.pipeline.ingestion.collectors.bcfy_calls import cursor_policy
-cursor_policy.ReplayFloorCause.REPLAY_OVERRIDE
-cursor_policy.ReplayFloorCause.OVERLOAD
-cursor_policy.BootstrapDecision.replay_floor
 cursor_policy._issue_covered_page
 cursor_policy._issue_replayable_page
 cursor_policy._issue_no_progress_page

@@ -16,7 +16,7 @@ if typing.TYPE_CHECKING:
     import collections.abc
 
 _NOW = datetime.datetime(2026, 7, 12, 12, 0, tzinfo=datetime.UTC)
-_REPLAY_FLOOR = _NOW - datetime.timedelta(minutes=5)
+_LIVE_WINDOW_START = _NOW - datetime.timedelta(minutes=5)
 _START_POS = _NOW - datetime.timedelta(minutes=2)
 _NEXT_POS = _START_POS + datetime.timedelta(seconds=10)
 
@@ -71,17 +71,11 @@ class TestBootstrapCursor(unittest.TestCase):
 
         self.assertEqual(
             tuple(field.name for field in dataclasses.fields(decision)),
-            (
-                "pos",
-                "durable_minimum",
-                "replay_floor",
-                "clamped",
-                "floor_reached",
-            ),
+            ("pos", "durable_minimum"),
         )
         self.assertFalse(hasattr(decision, "__dict__"))
         with self.assertRaises(dataclasses.FrozenInstanceError):
-            _assign_attribute(decision, "clamped", replacement=True)
+            _assign_attribute(decision, "pos", replacement=_NOW)
 
     def test_bootstrap_empty_or_all_null_omits_pos(self) -> None:
         for cursors in ((), (None, None)):
@@ -90,9 +84,6 @@ class TestBootstrapCursor(unittest.TestCase):
 
                 self.assertIsNone(decision.pos)
                 self.assertIsNone(decision.durable_minimum)
-                self.assertEqual(decision.replay_floor, _REPLAY_FLOOR)
-                self.assertFalse(decision.clamped)
-                self.assertIsNone(decision.floor_reached)
 
     def test_bootstrap_generator_uses_minimum_non_null_once(self) -> None:
         newer = _NOW - datetime.timedelta(minutes=1)
@@ -113,12 +104,9 @@ class TestBootstrapCursor(unittest.TestCase):
         self.assertEqual(observed, [None, newer, oldest, None])
         self.assertEqual(decision.pos, oldest)
         self.assertEqual(decision.durable_minimum, oldest)
-        self.assertEqual(decision.replay_floor, _REPLAY_FLOOR)
-        self.assertFalse(decision.clamped)
-        self.assertIsNone(decision.floor_reached)
         self.assertEqual(list(cursor_generator), [])
 
-    def test_bootstrap_clamps_minimum_older_than_replay_floor(self) -> None:
+    def test_bootstrap_clamps_minimum_older_than_live_window(self) -> None:
         oldest = _NOW - datetime.timedelta(minutes=20)
 
         decision = cursor_policy.bootstrap_cursor(
@@ -126,19 +114,14 @@ class TestBootstrapCursor(unittest.TestCase):
             now=_NOW,
         )
 
-        self.assertEqual(decision.pos, _REPLAY_FLOOR)
+        self.assertEqual(decision.pos, _LIVE_WINDOW_START)
         self.assertEqual(decision.durable_minimum, oldest)
-        self.assertEqual(decision.replay_floor, _REPLAY_FLOOR)
-        self.assertTrue(decision.clamped)
-        assert decision.floor_reached is not None
-        self.assertEqual(decision.floor_reached.requested_start, oldest)
-        self.assertEqual(decision.floor_reached.floor_start, _REPLAY_FLOOR)
 
     def test_bootstrap_exact_floor_and_newer_minimum_are_not_clamped(
         self,
     ) -> None:
         cases = (
-            _REPLAY_FLOOR,
+            _LIVE_WINDOW_START,
             _NOW - datetime.timedelta(microseconds=1),
         )
 
@@ -151,15 +134,6 @@ class TestBootstrapCursor(unittest.TestCase):
 
                 self.assertEqual(decision.pos, durable_minimum)
                 self.assertEqual(decision.durable_minimum, durable_minimum)
-                self.assertFalse(decision.clamped)
-                if durable_minimum == _REPLAY_FLOOR:
-                    assert decision.floor_reached is not None
-                    self.assertEqual(
-                        decision.floor_reached.lost_duration_seconds,
-                        0.0,
-                    )
-                else:
-                    self.assertIsNone(decision.floor_reached)
 
     def test_bootstrap_preserves_inclusive_cursor_exactly(self) -> None:
         durable_minimum = datetime.datetime(
@@ -222,112 +196,51 @@ class TestBootstrapCursor(unittest.TestCase):
                     cursor_policy.bootstrap_cursor((cursor,), now=_NOW)
 
 
-class TestReplayFloor(unittest.TestCase):
-    """Tests for the one closed four-cause replay-floor decision."""
+class TestLiveRequestStart(unittest.TestCase):
+    """Tests for Broadcastify's fixed five-minute live request window."""
 
-    def test_cause_vocabulary_is_exact(self) -> None:
-        self.assertEqual(
-            tuple(cursor_policy.ReplayFloorCause),
-            (
-                cursor_policy.ReplayFloorCause.BOOTSTRAP,
-                cursor_policy.ReplayFloorCause.RECOVERY,
-                cursor_policy.ReplayFloorCause.REPLAY_OVERRIDE,
-                cursor_policy.ReplayFloorCause.OVERLOAD,
-            ),
-        )
-
-    def test_every_cause_reports_exact_positive_lost_span(self) -> None:
+    def test_older_start_is_clamped_to_live_window(self) -> None:
         requested = _NOW - datetime.timedelta(minutes=20)
 
-        for cause in cursor_policy.ReplayFloorCause:
-            with self.subTest(cause=cause.value):
-                decision = cursor_policy.apply_replay_floor(
+        selected = cursor_policy.clamp_live_request_start(
+            requested,
+            now=_NOW,
+        )
+
+        self.assertEqual(selected, _LIVE_WINDOW_START)
+        assert selected is not None
+        self.assertGreater(selected, requested)
+
+    def test_exact_window_start_and_newer_start_are_unchanged(self) -> None:
+        cases = (
+            _LIVE_WINDOW_START,
+            _LIVE_WINDOW_START + datetime.timedelta(microseconds=1),
+        )
+
+        for requested in cases:
+            with self.subTest(requested=repr(requested)):
+                selected = cursor_policy.clamp_live_request_start(
                     requested,
                     now=_NOW,
-                    cause=cause,
                 )
 
-                self.assertEqual(decision.selected_start, _REPLAY_FLOOR)
-                self.assertEqual(decision.floor_start, _REPLAY_FLOOR)
-                evidence = decision.floor_reached
-                assert evidence is not None
-                self.assertEqual(evidence.cause, cause)
-                self.assertEqual(evidence.requested_start, requested)
-                self.assertEqual(evidence.floor_start, _REPLAY_FLOOR)
-                self.assertEqual(evidence.lost_span_start, requested)
-                self.assertEqual(evidence.lost_span_end, _REPLAY_FLOOR)
-                self.assertEqual(evidence.lost_duration_seconds, 900.0)
+                self.assertEqual(selected, requested)
 
-    def test_floor_equality_has_zero_duration_evidence_for_every_cause(
-        self,
-    ) -> None:
-        for cause in cursor_policy.ReplayFloorCause:
-            with self.subTest(cause=cause.value):
-                decision = cursor_policy.apply_replay_floor(
-                    _REPLAY_FLOOR,
-                    now=_NOW,
-                    cause=cause,
-                )
-
-                self.assertEqual(decision.selected_start, _REPLAY_FLOOR)
-                evidence = decision.floor_reached
-                assert evidence is not None
-                self.assertEqual(evidence.cause, cause)
-                self.assertEqual(evidence.lost_span_start, _REPLAY_FLOOR)
-                self.assertEqual(evidence.lost_span_end, _REPLAY_FLOOR)
-                self.assertEqual(evidence.lost_duration_seconds, 0.0)
-
-    def test_above_floor_and_omitted_start_suppress_evidence(self) -> None:
-        above = _REPLAY_FLOOR + datetime.timedelta(microseconds=1)
-
-        for cause in cursor_policy.ReplayFloorCause:
-            with self.subTest(cause=cause.value, case="above"):
-                decision = cursor_policy.apply_replay_floor(
-                    above,
-                    now=_NOW,
-                    cause=cause,
-                )
-                self.assertEqual(decision.selected_start, above)
-                self.assertIsNone(decision.floor_reached)
-            with self.subTest(cause=cause.value, case="omitted"):
-                decision = cursor_policy.apply_replay_floor(
-                    None,
-                    now=_NOW,
-                    cause=cause,
-                )
-                self.assertIsNone(decision.selected_start)
-                self.assertIsNone(decision.floor_reached)
-
-    def test_decision_and_evidence_are_frozen_slotted_values(self) -> None:
-        decision = cursor_policy.apply_replay_floor(
-            _REPLAY_FLOOR,
-            now=_NOW,
-            cause=cursor_policy.ReplayFloorCause.OVERLOAD,
+    def test_omitted_start_remains_omitted(self) -> None:
+        self.assertIsNone(
+            cursor_policy.clamp_live_request_start(None, now=_NOW)
         )
-        assert decision.floor_reached is not None
 
-        self.assertFalse(hasattr(decision, "__dict__"))
-        self.assertFalse(hasattr(decision.floor_reached, "__dict__"))
-        with self.assertRaises(dataclasses.FrozenInstanceError):
-            _assign_attribute(decision, "selected_start", _NOW)
-        with self.assertRaises(dataclasses.FrozenInstanceError):
-            _assign_attribute(
-                decision.floor_reached,
-                "lost_duration_seconds",
-                1.0,
-            )
-
-    def test_replay_floor_validates_utc_now_and_requested_start(self) -> None:
+    def test_live_window_validates_utc_now_and_requested_start(self) -> None:
         naive = datetime.datetime(2026, 7, 12, 12, 0)
-        cause = cursor_policy.ReplayFloorCause.RECOVERY
 
         with self.assertRaisesRegex(ValueError, "now must be UTC-aware"):
-            cursor_policy.apply_replay_floor(None, now=naive, cause=cause)
+            cursor_policy.clamp_live_request_start(None, now=naive)
         with self.assertRaisesRegex(
             ValueError,
             "requested_start must be UTC-aware",
         ):
-            cursor_policy.apply_replay_floor(naive, now=_NOW, cause=cause)
+            cursor_policy.clamp_live_request_start(naive, now=_NOW)
 
 
 class TestPageCursorCapability(unittest.TestCase):
