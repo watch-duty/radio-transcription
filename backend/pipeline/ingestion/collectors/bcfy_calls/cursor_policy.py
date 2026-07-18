@@ -146,7 +146,7 @@ def clamp_live_request_start(
         field_name="requested_start",
     )
     live_window_start = validated_now - _LIVE_REQUEST_WINDOW
-    return max(validated_start, live_window_start)
+    return min(max(validated_start, live_window_start), validated_now)
 
 
 class LeaseCursor:

@@ -113,6 +113,16 @@ class TestLiveRequestStart(unittest.TestCase):
 
         self.assertEqual(selected, _LIVE_WINDOW_START)
 
+    def test_future_start_is_clamped_at_request_boundary(self) -> None:
+        requested = _NOW + datetime.timedelta(seconds=1)
+
+        selected = cursor_policy.clamp_live_request_start(
+            requested,
+            now=_NOW,
+        )
+
+        self.assertEqual(selected, _NOW)
+
     def test_exact_window_start_and_newer_start_are_unchanged(self) -> None:
         cases = (
             _LIVE_WINDOW_START,
