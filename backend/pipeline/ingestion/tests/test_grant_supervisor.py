@@ -1290,6 +1290,11 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
             feed_store.FeedGrant,
             feed_store.LeasedFeed,
         ] = _Runner()
+        grant = _feed_grant(uuid.uuid4(), 1)
+        control.queue_claims(
+            grant_control.ClaimMode.PRIMARY,
+            grant_control.ClaimedGrant(grant, _feed_payload(grant)),
+        )
         control.claim_gate = asyncio.Event()
         supervisor = self._supervisor(
             worker_profiles.LEGACY_PROFILE,
@@ -1312,6 +1317,12 @@ class TestGrantSupervisor(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(heartbeat_stopped.is_set())
         control.claim_gate.set()
         await admission
+        await asyncio.sleep(0)
+        self.assertEqual(supervisor._registry, {})
+        self.assertEqual(runner.contexts, {})
+        self.assertTrue(
+            all(count == 0 for count in supervisor._reserved_by_domain.values())
+        )
 
     async def test_shutdown_rejects_cancellation_resistant_runner(
         self,

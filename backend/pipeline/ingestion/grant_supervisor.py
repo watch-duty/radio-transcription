@@ -455,6 +455,8 @@ class GrantSupervisor:
             claims = await domain.claim(mode, owner_worker_id, reservation)
             self._require_claim_count(claims, reservation)
             self._validate_claim_batch(domain, owner_worker_id, claims)
+            if self._shutting_down:
+                return 0
             for claim in claims:
                 self._consume_reservation(domain.domain_id)
                 remaining_reservation -= 1
