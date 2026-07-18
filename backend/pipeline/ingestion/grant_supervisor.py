@@ -455,8 +455,6 @@ class GrantSupervisor:
             claims = await domain.claim(mode, owner_worker_id, reservation)
             self._require_claim_count(claims, reservation)
             self._validate_claim_batch(domain, owner_worker_id, claims)
-            if self._shutting_down:
-                return 0
             for claim in claims:
                 self._consume_reservation(domain.domain_id)
                 remaining_reservation -= 1
@@ -577,11 +575,13 @@ class GrantSupervisor:
         domain: _ErasedRegisteredDomain,
         claim: _ErasedClaim,
     ) -> None:
-        """Install one exact generation and start its isolated runner.
+        """Install one exact generation and start or close its runner.
 
         A strictly newer same-worker generation replaces the current registry
         entry without increasing the domain ownership count. The superseded
-        runner remains task-tracked until it closes.
+        runner remains task-tracked until it closes. Claims that settle during
+        shutdown are installed as closed for later neutral finalization without
+        invoking their runner.
 
         Args:
             domain: Domain that produced the validated claim.
@@ -614,6 +614,10 @@ class GrantSupervisor:
                 and not superseded.runner_task.done()
             ):
                 superseded.runner_task.cancel()
+        if self._shutting_down:
+            managed.context.stop_requested.set()
+            managed.runner_closed = True
+            return
         task = asyncio.create_task(self._run_managed(managed))
         managed.runner_task = task
         self._runner_tasks.add(task)
@@ -676,8 +680,9 @@ class GrantSupervisor:
             return
         try:
             task.result()
-        except Exception:
+        except Exception as exc:
             logger.exception("Managed grant task escaped its isolation point")
+            self._surface_integrity_failure(exc)
 
     def _handle_runner_closed(self, managed: _ManagedGrant) -> None:
         if not self._is_current(managed) or not managed.runner_closed:
@@ -818,8 +823,9 @@ class GrantSupervisor:
             return
         try:
             task.result()
-        except Exception:
+        except Exception as exc:
             logger.exception("Grant finalization escaped its isolation point")
+            self._surface_integrity_failure(exc)
 
     async def heartbeat_cycle(
         self,
@@ -891,7 +897,7 @@ class GrantSupervisor:
                     failure = grant_control.GrantControlIntegrityError(
                         "heartbeat returned an unknown disposition"
                     )
-                    self._fail_heartbeat_domain((managed,), failure)
+                    self._fail_heartbeat_domain(expected, failure)
                     continue
                 if managed.runner_closed:
                     self._handle_runner_closed(managed)
@@ -949,7 +955,7 @@ class GrantSupervisor:
             wait_timeout_sec: Maximum remaining shutdown time to wait.
 
         Returns:
-            Whether a claim task remains capable of registering new work.
+            Whether a known claim mutation remains unsettled.
         """
         claim_tasks = tuple(self._claim_tasks)
         if not claim_tasks:
@@ -960,8 +966,6 @@ class GrantSupervisor:
         )
         if not pending_claims:
             return False
-        for managed in tuple(self._registry.values()):
-            managed.context.stop_requested.set()
         return True
 
     async def shutdown(
@@ -1013,12 +1017,13 @@ class GrantSupervisor:
 
         self._admission_enabled = False
         self._shutting_down = True
-        if await self._claim_shutdown_blocker(remaining_external_time()):
-            raise SupervisorNotDrainedError
 
         initial = tuple(self._registry.values())
         for managed in initial:
             managed.context.stop_requested.set()
+
+        if await self._claim_shutdown_blocker(remaining_external_time()):
+            raise SupervisorNotDrainedError
 
         runner_tasks = tuple(self._runner_tasks)
         remaining = await self._wait_tasks(
