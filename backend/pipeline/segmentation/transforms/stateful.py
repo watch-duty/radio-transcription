@@ -215,15 +215,7 @@ class StaleTimerManager:
 
     def schedule(self, deadline_ms: int, *, is_backfill: bool) -> None:
         """Schedules either or both timers based on the backfill mode."""
-        if is_backfill:
-            # In backfill mode, use ONLY Event Time (Watermark) timer.
-            self.proc_timer.clear()
-            if deadline_ms > 0:
-                deadline_s = deadline_ms / common_constants.MS_PER_SECOND
-                self.event_timer.set(Timestamp(seconds=deadline_s))
-            else:
-                self.event_timer.clear()
-        elif deadline_ms > 0:
+        if deadline_ms > 0:
             # Set event time timer based on data timeline
             deadline_s = deadline_ms / common_constants.MS_PER_SECOND
             self.event_timer.set(Timestamp(seconds=deadline_s))
@@ -330,14 +322,9 @@ def _manage_out_of_order_timers(
             # to satisfy the Runner V2 gate without triggering artificial
             # watermark delays or Pub/Sub source gridlocks.
             gap_timer_event.set(timestamp + WINDMILL_TIMER_MIN_ADVANCE_SECS)
-            if is_backfill:
-                gap_timer_proc.clear()
-            else:
-                gap_timer_proc.set(
-                    Timestamp(
-                        seconds=time.time() + WINDMILL_TIMER_MIN_ADVANCE_SECS
-                    )
-                )
+            gap_timer_proc.set(
+                Timestamp(seconds=time.time() + WINDMILL_TIMER_MIN_ADVANCE_SECS)
+            )
             return True
 
         if not order_timer_active:
@@ -346,14 +333,11 @@ def _manage_out_of_order_timers(
                 / float(common_constants.MS_PER_SECOND)
             )
             gap_timer_event.set(deadline_watermark)
-            if is_backfill:
-                gap_timer_proc.clear()
-            else:
-                deadline_proc = time.time() + (
-                    order_config.out_of_order_timeout_ms
-                    / float(common_constants.MS_PER_SECOND)
-                )
-                gap_timer_proc.set(Timestamp(seconds=deadline_proc))
+            deadline_proc = time.time() + (
+                order_config.out_of_order_timeout_ms
+                / float(common_constants.MS_PER_SECOND)
+            )
+            gap_timer_proc.set(Timestamp(seconds=deadline_proc))
             return True
 
         return order_timer_active
@@ -578,10 +562,7 @@ def _reschedule_gap_timeout(
         deadline_proc = time.time() + timeout_sec
 
     gap_timer_event.set(deadline_watermark)
-    if is_backfill:
-        gap_timer_proc.clear()
-    else:
-        gap_timer_proc.set(Timestamp(seconds=deadline_proc))
+    gap_timer_proc.set(Timestamp(seconds=deadline_proc))
     return True
 
 

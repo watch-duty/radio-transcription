@@ -4037,8 +4037,7 @@ class DlqTaggingTest(unittest.TestCase):
         )
 
         self.assertTrue(watermark_timer.set.called)
-        self.assertFalse(processing_timer.set.called)
-        self.assertTrue(processing_timer.clear.called)
+        self.assertTrue(processing_timer.set.called)
 
 
 class UploadRawSegmentFnTest(unittest.TestCase):
