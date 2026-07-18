@@ -336,8 +336,6 @@ class BcfyCallsSidRunner:
             )
         if isinstance(exception, sid_processor.SidProcessorAuthorityLost):
             return _TerminalSelection(_TerminalSignal.LOSS)
-        if isinstance(exception, sid_processor.SidProcessorPlannedDrain):
-            return _TerminalSelection(_TerminalSignal.STOP)
         if isinstance(exception, sid_processor.SidProcessorUndrained):
             message = "SID processor retained an undrained exact page"
             integrity = SidRunnerIntegrityError(message)

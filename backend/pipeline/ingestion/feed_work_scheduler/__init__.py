@@ -38,7 +38,6 @@ BoundaryDisposition = _types.BoundaryDisposition
 BoundaryGrantRejected = _types.BoundaryGrantRejected
 BoundaryResult = _types.BoundaryResult
 BoundaryWork = _types.BoundaryWork
-FeedRemoved = _types.FeedRemoved
 FinalPageCovered = _types.FinalPageCovered
 FinalPageGrantRejected = _types.FinalPageGrantRejected
 FinalPageNoProgress = _types.FinalPageNoProgress
@@ -88,7 +87,6 @@ __all__ = [
     "CohortSubmission",
     "CohortTerminalDisposition",
     "CohortTerminalFacts",
-    "FeedRemoved",
     "FeedWorkScheduler",
     "FinalPageCovered",
     "FinalPageGrantRejected",

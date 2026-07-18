@@ -401,9 +401,6 @@ class _ReferenceModel:
         self._ready_members: set[uuid.UUID] = set()
         self._active_by_feed: dict[uuid.UUID, int] = {}
         self._active_by_slot: dict[int, int] = {}
-        self._retired_scopes: set[
-            tuple[ingestion_lease_store.LeaseGrant, uuid.UUID]
-        ] = set()
         self._pending_boundary_by_feed: dict[uuid.UUID, int] = {}
         self._flushing_boundary_by_feed: dict[uuid.UUID, int] = {}
         self._released_sequences: set[int] = set()
@@ -450,7 +447,6 @@ class _ReferenceModel:
     ) -> int | None:
         if (
             self.fatal
-            or (grant, feed_id) in self._retired_scopes
             or self.pressure_paused
             or self.held >= self.limits.capacity
         ):
@@ -607,13 +603,12 @@ class _ReferenceModel:
         self._assert_invariants()
         return purged
 
-    def retire_feed(
+    def purge_feed(
         self,
         grant: ingestion_lease_store.LeaseGrant,
         feed_id: uuid.UUID,
-    ) -> tuple[tuple[int, ...], int | None]:
-        """Retire only one exact grant/Feed scope."""
-        self._retired_scopes.add((grant, feed_id))
+    ) -> tuple[int, ...]:
+        """Purge queued work only for one exact grant/Feed scope."""
         purged = tuple(
             sequence
             for sequence, record in sorted(self._records.items())
@@ -633,11 +628,8 @@ class _ReferenceModel:
             else:
                 del self._pending_boundary_by_feed[feed_id]
             self._release(sequence)
-        active = self._active_by_feed.get(feed_id)
-        if active is not None and self._records[active].grant != grant:
-            active = None
         self._assert_invariants()
-        return purged, active
+        return purged
 
     def mark_fatal(self) -> None:
         self.fatal = True
@@ -934,7 +926,7 @@ class TestConservationModel(unittest.TestCase):
         )
         self.assertEqual(model.snapshot().held, 3)
 
-    def test_model_feed_retirement_is_exact_and_active_is_retained(
+    def test_model_feed_purge_is_exact_and_active_is_retained(
         self,
     ) -> None:
         model = _ReferenceModel()
@@ -950,12 +942,12 @@ class TestConservationModel(unittest.TestCase):
         )
         self.assertEqual(model.dispatch(0), active)
 
-        purged, retained_active = model.retire_feed(old, feed_id)
+        purged = model.purge_feed(old, feed_id)
 
         self.assertEqual(purged, (removed,))
-        self.assertEqual(retained_active, active)
         self.assertIn(successor_record, model.live_sequences)
-        self.assertIsNone(model.admit_call(feed_id, old, source_order=3))
+        later = model.admit_call(feed_id, old, source_order=3)
+        self.assertIsNotNone(later)
         model.terminalize(typing.cast("int", active))
         self.assertEqual(model.dispatch(0), successor_record)
 
@@ -1079,7 +1071,7 @@ class TestConservationModel(unittest.TestCase):
                                 )
                             )
                     elif command == 7:
-                        model.retire_feed(
+                        model.purge_feed(
                             generator.choice(grants),
                             generator.choice(_FEED_IDS),
                         )
@@ -1613,18 +1605,8 @@ class TestShardModel(unittest.IsolatedAsyncioTestCase):
                     elif command == 4:
                         grant = generator.choice(grants)
                         feed_id = generator.choice(_FEED_IDS)
-                        expected_released, expected_active = model.retire_feed(
-                            grant, feed_id
-                        )
-                        actual = await shard.retire_feed(grant, feed_id)
-                        self.assertEqual(
-                            actual.released_sequences,
-                            expected_released,
-                        )
-                        self.assertEqual(
-                            actual.active_sequence,
-                            expected_active,
-                        )
+                        expected_released = model.purge_feed(grant, feed_id)
+                        await shard.purge_feed(grant, feed_id)
                         for sequence in expected_released:
                             records.pop(sequence)
 
@@ -2061,7 +2043,13 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
             high_water=1,
             resume_at=0,
         )
-        shard = shard_module._Shard(0, executor, limits=limits)
+        fatal = asyncio.Event()
+        shard = shard_module._Shard(
+            0,
+            executor,
+            limits=limits,
+            fatal_observer=lambda _failure: fatal.set(),
+        )
         grant = _grant()
         await shard.start()
         await _admit_work(
@@ -2105,7 +2093,13 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
             high_water=1,
             resume_at=0,
         )
-        shard = shard_module._Shard(0, executor, limits=limits)
+        fatal = asyncio.Event()
+        shard = shard_module._Shard(
+            0,
+            executor,
+            limits=limits,
+            fatal_observer=lambda _failure: fatal.set(),
+        )
         grant = _grant()
         await shard.start()
         await _admit_work(
@@ -2120,7 +2114,7 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
         worker_task = shard._workers[0].task
         self.assertIsNotNone(worker_task)
         typing.cast("asyncio.Task[None]", worker_task).cancel()
-        await shard.wait_for_fatal()
+        await fatal.wait()
 
         with self.assertRaises(shard_module._ShardFatalError):
             await blocked
@@ -2141,10 +2135,12 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         shard_module = _scheduler_shard()
         executor = _FailingExecutor()
+        fatal = asyncio.Event()
         shard = shard_module._Shard(
             0,
             executor,
             limits=self._limits(workers=1),
+            fatal_observer=lambda _failure: fatal.set(),
         )
         await shard.start()
         await _admit_work(
@@ -2152,7 +2148,7 @@ class TestShardWorkers(unittest.IsolatedAsyncioTestCase):
             _call_work(_FEED_IDS[0], _grant(), 0),
         )
         await asyncio.wait_for(executor.entered.wait(), timeout=1)
-        await shard.wait_for_fatal()
+        await fatal.wait()
 
         snapshot = await shard.snapshot()
         self.assertTrue(snapshot.fatal)

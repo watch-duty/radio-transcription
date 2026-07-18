@@ -1653,26 +1653,6 @@ class Undrained:
     reason: LaneCloseReason
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class FeedRemoved:
-    """Evidence-neutral result for one exact lane-local Feed removal.
-
-    Attributes:
-        grant: Complete immutable Lease generation scoped by the removal.
-        feed_id: Feed retired only from that exact grant.
-        released_count: Queued calls and pending boundaries safely released.
-        active_retained: Whether admitted active work remains to settle.
-    """
-
-    grant: ingestion_lease_store.LeaseGrant
-    feed_id: uuid.UUID
-    released_count: int
-    active_retained: bool
-
-    def __post_init__(self) -> None:
-        _require_nonnegative_integer(self.released_count, "released_count")
-
-
 _ExecutorCompleted = CallCompleted
 _ExecutorFinalClosurePending = CallFinalClosurePending
 _ExecutorReplayableDirectFailure = CallReplayableDirectFailure
@@ -1773,9 +1753,6 @@ class _ShardSnapshot:
     records: tuple[_RecordSnapshot, ...]
     boundaries: tuple[_BoundarySnapshot, ...]
     workers: tuple[_WorkerSnapshot, ...]
-    retired_scopes: frozenset[
-        tuple[ingestion_lease_store.LeaseGrant, uuid.UUID]
-    ]
     admission_open: bool
     fatal: bool
 
@@ -1786,15 +1763,3 @@ class _PurgeResult:
 
     released_sequences: tuple[int, ...]
     active_sequences: tuple[int, ...]
-
-
-@dataclasses.dataclass(frozen=True, slots=True)
-class _RetireFeedResult:
-    """Localized Feed retirement result for later lane coordination."""
-
-    released_sequences: tuple[int, ...]
-    released_call_records: tuple[_CallRecord, ...]
-    retained_final_pending_records: tuple[_CallRecord, ...]
-    released_calls: tuple[tuple[int, int], ...]
-    released_boundaries: tuple[tuple[int, int], ...]
-    active_sequence: int | None

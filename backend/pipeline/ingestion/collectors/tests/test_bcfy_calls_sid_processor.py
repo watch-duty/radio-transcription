@@ -443,15 +443,14 @@ class _ProcessorReplayPageFinalizer:
 
 
 class _RecordingLane:
-    """Record exact coverage/retirement without downstream work."""
+    """Record exact coverage and membership-refresh purges."""
 
     def __init__(
         self,
         *cover_actions: object,
         trace: list[str] | None = None,
     ) -> None:
-        self.removed: list[uuid.UUID] = []
-        self.retired: set[uuid.UUID] = set()
+        self.purged: list[uuid.UUID] = []
         self.trace = trace
         self.cover_actions = collections.deque(cover_actions)
         self.covers: list[
@@ -462,21 +461,8 @@ class _RecordingLane:
             ]
         ] = []
 
-    async def remove_feed(
-        self,
-        feed_id: uuid.UUID,
-    ) -> feed_work_scheduler.FeedRemoved:
-        self.removed.append(feed_id)
-        self.retired.add(feed_id)
-        return feed_work_scheduler.FeedRemoved(
-            grant=_GRANT,
-            feed_id=feed_id,
-            released_count=0,
-            active_retained=True,
-        )
-
-    async def is_feed_retired(self, feed_id: uuid.UUID) -> bool:
-        return feed_id in self.retired
+    async def purge_feed(self, feed_id: uuid.UUID) -> None:
+        self.purged.append(feed_id)
 
     async def cover_page(  # noqa: PLR0912
         self,
@@ -1415,7 +1401,9 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual([call.feed_id for call in next_page], [_FEED_B])
 
-    async def test_snapshot_removal_and_reactivation_plan_drain(self) -> None:
+    async def test_snapshot_removal_purges_and_reactivation_is_adopted(
+        self,
+    ) -> None:
         member_a = _member(_FEED_A, "00123-00045")
         member_b = _member(_FEED_B, "00123-00046")
         store = _ScriptedMembershipStore(
@@ -1433,12 +1421,12 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
 
         await processor._refresh_membership()
 
-        self.assertEqual(lane.removed, [_FEED_B])
+        self.assertEqual(lane.purged, [_FEED_B])
         self.assertNotIn("https://audio/retired", processor._pending_by_url)
         _complete_admitted(pending)
         self.assertNotIn("https://audio/retired", processor._recent_urls)
-        with self.assertRaises(sid_processor.SidProcessorPlannedDrain):
-            await processor._refresh_membership()
+        await processor._refresh_membership()
+        self.assertEqual(set(processor._members_by_id), {_FEED_A, _FEED_B})
 
     async def test_route_uses_exact_leading_zero_source_key(self) -> None:
         store = _ScriptedMembershipStore(
@@ -1686,7 +1674,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
 
         await processor._refresh_membership()
 
-        self.assertEqual(lane.removed, [_FEED_A])
+        self.assertEqual(lane.purged, [_FEED_A])
         self.assertEqual(
             processor._pending_by_url,
             {"https://audio/b": _FEED_B},
@@ -2318,10 +2306,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         class _RemovalFailureLane(_RecordingLane):
-            async def remove_feed(
-                self,
-                feed_id: uuid.UUID,
-            ) -> feed_work_scheduler.FeedRemoved:
+            async def purge_feed(self, feed_id: uuid.UUID) -> None:
                 del feed_id
                 message = "lane removal failed"
                 raise OSError(message)
@@ -2563,12 +2548,13 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls_provider.calls, [])
         self.assertEqual(wait.calls, [])
 
-    async def test_cadence_reactivation_planned_drain_precedes_fetch(
+    async def test_cadence_reactivation_is_adopted_before_fetch(
         self,
     ) -> None:
         member_a = _member(_FEED_A, "00123-00045")
         member_b = _member(_FEED_B, "00123-00046")
         calls_provider = _ScriptedProvider(
+            _page(last_pos=_NOW.timestamp()),
             _page(last_pos=_NOW.timestamp()),
             _page(last_pos=_NOW.timestamp()),
         )
@@ -2580,14 +2566,13 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         processor, _ = _processor(
             store,
             calls_provider=calls_provider,
-            wait=_RecordingWait(),
+            wait=_StoppingWait(stop_after=3),
         )
 
-        with self.assertRaises(sid_processor.SidProcessorPlannedDrain):
-            await processor.run(asyncio.Event())
+        await processor.run(asyncio.Event())
 
         self.assertEqual(len(store.calls), 3)
-        self.assertEqual(len(calls_provider.calls), 2)
+        self.assertEqual(len(calls_provider.calls), 3)
 
     async def test_stop_before_refresh_and_after_blocked_refresh(self) -> None:
         stop_requested = asyncio.Event()
@@ -3067,14 +3052,14 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(settlement, return_exceptions=True)
             await scheduler.close()
 
-    async def test_no_progress_nonboundary_rejection_tombstones_exact_feed(
+    async def test_no_progress_rejection_waits_for_membership_refresh(
         self,
     ) -> None:
         member_a = _member(_FEED_A, "00123-00045")
         member_b = _member(_FEED_B, "00123-00046")
         membership_store = _ScriptedMembershipStore(
             _snapshot(4, member_a, member_b),
-            ingestion_lease_store.MembershipUnchanged(_GRANT, 4),
+            _snapshot(5, member_b),
         )
         store = mock.create_autospec(
             ingestion_lease_store.IngestionLeaseStore,
@@ -3135,14 +3120,10 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
                 )
 
             emit_missing_call.assert_not_called()
-            self.assertTrue(await lane.is_feed_retired(_FEED_A))
-            self.assertFalse(await lane.is_feed_retired(_FEED_B))
-            self.assertEqual(set(processor._members_by_id), {_FEED_B})
             self.assertEqual(
-                set(processor._members_by_source),
-                {"00123-00046"},
+                set(processor._members_by_id),
+                {_FEED_A, _FEED_B},
             )
-            self.assertIn(_FEED_A, processor._retired_feed_ids)
             assert processor._lease_cursor is not None
             self.assertEqual(processor._lease_cursor.pos, _NOW)
             self.assertEqual(processor._lease_cursor.next_page_sequence, 1)
@@ -3159,6 +3140,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             )
 
             await processor._refresh_membership()
+            self.assertEqual(set(processor._members_by_id), {_FEED_B})
             prepared = _prepared_work(
                 processor,
                 (
@@ -3214,7 +3196,10 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         processor = sid_processor.BcfyCallsSidProcessor(
             _GRANT,
             _claim_payload(),
-            _ScriptedMembershipStore(_snapshot(4, member)),
+            _ScriptedMembershipStore(
+                _snapshot(4, member),
+                _snapshot(5),
+            ),
             _ScriptedProvider(),
             lane,
             now=lambda: _NOW,
@@ -3238,14 +3223,15 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
                 )
 
             emit_missing_call.assert_not_called()
-            self.assertTrue(await lane.is_feed_retired(_FEED_A))
-            self.assertEqual(processor._members_by_id, {})
+            self.assertEqual(set(processor._members_by_id), {_FEED_A})
             self.assertEqual(processor._pending_by_url, {})
             self.assertIsNone(processor._active_page_ledger)
             assert processor._lease_cursor is not None
             self.assertEqual(processor._lease_cursor.pos, _NOW)
             self.assertEqual(processor._lease_cursor.next_page_sequence, 1)
             self.assertEqual((await scheduler._snapshot()).held, 0)
+            await processor._refresh_membership()
+            self.assertEqual(processor._members_by_id, {})
         finally:
             await scheduler.close()
 
@@ -3288,7 +3274,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             )
         self.assertEqual(len(lane.covers), 1)
 
-    async def test_quarantine_tombstone_survives_unchanged_membership(
+    async def test_quarantine_waits_for_authoritative_membership_change(
         self,
     ) -> None:
         member = _member(_FEED_A, "00123-00045")
@@ -3297,7 +3283,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             _ScriptedMembershipStore(
                 _snapshot(4, member),
                 ingestion_lease_store.MembershipUnchanged(_GRANT, 4),
-                _snapshot(5, member),
+                _snapshot(5),
             ),
             lane=lane,
         )
@@ -3307,13 +3293,13 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
             request=processor._select_request_position(),
         )
 
-        self.assertEqual(lane.removed, [_FEED_A])
-        self.assertEqual(processor._members_by_id, {})
-        self.assertIn(_FEED_A, processor._retired_feed_ids)
+        self.assertEqual(lane.purged, [])
+        self.assertEqual(set(processor._members_by_id), {_FEED_A})
+        await processor._refresh_membership()
+        self.assertEqual(set(processor._members_by_id), {_FEED_A})
         await processor._refresh_membership()
         self.assertEqual(processor._members_by_id, {})
-        with self.assertRaises(sid_processor.SidProcessorPlannedDrain):
-            await processor._refresh_membership()
+        self.assertEqual(lane.purged, [_FEED_A])
 
     async def test_unanimous_page_failure_promotes_only_after_page_close(
         self,

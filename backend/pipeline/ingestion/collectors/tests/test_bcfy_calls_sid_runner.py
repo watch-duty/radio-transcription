@@ -563,13 +563,6 @@ class TestBcfyCallsSidRunner(unittest.IsolatedAsyncioTestCase):
                 feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS,
                 grant_control.RunLost(),
             ),
-            (
-                sid_processor.SidProcessorPlannedDrain(uuid.UUID(int=1)),
-                feed_work_scheduler.LaneCloseReason.PLANNED_DRAIN,
-                grant_control.RunStopped(
-                    grant_control.TerminalCause.PLANNED_DRAIN
-                ),
-            ),
         )
         for terminal, reason, expected in cases:
             with self.subTest(terminal=type(terminal).__name__):

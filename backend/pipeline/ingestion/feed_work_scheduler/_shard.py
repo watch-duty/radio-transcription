@@ -22,10 +22,6 @@ class _ShardClosedError(RuntimeError):
     """Admission reached a shard that no longer accepts work."""
 
 
-class _FeedRetiredError(RuntimeError):
-    """Admission reached a Feed retired from this shard."""
-
-
 class _ReplayBlockedError(RuntimeError):
     """Admission reached a same-Feed/page replay barrier."""
 
@@ -64,7 +60,6 @@ class _WorkerSlot:
     task: asyncio.Task[None] | None = None
     active_cohort: _types._CohortRecord | None = None
     cancellation_sequence: int | None = None
-    cancel_expected: bool = False
     abandoned: bool = False
 
     @property
@@ -80,7 +75,6 @@ class _CancellationRequest:
     """Exact registered worker cancellation awaiting settlement."""
 
     slot_id: int
-    local_sequence: int
     task: asyncio.Task[None]
 
 
@@ -105,7 +99,6 @@ class _PageNeutralizationObserver(typing.Protocol):
         records: tuple[_types._CallRecord, ...],
         *,
         replay_blocked: bool,
-        retired_member: ingestion_lease_store.LeaseMemberIdentity | None,
     ) -> None:
         """Observe one exact neutralized record tuple."""
 
@@ -123,7 +116,6 @@ class _Shard:
             [
                 _types._CallRecord,
                 _types._ExecutorOutcome,
-                _types._RetireFeedResult | None,
             ],
             None,
         ]
@@ -244,7 +236,6 @@ class _Shard:
         self._lock = asyncio.Lock()
         self._work_ready = asyncio.Condition(self._lock)
         self._capacity_changed = asyncio.Condition(self._lock)
-        self._fatal_event = asyncio.Event()
         self._worker_changed = asyncio.Event()
 
         self._held = 0
@@ -271,9 +262,6 @@ class _Shard:
             uuid.UUID,
             _types._BoundaryRecord,
         ] = {}
-        self._retired_scopes: set[
-            tuple[ingestion_lease_store.LeaseGrant, uuid.UUID]
-        ] = set()
         self._replay_blocks: set[
             tuple[ingestion_lease_store.LeaseGrant, int, uuid.UUID]
         ] = set()
@@ -294,7 +282,6 @@ class _Shard:
         self._started = False
         self._stopping = False
         self._closed = False
-        self._admission_open = True
         self._fatal: BaseException | None = None
 
     @property
@@ -533,7 +520,6 @@ class _Shard:
     ) -> bool:
         """Settle one already-validated immutable batch exactly once."""
         retryable = False
-        released_calls = []
         async with self._lock:
             for record, disposition in results:
                 current = self._flushing_boundaries.get(record.local_sequence)
@@ -550,29 +536,9 @@ class _Shard:
                     self._restore_retryable_boundary_locked(record)
                 else:
                     self._held -= 1
-                    if (
-                        disposition
-                        is _types.BoundaryDisposition.MEMBER_REJECTED
-                    ):
-                        retirement = self._retire_feed_locked(
-                            record.grant,
-                            record.feed_id,
-                        )
-                        released_calls.extend(retirement.released_call_records)
                     self._ready_call_or_boundary_locked(record.feed_id)
                     self._after_release_locked(1)
             self._check_conservation_locked()
-        if self._page_neutralization_observer is not None:
-            for record in released_calls:
-                self._page_neutralization_observer(
-                    (record,),
-                    replay_blocked=False,
-                    retired_member=record.identity.member,
-                )
-        await self._notify_settlements(
-            tuple(released_calls),
-            _types.CallSettlement.MEMBERSHIP_REJECTED,
-        )
         return retryable
 
     async def discard_boundary_batch(
@@ -828,8 +794,11 @@ class _Shard:
                 records=records,
                 boundaries=boundaries,
                 workers=workers,
-                retired_scopes=frozenset(self._retired_scopes),
-                admission_open=self._admission_open,
+                admission_open=(
+                    not self._stopping
+                    and not self._closed
+                    and self._fatal is None
+                ),
                 fatal=self._fatal is not None,
             )
 
@@ -902,7 +871,6 @@ class _Shard:
         if not isinstance(outcome, _TERMINAL_EXECUTOR_OUTCOMES):
             message = "outcome is not scheduling-terminal"
             raise TypeError(message)
-        retirement = None
         notifications: list[
             tuple[tuple[_types._CallRecord, ...], _types.CallSettlement]
         ] = []
@@ -969,7 +937,6 @@ class _Shard:
                             self._page_neutralization_observer(
                                 blocked_records,
                                 replay_blocked=True,
-                                retired_member=None,
                             )
                         notifications.append(
                             (
@@ -977,43 +944,15 @@ class _Shard:
                                 _types.CallSettlement.REPLAY_BLOCKED,
                             )
                         )
-                if isinstance(
-                    outcome,
-                    _types._ExecutorMembershipRejected,
-                ):
-                    retirement = self._retire_feed_locked(
-                        cohort.grant,
-                        cohort.feed_id,
-                    )
-                    if (
-                        retirement.released_call_records
-                        and self._page_neutralization_observer is not None
-                    ):
-                        self._page_neutralization_observer(
-                            retirement.released_call_records,
-                            replay_blocked=False,
-                            retired_member=cohort.records[0].identity.member,
-                        )
                 self._ready_call_or_boundary_locked(cohort.feed_id)
                 self._check_conservation_locked()
         for records, settlement in notifications:
             await self._notify_settlements(records, settlement)
-        if retirement is not None:
-            await self._notify_settlements(
-                retirement.released_call_records,
-                _types.CallSettlement.MEMBERSHIP_REJECTED,
-            )
         if (
-            isinstance(
-                outcome,
-                (
-                    _types._ExecutorAuthorityLost,
-                    _types._ExecutorMembershipRejected,
-                ),
-            )
+            isinstance(outcome, _types._ExecutorAuthorityLost)
             and self._outcome_observer is not None
         ):
-            self._outcome_observer(cohort.records[0], outcome, retirement)
+            self._outcome_observer(cohort.records[0], outcome)
 
     async def purge_exact(  # noqa: PLR0912
         self,
@@ -1237,7 +1176,6 @@ class _Shard:
             self._page_neutralization_observer(
                 tuple(released_records),
                 replay_blocked=False,
-                retired_member=None,
             )
         await self._notify_settlements(
             tuple(final_pending_records),
@@ -1245,74 +1183,33 @@ class _Shard:
         )
         return result
 
-    async def retire_feed(
+    async def purge_feed(
         self,
         grant: ingestion_lease_store.LeaseGrant,
         feed_id: uuid.UUID,
-    ) -> _types._RetireFeedResult:
-        """Reject one exact grant/Feed and purge only its queued calls."""
+    ) -> None:
+        """Purge queued work for one Feed removed at membership refresh."""
         async with self._lock:
-            result = self._retire_feed_locked(grant, feed_id)
+            released_records = self._purge_feed_locked(grant, feed_id)
         await self._notify_settlements(
-            result.released_call_records,
+            released_records,
             _types.CallSettlement.MEMBERSHIP_REJECTED,
         )
-        if self._page_neutralization_observer is not None:
-            for record in (
-                *result.released_call_records,
-                *result.retained_final_pending_records,
-            ):
-                self._page_neutralization_observer(
-                    (record,),
-                    replay_blocked=False,
-                    retired_member=record.identity.member,
-                )
-        return result
+        self._observe_neutralized_records(released_records)
 
-    async def forget_retired_grant(
-        self,
-        grant: ingestion_lease_store.LeaseGrant,
-    ) -> None:
-        """Drop Feed-removal history after exact mutation closure."""
-        async with self._lock:
-            self._retired_scopes = {
-                scope for scope in self._retired_scopes if scope[0] != grant
-            }
-            self._replay_blocks = {
-                key for key in self._replay_blocks if key[0] != grant
-            }
-            self._uncertain_final_pages = {
-                key: uncertainty
-                for key, uncertainty in self._uncertain_final_pages.items()
-                if key[0] != grant
-            }
-
-    def _retire_feed_locked(  # noqa: PLR0912
+    def _purge_feed_locked(
         self,
         grant: ingestion_lease_store.LeaseGrant,
         feed_id: uuid.UUID,
-    ) -> _types._RetireFeedResult:
-        """Retire one exact scope while the shard lock is held."""
-        self._retired_scopes.add((grant, feed_id))
+    ) -> tuple[_types._CallRecord, ...]:
+        """Purge queued work only; active or terminal work settles normally."""
         queue = self._feed_queues.get(feed_id, collections.deque())
         kept: collections.deque[_types._CohortRecord] = collections.deque()
-        released = []
-        released_call_records = []
-        retained_final_pending_records = tuple(
-            record
-            for identity, record in self._final_pending.items()
-            if identity.grant == grant and identity.feed_id == feed_id
-        )
-        released_calls = []
-        released_boundaries = []
+        released_records = []
         for cohort in queue:
             if cohort.grant == grant:
                 for record in cohort.records:
-                    released.append(record.local_sequence)
-                    released_call_records.append(record)
-                    released_calls.append(
-                        (record.work.page_sequence, record.work.source_order)
-                    )
+                    released_records.append(record)
                     del self._records[record.local_sequence]
                 self._held -= len(cohort.records)
             else:
@@ -1325,55 +1222,13 @@ class _Shard:
         scope = (grant, feed_id)
         pending_boundary = self._pending_boundaries.pop(scope, None)
         if pending_boundary is not None:
-            released.append(pending_boundary.local_sequence)
-            if pending_boundary.provisional_page_sequence is not None:
-                released_boundaries.append(
-                    (
-                        pending_boundary.provisional_page_sequence,
-                        pending_boundary.provisional_count,
-                    )
-                )
             self._held -= 1
-        active = self._active_by_feed.get(feed_id)
-        active_sequence = (
-            active.records[0].local_sequence
-            if active is not None and active.grant == grant
-            else None
+        self._ready_call_or_boundary_locked(feed_id)
+        self._after_release_locked(
+            len(released_records) + (pending_boundary is not None)
         )
-        if active_sequence is None and retained_final_pending_records:
-            active_sequence = retained_final_pending_records[0].local_sequence
-        retained = self._retained_by_feed.get(feed_id)
-        if (
-            retained is not None
-            and retained.grant == grant
-            and not self._cohort_is_unknown(retained)
-        ):
-            del self._retained_by_feed[feed_id]
-            for record in retained.records:
-                released.append(record.local_sequence)
-                released_call_records.append(record)
-                released_calls.append(
-                    (record.work.page_sequence, record.work.source_order)
-                )
-                del self._records[record.local_sequence]
-            self._held -= len(retained.records)
-        elif retained is not None and retained.grant == grant:
-            active_sequence = retained.records[0].local_sequence
-        active_boundary = self._active_boundaries.get(feed_id)
-        if active_boundary is not None and active_boundary.grant == grant:
-            active_sequence = active_boundary.local_sequence
-        self._after_release_locked(len(released))
-        self._capacity_changed.notify_all()
-        self._work_ready.notify_all()
         self._check_conservation_locked()
-        return _types._RetireFeedResult(
-            released_sequences=tuple(released),
-            released_call_records=tuple(released_call_records),
-            retained_final_pending_records=retained_final_pending_records,
-            released_calls=tuple(released_calls),
-            released_boundaries=tuple(released_boundaries),
-            active_sequence=active_sequence,
-        )
+        return tuple(released_records)
 
     async def request_cancel_exact(
         self,
@@ -1393,13 +1248,11 @@ class _Shard:
                     or task.done()
                 ):
                     continue
-                slot.cancel_expected = True
                 slot.cancellation_sequence = record.local_sequence
                 slot.abandoned = abandonment is not None
                 requests.append(
                     _CancellationRequest(
                         slot_id=slot.slot_id,
-                        local_sequence=record.local_sequence,
                         task=task,
                     )
                 )
@@ -1450,8 +1303,7 @@ class _Shard:
         slot = self._require_slot(slot_id)
         async with self._lock:
             if (
-                not slot.cancel_expected
-                or slot.cancellation_sequence is None
+                slot.cancellation_sequence is None
                 or slot.task is None
                 or slot.task.done()
             ):
@@ -1474,8 +1326,7 @@ class _Shard:
                 if (
                     record is None
                     or record.grant != grant
-                    or not slot.cancel_expected
-                    or slot.cancellation_sequence != record.local_sequence
+                    or (slot.cancellation_sequence != record.local_sequence)
                     or task is None
                     or task.done()
                 ):
@@ -1555,10 +1406,6 @@ class _Shard:
                 message = "exact grant retains outcome-unknown work"
                 raise _ShardUndrainedError(message)
 
-    async def wait_for_fatal(self) -> None:
-        """Wait until first persistent scheduler-integrity evidence exists."""
-        await self._fatal_event.wait()
-
     async def propagate_fatal(self, failure: BaseException) -> None:
         """Fail this shard from scheduler-global integrity evidence."""
         async with self._lock:
@@ -1579,7 +1426,6 @@ class _Shard:
             if self._held != 0:
                 message = "cannot close a shard with held work"
                 raise _ShardUndrainedError(message)
-            self._admission_open = False
             self._stopping = True
             self._work_ready.notify_all()
             self._capacity_changed.notify_all()
@@ -2052,7 +1898,6 @@ class _Shard:
                 self._page_neutralization_observer(
                     cohort.records,
                     replay_blocked=False,
-                    retired_member=None,
                 )
             notifications.append(
                 (cohort.records, _types.CallSettlement.REPLAY_SAFE_RELEASE)
@@ -2279,15 +2124,6 @@ class _Shard:
             for feed_id in feed_ids:
                 self._replay_blocks.discard((grant, page_sequence, feed_id))
 
-    async def is_feed_retired(
-        self,
-        grant: ingestion_lease_store.LeaseGrant,
-        feed_id: uuid.UUID,
-    ) -> bool:
-        """Return exact local-retirement state for context filtering."""
-        async with self._lock:
-            return (grant, feed_id) in self._retired_scopes
-
     @staticmethod
     def _cohort_is_unknown(cohort: _types._CohortRecord) -> bool:
         return (
@@ -2324,7 +2160,6 @@ class _Shard:
                 return
             if self._fatal is not None or self._stopping:
                 return
-            slot.cancel_expected = False
             slot.cancellation_sequence = None
             slot.abandoned = False
             self._spawn_worker_locked(slot)
@@ -2336,9 +2171,7 @@ class _Shard:
     ) -> tuple[bool, bool]:
         async with self._lock:
             expected = (
-                slot.cancel_expected
-                and slot.cancellation_sequence
-                == cohort.records[0].local_sequence
+                slot.cancellation_sequence == cohort.records[0].local_sequence
             )
             return expected, slot.abandoned
 
@@ -2347,7 +2180,7 @@ class _Shard:
         slot: _WorkerSlot,
     ) -> tuple[bool, bool]:
         async with self._lock:
-            return slot.cancel_expected, slot.abandoned
+            return slot.cancellation_sequence is not None, slot.abandoned
 
     async def _mark_fatal(self, failure: BaseException) -> None:
         async with self._lock:
@@ -2359,11 +2192,9 @@ class _Shard:
         *,
         observe: bool = True,
     ) -> None:
-        self._admission_open = False
         first = self._fatal is None
         if self._fatal is None:
             self._fatal = failure
-            self._fatal_event.set()
         if first and observe and self._fatal_observer is not None:
             self._fatal_observer(failure)
         self._worker_changed.set()
@@ -2544,7 +2375,6 @@ class _Shard:
             and record.feed_id not in self._active_by_feed
             and record.feed_id not in self._retained_by_feed
             and record.feed_id not in self._active_boundaries
-            and (record.grant, record.feed_id) not in self._retired_scopes
             and not self._is_grant_closing(record.grant)
         )
 
@@ -2564,7 +2394,6 @@ class _Shard:
             self._page_neutralization_observer(
                 records,
                 replay_blocked=False,
-                retired_member=None,
             )
 
     async def _notify_settlements(
@@ -2638,12 +2467,9 @@ class _Shard:
         if abort_event is not None and abort_event.is_set():
             message = "exact lane admission was aborted"
             raise _AdmissionAbortedError(message)
-        if not self._admission_open or self._stopping or self._closed:
+        if self._stopping or self._closed:
             message = "shard admission is closed"
             raise _ShardClosedError(message)
-        if (work.grant, work.feed_id) in self._retired_scopes:
-            message = "Feed is retired from this shard"
-            raise _FeedRetiredError(message)
         replay_key = (work.grant, work.page_sequence, work.feed_id)
         if replay_key in self._replay_blocks:
             message = "Feed/page is replay-blocked"
@@ -2658,13 +2484,9 @@ class _Shard:
         if abort_event.is_set():
             message = "exact lane admission was aborted"
             raise _AdmissionAbortedError(message)
-        if not self._admission_open or self._stopping or self._closed:
+        if self._stopping or self._closed:
             message = "shard admission is closed"
             raise _ShardClosedError(message)
-        scope = (boundary_input.grant, boundary_input.boundary.feed_id)
-        if scope in self._retired_scopes:
-            message = "Feed is retired from this shard"
-            raise _FeedRetiredError(message)
         replay_key = (
             boundary_input.grant,
             boundary_input.page_sequence,

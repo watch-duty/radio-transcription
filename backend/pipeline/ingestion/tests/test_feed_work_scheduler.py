@@ -1706,7 +1706,6 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             "BoundaryGrantRejected",
             "BoundaryResult",
             "BoundaryWork",
-            "FeedRemoved",
             "FeedWorkScheduler",
             "FinalPageCovered",
             "FinalPageGrantRejected",
@@ -1765,12 +1764,6 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             feed_work_scheduler.Undrained(
                 grant,
                 feed_work_scheduler.LaneCloseReason.AUTHORITY_LOSS,
-            ),
-            feed_work_scheduler.FeedRemoved(
-                grant=grant,
-                feed_id=uuid.UUID(int=8),
-                released_count=0,
-                active_retained=False,
             ),
         )
         for result in results:
@@ -2110,7 +2103,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
             )
         )
         await remove_executor.wait_for_started(1)
-        await remove_lane.remove_feed(removed_feed)
+        await remove_lane.purge_feed(removed_feed)
         self.assertEqual(
             remove_observed[1],
             [feed_work_scheduler.CallSettlement.MEMBERSHIP_REJECTED],
@@ -2802,140 +2795,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         await asyncio.gather(coverage, return_exceptions=True)
         await scheduler.close()
 
-    async def test_feed_removal_localizes_blocked_and_queued_records(  # noqa: PLR0915
-        self,
-    ) -> None:
-        scheduler_types = _scheduler_types()
-        limits = scheduler_types._SchedulerLimits(
-            shard_count=1,
-            capacity=4,
-            workers_per_shard=1,
-            high_water=2,
-            resume_at=1,
-        )
-        executor = _GateExecutor()
-        scheduler = feed_work_scheduler.FeedWorkScheduler(
-            executor,
-            _limits=limits,
-        )
-        await scheduler.start()
-        grant = _grant(fencing_token=7)
-        successor = _grant(fencing_token=8)
-        lane = _open_lane(scheduler, grant)
-        successor_lane = _open_lane(scheduler, successor)
-        removed_feed = uuid.UUID(int=1)
-        sibling_feed = uuid.UUID(int=2)
-        later_sibling_feed = uuid.UUID(int=3)
-        cursor = cursor_policy.LeaseCursor(grant, pos=None)
-        removed_member = _member(grant, removed_feed)
-        calls = _TracingCalls(
-            (
-                _submission(
-                    removed_feed,
-                    0,
-                    grant=grant,
-                    member=removed_member,
-                ),
-                _submission(
-                    removed_feed,
-                    1,
-                    grant=grant,
-                    member=removed_member,
-                ),
-                _submission(
-                    removed_feed,
-                    2,
-                    grant=grant,
-                    member=removed_member,
-                ),
-                _submission(sibling_feed, 3, grant=grant),
-                _submission(later_sibling_feed, 4, grant=grant),
-            )
-        )
-        coverage = asyncio.create_task(
-            lane.cover_page(
-                calls=calls,
-                boundaries=(),
-                candidate=cursor.prepare(_SOURCE_TIME),
-            )
-        )
-        try:
-            await scheduler._shards[0].wait_for_capacity_waiters(1)
-            self.assertEqual(calls.pulled, [0, 1, 2, 3, 4])
-            removed = await lane.remove_feed(removed_feed)
-            await calls.wait_for_pulled(5)
-            async with asyncio.timeout(1):
-                while True:
-                    barrier = (await lane._snapshot()).page
-                    if barrier is not None and barrier.pulled == 5:
-                        break
-                    await asyncio.sleep(0)
-            self.assertIsNotNone(barrier)
-            self.assertEqual(barrier.pulled, 5)
-            self.assertEqual(barrier.registered, 3)
-            self.assertEqual(barrier.localized, 1)
-            self.assertEqual(barrier.current_source_order, 4)
-            self.assertFalse(coverage.done())
-            executor.release_all()
-            receipt = await asyncio.wait_for(coverage, timeout=1)
-
-            self.assertEqual(
-                removed,
-                feed_work_scheduler.FeedRemoved(
-                    grant=grant,
-                    feed_id=removed_feed,
-                    released_count=1,
-                    active_retained=True,
-                ),
-            )
-            self.assertEqual(calls.pulled, [0, 1, 2, 3, 4])
-            self.assertEqual(
-                cursor.accept(_covered_settlement(receipt)),
-                _SOURCE_TIME,
-            )
-            snapshot = await scheduler._snapshot()
-            self.assertEqual(snapshot.held, 0)
-
-            next_candidate = cursor.prepare(
-                _SOURCE_TIME + datetime.timedelta(seconds=1)
-            )
-            removed_only = await lane.cover_page(
-                calls=(_submission(removed_feed, 0, grant=grant),),
-                boundaries=(),
-                candidate=next_candidate,
-            )
-            self.assertEqual(
-                cursor.accept(_covered_settlement(removed_only)),
-                _SOURCE_TIME + datetime.timedelta(seconds=1),
-            )
-            self.assertEqual((await scheduler._snapshot()).held, 0)
-
-            executor.release_all()
-            await scheduler._wait_for_idle()
-            successor_cursor = cursor_policy.LeaseCursor(
-                successor,
-                pos=None,
-            )
-            successor_receipt = await successor_lane.cover_page(
-                calls=(_submission(removed_feed, 0, grant=successor),),
-                boundaries=(),
-                candidate=successor_cursor.prepare(_SOURCE_TIME),
-            )
-            self.assertEqual(
-                successor_cursor.accept(_covered_settlement(successor_receipt)),
-                _SOURCE_TIME,
-            )
-            await scheduler._wait_for_idle()
-        finally:
-            if not coverage.done():
-                coverage.cancel()
-                with self.assertRaises(asyncio.CancelledError):
-                    await coverage
-            executor.release_all()
-            await scheduler._wait_for_idle()
-            await scheduler.close()
-
-    async def test_typed_membership_rejection_retires_only_that_feed(
+    async def test_typed_membership_rejection_is_page_local(
         self,
     ) -> None:
         executor = _GatedOutcomeExecutor(_membership_rejected)
@@ -2970,7 +2830,7 @@ class TestFeedWorkScheduler(unittest.IsolatedAsyncioTestCase):
         )
         cursor.accept(_covered_settlement(second))
         await scheduler._wait_for_idle()
-        self.assertEqual(executor.calls, 2)
+        self.assertEqual(executor.calls, 3)
         self.assertFalse((await scheduler._snapshot()).fatal)
         self.assertFalse((await lane._snapshot()).closing)
         await scheduler.close()
@@ -4608,7 +4468,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(coverage, return_exceptions=True)
             await scheduler.close()
 
-    async def test_terminal_barrier_local_rejection_is_not_registration(
+    async def test_empty_feed_purge_does_not_reject_later_registration(
         self,
     ) -> None:
         finalizer = _ControlledPageFinalizer()
@@ -4619,16 +4479,16 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
         await scheduler.start()
         grant = _grant()
         lane = _open_lane(scheduler, grant)
-        retired_feed = uuid.UUID(int=82)
+        purged_feed = uuid.UUID(int=82)
         sibling_feed = uuid.UUID(int=83)
-        await lane.remove_feed(retired_feed)
-        retired_submission = _submission(retired_feed, 0, grant=grant)
+        await lane.purge_feed(purged_feed)
+        purged_submission = _submission(purged_feed, 0, grant=grant)
         sibling_submission = _submission(sibling_feed, 1, grant=grant)
         cursor = cursor_policy.LeaseCursor(grant, pos=None)
         coverage = asyncio.create_task(
             lane.cover_page(
                 calls=(
-                    retired_submission,
+                    purged_submission,
                     sibling_submission,
                 ),
                 boundaries=(),
@@ -4640,20 +4500,18 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
             barrier = _require_not_none((await lane._snapshot()).page)
             self.assertIsNotNone(barrier)
             self.assertEqual(barrier.pulled_records, 2)
-            self.assertEqual(barrier.registered_records, 1)
-            self.assertEqual(barrier.locally_rejected_records, 1)
-            self.assertEqual(barrier.terminalized_registered_records, 1)
+            self.assertEqual(barrier.registered_records, 2)
+            self.assertEqual(barrier.locally_rejected_records, 0)
+            self.assertEqual(barrier.terminalized_registered_records, 2)
             context = finalizer.contexts[0]
-            self.assertEqual(len(context.cohort_terminal_facts), 1)
             self.assertEqual(
-                context.cohort_terminal_facts[0].records[0].identity.feed_id,
-                sibling_feed,
+                {
+                    facts.records[0].identity.feed_id
+                    for facts in context.cohort_terminal_facts
+                },
+                {purged_feed, sibling_feed},
             )
-            self.assertEqual(len(context.locally_retired_members), 1)
-            self.assertIs(
-                context.locally_retired_members[0],
-                retired_submission.member,
-            )
+            self.assertEqual(context.locally_retired_members, ())
             finalizer.release.set()
             receipt = await asyncio.wait_for(coverage, timeout=1)
             self.assertEqual(
@@ -5136,7 +4994,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
                 await asyncio.gather(coverage, return_exceptions=True)
             await scheduler.close()
 
-    async def test_member_removal_surfaces_final_pending_only_retirement(
+    async def test_feed_purge_preserves_final_pending_resolution(
         self,
     ) -> None:
         pending_feed = uuid.UUID(int=105)
@@ -5145,10 +5003,10 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
         pending_member = _member(grant, pending_feed)
         observed = {0: [], 1: []}
 
-        def accept_retirement(
+        def accept_pending(
             context: feed_work_scheduler.PageFinalizationContext,
         ) -> object:
-            self.assertEqual(context.locally_retired_members, (pending_member,))
+            self.assertEqual(context.locally_retired_members, ())
             identity = context.cohort_terminal_facts[0].records[0].identity
             return _covered_final_page(
                 context,
@@ -5156,17 +5014,17 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
                     feed_work_scheduler.FinalRecordClosureResolution(
                         identity=identity,
                         closure_state=(
-                            feed_work_scheduler.CohortRecordClosureState.REPLAY_SAFE_RELEASE
+                            feed_work_scheduler.CohortRecordClosureState.DURABLY_CLOSED
                         ),
                         release_basis=(
-                            feed_work_scheduler.FinalRecordReleaseBasis.ACCEPTED_MEMBER_RETIREMENT
+                            feed_work_scheduler.FinalRecordReleaseBasis.DURABLE_SOURCE_CLOSURE
                         ),
                     ),
                 ),
             )
 
         executor = _FinalPendingWithGatedSiblingExecutor()
-        finalizer = _ControlledPageFinalizer(accept_retirement)
+        finalizer = _ControlledPageFinalizer(accept_pending)
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             executor,
             page_finalizer=finalizer,
@@ -5208,9 +5066,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
                     await asyncio.sleep(0)
 
             await asyncio.wait_for(wait_for_final_pending(), timeout=1)
-            removal = await lane.remove_feed(pending_feed)
-            self.assertEqual(removal.released_count, 0)
-            self.assertTrue(removal.active_retained)
+            await lane.purge_feed(pending_feed)
             self.assertEqual(observed[0], [])
 
             executor.release_sibling.set()
@@ -5224,7 +5080,7 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(
                 observed,
                 {
-                    0: [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
+                    0: [feed_work_scheduler.CallSettlement.COMPLETED],
                     1: [feed_work_scheduler.CallSettlement.COMPLETED],
                 },
             )
@@ -5811,7 +5667,6 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
                 observed,
                 [feed_work_scheduler.CallSettlement.REPLAY_SAFE_RELEASE],
             )
-            self.assertTrue(await lane.is_feed_retired(feed_id))
             self.assertEqual((await scheduler._snapshot()).held, 0)
         finally:
             executor.release.set()
@@ -5870,7 +5725,6 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
                 feed_work_scheduler.Undrained,
             )
             self.assertEqual(observed, [])
-            self.assertFalse(await lane.is_feed_retired(feed_id))
             self.assertEqual((await scheduler._snapshot()).held, 1)
         finally:
             executor.release.set()
@@ -5967,7 +5821,6 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(coverage, timeout=1),
                 feed_work_scheduler.Undrained,
             )
-            self.assertFalse(await lane.is_feed_retired(feed_id))
             self.assertEqual((await scheduler._snapshot()).held, 1)
         finally:
             executor.release.set()
@@ -6018,8 +5871,6 @@ class TestPageFinalization(unittest.IsolatedAsyncioTestCase):
             )
 
             self.assertIsInstance(result, feed_work_scheduler.Undrained)
-            self.assertFalse(await lane.is_feed_retired(current_feed))
-            self.assertFalse(await lane.is_feed_retired(foreign_member.feed_id))
         finally:
             await scheduler.close()
 

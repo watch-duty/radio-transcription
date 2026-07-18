@@ -62,7 +62,6 @@ class MemberRouteState(enum.StrEnum):
     NORMAL = "normal"
     ADOPTING = "adopting"
     REPLAY_PENDING = "replay_pending"
-    RETIRED = "retired"
 
 
 class RunnerCancellationCause(enum.StrEnum):
@@ -155,14 +154,6 @@ class SidProcessorAuthorityLost(RuntimeError):
         super().__init__(f"bcfy_calls_sid_authority_lost:{rejection.reason}")
 
 
-class SidProcessorPlannedDrain(RuntimeError):
-    """A retired Feed UUID reappeared and requires a successor lane."""
-
-    def __init__(self, feed_id: uuid.UUID) -> None:
-        self.feed_id = feed_id
-        super().__init__("bcfy_calls_sid_member_reactivated")
-
-
 class SidProcessorUndrained(RuntimeError):
     """The page retained uncertain work and cannot begin another poll.
 
@@ -211,22 +202,8 @@ class _CallsProvider(typing.Protocol):
 class _GrantLane(typing.Protocol):
     """Exact-grant scheduler operations used by the processor."""
 
-    async def remove_feed(
-        self,
-        feed_id: uuid.UUID,
-    ) -> feed_work_scheduler.FeedRemoved:
-        """Retire one Feed without affecting siblings."""
-        ...
-
-    async def is_feed_retired(self, feed_id: uuid.UUID) -> bool:
-        """Return exact lane-local retirement for one Feed.
-
-        Args:
-            feed_id: Immutable Feed UUID within this lane's complete grant.
-
-        Returns:
-            Whether the scheduler has retired this exact Feed scope.
-        """
+    async def purge_feed(self, feed_id: uuid.UUID) -> None:
+        """Purge queued work removed by an authoritative refresh."""
         ...
 
     async def cover_page(
@@ -754,7 +731,6 @@ class BcfyCallsSidProcessor:
         self._snapshot: ingestion_lease_store.MembershipSnapshot | None = None
         self._members_by_source: dict[str, _MemberState] = {}
         self._members_by_id: dict[uuid.UUID, _MemberState] = {}
-        self._retired_feed_ids: set[uuid.UUID] = set()
         self._pending_by_url: dict[str, uuid.UUID] = {}
         self._recent_order: collections.deque[tuple[str, uuid.UUID]] = (
             collections.deque(maxlen=_RECENT_URL_LIMIT)
@@ -911,13 +887,6 @@ class BcfyCallsSidProcessor:
                         self._finish_poll(
                             poll,
                             telemetry.SidPollOutcome.AUTHORITY_LOST,
-                        )
-                    raise
-                except SidProcessorPlannedDrain:
-                    if not poll.closed:
-                        self._finish_poll(
-                            poll,
-                            telemetry.SidPollOutcome.STOPPED,
                         )
                     raise
                 except SidProcessorFailure as exc:
@@ -1155,11 +1124,6 @@ class BcfyCallsSidProcessor:
                 feed_store.FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,
                 "bcfy_calls_sid_membership_invalid",
             )
-        reactivated = self._retired_feed_ids.intersection(incoming)
-        if reactivated:
-            feed_id = min(reactivated, key=lambda item: item.int)
-            raise SidProcessorPlannedDrain(feed_id)
-
         next_by_source: dict[str, _MemberState] = {}
         next_by_id: dict[uuid.UUID, _MemberState] = {}
         for feed_id, member in incoming.items():
@@ -1194,10 +1158,7 @@ class BcfyCallsSidProcessor:
 
         removed = set(self._members_by_id).difference(incoming)
         for feed_id in sorted(removed, key=lambda item: item.int):
-            prior = self._members_by_id[feed_id]
-            await self._lane.remove_feed(feed_id)
-            prior.route_state = MemberRouteState.RETIRED
-            self._retired_feed_ids.add(feed_id)
+            await self._lane.purge_feed(feed_id)
             self._clear_feed_urls(feed_id)
 
         self._snapshot = snapshot
@@ -1680,14 +1641,10 @@ class BcfyCallsSidProcessor:
             if state is gap_ledger.MissingCallState.FINAL_CLOSURE_PENDING:
                 return
             del self._pending_by_url[audio_url]
-            if (
-                state
-                in {
-                    gap_ledger.MissingCallState.RESOLVED,
-                    gap_ledger.MissingCallState.EMITTED,
-                }
-                and feed_id not in self._retired_feed_ids
-            ):
+            if state in {
+                gap_ledger.MissingCallState.RESOLVED,
+                gap_ledger.MissingCallState.EMITTED,
+            }:
                 self._append_recent(audio_url, feed_id)
 
         return observe
@@ -1810,9 +1767,6 @@ class BcfyCallsSidProcessor:
             raise feed_work_scheduler.CohortIntegrityError(message)
 
         self._apply_closure_caps(settled, source_evidence.closure_caps)
-        await self._reconcile_lane_retirements()
-        for feed_id in source_evidence.quarantined_feed_ids:
-            await self._retire_local_feed(feed_id, remove_from_lane=True)
         self._active_page_ledger = None
 
         if (
@@ -1870,35 +1824,6 @@ class BcfyCallsSidProcessor:
             }:
                 state.route_state = MemberRouteState.NORMAL
 
-    async def _reconcile_lane_retirements(self) -> None:
-        """Mirror scheduler-local exact Feed retirement into routing state."""
-        for feed_id in tuple(self._members_by_id):
-            if await self._lane.is_feed_retired(feed_id):
-                await self._retire_local_feed(
-                    feed_id,
-                    remove_from_lane=False,
-                )
-
-    async def _retire_local_feed(
-        self,
-        feed_id: uuid.UUID,
-        *,
-        remove_from_lane: bool,
-    ) -> None:
-        """Tombstone one exact Feed and clear only its local work state."""
-        if feed_id in self._retired_feed_ids:
-            return
-        if remove_from_lane:
-            await self._lane.remove_feed(feed_id)
-        state = self._members_by_id.pop(feed_id, None)
-        if state is not None:
-            source_feed_id = state.member.identity.source_feed_id
-            if self._members_by_source.get(source_feed_id) is state:
-                del self._members_by_source[source_feed_id]
-            state.route_state = MemberRouteState.RETIRED
-        self._retired_feed_ids.add(feed_id)
-        self._clear_feed_urls(feed_id)
-
     def _finalize_page_urls(self, prepared: _PreparedPageWork) -> None:
         """Apply final close states that settle after scheduler observers."""
         for entry, feed_id in zip(
@@ -1916,8 +1841,7 @@ class BcfyCallsSidProcessor:
                 gap_ledger.MissingCallState.EMITTED,
             }:
                 del self._pending_by_url[entry.audio_url]
-                if feed_id not in self._retired_feed_ids:
-                    self._append_recent(entry.audio_url, feed_id)
+                self._append_recent(entry.audio_url, feed_id)
 
     def _append_recent(self, audio_url: str, feed_id: uuid.UUID) -> None:
         """Append one unique completion while synchronizing deque and set."""
@@ -1952,7 +1876,6 @@ class BcfyCallsSidProcessor:
         self._member_by_session.clear()
         self._members_by_source.clear()
         self._members_by_id.clear()
-        self._retired_feed_ids.clear()
         self._snapshot = None
         self._lease_cursor = None
         self._active_poll = None

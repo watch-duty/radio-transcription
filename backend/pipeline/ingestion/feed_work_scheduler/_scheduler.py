@@ -1019,13 +1019,6 @@ class FeedWorkScheduler:
                 feed_ids,
             )
 
-    async def _is_feed_retired(
-        self,
-        grant: ingestion_lease_store.LeaseGrant,
-        feed_id: uuid.UUID,
-    ) -> bool:
-        return await self._shard_for(feed_id).is_feed_retired(grant, feed_id)
-
     async def _purge_exact(
         self,
         grant: ingestion_lease_store.LeaseGrant,
@@ -1071,19 +1064,12 @@ class FeedWorkScheduler:
         for shard in self._shards:
             await shard.abandon_exact_cancellations(grant, failure)
 
-    async def _retire_feed(
+    async def _purge_feed(
         self,
         grant: ingestion_lease_store.LeaseGrant,
         feed_id: uuid.UUID,
-    ) -> _types._RetireFeedResult:
-        return await self._shard_for(feed_id).retire_feed(grant, feed_id)
-
-    async def _forget_retired_grant(
-        self,
-        grant: ingestion_lease_store.LeaseGrant,
     ) -> None:
-        for shard in self._shards:
-            await shard.forget_retired_grant(grant)
+        await self._shard_for(feed_id).purge_feed(grant, feed_id)
 
     async def _wake_admission(self) -> None:
         for shard in self._shards:
@@ -1160,19 +1146,13 @@ class FeedWorkScheduler:
         self,
         record: _types._CallRecord,
         outcome: _types._ExecutorOutcome,
-        retirement: _types._RetireFeedResult | None,
     ) -> None:
-        """Project terminal membership/loss evidence into its exact lane."""
+        """Project terminal authority loss into its exact lane."""
         lane = self._lanes.get(record.grant)
         if lane is None:
             return
         if isinstance(outcome, _types._ExecutorAuthorityLost):
             lane._request_close(_types.LaneCloseReason.AUTHORITY_LOSS)
-        elif isinstance(outcome, _types._ExecutorMembershipRejected):
-            if retirement is None:
-                message = "membership outcome omitted retirement evidence"
-                raise RuntimeError(message)
-            lane._observe_membership(record, retirement)
 
     def _observe_page_registration(
         self,
@@ -1197,7 +1177,6 @@ class FeedWorkScheduler:
         records: tuple[_types._CallRecord, ...],
         *,
         replay_blocked: bool,
-        retired_member: (ingestion_lease_store.LeaseMemberIdentity | None),
     ) -> None:
         by_lane: dict[GrantLane, list[_types._CallRecord]] = {}
         for record in records:
@@ -1208,7 +1187,6 @@ class FeedWorkScheduler:
             lane._observe_page_neutralization(
                 tuple(exact_records),
                 replay_blocked=replay_blocked,
-                retired_member=retired_member,
             )
 
     def _observe_boundary_ready(
@@ -1423,36 +1401,17 @@ class GrantLane:
         )
         return observed, finish
 
-    async def remove_feed(self, feed_id: uuid.UUID) -> _types.FeedRemoved:
-        """Retire one Feed only from this lane's complete grant."""
+    async def purge_feed(self, feed_id: uuid.UUID) -> None:
+        """Purge queued work after an authoritative membership refresh."""
         self._raise_closed_locked()
         try:
-            result = await self._scheduler._retire_feed(
+            await self._scheduler._purge_feed(
                 self._grant,
                 feed_id,
             )
         except _shard._ShardFatalError as exc:
             message = "scheduler shard integrity failed"
             raise SchedulerIntegrityError(message) from exc.failure
-        await self._localize_released(result.released_calls)
-        return _types.FeedRemoved(
-            grant=self._grant,
-            feed_id=feed_id,
-            released_count=len(result.released_sequences),
-            active_retained=result.active_sequence is not None,
-        )
-
-    async def is_feed_retired(self, feed_id: uuid.UUID) -> bool:
-        """Return whether this exact lane has retired one Feed scope.
-
-        Args:
-            feed_id: Immutable Feed UUID within this lane's complete grant.
-
-        Returns:
-            Whether that Feed is locally retired from scheduler admission.
-
-        """
-        return await self._scheduler._is_feed_retired(self._grant, feed_id)
 
     async def close(
         self,
@@ -1585,19 +1544,6 @@ class GrantLane:
                             if finish_pressure is not None:
                                 finish_pressure()
                             self._scheduler._sample_page_evidence(page.evidence)
-                    except _shard._FeedRetiredError:
-                        self._notify_unadmitted_cohort(
-                            cohort,
-                            _types.CallSettlement.MEMBERSHIP_REJECTED,
-                        )
-                        await self._mark_localized(
-                            source_order,
-                            record_count,
-                            call_records=True,
-                            retired_member=cohort.member,
-                        )
-                        source_order += record_count
-                        continue
                     except _shard._ReplayBlockedError:
                         self._notify_unadmitted_cohort(
                             cohort,
@@ -1678,14 +1624,6 @@ class GrantLane:
                                     pressure_started
                                 )
                             self._scheduler._sample_page_evidence(page.evidence)
-                    except _shard._FeedRetiredError:
-                        await self._mark_localized(
-                            source_order,
-                            1,
-                            call_records=False,
-                            retired_member=boundary.member,
-                        )
-                        continue
                     except _shard._ReplayBlockedError:
                         replay_blocked_feeds.add(boundary.feed_id)
                         await self._mark_localized(
@@ -1876,10 +1814,8 @@ class GrantLane:
             self._closing_event.is_set()
             or self._scheduler._fatal is not None
             or shard._fatal is not None
-            or not shard._admission_open
             or shard._stopping
             or shard._closed
-            or (self._grant, feed_id) in shard._retired_scopes
             or (self._grant, page_sequence, feed_id) in shard._replay_blocks
         ):
             return False
@@ -1899,10 +1835,8 @@ class GrantLane:
             self._closing_event.is_set()
             or self._scheduler._fatal is not None
             or shard._fatal is not None
-            or not shard._admission_open
             or shard._stopping
             or shard._closed
-            or scope in shard._retired_scopes
             or (
                 self._grant,
                 page_sequence,
@@ -1998,9 +1932,6 @@ class GrantLane:
         record_count: int,
         *,
         call_records: bool,
-        retired_member: (
-            ingestion_lease_store.LeaseMemberIdentity | None
-        ) = None,
         replay_blocked_feed: uuid.UUID | None = None,
     ) -> None:
         _types._require_positive_integer(record_count, "record_count")
@@ -2013,8 +1944,6 @@ class GrantLane:
             page.localized += record_count
             if call_records:
                 page.locally_rejected_records += record_count
-            if retired_member is not None:
-                self._append_retired_member(page, retired_member)
             if replay_blocked_feed is not None:
                 page.replay_blocked_feed_ids.add(replay_blocked_feed)
             page.changed.set()
@@ -2024,25 +1953,11 @@ class GrantLane:
                     replay_blocked=(
                         call_records and replay_blocked_feed is not None
                     ),
-                    member_rejected=retired_member is not None,
+                    member_rejected=False,
                 )
             except BaseException:  # noqa: S110 - evidence is observational
                 pass
         self._scheduler._sample_page_evidence(page.evidence)
-
-    async def _localize_released(
-        self,
-        released_calls: tuple[tuple[int, int], ...],
-    ) -> None:
-        del released_calls
-
-    def _observe_membership(
-        self,
-        record: _types._CallRecord,
-        retirement: _types._RetireFeedResult,
-    ) -> None:
-        """Localize a terminal membership outcome without another task."""
-        del record, retirement
 
     def _localize_tag(
         self,
@@ -2229,7 +2144,6 @@ class GrantLane:
         records: tuple[_types._CallRecord, ...],
         *,
         replay_blocked: bool,
-        retired_member: (ingestion_lease_store.LeaseMemberIdentity | None),
     ) -> None:
         page = self._page
         if page is None:
@@ -2282,14 +2196,12 @@ class GrantLane:
                     tuple(neutralized_firsts),
                     added,
                     replay_blocked=replay_blocked,
-                    member_rejected=retired_member is not None,
+                    member_rejected=False,
                 )
             except BaseException:  # noqa: S110 - evidence is observational
                 pass
         self._scheduler._sample_page_evidence(page.evidence)
-        if retired_member is not None:
-            self._append_retired_member(page, retired_member)
-        elif not replay_blocked and added:
+        if not replay_blocked and added:
             page.abort_reason = "precommit_cancellation"
         if not self._terminal_accounting_is_valid(page):
             self._mark_page_uncertain(
@@ -2360,18 +2272,17 @@ class GrantLane:
             self._grant,
             candidate.page_sequence,
         )
-        accepted_boundaries = []
-        for boundary in boundaries:
-            if boundary.feed_id in replay_blocked:
-                continue
-            if await self._scheduler._is_feed_retired(
-                self._grant,
-                boundary.feed_id,
-            ):
-                continue
-            accepted_boundaries.append(boundary)
         async with self._state_lock:
             page = self._require_page_locked()
+            locally_rejected_feed_ids = {
+                member.feed_id for member in page.locally_retired_members
+            }
+            accepted_boundaries = tuple(
+                boundary
+                for boundary in boundaries
+                if boundary.feed_id not in replay_blocked
+                and boundary.feed_id not in locally_rejected_feed_ids
+            )
             facts = tuple(
                 page.terminal_facts[key]
                 for key in sorted(
@@ -2411,7 +2322,7 @@ class GrantLane:
                         key=lambda value: value.int,
                     )
                 ),
-                candidate_boundaries=tuple(accepted_boundaries),
+                candidate_boundaries=accepted_boundaries,
             )
 
     async def _page_uncertainty(self) -> _types._FinalPageUncertainty:
@@ -2515,11 +2426,6 @@ class GrantLane:
                 accepted,
             )
             await self._scheduler._resolve_final_pending(by_shard)
-            for member in accepted.member_retirements:
-                await self._scheduler._retire_feed(
-                    self._grant,
-                    member.feed_id,
-                )
             await self._scheduler._clear_replay_barriers(
                 self._grant,
                 candidate.page_sequence,
@@ -2940,7 +2846,6 @@ class GrantLane:
                         continue
                 if self._close_strength is _CloseStrength.CANCELLING:
                     self._scheduler._raise_fatal()
-                await self._scheduler._forget_retired_grant(self._grant)
                 self._scheduler._raise_fatal()
                 self._scheduler._clear_abandonment(self._grant)
                 async with self._admission_lock:
