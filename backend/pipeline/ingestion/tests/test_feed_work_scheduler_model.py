@@ -368,7 +368,7 @@ class _ReferenceModel:
             for state in _ModelState
         }
 
-    def _assert_invariants(self) -> None:  # noqa: PLR0912
+    def _assert_invariants(self) -> None:
         counts = self._counts()
         conserved = sum(counts.values())
         if self.held != conserved:
@@ -412,7 +412,7 @@ class TestSchedulerConstants(unittest.TestCase):
         scheduler_types = _types
 
         for feed_id in _FEED_IDS:
-            with self.subTest(feed_id=feed_id):
+            with self.subTest(feed_id=str(feed_id)):
                 self.assertEqual(
                     scheduler_types._shard_index(feed_id),
                     feed_id.int % 8,
