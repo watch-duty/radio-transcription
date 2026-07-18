@@ -53,6 +53,7 @@ from backend.pipeline.segmentation.transforms import stitcher_engine
 from backend.pipeline.segmentation.transforms.stateful import (
     SHARED_RESOURCE_HANDLE,
     OrderedStitchAudioFn,
+    StaleTimerManager,
 )
 from backend.pipeline.segmentation.transforms.stateless import (
     ParseAndKeyFn,
@@ -3984,6 +3985,9 @@ class DlqTaggingTest(unittest.TestCase):
             feed_metadata=FeedMetadata(feed_name="mock-feed"),
         )
 
+        stale_timer_event = MagicMock()
+        stale_timer_proc = MagicMock()
+
         list(
             fn.process(
                 element=("test-feed", metadata),
@@ -3993,8 +3997,8 @@ class DlqTaggingTest(unittest.TestCase):
                 out_of_order_buffer_state=MockBagState(),  # type: ignore
                 gap_timer_event=watermark_timer,
                 gap_timer_proc=processing_timer,
-                stale_timer_event=MagicMock(),
-                stale_timer_proc=MagicMock(),
+                stale_timer_event=stale_timer_event,
+                stale_timer_proc=stale_timer_proc,
             )
         )
 
@@ -4013,6 +4017,8 @@ class DlqTaggingTest(unittest.TestCase):
 
         watermark_timer = MagicMock()
         processing_timer = MagicMock()
+        stale_timer_event = MagicMock()
+        stale_timer_proc = MagicMock()
 
         metadata = ChunkMetadata(
             gcs_uri="gs://test-bucket/chunk2.flac",
@@ -4031,13 +4037,32 @@ class DlqTaggingTest(unittest.TestCase):
                 out_of_order_buffer_state=MockBagState(),  # type: ignore
                 gap_timer_event=watermark_timer,
                 gap_timer_proc=processing_timer,
-                stale_timer_event=MagicMock(),
-                stale_timer_proc=MagicMock(),
+                stale_timer_event=stale_timer_event,
+                stale_timer_proc=stale_timer_proc,
             )
         )
 
         self.assertTrue(watermark_timer.set.called)
         self.assertTrue(processing_timer.set.called)
+
+    def test_stale_timer_manager_schedules_both_timers(self) -> None:
+        """Verifies StaleTimerManager schedules both event and proc timers when deadline > 0, and clears both when deadline <= 0."""
+        event_timer = MagicMock()
+        proc_timer = MagicMock()
+        stitch_config = get_test_stitch_config(stale_timeout_ms=5000)
+        manager = StaleTimerManager(event_timer, proc_timer, stitch_config)
+
+        # Case 1: deadline > 0
+        manager.schedule(deadline_ms=10000)
+        self.assertTrue(event_timer.set.called)
+        self.assertTrue(proc_timer.set.called)
+
+        # Case 2: deadline <= 0
+        event_timer.reset_mock()
+        proc_timer.reset_mock()
+        manager.schedule(deadline_ms=0)
+        self.assertTrue(event_timer.clear.called)
+        self.assertTrue(proc_timer.clear.called)
 
 
 class UploadRawSegmentFnTest(unittest.TestCase):

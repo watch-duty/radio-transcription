@@ -213,8 +213,8 @@ class StaleTimerManager:
         self.proc_timer = proc_timer
         self.config = config
 
-    def schedule(self, deadline_ms: int, *, is_backfill: bool) -> None:
-        """Schedules either or both timers based on the backfill mode."""
+    def schedule(self, deadline_ms: int) -> None:
+        """Schedules both event-time and processing-time timers."""
         if deadline_ms > 0:
             # Set event time timer based on data timeline
             deadline_s = deadline_ms / common_constants.MS_PER_SECOND
@@ -290,7 +290,6 @@ def _manage_out_of_order_timers(
     clamped: bool,
     has_buffer_elements: bool,
     order_timer_active: bool,
-    is_backfill: bool,
     old_expected_ts: int | None,
     new_expected_next_ts: int | None,
 ) -> bool:
@@ -496,7 +495,6 @@ def process_ordering(  # noqa: PLR0912, PLR0915
         clamped=clamped,
         has_buffer_elements=has_buffer_elements,
         order_timer_active=curr_context.order_timer_active,
-        is_backfill=is_backfill,
         old_expected_ts=old_expected_ts,
         new_expected_next_ts=expected_next_ts,
     )
@@ -537,7 +535,6 @@ def _reschedule_gap_timeout(
     *,
     timestamp: Timestamp,
     clamped: bool,
-    is_backfill: bool,
     new_expected: int | None,
     new_expected_next_ts: int | None,
 ) -> bool:
@@ -1112,7 +1109,6 @@ class OrderedStitchAudioFn(beam.DoFn):
                         order_config=self.order_config,
                         timestamp=timestamp,
                         clamped=True,
-                        is_backfill=is_backfill,
                         new_expected=original_expected_ts,
                         new_expected_next_ts=previous_expected_ts,
                     )
@@ -1278,7 +1274,6 @@ class OrderedStitchAudioFn(beam.DoFn):
                         order_config=self.order_config,
                         timestamp=timestamp,
                         clamped=clamped,
-                        is_backfill=is_backfill,
                         new_expected=new_expected,
                         new_expected_next_ts=new_expected_next_ts,
                     )

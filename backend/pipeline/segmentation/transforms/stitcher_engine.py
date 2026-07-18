@@ -773,7 +773,6 @@ class StitcherEngine:
                 case datatypes.ScheduleStaleTimerAction():
                     timer_manager.schedule(
                         deadline_ms=action.deadline_ms,
-                        is_backfill=is_backfill,
                     )
         # Commit final context updates (no buffer updates needed)
 
