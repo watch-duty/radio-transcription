@@ -85,24 +85,6 @@ grant_control.GrantRunner
 worker_profiles.derive_bcfy_calls_authority
 worker_profiles.resolve_worker_profile
 
-# The pure Calls cursor policy lands before the scheduler and SID runner that
-# consume it. Vulture excludes its focused tests.
-from backend.pipeline.ingestion.collectors.bcfy_calls import cursor_policy
-
-cursor_policy.ReplayFloorCause.REPLAY_OVERRIDE
-cursor_policy.ReplayFloorCause.OVERLOAD
-cursor_policy.BootstrapDecision.replay_floor
-cursor_policy._issue_covered_page
-cursor_policy._issue_replayable_page
-cursor_policy._issue_no_progress_page
-cursor_policy.LeaseCursor.next_page_sequence
-cursor_policy.LeaseCursor.outstanding_candidate
-cursor_policy.LeaseCursor.prepare
-cursor_policy.LeaseCursor.prepare_no_progress
-cursor_policy.LeaseCursor.accept
-cursor_policy.LeaseCursor.accept_no_progress
-cursor_policy.LeaseCursor.accept_replayable
-
 # The generic supervisor lands before CollectorRuntime delegates its legacy
 # Feed lifecycle to it. Vulture excludes the focused contract tests, so retain
 # only the public handoff surface until the next runtime-migration PR.
@@ -113,21 +95,6 @@ grant_supervisor.GrantSupervisor.integrity_failure
 grant_supervisor.GrantSupervisor.admit_cycle
 grant_supervisor.GrantSupervisor.heartbeat_cycle
 grant_supervisor.GrantSupervisor.active_count
-
-# The private Feed-affine shard lands before the public scheduler facade that
-# consumes it. Vulture excludes its focused shard tests, so allowlist this
-# dormant package only until the next stacked scheduler PR wires the facade.
-from backend.pipeline.ingestion.feed_work_scheduler import _shard, _types
-
-_shard._Shard
-_shard._Shard.fatal_failure
-_shard._Shard.admit
-_shard._Shard.purge_exact
-_shard._Shard.cancel_active_exact
-_shard._Shard.abandon_cancellation
-_shard._Shard.wait_for_held
-_types._shard_index
-cohort_timestamp
 
 # The shared Calls provider lands before the SID polling runtime consumes its
 # SID-specific selector. Vulture excludes the focused provider tests.
