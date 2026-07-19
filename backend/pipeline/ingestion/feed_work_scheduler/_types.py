@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import dataclasses
+import datetime
+import enum
 import typing
 
 if typing.TYPE_CHECKING:
-    import datetime
     import uuid
 
     from backend.pipeline.storage import ingestion_lease_store
@@ -83,6 +84,29 @@ def _shard_index(
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class CallSubmission:
+    """One opaque call offered to an exact Lease-grant lane.
+
+    Attributes:
+        feed_id: Authoritative Feed identity used for stable shard affinity.
+        source_timestamp: Optional normalized UTC source timestamp.
+        payload: Opaque executor input retained only by the counted record.
+    """
+
+    feed_id: uuid.UUID
+    source_timestamp: datetime.datetime | None
+    payload: object
+
+    def __post_init__(self) -> None:
+        if (
+            self.source_timestamp is not None
+            and self.source_timestamp.utcoffset() != datetime.timedelta(0)
+        ):
+            message = "source_timestamp must be UTC-aware"
+            raise ValueError(message)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class _CallWork:
     """One call submission before local shard registration."""
 
@@ -121,3 +145,27 @@ class CallExecutor(typing.Protocol):
     async def execute(self, record: _CallRecord) -> None:
         """Settle one already-registered call or raise on integrity failure."""
         ...
+
+
+class LaneCloseReason(enum.StrEnum):
+    """Closed reasons accepted by one exact Lease-grant lane."""
+
+    PLANNED_DRAIN = "planned_drain"
+    AUTHORITY_LOSS = "authority_loss"
+    SCHEDULER_SHUTDOWN = "scheduler_shutdown"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class LaneClosed:
+    """Proof that one exact lane reached mutation closure."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    reason: LaneCloseReason
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class Undrained:
+    """Conservative result when mutation closure cannot be proved."""
+
+    grant: ingestion_lease_store.LeaseGrant | None
+    reason: LaneCloseReason

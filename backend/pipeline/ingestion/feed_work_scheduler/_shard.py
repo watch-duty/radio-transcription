@@ -22,6 +22,10 @@ class _ShardClosedError(RuntimeError):
     """Admission reached a shard that no longer accepts work."""
 
 
+class _AdmissionAbortedError(RuntimeError):
+    """Admission stopped because its exact lane began closing."""
+
+
 class _ShardFatalError(RuntimeError):
     """Admission or coordination observed persistent integrity failure."""
 
@@ -69,6 +73,11 @@ class _Shard:
         *,
         limits: _types._SchedulerLimits = _types._PRODUCTION_LIMITS,
         fatal_observer: typing.Callable[[BaseException], None] | None = None,
+        grant_is_closing: typing.Callable[
+            [ingestion_lease_store.LeaseGrant],
+            bool,
+        ]
+        | None = None,
     ) -> None:
         if isinstance(shard_id, bool):
             message = "shard_id must be an integer"
@@ -81,6 +90,7 @@ class _Shard:
         self._executor = executor
         self._limits = limits
         self._fatal_observer = fatal_observer
+        self._grant_is_closing = grant_is_closing
         self._lock = asyncio.Lock()
         self._work_ready = asyncio.Condition(self._lock)
         self._capacity_changed = asyncio.Condition(self._lock)
@@ -124,11 +134,16 @@ class _Shard:
             for slot in self._workers:
                 self._spawn_worker_locked(slot)
 
-    async def admit(self, work: _types._CallWork) -> _types._CallRecord:
+    async def admit(
+        self,
+        work: _types._CallWork,
+        *,
+        abort_event: asyncio.Event | None = None,
+    ) -> _types._CallRecord:
         """Atomically register one capacity-owning source record."""
         async with self._capacity_changed:
             while True:
-                self._raise_admission_error_locked()
+                self._raise_admission_error_locked(abort_event)
                 if (
                     not self._pressure_paused
                     and self._held < self._limits.capacity
@@ -180,6 +195,17 @@ class _Shard:
                     record = queue.popleft()
                     if not queue:
                         del self._feed_queues[feed_id]
+                    if (
+                        self._grant_is_closing is not None
+                        and self._grant_is_closing(record.grant)
+                    ):
+                        del self._records[record.local_sequence]
+                        self._held -= 1
+                        if feed_id in self._feed_queues:
+                            self._ensure_ready_locked(feed_id)
+                        self._after_release_locked(1)
+                        self._check_conservation_locked()
+                        continue
                     self._active_by_feed[feed_id] = record
                     slot.active_record = record
                     self._check_conservation_locked()
@@ -226,6 +252,67 @@ class _Shard:
             self._after_release_locked(released_count)
             self._check_conservation_locked()
 
+    async def purge_page(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+    ) -> None:
+        """Release queued records from one exact grant and page."""
+        _types._require_nonnegative_integer(
+            page_sequence,
+            "page_sequence",
+        )
+        async with self._lock:
+            released_count = 0
+            for feed_id, queue in tuple(self._feed_queues.items()):
+                kept: collections.deque[_types._CallRecord] = (
+                    collections.deque()
+                )
+                for record in queue:
+                    if (
+                        record.grant == grant
+                        and record.work.page_sequence == page_sequence
+                    ):
+                        del self._records[record.local_sequence]
+                        self._held -= 1
+                        released_count += 1
+                    else:
+                        kept.append(record)
+                if kept:
+                    self._feed_queues[feed_id] = kept
+                else:
+                    del self._feed_queues[feed_id]
+                    self._remove_ready_locked(feed_id)
+            self._after_release_locked(released_count)
+            self._check_conservation_locked()
+
+    async def purge_feed(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        feed_id: uuid.UUID,
+    ) -> None:
+        """Release queued work for one Feed without rejecting future pages."""
+        async with self._lock:
+            queue = self._feed_queues.get(feed_id)
+            if queue is None:
+                return
+            kept: collections.deque[_types._CallRecord] = collections.deque()
+            released_count = 0
+            for record in queue:
+                if record.grant == grant:
+                    del self._records[record.local_sequence]
+                    self._held -= 1
+                    released_count += 1
+                else:
+                    kept.append(record)
+            if kept:
+                self._feed_queues[feed_id] = kept
+            else:
+                del self._feed_queues[feed_id]
+                self._remove_ready_locked(feed_id)
+            self._after_release_locked(released_count)
+            self._check_conservation_locked()
+
     async def request_cancel_exact(
         self,
         grant: ingestion_lease_store.LeaseGrant,
@@ -261,6 +348,13 @@ class _Shard:
     ) -> tuple[int, ...]:
         """Settle exact cancellations or fail closed when interrupted."""
         requests = await self.request_cancel_exact(grant)
+        return await self.settle_cancellations(requests)
+
+    async def settle_cancellations(
+        self,
+        requests: tuple[_CancellationRequest, ...],
+    ) -> tuple[int, ...]:
+        """Settle previously registered exact worker cancellations."""
         try:
             for request in requests:
                 await asyncio.wait((request.task,))
@@ -334,6 +428,34 @@ class _Shard:
                 lambda: self._held == expected or self._fatal is not None
             )
             self._raise_fatal_locked()
+
+    async def wait_exact_empty(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> None:
+        """Wait until no counted record retains one complete grant."""
+        async with self._capacity_changed:
+            await self._capacity_changed.wait_for(
+                lambda: (
+                    not any(
+                        record.grant == grant
+                        for record in self._records.values()
+                    )
+                    or self._fatal is not None
+                )
+            )
+            self._raise_fatal_locked()
+
+    async def propagate_fatal(self, failure: BaseException) -> None:
+        """Fail this shard from scheduler-global integrity evidence."""
+        async with self._lock:
+            self._mark_fatal_locked(failure, observe=False)
+
+    async def wake_waiters(self) -> None:
+        """Recheck admission predicates after a lane state transition."""
+        async with self._lock:
+            self._work_ready.notify_all()
+            self._capacity_changed.notify_all()
 
     async def close(self) -> None:
         """Stop fixed workers only after the shard is provably quiescent."""
@@ -500,13 +622,18 @@ class _Shard:
         async with self._lock:
             self._mark_fatal_locked(failure)
 
-    def _mark_fatal_locked(self, failure: BaseException) -> None:
+    def _mark_fatal_locked(
+        self,
+        failure: BaseException,
+        *,
+        observe: bool = True,
+    ) -> None:
         first_failure = self._fatal is None
         if first_failure:
             self._fatal = failure
         self._work_ready.notify_all()
         self._capacity_changed.notify_all()
-        if first_failure and self._fatal_observer is not None:
+        if first_failure and observe and self._fatal_observer is not None:
             self._fatal_observer(failure)
 
     def _worker_done(
@@ -545,8 +672,14 @@ class _Shard:
         self._capacity_changed.notify_all()
         self._work_ready.notify_all()
 
-    def _raise_admission_error_locked(self) -> None:
+    def _raise_admission_error_locked(
+        self,
+        abort_event: asyncio.Event | None,
+    ) -> None:
         self._raise_fatal_locked()
+        if abort_event is not None and abort_event.is_set():
+            message = "exact lane closed during admission"
+            raise _AdmissionAbortedError(message)
         if self._stopping or self._closed:
             message = "shard admission is closed"
             raise _ShardClosedError(message)
