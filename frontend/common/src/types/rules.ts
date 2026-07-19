@@ -1,4 +1,5 @@
 import type { Tag } from './feeds.js';
+import type { TextMatchSpan } from './audio.js';
 
 export type ScopeLevel = 'FEED_SPECIFIC' | 'GLOBAL';
 export type EvaluationType = 'KEYWORD_MATCH' | 'REGEX_MATCH' | 'RULE_GROUP';
@@ -66,4 +67,24 @@ export interface RuleUpdate {
   scope?: Scope;
   conditions?: RuleConditions;
   tags?: Tag[];
+}
+
+export interface DryRunMatchExample {
+  audioSegmentId: string;
+  feedId: string;
+  text: string;
+  matchedSpans: TextMatchSpan[];
+}
+
+export interface DryRunResponse {
+  hitCount: number;
+  totalEvaluated: number;
+  examples: DryRunMatchExample[];
+}
+
+export interface DryRunRequest {
+  rule: RuleCreate;
+  maxExamples?: number;
+  feedIds?: string[];
+  daysLookback?: number;
 }

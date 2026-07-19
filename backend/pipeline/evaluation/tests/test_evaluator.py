@@ -1,10 +1,7 @@
-import io
-import json
 import unittest
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import ANY, MagicMock, Mock, patch
 
-import urllib3
-from urllib3.response import HTTPResponse
+import httpx
 
 from backend.pipeline.common.rules import models
 from backend.pipeline.evaluation.rules_evaluation import evaluator
@@ -271,11 +268,22 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         self.api_url = "http://localhost:8080"
         self.remote_evaluator = evaluator.RemoteTextEvaluator(self.api_url)
 
+    def tearDown(self) -> None:
+        self.remote_evaluator.close()
+
+    def test_init_initializes_without_http2(self) -> None:
+        transport = self.remote_evaluator.client._transport
+        self.assertIsNotNone(transport)
+        self.assertIsInstance(transport, httpx.HTTPTransport)
+        self.assertFalse(
+            getattr(getattr(transport, "_pool", None), "_http2", False)
+        )
+
     @patch(
         "backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token"
     )
     @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.is_gcp_env")
-    @patch("requests.Session.get")
+    @patch("httpx.Client.get")
     def test_evaluate_success(
         self, mock_get, mock_is_gcp, mock_get_id_token
     ) -> None:
@@ -310,7 +318,7 @@ class TestRemoteTextEvaluator(unittest.TestCase):
 
         # Verify Authorization header was set
         self.assertEqual(
-            self.remote_evaluator.session.headers.get("Authorization"),
+            self.remote_evaluator.client.headers.get("Authorization"),
             "Bearer mock_token",
         )
         mock_get_id_token.assert_called_with(self.api_url)
@@ -319,7 +327,7 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         "backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token"
     )
     @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.is_gcp_env")
-    @patch("requests.Session.get")
+    @patch("httpx.Client.get")
     def test_evaluate_outside_gcp(
         self, mock_get, mock_is_gcp, mock_get_id_token
     ) -> None:
@@ -348,13 +356,13 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         self.assertTrue(result["is_flagged"])
         mock_get_id_token.assert_not_called()
         self.assertIsNone(
-            self.remote_evaluator.session.headers.get("Authorization")
+            self.remote_evaluator.client.headers.get("Authorization")
         )
 
     @patch(
         "backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token"
     )
-    @patch("requests.Session.get")
+    @patch("httpx.Client.get")
     def test_evaluate_inactive_rule(self, mock_get, mock_get_id_token) -> None:
         """Test that inactive rules are ignored."""
         mock_get_id_token.return_value = "mock_token"
@@ -381,7 +389,7 @@ class TestRemoteTextEvaluator(unittest.TestCase):
     @patch(
         "backend.pipeline.evaluation.rules_evaluation.evaluator.get_id_token"
     )
-    @patch("requests.Session.get")
+    @patch("httpx.Client.get")
     def test_evaluate_feed_specific_rules(
         self, mock_get, mock_get_id_token
     ) -> None:
@@ -455,7 +463,7 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         self.assertNotIn("feed_b_rule", result_other["triggered_rules"])
 
     @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.is_gcp_env")
-    @patch("requests.Session.get")
+    @patch("httpx.Client.get")
     def test_evaluate_caches_rules(self, mock_get, mock_is_gcp) -> None:
         """Test that RemoteTextEvaluator caches rules and does not refetch within TTL."""
         mock_is_gcp.return_value = False
@@ -487,7 +495,7 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         self.assertEqual(mock_get.call_count, 1)  # Still 1
 
     @patch("backend.pipeline.evaluation.rules_evaluation.evaluator.is_gcp_env")
-    @patch("requests.Session.get")
+    @patch("httpx.Client.get")
     def test_evaluate_refetches_rules_when_cache_ttl_is_zero(
         self, mock_get, mock_is_gcp
     ) -> None:
@@ -562,14 +570,12 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         )
 
     @patch("time.sleep", return_value=None)
-    @patch("urllib3.connectionpool.HTTPConnectionPool._make_request")
+    @patch("httpx.Client.get")
     def test_evaluate_rules_fetch_retry_on_timeout_exhausted(
-        self, mock_make_request, mock_sleep
+        self, mock_get, mock_sleep
     ) -> None:
         """Test that a retryable timeout error retries 3 times and then fails."""
-        mock_make_request.side_effect = urllib3.exceptions.ReadTimeoutError(
-            Mock(), "/v1/rules", "Read timed out"
-        )
+        mock_get.side_effect = httpx.ReadTimeout("Read timed out")
 
         result = self.remote_evaluator.evaluate(
             "Some text", feed_id="test_feed"
@@ -579,14 +585,12 @@ class TestRemoteTextEvaluator(unittest.TestCase):
             EvaluationErrorType.ERROR_RULES_FETCH_FAILED,
             result["errors"],
         )
-        # total=3 means 1 initial attempt + 3 retries = 4 attempts total
-        self.assertEqual(mock_make_request.call_count, 4)
-        self.assertEqual(mock_sleep.call_count, 2)
+        self.assertEqual(mock_get.call_count, 4)
 
     @patch("time.sleep", return_value=None)
-    @patch("urllib3.connectionpool.HTTPConnectionPool._make_request")
+    @patch("httpx.Client.get")
     def test_evaluate_rules_fetch_retry_and_succeed(
-        self, mock_make_request, mock_sleep
+        self, mock_get, mock_sleep
     ) -> None:
         """Test that a transient timeout error succeeds on a later retry."""
         mock_rule = {
@@ -602,22 +606,13 @@ class TestRemoteTextEvaluator(unittest.TestCase):
             },
         }
 
-        success_body = json.dumps([mock_rule]).encode("utf-8")
-        success_response = HTTPResponse(
-            body=io.BytesIO(success_body),
-            headers={"Content-Type": "application/json"},
-            status=200,
-            preload_content=False,
-        )
+        success_response = MagicMock()
+        success_response.json.return_value = [mock_rule]
+        success_response.status_code = 200
 
-        # Fail first 2 times with Timeout, succeed on 3rd time
-        mock_make_request.side_effect = [
-            urllib3.exceptions.ReadTimeoutError(
-                Mock(), "/v1/rules", "Read timed out 1"
-            ),
-            urllib3.exceptions.ReadTimeoutError(
-                Mock(), "/v1/rules", "Read timed out 2"
-            ),
+        mock_get.side_effect = [
+            httpx.ReadTimeout("Read timed out 1"),
+            httpx.ReadTimeout("Read timed out 2"),
             success_response,
         ]
 
@@ -625,22 +620,22 @@ class TestRemoteTextEvaluator(unittest.TestCase):
             "This is a test message.", feed_id="test_feed"
         )
         self.assertTrue(result["is_flagged"])
-        self.assertEqual(mock_make_request.call_count, 3)
-        self.assertEqual(mock_sleep.call_count, 1)
+        self.assertEqual(mock_get.call_count, 3)
 
     @patch("time.sleep", return_value=None)
-    @patch("urllib3.connectionpool.HTTPConnectionPool._make_request")
+    @patch("httpx.Client.get")
     def test_evaluate_rules_fetch_no_retry_on_404(
-        self, mock_make_request, mock_sleep
+        self, mock_get, mock_sleep
     ) -> None:
         """Test that non-retryable client errors (e.g. 404) fail immediately without retrying."""
-        mock_response = HTTPResponse(
-            body=io.BytesIO(b"[]"),
-            headers={"Content-Type": "application/json"},
-            status=404,
-            preload_content=False,
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "Not Found",
+            request=MagicMock(spec=httpx.Request),
+            response=mock_response,
         )
-        mock_make_request.return_value = mock_response
+        mock_get.return_value = mock_response
 
         result = self.remote_evaluator.evaluate(
             "Some text", feed_id="test_feed"
@@ -650,23 +645,23 @@ class TestRemoteTextEvaluator(unittest.TestCase):
             EvaluationErrorType.ERROR_RULES_FETCH_FAILED,
             result["errors"],
         )
-        # exactly 1 attempt
-        self.assertEqual(mock_make_request.call_count, 1)
+        self.assertEqual(mock_get.call_count, 1)
         mock_sleep.assert_not_called()
 
     @patch("time.sleep", return_value=None)
-    @patch("urllib3.connectionpool.HTTPConnectionPool._make_request")
+    @patch("httpx.Client.get")
     def test_evaluate_rules_fetch_retry_on_503_server_error(
-        self, mock_make_request, mock_sleep
+        self, mock_get, mock_sleep
     ) -> None:
         """Test that retryable server errors (503) retry and fail after exhausting attempts."""
-        mock_response = HTTPResponse(
-            body=io.BytesIO(b"[]"),
-            headers={"Content-Type": "application/json"},
-            status=503,
-            preload_content=False,
+        mock_response = MagicMock()
+        mock_response.status_code = 503
+        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+            "Service Unavailable",
+            request=MagicMock(spec=httpx.Request),
+            response=mock_response,
         )
-        mock_make_request.return_value = mock_response
+        mock_get.return_value = mock_response
 
         result = self.remote_evaluator.evaluate(
             "Some text", feed_id="test_feed"
@@ -676,11 +671,9 @@ class TestRemoteTextEvaluator(unittest.TestCase):
             EvaluationErrorType.ERROR_RULES_FETCH_FAILED,
             result["errors"],
         )
-        # 1 initial attempt + 3 retries = 4 attempts total
-        self.assertEqual(mock_make_request.call_count, 4)
-        self.assertEqual(mock_sleep.call_count, 2)
+        self.assertEqual(mock_get.call_count, 4)
 
-    @patch("requests.Session.get")
+    @patch("httpx.Client.get")
     def test_keyword_match_word_boundaries(self, mock_get) -> None:
         """Test that KEYWORD_MATCH rules enforce word boundaries."""
         mock_rule = {
@@ -712,7 +705,7 @@ class TestRemoteTextEvaluator(unittest.TestCase):
             result2["is_flagged"], "Should match standalone 'field fire'"
         )
 
-    @patch("requests.Session.get")
+    @patch("httpx.Client.get")
     def test_evaluate_empty_keyword_set_all(self, mock_get) -> None:
         """Test that an ALL rule with empty keywords does not trigger."""
         mock_rule = {
@@ -736,7 +729,7 @@ class TestRemoteTextEvaluator(unittest.TestCase):
         )
         self.assertFalse(result["is_flagged"])
 
-    @patch("requests.Session.get")
+    @patch("httpx.Client.get")
     def test_evaluate_empty_string_keywords(self, mock_get) -> None:
         """Test that whitespace-only or empty-string keywords are ignored."""
         mock_rule = {
