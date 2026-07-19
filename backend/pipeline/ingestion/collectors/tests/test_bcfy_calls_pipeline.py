@@ -41,6 +41,7 @@ def _member() -> ingestion_lease_store.LeaseMember:
         ),
         name="Dispatch",
         last_bookmark_time=None,
+        retry_after=None,
     )
 
 
