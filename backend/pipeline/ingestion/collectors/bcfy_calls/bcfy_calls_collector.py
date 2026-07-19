@@ -5,6 +5,7 @@ import collections
 import dataclasses
 import datetime
 import logging
+import math
 import uuid
 from typing import TYPE_CHECKING, Any
 
@@ -53,6 +54,19 @@ _TRANSIENT_CALLS_API_FAILURES = frozenset(
 class _CallChunkResult:
     chunk: CapturedChunk | None = None
     failure: ItemFailure | None = None
+
+
+def _provider_timestamp(value: object) -> datetime.datetime | None:
+    """Decode one finite provider timestamp without rejecting its audio."""
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        numeric = float(value)
+        if not math.isfinite(numeric):
+            return None
+        return datetime.datetime.fromtimestamp(numeric, datetime.UTC)
+    except (TypeError, ValueError, OSError, OverflowError):
+        return None
 
 
 def _extract_calls_from_response(
@@ -131,32 +145,18 @@ async def _create_chunk_from_call(
 
     audio_bytes = audio_result
 
-    start_ts = result.get("start_ts")
-    end_ts = result.get("end_ts")
     now = datetime.datetime.now(datetime.UTC)
-
-    chunk_start_time = (
-        datetime.datetime.fromtimestamp(start_ts, datetime.UTC)
-        if start_ts is not None
-        else now
-    )
-    chunk_end_time = (
-        datetime.datetime.fromtimestamp(end_ts, datetime.UTC)
-        if end_ts is not None
-        else now
-    )
+    chunk_start_time = _provider_timestamp(result.get("start_ts")) or now
+    chunk_end_time = _provider_timestamp(result.get("end_ts")) or now
 
     # Resume cursor: the call's own API index time `ts`. On a mid-page crash
     # between two calls sharing a `ts` second the later one is not re-fetched
     # (strict `ts > pos`) -- an accepted, bounded data-loss case.
-    ts = result.get("ts")
-    if ts is not None:
-        resume_position = datetime.datetime.fromtimestamp(ts, datetime.UTC)
-    else:
-        resume_position = None
+    resume_position = _provider_timestamp(result.get("ts"))
+    if resume_position is None:
         logger.warning(
-            "bcfy_calls call missing 'ts' (API pagination key) -- resume "
-            "cursor falls back to chunk_end_time",
+            "bcfy_calls call missing or invalid 'ts' (API pagination key) "
+            "-- resume cursor falls back to chunk_end_time",
             extra={"json_fields": {"event_type": "bcfy_calls_missing_ts"}},
         )
 
