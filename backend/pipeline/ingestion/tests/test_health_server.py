@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 import unittest
-import uuid
 from typing import TYPE_CHECKING
 from unittest import mock
 
@@ -38,7 +37,7 @@ class HealthzHandlerTests(AioHTTPTestCase):
 
     async def get_application(self) -> web.Application:
         self.settings = _fake_settings()
-        self.state = HealthState()
+        self.state = HealthState(active_feed_count=lambda: 0)
         return build_app(self.settings, self.state)
 
     async def _get_healthz(self) -> tuple[int, dict]:
@@ -111,7 +110,6 @@ class HealthzHandlerTests(AioHTTPTestCase):
         now = time.monotonic()
         self.state.startup_time = now - 3600.0  # 1h uptime — well past grace
         self.state.last_heartbeat_tick = now - 2.0
-        # feed_tasks intentionally empty.
 
         status, body = await self._get_healthz()
 
@@ -124,13 +122,8 @@ class HealthzHandlerTests(AioHTTPTestCase):
         now = time.monotonic()
         self.state.startup_time = now - 400.0
         self.state.last_heartbeat_tick = now - 2.0
-        self.state.feed_tasks.update(
-            {
-                uuid.uuid4(): object(),
-                uuid.uuid4(): object(),
-                uuid.uuid4(): object(),
-            }
-        )
+        active_feed_count = mock.Mock(return_value=3)
+        self.state.active_feed_count = active_feed_count
 
         status, body = await self._get_healthz()
 
@@ -141,6 +134,7 @@ class HealthzHandlerTests(AioHTTPTestCase):
         )
         self.assertEqual(body["status"], "healthy")
         self.assertEqual(body["active_feeds"], 3)
+        active_feed_count.assert_called_once_with()
         self.assertIsInstance(body["last_heartbeat_age_sec"], (int, float))
 
 

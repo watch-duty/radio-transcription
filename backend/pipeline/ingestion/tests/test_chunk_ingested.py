@@ -8,7 +8,7 @@ D-16 (absent processing_latency_sec when receipt_time is None). Test matrix:
     3. Unstamped            -> unstamped golden (3 keys, no latency fields)
     4. Bookmark fails       -> no emit (fence-violation path skips the log)
 
-All 4 tests exercise the real _process_feed loop with mocked GCS / Pub/Sub
+All tests exercise the real _process_feed loop with mocked GCS / Pub/Sub
 / FeedStore so the assertion is on the record the emit actually produces,
 not on a unit-extracted helper.
 """
@@ -28,9 +28,11 @@ from unittest import mock
 import aiohttp
 
 from backend.pipeline.common.constants import CHUNK_DURATION_SECONDS
+from backend.pipeline.ingestion import grant_control
 from backend.pipeline.ingestion.collector_runtime import CollectorRuntime
 from backend.pipeline.ingestion.models import CapturedChunk, CaptureResources
 from backend.pipeline.storage.feed_store import (
+    FeedGrant,
     FeedStatusReason,
     LeasedFeed,
     SourceType,
@@ -140,10 +142,9 @@ def _build_runtime_for_one_chunk(
 ) -> CollectorRuntime:
     """Construct a runtime wired to yield a single chunk then stop.
 
-    When bookmark_ok=True we set shutdown so _process_feed returns cleanly
-    after the emit (before asking for more chunks). When bookmark_ok=False
-    the emit is unreachable: the fence-violation branch triggers os._exit,
-    which the caller mocks away.
+    The one-item capture iterator closes after yielding the chunk. A rejected
+    bookmark is surfaced as a lost grant; terminal persistence belongs to the
+    common grant supervisor rather than this data-plane runner.
     """
 
     async def _one_chunk(
@@ -155,14 +156,27 @@ def _build_runtime_for_one_chunk(
 
     rt = CollectorRuntime(capture_fn=_one_chunk, settings=_make_settings())
     rt._shutdown = asyncio.Event()
-    rt._lease_lost = asyncio.Event()
     rt._capture_resources = CaptureResources(
         http_session=mock.AsyncMock(spec=aiohttp.ClientSession),
     )
     rt._store = mock.AsyncMock()
     rt._store.update_feed_progress.return_value = bookmark_ok
-    rt._releasing_feeds = set()
     return rt
+
+
+def _grant() -> FeedGrant:
+    return FeedGrant(
+        feed_id=_FEED_ID,
+        owner_worker_id=_WORKER_ID,
+        fencing_token=1,
+    )
+
+
+def _context() -> grant_control.RunContext:
+    return grant_control.RunContext(
+        stop_requested=asyncio.Event(),
+        grant_lost=asyncio.Event(),
+    )
 
 
 class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
@@ -184,22 +198,16 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
                 level=logging.INFO,
             ) as cm,
         ):
-            if bookmark_ok:
-                await rt._process_feed(_FEED)
-            else:
-                # Real os._exit(1) never returns. Mocking it to a plain no-op
-                # would let control fall into the emit block (a test artifact),
-                # so we raise SystemExit from the mock to faithfully model the
-                # "process dies here" semantics.
-                with (
-                    mock.patch(
-                        "backend.pipeline.ingestion.collector_runtime.os._exit",
-                        side_effect=SystemExit(1),
-                    ),
-                    mock.patch("logging.shutdown"),
-                    self.assertRaises(SystemExit),
-                ):
-                    await rt._process_feed(_FEED)
+            outcome = await rt._process_feed(
+                _grant(),
+                _FEED,
+                _context(),
+            )
+
+        if bookmark_ok:
+            self.assertIsInstance(outcome, grant_control.RunCompleted)
+        else:
+            self.assertIsInstance(outcome, grant_control.RunLost)
 
         return [r for r in cm.records if r.getMessage() == "Chunk ingested"]
 
@@ -292,7 +300,6 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
         chunk = _make_chunk(datetime.datetime.now(datetime.UTC))
         rt = _build_runtime_for_one_chunk(chunk, bookmark_ok=True)
         store = cast("Any", rt._store)
-        store.release_non_budgeted_failure.return_value = "failing"
 
         with (
             _mock_upload_audio(),
@@ -306,14 +313,17 @@ class TestChunkIngestedEmit(unittest.IsolatedAsyncioTestCase):
                 level=logging.INFO,
             ) as cm,
         ):
-            await rt._process_feed(_FEED)
+            outcome = await rt._process_feed(
+                _grant(),
+                _FEED,
+                _context(),
+            )
 
         store.update_feed_progress.assert_awaited_once()
-        store.report_feed_failure.assert_not_awaited()
-        store.release_non_budgeted_failure.assert_awaited_once()
-        kwargs = store.release_non_budgeted_failure.await_args.kwargs
+        self.assertIsInstance(outcome, grant_control.RunFailed)
+        failed = cast("grant_control.RunFailed", outcome)
         self.assertIs(
-            kwargs["status_reason"],
+            failed.status_reason,
             FeedStatusReason.PIPELINE_PUBLISH_AFTER_BOOKMARK_FAILED,
         )
         records = [
