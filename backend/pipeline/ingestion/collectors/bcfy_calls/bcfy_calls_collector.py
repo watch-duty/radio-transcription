@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-# Compatibility aliases preserve the existing collector seams while the
-# provider owns behavior shared by group and SID callers.
-# ruff: noqa: SLF001
 import asyncio
 import collections
 import dataclasses
@@ -10,8 +7,6 @@ import datetime
 import logging
 import uuid
 from typing import TYPE_CHECKING, Any
-
-from google.cloud import secretmanager
 
 from backend.pipeline.ingestion.collectors import (
     control_flow,
@@ -40,8 +35,6 @@ from backend.pipeline.storage.feed_store import FeedStatusReason
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    import aiohttp
-
     from backend.pipeline.storage.feed_store import LeasedFeed
 
 logger = logging.getLogger(__name__)
@@ -60,97 +53,6 @@ _TRANSIENT_CALLS_API_FAILURES = frozenset(
 class _CallChunkResult:
     chunk: CapturedChunk | None = None
     failure: ItemFailure | None = None
-
-
-def _get_jwt_token() -> str:
-    """Forward the existing test seam to the shared provider."""
-    return provider._get_jwt_token(
-        _client_factory=secretmanager.SecretManagerServiceClient
-    )
-
-
-def _get_jwt_lock() -> asyncio.Lock:
-    """Forward the existing test seam to the shared provider."""
-    return provider._get_jwt_lock()
-
-
-def _reset_jwt_cache_for_tests() -> None:
-    """Reset the one provider-owned process-wide JWT cache."""
-    provider._reset_jwt_cache_for_tests()
-
-
-async def _get_shared_jwt_token(
-    *,
-    force_refresh: bool = False,
-    stale_token: str | None = None,
-) -> str:
-    """Forward the existing test seam to the shared provider."""
-    return await provider._get_shared_jwt_token(
-        force_refresh=force_refresh,
-        stale_token=stale_token,
-        _token_fetcher=_get_jwt_token,
-    )
-
-
-async def _get_shared_jwt_token_with_retry(
-    shutdown_event: asyncio.Event,
-    *,
-    force_refresh: bool = False,
-    stale_token: str | None = None,
-) -> str | None:
-    """Forward the existing test seam to the shared provider."""
-    return await provider._get_shared_jwt_token_with_retry(
-        shutdown_event,
-        force_refresh=force_refresh,
-        stale_token=stale_token,
-        _token_fetcher=_get_jwt_token,
-    )
-
-
-def _log_calls_api_response_invalid() -> None:
-    """Forward the existing test seam to the shared provider."""
-    provider._log_calls_api_response_invalid()
-
-
-def _validate_calls_api_payload(
-    payload: object,
-) -> dict[str, Any]:
-    """Forward the existing test seam to the shared provider."""
-    validated = provider._validate_calls_api_payload(payload)
-    return dict(validated)
-
-
-async def _fetch_calls(
-    session: aiohttp.ClientSession,
-    url: str,
-    headers: dict[str, str],
-    params: dict[str, Any],
-    shutdown_event: asyncio.Event,
-) -> dict[str, Any]:
-    """Forward the existing test seam to the shared provider."""
-    result = await provider._fetch_calls(
-        session,
-        url,
-        headers,
-        params,
-        shutdown_event,
-    )
-    return dict(result)
-
-
-async def _download_audio(
-    session: aiohttp.ClientSession,
-    audio_url: str,
-    shutdown_event: asyncio.Event,
-    out_headers: dict[str, str] | None = None,
-) -> bytes | ItemFailure:
-    """Forward the existing test seam to the shared provider."""
-    return await provider._download_audio(
-        session,
-        audio_url,
-        shutdown_event,
-        out_headers,
-    )
 
 
 def _extract_calls_from_response(
@@ -188,31 +90,22 @@ def _last_pos_to_resume_position(
 
 
 async def _create_chunk_from_call(
-    session: aiohttp.ClientSession,
     result: dict[str, Any],
     audio_url: str,
     shutdown_event: asyncio.Event,
     session_id: str,
     receipt_time: datetime.datetime,
+    calls_provider: provider.CallsProviderClient,
     out_headers: dict[str, str] | None = None,
-    calls_provider: provider.CallsProviderClient | None = None,
 ) -> _CallChunkResult:
     """Download audio for a single call and wrap it in a CapturedChunk."""
     out_h = out_headers if out_headers is not None else {}
     try:
-        if calls_provider is None:
-            audio_result = await _download_audio(
-                session,
-                audio_url,
-                shutdown_event,
-                out_h,
-            )
-        else:
-            audio_result = await calls_provider.download_audio(
-                audio_url,
-                shutdown_event=shutdown_event,
-                out_headers=out_h,
-            )
+        audio_result = await calls_provider.download_audio(
+            audio_url,
+            shutdown_event=shutdown_event,
+            out_headers=out_h,
+        )
     except asyncio.CancelledError:
         raise
     except Exception as error:
@@ -349,29 +242,18 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
         )
         raise missing_source_feed_id_failure()
 
-    async def load_provider_token(
-        token_shutdown_event: asyncio.Event,
-        *,
-        force_refresh: bool = False,
-        stale_token: str | None = None,
-    ) -> str | None:
-        """Load a token and emit feed-scoped evidence before forced refresh."""
-        if force_refresh:
-            logger.warning(
-                "Auth failure for feed %s; refreshing token.",
-                feed_id,
-                extra={
-                    "json_fields": {
-                        "event_type": EVENT_TYPE_CALL_AUTH_FAILURE,
-                        "feed_id": str(feed_id),
-                        "source_type": feed["source_type"],
-                    },
+    def observe_authentication_failure() -> None:
+        """Emit feed-scoped evidence before a forced credential refresh."""
+        logger.warning(
+            "Auth failure for feed %s; refreshing token.",
+            feed_id,
+            extra={
+                "json_fields": {
+                    "event_type": EVENT_TYPE_CALL_AUTH_FAILURE,
+                    "feed_id": str(feed_id),
+                    "source_type": feed["source_type"],
                 },
-            )
-        return await _get_shared_jwt_token_with_retry(
-            token_shutdown_event,
-            force_refresh=force_refresh,
-            stale_token=stale_token,
+            },
         )
 
     seen_urls = collections.deque(maxlen=1000)
@@ -383,9 +265,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
     calls_provider = provider.CallsProviderClient(
         session,
         url_base,
-        _token_loader=load_provider_token,
-        _json_fetcher=_fetch_calls,
-        _media_downloader=_download_audio,
+        on_authentication_failure=observe_authentication_failure,
     )
     while not shutdown_event.is_set():
         try:
@@ -395,7 +275,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                     last_bookmark_time_unix,
                     shutdown_event=shutdown_event,
                 )
-            except provider._TokenLoadStopped:
+            except provider.TokenLoadStopped:
                 return
             except FeedFailure as e:
                 if e.status_reason not in _TRANSIENT_CALLS_API_FAILURES:
@@ -434,13 +314,12 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
 
                     outcome.record_attempt()
                     call_result = await _create_chunk_from_call(
-                        session,
                         result,
                         audio_url,
                         shutdown_event,
                         connection_session_id,
                         receipt_time,
-                        calls_provider=calls_provider,
+                        calls_provider,
                     )
                     if call_result.failure is not None:
                         outcome.record_failure(call_result.failure)

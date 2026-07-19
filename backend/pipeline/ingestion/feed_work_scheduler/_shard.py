@@ -594,13 +594,9 @@ class _Shard:
         if active_sequences != slot_sequences:
             message = "Feed and fixed-worker ownership disagree"
             raise RuntimeError(message)
-        if set(self._records) != (
-            {
-                record.local_sequence
-                for queue in self._feed_queues.values()
-                for record in queue
-            }
-            | active_sequences
-        ):
+        owned_sequences = set(active_sequences)
+        for queue in self._feed_queues.values():
+            owned_sequences.update(record.local_sequence for record in queue)
+        if set(self._records) != owned_sequences:
             message = "record registry and ownership disagree"
             raise RuntimeError(message)

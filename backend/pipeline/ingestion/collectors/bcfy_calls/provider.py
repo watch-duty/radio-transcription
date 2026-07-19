@@ -12,19 +12,13 @@ import typing
 import aiohttp
 from google.cloud import secretmanager
 
+from backend.pipeline.ingestion import models, slo_contract
 from backend.pipeline.ingestion.collectors import (
     aiohttp_requests,
     control_flow,
-)
-from backend.pipeline.ingestion.collectors.failure_classification import (
-    ItemFailure,
-    collector_failure,
+    failure_classification,
 )
 from backend.pipeline.ingestion.failure_classifiers import http_status
-from backend.pipeline.ingestion.models import FeedFailure
-from backend.pipeline.ingestion.slo_contract import (
-    EVENT_TYPE_BCFY_JWT_FETCH_FAILED,
-)
 from backend.pipeline.storage import feed_store
 
 if typing.TYPE_CHECKING:
@@ -104,11 +98,11 @@ type _MediaDownloader = collections.abc.Callable[
         asyncio.Event,
         dict[str, str] | None,
     ],
-    typing.Awaitable[bytes | ItemFailure],
+    typing.Awaitable[bytes | failure_classification.ItemFailure],
 ]
 
 
-class _TokenLoadStopped(asyncio.CancelledError):
+class TokenLoadStopped(asyncio.CancelledError):
     """Signal that credential loading stopped because shutdown won."""
 
 
@@ -124,7 +118,7 @@ def _get_jwt_token(
     project_id = os.getenv("GOOGLE_CLOUD_PROJECT")
     secret_id = os.getenv("BROADCASTIFY_JWT_SECRET_ID")
     if not project_id or not secret_id:
-        raise collector_failure(
+        raise failure_classification.collector_failure(
             feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
             "calls_jwt_config_missing",
         )
@@ -137,7 +131,7 @@ def _get_jwt_token(
         return response.payload.data.decode("UTF-8").strip()
     except Exception as error:
         logger.exception("Failed to access secret %s: %s", name, error)
-        raise collector_failure(
+        raise failure_classification.collector_failure(
             feed_store.FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
             "calls_jwt_secret_access_failed",
         ) from error
@@ -201,7 +195,7 @@ async def _get_shared_jwt_token(
             if _jwt_state.refresh_task is task:
                 _jwt_state.refresh_task = None
                 should_log = True
-        is_config_failure = isinstance(error, FeedFailure) and (
+        is_config_failure = isinstance(error, models.FeedFailure) and (
             error.status_reason
             in (
                 feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
@@ -214,7 +208,9 @@ async def _get_shared_jwt_token(
                 exc_info=error,
                 extra={
                     "json_fields": {
-                        "event_type": EVENT_TYPE_BCFY_JWT_FETCH_FAILED,
+                        "event_type": (
+                            slo_contract.EVENT_TYPE_BCFY_JWT_FETCH_FAILED
+                        ),
                     },
                 },
             )
@@ -246,22 +242,28 @@ async def _get_shared_jwt_token_with_retry(
                 stale_token=stale_token,
                 _token_fetcher=_token_fetcher,
             )
-        except FeedFailure as error:
+        except models.FeedFailure as error:
             if error.status_reason in (
                 feed_store.FeedStatusReason.SYSTEM_CONFIGURATION_INVALID,
                 feed_store.FeedStatusReason.SYSTEM_RUNTIME_CONFIGURATION_INVALID,
             ):
                 raise
-            failure = ItemFailure(error.status_reason, error.reason)
+            failure = failure_classification.ItemFailure(
+                error.status_reason,
+                error.reason,
+            )
         except Exception:
-            failure = ItemFailure(
+            failure = failure_classification.ItemFailure(
                 feed_store.FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
                 "calls_jwt_secret_access_failed",
             )
 
         failures += 1
         if failures >= _JWT_MAX_CONSECUTIVE_FAILURES:
-            raise collector_failure(failure.status_reason, failure.reason)
+            raise failure_classification.collector_failure(
+                failure.status_reason,
+                failure.reason,
+            )
         await control_flow.sleep_or_cancel(
             shutdown_event,
             _JWT_RETRY_INTERVAL_SEC,
@@ -299,12 +301,6 @@ async def _fetch_calls(
     shutdown_event: asyncio.Event,
 ) -> collections.abc.Mapping[str, object]:
     """Fetch one Calls metadata page with the shared request policy."""
-
-    def validate_payload(
-        payload: object,
-    ) -> collections.abc.Mapping[str, object]:
-        return _validate_calls_api_payload(payload)
-
     selector_label = next(
         (
             f"{selector}={params[selector]}"
@@ -330,7 +326,7 @@ async def _fetch_calls(
         log_label=f"Calls API {selector_label}",
         reason_prefix="calls_api_http",
         status_policy=_CALLS_API_HTTP_POLICY,
-        validate_payload=validate_payload,
+        validate_payload=_validate_calls_api_payload,
         invalid_payload_status_reason=(
             feed_store.FeedStatusReason.SYSTEM_SOURCE_PAYLOAD_INVALID
         ),
@@ -347,7 +343,7 @@ async def _download_audio(
     audio_url: str,
     shutdown_event: asyncio.Event,
     out_headers: dict[str, str] | None = None,
-) -> bytes | ItemFailure:
+) -> bytes | failure_classification.ItemFailure:
     """Download one Calls item with the shared media retry policy."""
     result = await aiohttp_requests.download_item_media(
         session,
@@ -388,6 +384,8 @@ class CallsProviderClient:
         session: aiohttp.ClientSession,
         live_endpoint_url: str,
         *,
+        on_authentication_failure: collections.abc.Callable[[], None]
+        | None = None,
         _token_loader: _TokenLoader | None = None,
         _json_fetcher: _JsonFetcher | None = None,
         _media_downloader: _MediaDownloader | None = None,
@@ -397,6 +395,8 @@ class CallsProviderClient:
         Args:
             session: Runtime-owned session used for every provider request.
             live_endpoint_url: Broadcastify Calls live endpoint URL.
+            on_authentication_failure: Optional source-context observer invoked
+                before a forced credential refresh.
             _token_loader: Internal credential-loader test seam.
             _json_fetcher: Internal metadata-fetch test seam.
             _media_downloader: Internal media-download test seam.
@@ -407,6 +407,7 @@ class CallsProviderClient:
             if live_endpoint_url.endswith("/")
             else f"{live_endpoint_url}/"
         )
+        self._on_authentication_failure = on_authentication_failure
         self._token_loader = _token_loader or _get_shared_jwt_token_with_retry
         self._json_fetcher = _json_fetcher or _fetch_calls
         self._media_downloader = _media_downloader or _download_audio
@@ -491,7 +492,7 @@ class CallsProviderClient:
 
         token = await self._token_loader(shutdown_event)
         if token is None:
-            raise _TokenLoadStopped
+            raise TokenLoadStopped
         headers = {"Authorization": f"Bearer {token}"}
         try:
             payload = await self._json_fetcher(
@@ -501,18 +502,20 @@ class CallsProviderClient:
                 params,
                 shutdown_event,
             )
-        except FeedFailure as error:
+        except models.FeedFailure as error:
             if (
                 error.status_reason
                 is feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
             ):
+                if self._on_authentication_failure is not None:
+                    self._on_authentication_failure()
                 refreshed = await self._token_loader(
                     shutdown_event,
                     force_refresh=True,
                     stale_token=token,
                 )
                 if refreshed is None:
-                    raise _TokenLoadStopped from error
+                    raise TokenLoadStopped from error
             raise
         return _calls_page_envelope(payload)
 
@@ -522,7 +525,7 @@ class CallsProviderClient:
         *,
         shutdown_event: asyncio.Event,
         out_headers: dict[str, str] | None = None,
-    ) -> bytes | ItemFailure:
+    ) -> bytes | failure_classification.ItemFailure:
         """Download one item without taking ownership of the session.
 
         Args:

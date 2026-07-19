@@ -19,9 +19,7 @@ from testcontainers.postgres import PostgresContainer
 from backend.pipeline.common import gcp_helper
 from backend.pipeline.common.clients import gcs_client
 from backend.pipeline.common.test_schema_helper import async_apply_test_schema
-from backend.pipeline.ingestion.collectors.bcfy_calls import (
-    bcfy_calls_collector,
-)
+from backend.pipeline.ingestion.collectors.bcfy_calls import provider
 from backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector import (
     capture_bcfy_calls,
 )
@@ -44,9 +42,7 @@ _TEST_BUCKET = "test-audio-bucket"
 _FLAC_MAGIC = b"fLaC"
 _RUNTIME_ACTOR_ID = "service_account:gcp:123456789012345678901"
 
-_COL_MOD = (
-    "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector"
-)
+_PROVIDER_MOD = "backend.pipeline.ingestion.collectors.bcfy_calls.provider"
 
 
 def _docker_available() -> bool:
@@ -126,7 +122,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         cls.db_container.stop()
 
     async def asyncSetUp(self) -> None:
-        bcfy_calls_collector._reset_jwt_cache_for_tests()
+        provider._reset_jwt_cache_for_tests()
         self.pool = await asyncpg.create_pool(
             host=self._db_host,
             port=self._db_port,
@@ -147,7 +143,7 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         await self.gcs.close()
         os.environ.pop("STORAGE_EMULATOR_HOST", None)
         await self.pool.close()
-        bcfy_calls_collector._reset_jwt_cache_for_tests()
+        provider._reset_jwt_cache_for_tests()
 
     # -- Helpers ----------------------------------------------------------
 
@@ -213,11 +209,11 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
 
     # -- Tests ------------------------------------------------------------
 
-    @patch(f"{_COL_MOD}._get_jwt_token")
-    @patch(f"{_COL_MOD}._fetch_calls", new_callable=AsyncMock)
-    @patch(f"{_COL_MOD}._download_audio", new_callable=AsyncMock)
+    @patch(f"{_PROVIDER_MOD}._get_jwt_token")
+    @patch(f"{_PROVIDER_MOD}._fetch_calls", new_callable=AsyncMock)
+    @patch(f"{_PROVIDER_MOD}._download_audio", new_callable=AsyncMock)
     @patch(
-        f"{_COL_MOD}.control_flow.sleep_or_cancel",
+        f"{_PROVIDER_MOD}.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_capture_upload_and_bookmark(
@@ -293,11 +289,11 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(row["last_processed_filename"], chunks_uploaded[0])
         self.assertEqual(row["failure_count"], 0)
 
-    @patch(f"{_COL_MOD}._get_jwt_token")
-    @patch(f"{_COL_MOD}._fetch_calls", new_callable=AsyncMock)
-    @patch(f"{_COL_MOD}._download_audio", new_callable=AsyncMock)
+    @patch(f"{_PROVIDER_MOD}._get_jwt_token")
+    @patch(f"{_PROVIDER_MOD}._fetch_calls", new_callable=AsyncMock)
+    @patch(f"{_PROVIDER_MOD}._download_audio", new_callable=AsyncMock)
     @patch(
-        f"{_COL_MOD}.control_flow.sleep_or_cancel",
+        f"{_PROVIDER_MOD}.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_multiple_calls_uploaded_to_gcs(
@@ -378,11 +374,11 @@ class TestBcfyCallsCollectorIntegration(unittest.IsolatedAsyncioTestCase):
         row = await self._get_feed_row(feed["id"])
         self.assertEqual(row["last_processed_filename"], gcs_paths[-1])
 
-    @patch(f"{_COL_MOD}._get_jwt_token")
-    @patch(f"{_COL_MOD}._fetch_calls", new_callable=AsyncMock)
-    @patch(f"{_COL_MOD}._download_audio", new_callable=AsyncMock)
+    @patch(f"{_PROVIDER_MOD}._get_jwt_token")
+    @patch(f"{_PROVIDER_MOD}._fetch_calls", new_callable=AsyncMock)
+    @patch(f"{_PROVIDER_MOD}._download_audio", new_callable=AsyncMock)
     @patch(
-        f"{_COL_MOD}.control_flow.sleep_or_cancel",
+        f"{_PROVIDER_MOD}.control_flow.sleep_or_cancel",
         new_callable=AsyncMock,
     )
     async def test_session_id_set_on_chunks(
