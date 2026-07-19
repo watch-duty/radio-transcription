@@ -3,6 +3,14 @@
 from backend.pipeline.ingestion.feed_work_scheduler import _scheduler, _types
 
 CallSubmission = _types.CallSubmission
+BoundaryBatchCommitted = _types.BoundaryBatchCommitted
+BoundaryBatchRetryable = _types.BoundaryBatchRetryable
+BoundaryCommitResult = _types.BoundaryCommitResult
+BoundaryCommitter = _types.BoundaryCommitter
+BoundaryDisposition = _types.BoundaryDisposition
+BoundaryGrantRejected = _types.BoundaryGrantRejected
+BoundaryResult = _types.BoundaryResult
+BoundaryWork = _types.BoundaryWork
 FeedWorkScheduler = _scheduler.FeedWorkScheduler
 GrantLane = _scheduler.GrantLane
 LaneCloseReason = _types.LaneCloseReason
@@ -11,6 +19,14 @@ SchedulerIntegrityError = _scheduler.SchedulerIntegrityError
 Undrained = _types.Undrained
 
 __all__ = [
+    "BoundaryBatchCommitted",
+    "BoundaryBatchRetryable",
+    "BoundaryCommitResult",
+    "BoundaryCommitter",
+    "BoundaryDisposition",
+    "BoundaryGrantRejected",
+    "BoundaryResult",
+    "BoundaryWork",
     "CallSubmission",
     "FeedWorkScheduler",
     "GrantLane",

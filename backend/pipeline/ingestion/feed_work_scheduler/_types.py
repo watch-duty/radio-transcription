@@ -107,6 +107,76 @@ class CallSubmission:
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
+class BoundaryWork:
+    """One trailing Feed observation offered after a page's calls."""
+
+    member: ingestion_lease_store.LeaseMemberIdentity
+    target: datetime.datetime
+
+    def __post_init__(self) -> None:
+        if self.target.utcoffset() != datetime.timedelta(0):
+            message = "target must be UTC-aware"
+            raise ValueError(message)
+
+    @property
+    def feed_id(self) -> uuid.UUID:
+        """Return the immutable member's Feed identity."""
+        return self.member.feed_id
+
+
+class BoundaryDisposition(enum.StrEnum):
+    """Closed persistence outcome for one correlated boundary."""
+
+    COMMITTED = "committed"
+    MEMBER_REJECTED = "member_rejected"
+    RETRYABLE = "retryable"
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class BoundaryResult:
+    """One disposition correlated to the caller's exact object."""
+
+    boundary: BoundaryWork
+    disposition: BoundaryDisposition
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class BoundaryBatchCommitted:
+    """Caller-ordered outcomes beneath an accepted exact grant."""
+
+    results: tuple[BoundaryResult, ...]
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class BoundaryBatchRetryable:
+    """One whole physical boundary attempt settled transiently."""
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class BoundaryGrantRejected:
+    """The committer rejected the complete grant or fencing token."""
+
+
+type BoundaryCommitResult = (
+    BoundaryBatchCommitted | BoundaryBatchRetryable | BoundaryGrantRejected
+)
+
+
+class BoundaryCommitter(typing.Protocol):
+    """Exact-grant persistence seam used outside scheduler locks."""
+
+    async def commit(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        boundaries: tuple[BoundaryWork, ...],
+        *,
+        final_logical: bool,
+    ) -> BoundaryCommitResult:
+        """Attempt one immutable physical or final logical batch."""
+        ...
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
 class _CallWork:
     """One call submission before local shard registration."""
 
@@ -137,6 +207,47 @@ class _CallRecord:
     @property
     def grant(self) -> ingestion_lease_store.LeaseGrant:
         return self.work.grant
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _BoundaryInput:
+    """One page-local boundary before counted shard admission."""
+
+    boundary: BoundaryWork
+    grant: ingestion_lease_store.LeaseGrant
+    page_sequence: int
+
+    def __post_init__(self) -> None:
+        _require_nonnegative_integer(self.page_sequence, "page_sequence")
+
+
+@dataclasses.dataclass(slots=True)
+class _BoundaryRecord:
+    """One counted pending or immutable flushing boundary."""
+
+    grant: ingestion_lease_store.LeaseGrant
+    member: ingestion_lease_store.LeaseMemberIdentity
+    local_sequence: int
+    target: datetime.datetime
+    stable_target: datetime.datetime | None
+    provisional_page_sequence: int | None
+    retry_suspended: bool = False
+    aborted_page_sequence: int | None = None
+
+    @property
+    def feed_id(self) -> uuid.UUID:
+        return self.member.feed_id
+
+    def detached_work(self) -> BoundaryWork:
+        """Return an immutable target for the persistence boundary."""
+        return BoundaryWork(self.member, self.target)
+
+
+class _BoundaryPressureResult(enum.StrEnum):
+    """Result returned to one pressure-blocked page admission."""
+
+    COMPLETED = "completed"
+    RETRYABLE = "retryable"
 
 
 class CallExecutor(typing.Protocol):

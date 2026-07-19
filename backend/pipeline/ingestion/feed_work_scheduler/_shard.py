@@ -26,6 +26,10 @@ class _AdmissionAbortedError(RuntimeError):
     """Admission stopped because its exact lane began closing."""
 
 
+class _BoundaryReliefRetryableError(RuntimeError):
+    """Pressure relief could not release a boundary permit."""
+
+
 class _ShardFatalError(RuntimeError):
     """Admission or coordination observed persistent integrity failure."""
 
@@ -78,6 +82,11 @@ class _Shard:
             bool,
         ]
         | None = None,
+        boundary_ready_observer: typing.Callable[
+            [ingestion_lease_store.LeaseGrant],
+            None,
+        ]
+        | None = None,
     ) -> None:
         if isinstance(shard_id, bool):
             message = "shard_id must be an integer"
@@ -91,6 +100,7 @@ class _Shard:
         self._limits = limits
         self._fatal_observer = fatal_observer
         self._grant_is_closing = grant_is_closing
+        self._boundary_ready_observer = boundary_ready_observer
         self._lock = asyncio.Lock()
         self._work_ready = asyncio.Condition(self._lock)
         self._capacity_changed = asyncio.Condition(self._lock)
@@ -106,6 +116,15 @@ class _Shard:
         self._ready_members: set[uuid.UUID] = set()
         self._records: dict[int, _types._CallRecord] = {}
         self._active_by_feed: dict[uuid.UUID, _types._CallRecord] = {}
+        self._pending_boundaries: dict[
+            tuple[ingestion_lease_store.LeaseGrant, uuid.UUID],
+            _types._BoundaryRecord,
+        ] = {}
+        self._flushing_boundaries: dict[int, _types._BoundaryRecord] = {}
+        self._active_boundaries: dict[
+            uuid.UUID,
+            _types._BoundaryRecord,
+        ] = {}
 
         self._workers = [
             _WorkerSlot(slot_id)
@@ -162,13 +181,211 @@ class _Shard:
                     self._held += 1
                     if self._held >= self._limits.high_water:
                         self._pressure_paused = True
-                    if record.feed_id not in self._active_by_feed:
+                    if (
+                        record.feed_id not in self._active_by_feed
+                        and record.feed_id not in self._active_boundaries
+                    ):
                         self._ensure_ready_locked(record.feed_id)
                     self._check_conservation_locked()
                     self._work_ready.notify_all()
                     return record
 
                 await self._capacity_changed.wait()
+
+    async def admit_boundary(
+        self,
+        boundary_input: _types._BoundaryInput,
+        *,
+        abort_event: asyncio.Event,
+        pressure_relief: typing.Callable[
+            [],
+            typing.Awaitable[_types._BoundaryPressureResult],
+        ],
+    ) -> _types._BoundaryRecord:
+        """Count or coalesce one current-page trailing boundary."""
+        relief_requested = False
+        while True:
+            request_relief = False
+            async with self._capacity_changed:
+                self._raise_admission_error_locked(abort_event)
+                scope = (
+                    boundary_input.grant,
+                    boundary_input.boundary.feed_id,
+                )
+                pending = self._pending_boundaries.get(scope)
+                if pending is not None:
+                    self._coalesce_boundary_locked(pending, boundary_input)
+                    if self._boundary_is_ready_locked(pending):
+                        self._notify_boundary_ready_locked(pending.grant)
+                    self._check_conservation_locked()
+                    return pending
+                if (
+                    not self._pressure_paused
+                    and self._held < self._limits.capacity
+                ):
+                    record = _types._BoundaryRecord(
+                        grant=boundary_input.grant,
+                        member=boundary_input.boundary.member,
+                        local_sequence=self._next_sequence,
+                        target=boundary_input.boundary.target,
+                        stable_target=None,
+                        provisional_page_sequence=(
+                            boundary_input.page_sequence
+                        ),
+                    )
+                    self._next_sequence += 1
+                    self._pending_boundaries[scope] = record
+                    self._held += 1
+                    if self._held >= self._limits.high_water:
+                        self._pressure_paused = True
+                    self._capacity_changed.notify_all()
+                    if self._boundary_is_ready_locked(record):
+                        self._notify_boundary_ready_locked(record.grant)
+                    self._check_conservation_locked()
+                    return record
+                if not relief_requested:
+                    request_relief = True
+                else:
+                    await self._capacity_changed.wait()
+            if request_relief:
+                relief_requested = True
+                result = await pressure_relief()
+                if result is _types._BoundaryPressureResult.RETRYABLE:
+                    message = "boundary pressure relief is retryable"
+                    raise _BoundaryReliefRetryableError(message)
+
+    async def select_boundary_batch(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        limit: int,
+        *,
+        include_suspended: bool,
+    ) -> tuple[_types._BoundaryRecord, ...]:
+        """Detach one bounded ready exact-grant prefix."""
+        _types._require_positive_integer(limit, "limit")
+        async with self._lock:
+            self._raise_fatal_locked()
+            selected = []
+            candidates = sorted(
+                self._pending_boundaries.items(),
+                key=lambda item: item[1].local_sequence,
+            )
+            for scope, record in candidates:
+                if len(selected) >= limit:
+                    break
+                if record.grant != grant or not self._boundary_is_ready_locked(
+                    record,
+                    include_suspended=include_suspended,
+                ):
+                    continue
+                del self._pending_boundaries[scope]
+                record.retry_suspended = False
+                self._flushing_boundaries[record.local_sequence] = record
+                self._active_boundaries[record.feed_id] = record
+                selected.append(record)
+            self._check_conservation_locked()
+            return tuple(selected)
+
+    async def apply_boundary_results(
+        self,
+        results: tuple[
+            tuple[_types._BoundaryRecord, _types.BoundaryDisposition],
+            ...,
+        ],
+    ) -> bool:
+        """Release or restore one validated immutable batch."""
+        retryable = False
+        async with self._lock:
+            for record, disposition in results:
+                self._require_flushing_boundary_locked(record)
+                del self._flushing_boundaries[record.local_sequence]
+                del self._active_boundaries[record.feed_id]
+                if disposition is _types.BoundaryDisposition.RETRYABLE:
+                    retryable = True
+                    self._restore_retryable_boundary_locked(record)
+                else:
+                    self._held -= 1
+                    self._after_release_locked(1)
+                    self._ready_call_or_boundary_locked(record.feed_id)
+            self._check_conservation_locked()
+        return retryable
+
+    async def discard_boundary_batch(
+        self,
+        records: tuple[_types._BoundaryRecord, ...],
+    ) -> None:
+        """Release a batch rejected by the exact Lease fence."""
+        async with self._lock:
+            for record in records:
+                self._require_flushing_boundary_locked(record)
+                del self._flushing_boundaries[record.local_sequence]
+                del self._active_boundaries[record.feed_id]
+                self._held -= 1
+                self._after_release_locked(1)
+                self._ready_call_or_boundary_locked(record.feed_id)
+            self._check_conservation_locked()
+
+    async def promote_boundary_page(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+    ) -> None:
+        """Make one covered page's provisional targets stable."""
+        async with self._lock:
+            records = (
+                *self._pending_boundaries.values(),
+                *self._flushing_boundaries.values(),
+            )
+            for record in records:
+                if (
+                    record.grant == grant
+                    and record.provisional_page_sequence == page_sequence
+                ):
+                    record.stable_target = record.target
+                    record.provisional_page_sequence = None
+                    record.aborted_page_sequence = None
+            self._check_conservation_locked()
+
+    async def abort_boundary_page(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        page_sequence: int,
+    ) -> None:
+        """Roll back one uncovered page without mutating flushing targets."""
+        async with self._lock:
+            released_count = 0
+            for scope, record in tuple(self._pending_boundaries.items()):
+                if (
+                    record.grant != grant
+                    or record.provisional_page_sequence != page_sequence
+                ):
+                    continue
+                if record.stable_target is None:
+                    del self._pending_boundaries[scope]
+                    self._held -= 1
+                    released_count += 1
+                else:
+                    record.target = record.stable_target
+                    record.provisional_page_sequence = None
+            for record in self._flushing_boundaries.values():
+                if (
+                    record.grant == grant
+                    and record.provisional_page_sequence == page_sequence
+                ):
+                    record.aborted_page_sequence = page_sequence
+            self._after_release_locked(released_count)
+            self._check_conservation_locked()
+
+    async def has_ready_boundary(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> bool:
+        """Return whether ordinary physical flushing can make progress."""
+        async with self._lock:
+            return any(
+                record.grant == grant and self._boundary_is_ready_locked(record)
+                for record in self._pending_boundaries.values()
+            )
 
     async def _take_next(
         self,
@@ -190,6 +407,9 @@ class _Shard:
                     self._ready_members.remove(feed_id)
                     if feed_id in self._active_by_feed:
                         message = "ready Feed already owns an active record"
+                        raise RuntimeError(message)
+                    if feed_id in self._active_boundaries:
+                        message = "ready Feed owns a flushing boundary"
                         raise RuntimeError(message)
                     queue = self._feed_queues[feed_id]
                     record = queue.popleft()
@@ -249,6 +469,12 @@ class _Shard:
                 else:
                     del self._feed_queues[feed_id]
                     self._remove_ready_locked(feed_id)
+            for scope, record in tuple(self._pending_boundaries.items()):
+                if record.grant != grant:
+                    continue
+                del self._pending_boundaries[scope]
+                self._held -= 1
+                released_count += 1
             self._after_release_locked(released_count)
             self._check_conservation_locked()
 
@@ -294,11 +520,9 @@ class _Shard:
         """Release queued work for one Feed without rejecting future pages."""
         async with self._lock:
             queue = self._feed_queues.get(feed_id)
-            if queue is None:
-                return
             kept: collections.deque[_types._CallRecord] = collections.deque()
             released_count = 0
-            for record in queue:
+            for record in queue or ():
                 if record.grant == grant:
                     del self._records[record.local_sequence]
                     self._held -= 1
@@ -307,9 +531,16 @@ class _Shard:
                     kept.append(record)
             if kept:
                 self._feed_queues[feed_id] = kept
-            else:
+            elif queue is not None:
                 del self._feed_queues[feed_id]
                 self._remove_ready_locked(feed_id)
+            boundary = self._pending_boundaries.pop(
+                (grant, feed_id),
+                None,
+            )
+            if boundary is not None:
+                self._held -= 1
+                released_count += 1
             self._after_release_locked(released_count)
             self._check_conservation_locked()
 
@@ -439,7 +670,11 @@ class _Shard:
                 lambda: (
                     not any(
                         record.grant == grant
-                        for record in self._records.values()
+                        for record in (
+                            *self._records.values(),
+                            *self._pending_boundaries.values(),
+                            *self._flushing_boundaries.values(),
+                        )
                     )
                     or self._fatal is not None
                 )
@@ -575,8 +810,8 @@ class _Shard:
         del self._active_by_feed[record.feed_id]
         del self._records[record.local_sequence]
         self._held -= 1
-        if record.feed_id in self._feed_queues and self._fatal is None:
-            self._ensure_ready_locked(record.feed_id)
+        if self._fatal is None:
+            self._ready_call_or_boundary_locked(record.feed_id)
         self._after_release_locked(1)
         self._check_conservation_locked()
         return True
@@ -652,6 +887,8 @@ class _Shard:
     def _ensure_ready_locked(self, feed_id: uuid.UUID) -> None:
         if feed_id in self._ready_members:
             return
+        if feed_id in self._active_boundaries:
+            return
         if feed_id not in self._feed_queues:
             message = "cannot ready a Feed without queued calls"
             raise RuntimeError(message)
@@ -663,6 +900,125 @@ class _Shard:
             return
         self._ready_members.remove(feed_id)
         self._ready.remove(feed_id)
+
+    def _coalesce_boundary_locked(
+        self,
+        record: _types._BoundaryRecord,
+        boundary_input: _types._BoundaryInput,
+    ) -> None:
+        page_sequence = boundary_input.page_sequence
+        provisional = record.provisional_page_sequence
+        if provisional not in (None, page_sequence):
+            message = "pending boundary retained another live page"
+            raise RuntimeError(message)
+        offered = boundary_input.boundary.target
+        stable = record.stable_target
+        if provisional is None:
+            if stable is not None and offered <= stable:
+                return
+            record.provisional_page_sequence = page_sequence
+        record.target = max(record.target, offered)
+
+    def _restore_retryable_boundary_locked(
+        self,
+        record: _types._BoundaryRecord,
+    ) -> None:
+        aborted = (
+            record.aborted_page_sequence is not None
+            and record.aborted_page_sequence == record.provisional_page_sequence
+        )
+        if aborted and record.stable_target is None:
+            self._held -= 1
+            self._after_release_locked(1)
+            self._ready_call_or_boundary_locked(record.feed_id)
+            return
+        if aborted:
+            stable = record.stable_target
+            if stable is None:
+                message = "aborted stable boundary lost its target"
+                raise RuntimeError(message)
+            record.target = stable
+            record.provisional_page_sequence = None
+        record.aborted_page_sequence = None
+        record.retry_suspended = True
+
+        scope = (record.grant, record.feed_id)
+        pending = self._pending_boundaries.pop(scope, None)
+        if pending is not None:
+            provisional_pages = {
+                value
+                for value in (
+                    record.provisional_page_sequence,
+                    pending.provisional_page_sequence,
+                )
+                if value is not None
+            }
+            if len(provisional_pages) > 1:
+                message = "retryable merge crossed live boundary pages"
+                raise RuntimeError(message)
+            stable_targets = tuple(
+                value
+                for value in (record.stable_target, pending.stable_target)
+                if value is not None
+            )
+            record.stable_target = (
+                max(stable_targets) if stable_targets else None
+            )
+            record.target = max(record.target, pending.target)
+            record.provisional_page_sequence = next(
+                iter(provisional_pages),
+                None,
+            )
+            self._held -= 1
+            self._after_release_locked(1)
+        self._pending_boundaries[scope] = record
+        self._ready_call_or_boundary_locked(record.feed_id)
+
+    def _ready_call_or_boundary_locked(self, feed_id: uuid.UUID) -> None:
+        if (
+            feed_id in self._active_by_feed
+            or feed_id in self._active_boundaries
+        ):
+            return
+        if feed_id in self._feed_queues:
+            self._ensure_ready_locked(feed_id)
+            return
+        for record in self._pending_boundaries.values():
+            if record.feed_id == feed_id and self._boundary_is_ready_locked(
+                record
+            ):
+                self._notify_boundary_ready_locked(record.grant)
+
+    def _boundary_is_ready_locked(
+        self,
+        record: _types._BoundaryRecord,
+        *,
+        include_suspended: bool = False,
+    ) -> bool:
+        return (
+            (include_suspended or not record.retry_suspended)
+            and record.feed_id not in self._feed_queues
+            and record.feed_id not in self._active_by_feed
+            and record.feed_id not in self._active_boundaries
+        )
+
+    def _notify_boundary_ready_locked(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+    ) -> None:
+        if self._boundary_ready_observer is not None:
+            self._boundary_ready_observer(grant)
+
+    def _require_flushing_boundary_locked(
+        self,
+        record: _types._BoundaryRecord,
+    ) -> None:
+        if self._flushing_boundaries.get(record.local_sequence) is not record:
+            message = "flushing boundary identity changed"
+            raise RuntimeError(message)
+        if self._active_boundaries.get(record.feed_id) is not record:
+            message = "boundary Feed ownership changed"
+            raise RuntimeError(message)
 
     def _after_release_locked(self, released_count: int) -> None:
         if released_count <= 0:
@@ -700,7 +1056,12 @@ class _Shard:
     def _check_conservation_locked(self) -> None:
         queued = sum(len(queue) for queue in self._feed_queues.values())
         active = len(self._active_by_feed)
-        conserved = queued + active
+        conserved = (
+            queued
+            + active
+            + len(self._pending_boundaries)
+            + len(self._flushing_boundaries)
+        )
         if self._held != conserved:
             message = "held conservation equation failed"
             raise RuntimeError(message)
@@ -716,6 +1077,7 @@ class _Shard:
         if set(self._active_by_feed) & self._ready_members:
             message = "active Feed also appears in the ready ring"
             raise RuntimeError(message)
+        self._check_boundary_conservation_locked()
         active_sequences = {
             record.local_sequence for record in self._active_by_feed.values()
         }
@@ -732,4 +1094,35 @@ class _Shard:
             owned_sequences.update(record.local_sequence for record in queue)
         if set(self._records) != owned_sequences:
             message = "record registry and ownership disagree"
+            raise RuntimeError(message)
+
+    def _check_boundary_conservation_locked(self) -> None:
+        if set(self._active_boundaries) & self._ready_members:
+            message = "flushing boundary Feed appears in the ready ring"
+            raise RuntimeError(message)
+        if set(self._active_by_feed) & set(self._active_boundaries):
+            message = "Feed has both call and boundary ownership"
+            raise RuntimeError(message)
+        if set(self._active_boundaries) != {
+            record.feed_id for record in self._flushing_boundaries.values()
+        }:
+            message = "boundary Feed ownership and flushing state disagree"
+            raise RuntimeError(message)
+        if len(self._active_boundaries) != len(self._flushing_boundaries):
+            message = "multiple flushing boundaries own one Feed"
+            raise RuntimeError(message)
+        boundary_sequences = {
+            record.local_sequence
+            for record in (
+                *self._pending_boundaries.values(),
+                *self._flushing_boundaries.values(),
+            )
+        }
+        if len(boundary_sequences) != (
+            len(self._pending_boundaries) + len(self._flushing_boundaries)
+        ):
+            message = "boundary local sequences are not unique"
+            raise RuntimeError(message)
+        if boundary_sequences & set(self._records):
+            message = "call and boundary local sequences overlap"
             raise RuntimeError(message)

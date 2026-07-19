@@ -131,6 +131,26 @@ class _FailingExecutor:
         raise RuntimeError(message)
 
 
+class _CommittedBoundaryCommitter:
+    async def commit(
+        self,
+        grant: ingestion_lease_store.LeaseGrant,
+        boundaries: tuple[feed_work_scheduler.BoundaryWork, ...],
+        *,
+        final_logical: bool,
+    ) -> feed_work_scheduler.BoundaryBatchCommitted:
+        del grant, final_logical
+        return feed_work_scheduler.BoundaryBatchCommitted(
+            tuple(
+                feed_work_scheduler.BoundaryResult(
+                    boundary,
+                    feed_work_scheduler.BoundaryDisposition.COMMITTED,
+                )
+                for boundary in boundaries
+            )
+        )
+
+
 class TestExactGrantScheduler(unittest.IsolatedAsyncioTestCase):
     async def test_page_receipt_proves_bounded_admission_not_completion(
         self,
@@ -138,6 +158,7 @@ class TestExactGrantScheduler(unittest.IsolatedAsyncioTestCase):
         executor = _GateExecutor()
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             executor,
+            _CommittedBoundaryCommitter(),
             _limits=_limits(capacity=2),
         )
         await scheduler.start()
@@ -175,6 +196,7 @@ class TestExactGrantScheduler(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             _ImmediateExecutor(),
+            _CommittedBoundaryCommitter(),
             _limits=_limits(),
         )
         await scheduler.start()
@@ -206,6 +228,7 @@ class TestExactGrantScheduler(unittest.IsolatedAsyncioTestCase):
     ) -> None:
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             _ImmediateExecutor(),
+            _CommittedBoundaryCommitter(),
             _limits=_limits(),
         )
         await scheduler.start()
@@ -237,6 +260,7 @@ class TestExactGrantScheduler(unittest.IsolatedAsyncioTestCase):
         executor = _GateExecutor()
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             executor,
+            _CommittedBoundaryCommitter(),
             _limits=_limits(capacity=3),
         )
         await scheduler.start()
@@ -268,6 +292,7 @@ class TestExactGrantScheduler(unittest.IsolatedAsyncioTestCase):
         executor = _GateExecutor()
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             executor,
+            _CommittedBoundaryCommitter(),
             _limits=_limits(capacity=2),
         )
         await scheduler.start()
@@ -300,6 +325,7 @@ class TestExactGrantScheduler(unittest.IsolatedAsyncioTestCase):
         executor = _CancellationExecutor()
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             executor,
+            _CommittedBoundaryCommitter(),
             _limits=_limits(),
         )
         await scheduler.start()
@@ -329,6 +355,7 @@ class TestExactGrantScheduler(unittest.IsolatedAsyncioTestCase):
         executor = _CancellationExecutor()
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             executor,
+            _CommittedBoundaryCommitter(),
             _limits=_limits(capacity=1),
         )
         await scheduler.start()
@@ -362,6 +389,7 @@ class TestExactGrantScheduler(unittest.IsolatedAsyncioTestCase):
         executor = _CancellationExecutor()
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             executor,
+            _CommittedBoundaryCommitter(),
             _limits=_limits(),
         )
         await scheduler.start()
@@ -389,16 +417,18 @@ class TestExactGrantScheduler(unittest.IsolatedAsyncioTestCase):
     async def test_executor_failure_stops_process_wide_admission(self) -> None:
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             _FailingExecutor(),
+            _CommittedBoundaryCommitter(),
             _limits=_limits(shards=2),
         )
         await scheduler.start()
         first_grant = _grant(lease_key="150")
         first_lane = scheduler.open_lane(first_grant)
         _cursor, candidate = _candidate(first_grant)
-        await first_lane.cover_page(
-            (_call(_FEED_IDS[0], "failure"),),
-            candidate,
-        )
+        with self.assertRaises(feed_work_scheduler.SchedulerIntegrityError):
+            await first_lane.cover_page(
+                (_call(_FEED_IDS[0], "failure"),),
+                candidate,
+            )
 
         await asyncio.wait_for(
             scheduler.integrity_failure_event.wait(),
@@ -419,6 +449,7 @@ class TestExactGrantScheduler(unittest.IsolatedAsyncioTestCase):
         executor = _ImmediateExecutor()
         scheduler = feed_work_scheduler.FeedWorkScheduler(
             executor,
+            _CommittedBoundaryCommitter(),
             _limits=_limits(),
         )
         await scheduler.start()
