@@ -301,6 +301,7 @@ class TestShard(unittest.IsolatedAsyncioTestCase):
             0,
             executor,
             limits=self._limits(workers=1),
+            fatal_observer=_raise_observer_failure,
         )
         grant = _grant()
         await shard.start()

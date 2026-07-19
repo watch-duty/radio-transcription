@@ -269,14 +269,17 @@ class _Shard:
                     if failure is not None:
                         await self._mark_fatal(failure)
                 await self._replace_cancelled_worker(request)
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as cancellation:
             failure = _ShardUndrainedError(
                 "cancellation settlement was interrupted"
             )
-            await self._abandon_interrupted_cancellations(
-                requests,
-                failure,
-            )
+            try:
+                await self._abandon_interrupted_cancellations(
+                    requests,
+                    failure,
+                )
+            except Exception as cleanup_failure:
+                raise cancellation from cleanup_failure
             raise
         return tuple(request.slot_id for request in requests)
 
