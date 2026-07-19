@@ -215,6 +215,7 @@ def _log_chunk_ingested(
         )
         if raw_latency_sec < 0:
             payload["latency_clamped"] = True
+    # SLO: chunk_ingested emit -- after SID child progress and publish settle.
     logger.info("Chunk ingested", extra={"json_fields": payload})
 
 

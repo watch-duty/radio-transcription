@@ -40,6 +40,7 @@ from backend.pipeline.ingestion import (
     memory_watchdog,
     quarantine_telemetry,
     sid_grant_control,
+    slo_contract,
     source_runtime_specs,
     status_reason_detail,
 )
@@ -788,7 +789,7 @@ class CollectorRuntime:
     ) -> None:
         """Emit processing-latency evidence after successful publication."""
         payload: dict[str, object] = {
-            "event_type": "chunk_ingested",
+            "event_type": slo_contract.EVENT_TYPE_CHUNK_INGESTED,
             "feed_id": str(feed["id"]),
             "source_type": feed["source_type"],
         }
@@ -808,6 +809,7 @@ class CollectorRuntime:
                 captured_chunk.stream_interval_lag_sec,
                 2,
             )
+        # SLO: chunk_ingested emit -- after legacy Feed publish succeeds.
         logger.info("Chunk ingested", extra={"json_fields": payload})
 
     @staticmethod
