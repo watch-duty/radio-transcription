@@ -111,6 +111,13 @@ _shard._Shard.wait_for_held
 _types._shard_index
 cohort_timestamp
 
+# The shared Calls provider lands before the SID polling runtime consumes its
+# SID-specific selector. Vulture excludes the focused provider tests.
+from backend.pipeline.ingestion.collectors.bcfy_calls.provider import (
+    CallsProviderClient,
+)
+CallsProviderClient.fetch_sid_page
+
 # FeedChangeNotificationPayload fields are consumed by Pydantic model validation
 # and schema reflection, which Vulture cannot trace through direct Python
 # references.
