@@ -460,7 +460,7 @@ async def test_authentication_failure_retries_the_owned_sid() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_boundary_uses_call_timestamp_and_recent_url() -> None:
+async def test_invalid_boundary_replays_bookmark_and_deduplicates_url() -> None:
     grant = _grant()
     bookmark = _NOW - datetime.timedelta(seconds=30)
     member = _member("100", bookmark=bookmark)
@@ -496,8 +496,7 @@ async def test_invalid_boundary_uses_call_timestamp_and_recent_url() -> None:
 
     assert isinstance(outcome, grant_control.RunCompleted)
     # Durable membership is deliberately reloaded every poll. This fake store
-    # keeps returning the old bookmark, so it remains the safe request floor
-    # even though the grant-local fallback watermark advanced to call_time.
+    # keeps returning the old bookmark, so it remains the safe request floor.
     assert calls_provider.positions == [bookmark, bookmark]
     assert len(pool.batches) == 1
     assert len(store.batches) == 2
@@ -580,6 +579,11 @@ async def test_all_failed_multi_feed_page_promotes_only_parent() -> None:
                 "ts": _NOW.timestamp(),
             },
             {
+                "groupId": "7017-100",
+                "url": "https://audio/1b",
+                "ts": _NOW.timestamp(),
+            },
+            {
                 "groupId": "7017-200",
                 "url": "https://audio/2",
                 "ts": _NOW.timestamp(),
@@ -592,7 +596,7 @@ async def test_all_failed_multi_feed_page_promotes_only_parent() -> None:
         "first",
     )
     second_failure = ItemFailure(
-        feed_store.FeedStatusReason.SYSTEM_PIPELINE_ERROR,
+        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
         "second",
     )
     failures = iter((first_failure, second_failure))
@@ -624,8 +628,8 @@ async def test_all_failed_multi_feed_page_promotes_only_parent() -> None:
     )
 
     assert outcome == grant_control.RunFailed(
-        feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-        "mixed_feed_failures",
+        feed_store.FeedStatusReason.SOURCE_UNREACHABLE,
+        "first",
     )
     assert store.batches[0].mutations == ()
     assert isinstance(
@@ -645,6 +649,11 @@ async def test_single_feed_failure_stays_child_local() -> None:
             {
                 "groupId": "7017-100",
                 "url": "https://audio/1",
+                "ts": _NOW.timestamp(),
+            },
+            {
+                "groupId": "7017-100",
+                "url": "https://audio/2",
                 "ts": _NOW.timestamp(),
             },
         ),

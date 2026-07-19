@@ -14,6 +14,7 @@ import uuid
 from backend.pipeline.ingestion import failure_policy, grant_control
 from backend.pipeline.ingestion.collectors.bcfy_calls import pipeline, provider
 from backend.pipeline.ingestion.collectors.failure_classification import (
+    ItemBatchOutcome,
     ItemFailure,
 )
 from backend.pipeline.ingestion.models import FeedFailure
@@ -24,7 +25,6 @@ logger = logging.getLogger(__name__)
 _POLL_INTERVAL_SEC = 10.0
 _MAX_CONSECUTIVE_FAILURES = 10
 _RECENT_URL_LIMIT = 1_000
-_MIXED_FEED_FAILURES = "mixed_feed_failures"
 _MEMBERSHIP_INVALID = "bcfy_calls_sid_membership_invalid"
 _TRANSIENT_METADATA_FAILURES = frozenset(
     {
@@ -163,26 +163,6 @@ async def _settle_accepted(
     )
 
 
-async def _wait_for_next_poll(
-    delay: float,
-    context: grant_control.RunContext,
-) -> None:
-    if delay <= 0:
-        return
-    stop_task = asyncio.create_task(context.stop_requested.wait())
-    lost_task = asyncio.create_task(context.grant_lost.wait())
-    try:
-        await asyncio.wait(
-            (stop_task, lost_task),
-            timeout=delay,
-            return_when=asyncio.FIRST_COMPLETED,
-        )
-    finally:
-        for task in (stop_task, lost_task):
-            task.cancel()
-        await asyncio.gather(stop_task, lost_task, return_exceptions=True)
-
-
 class BcfyCallsSidRunner:
     """Run locally demultiplexed Calls pages under one exact SID grant."""
 
@@ -216,7 +196,6 @@ class BcfyCallsSidRunner:
     ) -> grant_control.RunOutcome:
         """Poll, settle, and durably close pages until stopped or failed."""
         del payload
-        watermark: datetime.datetime | None = None
         states: dict[uuid.UUID, _FeedState] = {}
         consecutive_failures = 0
 
@@ -246,15 +225,16 @@ class BcfyCallsSidRunner:
                 or member.retry_after <= poll_started
             )
             if not due_members:
-                await _wait_for_next_poll(
-                    self._poll_interval_sec,
-                    context,
-                )
+                await asyncio.sleep(self._poll_interval_sec)
                 continue
 
-            requested_position = self._requested_position(
-                watermark,
-                due_members,
+            requested_position = min(
+                (
+                    member.last_bookmark_time
+                    for member in due_members
+                    if member.last_bookmark_time is not None
+                ),
+                default=None,
             )
             request_stop = asyncio.Event()
             try:
@@ -282,17 +262,14 @@ class BcfyCallsSidRunner:
                         error.status_reason,
                         error.reason,
                     )
-                await self._finish_poll_wait(poll_started, context)
+                await self._finish_poll_wait(poll_started)
                 continue
 
             consecutive_failures = 0
             poll_status = "integrity_failed"
             poll_error: str | None = None
             try:
-                (
-                    batches,
-                    response_timestamp,
-                ) = self._route_page(
+                batches = self._route_page(
                     grant,
                     due_members,
                     page.calls,
@@ -360,13 +337,6 @@ class BcfyCallsSidRunner:
                             }
                         },
                     )
-                watermark = self._next_watermark(
-                    watermark,
-                    requested_position,
-                    boundary,
-                    response_timestamp,
-                )
-
                 promoted = self._promoted_parent_failure(results)
                 try:
                     mutation_result = await self._commit_page(
@@ -421,20 +391,7 @@ class BcfyCallsSidRunner:
                 return grant_control.RunLost()
             if context.stop_requested.is_set():
                 return grant_control.RunCompleted()
-            await self._finish_poll_wait(poll_started, context)
-
-    @staticmethod
-    def _requested_position(
-        watermark: datetime.datetime | None,
-        members: collections.abc.Sequence[ingestion_lease_store.LeaseMember],
-    ) -> datetime.datetime | None:
-        candidates = [watermark] if watermark is not None else []
-        candidates.extend(
-            member.last_bookmark_time
-            for member in members
-            if member.last_bookmark_time is not None
-        )
-        return min(candidates) if candidates else None
+            await self._finish_poll_wait(poll_started)
 
     def _route_page(
         self,
@@ -442,10 +399,7 @@ class BcfyCallsSidRunner:
         members: collections.abc.Sequence[ingestion_lease_store.LeaseMember],
         raw_calls: collections.abc.Sequence[object],
         states: dict[uuid.UUID, _FeedState],
-    ) -> tuple[
-        tuple[pipeline.FeedBatch, ...],
-        datetime.datetime | None,
-    ]:
+    ) -> tuple[pipeline.FeedBatch, ...]:
         by_group = {
             member.identity.source_feed_id: member for member in members
         }
@@ -456,7 +410,6 @@ class BcfyCallsSidRunner:
         )
         calls_by_feed: dict[uuid.UUID, list[pipeline.CallWork]] = {}
         admitted_urls: dict[uuid.UUID, set[str]] = {}
-        response_timestamp: datetime.datetime | None = None
 
         for raw_call in raw_calls:
             if not isinstance(raw_call, collections.abc.Mapping):
@@ -467,10 +420,6 @@ class BcfyCallsSidRunner:
                 raw_call,
             )
             timestamp = _utc_timestamp(call.get("ts"))
-            if timestamp is not None and (
-                response_timestamp is None or timestamp > response_timestamp
-            ):
-                response_timestamp = timestamp
 
             raw_group_id = call.get("groupId")
             group_id = (
@@ -535,26 +484,7 @@ class BcfyCallsSidRunner:
                     calls=tuple(calls),
                 )
             )
-        return tuple(batches), response_timestamp
-
-    @staticmethod
-    def _next_watermark(
-        previous: datetime.datetime | None,
-        requested: datetime.datetime | None,
-        boundary: datetime.datetime | None,
-        response_timestamp: datetime.datetime | None,
-    ) -> datetime.datetime | None:
-        candidates = [
-            candidate
-            for candidate in (
-                previous,
-                boundary,
-                requested if boundary is None else None,
-                response_timestamp if boundary is None else None,
-            )
-            if candidate is not None
-        ]
-        return max(candidates) if candidates else None
+        return tuple(batches)
 
     @staticmethod
     def _promoted_parent_failure(
@@ -565,22 +495,14 @@ class BcfyCallsSidRunner:
         ]
         if len(participants) < 2:
             return None
-        if any(
-            result.published_count > 0 or result.failure is None
-            for result in participants
-        ):
-            return None
-        failures = [
-            typing.cast("ItemFailure", result.failure)
-            for result in participants
-        ]
-        first = failures[0]
-        if all(failure == first for failure in failures):
-            return first
-        return ItemFailure(
-            feed_store.FeedStatusReason.SYSTEM_COLLECTOR_ERROR,
-            _MIXED_FEED_FAILURES,
-        )
+        outcome = ItemBatchOutcome()
+        for result in participants:
+            outcome.record_attempt()
+            if result.published_count > 0:
+                outcome.record_chunk_produced()
+            if result.failure is not None:
+                outcome.record_failure(result.failure)
+        return outcome.promoted_failure()
 
     async def _commit_page(
         self,
@@ -644,13 +566,9 @@ class BcfyCallsSidRunner:
     async def _finish_poll_wait(
         self,
         poll_started: datetime.datetime,
-        context: grant_control.RunContext,
     ) -> None:
         elapsed = (self._clock() - poll_started).total_seconds()
-        await _wait_for_next_poll(
-            max(0.0, self._poll_interval_sec - elapsed),
-            context,
-        )
+        await asyncio.sleep(max(0.0, self._poll_interval_sec - elapsed))
 
     @staticmethod
     def _log_poll_settled(
