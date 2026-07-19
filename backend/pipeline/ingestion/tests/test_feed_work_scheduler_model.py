@@ -33,6 +33,11 @@ def _assign_attribute(value: object, name: str, replacement: object) -> None:
     setattr(value, name, replacement)
 
 
+def _raise_observer_failure(_failure: BaseException) -> None:
+    message = "fatal observer failed"
+    raise RuntimeError(message)
+
+
 def _call_work(
     feed_id: uuid.UUID,
     grant: ingestion_lease_store.LeaseGrant,
@@ -290,9 +295,7 @@ class TestShard(unittest.IsolatedAsyncioTestCase):
         finally:
             await shard.close()
 
-    async def test_cancel_active_exact_propagates_outer_cancellation(
-        self,
-    ) -> None:
+    async def test_interrupted_exact_cancellation_fails_closed(self) -> None:
         executor = _CancellationExecutor(swallow=True)
         shard = _shard._Shard(
             0,
@@ -310,14 +313,46 @@ class TestShard(unittest.IsolatedAsyncioTestCase):
         try:
             with self.assertRaises(asyncio.CancelledError):
                 await cancellation
+            self.assertIsInstance(
+                shard.fatal_failure,
+                _shard._ShardUndrainedError,
+            )
+            self.assertTrue(shard._workers[0].abandoned)
         finally:
             executor.release.set()
             tasks = tuple(
                 slot.task for slot in shard._workers if slot.task is not None
             )
-            for task in tasks:
-                task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def test_concurrent_exact_cancellation_is_idempotent(self) -> None:
+        executor = _CancellationExecutor(swallow=True)
+        shard = _shard._Shard(
+            0,
+            executor,
+            limits=self._limits(workers=1),
+        )
+        grant = _grant()
+        await shard.start()
+        await shard.admit(_call_work(_FEED_IDS[0], grant))
+        await asyncio.wait_for(executor.entered.wait(), timeout=1)
+        first = asyncio.create_task(shard.cancel_active_exact(grant))
+        await asyncio.wait_for(executor.cancellation_seen.wait(), timeout=1)
+        second = asyncio.create_task(shard.cancel_active_exact(grant))
+        await asyncio.sleep(0)
+        executor.release.set()
+
+        try:
+            results = await asyncio.gather(
+                first,
+                second,
+                return_exceptions=True,
+            )
+            self.assertEqual(results, [(0,), ()])
+        finally:
+            executor.release.set()
+            await shard.wait_for_held(0)
+            await shard.close()
 
     async def test_wait_for_held_rejects_nonzero_targets(self) -> None:
         executor = _GateExecutor()
@@ -359,6 +394,25 @@ class TestShard(unittest.IsolatedAsyncioTestCase):
         await shard.close()
         self.assertTrue(shard._closed)
 
+    async def test_close_accepts_worker_cancelled_during_shutdown(self) -> None:
+        shard = _shard._Shard(
+            0,
+            _ImmediateExecutor(),
+            limits=self._limits(workers=1),
+        )
+        await shard.start()
+        tasks = tuple(
+            slot.task for slot in shard._workers if slot.task is not None
+        )
+        async with shard._lock:
+            shard._stopping = True
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+        await shard.close()
+        self.assertTrue(shard._closed)
+
     async def test_abandoned_cancellation_fails_closed(self) -> None:
         executor = _CancellationExecutor(swallow=True)
         shard = _shard._Shard(
@@ -381,6 +435,40 @@ class TestShard(unittest.IsolatedAsyncioTestCase):
 
         executor.release.set()
         await asyncio.wait_for(requests[0].task, timeout=1)
+
+    async def test_fatal_observer_cannot_skip_waiter_notification(
+        self,
+    ) -> None:
+        executor = _CancellationExecutor(swallow=True)
+        shard = _shard._Shard(
+            0,
+            executor,
+            limits=self._limits(workers=1),
+            fatal_observer=_raise_observer_failure,
+        )
+        grant = _grant()
+        await shard.start()
+        await shard.admit(_call_work(_FEED_IDS[0], grant))
+        await asyncio.wait_for(executor.entered.wait(), timeout=1)
+        requests = await shard.request_cancel_exact(grant)
+        await asyncio.wait_for(executor.cancellation_seen.wait(), timeout=1)
+        waiter = asyncio.create_task(shard.wait_for_held(0))
+        await asyncio.sleep(0)
+
+        try:
+            failure = RuntimeError("worker swallowed cancellation")
+            with self.assertRaisesRegex(RuntimeError, "observer failed"):
+                await shard.abandon_cancellation(
+                    requests[0].slot_id,
+                    failure,
+                )
+            with self.assertRaises(_shard._ShardFatalError):
+                await asyncio.wait_for(waiter, timeout=1)
+        finally:
+            if not waiter.done():
+                waiter.cancel()
+            executor.release.set()
+            await asyncio.wait_for(requests[0].task, timeout=1)
 
     async def test_executor_failure_is_persistent(self) -> None:
         executor = _FailingExecutor()

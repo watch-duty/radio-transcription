@@ -241,6 +241,7 @@ class _Shard:
                     or record.grant != grant
                     or task is None
                     or task.done()
+                    or slot.cancellation_sequence is not None
                 ):
                     continue
                 slot.cancellation_sequence = record.local_sequence
@@ -258,16 +259,43 @@ class _Shard:
         self,
         grant: ingestion_lease_store.LeaseGrant,
     ) -> tuple[int, ...]:
-        """Settle expected exact cancellations before reusing worker slots."""
+        """Settle exact cancellations or fail closed when interrupted."""
         requests = await self.request_cancel_exact(grant)
-        for request in requests:
-            await asyncio.wait((request.task,))
-            if not request.task.cancelled():
-                failure = request.task.exception()
-                if failure is not None:
-                    await self._mark_fatal(failure)
-            await self._replace_cancelled_worker(request)
+        try:
+            for request in requests:
+                await asyncio.wait((request.task,))
+                if not request.task.cancelled():
+                    failure = request.task.exception()
+                    if failure is not None:
+                        await self._mark_fatal(failure)
+                await self._replace_cancelled_worker(request)
+        except asyncio.CancelledError:
+            failure = _ShardUndrainedError(
+                "cancellation settlement was interrupted"
+            )
+            await self._abandon_interrupted_cancellations(
+                requests,
+                failure,
+            )
+            raise
         return tuple(request.slot_id for request in requests)
+
+    async def _abandon_interrupted_cancellations(
+        self,
+        requests: tuple[_CancellationRequest, ...],
+        failure: BaseException,
+    ) -> None:
+        """Abandon workers whose cancelled caller cannot settle them."""
+        async with self._lock:
+            for request in requests:
+                slot = self._require_slot(request.slot_id)
+                if (
+                    slot.task is request.task
+                    and not request.task.done()
+                    and slot.cancellation_sequence is not None
+                ):
+                    slot.abandoned = True
+            self._mark_fatal_locked(failure)
 
     async def abandon_cancellation(
         self,
@@ -322,7 +350,8 @@ class _Shard:
         if tasks:
             await asyncio.wait(tasks)
             for task in tasks:
-                task.result()
+                if not task.cancelled():
+                    task.result()
         async with self._lock:
             self._closed = True
 
@@ -469,12 +498,13 @@ class _Shard:
             self._mark_fatal_locked(failure)
 
     def _mark_fatal_locked(self, failure: BaseException) -> None:
-        if self._fatal is None:
+        first_failure = self._fatal is None
+        if first_failure:
             self._fatal = failure
-            if self._fatal_observer is not None:
-                self._fatal_observer(failure)
         self._work_ready.notify_all()
         self._capacity_changed.notify_all()
+        if first_failure and self._fatal_observer is not None:
+            self._fatal_observer(failure)
 
     def _worker_done(
         self,
