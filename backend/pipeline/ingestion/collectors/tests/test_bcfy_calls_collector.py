@@ -1968,14 +1968,19 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         )
         mock_sleep.return_value = False
 
-        with self.assertRaises(FeedFailure) as ctx:
-            async for _ in bcfy_calls_collector.capture_bcfy_calls(
-                self.leased_feed,
-                self.shutdown,
-                self.url_base,
-                _default_resources(),
-            ):
-                pass
+        with self.assertLogs(
+            "backend.pipeline.ingestion.collectors.bcfy_calls"
+            ".bcfy_calls_collector",
+            level="WARNING",
+        ) as captured_logs:
+            with self.assertRaises(FeedFailure) as ctx:
+                async for _ in bcfy_calls_collector.capture_bcfy_calls(
+                    self.leased_feed,
+                    self.shutdown,
+                    self.url_base,
+                    _default_resources(),
+                ):
+                    pass
         self.assertIs(
             ctx.exception.status_reason,
             FeedStatusReason.SYSTEM_CREDENTIAL_ACCESS_FAILED,
@@ -1983,6 +1988,19 @@ class TestCaptureBcfyCalls(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(str(ctx.exception), "calls_jwt_secret_access_failed")
         self.assertEqual(mock_fetch.call_count, 1)
         self.assertEqual(mock_jwt.call_count, 11)
+        auth_events = [
+            record
+            for record in captured_logs.records
+            if getattr(record, "json_fields", {}).get("event_type")
+            == "call_auth_failure"
+        ]
+        self.assertEqual(len(auth_events), 1)
+        event = cast("Any", auth_events[0])
+        self.assertEqual(event.json_fields["feed_id"], str(self.feed["id"]))
+        self.assertEqual(
+            event.json_fields["source_type"],
+            self.feed["source_type"],
+        )
 
     @patch(
         "backend.pipeline.ingestion.collectors.bcfy_calls.bcfy_calls_collector._get_jwt_token"

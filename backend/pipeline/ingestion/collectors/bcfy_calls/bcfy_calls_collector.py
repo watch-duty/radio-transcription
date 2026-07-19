@@ -349,6 +349,31 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
         )
         raise missing_source_feed_id_failure()
 
+    async def load_provider_token(
+        token_shutdown_event: asyncio.Event,
+        *,
+        force_refresh: bool = False,
+        stale_token: str | None = None,
+    ) -> str | None:
+        """Load a token and emit feed-scoped evidence before forced refresh."""
+        if force_refresh:
+            logger.warning(
+                "Auth failure for feed %s; refreshing token.",
+                feed_id,
+                extra={
+                    "json_fields": {
+                        "event_type": EVENT_TYPE_CALL_AUTH_FAILURE,
+                        "feed_id": str(feed_id),
+                        "source_type": feed["source_type"],
+                    },
+                },
+            )
+        return await _get_shared_jwt_token_with_retry(
+            token_shutdown_event,
+            force_refresh=force_refresh,
+            stale_token=stale_token,
+        )
+
     seen_urls = collections.deque(maxlen=1000)
     consecutive_failures = 0
 
@@ -358,7 +383,7 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
     calls_provider = provider.CallsProviderClient(
         session,
         url_base,
-        _token_loader=_get_shared_jwt_token_with_retry,
+        _token_loader=load_provider_token,
         _json_fetcher=_fetch_calls,
         _media_downloader=_download_audio,
     )
@@ -479,17 +504,6 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 is not FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
             ):
                 raise
-            logger.warning(
-                "Auth failure for feed %s; refreshing token.",
-                feed_id,
-                extra={
-                    "json_fields": {
-                        "event_type": EVENT_TYPE_CALL_AUTH_FAILURE,
-                        "feed_id": str(feed_id),
-                        "source_type": feed["source_type"],
-                    },
-                },
-            )
             consecutive_failures = await _handle_loop_failure(
                 feed_id,
                 consecutive_failures,

@@ -72,7 +72,13 @@ _jwt_state = _JwtCacheState()
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class CallsPageEnvelope:
-    """Validated metadata envelope with raw independently handled items."""
+    """Validated metadata envelope with raw independently handled items.
+
+    Attributes:
+        payload: Validated provider response mapping.
+        calls: Raw call items preserved without per-item validation.
+        last_pos: Provider cursor value from ``lastPos``, when present.
+    """
 
     payload: collections.abc.Mapping[str, object]
     calls: tuple[object, ...]
@@ -386,6 +392,15 @@ class CallsProviderClient:
         _json_fetcher: _JsonFetcher | None = None,
         _media_downloader: _MediaDownloader | None = None,
     ) -> None:
+        """Initialize a client over a caller-owned HTTP session.
+
+        Args:
+            session: Runtime-owned session used for every provider request.
+            live_endpoint_url: Broadcastify Calls live endpoint URL.
+            _token_loader: Internal credential-loader test seam.
+            _json_fetcher: Internal metadata-fetch test seam.
+            _media_downloader: Internal media-download test seam.
+        """
         self._session = session
         self._live_endpoint_url = (
             live_endpoint_url
@@ -403,7 +418,21 @@ class CallsProviderClient:
         *,
         shutdown_event: asyncio.Event,
     ) -> CallsPageEnvelope:
-        """Fetch one legacy inclusive groups page."""
+        """Fetch one legacy inclusive groups page.
+
+        Args:
+            source_feed_id: Nonempty Broadcastify group selector.
+            pos: Inclusive upstream cursor, or ``None`` for the first page.
+            shutdown_event: Signals cooperative request cancellation.
+
+        Returns:
+            Validated page metadata and raw call items.
+
+        Raises:
+            ValueError: If ``source_feed_id`` is empty.
+            FeedFailure: If credential or metadata retrieval fails.
+            asyncio.CancelledError: If shutdown interrupts the request.
+        """
         if not source_feed_id:
             msg = "source_feed_id must be a nonempty string"
             raise ValueError(msg)
@@ -421,7 +450,21 @@ class CallsProviderClient:
         *,
         shutdown_event: asyncio.Event,
     ) -> CallsPageEnvelope:
-        """Fetch one SID page with an integer timestamp position."""
+        """Fetch one SID page with an integer timestamp position.
+
+        Args:
+            sid: Nonempty Broadcastify system selector.
+            pos: UTC-aware inclusive cursor, or ``None`` for the first page.
+            shutdown_event: Signals cooperative request cancellation.
+
+        Returns:
+            Validated page metadata and raw call items.
+
+        Raises:
+            ValueError: If ``sid`` is empty.
+            FeedFailure: If credential or metadata retrieval fails.
+            asyncio.CancelledError: If shutdown interrupts the request.
+        """
         if not sid:
             msg = "sid must be a nonempty string"
             raise ValueError(msg)
@@ -480,7 +523,19 @@ class CallsProviderClient:
         shutdown_event: asyncio.Event,
         out_headers: dict[str, str] | None = None,
     ) -> bytes | ItemFailure:
-        """Download one item without taking ownership of the session."""
+        """Download one item without taking ownership of the session.
+
+        Args:
+            audio_url: Provider media URL for one call.
+            shutdown_event: Signals cooperative request cancellation.
+            out_headers: Optional mapping populated with response headers.
+
+        Returns:
+            Downloaded audio bytes or a classified item failure.
+
+        Raises:
+            asyncio.CancelledError: If shutdown interrupts the request.
+        """
         return await self._media_downloader(
             self._session,
             audio_url,
