@@ -210,13 +210,11 @@ class LeaseFailureResult:
 
 @dataclasses.dataclass(frozen=True)
 class LeaseMemberIdentity:
-    """Immutable Feed/source/SID/group binding from membership loading."""
+    """Immutable Feed/source binding from membership loading."""
 
     __slots__ = (
         "_binding_proof",
         "feed_id",
-        "group_id",
-        "sid",
         "source_feed_id",
         "source_type",
     )
@@ -224,8 +222,6 @@ class LeaseMemberIdentity:
     feed_id: uuid.UUID
     source_type: feed_store.SourceType
     source_feed_id: str
-    sid: str
-    group_id: str
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_binding_proof", b"")
@@ -246,8 +242,6 @@ def _member_binding_proof(
             str(identity.feed_id),
             identity.source_type.value,
             identity.source_feed_id,
-            identity.sid,
-            identity.group_id,
         ),
         ensure_ascii=True,
         separators=(",", ":"),
@@ -261,16 +255,12 @@ def _issue_member_identity(
     feed_id: uuid.UUID,
     source_type: feed_store.SourceType,
     source_feed_id: str,
-    sid: str,
-    group_id: str,
 ) -> LeaseMemberIdentity:
     """Issue one opaque binding after authoritative membership loading."""
     identity = LeaseMemberIdentity(
         feed_id=feed_id,
         source_type=source_type,
         source_feed_id=source_feed_id,
-        sid=sid,
-        group_id=group_id,
     )
     object.__setattr__(
         identity,
@@ -676,29 +666,11 @@ def _require_member_binding(
     if not isinstance(value.source_type, feed_store.SourceType):
         msg = "child member source_type must be a SourceType"
         raise TypeError(msg)
-    for field_name, field_value in (
-        ("sid", value.sid),
-        ("group_id", value.group_id),
-    ):
-        if (
-            not isinstance(field_value, str)
-            or not field_value
-            or not field_value.isascii()
-            or not field_value.isdigit()
-        ):
-            msg = f"child member {field_name} must contain ASCII digits"
-            raise ValueError(msg)
     if not isinstance(value.source_feed_id, str):
         msg = "child member source_feed_id must be a string"
         raise TypeError(msg)
     if value.source_type is not grant.source_type:
         msg = "child member source type does not match the Lease grant"
-        raise ValueError(msg)
-    if value.sid != grant.lease_key:
-        msg = "child member SID does not match the Lease key"
-        raise ValueError(msg)
-    if value.source_feed_id != f"{value.sid}-{value.group_id}":
-        msg = "child member source_feed_id does not match SID-group identity"
         raise ValueError(msg)
     expected_proof = _member_binding_proof(grant, value)
     binding_proof = object.__getattribute__(value, "_binding_proof")
@@ -1259,8 +1231,6 @@ def _membership_identity_from_row(
         feed_id=feed_id,
         source_type=property_source,
         source_feed_id=source_feed_id,
-        sid=sid,
-        group_id=group_id,
     )
 
 

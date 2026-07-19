@@ -1185,14 +1185,12 @@ class BcfyCallsSidProcessor:
         prior: ingestion_lease_store.LeaseMember,
         current: ingestion_lease_store.LeaseMember,
     ) -> None:
-        """Reject source/SID/group changes for one immutable Feed UUID."""
+        """Reject source changes for one immutable Feed UUID."""
         prior_identity = prior.identity
         current_identity = current.identity
         if (
             prior_identity.source_type is not current_identity.source_type
             or prior_identity.source_feed_id != current_identity.source_feed_id
-            or prior_identity.sid != current_identity.sid
-            or prior_identity.group_id != current_identity.group_id
         ):
             raise SidProcessorFailure(
                 feed_store.FeedStatusReason.SYSTEM_SOURCE_CONFIGURATION_INVALID,

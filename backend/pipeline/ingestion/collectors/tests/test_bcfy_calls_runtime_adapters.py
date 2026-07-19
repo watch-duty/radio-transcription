@@ -72,8 +72,6 @@ def _member(
         feed_id=feed_id,
         source_type=feed_store.SourceType.BCFY_CALLS,
         source_feed_id=f"{grant.lease_key}-{group_id}",
-        sid=grant.lease_key,
-        group_id=group_id,
     )
 
 

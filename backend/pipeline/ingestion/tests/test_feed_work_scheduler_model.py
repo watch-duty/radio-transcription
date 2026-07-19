@@ -28,8 +28,6 @@ def _identity() -> feed_work_scheduler.CohortRecordIdentity:
         feed_id=_FEED_ID,
         source_type=feed_store.SourceType.BCFY_CALLS,
         source_feed_id="150-1",
-        sid="150",
-        group_id="1",
     )
     return feed_work_scheduler.CohortRecordIdentity(
         grant=grant,

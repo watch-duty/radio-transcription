@@ -177,10 +177,11 @@ class MissingCallLedger:
             "member.name",
             slo_contract.BCFY_CALLS_MISSING_CALL_IDENTITY_MAX_LENGTH,
         )
+        _, _, group_id = member.identity.source_feed_id.partition("-")
         for name, value in (
-            ("member.sid", member.identity.sid),
+            ("member.sid", self._grant.lease_key),
             ("member.source_feed_id", member.identity.source_feed_id),
-            ("member.group_id", member.identity.group_id),
+            ("member.group_id", group_id),
             ("member.source_type", member.identity.source_type.value),
         ):
             _require_bounded_string(
@@ -781,8 +782,7 @@ class MissingCallLedger:
             raise MissingCallIntegrityError(message)
         record.state = MissingCallState.REPLAY_RELEASED
 
-    @staticmethod
-    def _event(record: _ObligationRecord) -> telemetry.MissingCallEvent:
+    def _event(self, record: _ObligationRecord) -> telemetry.MissingCallEvent:
         if (
             record.gap_stage is None
             or record.status_reason is None
@@ -792,14 +792,15 @@ class MissingCallLedger:
             message = "irreversible obligation lacks complete event evidence"
             raise MissingCallIntegrityError(message)
         identity = record.member.identity
+        _, _, group_id = identity.source_feed_id.partition("-")
         return telemetry.MissingCallEvent(
             audio_url=record.audio_url,
-            sid=identity.sid,
+            sid=self._grant.lease_key,
             feed_id=str(identity.feed_id),
             feed_name=record.feed_name,
             source_type=identity.source_type.value,
             source_feed_id=identity.source_feed_id,
-            group_id=identity.group_id,
+            group_id=group_id,
             provider_ts=(
                 record.provider_ts.isoformat()
                 if record.provider_ts is not None

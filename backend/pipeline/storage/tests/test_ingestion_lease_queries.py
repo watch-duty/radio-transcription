@@ -907,8 +907,6 @@ class TestMembershipSnapshotContract(unittest.TestCase):
                 "feed_id",
                 "source_type",
                 "source_feed_id",
-                "sid",
-                "group_id",
             },
         )
         self.assertNotIn("membership_revision", fields)

@@ -62,8 +62,6 @@ def _member(
         feed_id=_FEED_ID,
         source_type=feed_store.SourceType.BCFY_CALLS,
         source_feed_id="123-45",
-        sid="123",
-        group_id="45",
     )
     return ingestion_lease_store.LeaseMember(
         identity=identity,

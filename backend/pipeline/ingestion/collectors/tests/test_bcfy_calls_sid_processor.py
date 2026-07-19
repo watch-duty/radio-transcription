@@ -74,14 +74,11 @@ def _member(
     *,
     cursor: datetime.datetime | None = _NOW,
 ) -> ingestion_lease_store.LeaseMember:
-    sid, group_id = source_feed_id.split("-", maxsplit=1)
     identity = ingestion_lease_store._issue_member_identity(
         _GRANT,
         feed_id=feed_id,
         source_type=feed_store.SourceType.BCFY_CALLS,
         source_feed_id=source_feed_id,
-        sid=sid,
-        group_id=group_id,
     )
     return ingestion_lease_store.LeaseMember(
         identity=identity,
