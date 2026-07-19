@@ -602,8 +602,6 @@ class BcfyCallsSidRunner:
         for member in due_members:
             feed_id = member.identity.feed_id
             result = results.get(feed_id)
-            if result is not None and result.member_rejected:
-                continue
             if promoted is not None and result is not None:
                 continue
             if result is not None and result.failure is not None:
