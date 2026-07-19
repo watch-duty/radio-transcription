@@ -1509,6 +1509,42 @@ class TestCommitChildMutations(unittest.IsolatedAsyncioTestCase):
                 )
             pool.acquire.assert_not_called()
 
+    async def test_precheckout_validation_rejects_noncanonical_sid(
+        self,
+    ) -> None:
+        feed_id = uuid.UUID("aaaaaaaa-0000-0000-0000-000000000002")
+
+        for sid in ("abc", "١٢٣"):
+            with self.subTest(sid=sid):
+                grant = dataclasses.replace(_grant(), lease_key=sid)
+                member = dataclasses.replace(
+                    _member_identity(feed_id),
+                    source_feed_id=f"{sid}-45",
+                )
+                batch = ingestion_lease_store.ChildMutationBatch(
+                    (
+                        ingestion_lease_store.SourceObservation(
+                            member,
+                            _NOW,
+                        ),
+                    ),
+                    ingestion_lease_store.NoLeaseEffect(),
+                )
+                pool = connection_util.make_mock_pool(transaction=True)
+                store = ingestion_lease_store.IngestionLeaseStore(pool)
+
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "does not belong to the Lease SID",
+                ):
+                    await store.commit_child_mutations(
+                        grant,
+                        batch,
+                        actor_id="service_account:gcp:collector",
+                    )
+
+                pool.acquire.assert_not_called()
+
     async def test_closed_cohort_duplicate_feed_rejected_before_checkout(
         self,
     ) -> None:

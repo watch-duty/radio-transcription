@@ -210,6 +210,8 @@ def _require_member_identity(
     if (
         separator != "-"
         or sid != grant.lease_key
+        or not sid.isascii()
+        or not sid.isdigit()
         or not group_id
         or not group_id.isascii()
         or not group_id.isdigit()
