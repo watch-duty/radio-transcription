@@ -38,7 +38,7 @@ from backend.pipeline.ingestion.slo_contract import EVENT_TYPE_CALL_AUTH_FAILURE
 from backend.pipeline.storage.feed_store import FeedStatusReason
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Mapping
 
     import aiohttp
 
@@ -103,7 +103,6 @@ async def _get_shared_jwt_token(
 
 
 async def _get_shared_jwt_token_with_retry(
-    feed_id: object,
     shutdown_event: asyncio.Event,
     *,
     force_refresh: bool = False,
@@ -111,7 +110,6 @@ async def _get_shared_jwt_token_with_retry(
 ) -> str | None:
     """Forward the existing test seam to the shared provider."""
     return await provider._get_shared_jwt_token_with_retry(
-        feed_id,
         shutdown_event,
         force_refresh=force_refresh,
         stale_token=stale_token,
@@ -119,26 +117,24 @@ async def _get_shared_jwt_token_with_retry(
     )
 
 
-def _log_calls_api_response_invalid(feed_id: object) -> None:
+def _log_calls_api_response_invalid() -> None:
     """Forward the existing test seam to the shared provider."""
-    provider._log_calls_api_response_invalid(feed_id)
+    provider._log_calls_api_response_invalid()
 
 
 def _validate_calls_api_payload(
     payload: object,
-    feed_id: object,
 ) -> dict[str, Any]:
     """Forward the existing test seam to the shared provider."""
-    validated = provider._validate_calls_api_payload(payload, feed_id)
+    validated = provider._validate_calls_api_payload(payload)
     return dict(validated)
 
 
 async def _fetch_calls(
     session: aiohttp.ClientSession,
     url: str,
-    headers: dict[str, str],
-    params: dict[str, Any],
-    feed_id: object,
+    headers: Mapping[str, str],
+    params: Mapping[str, Any],
     shutdown_event: asyncio.Event,
 ) -> dict[str, Any]:
     """Forward the existing test seam to the shared provider."""
@@ -147,7 +143,6 @@ async def _fetch_calls(
         url,
         headers,
         params,
-        feed_id,
         shutdown_event,
     )
     return dict(result)
@@ -389,7 +384,6 @@ async def capture_bcfy_calls(  # noqa: PLR0912, PLR0915
                 page = await calls_provider.fetch_group_page(
                     source_feed_id,
                     last_bookmark_time_unix,
-                    subject_id=feed_id,
                     shutdown_event=shutdown_event,
                 )
             except provider._TokenLoadStopped:

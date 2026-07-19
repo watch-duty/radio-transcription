@@ -191,7 +191,6 @@ class _CallsProvider(typing.Protocol):
         sid: str,
         pos: datetime.datetime | None,
         *,
-        subject_id: object,
         shutdown_event: typing.Any,
         attempt_observer: (aiohttp_requests.HttpAttemptObserver | None) = None,
     ) -> provider.CallsPageEnvelope:
@@ -836,7 +835,6 @@ class BcfyCallsSidProcessor:
                                 page = await self._provider.fetch_sid_page(
                                     self._grant.lease_key,
                                     request.pos,
-                                    subject_id=self._grant.lease_key,
                                     shutdown_event=stop_requested,
                                     attempt_observer=(
                                         poll.observe_http_attempt

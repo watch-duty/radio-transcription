@@ -152,7 +152,7 @@ class _ScriptedProvider:
         self.pages = collections.deque(pages)
         self.trace = trace
         self.calls: list[
-            tuple[str, datetime.datetime | None, object, asyncio.Event]
+            tuple[str, datetime.datetime | None, asyncio.Event]
         ] = []
 
     async def fetch_sid_page(
@@ -160,13 +160,12 @@ class _ScriptedProvider:
         sid: str,
         pos: datetime.datetime | None,
         *,
-        subject_id: object,
         shutdown_event: asyncio.Event,
         attempt_observer: (aiohttp_requests.HttpAttemptObserver | None) = None,
     ) -> provider.CallsPageEnvelope:
         if self.trace is not None:
             self.trace.append("fetch")
-        self.calls.append((sid, pos, subject_id, shutdown_event))
+        self.calls.append((sid, pos, shutdown_event))
         if attempt_observer is not None:
             attempt_observer(aiohttp_requests.HttpAttemptKind.JSON, 1)
         result = self.pages.popleft()
@@ -2177,8 +2176,7 @@ class TestBcfyCallsSidProcessor(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.calls, [(_GRANT, None)])
         self.assertEqual(len(calls_provider.calls), 1)
         self.assertEqual(calls_provider.calls[0][0], "00123")
-        self.assertEqual(calls_provider.calls[0][2], "00123")
-        self.assertIs(calls_provider.calls[0][3], stop_requested)
+        self.assertIs(calls_provider.calls[0][2], stop_requested)
         self.assertEqual(wait.calls, [(stop_requested, 10.0)])
 
     async def test_overlap_pressure_cover_blocks_fetch_and_cadence(

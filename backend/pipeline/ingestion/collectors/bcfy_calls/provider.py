@@ -123,7 +123,6 @@ type _JsonFetcher = collections.abc.Callable[
         str,
         collections.abc.Mapping[str, str],
         collections.abc.Mapping[str, object],
-        object,
         asyncio.Event,
     ],
     typing.Awaitable[collections.abc.Mapping[str, object]],
@@ -134,7 +133,6 @@ type _JsonEvidenceFetcher = collections.abc.Callable[
         str,
         collections.abc.Mapping[str, str],
         collections.abc.Mapping[str, object],
-        object,
         asyncio.Event,
         aiohttp_requests.HttpAttemptObserver | None,
     ],
@@ -330,7 +328,6 @@ async def _get_shared_jwt_token(
 
 
 async def _get_shared_jwt_token_with_retry(
-    subject_id: object,
     shutdown_event: asyncio.Event,
     *,
     force_refresh: bool = False,
@@ -338,7 +335,6 @@ async def _get_shared_jwt_token_with_retry(
     _token_fetcher: _TokenFetcher | None = None,
 ) -> str | None:
     """Retry transient shared JWT access without releasing authority."""
-    del subject_id
     failures = 0
     while not shutdown_event.is_set():
         try:
@@ -370,27 +366,23 @@ async def _get_shared_jwt_token_with_retry(
     return None
 
 
-def _log_calls_api_response_invalid(subject_id: object) -> None:
+def _log_calls_api_response_invalid() -> None:
     """Log invalid successful Calls metadata without response contents."""
-    logger.error(
-        "Invalid Broadcastify Calls API response payload (subject %s)",
-        subject_id,
-    )
+    logger.error("Invalid Broadcastify Calls API response payload")
 
 
 def _validate_calls_api_payload(
     payload: object,
-    subject_id: object,
 ) -> collections.abc.Mapping[str, object]:
     """Validate only the Calls metadata envelope shape."""
     if not isinstance(payload, collections.abc.Mapping):
-        _log_calls_api_response_invalid(subject_id)
+        _log_calls_api_response_invalid()
         msg = "payload must be an object"
         raise TypeError(msg)
     validated = typing.cast("collections.abc.Mapping[str, object]", payload)
     calls = validated.get("calls", [])
     if not isinstance(calls, list):
-        _log_calls_api_response_invalid(subject_id)
+        _log_calls_api_response_invalid()
         msg = "calls field must be a list"
         raise TypeError(msg)
     return validated
@@ -401,7 +393,6 @@ async def _fetch_calls_with_evidence(
     url: str,
     headers: collections.abc.Mapping[str, str],
     params: collections.abc.Mapping[str, object],
-    subject_id: object,
     shutdown_event: asyncio.Event,
     attempt_observer: aiohttp_requests.HttpAttemptObserver | None = None,
 ) -> aiohttp_requests.JsonFetchEvidence[collections.abc.Mapping[str, object]]:
@@ -410,7 +401,16 @@ async def _fetch_calls_with_evidence(
     def validate_payload(
         payload: object,
     ) -> collections.abc.Mapping[str, object]:
-        return _validate_calls_api_payload(payload, subject_id)
+        return _validate_calls_api_payload(payload)
+
+    selector_label = next(
+        (
+            f"{selector}={params[selector]}"
+            for selector in ("groups", "sid")
+            if selector in params
+        ),
+        "unknown selector",
+    )
 
     return await aiohttp_requests.fetch_json_with_retries_evidence(
         session,
@@ -425,7 +425,7 @@ async def _fetch_calls_with_evidence(
         ),
         headers=headers,
         params=params,
-        log_label=f"Calls API subject {subject_id}",
+        log_label=f"Calls API {selector_label}",
         reason_prefix="calls_api_http",
         status_policy=_CALLS_API_HTTP_POLICY,
         validate_payload=validate_payload,
@@ -446,7 +446,6 @@ async def _fetch_calls(
     url: str,
     headers: collections.abc.Mapping[str, str],
     params: collections.abc.Mapping[str, object],
-    subject_id: object,
     shutdown_event: asyncio.Event,
 ) -> collections.abc.Mapping[str, object]:
     """Fetch one Calls page through the legacy payload-only contract."""
@@ -455,7 +454,6 @@ async def _fetch_calls(
         url,
         headers,
         params,
-        subject_id,
         shutdown_event,
     )
     return evidence.payload
@@ -467,7 +465,6 @@ async def _adapt_payload_json_fetcher(
     url: str,
     headers: collections.abc.Mapping[str, str],
     params: collections.abc.Mapping[str, object],
-    subject_id: object,
     shutdown_event: asyncio.Event,
     attempt_observer: aiohttp_requests.HttpAttemptObserver | None,
 ) -> aiohttp_requests.JsonFetchEvidence[collections.abc.Mapping[str, object]]:
@@ -478,7 +475,6 @@ async def _adapt_payload_json_fetcher(
         url,
         headers,
         params,
-        subject_id,
         shutdown_event,
     )
     return aiohttp_requests.JsonFetchEvidence(
@@ -523,12 +519,11 @@ async def _download_audio(
 
 def _calls_page_envelope(
     payload: object,
-    subject_id: object,
     *,
     http_attempt_count: int,
     response_byte_count: int,
 ) -> CallsPageEnvelope:
-    validated = _validate_calls_api_payload(payload, subject_id)
+    validated = _validate_calls_api_payload(payload)
     calls = typing.cast("list[object]", validated.get("calls", []))
     distinct_audio_urls: set[str] = set()
     for call in calls:
@@ -579,21 +574,19 @@ class CallsProviderClient:
 
     async def fetch_group_page(
         self,
-        group_id: str,
+        source_feed_id: str,
         pos: object | None,
         *,
-        subject_id: object,
         shutdown_event: asyncio.Event,
     ) -> CallsPageEnvelope:
         """Fetch one legacy inclusive groups page."""
-        if not group_id:
-            msg = "group_id must be a nonempty string"
+        if not source_feed_id:
+            msg = "source_feed_id must be a nonempty string"
             raise ValueError(msg)
         return await self._fetch_page(
-            group_id=group_id,
-            sid=None,
+            selector_name="groups",
+            selector_value=source_feed_id,
             pos=pos,
-            subject_id=subject_id,
             shutdown_event=shutdown_event,
         )
 
@@ -602,7 +595,6 @@ class CallsProviderClient:
         sid: str,
         pos: datetime.datetime | None,
         *,
-        subject_id: object,
         shutdown_event: asyncio.Event,
         attempt_observer: aiohttp_requests.HttpAttemptObserver | None = None,
     ) -> CallsPageEnvelope:
@@ -612,10 +604,9 @@ class CallsProviderClient:
             raise ValueError(msg)
         timestamp = int(pos.timestamp()) if pos is not None else None
         return await self._fetch_page(
-            group_id=None,
-            sid=sid,
+            selector_name="sid",
+            selector_value=sid,
             pos=timestamp,
-            subject_id=subject_id,
             shutdown_event=shutdown_event,
             attempt_observer=attempt_observer,
         )
@@ -623,24 +614,18 @@ class CallsProviderClient:
     async def _fetch_page(
         self,
         *,
-        group_id: str | None,
-        sid: str | None,
+        selector_name: typing.Literal["groups", "sid"],
+        selector_value: str,
         pos: object | None,
-        subject_id: object,
         shutdown_event: asyncio.Event,
         attempt_observer: aiohttp_requests.HttpAttemptObserver | None = None,
     ) -> CallsPageEnvelope:
-        """Fetch one page after enforcing selector exclusivity."""
-        if (group_id is None) == (sid is None):
-            msg = "exactly one of group_id or sid is required"
-            raise ValueError(msg)
-        params: dict[str, object] = (
-            {"groups": group_id} if group_id is not None else {"sid": sid}
-        )
+        """Fetch one page for an already-selected provider query mode."""
+        params: dict[str, object] = {selector_name: selector_value}
         if pos is not None:
             params["pos"] = pos
 
-        token = await self._token_loader(subject_id, shutdown_event)
+        token = await self._token_loader(shutdown_event)
         if token is None:
             raise _TokenLoadStopped
         headers = {"Authorization": f"Bearer {token}"}
@@ -651,7 +636,6 @@ class CallsProviderClient:
                     self._live_endpoint_url,
                     headers,
                     params,
-                    subject_id,
                     shutdown_event,
                     attempt_observer,
                 )
@@ -662,7 +646,6 @@ class CallsProviderClient:
                     self._live_endpoint_url,
                     headers,
                     params,
-                    subject_id,
                     shutdown_event,
                     attempt_observer,
                 )
@@ -672,7 +655,6 @@ class CallsProviderClient:
                 is feed_store.FeedStatusReason.SYSTEM_AUTHENTICATION_FAILED
             ):
                 refreshed = await self._token_loader(
-                    subject_id,
                     shutdown_event,
                     force_refresh=True,
                     stale_token=token,
@@ -682,7 +664,6 @@ class CallsProviderClient:
             raise
         return _calls_page_envelope(
             evidence.payload,
-            subject_id,
             http_attempt_count=evidence.http_attempt_count,
             response_byte_count=evidence.response_byte_count,
         )
